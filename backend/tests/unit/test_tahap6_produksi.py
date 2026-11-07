@@ -142,9 +142,11 @@ def test_permak_layar_pilih_dari_master():
 # PR2 · Komponen Kurang — bahan BOM di atas (layar)
 # ══════════════════════════════════════════════════════════════════════════════
 def test_komponen_bahan_bom_di_atas_layar():
-    src = (FE / "CMTComponentRequestModule.jsx").read_text(encoding="utf-8")
-    assert "/api/rahaza/boms?model_id=" in src and "(dari BOM)" in src
-    assert "materialChoices.map" in src                 # pilihan barang memakai urutan BOM-dulu
+    # Tahap 9 (keputusan 12): input staf di tab "Permintaan tambahan" — pcs per SKU → potongan dari BOM otomatis,
+    # pilihan aksesoris menampilkan rencana aksesoris PO (dari BOM) paling atas.
+    src = (FE / "engine" / "kirim" / "PermintaanTab.jsx").read_text(encoding="utf-8")
+    assert "/accessory-plan" in src and "(rencana PO)" in src
+    assert "matChoices.map" in src
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -321,7 +323,7 @@ def test_isi_vendor_balapan_ditolak(monkeypatch):
 
 
 def test_kirim_layar_po_tanpa_vendor_tampil():
-    src = (FE / "engine" / "VendorShipmentModule.jsx").read_text(encoding="utf-8")
+    src = (FE / "engine" / "kirim" / "KirimanForm.jsx").read_text(encoding="utf-8")   # Tahap 9: form kiriman
     assert "!form.vendor_id || !p.vendor_id || p.vendor_id === form.vendor_id" in src
 
 
@@ -377,7 +379,7 @@ def test_katalog_artikel_lama_tetap_bisa_diubah(monkeypatch):
 
 
 def test_katalog_layar_tanpa_kotak_lain():
-    src = (FE / "MaklonBuyerCatalogModule.jsx").read_text(encoding="utf-8")
+    src = (FE / "maklon" / "KatalogArtikelForm.jsx").read_text(encoding="utf-8")   # Tahap 9: form di halaman
     assert "bc-form-color-custom" not in src and "bc-form-size-custom" not in src
     assert "bc-form-master-hint" in src
 

@@ -83,7 +83,71 @@ SPECIAL_RULES = {
                               "kepala, toolbar, dan posisi tombol disusun sendiri."),
     "POPUP-DAFTAR": ("G13", "Daftar/tabel dibuka di popup (Sheet/Dialog) — detail dibuka di halaman: DetailPanel / RowDetail."),
     "JARAK-BESAR": ("G1", "Jarak/padding besar buatan sendiri (space-y-6+, py-10+, mb-8…) — jarak antarbagian dari cetakan (16 px)."),
+    # 2026-11-07 (Tahap 9, permintaan owner "UI dibuat konsisten bukan hanya nama menu"): dua pola yang lolos
+    # dari aturan lama — daftar yang tiap barisnya kartu (vendor CMT, job, klien) dan kartu bertingkat.
+    "KARTU-PER-BARIS": ("G5", "Daftar yang tiap barisnya kartu (.map → GlassCard/Card/kartu <div>) — daftar = tabel; "
+                        "rincian baris dibuka dengan RowDetail/DetailPanel."),
+    "KARTU-DALAM-KARTU": ("G5", "Kartu di dalam kartu (GlassCard/Card/GlassPanel bertingkat) — satu tingkat kartu saja; "
+                          "isi bagian dalam memakai tabel/daftar biasa."),
 }
+# kartu = GlassCard / GlassPanel / Card shadcn (bukan CardContent/CardHeader) / DataCard
+CARD_OPEN_RX = re.compile(r'<(GlassCard|GlassPanel|DataCard|Card)(?=[\s>/])')
+CARD_CLOSE_RX = re.compile(r'</(GlassCard|GlassPanel|DataCard|Card)\s*>')
+DIV_CARD_CLASS_RX = re.compile(r'\brounded-(?:xl|2xl|lg|\[var\(--radius-[a-z]+\)\])\b[^"`]*\bborder\b[^"`]*\bbg-'
+                               r'|\bborder\b[^"`]*\brounded-(?:xl|2xl|lg)\b[^"`]*\bbg-')
+MAP_CARD_RX = re.compile(
+    r'\.map\(\s*(?:\([^)]{0,80}\)|\w+)\s*=>\s*\(?\s*'
+    r'(?:<(?:GlassCard|GlassPanel|DataCard|Card|(?!Stat)[A-Z]\w*Card)(?=[\s>/])'
+    r'|<div\b[^>]{0,200}?className=(?:"|\{`)(?P<cls>[^"`]*)(?:"|`\}))', re.S)
+
+
+def _tag_end(src: str, i: int) -> tuple[int, bool]:
+    """Akhir tag JSX yang dibuka di `i` (posisi setelah nama tag) → (indeks '>', self_closing).
+    Kurung kurawal dan string di atribut dilewati supaya `=>` di onClick tidak dianggap penutup tag."""
+    depth, quote, n = 0, "", len(src)
+    while i < n:
+        c = src[i]
+        if quote:
+            if c == quote and src[i - 1] != "\\":
+                quote = ""
+        elif c in "\"'`":
+            quote = c
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        elif c == ">" and depth <= 0:
+            return i, src[i - 1] == "/"
+        i += 1
+    return n, False
+
+
+def card_nesting_lines(src: str) -> list[int]:
+    """Baris tempat sebuah kartu dibuka ketika kartu lain masih terbuka (kartu di dalam kartu)."""
+    events = [(m.start(), m.end(), "open") for m in CARD_OPEN_RX.finditer(src)]
+    events += [(m.start(), m.end(), "close") for m in CARD_CLOSE_RX.finditer(src)]
+    depth, out = 0, []
+    for start, end, kind in sorted(events):
+        if kind == "close":
+            depth = max(0, depth - 1)
+            continue
+        _, self_closing = _tag_end(src, end)
+        if depth >= 1:
+            out.append(src.count("\n", 0, start) + 1)
+        if not self_closing:
+            depth += 1
+    return out
+
+
+def card_per_row_lines(src: str) -> list[int]:
+    """Baris `.map(...) => <Kartu` — tiap baris daftar dirender sebagai kartu."""
+    out = []
+    for m in MAP_CARD_RX.finditer(src):
+        cls = m.group("cls")
+        if cls is not None and not DIV_CARD_CLASS_RX.search(cls):
+            continue
+        out.append(src.count("\n", 0, m.start()) + 1)
+    return out
 BIG_SPACE_RX = re.compile(r'(?<![\w-])(?:space-y-(?:6|7|8|10|12)|gap-(?:8|10|12)|(?:p|py|pt|pb)-(?:10|12|14|16|20|24)'
                           r'|(?:m|my|mt|mb)-(?:8|10|12|16|20|24))(?![\w-])')
 BIG_SPACE_SKIP = ("moduleAtoms.jsx", "/layout/", "EmptyState.jsx")
@@ -169,6 +233,11 @@ def scan_special(files: set[Path], screens: set[Path]) -> list[dict]:
             if LIST_IN_POPUP_RX[tag].search(block):
                 ln = src.count("\n", 0, mm.start()) + 1
                 hits.append({"rule": "POPUP-DAFTAR", "sec": "G13", "file": rel, "line": ln, "text": lines[ln - 1].strip()[:140]})
+        for code, fn in (("KARTU-DALAM-KARTU", card_nesting_lines), ("KARTU-PER-BARIS", card_per_row_lines)):
+            for ln in fn(src):
+                if COMMENT_RX.match(lines[ln - 1]):
+                    continue
+                hits.append({"rule": code, "sec": "G5", "file": rel, "line": ln, "text": lines[ln - 1].strip()[:140]})
         if not any(s in rel for s in BIG_SPACE_SKIP):
             for mm in BIG_SPACE_RX.finditer(src):
                 ln = src.count("\n", 0, mm.start()) + 1

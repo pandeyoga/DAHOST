@@ -689,84 +689,52 @@ async def billable_lines_for_po(db, po_id: str) -> dict:
 
 
 async def maklon_actual_costs(db, po_id: str) -> dict:
-    """2026-11-02 (K16) — biaya jahit PO dari ANGKA NYATA, satu rumus untuk HPP Jahit
-    maklon, cermin margin, dan laporan.
+    """Biaya jahit PO dari ANGKA NYATA — Tahap 9 (7 Nov 2026, keputusan No. 13): kini MENDELEGASIKAN ke SATU
+    hitungan HPP per PO (`core.hpp_aktual`) yang juga dipakai PO internal, layar HPP per PO, dan laporan.
 
-      CMT        = Σ tagihan CMT nyata (`dewi_cmt_payments`, bukan batal) — tarif dari PO/SPK
-      aksesoris  = Σ nilai Material Issue PO ini (qty keluar × harga yang dibukukan)
-      permak     = Σ ongkos permak (`dewi_cmt_permak.total_cost`)
-      pendapatan = tagihan klien = qty diterima buyer × harga jasa (`billable_lines_for_po`)
-      margin     = pendapatan − (CMT + aksesoris DA + permak)
-    Kain klien BUKAN biaya DA (K14).
-    """
-    po = await db.production_pos.find_one({'id': po_id}, {'_id': 0}) or {}
-    items = await db.po_items.find({'po_id': po_id}, {'_id': 0}).to_list(None)
-    qty_ordered = sum(int(i.get('qty', 0) or 0) for i in items)
-    cmt_rate_plan = round(sum(float(i.get('cmt_price_snapshot', 0) or 0) * int(i.get('qty', 0) or 0)
-                              for i in items), 2)
-    pays = [p async for p in db.dewi_cmt_payments.find({'po_id': po_id}, {'_id': 0})
-            if str(p.get('status') or '').lower() not in ('cancelled', 'void', 'voided')]
-    cmt_cost = round(sum(float(p.get('subtotal', p.get('net_amount', 0)) or 0) for p in pays), 2)
-    cmt_pcs = sum(int(p.get('total_pcs', 0) or 0) for p in pays)
-    acc_cost, mi_numbers, mi_pcs = 0.0, [], 0
-    async for mi in db.rahaza_material_issues.find(
-            {'production_po_id': po_id, 'status': {'$nin': ['rejected', 'draft', 'cancelled']}}, {'_id': 0}):
-        mi_numbers.append(mi.get('mi_number'))
-        mi_pcs += int(mi.get('qty_wo_pcs') or 0)
-        for it in mi.get('items') or []:
-            acc_cost += float(it.get('qty_issued') or 0) * float(it.get('unit_cost_applied') or 0)
-    acc_cost = round(acc_cost, 2)
-    permak_cost = 0.0
-    async for p in db.dewi_cmt_permak.find({'po_id': po_id}, {'_id': 0, 'total_cost': 1}):
-        permak_cost += float(p.get('total_cost') or 0)
-    permak_cost = round(permak_cost, 2)
-    bill = await billable_lines_for_po(db, po_id)
-    revenue = float(bill.get('subtotal') or 0)
-    total_cost = round(cmt_cost + acc_cost + permak_cost, 2)
-    from core import dispatch_capacity as dcap
-    q = dcap.sum_quantities((await dcap.po_item_quantities(db, [i['id'] for i in items])).values())
-    basis_pcs = q['accepted_total'] or cmt_pcs
-    # 2026-11-06 (Tahap 2): aksesoris DA dikeluarkan untuk SEMUA pcs yang dikirim ke CMT. Dulu
-    # Σ aksesoris dibagi pcs LOLOS QC saja ⇒ HPP per pcs membengkak bila ada reject. Sekarang
-    # aksesoris per pcs = Σ aksesoris ÷ pcs yang dikirim; HPP memuat bagian pcs lolos QC saja,
-    # sisanya (aksesoris pcs reject/hilang) dilaporkan terpisah dan tetap ikut di margin.
-    sent_pcs = mi_pcs
-    if not sent_pcs:
-        sent_pcs = sum(int(x.get('qty_sent') or 0) for x in await db.vendor_shipment_items.find(
-            {'po_item_id': {'$in': [i['id'] for i in items]}}, {'_id': 0, 'qty_sent': 1}).to_list(20000)) if items else 0
-    acc_per_pcs = round(acc_cost / sent_pcs, 4) if sent_pcs else (round(acc_cost / basis_pcs, 4) if basis_pcs else 0.0)
-    acc_absorbed = round(min(acc_cost, acc_per_pcs * basis_pcs), 2)
-    hpp_basis_cost = round(cmt_cost + acc_absorbed + permak_cost, 2)
-    gaps = []
-    if not pays:
-        gaps.append('belum ada tagihan CMT (biaya jahit lahir saat Terima FG dari CMT selesai QC)')
+      HPP        = potongan + aksesoris yang diserahkan + upah CMT (tagihan nyata) + permak
+      pendapatan = tagihan klien = qty diterima buyer × harga jasa
+      margin     = pendapatan − HPP;  per pcs: harga jasa − HPP per pcs
+    Kain klien BUKAN biaya DA (K14). Kunci keluaran lama dipertahankan untuk pemanggil lama."""
+    from core import hpp_aktual
+    po = await db.production_pos.find_one({'id': po_id}, {'_id': 0}) or {'id': po_id}
+    rows = await hpp_aktual.po_hpp_many(db, [po], with_overhead=False)
+    f = rows[0] if rows else {}
+    acc_pp = round(f.get('accessory_cost', 0.0) / f['qty_sent'], 4) if f.get('qty_sent') else 0.0
+    acc_abs = round(min(f.get('accessory_cost', 0.0), acc_pp * f.get('qty_accepted', 0)), 2)
+    mi_numbers = sorted({ln.get('doc') for ln in f.get('issue_lines') or [] if ln.get('doc')})
+    bills = [b async for b in db.dewi_cmt_payments.find({'po_id': po_id}, {'_id': 0}).limit(500)
+             if str(b.get('status') or '').lower() not in ('cancelled', 'void', 'voided')]
     has_da_acc = await db.dewi_maklon_bom.find_one(
         {'po_id': po_id, 'materials.ownership': {'$in': ['cv_da_stock', 'cv_da', 'da_provided']}},
         {'_id': 0, 'id': 1})
+    gaps = list(f.get('gaps') or [])
     if has_da_acc and not mi_numbers:
-        # P-7: sejak 2026-11-02 Kirim Material CMT maklon menerbitkan MI aksesoris DA
-        # (core.material_issue_engine.issue_for_maklon_shipment). Celah ini kini hanya muncul untuk
-        # surat jalan LAMA / BOM tanpa material_id — tetap DILAPORKAN, bukan ditebak.
-        gaps.append('BOM PO ini memuat aksesoris milik DA (cv_da_stock), tetapi belum ada Material '
-                    'Issue — biaya aksesoris DA belum terbukukan')
+        gaps.append('BOM PO ini memuat aksesoris milik DA, tetapi belum ada penyerahan tercatat — biaya '
+                    'aksesoris DA belum terbukukan')
+    total = f.get('total_hpp', 0.0)
+    revenue = f.get('revenue', 0.0)
     return {
-        'po_id': po_id, 'po_number': po.get('po_number', ''), 'business_type': po.get('business_type'),
-        'qty_ordered': qty_ordered, 'qty_basis': basis_pcs, 'qty_billed_cmt': cmt_pcs,
-        'cmt_cost': cmt_cost, 'cmt_cost_plan': cmt_rate_plan,
-        'accessory_cost': acc_cost, 'material_issues': mi_numbers,
-        'accessory_pcs_sent': sent_pcs, 'accessory_cost_per_pcs': acc_per_pcs,
-        'accessory_cost_absorbed': acc_absorbed,
-        'accessory_cost_unabsorbed': round(acc_cost - acc_absorbed, 2),
-        'permak_cost': permak_cost, 'total_cost': total_cost, 'hpp_basis_cost': hpp_basis_cost,
-        'hpp_per_pcs': round(hpp_basis_cost / basis_pcs, 2) if basis_pcs else 0.0,
-        'revenue': round(revenue, 2), 'qty_billable': bill.get('total_received', 0),
-        'margin': round(revenue - total_cost, 2),
-        'margin_pct': round((revenue - total_cost) / revenue * 100, 2) if revenue else 0.0,
-        'has_actual': bool(pays),
+        'po_id': po_id, 'po_number': f.get('po_number', ''), 'business_type': po.get('business_type'),
+        'qty_ordered': f.get('qty_ordered', 0), 'qty_basis': f.get('qty_accepted', 0) or f.get('cmt_pcs_billed', 0),
+        'qty_billed_cmt': f.get('cmt_pcs_billed', 0),
+        'cmt_cost': f.get('cmt_cost', 0.0), 'cmt_cost_plan': f.get('cmt_cost_plan', 0.0),
+        'cut_cost': f.get('cut_cost', 0.0),
+        'accessory_cost': f.get('accessory_cost', 0.0), 'material_issues': mi_numbers,
+        'accessory_pcs_sent': f.get('qty_sent', 0), 'accessory_cost_per_pcs': acc_pp,
+        'accessory_cost_absorbed': acc_abs,
+        'accessory_cost_unabsorbed': round(f.get('accessory_cost', 0.0) - acc_abs, 2),
+        'permak_cost': f.get('permak_cost', 0.0), 'total_cost': total,
+        'hpp_basis_cost': f.get('absorbed_cost', 0.0), 'hpp_per_pcs': f.get('hpp_per_pcs') or 0.0,
+        'revenue': revenue, 'qty_billable': f.get('qty_dispatched', 0),
+        'margin': round(revenue - total, 2),
+        'margin_pct': round((revenue - total) / revenue * 100, 2) if revenue else 0.0,
+        'margin_per_pcs': f.get('margin_per_pcs'), 'selling_price_per_pcs': f.get('selling_price_per_pcs'),
+        'has_actual': bool(bills),
         'cmt_payments': [{'payment_code': p.get('payment_code'), 'total_pcs': p.get('total_pcs'),
                           'subtotal': p.get('subtotal'), 'variance_flagged': p.get('variance_flagged')}
-                         for p in pays],
-        'gaps': gaps,
+                         for p in bills],
+        'gaps': gaps, 'source': 'hpp_per_po',
     }
 
 

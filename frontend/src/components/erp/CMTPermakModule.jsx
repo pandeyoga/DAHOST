@@ -1,96 +1,76 @@
 /**
- * CMTPermakModule — Maklon → Permak / Perbaikan (rework barang cacat).
+ * CMTPermakModule — "Perbaikan" (permak barang cacat), satu layar untuk Portal Produksi & Maklon.
  *
- * Barang cacat dari QC (cmt_receipt_lines.reject_qty) atau Barang Jadi yang ternyata
- * perlu perbaikan dikirim ke PERMAK. Permak open/in_progress MENGURANGI FG. Hasil:
- *   selesai_berhasil (qty_fixed + qty_scrap) atau gagal_buang (semua scrap).
+ * Barang cacat dari QC (cmt_receipt_lines.reject_qty) atau barang jadi yang perlu diperbaiki dikirim ke
+ * PERMAK. Permak terbuka/dikerjakan MENGURANGI barang jadi. Hasil: berhasil (qty_fixed + qty_scrap) atau
+ * gagal dibuang (semua scrap).
+ *
+ * Tahap 9 (7 Nov 2026):
+ *   • Keputusan 2 — tampilan identik di dua portal; daftar, ringkasan, dan pilihan PO disaring per
+ *     portal (`?business_type=`).
+ *   • Keputusan 12 — menu Perbaikan tinggal berisi Permak (Komponen Kurang pindah ke Kirim ke CMT).
+ *   • Cetakan PageLayout: tabel + rincian di bawah barisnya; formulir "Buat permak" dibuka di halaman
+ *     (DetailPanel); popup hanya untuk ubah status (isian pendek) dan konfirmasi hapus.
  *
  * API: /api/dewi/cmt-permak/* (routes/dewi_cmt_permak.py)
  */
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { Fragment, useEffect, useMemo, useState, useCallback } from 'react';
 import {
-  Wrench, RefreshCw, Search, Plus, Play, CheckCircle2, XCircle,
-  Trash2, Loader2, Package, AlertTriangle, ClipboardList,
+  Wrench, RefreshCw, Search, Plus, Play, CheckCircle2, XCircle, Trash2, Loader2, AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import Modal from './engine/Modal';
-import ConfirmDialog from './engine/ConfirmDialog';
-import { apiGet, apiPost, apiPut, apiDelete } from '../../lib/api';
+import { apiGet, apiPost, apiDelete } from '../../lib/api';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Button } from '@/components/ui/button';
-import { GlassInput } from '@/components/ui/glass';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { Textarea } from '@/components/ui/textarea';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
-import { EmptyState, StatTile } from './moduleAtoms';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import PageLayout, { DetailPanel, RowDetail, RowToggle } from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
+import FormDialog, { Field } from './engine/FormDialog';
+import { portalBusinessType, portalQuery } from '@/lib/portalScope';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
+import { formatDateID } from '@/lib/format';
 
 const STATUS_META = {
-  open: { label: 'Menunggu', cls: 'bg-slate-100 text-slate-700' },
-  in_progress: { label: 'Dikerjakan', cls: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' },
-  selesai_berhasil: { label: 'Selesai (Berhasil)', cls: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' },
-  gagal_buang: { label: 'Gagal (Dibuang)', cls: 'bg-zinc-200 text-zinc-700' },
+  open: { label: 'Menunggu', tone: 'muted' },
+  in_progress: { label: 'Dikerjakan', tone: 'primary' },
+  selesai_berhasil: { label: 'Selesai (berhasil)', tone: 'success' },
+  gagal_buang: { label: 'Gagal (dibuang)', tone: 'muted' },
 };
-const SOURCE_LABEL = { reject: 'Dari Reject QC', good: 'Dari Barang Jadi' };
-// Angka per pil penyaring diambil dari ringkasan (summary) yang sudah dimuat.
-const TAB_COUNT = {
-  all: (s) => s.total_records ?? 0,
-  open: (s) => s.open ?? 0,
-  in_progress: (s) => s.in_progress ?? 0,
-  selesai_berhasil: (s) => s.selesai_berhasil ?? 0,
-  gagal_buang: (s) => s.gagal_buang ?? 0,
-};
-const TABS = [
-  { key: 'all', label: 'Semua' },
-  { key: 'open', label: 'Menunggu' },
-  { key: 'in_progress', label: 'Dikerjakan' },
-  { key: 'selesai_berhasil', label: 'Selesai' },
-  { key: 'gagal_buang', label: 'Dibuang' },
+const TYPE_LABEL = { permak_sendiri: 'Permak sendiri', retur_ke_cmt: 'Retur ke CMT' };
+const SOURCE_LABEL = { reject: 'Dari ditolak QC', good: 'Dari barang jadi' };
+const PROBLEM_OPTS = [
+  ['jahitan', 'Jahitan'], ['noda', 'Noda'], ['ukuran', 'Ukuran'], ['bahan', 'Bahan'],
+  ['aksesoris', 'Aksesoris'], ['lainnya', 'Lainnya'],
 ];
-
-const fmt = (n) => Number(n || 0).toLocaleString('id-ID');
-const fmtRp = (n) => 'Rp' + Number(n || 0).toLocaleString('id-ID');
-const PERMAK_TYPE_META = {
-  permak_sendiri: { label: 'Permak Sendiri', cls: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' },
-  retur_ke_cmt: { label: 'Retur ke CMT', cls: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' },
-};
-const PROBLEM_OPTS = ['jahitan', 'noda', 'ukuran', 'bahan', 'aksesoris', 'lainnya'];
 // Tahap 6 (PR1) — penanda tetap workshop sendiri; sama dengan WORKSHOP_DA_ID di routes/dewi_cmt_permak.py
 const WORKSHOP_DA_ID = 'workshop_da';
-const fmtDate = (iso) => {
-  if (!iso) return '—';
-  try { return new Date(iso).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }); }
-  catch { return String(iso).slice(0, 10); }
-};
+const fmt = (n) => Number(n || 0).toLocaleString('id-ID');
+const fmtRp = (n) => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
+const fmtDate = (iso) => (iso ? formatDateID(iso) : '—');
 
-function PermakStatusBadge({ status }) {
-  const m = STATUS_META[status] || { label: status, cls: 'bg-muted text-foreground/80' };
-  return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${m.cls}`}>{m.label}</span>;
-}
-
-// PANDUAN_UI G5: kartu angka = StatTile (nol otomatis abu). Nada lama dipetakan ke token.
-const KPI_ACCENT = { default: 'default', amber: 'warning', emerald: 'success', zinc: 'muted', blue: 'primary' };
-function KpiCard({ label, value, sub, tone = 'default' }) {
-  return <StatTile label={label} value={value} sub={sub} accent={KPI_ACCENT[tone] || 'default'} />;
-}
-
-export default function CMTPermakModule() {
+export default function CMTPermakModule({ portalId }) {
+  const businessType = portalBusinessType(portalId);
   const [rows, setRows] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('all');
   const [search, setSearch] = useState('');
-
-  const [showCreate, setShowCreate] = useState(false);
+  const [openRow, setOpenRow] = useState(null);
+  const [creating, setCreating] = useState(false);
   const [statusTarget, setStatusTarget] = useState(null);   // { record, action }
-  const [confirmDelete, setConfirmDelete] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = tab && tab !== 'all' ? `?status=${tab}&limit=300` : '?limit=300';
       const [list, sum] = await Promise.all([
-        apiGet(`/dewi/cmt-permak${params}`),
-        apiGet('/dewi/cmt-permak/summary'),
+        apiGet(`/dewi/cmt-permak${portalQuery(businessType, { limit: 300, status: tab !== 'all' ? tab : '' })}`),
+        apiGet(`/dewi/cmt-permak/summary${portalQuery(businessType)}`),
       ]);
       setRows(Array.isArray(list.items) ? list.items : []);
       setSummary(sum);
@@ -100,24 +80,20 @@ export default function CMTPermakModule() {
     } finally {
       setLoading(false);
     }
-  }, [tab]);
-
+  }, [tab, businessType]);
   useEffect(() => { load(); }, [load]);
 
   const filtered = useMemo(() => {
-    if (!search) return rows;
-    const q = search.toLowerCase();
-    return rows.filter((r) =>
-      (r.permak_number || '').toLowerCase().includes(q) ||
-      (r.sku || '').toLowerCase().includes(q) ||
-      (r.product_name || '').toLowerCase().includes(q) ||
-      (r.po_number || '').toLowerCase().includes(q)
-    );
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => [r.permak_number, r.sku, r.product_name, r.po_number, r.vendor_name]
+      .some((v) => String(v || '').toLowerCase().includes(q)));
   }, [rows, search]);
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(filtered, 25);
 
-  const doDelete = async () => {
-    const rec = confirmDelete;
-    setConfirmDelete(null);
+  const doDelete = async (rec) => {
+    if (!(await confirmDialog({ title: `Hapus ${rec.permak_number}?`, body: 'Hanya permak berstatus Menunggu yang bisa dihapus.',
+      confirmLabel: 'Hapus permak', danger: true }))) return;
     try {
       await apiDelete(`/dewi/cmt-permak/${rec.id}`);
       toast.success('Permak dihapus');
@@ -127,219 +103,152 @@ export default function CMTPermakModule() {
     }
   };
 
+  const s = summary || {};
+  const anyKpi = Number(s.total_records || 0) > 0;
+  const tabs = [
+    { key: 'all', label: 'Semua', count: s.total_records },
+    { key: 'open', label: 'Menunggu', count: s.open },
+    { key: 'in_progress', label: 'Dikerjakan', count: s.in_progress },
+    { key: 'selesai_berhasil', label: 'Selesai', count: s.selesai_berhasil },
+    { key: 'gagal_buang', label: 'Dibuang', count: s.gagal_buang },
+  ];
+
   return (
-    <div className="space-y-4" data-testid="cmt-permak-module">
-      {/* Header */}
-      <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Wrench size={26} className="text-[hsl(var(--warning))]" />
-            Permak / Perbaikan
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Kelola perbaikan barang cacat dari CMT. Permak yang belum selesai <strong>mengurangi Barang Jadi</strong>;
-            berhasil = kembali jadi barang bagus, gagal = scrap.
-          </p>
+    <PageLayout
+      testId="cmt-permak-module"
+      title="Perbaikan (permak)"
+      subtitle="Perbaikan barang cacat dari CMT. Permak yang belum selesai mengurangi stok barang jadi."
+      actions={<Button onClick={() => setCreating(true)} data-testid="btn-open-create-permak"><Plus className="w-4 h-4" />Buat permak</Button>}
+      filters={<>
+        <div className="relative w-72 max-w-full">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari no. permak / SKU / produk / PO…"
+            data-testid="input-search-permak" className="pl-9 h-9" />
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline" size="icon"
-            onClick={load}
-            title="Muat ulang" aria-label="Muat ulang"
-            data-testid="btn-refresh-permak"
-          >
-            <RefreshCw className={loading ? 'animate-spin' : ''} />
-          </Button>
-          <Button
-            onClick={() => setShowCreate(true)}
-            data-testid="btn-open-create-permak"
-          >
-            <Plus /> Buat permak
-          </Button>
+        <FilterChips value={tab} onChange={setTab} testId="tab-permak" ariaLabel="Penyaring status permak"
+          hideWhenEmpty={false} options={tabs.map((t) => ({ ...t, count: summary ? Number(t.count || 0) : undefined }))} />
+      </>}
+      tools={<Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="btn-refresh-permak">
+        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+      </Button>}
+      summary={anyKpi ? (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <StatTile testId="permak-kpi-open" label="Menunggu" value={fmt(s.open)} accent="warning" sub={`${fmt(s.qty_open)} pcs`} />
+          <StatTile testId="permak-kpi-progress" label="Dikerjakan" value={fmt(s.in_progress)} accent="primary"
+            sub={`${fmt(s.qty_in_progress)} pcs${s.h3_alert ? ` · ${fmt(s.h3_alert)} lewat batas waktu` : ''}`}
+            subTone={s.h3_alert ? 'danger' : undefined} />
+          <StatTile testId="permak-kpi-done" label="Selesai" value={fmt(Number(s.selesai_berhasil || 0) + Number(s.gagal_buang || 0))} accent="success"
+            sub={`${fmt(s.qty_fixed)} pcs diperbaiki · ${fmt(s.qty_scrap)} pcs dibuang`} />
+          <StatTile testId="permak-kpi-cost" label="Biaya permak" value={fmtRp(s.total_cost)}
+            sub={`sendiri ${fmt(s.permak_sendiri)} · retur ${fmt(s.retur_ke_cmt)} · ${fmt(s.distinct_pos)} PO`} />
         </div>
-      </div>
-
-      {/* KPI cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
-        <KpiCard label="Total Permak" value={fmt(summary?.total_records)} sub={`${fmt(summary?.distinct_pos)} PO`} icon={ClipboardList} />
-        <KpiCard label="Menunggu" value={fmt(summary?.open)} sub={`${fmt(summary?.qty_open)} pcs`} tone="amber" />
-        <KpiCard label="Dikerjakan" value={fmt(summary?.in_progress)} sub={`${fmt(summary?.qty_in_progress)} pcs`} tone="blue" icon={Play} />
-        <KpiCard label="Berhasil" value={fmt(summary?.selesai_berhasil)} sub={`${fmt(summary?.qty_fixed)} pcs fixed`} tone="emerald" icon={CheckCircle2} />
-        <KpiCard label="Dibuang" value={fmt(summary?.gagal_buang)} sub={`${fmt(summary?.qty_scrap)} pcs scrap`} tone="zinc" icon={XCircle} />
-        <KpiCard label="Perlu Tindakan" value={fmt(summary?.h3_alert)} sub="lewat deadline (H+N)" tone="amber" icon={AlertTriangle} />
-        <KpiCard label="Biaya Permak" value={fmtRp(summary?.total_cost)} sub={`sendiri ${fmt(summary?.permak_sendiri)} · retur ${fmt(summary?.retur_ke_cmt)}`} tone="blue" icon={Package} />
-      </div>
-
-      {/* Penyaring status (PANDUAN_UI G4) — testid tetap `tab-permak-<status>` */}
-      <FilterChips
-        value={tab}
-        onChange={setTab}
-        testId="tab-permak"
-        ariaLabel="Penyaring status permak"
-        options={TABS.map((t) => ({ key: t.key, label: t.label, count: summary ? TAB_COUNT[t.key](summary) : undefined }))}
-      />
-
-      {/* Search */}
-      <div className="relative max-w-md">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-        <input
-          type="text"
-          placeholder="Cari no. permak / SKU / produk / PO..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full pl-9 pr-3 py-2 text-sm rounded-md border border-input bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-          data-testid="input-search-permak"
-        />
-      </div>
-
-      {/* Table */}
-      <div className="rounded-md border border-border overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-            <tr>
-              <th className="px-3 py-2 text-left">No. Permak</th>
-              <th className="px-3 py-2 text-left">Produk / SKU</th>
-              <th className="px-3 py-2 text-left">PO</th>
-              <th className="px-3 py-2 text-left whitespace-nowrap">Vendor CMT / SJ Rework</th>
-              <th className="px-3 py-2 text-left">Tipe</th>
-              <th className="px-3 py-2 text-right">Qty</th>
-              <th className="px-3 py-2 text-right">Fixed / Scrap</th>
-              <th className="px-3 py-2 text-right">Biaya</th>
-              <th className="px-3 py-2 text-left">Status</th>
-              <th className="px-3 py-2 text-left">Dibuat</th>
-              <th className="px-3 py-2 text-right">Aksi</th>
-            </tr>
-          </thead>
-          <tbody data-testid="permak-table-body">
-            {loading ? (
-              <tr><td colSpan={11} className="px-3 py-4 text-center text-muted-foreground">
-                <Loader2 className="inline animate-spin mr-2" size={16} /> Memuat...
-              </td></tr>
-            ) : filtered.length === 0 ? (
-              <tr><td colSpan={11}>
-                <EmptyState icon={Wrench} title="Belum ada permak"
-                  description={<>Klik <strong>Buat permak</strong>, atau kirim barang dari "Terima FG dari CMT".</>} />
-              </td></tr>
-            ) : filtered.map((r) => {
-              const terminal = r.status === 'selesai_berhasil' || r.status === 'gagal_buang';
-              return (
-                <tr key={r.id} className="border-t border-border hover:bg-muted/30" data-testid={`permak-row-${r.id}`}>
-                  <td className="px-3 py-2 tabular-nums text-xs">{r.permak_number}</td>
-                  <td className="px-3 py-2">
-                    <div className="font-medium text-foreground">{r.product_name || r.sku || '—'}</div>
-                    <div className="text-xs text-muted-foreground">{r.sku} · {r.color} · {r.size}</div>
-                  </td>
-                  <td className="px-3 py-2 text-xs">{r.po_number || '—'}</td>
-                  {/* FASE 2: tautan vendor + Surat Jalan REWORK — dulu permak tidak
-                      punya vendor_id sehingga retur ke CMT tidak pernah terlacak. */}
-                  <td className="px-3 py-2 text-xs">
-                    <div className="text-foreground truncate max-w-[160px]">{r.vendor_name || r.vendor_permak || '—'}</div>
-                    {/* Tahap 6 (PR1): siapa yang mengerjakan permak (master Vendor CMT / Workshop DA sendiri) */}
-                    {(r.vendor_permak_name || r.vendor_permak) && (r.vendor_permak_name || r.vendor_permak) !== r.vendor_name && (
-                      <div className="text-[11px] text-muted-foreground truncate max-w-[160px]" data-testid={`permak-workshop-${r.id}`}>
-                        Dikerjakan: {r.vendor_permak_name || r.vendor_permak}
-                      </div>
+      ) : null}
+      detail={creating && (
+        <CreatePermakPanel businessType={businessType} onClose={() => setCreating(false)}
+          onCreated={() => { setCreating(false); load(); }} />
+      )}
+      footer={filtered.length > pageSize && (
+        <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
+      )}
+    >
+      <GlassCard className="p-0 overflow-hidden">
+        {loading && !rows.length ? (
+          <div className="p-4 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin inline mr-2" />Memuat…</div>
+        ) : filtered.length === 0 ? (
+          <EmptyState icon={Wrench} title="Belum ada permak"
+            description="Buat permak baru, atau kirim barang ditolak dari layar Terima & QC." />
+        ) : (
+          <Table>
+            <TableHeader><TableRow>
+              <TableHead className="w-10" />
+              <TableHead>No. permak</TableHead><TableHead>Produk / SKU</TableHead><TableHead>PO</TableHead>
+              <TableHead>Jenis</TableHead><TableHead className="text-right">Qty</TableHead>
+              <TableHead className="text-right">Diperbaiki / dibuang</TableHead><TableHead className="text-right">Biaya</TableHead>
+              <TableHead>Status</TableHead><TableHead className="text-right">Aksi</TableHead>
+            </TableRow></TableHeader>
+            <TableBody data-testid="permak-table-body">
+              {paged.map((r) => {
+                const terminal = r.status === 'selesai_berhasil' || r.status === 'gagal_buang';
+                const meta = STATUS_META[r.status] || { label: r.status, tone: 'muted' };
+                const open = openRow === r.id;
+                return (
+                  <Fragment key={r.id}>
+                    <TableRow data-testid={`permak-row-${r.id}`}>
+                      <TableCell><RowToggle open={open} onClick={() => setOpenRow(open ? null : r.id)} testId={`permak-expand-${r.id}`} /></TableCell>
+                      <TableCell className="whitespace-nowrap font-medium">{r.permak_number}</TableCell>
+                      <TableCell>
+                        {r.product_name || r.sku || '—'}
+                        <span className="block text-xs text-muted-foreground">{[r.sku, r.color, r.size].filter(Boolean).join(' · ')}</span>
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">{r.po_number || '—'}</TableCell>
+                      <TableCell>
+                        {TYPE_LABEL[r.permak_type] || SOURCE_LABEL[r.source] || '—'}
+                        {r.h3_flag && (
+                          <span className="block text-[11px] text-[hsl(var(--destructive))]" title={`Lewat batas waktu ${Math.abs(r.days_to_deadline || 0)} hari`}>
+                            <AlertTriangle className="w-3 h-3 inline mr-0.5" />Perlu tindakan
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{fmt(r.qty)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{terminal ? `${fmt(r.qty_fixed)} / ${fmt(r.qty_scrap)}` : '—'}</TableCell>
+                      <TableCell className="text-right tabular-nums whitespace-nowrap">{r.total_cost ? fmtRp(r.total_cost) : '—'}</TableCell>
+                      <TableCell><StatusBadge status={r.status} label={meta.label} tone={meta.tone} /></TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          {r.status === 'open' && (
+                            <Button variant="ghost" size="icon-sm" onClick={() => setStatusTarget({ record: r, action: 'in_progress' })}
+                              data-testid={`btn-start-${r.id}`} title="Mulai kerjakan" aria-label="Mulai kerjakan"><Play className="w-4 h-4" /></Button>
+                          )}
+                          {!terminal && (
+                            <>
+                              <Button variant="ghost" size="icon-sm" onClick={() => setStatusTarget({ record: r, action: 'selesai_berhasil' })}
+                                data-testid={`btn-complete-${r.id}`} title="Selesai (berhasil)" aria-label="Selesai (berhasil)"><CheckCircle2 className="w-4 h-4" /></Button>
+                              <Button variant="ghost" size="icon-sm" onClick={() => setStatusTarget({ record: r, action: 'gagal_buang' })}
+                                data-testid={`btn-scrap-${r.id}`} title="Gagal / buang" aria-label="Gagal / buang"><XCircle className="w-4 h-4" /></Button>
+                            </>
+                          )}
+                          {r.status === 'open' && (
+                            <Button variant="ghost" size="icon-sm" onClick={() => doDelete(r)}
+                              data-testid={`btn-delete-${r.id}`} title="Hapus" aria-label="Hapus"><Trash2 className="w-4 h-4" /></Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                    {open && (
+                      <RowDetail colSpan={10} testId={`permak-detail-${r.id}`}>
+                        <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                          <div><dt className="text-xs text-muted-foreground">Vendor CMT</dt><dd>{r.vendor_name || '—'}</dd></div>
+                          <div><dt className="text-xs text-muted-foreground">Dikerjakan oleh</dt>
+                            <dd data-testid={`permak-workshop-${r.id}`}>{r.vendor_permak_name || r.vendor_permak || '—'}</dd></div>
+                          <div><dt className="text-xs text-muted-foreground">Surat jalan perbaikan</dt>
+                            <dd>{r.rework_shipment_number || (r.permak_type === 'retur_ke_cmt'
+                              ? <span className="text-[hsl(var(--destructive))]">Belum terbentuk</span> : '—')}</dd></div>
+                          <div><dt className="text-xs text-muted-foreground">Asal barang</dt><dd>{SOURCE_LABEL[r.source] || '—'}</dd></div>
+                          <div><dt className="text-xs text-muted-foreground">Target kembali</dt><dd>{fmtDate(r.return_deadline)}</dd></div>
+                          <div><dt className="text-xs text-muted-foreground">Ongkos per pcs</dt><dd className="tabular-nums">{r.cost_per_pcs ? fmtRp(r.cost_per_pcs) : '—'}</dd></div>
+                          <div><dt className="text-xs text-muted-foreground">Dibuat</dt><dd>{fmtDate(r.created_at)}</dd></div>
+                          <div className="sm:col-span-2 lg:col-span-1"><dt className="text-xs text-muted-foreground">Alasan</dt><dd>{r.reason || r.problem_type || '—'}</dd></div>
+                        </dl>
+                      </RowDetail>
                     )}
-                    {r.rework_shipment_number ? (
-                      <div className="tabular-nums text-[11px] text-[hsl(var(--warning))] whitespace-nowrap" title="Surat jalan rework ke vendor">
-                        {r.rework_shipment_number}
-                      </div>
-                    ) : r.permak_type === 'retur_ke_cmt' ? (
-                      <div className="text-[11px] text-[hsl(var(--destructive))]">SJ rework belum terbentuk</div>
-                    ) : null}
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex flex-col gap-1">
-                      <span className={`inline-flex w-fit items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${(PERMAK_TYPE_META[r.permak_type] || {}).cls || 'bg-muted text-foreground/70'}`}>
-                        {(PERMAK_TYPE_META[r.permak_type] || {}).label || (r.source === 'good' ? 'Dari FG' : 'Dari Reject')}
-                      </span>
-                      {r.h3_flag && (
-                        <span className="inline-flex w-fit items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]" title={`Lewat deadline ${Math.abs(r.days_to_deadline)} hari`}>
-                          <AlertTriangle size={10} /> Perlu tindakan
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums">{fmt(r.qty)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-xs">
-                    {terminal ? (
-                      <span><span className="text-[hsl(var(--success))]">{fmt(r.qty_fixed)}</span> / <span className="text-zinc-500">{fmt(r.qty_scrap)}</span></span>
-                    ) : '—'}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-xs">{r.total_cost ? fmtRp(r.total_cost) : '—'}</td>
-                  <td className="px-3 py-2"><PermakStatusBadge status={r.status} /></td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">{fmtDate(r.created_at)}</td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center justify-end gap-1">
-                      {r.status === 'open' && (
-                        <Button
-                          variant="ghost" size="icon-sm"
-                          onClick={() => setStatusTarget({ record: r, action: 'in_progress' })}
-                          className="text-[hsl(var(--primary))]"
-                          data-testid={`btn-start-${r.id}`}
-                          title="Mulai kerjakan" aria-label="Mulai kerjakan"
-                        ><Play /></Button>
-                      )}
-                      {!terminal && (
-                        <>
-                          <Button
-                            variant="ghost" size="icon-sm"
-                            onClick={() => setStatusTarget({ record: r, action: 'selesai_berhasil' })}
-                            className="text-[hsl(var(--success))]"
-                            data-testid={`btn-complete-${r.id}`}
-                            title="Selesai (berhasil)" aria-label="Selesai (berhasil)"
-                          ><CheckCircle2 /></Button>
-                          <Button
-                            variant="ghost" size="icon-sm"
-                            onClick={() => setStatusTarget({ record: r, action: 'gagal_buang' })}
-                            className="text-muted-foreground"
-                            data-testid={`btn-scrap-${r.id}`}
-                            title="Gagal / buang" aria-label="Gagal / buang"
-                          ><XCircle /></Button>
-                        </>
-                      )}
-                      {r.status === 'open' && (
-                        <Button
-                          variant="ghost" size="icon-sm"
-                          onClick={() => setConfirmDelete(r)}
-                          className="text-[hsl(var(--destructive))]"
-                          data-testid={`btn-delete-${r.id}`}
-                          title="Hapus" aria-label="Hapus"
-                        ><Trash2 /></Button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                  </Fragment>
+                );
+              })}
+            </TableBody>
+          </Table>
+        )}
+      </GlassCard>
 
-      {showCreate && (
-        <CreatePermakDialog onClose={() => setShowCreate(false)} onCreated={() => { setShowCreate(false); load(); }} />
-      )}
       {statusTarget && (
-        <StatusDialog
-          target={statusTarget}
-          onClose={() => setStatusTarget(null)}
-          onDone={() => { setStatusTarget(null); load(); }}
-        />
+        <StatusDialog target={statusTarget} onClose={() => setStatusTarget(null)}
+          onDone={() => { setStatusTarget(null); load(); }} />
       )}
-      {confirmDelete && (
-        <ConfirmDialog
-          title="Hapus Permak?"
-          message={`Hapus ${confirmDelete.permak_number}? Hanya permak berstatus "Menunggu" yang bisa dihapus.`}
-          onConfirm={doDelete}
-          onCancel={() => setConfirmDelete(null)}
-        />
-      )}
-    </div>
+    </PageLayout>
   );
 }
 
-/* ─── Create dialog ─────────────────────────────────────────────────────── */
-function CreatePermakDialog({ onClose, onCreated }) {
+/* ─── Formulir "Buat permak" — di halaman (DetailPanel) ─────────────────── */
+function CreatePermakPanel({ businessType, onClose, onCreated }) {
   const [pos, setPos] = useState([]);
   const [poId, setPoId] = useState('');
   const [items, setItems] = useState([]);
@@ -350,24 +259,21 @@ function CreatePermakDialog({ onClose, onCreated }) {
   const [problemType, setProblemType] = useState('jahitan');
   const [costPerPcs, setCostPerPcs] = useState('');
   const [returnDeadline, setReturnDeadline] = useState('');
-  // 2026-11-07 (Tahap 6, PR1): vendor/workshop permak DARI MASTER Vendor CMT (sama dengan Komponen Kurang)
-  // + pilihan tetap "Workshop DA sendiri" (bawaan untuk Permak Sendiri). Dulu teks bebas.
+  // Tahap 6 (PR1): vendor/workshop permak DARI MASTER Vendor CMT + pilihan tetap "Workshop DA sendiri".
   const [workshopId, setWorkshopId] = useState(WORKSHOP_DA_ID);
   const [vendors, setVendors] = useState([]);
   const [reason, setReason] = useState('');
   const [loadingItems, setLoadingItems] = useState(false);
   const [saving, setSaving] = useState(false);
   // SESI #27 — kebijakan penomoran Permak (Otomatis/Manual) milik owner.
-  const numPolicy = useDocNumberPolicy('dewi_cmt_permak.permak_number',
-                                       localStorage.getItem('erp_token'));
+  const numPolicy = useDocNumberPolicy('dewi_cmt_permak.permak_number', localStorage.getItem('erp_token'));
   const [permakNumber, setPermakNumber] = useState('');
 
   useEffect(() => {
     (async () => {
       try {
-        // 2026-11-07 (Tahap 5): dulu `/maklon-client/pos` (pintu portal klien, PO MAKLON saja) — PO internal
-        // tidak pernah bisa dipilih dari menu Permak di portal Produksi. Kini semua PO terbuka.
-        const data = await apiGet('/dewi/cmt-permak/po-options');
+        // Tahap 9 (keputusan 2): pilihan PO hanya PO portal ini.
+        const data = await apiGet(`/dewi/cmt-permak/po-options${portalQuery(businessType)}`);
         setPos(Array.isArray(data) ? data : []);
       } catch (e) { toast.error(`Gagal memuat PO: ${e.message || e}`); }
     })();
@@ -377,17 +283,14 @@ function CreatePermakDialog({ onClose, onCreated }) {
         setVendors((Array.isArray(data) ? data : []).filter((v) => v.status !== 'inactive'));
       } catch { setVendors([]); }
     })();
-  }, []);
+  }, [businessType]);
 
   const changePermakType = (t) => {
     setPermakType(t);
-    // Retur ke CMT = vendor pemilik barang (otomatis dari penerimaan/PO); Permak Sendiri = Workshop DA.
-    setWorkshopId((w) => (t === 'retur_ke_cmt' && w === WORKSHOP_DA_ID ? ''
-      : t === 'permak_sendiri' && !w ? WORKSHOP_DA_ID : w));
+    setWorkshopId((w) => (t === 'retur_ke_cmt' && w === WORKSHOP_DA_ID ? '' : t === 'permak_sendiri' && !w ? WORKSHOP_DA_ID : w));
   };
 
   useEffect(() => {
-    // ganti PO = item PO lama dilepas (dulu tertinggal ⇒ simpan ditolak "Item PO tidak ditemukan pada PO ini")
     setItemId('');
     if (!poId) { setItems([]); return; }
     (async () => {
@@ -405,16 +308,15 @@ function CreatePermakDialog({ onClose, onCreated }) {
   const selectedItem = items.find((i) => i.po_item_id === itemId);
 
   const submit = async () => {
-    if (!poId || !itemId) return toast.error('Pilih PO & item terlebih dahulu');
-    const q = Number(qty);
-    if (!q || q <= 0) return toast.error('Qty harus lebih dari 0');
+    if (!poId || !itemId) { toast.error('Pilih PO & item terlebih dahulu'); return; }
+    const n = Number(qty);
+    if (!n || n <= 0) { toast.error('Qty harus lebih dari 0'); return; }
     setSaving(true);
     try {
       await apiPost('/dewi/cmt-permak', {
-        po_id: poId, po_item_id: itemId, qty: q, source,
+        po_id: poId, po_item_id: itemId, qty: n, source,
         permak_type: permakType, problem_type: problemType,
-        cost_per_pcs: Number(costPerPcs || 0),
-        return_deadline: returnDeadline || null,
+        cost_per_pcs: Number(costPerPcs || 0), return_deadline: returnDeadline || null,
         vendor_permak_id: workshopId, reason,
         ...docNumberPayload(numPolicy, 'permak_number', permakNumber),
       });
@@ -426,186 +328,99 @@ function CreatePermakDialog({ onClose, onCreated }) {
   };
 
   return (
-    <Modal title="Buat Permak Baru" onClose={onClose} size="lg">
-      <div className="space-y-4" data-testid="create-permak-dialog">
-        <div>
-          <label className="text-xs font-medium text-muted-foreground">PO produksi *</label>
-          <SmartNativeSelect
-            value={poId}
-            onChange={(e) => setPoId(e.target.value)}
-            className="mt-1 w-full text-sm px-3 py-2 rounded-md border border-input bg-background"
-            data-testid="select-permak-po"
-          >
+    <DetailPanel title="Buat permak" description="Barang yang dipermak mengurangi stok barang jadi sampai permaknya selesai."
+      onClose={onClose} testId="create-permak-dialog"
+      actions={<Button onClick={submit} disabled={saving} data-testid="btn-submit-create-permak">
+        {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}Simpan
+      </Button>}>
+      <div className="grid gap-3 md:grid-cols-2">
+        <Field label="PO *">
+          <SmartNativeSelect value={poId} onChange={(e) => setPoId(e.target.value)} className="w-full h-9" data-testid="select-permak-po" aria-label="PO">
             <option value="">— Pilih PO —</option>
             {pos.map((p) => (
               <option key={p.po_id} value={p.po_id}>
-                {`${p.po_number} · ${p.business_type_label || ''}${p.customer_name ? ` · ${p.customer_name}` : ''} — ${p.status}`}
+                {[p.po_number, p.customer_name, p.status].filter(Boolean).join(' · ')}
               </option>
             ))}
           </SmartNativeSelect>
-        </div>
-
-        <div>
-          <label className="text-xs font-medium text-muted-foreground">Item / SKU *</label>
-          <SmartNativeSelect
-            value={itemId}
-            onChange={(e) => setItemId(e.target.value)}
-            disabled={!poId || loadingItems}
-            className="mt-1 w-full text-sm px-3 py-2 rounded-md border border-input bg-background disabled:opacity-60"
-            data-testid="select-permak-item"
-          >
-            <option value="">{loadingItems ? 'Memuat item...' : '— Pilih item —'}</option>
+        </Field>
+        <Field label="Item / SKU *">
+          <SmartNativeSelect value={itemId} onChange={(e) => setItemId(e.target.value)} disabled={!poId || loadingItems}
+            className="w-full h-9" data-testid="select-permak-item" aria-label="Item / SKU">
+            <option value="">{loadingItems ? 'Memuat item…' : '— Pilih item —'}</option>
             {items.map((i) => (
               <option key={i.po_item_id} value={i.po_item_id}>
-                {`${i.product_name || i.sku} · ${i.color || '-'} · ${i.size || '-'} · ${i.sku || '-'} — bagus ${fmt(i.qty_good)} / reject ${fmt(i.qty_reject_qc)}`}
+                {`${i.product_name || i.sku} · ${i.color || '-'} · ${i.size || '-'} · ${i.sku || '-'} — bagus ${fmt(i.qty_good)} / ditolak ${fmt(i.qty_reject_qc)}`}
               </option>
             ))}
           </SmartNativeSelect>
-        </div>
-
-        {selectedItem && (
-          <div className="grid grid-cols-3 gap-2 text-xs rounded-md bg-muted/40 p-3">
-            <div><span className="text-muted-foreground">Barang Jadi</span><div className="font-semibold text-[hsl(var(--success))]">{fmt(selectedItem.qty_good)}</div></div>
-            <div><span className="text-muted-foreground">Reject QC</span><div className="font-semibold text-[hsl(var(--destructive))]">{fmt(selectedItem.qty_reject_qc)}</div></div>
-            <div><span className="text-muted-foreground">Sedang Permak</span><div className="font-semibold text-[hsl(var(--warning))]">{fmt(selectedItem.qty_rework_open)}</div></div>
-          </div>
-        )}
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Sumber</label>
-            <SmartNativeSelect
-              value={source}
-              onChange={(e) => setSource(e.target.value)}
-              className="mt-1 w-full text-sm px-3 py-2 rounded-md border border-input bg-background"
-              data-testid="select-permak-source"
-            >
-              <option value="good">Dari Barang Jadi (mengurangi FG)</option>
-              <option value="reject">Dari Reject QC</option>
-            </SmartNativeSelect>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Qty *</label>
-            <input
-              type="number" min="1"
-              value={qty}
-              onChange={(e) => setQty(e.target.value)}
-              className="mt-1 w-full text-sm px-3 py-2 rounded-md border border-input bg-background"
-              data-testid="input-permak-qty"
-            />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Tipe Permak</label>
-            <SmartNativeSelect
-              value={permakType}
-              onChange={(e) => changePermakType(e.target.value)}
-              className="mt-1 w-full text-sm px-3 py-2 rounded-md border border-input bg-background"
-              data-testid="select-permak-type"
-            >
-              <option value="permak_sendiri">Permak Sendiri (workshop DA)</option>
-              <option value="retur_ke_cmt">Retur ke CMT (dikembalikan)</option>
-            </SmartNativeSelect>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Jenis Masalah</label>
-            <SmartNativeSelect
-              value={problemType}
-              onChange={(e) => setProblemType(e.target.value)}
-              className="mt-1 w-full text-sm px-3 py-2 rounded-md border border-input bg-background"
-              data-testid="select-permak-problem"
-            >
-              {PROBLEM_OPTS.map((p) => <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>)}
-            </SmartNativeSelect>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Ongkos Permak / pcs (Rp)</label>
-            <MoneyInput
-              unstyled
-              value={costPerPcs}
-              onChange={(e) => setCostPerPcs(e.target.value)}
-              placeholder="0"
-              className="mt-1 w-full text-sm px-3 py-2 rounded-md border border-input bg-background"
-              data-testid="input-permak-cost"
-            />
-            {Number(costPerPcs) > 0 && Number(qty) > 0 && (
-              <div className="mt-1 text-[11px] text-muted-foreground">Total: {fmtRp(Number(costPerPcs) * Number(qty))}</div>
-            )}
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Target Kembali (deadline)</label>
-            <GlassInput
-              type="date"
-              value={returnDeadline}
-              onChange={(e) => setReturnDeadline(e.target.value)}
-              className="mt-1"
-              data-testid="input-permak-deadline"
-            />
-          </div>
-        </div>
-
-        <div>
-          <label className="text-xs font-medium text-muted-foreground">Vendor / workshop permak</label>
-          <SmartNativeSelect
-            value={workshopId}
-            onChange={(e) => setWorkshopId(e.target.value)}
-            className="mt-1 w-full"
-            aria-label="Vendor / workshop permak"
-            data-testid="select-permak-workshop"
-          >
+        </Field>
+      </div>
+      {selectedItem && (
+        <p className="text-sm text-muted-foreground" data-testid="permak-item-position">
+          Barang jadi <b className="text-foreground tabular-nums">{fmt(selectedItem.qty_good)}</b> · ditolak QC{' '}
+          <b className="text-foreground tabular-nums">{fmt(selectedItem.qty_reject_qc)}</b> · sedang dipermak{' '}
+          <b className="text-foreground tabular-nums">{fmt(selectedItem.qty_rework_open)}</b>
+        </p>
+      )}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Field label="Asal barang">
+          <SmartNativeSelect value={source} onChange={(e) => setSource(e.target.value)} className="w-full h-9" data-testid="select-permak-source" aria-label="Asal barang">
+            <option value="good">Dari barang jadi (mengurangi stok)</option>
+            <option value="reject">Dari ditolak QC</option>
+          </SmartNativeSelect>
+        </Field>
+        <Field label="Qty *">
+          <GlassInput type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} className="h-9" data-testid="input-permak-qty" />
+        </Field>
+        <Field label="Jenis permak">
+          <SmartNativeSelect value={permakType} onChange={(e) => changePermakType(e.target.value)} className="w-full h-9" data-testid="select-permak-type" aria-label="Jenis permak">
+            <option value="permak_sendiri">Permak sendiri (workshop DA)</option>
+            <option value="retur_ke_cmt">Retur ke CMT (dikembalikan)</option>
+          </SmartNativeSelect>
+        </Field>
+        <Field label="Jenis masalah">
+          <SmartNativeSelect value={problemType} onChange={(e) => setProblemType(e.target.value)} className="w-full h-9" data-testid="select-permak-problem" aria-label="Jenis masalah">
+            {PROBLEM_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </SmartNativeSelect>
+        </Field>
+        <Field label="Ongkos permak per pcs (Rp)"
+          hint={Number(costPerPcs) > 0 && Number(qty) > 0 ? `Total ${fmtRp(Number(costPerPcs) * Number(qty))}` : undefined}>
+          <MoneyInput glass value={costPerPcs} onChange={(e) => setCostPerPcs(e.target.value)} placeholder="0" className="h-9" data-testid="input-permak-cost" />
+        </Field>
+        <Field label="Target kembali">
+          <GlassInput type="date" value={returnDeadline} onChange={(e) => setReturnDeadline(e.target.value)} className="h-9" data-testid="input-permak-deadline" />
+        </Field>
+        <Field label="Vendor / workshop permak" className="lg:col-span-2"
+          hint="Dari master Vendor CMT. Vendor baru ditambahkan di menu Vendor CMT.">
+          <SmartNativeSelect value={workshopId} onChange={(e) => setWorkshopId(e.target.value)} className="w-full h-9"
+            aria-label="Vendor / workshop permak" data-testid="select-permak-workshop">
             <option value="">— Belum ditentukan —</option>
             <option value={WORKSHOP_DA_ID}>Workshop DA sendiri</option>
             {vendors.map((v) => (
               <option key={v.id} value={v.id}>{`${v.garment_code ? `${v.garment_code} · ` : ''}${v.garment_name || v.name}`}</option>
             ))}
           </SmartNativeSelect>
-          <p className="mt-1 text-[11px] text-muted-foreground">Dari master Vendor CMT. Vendor baru ditambahkan di menu Vendor CMT.</p>
-        </div>
-
-        {/* SESI #27 — nomor dokumen mengikuti kebijakan Otomatis/Manual milik owner */}
-        <DocNumberField
-          policy={numPolicy} value={permakNumber} onChange={setPermakNumber}
-          testId="permak-docnum" label="Nomor Permak" />
-        {numPolicy?.mode === 'manual' && (
-          <p className="text-[11px] text-[hsl(var(--warning))] " data-testid="permak-docnum-warn">
-            Catatan: bila qty yang diminta harus dipecah ke beberapa baris reject,
-            satu pengajuan bisa melahirkan lebih dari satu dokumen permak — nomor
-            ketikan hanya bisa dipakai untuk pengajuan yang menghasilkan SATU dokumen.
-          </p>
-        )}
-        <div>
-          <label className="text-xs font-medium text-muted-foreground">Alasan / Catatan</label>
-          <textarea
-            rows={2}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Contoh: jahitan lepas, noda, salah ukuran..."
-            className="mt-1 w-full text-sm px-3 py-2 rounded-md border border-input bg-background"
-            data-testid="input-permak-reason"
-          />
-        </div>
-
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button
-            onClick={submit}
-            disabled={saving}
-            data-testid="btn-submit-create-permak"
-          >
-            {saving ? <Loader2 className="animate-spin" /> : <Plus />} Simpan
-          </Button>
-        </div>
+        </Field>
       </div>
-    </Modal>
+      <div className="grid gap-3 md:grid-cols-2">
+        <DocNumberField policy={numPolicy} value={permakNumber} onChange={setPermakNumber} testId="permak-docnum" label="Nomor permak" />
+        <Field label="Alasan / catatan">
+          <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Contoh: jahitan lepas, noda, salah ukuran…"
+            data-testid="input-permak-reason" />
+        </Field>
+      </div>
+      {numPolicy?.mode === 'manual' && (
+        <Notice tone="warning" icon={AlertTriangle} testId="permak-docnum-warn">
+          Bila qty harus dipecah ke beberapa baris ditolak, satu pengajuan bisa menghasilkan lebih dari satu dokumen permak —
+          nomor ketikan hanya bisa dipakai untuk pengajuan yang menghasilkan satu dokumen.
+        </Notice>
+      )}
+    </DetailPanel>
   );
 }
 
-/* ─── Status transition dialog ──────────────────────────────────────────── */
+/* ─── Ubah status (isian pendek) ─────────────────────────────────────────── */
 function StatusDialog({ target, onClose, onDone }) {
   const { record, action } = target;
   const qty = Number(record.qty || 0);
@@ -613,11 +428,10 @@ function StatusDialog({ target, onClose, onDone }) {
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const qtyScrap = Math.max(0, qty - Number(qtyFixed || 0));
-
   const titles = {
-    in_progress: 'Mulai Kerjakan Permak',
-    selesai_berhasil: 'Selesaikan Permak (Berhasil)',
-    gagal_buang: 'Tandai Gagal / Buang',
+    in_progress: 'Mulai kerjakan permak',
+    selesai_berhasil: 'Selesaikan permak (berhasil)',
+    gagal_buang: 'Tandai gagal / buang',
   };
 
   const submit = async () => {
@@ -626,7 +440,7 @@ function StatusDialog({ target, onClose, onDone }) {
       const body = { status: action, note };
       if (action === 'selesai_berhasil') {
         const qf = Number(qtyFixed || 0);
-        if (qf < 0 || qf > qty) { setSaving(false); return toast.error(`Qty fixed harus 0..${qty}`); }
+        if (qf < 0 || qf > qty) { setSaving(false); toast.error(`Qty diperbaiki harus 0–${qty}`); return; }
         body.qty_fixed = qf;
         body.qty_scrap = qty - qf;
       }
@@ -639,64 +453,27 @@ function StatusDialog({ target, onClose, onDone }) {
   };
 
   return (
-    <Modal title={titles[action] || 'Ubah Status'} onClose={onClose} size="sm">
-      <div className="space-y-4" data-testid="permak-status-dialog">
-        <div className="text-sm text-muted-foreground">
-          {record.permak_number} — {record.product_name || record.sku} ({fmt(qty)} pcs)
-        </div>
-
-        {action === 'selesai_berhasil' && (
-          <div className="space-y-3 rounded-md bg-muted/40 p-3">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">Qty Berhasil Diperbaiki</label>
-              <input
-                type="number" min="0" max={qty}
-                value={qtyFixed}
-                onChange={(e) => setQtyFixed(e.target.value)}
-                className="mt-1 w-full text-sm px-3 py-2 rounded-md border border-input bg-background"
-                data-testid="input-status-qty-fixed"
-              />
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-[hsl(var(--success))]">Fixed: {fmt(qtyFixed)}</span>
-              <span className="text-zinc-500">Scrap: {fmt(qtyScrap)}</span>
-            </div>
-            <div className="text-[11px] text-muted-foreground flex items-start gap-1">
-              <AlertTriangle size={12} className="mt-0.5" />
-              Fixed + Scrap harus = {fmt(qty)}. Fixed akan menambah Barang Jadi.
-            </div>
-          </div>
-        )}
-
-        {action === 'gagal_buang' && (
-          <div className="rounded-md bg-zinc-50 border border-zinc-200 p-3 text-xs text-zinc-700 flex items-start gap-1">
-            <AlertTriangle size={14} className="mt-0.5" />
-            Seluruh {fmt(qty)} pcs akan ditandai <strong>scrap</strong> (dibuang permanen).
-          </div>
-        )}
-
-        <div>
-          <label className="text-xs font-medium text-muted-foreground">Catatan (opsional)</label>
-          <input
-            type="text"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            className="mt-1 w-full text-sm px-3 py-2 rounded-md border border-input bg-background"
-            data-testid="input-status-note"
-          />
-        </div>
-
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button
-            onClick={submit}
-            disabled={saving}
-            data-testid="btn-submit-status"
-          >
-            {saving ? <Loader2 className="animate-spin" /> : <CheckCircle2 />} Konfirmasi
-          </Button>
-        </div>
-      </div>
-    </Modal>
+    <FormDialog onClose={onClose} testId="permak-status-dialog" title={titles[action] || 'Ubah status'}
+      description={`${record.permak_number} — ${record.product_name || record.sku} (${fmt(qty)} pcs)`}
+      footer={<>
+        <Button variant="outline" onClick={onClose}>Batal</Button>
+        <Button onClick={submit} disabled={saving} data-testid="btn-submit-status">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}Konfirmasi
+        </Button>
+      </>}>
+      {action === 'selesai_berhasil' && (
+        <Field label="Qty berhasil diperbaiki"
+          hint={`Diperbaiki ${fmt(qtyFixed)} + dibuang ${fmt(qtyScrap)} = ${fmt(qty)}. Yang diperbaiki menambah stok barang jadi.`}>
+          <GlassInput type="number" min="0" max={qty} value={qtyFixed} onChange={(e) => setQtyFixed(e.target.value)}
+            className="h-9" data-testid="input-status-qty-fixed" />
+        </Field>
+      )}
+      {action === 'gagal_buang' && (
+        <Notice tone="warning" icon={AlertTriangle}>Seluruh {fmt(qty)} pcs ditandai dibuang (permanen).</Notice>
+      )}
+      <Field label="Catatan (opsional)">
+        <GlassInput value={note} onChange={(e) => setNote(e.target.value)} className="h-9" data-testid="input-status-note" />
+      </Field>
+    </FormDialog>
   );
 }

@@ -29,11 +29,21 @@ def _norm(s: Any) -> str:
 
 
 # ─── Scope PO ────────────────────────────────────────────────────────────────
+SCOPES = ("maklon", "internal", "all")
+
+
+def _scoped(scope: str) -> bool:
+    return scope in ("maklon", "internal")
+
+
 async def _po_map(db, scope: str = "maklon") -> Dict[str, Dict[str, Any]]:
-    """Peta {po_id: po} sesuai scope ('maklon' | 'all')."""
-    q: Dict[str, Any] = {}
-    if scope == "maklon":
-        q["business_type"] = "maklon"
+    """Peta {po_id: po} sesuai scope ('maklon' = bukan internal | 'internal' | 'all').
+
+    Tahap 9 (7 Nov 2026): dulu hanya 'maklon' (business_type == 'maklon') atau semua — layar Pantau
+    Produksi kini juga dipakai Portal Produksi, jadi PO internal punya cakupan sendiri. Aturan portal yang
+    dipakai di mana-mana: maklon = bukan internal."""
+    from core.pantau_produksi import bt_filter
+    q: Dict[str, Any] = bt_filter(scope) if _scoped(scope) else {}
     pos = await db.production_pos.find(
         q, {"_id": 0, "id": 1, "po_number": 1, "customer_name": 1,
             "status": 1, "business_type": 1}
@@ -50,7 +60,7 @@ async def cek_seri(db, scope: str = "maklon") -> Dict[str, Any]:
     pom = await _po_map(db, scope)
     po_ids = list(pom.keys())
     q: Dict[str, Any] = {"serial_number": {"$nin": [None, ""]}}
-    if scope == "maklon":
+    if _scoped(scope):
         q["po_id"] = {"$in": po_ids}
 
     items = await db.po_items.find(
@@ -120,8 +130,8 @@ async def serial_lookup(
         return result
 
     q: Dict[str, Any] = {"serial_number": {"$nin": [None, ""]}}
-    if scope == "maklon":
-        pom = await _po_map(db, "maklon")
+    if _scoped(scope):
+        pom = await _po_map(db, scope)
         q["po_id"] = {"$in": list(pom.keys())}
     else:
         pom = None
@@ -179,17 +189,17 @@ async def intake_batches(
     q: Dict[str, Any] = {}
     if po_id:
         q["po_id"] = po_id
-    elif scope == "maklon":
-        # batasi ke shipment yang PO-nya maklon (business_type shipment kadang kosong utk data lama)
-        q["$or"] = [{"business_type": "maklon"}, {"po_id": {"$in": list(pom.keys())}}]
+    elif _scoped(scope):
+        # batasi ke shipment yang PO-nya sesuai cakupan (business_type shipment kadang kosong utk data lama)
+        q["po_id"] = {"$in": list(pom.keys())}
 
     shipments = await db.vendor_shipments.find(
         q, {"_id": 0}
     ).sort("created_at", -1).to_list(1000)
 
-    # buang PO yang bukan scope (kalau data lama tak ber-business_type)
-    if scope == "maklon" and not po_id:
-        shipments = [s for s in shipments if s.get("po_id") in pom or s.get("business_type") == "maklon"]
+    # PO di luar cakupan dibuang juga saat `po_id` diminta langsung (layar per portal)
+    if _scoped(scope):
+        shipments = [s for s in shipments if s.get("po_id") in pom]
 
     ship_ids = [s["id"] for s in shipments]
     items_by_ship: Dict[str, List[Dict[str, Any]]] = {}
@@ -222,6 +232,7 @@ async def intake_batches(
                 "inspected": bool(ii),
             })
 
+    from services.cmt_kejar import shipment_kind as _kind
     batches = []
     for s in shipments:
         items = items_by_ship.get(s["id"], [])
@@ -229,7 +240,10 @@ async def intake_batches(
         total_received = sum((i["received_qty"] or 0) for i in items if i["received_qty"] is not None)
         total_missing = sum((i["missing_qty"] or 0) for i in items if i["missing_qty"] is not None)
         any_inspected = any(i["inspected"] for i in items)
+        po_doc = pom.get(s.get("po_id"), {})
         batches.append({
+            "business_type": "internal" if po_doc.get("business_type") == "internal" else (
+                "maklon" if po_doc else (s.get("business_type") or "")),
             "shipment_id": s.get("id"),
             "shipment_number": s.get("shipment_number", ""),
             "delivery_note_number": s.get("delivery_note_number", ""),
@@ -239,6 +253,8 @@ async def intake_batches(
             "vendor_name": s.get("vendor_name", ""),
             "shipment_date": s.get("shipment_date"),
             "shipment_type": s.get("shipment_type", "NORMAL"),
+            # NORMAL vs kiriman anak (pengganti/tambahan/permak) — rumus yang sama dengan Kejar CMT
+            "kind": _kind(s),
             "status": s.get("status", ""),
             "inspection_status": s.get("inspection_status", "" if not any_inspected else "Inspected"),
             "item_count": len(items),
@@ -253,5 +269,8 @@ async def intake_batches(
         "po_id": po_id,
         "count": len(batches),
         "total_sent": sum(b["total_sent"] for b in batches),
+        "total_received": sum(b["total_received"] or 0 for b in batches),
+        "total_missing": sum(b["total_missing"] or 0 for b in batches),
+        "uninspected": sum(1 for b in batches if b["total_received"] is None),
         "batches": batches,
     }

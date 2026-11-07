@@ -586,6 +586,45 @@ const EmployeeExpenseGLMappingModule = lazyRetry(() => import('./EmployeeExpense
 const EmployeeExpenseCategoryMasterModule = lazyRetry(() => import('./EmployeeExpenseCategoryMasterModule')); // Phase 5D
 const BankTransferModule   = lazyRetry(() => import('./BankTransferModule'));   // Phase 6C
 
+// ── Tahap 9 (master) — 7 Nov 2026 ───────────────────────────────────────────
+// Id BARU:
+//   'maklon-klien-katalog' → menu "Klien & Katalog Buyer" bertab Klien · Katalog · Estimasi harga. Menggantikan
+//                            'maklon-clients', 'maklon-buyer-catalog', 'maklon-ai-quote' (wave 2 mengalihkan id lama
+//                            dengan makeRedirect('maklon-klien-katalog', 'klien' | 'katalog' | 'estimasi')).
+//   'hr-holiday-calendar'  → Portal SDM › Kalender libur (dulu tab Kalender di Master Proses). Satu sumber hari libur
+//                            untuk cuti, payroll, dan absensi (core.workdays.holidays_between).
+// Id yang DIPENSIUNKAN (layar dihapus; tautan lama diarahkan, tidak boleh crash) — `TAHAP9_MASTER_REDIRECTS`
+// disebar di AKHIR MODULE_REGISTRY sehingga menimpa entri lamanya. Wave 2 boleh memindahkannya ke entri biasa.
+const MaklonKlienKatalogHub = lazyRetry(() => import('./maklon/KlienKatalogHub'));
+export const TAHAP9_MASTER_REDIRECTS = {
+  'prod-predictive-maintenance': makeRedirect('production-dashboard'),  // Perawatan Mesin dihapus (data mesin contoh)
+  'prod-ai-insights':            makeRedirect('production-dashboard'),  // Estimasi AI Produksi dihapus (RCA tanpa data)
+  'prod-master-process-hub':     makeRedirect('fin-hpp'),               // Master Proses dihapus; tarif standar → HPP
+  'prod-processes':              makeRedirect('fin-hpp'),               // tab Proses (tambah/hapus rusak) → HPP
+  'prod-sop':                    makeRedirect('production-dashboard'),  // tab SOP tidak dipakai (SOP ada di model/katalog)
+  'prod-production-calendar':    makeRedirect('hr-holiday-calendar'),   // kalender libur pindah ke SDM
+  // ── Tahap 9 wave 2 (menu identik Produksi ⇄ Maklon) — layar lama digabung; id lama → layar pengganti ──
+  // 5 layar pantau → Pantau Produksi (keputusan 7)
+  'prod-control-tower':          makeRedirect('pantau-produksi', 'ringkasan'),
+  'prod-monitoring':             makeRedirect('pantau-produksi', 'vendor'),
+  'prod-work-orders':            makeRedirect('pantau-produksi', 'po'),
+  'maklon-tracking':             makeRedirect('pantau-produksi', 'po'),
+  'cmt-monitor':                 makeRedirect('pantau-produksi', 'kejar'),
+  // Analitik Produksi dipecah (keputusan 11): kapasitas → Pantau, AQL → Terima & QC, catatan mesin berhenti dihapus
+  'prod-analytics-hub':          makeRedirect('pantau-produksi', 'kapasitas'),
+  'prod-aql-calculator':         makeRedirect('da-cmt-receive'),
+  'prod-downtime':               makeRedirect('production-dashboard'),
+  // dua "Laporan Variance" → satu Laporan Selisih otomatis per PO
+  'prod-variance':               makeRedirect('laporan-selisih', 'vendor'),
+  'prod-variance-report':        makeRedirect('laporan-selisih', 'klien'),
+  // Kebutuhan Material → menu Bahan (Retur tetap id lamanya: Portal Gudang masih membukanya)
+  'prod-material-requirements':  makeRedirect('bahan-produksi', 'kebutuhan'),
+  // Data Klien · Katalog Buyer · Estimasi AI Maklon → satu menu bertab
+  'maklon-clients':              makeRedirect('maklon-klien-katalog', 'klien'),
+  'maklon-buyer-catalog':        makeRedirect('maklon-klien-katalog', 'katalog'),
+  'maklon-ai-quote':             makeRedirect('maklon-klien-katalog', 'estimasi'),
+};
+
 // Module map — id → component. IDs MUST be unique.
 export const MODULE_REGISTRY = {
   // Portal dashboards
@@ -1296,6 +1335,13 @@ export const MODULE_REGISTRY = {
   'production-cmt-component-requests': CMTComponentRequestModule,
   'cmt-component-requests':           CMTComponentRequestModule,  // alias generic
 
+  // Tahap 9 (kirim) — Kirim ke CMT (tab Kiriman · Permintaan tambahan), satu layar untuk Produksi & Maklon.
+  // `kirim-cmt` = menu "Kirim ke CMT" (menggantikan `prod-shipments-vendor`, yang tetap jalan);
+  // `kirim-cmt-permintaan` = langsung ke tab "Permintaan tambahan" (menggantikan `cmt-component-requests`,
+  // `production-cmt-component-requests`, dan tab lama Permintaan Tambahan/Pengganti).
+  'kirim-cmt':                        EngineVendorShipmentModule,
+  'kirim-cmt-permintaan':             withProps(EngineVendorShipmentModule, { initialTab: 'permintaan' }),
+
   // ─── New Portals: Collaboration (Communication + Workspace + Learning) + Asset Management ───────────────────
   'collaboration':            lazyRetry(() => import('./CollaborationPortal')),
   'collab-workspace':         lazyRetry(() => import('./WorkspacePortal')),  // Spreadsheet Workspace
@@ -1351,6 +1397,26 @@ export const MODULE_REGISTRY = {
   // 2026-09-12 (owner): BOM & Ukuran kini di Portal RnD → Master Produk
   'prod-bom':                makeRedirect('rnd-master-product-hub', 'bom'),
   'prod-sizes':              makeRedirect('rnd-master-product-hub', 'sizes'),
+
+  // Tahap 9 (proses) — menu "Bahan" (tab Kebutuhan · Retur), sama di Portal Produksi & Maklon.
+  // Menggantikan `prod-material-requirements` + `prod-material-returns` (wave 2 memasang menunya;
+  // Portal Gudang tetap membuka `prod-material-returns` = modul Retur yang sama).
+  'bahan-produksi':          lazyRetry(() => import('./bahan/BahanHub')),
+  // Tahap 9 (hpp) — menu HPP satu untuk Produksi/Maklon/Keuangan = 'fin-hpp' (FinanceHppHub: HPP per PO ·
+  // HPP standar per potong · Tarif standar). 'maklon-hpp' & 'prod-sewing-cost' membuka hub yang sama.
+  'hpp-per-po':              makeRedirect('fin-hpp', 'actual'),  // HPP aktual per PO (dulu HPP Jahit, Biaya Jahit, HPP aktual job)
+  'hpp-tarif-standar':       makeRedirect('fin-hpp', 'rates'),   // tarif standar per tahap (dulu Master Proses)
+  // ── Tahap 9 (master) — 7 Nov 2026 (lihat blok di atas MODULE_REGISTRY) ──
+  'maklon-klien-katalog':  MaklonKlienKatalogHub,
+  'hr-holiday-calendar':   RahazaProductionCalendarModule,
+  // Tahap 9 (pantau) — satu layar dua portal, disaring per portal (portalId → internal / maklon).
+  //   pantau-produksi menggantikan: prod-monitoring, prod-work-orders, maklon-tracking, cmt-monitor,
+  //     prod-control-tower (+ tab Kapasitas di prod-analytics-hub). Tab: ringkasan · vendor · po · kejar ·
+  //     kiriman · kapasitas (deep link: makeRedirect('pantau-produksi', '<tab>') → hub_tab_pantau-produksi).
+  //   laporan-selisih menggantikan: prod-variance, prod-variance-report. Tab: baris · vendor · klien.
+  'pantau-produksi': lazyRetry(() => import('./pantau/PantauProduksiModule')),
+  'laporan-selisih': lazyRetry(() => import('./pantau/LaporanSelisihModule')),
+  ...TAHAP9_MASTER_REDIRECTS,
 };
 
 export const DEFAULT_MODULE = ManagementDashboard;

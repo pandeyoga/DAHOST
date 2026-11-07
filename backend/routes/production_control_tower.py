@@ -116,15 +116,31 @@ def _wo_risk_status(wo: Dict[str, Any]) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 # Main Aggregator
 # ─────────────────────────────────────────────────────────────────────────────
+def _bt_extra(business_type: Optional[str]) -> Dict[str, Any]:
+    """Tahap 9: saringan portal (internal = 'internal', maklon = bukan internal) — dulu tidak disaring."""
+    from core.pantau_produksi import bt_filter
+    return bt_filter(business_type)
+
+
+async def _receipts_on_qc(db, business_type: Optional[str]) -> int:
+    """Penerimaan yang masih dihitung/QC — status kanonik `on_qc` (dulu 'submitted/pending_approval/in_review'
+    yang tidak pernah ditulis lagi, jadi selalu 0)."""
+    from core.cmt_receipt_status import canon_status_filter, ST_QC
+    return await db.cmt_receipts.count_documents({'status': canon_status_filter(ST_QC), **_bt_extra(business_type)})
+
+
 @router.get('/control-tower')
 async def control_tower(
     days_window: int = Query(7, ge=1, le=60, description='Today output window in days'),
+    business_type: Optional[str] = Query(None, pattern='^(internal|maklon)$'),
     user: dict = Depends(require_auth),
 ):
     """
     Single-call aggregator for Production Control Tower dashboard.
 
     Returns all KPIs + critical lists in one response.
+    Tahap 9: layar penggantinya = Pantau Produksi (`/api/pantau/ringkasan`). Endpoint ini tetap untuk
+    tautan lama; kini bisa disaring `business_type` dan progres maklon dibaca dari PO utama.
     """
     db = get_db()
     today = today_wib()
@@ -132,7 +148,7 @@ async def control_tower(
     win_start = (today - timedelta(days=days_window)).isoformat()
 
     # ── Active Work Orders (= production_jobs induk yang belum selesai) ─────
-    all_wos = await _load_active_wos(db)
+    all_wos = await _load_active_wos(db, _bt_extra(business_type))
     active_wos = [w for w in all_wos if w['status'] not in WO_TERMINAL]
     total_active = len(active_wos)
 
@@ -169,40 +185,44 @@ async def control_tower(
     today_completed_count = sum(1 for w in all_wos if _done_since(w, today_iso))
     last_week_completed = sum(1 for w in all_wos if _done_since(w, win_start))
 
-    # ── Maklon PO progress aggregation ──────────────────────────────────────
-    maklon_pos = await db.dewi_maklon_pos.find(
-        {'status': {'$in': ['confirmed', 'in_production', 'partial_delivered']}},
-        {'_id': 0}
-    ).to_list(length=500)
+    # ── PO progress aggregation (Tahap 9: dari PO utama `production_pos`, bukan cermin dewi_maklon_pos;
+    #    progres = lolos QC ÷ dipesan dari core.pantau_produksi) ─────────────
+    from core import pantau_produksi as _pp
+    maklon_pos = await _pp.load_pos(db, business_type or 'maklon', running=True, limit=500)
+    _lines = await _pp.po_lines(db, maklon_pos)
+    _by_po: Dict[str, Dict[str, Any]] = {}
+    for _ln in _lines:
+        _t = _by_po.setdefault(_ln['po_id'], {'ordered': 0, 'accepted': 0})
+        _t['ordered'] += _ln['ordered']
+        _t['accepted'] += _ln['accepted']
     maklon_progress = []
     total_maklon_target = 0
     total_maklon_produced = 0
     for po in maklon_pos:
-        total_qty = int(po.get('total_qty', 0) or 0)
-        items = po.get('items') or []
-        produced = sum(int(it.get('qty_produced', 0) or 0) for it in items)
+        total_qty = int(_by_po.get(po['id'], {}).get('ordered', 0))
+        produced = int(_by_po.get(po['id'], {}).get('accepted', 0))
         total_maklon_target += total_qty
         total_maklon_produced += produced
         progress = round((produced / total_qty) * 100, 1) if total_qty > 0 else 0
         maklon_progress.append({
             'id': po['id'],
             'po_number': po.get('po_number'),
-            'client_name': po.get('client_name'),
+            'client_name': po.get('customer_name') or po.get('client_name'),
             'status': po.get('status'),
-            'deadline': po.get('deadline'),
-            'days_to_deadline': _wo_days_until_deadline(po),
+            'deadline': po.get('delivery_deadline') or po.get('deadline'),
+            'days_to_deadline': _wo_days_until_deadline({'deadline': po.get('delivery_deadline') or po.get('deadline')}),
             'total_qty': total_qty,
             'qty_produced': produced,
             'progress_pct': progress,
-            'risk_status': _wo_risk_status({**po, 'qty': total_qty, 'qty_produced': produced}),
+            'risk_status': _wo_risk_status({'status': po.get('status'), 'qty': total_qty, 'qty_produced': produced,
+                                           'deadline': po.get('delivery_deadline') or po.get('deadline')}),
         })
 
     # ── CMT Receipts pending review ─────────────────────────────────────────
-    cmt_pending = await db.cmt_receipts.count_documents(
-        {'status': {'$in': ['submitted', 'pending_approval', 'in_review']}}
-    )
+    cmt_pending = await _receipts_on_qc(db, business_type)
     cmt_today = await db.cmt_receipts.count_documents({
-        'created_at': {'$gte': wib_day_bounds_utc(today)[0]}   # awal hari WIB (No.54a), dulu 00:00 UTC
+        'created_at': {'$gte': wib_day_bounds_utc(today)[0]},   # awal hari WIB (No.54a), dulu 00:00 UTC
+        **_bt_extra(business_type),
     })
 
     # ── Bundles: engine bundel sudah dihapus (FASE 4) — tidak ada yang perlu dicetak.
@@ -303,10 +323,11 @@ async def control_tower_wo_list(
 
 
 @router.get('/control-tower/alerts')
-async def control_tower_alerts(user: dict = Depends(require_auth)):
+async def control_tower_alerts(business_type: Optional[str] = Query(None, pattern='^(internal|maklon)$'),
+                               user: dict = Depends(require_auth)):
     """Just the critical alerts (overdue + at_risk + cmt_pending) — for header notification bell."""
     db = get_db()
-    wos = [w for w in await _load_active_wos(db) if w['status'] not in WO_TERMINAL]
+    wos = [w for w in await _load_active_wos(db, _bt_extra(business_type)) if w['status'] not in WO_TERMINAL]
     overdue = []
     at_risk = []
     for wo in wos:
@@ -327,9 +348,7 @@ async def control_tower_alerts(user: dict = Depends(require_auth)):
                 'client_name': wo.get('client_name'),
                 'progress_pct': _wo_progress_pct(wo),
             })
-    cmt_pending = await db.cmt_receipts.count_documents(
-        {'status': {'$in': ['submitted', 'pending_approval', 'in_review']}}
-    )
+    cmt_pending = await _receipts_on_qc(db, business_type)
     return {
         'total': len(overdue) + len(at_risk) + cmt_pending,
         'overdue': overdue,

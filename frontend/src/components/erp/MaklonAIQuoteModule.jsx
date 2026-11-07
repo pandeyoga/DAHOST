@@ -1,444 +1,298 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { GlassCard } from '@/components/ui/glass';
+/**
+ * MaklonAIQuoteModule — tab "Estimasi harga" di menu Klien & Katalog Buyer (Portal Maklon).
+ *
+ * Perkiraan harga jasa maklon dari rincian produk: HPP per pcs, margin, waktu kerja, risiko & saran.
+ * Hitungan bawaan memakai rumus (heuristik); bila AI aktif, hasilnya diperhalus AI lalu dirapikan dengan
+ * aturan biaya owner (bahan dari klien & biaya umum bukan HPP; margin atas harga jual) — lihat
+ * `routes/dewi_maklon_quote.py`.
+ *
+ * Tahap 9 (7 Nov 2026, keputusan owner): "Estimasi AI Maklon" pindah ke Katalog Buyer sebagai tab.
+ * Cetakan PageLayout: daftar estimasi = tabel; estimasi baru & rinciannya dibuka DI HALAMAN (DetailPanel).
+ * Dulu: judul h1 sendiri, tab Radix di dalam modul, riwayat berupa kartu, rincian di popup, window.confirm.
+ *
+ *   POST /api/maklon/ai-quote/generate · GET /api/maklon/ai-quote/history
+ *   POST /api/maklon/ai-quote/{id}/accept · DELETE /api/maklon/ai-quote/{id}
+ */
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, Calculator, CheckCircle2, Loader2, Plus, RefreshCw, Search, Sparkles, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { toast } from 'sonner';
-import {
-  Calculator, Sparkles, Loader2, Receipt, History, AlertTriangle,
-  ThumbsUp, ChevronRight, Trash2, CheckCircle2
-} from 'lucide-react';
-import { formatRupiah } from '@/lib/format';
-import BuyerCatalogSelect from './pickers/BuyerCatalogSelect';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { apiDelete, apiGet, apiPost, getToken } from '../../lib/api';
+import { formatDateTimeID, formatRupiah } from '@/lib/format';
+import PageLayout, { DetailPanel } from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
+import BuyerCatalogSelect from './pickers/BuyerCatalogSelect';
 
-const CATEGORY_OPTIONS = [
-  { value: 'kaos', label: 'Kaos / T-Shirt' },
-  { value: 'kemeja', label: 'Kemeja' },
-  { value: 'hijab', label: 'Hijab' },
-  { value: 'celana', label: 'Celana' },
-  { value: 'outerwear', label: 'Outerwear / Jaket' },
-  { value: 'general', label: 'Lainnya' },
-];
-
-const MARKET_OPTIONS = [
-  { value: 'mass', label: 'Mass Market' },
-  { value: 'mid', label: 'Mid Market' },
-  { value: 'premium', label: 'Premium' },
-  { value: 'luxury', label: 'Luxury' },
-];
-
-const COMPETITIVENESS_COLOR = {
-  high: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ',
-  medium: 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)] ',
-  low: 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.35)] ',
-  'n/a': 'bg-muted dark:bg-slate-500/15 text-muted-foreground dark:text-muted-foreground border-border dark:border-slate-500/30',
+const CATEGORY_OPTIONS = { kaos: 'Kaos', kemeja: 'Kemeja', hijab: 'Hijab', celana: 'Celana', outerwear: 'Jaket / luaran', general: 'Lainnya' };
+const MARKET_OPTIONS = { mass: 'Pasar massal', mid: 'Menengah', premium: 'Premium', luxury: 'Mewah' };
+const COMPETITIVE = { high: ['Bersaing', 'success'], medium: ['Sedang', 'warning'], low: ['Mahal', 'danger'] };
+const QUOTE_STATUS = { draft: ['Draf', 'muted'], accepted: ['Diterima', 'success'] };
+const SOURCE_LABEL = {
+  ai: 'Diperhalus AI', heuristic: 'Rumus bawaan', heuristic_budget_exceeded: 'Rumus bawaan (batas biaya AI tercapai)',
+  heuristic_after_ai_error: 'Rumus bawaan (AI gagal)', heuristic_after_ai_parse_fail: 'Rumus bawaan (jawaban AI tidak terbaca)',
 };
+const EMPTY_FORM = {
+  product_name: '', buyer_catalog_id: '', is_new_article: true, category: 'kaos', quantity: 1000, target_market: 'mid',
+  target_unit_price: '', materials: '', finishing: '', required_lead_time_days: '', client_name: '', additional_notes: '',
+  target_margin_pct: 25, fabric_provided_by: 'client',
+};
+const fmtRp = (v) => (v == null ? '—' : formatRupiah(v));
 
-const fmtIDR = (v) => (v == null) ? '—' : formatRupiah(v);
+function Field({ label, children, className = '' }) {
+  return (
+    <label className={`block space-y-1 ${className}`}>
+      <span className="text-xs text-muted-foreground">{label}</span>
+      {children}
+    </label>
+  );
+}
 
-export default function MaklonAIQuoteModule({ token }) {
-  const [activeTab, setActiveTab] = useState('generate');
-  const [form, setForm] = useState({
-    product_name: '',
-    // F14b — kalau artikelnya sudah ada di Katalog Buyer, penawaran menempel
-    // pada artikel itu (`buyer_catalog_id`). `is_new_article` membuat jumlah
-    // penawaran untuk artikel yang belum terdaftar bisa DIHITUNG, bukan
-    // tersembunyi di antara teks bebas.
-    buyer_catalog_id: '',
-    is_new_article: true,
-    category: 'kaos',
-    quantity: 1000,
-    target_market: 'mid',
-    target_unit_price: '',
-    materials: '',
-    finishing: '',
-    required_lead_time_days: '',
-    client_name: '',
-    additional_notes: '',
-    target_margin_pct: 25,
-    fabric_provided_by: 'client',   // 2026-11-06 (Tahap 2): bahan klien bukan biaya DA
-  });
-  const [generating, setGenerating] = useState(false);
+export function QuoteResult({ result }) {
+  const res = result?.result || result;
+  if (!res) return null;
+  // bahan dari klien bukan biaya DA — hasil AI menandai `material_supplied_by`, hasil rumus mengikuti isian permintaan
+  const clientMaterial = res.material_supplied_by
+    ? res.material_supplied_by === 'client' : (result?.request?.fabric_provided_by || 'client') !== 'cv_da';
+  const [cLabel, cTone] = COMPETITIVE[res.competitiveness] || [null, null];
+  const bd = res.hpp_breakdown || {};
+  return (
+    <div className="space-y-3" data-testid="quote-result">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatTile label="Perkiraan harga per pcs" value={fmtRp(res.estimated_unit_price)} accent="success"
+          sub={cLabel ? `Daya saing: ${cLabel}` : undefined} subTone={cTone || undefined} testId="quote-unit-price" />
+        <StatTile label="Total order" value={fmtRp(res.estimated_total)} />
+        <StatTile label="Margin" value={`${Number(res.margin_pct || 0).toLocaleString('id-ID', { maximumFractionDigits: 1 })}%`} sub={fmtRp(res.margin_amount)} />
+        <StatTile label="Perkiraan waktu kerja" value={res.estimated_lead_time_days ? `${res.estimated_lead_time_days} hari` : '—'} />
+      </div>
+      {res.hpp_breakdown && (
+        <Table>
+          <TableHeader><TableRow><TableHead>HPP per pcs</TableHead><TableHead className="text-right">Nilai</TableHead></TableRow></TableHeader>
+          <TableBody>
+            <TableRow><TableCell>{clientMaterial ? 'Bahan (dari klien, tidak dihitung)' : 'Bahan'}</TableCell><TableCell className="text-right tabular-nums">{fmtRp(bd.material)}</TableCell></TableRow>
+            <TableRow><TableCell>Upah CMT</TableCell><TableCell className="text-right tabular-nums">{fmtRp(bd.labor)}</TableCell></TableRow>
+            <TableRow><TableCell>Finishing</TableCell><TableCell className="text-right tabular-nums">{fmtRp(bd.finishing)}</TableCell></TableRow>
+            <TableRow><TableCell>Biaya umum (tidak masuk HPP)</TableCell><TableCell className="text-right tabular-nums">{fmtRp(bd.overhead)}</TableCell></TableRow>
+            <TableRow><TableCell className="font-semibold">Jumlah HPP</TableCell><TableCell className="text-right tabular-nums font-semibold">{fmtRp(res.hpp_per_pcs)}</TableCell></TableRow>
+          </TableBody>
+        </Table>
+      )}
+      {res.summary && <p className="text-sm text-muted-foreground whitespace-pre-wrap">{res.summary}</p>}
+      {res.risks?.length > 0 && (
+        <Notice tone="warning" icon={AlertTriangle} title="Risiko">
+          <ul className="list-disc pl-4 text-xs space-y-0.5">{res.risks.map((r, i) => <li key={i}>{r}</li>)}</ul>
+        </Notice>
+      )}
+      {res.recommendations?.length > 0 && (
+        <Notice tone="info" icon={CheckCircle2} title="Saran">
+          <ul className="list-disc pl-4 text-xs space-y-0.5">{res.recommendations.map((r, i) => <li key={i}>{r}</li>)}</ul>
+        </Notice>
+      )}
+      {res.source && <p className="text-[11px] text-muted-foreground text-right">Sumber hitungan: {SOURCE_LABEL[res.source] || 'Rumus bawaan'}</p>}
+    </div>
+  );
+}
+
+function NewQuotePanel({ onClose, onCreated }) {
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
-  const [history, setHistory] = useState([]);
-  const [detailOpen, setDetailOpen] = useState(false);
-  const [detail, setDetail] = useState(null);
-
-  const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
-  const BASE = process.env.REACT_APP_BACKEND_URL;
-
-  const fetchHistory = useCallback(async () => {
-    try {
-      const r = await fetch(`${BASE}/api/maklon/ai-quote/history?limit=30`, { headers });
-      const data = await r.json();
-      setHistory(data?.data || []);
-    } catch (e) {
-      console.error(e);
-    }
-  }, [BASE, headers]);
-
-  useEffect(() => { fetchHistory(); }, [fetchHistory]);
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   const generate = async () => {
-    if (!form.product_name?.trim()) {
-      toast.error('Product name wajib diisi');
-      return;
-    }
-    if (!form.quantity || Number(form.quantity) <= 0) {
-      toast.error('Quantity harus > 0');
-      return;
-    }
-    setGenerating(true);
-    setResult(null);
+    if (!form.product_name?.trim()) { toast.error('Nama produk wajib diisi'); return; }
+    if (!form.quantity || Number(form.quantity) <= 0) { toast.error('Jumlah harus lebih dari 0'); return; }
+    setBusy(true); setResult(null);
     try {
-      const body = {
-        ...form,
-        quantity: Number(form.quantity),
+      const d = await apiPost('/maklon/ai-quote/generate', {
+        ...form, quantity: Number(form.quantity),
         target_unit_price: form.target_unit_price ? Number(form.target_unit_price) : null,
         required_lead_time_days: form.required_lead_time_days ? Number(form.required_lead_time_days) : null,
         target_margin_pct: Number(form.target_margin_pct) || 25,
-      };
-      const r = await fetch(`${BASE}/api/maklon/ai-quote/generate`, {
-        method: 'POST', headers, body: JSON.stringify(body),
       });
-      if (!r.ok) {
-        const t = await r.text();
-        throw new Error(t.slice(0, 200));
-      }
-      const data = await r.json();
-      setResult(data?.data || null);
-      toast.success('Quote berhasil dibuat', { icon: <Sparkles className="w-4 h-4" /> });
-      fetchHistory();
-    } catch (e) {
-      toast.error(`Gagal generate: ${e.message}`);
-    } finally {
-      setGenerating(false);
-    }
+      setResult(d?.data || null);
+      toast.success('Estimasi harga dibuat');
+      onCreated(d?.data?.id);
+    } catch (e) { toast.error(`Gagal membuat estimasi: ${e.message}`); }
+    finally { setBusy(false); }
   };
 
-  const openDetail = (q) => {
-    setDetail(q);
-    setDetailOpen(true);
-  };
-
-  const acceptQuote = async (id) => {
-    try {
-      const r = await fetch(`${BASE}/api/maklon/ai-quote/${id}/accept`, { method: 'POST', headers });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      toast.success('Quote ditandai accepted');
-      fetchHistory();
-      setDetailOpen(false);
-    } catch (e) {
-      toast.error(`Gagal: ${e.message}`);
-    }
-  };
-
-  const deleteQuote = async (id) => {
-    if (!confirm('Hapus quote ini?')) return;
-    try {
-      const r = await fetch(`${BASE}/api/maklon/ai-quote/${id}`, { method: 'DELETE', headers });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      toast.success('Quote dihapus');
-      fetchHistory();
-      setDetailOpen(false);
-    } catch (e) {
-      toast.error(`Gagal: ${e.message}`);
-    }
-  };
-
-  const renderResult = (r) => {
-    if (!r) return null;
-    const res = r.result || r;
-    return (
-      <div className="space-y-4">
-        <div className="p-4 rounded-xl bg-gradient-to-br from-[hsl(var(--success)/0.1)] to-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] ">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-semibold flex items-center gap-1"><Calculator className="w-4 h-4 text-[hsl(var(--success))]" /> Estimated Unit Price</span>
-            {res.competitiveness && (
-              <Badge className={COMPETITIVENESS_COLOR[res.competitiveness] || ''} variant="outline">
-                {res.competitiveness === 'high' ? '🟢 Kompetitif' : res.competitiveness === 'medium' ? '🟡 Medium' : res.competitiveness === 'low' ? '🔴 Mahal' : 'n/a'}
-              </Badge>
-            )}
-          </div>
-          <div className="flex items-baseline gap-4">
-            <span className="text-3xl font-bold text-[hsl(var(--success))] ">{fmtIDR(res.estimated_unit_price)}</span>
-            <span className="text-sm text-muted-foreground">/ pcs</span>
-          </div>
-          <div className="text-xs text-muted-foreground mt-1">
-            Total order: <span className="font-semibold text-foreground">{fmtIDR(res.estimated_total)}</span> · Lead time ~{res.estimated_lead_time_days} hari · Margin {res.margin_pct}%
-          </div>
+  return (
+    <DetailPanel testId="quote-new-panel" onClose={onClose} title="Estimasi harga baru"
+      description="Isi rincian produk; hasilnya tersimpan di daftar estimasi.">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="sm:col-span-2">
+          {/* F14b — artikel yang SUDAH ada di Katalog Buyer dipilih, bukan diketik ulang; artikel baru boleh diketik. */}
+          <BuyerCatalogSelect token={getToken()} value={form.buyer_catalog_id} newName={form.product_name} label="Produk / artikel"
+            testId="quote-product-select"
+            onPick={(cat) => setForm((p) => ({ ...p, buyer_catalog_id: cat?.id || '', is_new_article: !cat,
+              product_name: cat?.product_name || '', client_name: cat?.client_name || p.client_name, materials: cat?.description || p.materials }))}
+            onNewName={(v) => setForm((p) => ({ ...p, product_name: v, buyer_catalog_id: '', is_new_article: true }))} />
         </div>
-
-        {res.hpp_breakdown && (
-          <div>
-            <h4 className="text-sm font-semibold mb-2">HPP Breakdown (per pcs)</h4>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              <MiniStat label={res.material_supplied_by === 'client' ? 'Bahan (dari klien, tidak dihitung)' : 'Bahan'} value={fmtIDR(res.hpp_breakdown.material)} />
-              <MiniStat label="Upah CMT" value={fmtIDR(res.hpp_breakdown.labor)} />
-              <MiniStat label="Overhead (tidak masuk HPP)" value={fmtIDR(res.hpp_breakdown.overhead)} />
-              <MiniStat label="Finishing" value={fmtIDR(res.hpp_breakdown.finishing)} />
-            </div>
-            <div className="mt-2 p-2 rounded bg-[var(--glass)] text-xs text-muted-foreground">
-              Margin: <span className="text-foreground font-medium">{fmtIDR(res.margin_amount)}</span> ({res.margin_pct}% dari harga jual)
-            </div>
-          </div>
-        )}
-
-        {res.summary && (
-          <div>
-            <h4 className="text-sm font-semibold mb-2">Summary</h4>
-            <div className="p-3 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)] text-sm whitespace-pre-wrap text-muted-foreground">{res.summary}</div>
-          </div>
-        )}
-
-        {res.risks?.length > 0 && (
-          <div>
-            <h4 className="text-sm font-semibold mb-2 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-[hsl(var(--warning))] " /> Risks</h4>
-            <ul className="space-y-1">
-              {res.risks.map((rk, i) => (
-                <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                  <span className="text-[hsl(var(--warning))] mt-0.5">⚠️</span><span>{rk}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {res.recommendations?.length > 0 && (
-          <div>
-            <h4 className="text-sm font-semibold mb-2 flex items-center gap-2"><ThumbsUp className="w-4 h-4 text-[hsl(var(--success))]" /> Recommendations</h4>
-            <ul className="space-y-1">
-              {res.recommendations.map((rec, i) => (
-                <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                  <ChevronRight className="w-3.5 h-3.5 mt-0.5 text-[hsl(var(--success))]" /><span>{rec}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {res.source && (
-          <p className="text-[10px] text-muted-foreground text-right">Source: {res.source}</p>
-        )}
+        <Field label="Kategori">
+          <SmartNativeSelect value={form.category} onChange={set('category')} className="w-full h-9" searchable={false} aria-label="Kategori">
+            {Object.entries(CATEGORY_OPTIONS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </SmartNativeSelect>
+        </Field>
+        <Field label="Target pasar">
+          <SmartNativeSelect value={form.target_market} onChange={set('target_market')} className="w-full h-9" searchable={false} aria-label="Target pasar">
+            {Object.entries(MARKET_OPTIONS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </SmartNativeSelect>
+        </Field>
+        <Field label="Jumlah (pcs) *"><GlassInput type="number" value={form.quantity} onChange={set('quantity')} data-testid="quote-qty" /></Field>
+        <Field label="Target harga per pcs (opsional)"><MoneyInput glass value={form.target_unit_price} onChange={set('target_unit_price')} /></Field>
+        <Field label="Margin (% dari harga jual)"><GlassInput type="number" value={form.target_margin_pct} onChange={set('target_margin_pct')} /></Field>
+        <Field label="Waktu kerja diminta klien (hari)"><GlassInput type="number" value={form.required_lead_time_days} onChange={set('required_lead_time_days')} placeholder="opsional" /></Field>
+        <Field label="Bahan utama disediakan oleh">
+          <SmartNativeSelect value={form.fabric_provided_by} onChange={set('fabric_provided_by')} className="w-full h-9" searchable={false}
+            data-testid="quote-fabric-provider" aria-label="Bahan utama disediakan oleh">
+            <option value="client">Klien (tidak dihitung sebagai biaya)</option>
+            <option value="cv_da">CV Dewi Aditya (masuk biaya)</option>
+          </SmartNativeSelect>
+        </Field>
+        <Field label="Nama klien"><GlassInput value={form.client_name} onChange={set('client_name')} /></Field>
+        <Field label="Bahan" className="lg:col-span-2"><GlassInput value={form.materials} onChange={set('materials')} placeholder="mis. katun combed 30s, 180 gsm" /></Field>
+        <Field label="Finishing" className="lg:col-span-2"><GlassInput value={form.finishing} onChange={set('finishing')} placeholder="mis. sablon + bordir logo" /></Field>
+        <Field label="Catatan tambahan" className="sm:col-span-2 lg:col-span-4"><Textarea rows={2} value={form.additional_notes} onChange={set('additional_notes')} placeholder="Spesifikasi khusus, kemasan, dll." /></Field>
       </div>
-    );
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={onClose} disabled={busy}>Tutup</Button>
+        <Button onClick={generate} disabled={busy} data-testid="quote-generate-btn">
+          {busy ? <><Loader2 className="w-4 h-4 animate-spin" />Menghitung (10–30 detik)…</> : <><Sparkles className="w-4 h-4" />Hitung estimasi</>}
+        </Button>
+      </div>
+      {result && <QuoteResult result={result} />}
+    </DetailPanel>
+  );
+}
+
+function QuoteDetail({ quote, onClose, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [label, tone] = QUOTE_STATUS[quote.status] || [quote.status || 'Draf', 'muted'];
+  const accept = async () => {
+    if (!(await confirmDialog({ title: 'Tandai estimasi ini diterima klien?', body: 'Hanya menandai — PO maklon tetap dibuat dari menu PO Maklon.',
+      confirmLabel: 'Tandai diterima' }))) return;
+    setBusy(true);
+    try { await apiPost(`/maklon/ai-quote/${quote.id}/accept`, {}); toast.success('Estimasi ditandai diterima'); await onChanged(quote.id); }
+    catch (e) { toast.error(e.message || 'Gagal'); }
+    finally { setBusy(false); }
   };
-
+  const remove = async () => {
+    if (!(await confirmDialog({ title: 'Hapus estimasi ini?', body: 'Estimasi dihapus dari daftar.', confirmLabel: 'Hapus estimasi', danger: true }))) return;
+    setBusy(true);
+    try { await apiDelete(`/maklon/ai-quote/${quote.id}`); toast.success('Estimasi dihapus'); onClose(); await onChanged(null); }
+    catch (e) { toast.error(e.message || 'Gagal menghapus'); }
+    finally { setBusy(false); }
+  };
+  const rq = quote.request || {};
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-          <Calculator className="w-6 h-6 text-[hsl(var(--success))]" /> AI Quote Generator
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Generate quotation maklon AI dengan HPP breakdown, margin, lead time, dan rekomendasi (Claude, bila AI aktif; selain itu estimasi heuristik).
-        </p>
-      </div>
-
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid grid-cols-2 w-full md:w-[360px]">
-          <TabsTrigger value="generate" data-testid="quote-tab-generate"><Sparkles className="w-4 h-4 mr-1.5" /> Generate</TabsTrigger>
-          <TabsTrigger value="history" data-testid="quote-tab-history"><History className="w-4 h-4 mr-1.5" /> History ({history.length})</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="generate" className="mt-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <GlassCard className="p-6">
-              <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><Receipt className="w-4 h-4 text-[hsl(var(--primary))]" /> Input Requirement</h3>
-              <div className="space-y-3">
-                <div>
-                  {/* F14b — artikel yang SUDAH ada di Katalog Buyer dipilih,
-                      bukan diketik ulang; artikel yang memang belum ada tetap
-                      boleh diketik TAPI ditandai. Lihat komponennya. */}
-                  <BuyerCatalogSelect
-                    token={token}
-                    value={form.buyer_catalog_id}
-                    newName={form.product_name}
-                    label="Produk / Artikel"
-                    testId="quote-product-select"
-                    onPick={(cat) => setForm((p) => ({
-                      ...p,
-                      buyer_catalog_id: cat?.id || '',
-                      is_new_article: !cat,
-                      product_name: cat?.product_name || '',
-                      client_name: cat?.client_name || p.client_name,
-                      materials: cat?.description || p.materials,
-                    }))}
-                    onNewName={(v) => setForm((p) => ({
-                      ...p, product_name: v, buyer_catalog_id: '', is_new_article: true,
-                    }))}
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label>Category</Label>
-                    <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {CATEGORY_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label>Target Market</Label>
-                    <Select value={form.target_market} onValueChange={(v) => setForm({ ...form, target_market: v })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {MARKET_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <Label>Quantity *</Label>
-                    <Input data-testid="quote-qty" type="number" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
-                  </div>
-                  <div>
-                    <Label>Target Unit Price (Rp)</Label>
-                    <MoneyInput value={form.target_unit_price} onChange={(e) => setForm({ ...form, target_unit_price: e.target.value })} placeholder="opsional" />
-                  </div>
-                  <div>
-                    <Label>Margin (%)</Label>
-                    <Input type="number" value={form.target_margin_pct} onChange={(e) => setForm({ ...form, target_margin_pct: e.target.value })} />
-                  </div>
-                </div>
-                <div>
-                  <Label>Materials</Label>
-                  <Input value={form.materials} onChange={(e) => setForm({ ...form, materials: e.target.value })} placeholder="Mis. Cotton combed 30s, gramasi 180gsm" />
-                </div>
-                <div>
-                  <Label>Bahan utama disediakan oleh</Label>
-                  <SmartNativeSelect value={form.fabric_provided_by} searchable={false} data-testid="quote-fabric-provider"
-                    onChange={(e) => setForm({ ...form, fabric_provided_by: e.target.value })}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]">
-                    <option value="client">Klien (tidak dihitung sebagai biaya)</option>
-                    <option value="cv_da">CV. DA (masuk biaya)</option>
-                  </SmartNativeSelect>
-                </div>
-                <div>
-                  <Label>Finishing</Label>
-                  <Input value={form.finishing} onChange={(e) => setForm({ ...form, finishing: e.target.value })} placeholder="Mis. sablon rubber + bordir logo" />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label>Lead Time Klien (hari)</Label>
-                    <Input type="number" value={form.required_lead_time_days} onChange={(e) => setForm({ ...form, required_lead_time_days: e.target.value })} placeholder="opsional" />
-                  </div>
-                  <div>
-                    <Label>Client Name</Label>
-                    <Input value={form.client_name} onChange={(e) => setForm({ ...form, client_name: e.target.value })} />
-                  </div>
-                </div>
-                <div>
-                  <Label>Catatan Tambahan</Label>
-                  <Textarea value={form.additional_notes} onChange={(e) => setForm({ ...form, additional_notes: e.target.value })} rows={2} placeholder="Spesifikasi khusus, packaging, dll" />
-                </div>
-                <Button onClick={generate} disabled={generating} className="w-full" data-testid="quote-generate-btn">
-                  {generating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generating Quote (10-30s)...</> : <><Sparkles className="w-4 h-4 mr-2" /> Generate AI Quote</>}
-                </Button>
-              </div>
-            </GlassCard>
-
-            <GlassCard className="p-6">
-              <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><Receipt className="w-4 h-4 text-[hsl(var(--success))]" /> Quote Result</h3>
-              {result ? renderResult(result) : (
-                <div className="py-12 text-center text-sm text-muted-foreground">
-                  <Sparkles className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                  Quote akan muncul di sini setelah Generate.
-                </div>
-              )}
-            </GlassCard>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="history" className="mt-4">
-          {history.length === 0 ? (
-            <GlassCard className="p-10 text-center text-sm text-muted-foreground">Belum ada quote</GlassCard>
-          ) : (
-            <div className="space-y-2">
-              {history.map((q) => (
-                <div
-                  key={q.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => openDetail(q)}
-                  onKeyDown={(e) => e.key === 'Enter' && openDetail(q)}
-                  data-testid={`quote-history-${q.id}`}
-                  className="p-3 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)] hover:border-[hsl(var(--success)/0.4)] cursor-pointer transition"
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <div>
-                      <span className="font-medium text-sm">{q.request?.product_name || '—'}</span>
-                      <span className="text-xs text-muted-foreground ml-2">{q.request?.quantity} pcs · {q.request?.client_name || 'no client'}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-[hsl(var(--success))] ">{fmtIDR(q.result?.estimated_unit_price)}</span>
-                      {q.status === 'accepted' ? (
-                        <Badge className="bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)] " variant="outline">accepted</Badge>
-                      ) : (
-                        <Badge variant="outline">{q.status || 'draft'}</Badge>
-                      )}
-                    </div>
-                  </div>
-                  <div className="text-[11px] text-muted-foreground">
-                    {q.created_at ? new Date(q.created_at).toLocaleString('id-ID') : '—'} · Total {fmtIDR(q.result?.estimated_total)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </TabsContent>
-      </Tabs>
-
-      {/* Detail dialog */}
-      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Receipt className="w-5 h-5 text-[hsl(var(--success))]" /> Detail Quote
-            </DialogTitle>
-          </DialogHeader>
-          {detail && (
-            <div className="space-y-4">
-              <div className="text-xs text-muted-foreground">
-                {detail.created_at ? new Date(detail.created_at).toLocaleString('id-ID') : '—'} · {detail.created_by_name || '—'}
-              </div>
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><span className="text-muted-foreground">Product:</span> <span className="font-medium">{detail.request?.product_name}</span></div>
-                <div><span className="text-muted-foreground">Category:</span> {detail.request?.category}</div>
-                <div><span className="text-muted-foreground">Quantity:</span> {detail.request?.quantity}</div>
-                <div><span className="text-muted-foreground">Client:</span> {detail.request?.client_name || '—'}</div>
-              </div>
-              {renderResult(detail.result)}
-              <div className="flex items-center gap-2 pt-2 border-t border-[var(--glass-border)]">
-                {detail.status !== 'accepted' && (
-                  <Button size="sm" onClick={() => acceptQuote(detail.id)} data-testid={`quote-accept-${detail.id}`}><CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Accept Quote</Button>
-                )}
-                <Button variant="destructive" size="sm" onClick={() => deleteQuote(detail.id)}><Trash2 className="w-3.5 h-3.5 mr-1" /> Hapus</Button>
-                <Button variant="outline" size="sm" onClick={() => setDetailOpen(false)}>Tutup</Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-    </div>
+    <DetailPanel testId="quote-detail" onClose={onClose}
+      title={<span className="inline-flex items-center gap-2 flex-wrap">{rq.product_name || 'Estimasi'} <StatusBadge status={quote.status} label={label} tone={tone} /></span>}
+      description={`${quote.created_at ? formatDateTimeID(quote.created_at) : '—'} · ${quote.created_by_name || '—'}`}
+      actions={<>
+        {quote.status !== 'accepted' && <Button variant="outline" onClick={accept} disabled={busy} data-testid={`quote-accept-${quote.id}`}><CheckCircle2 className="w-4 h-4" />Tandai diterima</Button>}
+        <Button variant="outline" size="icon" onClick={remove} disabled={busy} title="Hapus estimasi" aria-label="Hapus estimasi" data-testid={`quote-delete-${quote.id}`}><Trash2 className="w-4 h-4" /></Button>
+      </>}>
+      <p className="text-sm text-muted-foreground">
+        {CATEGORY_OPTIONS[rq.category] || rq.category || '—'} · {Number(rq.quantity || 0).toLocaleString('id-ID')} pcs · klien {rq.client_name || '—'}
+        {rq.is_new_article === false ? ' · artikel dari Katalog Buyer' : ' · artikel baru (belum di katalog)'}
+      </p>
+      <QuoteResult result={quote} />
+    </DetailPanel>
   );
 }
 
-function MiniStat({ label, value }) {
+// ══════════════════════════════════════════════════════════════════════════════
+export default function MaklonAIQuoteModule() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('');
+  const [panel, setPanel] = useState(null); // {mode:'new'} | {mode:'view', id}
+
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
+    try { const d = await apiGet('/maklon/ai-quote/history?limit=200'); setRows(Array.isArray(d?.data) ? d.data : []); }
+    catch (e) { setError(e.message || 'Gagal memuat estimasi'); setRows([]); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const counts = useMemo(() => ({ all: rows.length, draft: rows.filter((q) => q.status !== 'accepted').length,
+    accepted: rows.filter((q) => q.status === 'accepted').length }), [rows]);
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((r) => (!status || (status === 'accepted' ? r.status === 'accepted' : r.status !== 'accepted'))
+      && (!q || `${r.request?.product_name} ${r.request?.client_name}`.toLowerCase().includes(q)));
+  }, [rows, search, status]);
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(filtered, 25);
+  const current = panel?.mode === 'view' ? rows.find((r) => r.id === panel.id) : null;
+
   return (
-    <div className="p-2 rounded bg-[var(--glass)] border border-[var(--glass-border)]">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div className="text-sm font-semibold text-foreground">{value}</div>
-    </div>
+    <PageLayout testId="maklon-ai-quote" title="Estimasi harga"
+      subtitle="Perkiraan harga jasa maklon dari rincian produk: HPP, margin, dan waktu kerja."
+      actions={<Button onClick={() => setPanel({ mode: 'new' })} data-testid="quote-new-btn"><Plus className="w-4 h-4" />Estimasi baru</Button>}
+      filters={<>
+        <div className="relative w-72 max-w-full">
+          <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari produk / klien…" className="pl-8 h-9"
+            data-testid="quote-search" />
+        </div>
+        <FilterChips value={status} onChange={setStatus} testId="quote-status" ariaLabel="Status estimasi"
+          options={[{ key: '', label: 'Semua', count: counts.all }, { key: 'draft', label: 'Draf', count: counts.draft },
+            { key: 'accepted', label: 'Diterima', count: counts.accepted }]} />
+      </>}
+      tools={<Button size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="quote-refresh">
+        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+      </Button>}
+      summary={error && <Notice tone="danger" title="Gagal memuat estimasi">{error}</Notice>}
+      detail={panel?.mode === 'new'
+        ? <NewQuotePanel onClose={() => setPanel(null)} onCreated={() => load()} />
+        : current && <QuoteDetail quote={current} onClose={() => setPanel(null)} onChanged={async (id) => { await load(); setPanel(id ? { mode: 'view', id } : null); }} />}
+      footer={filtered.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
+      <GlassCard className="p-0 overflow-hidden">
+        {loading && !rows.length ? (
+          <div className="p-4 text-sm text-muted-foreground">Memuat estimasi…</div>
+        ) : !paged.length ? (
+          <EmptyState icon={Calculator} title={rows.length ? 'Tidak ada estimasi yang cocok' : 'Belum ada estimasi harga'}
+            description={rows.length ? 'Ubah kata pencarian atau penyaring status.' : 'Klik Estimasi baru untuk menghitung harga jasa maklon.'} />
+        ) : (
+          <Table data-testid="quote-history-table">
+            <TableHeader><TableRow>
+              <TableHead>Waktu</TableHead><TableHead>Produk</TableHead><TableHead>Klien</TableHead>
+              <TableHead className="text-right">Jumlah</TableHead><TableHead className="text-right">Harga/pcs</TableHead>
+              <TableHead className="text-right">Total</TableHead><TableHead>Status</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>
+              {paged.map((q) => {
+                const [label, tone] = QUOTE_STATUS[q.status] || [q.status || 'Draf', 'muted'];
+                return (
+                  <TableRow key={q.id} data-testid={`quote-history-${q.id}`} className={panel?.id === q.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
+                    <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{q.created_at ? formatDateTimeID(q.created_at) : '—'}</TableCell>
+                    <TableCell>
+                      <Button variant="link" size="sm" className="h-auto p-0 font-semibold text-left" onClick={() => setPanel({ mode: 'view', id: q.id })}
+                        data-testid={`quote-open-${q.id}`}>{q.request?.product_name || '—'}</Button>
+                    </TableCell>
+                    <TableCell className="text-sm">{q.request?.client_name || '—'}</TableCell>
+                    <TableCell className="text-right tabular-nums">{Number(q.request?.quantity || 0).toLocaleString('id-ID')}</TableCell>
+                    <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(q.result?.estimated_unit_price)}</TableCell>
+                    <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(q.result?.estimated_total)}</TableCell>
+                    <TableCell><StatusBadge status={q.status} label={label} tone={tone} /></TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        )}
+      </GlassCard>
+    </PageLayout>
   );
 }
-

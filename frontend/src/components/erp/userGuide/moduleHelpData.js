@@ -1847,6 +1847,44 @@ export const MODULE_HELP = {
     ],
   },
 
+  // Tahap 9 (7 Nov 2026): kalender libur pindah dari Master Proses (Produksi) ke Portal SDM.
+  'hr-holiday-calendar': {
+    title: 'Kalender libur',
+    icon: Calendar,
+    purpose: 'Satu kalender hari libur perusahaan: libur nasional, cuti bersama, libur pabrik, dan hari kerja pengganti. Dipakai menghitung hari cuti, pembagi gaji harian, dan absensi.',
+    whoUses: 'Staf SDM, Manajer SDM',
+    sections: [
+      'Tabel per tahun — cari, saring jenis, ubah atau hapus entri',
+      'Tampilan bulan — lihat hari libur di kalender',
+      'Hitung hari kerja — jumlah hari kerja di antara dua tanggal',
+    ],
+    buttons: [
+      { label: 'Isi libur nasional', icon: Calendar, action: 'Mengisi libur nasional & cuti bersama tahun yang dilihat dari daftar resmi', when: 'Awal tahun' },
+      { label: 'Entri baru', icon: Plus, action: 'Menambah libur perusahaan atau hari kerja pengganti', when: 'Ada libur pabrik' },
+    ],
+    tips: [
+      'Cuti bersama boleh dihapus bila pabrik tetap bekerja',
+      'Perubahan langsung dipakai hitungan cuti dan gaji harian',
+    ],
+  },
+
+  // Tahap 9 (7 Nov 2026): Data Klien + Katalog Buyer + Estimasi AI Maklon menjadi satu menu bertab.
+  'maklon-klien-katalog': {
+    title: 'Klien & Katalog Buyer',
+    icon: BookOpen,
+    purpose: 'Master maklon dalam satu menu: data klien (termasuk akses portal klien), artikel buyer beserta varian SKU, templat BOM, riwayat harga dan sampel, serta estimasi harga jasa.',
+    whoUses: 'Admin Maklon, Manajer',
+    sections: [
+      'Klien — tabel klien, rincian & ubah di halaman, akses portal klien',
+      'Katalog — tabel artikel, rincian di halaman: sampel, varian, harga, templat BOM',
+      'Estimasi harga — hitung perkiraan harga jasa dari rincian produk',
+    ],
+    tips: [
+      'Sampel dibuat dari rincian PO maklon; riwayatnya terlihat di rincian artikel',
+      'Klik nama di tabel untuk membuka rinciannya di atas tabel',
+    ],
+  },
+
   'prod-aql-calculator': {
     title: 'Kalkulator AQL (Acceptance Quality Limit)',
     icon: ClipboardList,

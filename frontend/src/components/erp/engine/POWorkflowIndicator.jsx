@@ -2,11 +2,11 @@
 import { Check } from 'lucide-react';
 
 const STEPS = [
-  { key: 'Draft', label: 'Draft', color: 'bg-muted-foreground/50' },
-  { key: 'Distributed', label: 'Distributed', color: 'bg-[hsl(var(--primary))]' },
-  { key: 'In Production', label: 'In Production', color: 'bg-[hsl(var(--warning))]' },
-  { key: 'Completed', label: 'Completed', color: 'bg-[hsl(var(--success))]' },
-  { key: 'Closed', label: 'Closed', color: 'bg-foreground/80' },
+  { key: 'Draft', label: 'Draf', color: 'bg-muted-foreground/50' },
+  { key: 'Distributed', label: 'Didistribusikan', color: 'bg-[hsl(var(--primary))]' },
+  { key: 'In Production', label: 'Produksi', color: 'bg-[hsl(var(--warning))]' },
+  { key: 'Completed', label: 'Selesai', color: 'bg-[hsl(var(--success))]' },
+  { key: 'Closed', label: 'Ditutup', color: 'bg-foreground/80' },
 ];
 
 export default function POWorkflowIndicator({ status, compact = false }) {

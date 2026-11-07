@@ -321,7 +321,9 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
   );
 }
 
-export default function RahazaModelsModule({ token, onNavigate, embedded = false }) {
+// Tahap 9 (7 Nov 2026): `renderPage(slots, body)` — halaman pemanggil (Portal Produksi › Master Produk) memegang
+// cetakan PageLayout; modul ini hanya mengisi slotnya (penyaring, alat, tombol utama, ringkasan).
+export default function RahazaModelsModule({ token, onNavigate, embedded = false, renderPage = null }) {
   const [rows, setRows] = useState([]);
   const [categories, setCategories] = useState([]);
   const [catFilter, setCatFilter] = useState('');
@@ -536,47 +538,35 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
     },
   ];
 
-  return (
-    <div className="space-y-4" data-testid="rahaza-models-module">
-      {(() => {
-        const actions = (
-          <>
-            <SmartNativeSelect value={catFilter} onChange={(e) => setCatFilter(e.target.value)}
-              className="w-56 text-sm"
-              data-testid="model-filter-category">
-              <option value="">Semua kategori</option>
-              {categories.map((c) => <option key={c.id} value={c.id}>{c.sku_prefix} · {c.name}</option>)}
-            </SmartNativeSelect>
-            <ImportExportToolbar collectionKey="models" label="Model Produk" onImported={fetchRows} />
-            <Button onClick={openCreate} className="gap-1.5" data-testid="model-create-btn">
-              <Plus className="w-4 h-4" /> Tambah Model
-            </Button>
-          </>
-        );
-        // `embedded`: dipanggil dari Master Produk yang sudah punya kepala halaman sendiri —
-        // cukup baris aksi, tanpa judul ganda.
-        return embedded
-          ? <div className="flex items-center justify-end gap-2 flex-wrap" data-testid="models-toolbar">{actions}</div>
-          : <PageHeader
-              title="Model Produk (Internal)"
-              subtitle="Master model produksi: kategori, HPP, harga jual resmi, berat, + Panduan Produksi (SOP, foto, video) yang dibaca Vendor CMT."
-              actions={actions}
-            />;
-      })()}
-
-      {noCategoryCount > 0 && (
-        <Notice tone="warning" icon={AlertTriangle} testId="model-nocat-banner">
-          <b>{noCategoryCount} produk belum punya kategori.</b> Sistem <b>tidak menebak</b> —
-          pengelompokan & filter katalog marketing baru bisa dipercaya setelah kategorinya dipilih.
-          Buka Ubah pada baris bertanda “belum dipilih”.
-        </Notice>
-      )}
-
-      <GlassCard>
-        <DataTable tableId="rahaza-models" columns={columns} rows={visibleRows} loading={loading}
-          emptyTitle="Belum ada model" emptyDescription="Model internal idealnya lahir dari R&D. Klik Tambah Model untuk input manual." rowKey="id" />
-      </GlassCard>
-
+  const categoryFilter = (
+    <SmartNativeSelect value={catFilter} onChange={(e) => setCatFilter(e.target.value)}
+      className="w-56 text-sm"
+      data-testid="model-filter-category" aria-label="Kategori">
+      <option value="">Semua kategori</option>
+      {categories.map((c) => <option key={c.id} value={c.id}>{c.sku_prefix} · {c.name}</option>)}
+    </SmartNativeSelect>
+  );
+  const importExport = <ImportExportToolbar collectionKey="models" label="Model Produk" onImported={fetchRows} />;
+  const createBtn = (
+    <Button onClick={openCreate} className="gap-1.5" data-testid="model-create-btn">
+      <Plus className="w-4 h-4" /> Tambah model
+    </Button>
+  );
+  const noCatNotice = noCategoryCount > 0 && (
+    <Notice tone="warning" icon={AlertTriangle} testId="model-nocat-banner">
+      <b>{noCategoryCount} produk belum punya kategori.</b> Sistem <b>tidak menebak</b> —
+      pengelompokan & filter katalog marketing baru bisa dipercaya setelah kategorinya dipilih.
+      Buka Ubah pada baris bertanda “belum dipilih”.
+    </Notice>
+  );
+  const table = (
+    <GlassCard>
+      <DataTable tableId="rahaza-models" columns={columns} rows={visibleRows} loading={loading}
+        emptyTitle="Belum ada model" emptyDescription="Model internal idealnya lahir dari R&D. Klik Tambah model untuk input manual." rowKey="id" />
+    </GlassCard>
+  );
+  const dialogs = (
+    <>
       {modalOpen && (
         <Modal onClose={() => setModalOpen(false)} title={editing ? `Edit Model · ${editing.code}` : 'Tambah Model Baru'} size="md">
           <div className="space-y-3" data-testid="model-form">
@@ -759,6 +749,27 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
           </div>
         </Modal>
       )}
+    </>
+  );
+
+  if (renderPage) {
+    return renderPage({ filters: categoryFilter, tools: importExport, actions: createBtn, summary: noCatNotice || null },
+      <div data-testid="rahaza-models-module">{table}{dialogs}</div>);
+  }
+  const actions = <>{categoryFilter}{importExport}{createBtn}</>;
+  return (
+    <div className="space-y-4" data-testid="rahaza-models-module">
+      {/* `embedded`: dipanggil dari Master Produk yang sudah punya kepala halaman sendiri — cukup baris aksi. */}
+      {embedded
+        ? <div className="flex items-center justify-end gap-2 flex-wrap" data-testid="models-toolbar">{actions}</div>
+        : <PageHeader
+            title="Model Produk (Internal)"
+            subtitle="Master model produksi: kategori, HPP, harga jual resmi, berat, + Panduan Produksi (SOP, foto, video) yang dibaca Vendor CMT."
+            actions={actions}
+          />}
+      {noCatNotice}
+      {table}
+      {dialogs}
     </div>
   );
 }

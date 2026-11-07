@@ -3,7 +3,6 @@ import { useState, useEffect, useRef } from 'react';
 import { Paperclip, Upload, Trash2, Download, File, FileImage, FileSpreadsheet, Archive } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { GlassCard } from '@/components/ui/glass';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { apiGet, apiPost, apiDelete, getToken } from '../../../lib/api';
 
@@ -116,8 +115,9 @@ export default function FileAttachmentPanel({ token, entityType, entityId, userR
           accept=".pdf,.jpg,.jpeg,.png,.webp,.xlsx,.xls,.zip" />
       </div>
 
-      <GlassCard
-        className={`border-2 border-dashed p-3 text-center text-xs shadow-none transition-colors ${
+      {/* Tahap 9: zona seret tanpa kartu — panel ini dipakai di dalam rincian (DetailPanel), tidak boleh kartu di dalam kartu */}
+      <div
+        className={`rounded-lg border-2 border-dashed border-border p-3 text-center text-xs transition-colors ${
           dragOver ? 'border-[hsl(var(--primary)/0.35)]' : ''
         }`}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -128,12 +128,12 @@ export default function FileAttachmentPanel({ token, entityType, entityId, userR
         <span className="text-muted-foreground/70">Seret & lepas file di sini atau klik tombol Unggah file</span>
         <br />
         <span className="text-muted-foreground/50">PDF, JPG, PNG, XLSX, ZIP — maks. 10MB</span>
-      </GlassCard>
+      </div>
 
       {attachments.length > 0 && (
-        <div className="space-y-1.5">
+        <div className="divide-y divide-border">
           {attachments.map(att => (
-            <div key={att.id} className="flex items-center gap-2 p-2 bg-card border border-border rounded-lg">
+            <div key={att.id} className="flex items-center gap-2 py-2">
               {getFileIcon(attExt(att))}
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium text-foreground/90 truncate">{attName(att)}</p>
@@ -149,14 +149,10 @@ export default function FileAttachmentPanel({ token, entityType, entityId, userR
               >
                 <Download className="w-3.5 h-3.5" />
               </a>
-              <button
-                type="button"
-                onClick={() => handleDelete(att)}
-                className="p-1 rounded hover:bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))]"
-                title="Hapus"
-              >
+              <Button type="button" variant="ghost" size="icon-sm" onClick={() => handleDelete(att)}
+                className="text-[hsl(var(--destructive))]" title="Hapus" aria-label="Hapus">
                 <Trash2 className="w-3.5 h-3.5" />
-              </button>
+              </Button>
             </div>
           ))}
         </div>

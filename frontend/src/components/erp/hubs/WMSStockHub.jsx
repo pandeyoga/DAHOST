@@ -4,7 +4,7 @@ import HubTabs from './HubTabs';
 
 // RC-IA-warehouse-1 (Opsi A) — konsolidasi 4 modul "STOK & AKURASI" gudang → 1 hub.
 // Menghilangkan kebingungan "pintu mana yang benar" untuk stok yang sama (SSOT rahaza_material_stock / unified).
-//   - Viewer Stok (Unified)  → UnifiedInventoryModule  (read-only, sumber gabungan)
+//   - Daftar stok            → UnifiedInventoryModule  (hanya baca; Kepemilikan: milik DA / titipan klien maklon)
 //   - Stok & Pergerakan      → RahazaStockModule       (stok kanonik + receive/transfer/adjust rahaza SSOT)
 //   - Opname                 → WMSOpnameScanModule    (Fase 4/5: scan-driven /api/wms/opname3 SSOT + finance)
 //   - Penyesuaian (Adjust)   → InventoryScrapModule    (jalur adjust RESMI: rahaza/material-adjust + posting GL)
@@ -24,15 +24,15 @@ export default function WMSStockHub(props) {
     <HubTabs
       hubId="wms-stock-hub"
       title="Stok & Akurasi"
-      subtitle="Satu pintu: lihat stok, kelola pergerakan, opname, penyesuaian, dan posisi bin — semua terhubung SSOT."
+      subtitle="Satu pintu: lihat stok, kelola pergerakan, opname, penyesuaian, dan posisi rak."
       tabs={[
-        { key: 'viewer', label: 'Viewer Stok (Unified)', Component: UnifiedInventoryModule },
-        { key: 'stock', label: 'Stok & Pergerakan', Component: RahazaStockModule },
-        { key: 'opname', label: 'Opname Stok', Component: WMSOpnameScanModule },
-        { key: 'negative', label: 'Stok Minus', Component: NegativeStockModule },
-        { key: 'adjust', label: 'Penyesuaian (Adjustment)', Component: InventoryScrapModule },
-        { key: 'positions', label: 'Posisi & Search', Component: WMSPositionsTab },
-        { key: 'schema', label: 'Kesehatan Skema', Component: StockSchemaHealthModule },
+        { key: 'viewer', label: 'Daftar stok', Component: UnifiedInventoryModule },  // Tahap 9C: + Kepemilikan (DA / titipan klien)
+        { key: 'stock', label: 'Stok & pergerakan', Component: RahazaStockModule },
+        { key: 'opname', label: 'Opname stok', Component: WMSOpnameScanModule },
+        { key: 'negative', label: 'Stok minus', Component: NegativeStockModule },
+        { key: 'adjust', label: 'Penyesuaian', Component: InventoryScrapModule },
+        { key: 'positions', label: 'Posisi & cari', Component: WMSPositionsTab },
+        { key: 'schema', label: 'Kesehatan data stok', Component: StockSchemaHealthModule },
       ]}
       {...props}
     />

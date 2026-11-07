@@ -208,7 +208,7 @@ REGISTRY = {
         "columns": dtm.CUSTOMER_COLUMNS,
     },
     "holidays": {
-        "collection": "rahaza_production_calendar", "label": "Kalender Libur", "group": "Master Produksi",
+        "collection": "rahaza_production_calendar", "label": "Kalender Libur", "group": "HR / SDM",  # Tahap 9: pindah ke SDM
         "key": ["tanggal"], "importable": True, "handler": "holidays",
         "import_roles": _CALENDAR_ROLES, "export_roles": _CALENDAR_ROLES,
         "columns": dtm.HOLIDAY_COLUMNS,

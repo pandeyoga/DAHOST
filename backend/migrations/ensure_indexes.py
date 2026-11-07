@@ -445,6 +445,12 @@ async def create_indexes():
         await db.dewi_maklon_inventory.create_index("maklon_po_ref")
         await db.dewi_maklon_inventory.create_index("maklon_client_id")
         await db.dewi_maklon_inventory.create_index([("created_at", -1)])
+        # Tahap 9C: stok titipan barang jadi klien (core.client_goods) — saldo per stock_key,
+        # satu mutasi per dokumen sumber (source_key unik → idempoten walau klik ganda)
+        await db.dewi_maklon_inventory.create_index([("stock_key", 1), ("created_at", -1)])
+        await db.dewi_maklon_inventory.create_index([("inventory_category", 1), ("maklon_client_id", 1)])
+        await _ensure_unique_index(db, "dewi_maklon_inventory", [("source_key", 1)],
+                                   name="uniq_titipan_source_key", partial={"source_key": {"$type": "string"}})
 
         # Maklon Advance Payments
         await db.dewi_maklon_advance_payments.create_index("po_id")

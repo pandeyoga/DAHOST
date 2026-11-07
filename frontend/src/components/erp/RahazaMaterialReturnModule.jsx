@@ -1,45 +1,197 @@
 /**
- * RahazaMaterialReturnModule — Retur Material produksi → gudang. 2026-11-02, keputusan owner K10.
+ * RahazaMaterialReturnModule — Retur material produksi → gudang. 2026-11-02, keputusan owner K10.
  *
- * Jalur koreksi bahan yang SUDAH keluar gudang (Material Issue / Surat Jalan "Kirim Material CMT").
+ * Jalur koreksi bahan yang SUDAH keluar gudang (Material Issue / Surat Jalan "Kirim ke CMT").
  * Surat jalan yang bahannya sudah keluar TIDAK bisa dihapus; bahan dikembalikan lewat layar ini:
  *   pilih MI / Surat Jalan asal → qty retur ≤ sisa (keluar − sudah diretur − retur berjalan)
  *   → supervisor setuju → gudang terima di lokasi WAJIB → stok kembali + jurnal balik
  *   (Dr persediaan / Cr WIP atau biaya proyek, pada HPP saat keluar) + status retur MI.
  * Backend: /api/production/material-returns (routes/production_material_returns.py).
  *
+ * Tahap 9 (7 Nov 2026): tab "Retur" di menu Bahan (Portal Produksi & Maklon, disaring per portal lewat
+ * `?business_type=`), dan tetap menu sendiri di Portal Gudang (tanpa saringan — gudang menerima semua).
+ * Cetakan PageLayout: formulir retur dibuka di halaman (DetailPanel), popup hanya pilihan lokasi terima.
+ *
  * Berbeda dari "Retur Produksi (barang dari buyer)" (`prod-buyer-returns`) dan Retur Fisik marketplace.
  */
-import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, PackageCheck, Plus, RefreshCw, Send, Undo2, XCircle } from 'lucide-react';
-import { GlassCard } from '@/components/ui/glass';
-import { Button } from '@/components/ui/button';
-import SmartNativeSelect from '@/components/ui/smart-native-select';
-import Modal from './Modal';
+import { Fragment, useCallback, useEffect, useState } from 'react';
+import { CheckCircle2, Loader2, PackageCheck, Plus, RefreshCw, Send, Undo2, XCircle, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
-import { apiGet, apiPost, fmtDate, fmtNum } from './procurement/procApi';
+import { Button } from '@/components/ui/button';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import PageLayout, { DetailPanel, RowDetail, RowToggle } from './layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
+import FormDialog, { Field } from './engine/FormDialog';
+import { apiGet, apiPost } from '../../lib/api';
+import { formatDateID } from '@/lib/format';
+import { portalBusinessType, portalQuery } from '@/lib/portalScope';
 
 const BASE = '/api/production/material-returns';
 const CONDITIONS = [
   { value: 'good', label: 'Baik — kembali ke stok' },
   { value: 'damaged', label: 'Rusak — tidak kembali ke stok' },
-  { value: 'scrap', label: 'Scrap — dicatat saja' },
+  { value: 'scrap', label: 'Sisa buang — dicatat saja' },
 ];
+const COND_LABEL = { good: 'baik', damaged: 'rusak', scrap: 'sisa buang' };
 const STATUS_META = {
-  draft: { label: 'Draft', cls: 'bg-muted text-muted-foreground border-border' },
-  submitted: { label: 'Menunggu Supervisor', cls: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]   ' },
-  approved: { label: 'Menunggu Gudang', cls: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]   ' },
-  received: { label: 'Diterima Gudang', cls: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]   ' },
-  rejected: { label: 'Ditolak', cls: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.35)]   ' },
+  draft: ['Draf', 'muted'], submitted: ['Menunggu supervisor', 'warning'], approved: ['Menunggu gudang', 'primary'],
+  receiving: ['Sedang diterima', 'primary'], received: ['Diterima gudang', 'success'], rejected: ['Ditolak', 'danger'],
 };
-const inputCls = 'w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]';
+const fmtNum = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 4 });
 
-function StatusBadge({ status }) {
-  const m = STATUS_META[status] || STATUS_META.draft;
-  return <span className={`inline-flex text-[10px] font-semibold px-2 py-0.5 rounded-full border ${m.cls}`}>{m.label}</span>;
+export default function RahazaMaterialReturnModule({ deepLinkParams, portalId }) {
+  const businessType = portalBusinessType(portalId);
+  const [rows, setRows] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [status, setStatus] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const [creating, setCreating] = useState(null);
+  const [receiving, setReceiving] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [openRow, setOpenRow] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true); setErr('');
+    try {
+      const [res, sum] = await Promise.all([
+        apiGet(`${BASE}${portalQuery(businessType, { limit: 200, status })}`),
+        apiGet(`${BASE}/summary${portalQuery(businessType)}`).catch(() => null),
+      ]);
+      setRows(res?.data || []);
+      setSummary(sum?.data || null);
+    } catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  }, [businessType, status]);
+  useEffect(() => { load(); }, [load]);
+  // tautan dari "Kirim ke CMT" (hapus surat jalan ditolak → Retur material)
+  useEffect(() => {
+    if (deepLinkParams?.vendor_shipment_id || deepLinkParams?.material_issue_id) setCreating({ ...deepLinkParams, key: Date.now() });
+  }, [deepLinkParams]);
+
+  const act = async (doc, path, msg) => {
+    setBusy(doc.id);
+    try {
+      await apiPost(`${BASE}/${doc.id}/${path}`, { note: '' });
+      toast.success(`${msg} ${doc.ref_no}`);
+      load();
+    } catch (e) { toast.error(e.message); }
+    finally { setBusy(''); }
+  };
+
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 25);
+  const s = summary || {};
+  const chips = [
+    { key: '', label: 'Semua' },
+    { key: 'submitted', label: 'Menunggu supervisor', count: summary ? Number(s.submitted || 0) : undefined },
+    { key: 'approved', label: 'Menunggu gudang', count: summary ? Number(s.approved || 0) : undefined },
+    { key: 'received', label: 'Diterima', count: summary ? Number(s.received || 0) : undefined },
+    { key: 'rejected', label: 'Ditolak', count: summary ? Number(s.rejected || 0) : undefined },
+  ];
+
+  return (
+    <PageLayout
+      testId="material-return-module"
+      title="Retur material"
+      subtitle="Bahan yang sudah keluar ke produksi atau CMT dikembalikan ke gudang, dengan jurnal balik pada HPP saat keluar."
+      actions={<Button onClick={() => setCreating({ key: Date.now() })} data-testid="pmr-new"><Plus className="w-4 h-4" />Retur material</Button>}
+      filters={<FilterChips value={status} onChange={setStatus} testId="pmr-filter" ariaLabel="Penyaring status retur" hideWhenEmpty={false} options={chips} />}
+      tools={<Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="pmr-refresh">
+        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+      </Button>}
+      summary={err ? <Notice tone="danger" icon={AlertTriangle} title="Gagal memuat retur" testId="pmr-error">{err}</Notice> : null}
+      detail={creating && (
+        <CreatePanel key={creating.key} preset={creating} businessType={businessType} onClose={() => setCreating(null)}
+          onSaved={() => { setCreating(null); load(); }} />
+      )}
+      footer={rows.length > pageSize && (
+        <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
+      )}
+    >
+      <GlassCard className="p-0 overflow-hidden">
+        {loading && !rows.length ? (
+          <div className="p-4 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin inline mr-2" />Memuat…</div>
+        ) : rows.length === 0 ? (
+          <EmptyState icon={Undo2} title="Belum ada retur material" description="Retur dibuat dari pengeluaran material atau surat jalan ke CMT yang bahannya sudah keluar." />
+        ) : (
+          <Table>
+            <TableHeader><TableRow>
+              <TableHead className="w-10" />
+              <TableHead>No. retur</TableHead><TableHead>Asal (MI · surat jalan)</TableHead><TableHead className="text-right">Baris bahan</TableHead>
+              <TableHead>Status</TableHead><TableHead>Jurnal</TableHead><TableHead className="text-right">Aksi</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>
+              {paged.map((r) => {
+                const [label, tone] = STATUS_META[r.status] || STATUS_META.draft;
+                const open = openRow === r.id;
+                return (
+                  <Fragment key={r.id}>
+                    <TableRow data-testid={`pmr-row-${r.ref_no}`}>
+                      <TableCell><RowToggle open={open} onClick={() => setOpenRow(open ? null : r.id)} label="Lihat bahan" /></TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        <span className="font-medium">{r.ref_no}</span>
+                        <span className="block text-xs text-muted-foreground">{r.created_at ? formatDateID(r.created_at) : '—'} · {r.submitted_by || '—'}</span>
+                      </TableCell>
+                      <TableCell>{r.mi_number || '—'}<span className="block text-xs text-muted-foreground">{r.vendor_shipment_number || r.work_order_code || ''}</span></TableCell>
+                      <TableCell className="text-right tabular-nums">{(r.items || []).length}</TableCell>
+                      <TableCell><StatusBadge status={r.status} label={label} tone={tone} /></TableCell>
+                      <TableCell className="text-xs">{r.gl_je_number || (r.gl_error ? <span className="text-[hsl(var(--destructive))]">{r.gl_error}</span> : '—')}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1 flex-wrap">
+                          {r.status === 'draft' && (
+                            <Button size="sm" variant="outline" disabled={busy === r.id} onClick={() => act(r, 'submit', 'Diajukan')}><Send className="w-3.5 h-3.5" />Ajukan</Button>
+                          )}
+                          {r.status === 'submitted' && (<>
+                            <Button size="sm" variant="outline" disabled={busy === r.id} onClick={() => act(r, 'approve', 'Disetujui')} data-testid={`pmr-approve-${r.ref_no}`}>
+                              <CheckCircle2 className="w-3.5 h-3.5" />Setujui</Button>
+                            <Button size="sm" variant="outline" disabled={busy === r.id} onClick={() => act(r, 'reject', 'Ditolak')}>
+                              <XCircle className="w-3.5 h-3.5" />Tolak</Button>
+                          </>)}
+                          {r.status === 'approved' && (
+                            <Button size="sm" variant="outline" disabled={busy === r.id} onClick={() => setReceiving(r)} data-testid={`pmr-receive-${r.ref_no}`}>
+                              <PackageCheck className="w-3.5 h-3.5" />Terima</Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                    {open && (
+                      <RowDetail colSpan={7} testId={`pmr-items-${r.ref_no}`}>
+                        <Table>
+                          <TableHeader><TableRow>
+                            <TableHead>Kode</TableHead><TableHead>Bahan</TableHead><TableHead className="text-right">Qty retur</TableHead><TableHead>Kondisi</TableHead>
+                          </TableRow></TableHeader>
+                          <TableBody>
+                            {(r.items || []).map((it, i) => (
+                              <TableRow key={i}>
+                                <TableCell className="whitespace-nowrap">{it.material_code || '—'}</TableCell>
+                                <TableCell>{it.material_name || '—'}</TableCell>
+                                <TableCell className="text-right tabular-nums">{fmtNum(it.qty_returned)} {it.unit}</TableCell>
+                                <TableCell>{COND_LABEL[it.condition] || it.condition || '—'}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                        {(r.return_reason || r.notes) && <p className="mt-2 text-xs text-muted-foreground">Alasan: {r.return_reason || r.notes}</p>}
+                      </RowDetail>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </TableBody>
+          </Table>
+        )}
+      </GlassCard>
+      {receiving && <ReceiveDialog doc={receiving} onClose={() => setReceiving(null)} onDone={() => { setReceiving(null); load(); }} />}
+    </PageLayout>
+  );
 }
 
-function CreateModal({ token, preset, onClose, onSaved }) {
+/* ── Formulir retur — di halaman ─────────────────────────────────────────── */
+function CreatePanel({ preset, businessType, onClose, onSaved }) {
   const [q, setQ] = useState(preset?.vendor_shipment_number || '');
   const [sources, setSources] = useState([]);
   const [src, setSrc] = useState(null);
@@ -52,23 +204,22 @@ function CreateModal({ token, preset, onClose, onSaved }) {
   const loadSource = useCallback(async (params) => {
     setErr(''); setSrc(null); setQty({}); setCond({});
     try {
-      const qs = new URLSearchParams(params).toString();
-      const res = await apiGet(token, `${BASE}/source?${qs}`);
+      const res = await apiGet(`${BASE}/source?${new URLSearchParams(params).toString()}`);
       setSrc(res?.data || null);
     } catch (e) { setErr(e.message); }
-  }, [token]);
+  }, []);
 
   useEffect(() => {
-    apiGet(token, `${BASE}/sources?q=${encodeURIComponent(q)}`)
+    apiGet(`${BASE}/sources${portalQuery(businessType, { q })}`)
       .then((res) => setSources(res?.data || [])).catch((e) => setErr(e.message));
-  }, [token, q]);
+  }, [businessType, q]);
   useEffect(() => {
     if (preset?.material_issue_id) loadSource({ material_issue_id: preset.material_issue_id });
     else if (preset?.vendor_shipment_id) loadSource({ vendor_shipment_id: preset.vendor_shipment_id });
   }, [preset, loadSource]);
 
   const submit = async () => {
-    if (!src) { setErr('Pilih MI / Surat Jalan asal'); return; }
+    if (!src) { setErr('Pilih MI / surat jalan asal'); return; }
     const items = [];
     for (const l of src.lines) {
       const v = parseFloat(qty[l.material_id]);
@@ -80,227 +231,115 @@ function CreateModal({ token, preset, onClose, onSaved }) {
     if (!items.length) { setErr('Isi qty retur minimal satu bahan'); return; }
     setBusy(true); setErr('');
     try {
-      const created = await apiPost(token, BASE, {
-        material_issue_id: src.material_issue_id, return_reason: reason, notes: reason, items,
-        work_order_id: src.work_order_id || '',
+      const created = await apiPost(BASE, {
+        material_issue_id: src.material_issue_id, return_reason: reason, notes: reason, items, work_order_id: src.work_order_id || '',
       });
       const doc = created?.data;
-      await apiPost(token, `${BASE}/${doc.id}/submit`, {});
+      await apiPost(`${BASE}/${doc.id}/submit`, {});
       toast.success(`Retur ${doc.ref_no} diajukan — menunggu persetujuan supervisor`);
       onSaved?.();
     } catch (e) { setErr(e.message); setBusy(false); }
   };
 
   return (
-    <Modal title="Retur Material ke Gudang" onClose={onClose} size="xl">
-      <div className="space-y-3 text-sm" data-testid="pmr-create-modal">
-        <div className="grid gap-2 sm:grid-cols-2">
-          <input value={q} onChange={(e) => setQ(e.target.value)} className={inputCls}
-            placeholder="Cari no. MI / surat jalan / vendor" data-testid="pmr-source-search" />
-          <SmartNativeSelect value={src?.material_issue_id || ''} className={inputCls} data-testid="pmr-source-select"
+    <DetailPanel title="Retur material ke gudang" onClose={onClose} testId="pmr-create-modal"
+      description="Bahan kondisi baik kembali ke stok di lokasi yang dipilih gudang saat menerima, dengan jurnal balik pada HPP saat keluar."
+      actions={<Button onClick={submit} disabled={busy || !src} data-testid="pmr-create-submit">
+        {busy && <Loader2 className="w-4 h-4 animate-spin" />}Ajukan retur
+      </Button>}>
+      <div className="grid gap-3 md:grid-cols-2">
+        <Field label="Cari asal retur">
+          <GlassInput value={q} onChange={(e) => setQ(e.target.value)} className="h-9" placeholder="No. MI / surat jalan / vendor"
+            data-testid="pmr-source-search" />
+        </Field>
+        <Field label="MI / surat jalan asal *">
+          <SmartNativeSelect value={src?.material_issue_id || ''} className="w-full h-9" data-testid="pmr-source-select" aria-label="MI / surat jalan asal"
             onChange={(e) => e.target.value && loadSource({ material_issue_id: e.target.value })}>
-            <option value="">— pilih MI / Surat Jalan asal —</option>
-            {sources.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.mi_number}{s.vendor_shipment_number ? ` · SJ ${s.vendor_shipment_number}` : ''}{s.vendor_name ? ` · ${s.vendor_name}` : ''}{s.return_status === 'partial' ? ' · sebagian diretur' : ''}
+            <option value="">— pilih MI / surat jalan asal —</option>
+            {sources.map((x) => (
+              <option key={x.id} value={x.id}>
+                {[x.mi_number, x.vendor_shipment_number ? `SJ ${x.vendor_shipment_number}` : '', x.vendor_name,
+                  x.return_status === 'partial' ? 'sebagian diretur' : ''].filter(Boolean).join(' · ')}
               </option>
             ))}
           </SmartNativeSelect>
-        </div>
-        {src && (
-          <GlassCard className="p-0 overflow-x-auto" hover={false}>
-            <div className="px-3 py-2 text-xs text-muted-foreground border-b border-border">
-              MI <span className="tabular-nums">{src.mi_number}</span>
-              {src.vendor_shipment_number ? <> · Surat Jalan <span className="tabular-nums">{src.vendor_shipment_number}</span></> : null}
-              {src.vendor_name ? ` · ${src.vendor_name}` : ''}
-            </div>
-            <table className="w-full text-sm min-w-[640px]" data-testid="pmr-source-lines">
-              <thead className="text-xs text-muted-foreground border-b border-border">
-                <tr>
-                  <th className="text-left px-3 py-2">Bahan</th><th className="text-right px-3 py-2">Keluar</th>
-                  <th className="text-right px-3 py-2">Sudah diretur</th><th className="text-right px-3 py-2">Sisa</th>
-                  <th className="text-right px-3 py-2">Qty retur</th><th className="text-left px-3 py-2">Kondisi</th>
-                </tr>
-              </thead>
-              <tbody>
-                {src.lines.map((l) => (
-                  <tr key={l.material_id} className="border-b border-border">
-                    <td className="px-3 py-2 text-xs"><div className="tabular-nums">{l.material_code}</div>{l.material_name}</td>
-                    <td className="px-3 py-2 text-right">{fmtNum(l.qty_issued)} {l.unit}</td>
-                    <td className="px-3 py-2 text-right">{fmtNum(l.qty_returned)}</td>
-                    <td className="px-3 py-2 text-right font-semibold">{fmtNum(l.returnable)}</td>
-                    <td className="px-3 py-2 text-right">
-                      <input type="number" min="0" step="any" max={l.returnable} disabled={!(l.returnable > 0)}
-                        value={qty[l.material_id] ?? ''} onChange={(e) => setQty({ ...qty, [l.material_id]: e.target.value })}
-                        className="w-24 border border-border rounded px-2 py-1 text-right bg-[var(--card-surface)]"
-                        data-testid={`pmr-qty-${l.material_code}`} />
-                    </td>
-                    <td className="px-3 py-2">
-                      <SmartNativeSelect value={cond[l.material_id] || 'good'} className="border border-border rounded px-2 py-1 text-xs bg-[var(--card-surface)]"
-                        onChange={(e) => setCond({ ...cond, [l.material_id]: e.target.value })}>
-                        {CONDITIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-                      </SmartNativeSelect>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </GlassCard>
-        )}
-        <input value={reason} onChange={(e) => setReason(e.target.value)} className={inputCls}
-          placeholder="Alasan retur (mis. surat jalan salah / sisa produksi)" data-testid="pmr-reason" />
-        <p className="text-xs text-muted-foreground">
-          Bahan kondisi baik kembali ke stok di lokasi yang dipilih gudang saat menerima, dengan jurnal balik pada HPP saat bahan keluar.
-        </p>
-        {err && <div className="text-sm text-[hsl(var(--destructive))] " data-testid="pmr-create-error">{err}</div>}
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={submit} disabled={busy || !src} data-testid="pmr-create-submit">{busy ? 'Menyimpan…' : 'Ajukan Retur'}</Button>
-        </div>
+        </Field>
       </div>
-    </Modal>
+      {src && (
+        <div className="overflow-x-auto">
+          <p className="text-xs text-muted-foreground mb-1">
+            MI {src.mi_number}{src.vendor_shipment_number ? ` · surat jalan ${src.vendor_shipment_number}` : ''}{src.vendor_name ? ` · ${src.vendor_name}` : ''}
+          </p>
+          <Table data-testid="pmr-source-lines">
+            <TableHeader><TableRow>
+              <TableHead>Bahan</TableHead><TableHead className="text-right">Keluar</TableHead><TableHead className="text-right">Sudah diretur</TableHead>
+              <TableHead className="text-right">Sisa</TableHead><TableHead className="text-right">Qty retur</TableHead><TableHead>Kondisi</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>
+              {src.lines.map((l) => (
+                <TableRow key={l.material_id}>
+                  <TableCell><span className="font-medium">{l.material_code}</span><span className="block text-xs text-muted-foreground">{l.material_name}</span></TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtNum(l.qty_issued)} {l.unit}</TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtNum(l.qty_returned)}</TableCell>
+                  <TableCell className="text-right tabular-nums font-medium">{fmtNum(l.returnable)}</TableCell>
+                  <TableCell className="text-right">
+                    <GlassInput type="number" min="0" step="any" max={l.returnable} disabled={!(l.returnable > 0)} aria-label="Qty retur"
+                      value={qty[l.material_id] ?? ''} onChange={(e) => setQty({ ...qty, [l.material_id]: e.target.value })}
+                      className="w-24 h-8 text-right ml-auto" data-testid={`pmr-qty-${l.material_code}`} />
+                  </TableCell>
+                  <TableCell>
+                    <SmartNativeSelect value={cond[l.material_id] || 'good'} className="h-8 w-56" aria-label="Kondisi"
+                      onChange={(e) => setCond({ ...cond, [l.material_id]: e.target.value })}>
+                      {CONDITIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                    </SmartNativeSelect>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+      <Field label="Alasan retur">
+        <GlassInput value={reason} onChange={(e) => setReason(e.target.value)} className="h-9"
+          placeholder="mis. surat jalan salah / sisa produksi" data-testid="pmr-reason" />
+      </Field>
+      {err && <Notice tone="danger" icon={AlertTriangle} testId="pmr-create-error">{err}</Notice>}
+    </DetailPanel>
   );
 }
 
-function ReceiveModal({ token, doc, onClose, onDone }) {
+/* ── Isian pendek: lokasi penerima retur ─────────────────────────────────── */
+function ReceiveDialog({ doc, onClose, onDone }) {
   const [locs, setLocs] = useState([]);
   const [locId, setLocId] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  useEffect(() => { apiGet(token, '/api/rahaza/storage-locations').then((r) => setLocs(Array.isArray(r) ? r : [])).catch((e) => setErr(e.message)); }, [token]);
+  useEffect(() => {
+    apiGet('/rahaza/storage-locations').then((r) => setLocs(Array.isArray(r) ? r : [])).catch((e) => setErr(e.message));
+  }, []);
   const submit = async () => {
     if (!locId) { setErr('Lokasi penerima wajib dipilih'); return; }
     setBusy(true); setErr('');
     try {
-      const out = await apiPost(token, `${BASE}/${doc.id}/receive`, { location_id: locId });
+      const out = await apiPost(`${BASE}/${doc.id}/receive`, { location_id: locId });
       const p = out?.posting || {};
       toast.success(`Retur ${doc.ref_no} diterima${p.je_number ? ` · jurnal ${p.je_number}` : ''}${p.ok === false ? ` · jurnal GAGAL: ${p.error}` : ''}`);
       onDone();
     } catch (e) { setErr(e.message); setBusy(false); }
   };
   return (
-    <Modal title={`Terima Retur · ${doc.ref_no}`} onClose={onClose} size="sm">
-      <div className="space-y-3 text-sm">
-        <SmartNativeSelect value={locId} onChange={(e) => setLocId(e.target.value)} className={inputCls} data-testid="pmr-receive-location">
+    <FormDialog onClose={onClose} title={`Terima retur ${doc.ref_no}`} testId="pmr-receive-dialog"
+      footer={<>
+        <Button variant="outline" onClick={onClose}>Batal</Button>
+        <Button onClick={submit} disabled={busy} data-testid="pmr-receive-submit">{busy ? 'Memproses…' : 'Terima ke stok'}</Button>
+      </>}>
+      <Field label="Lokasi penerima (wajib)">
+        <SmartNativeSelect value={locId} onChange={(e) => setLocId(e.target.value)} className="w-full h-9" data-testid="pmr-receive-location" aria-label="Lokasi penerima">
           <option value="">— lokasi penerima (wajib) —</option>
           {locs.map((l) => <option key={l.id} value={l.id}>{l.code ? `${l.code} · ` : ''}{l.name || l.code}</option>)}
         </SmartNativeSelect>
-        {err && <div className="text-sm text-[hsl(var(--destructive))] ">{err}</div>}
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={submit} disabled={busy} data-testid="pmr-receive-submit">{busy ? 'Memproses…' : 'Terima ke Stok'}</Button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-export default function RahazaMaterialReturnModule({ token, deepLinkParams }) {
-  const [rows, setRows] = useState([]);
-  const [status, setStatus] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState('');
-  const [creating, setCreating] = useState(null);
-  const [receiving, setReceiving] = useState(null);
-  const [busy, setBusy] = useState('');
-
-  const load = useCallback(async () => {
-    setLoading(true); setErr('');
-    try {
-      const res = await apiGet(token, `${BASE}?limit=200${status ? `&status=${status}` : ''}`);
-      setRows(res?.data || []);
-    } catch (e) { setErr(e.message); }
-    finally { setLoading(false); }
-  }, [token, status]);
-  useEffect(() => { load(); }, [load]);
-  // deep-link dari "Kirim Material CMT" (hapus surat jalan ditolak → Retur Material)
-  useEffect(() => {
-    if (deepLinkParams?.vendor_shipment_id || deepLinkParams?.material_issue_id) setCreating({ ...deepLinkParams });
-  }, [deepLinkParams]);
-
-  const act = async (doc, path, msg) => {
-    setBusy(doc.id);
-    try {
-      await apiPost(token, `${BASE}/${doc.id}/${path}`, { note: '' });
-      toast.success(`${msg} ${doc.ref_no}`);
-      load();
-    } catch (e) { toast.error(e.message); }
-    finally { setBusy(''); }
-  };
-
-  return (
-    <div className="space-y-4" data-testid="material-return-module">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold flex items-center gap-2"><Undo2 className="w-5 h-5" /> Retur Material</h2>
-          <p className="text-sm text-muted-foreground mt-1 max-w-3xl">
-            Bahan yang sudah keluar lewat Pengeluaran Material / Kirim Material CMT dikembalikan ke gudang. Qty retur tidak boleh
-            melebihi sisa; gudang memilih lokasi penerima; stok kembali dengan jurnal balik pada HPP saat bahan keluar.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load}><RefreshCw className="w-4 h-4" /></Button>
-          <Button onClick={() => setCreating({})} data-testid="pmr-new"><Plus className="w-4 h-4 mr-1" /> Retur Material</Button>
-        </div>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {[['', 'Semua'], ['submitted', 'Menunggu Supervisor'], ['approved', 'Menunggu Gudang'], ['received', 'Diterima'], ['rejected', 'Ditolak']].map(([k, l]) => (
-          <button key={k || 'all'} onClick={() => setStatus(k)}
-            className={`px-3 py-1.5 rounded-full text-xs border ${status === k ? 'bg-primary/15 border-primary' : 'border-border'}`}
-            data-testid={`pmr-filter-${k || 'all'}`}>{l}</button>
-        ))}
-      </div>
-      {err && <div className="text-sm text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.15)]  rounded-lg px-4 py-2">{err}</div>}
-      <GlassCard className="overflow-x-auto p-0">
-        <table className="w-full text-sm min-w-[860px]">
-          <thead className="border-b border-border text-xs text-muted-foreground">
-            <tr>
-              <th className="text-left px-3 py-2">No. Retur</th><th className="text-left px-3 py-2">Asal (MI · Surat Jalan)</th>
-              <th className="text-left px-3 py-2">Bahan</th><th className="text-center px-3 py-2">Status</th>
-              <th className="text-left px-3 py-2">Jurnal</th><th className="text-right px-3 py-2">Aksi</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr><td colSpan="6" className="px-3 py-6 text-center text-muted-foreground">Memuat…</td></tr>
-            ) : rows.length === 0 ? (
-              <tr><td colSpan="6" className="px-3 py-6 text-center text-muted-foreground">Belum ada Retur Material.</td></tr>
-            ) : rows.map((r) => (
-              <tr key={r.id} className="border-b border-border align-top" data-testid={`pmr-row-${r.ref_no}`}>
-                <td className="px-3 py-2"><div className="tabular-nums text-xs">{r.ref_no}</div>
-                  <div className="text-[11px] text-muted-foreground">{fmtDate(r.created_at)} · {r.submitted_by || '-'}</div></td>
-                <td className="px-3 py-2 text-xs">{r.mi_number || '-'}<div className="text-muted-foreground">{r.vendor_shipment_number || r.work_order_code || ''}</div></td>
-                <td className="px-3 py-2 text-xs">
-                  {(r.items || []).map((it, i) => (
-                    <div key={i}>{it.material_code} · {fmtNum(it.qty_returned)} {it.unit}{it.condition && it.condition !== 'good' ? ` (${it.condition})` : ''}</div>
-                  ))}
-                </td>
-                <td className="px-3 py-2 text-center"><StatusBadge status={r.status} /></td>
-                <td className="px-3 py-2 text-xs">{r.gl_je_number || (r.gl_error ? <span className="text-[hsl(var(--destructive))] ">{r.gl_error}</span> : '-')}</td>
-                <td className="px-3 py-2">
-                  <div className="flex justify-end gap-1 flex-wrap">
-                    {r.status === 'draft' && (
-                      <Button size="sm" disabled={busy === r.id} onClick={() => act(r, 'submit', 'Diajukan')}><Send className="w-3.5 h-3.5 mr-1" />Ajukan</Button>
-                    )}
-                    {r.status === 'submitted' && (<>
-                      <Button size="sm" disabled={busy === r.id} onClick={() => act(r, 'approve', 'Disetujui')} data-testid={`pmr-approve-${r.ref_no}`}>
-                        <CheckCircle2 className="w-3.5 h-3.5 mr-1" />Setujui</Button>
-                      <Button size="sm" variant="outline" disabled={busy === r.id} onClick={() => act(r, 'reject', 'Ditolak')}>
-                        <XCircle className="w-3.5 h-3.5 mr-1" />Tolak</Button>
-                    </>)}
-                    {r.status === 'approved' && (
-                      <Button size="sm" disabled={busy === r.id} onClick={() => setReceiving(r)} data-testid={`pmr-receive-${r.ref_no}`}>
-                        <PackageCheck className="w-3.5 h-3.5 mr-1" />Terima</Button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </GlassCard>
-      {creating && <CreateModal token={token} preset={creating} onClose={() => setCreating(null)} onSaved={() => { setCreating(null); load(); }} />}
-      {receiving && <ReceiveModal token={token} doc={receiving} onClose={() => setReceiving(null)} onDone={() => { setReceiving(null); load(); }} />}
-    </div>
+      </Field>
+      {err && <Notice tone="danger" icon={AlertTriangle}>{err}</Notice>}
+    </FormDialog>
   );
 }

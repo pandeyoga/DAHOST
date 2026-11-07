@@ -1,715 +1,471 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { RefreshCw, Save, Package, BarChart3, Building2, Settings2, Download, FileSpreadsheet, Factory, Calculator } from 'lucide-react';
-import { GlassCard } from '@/components/ui/glass';
+/**
+ * RahazaHPPModule — "HPP per PO" (menu HPP › HPP per PO), SATU layar untuk Portal Produksi & Maklon.
+ *
+ * Tahap 9 (keputusan owner 7 Nov 2026 No. 6 & 13):
+ *   • HPP aktual per PO = potongan (nilai dari cutting) + aksesoris yang diserahkan + upah CMT (tagihan) + permak.
+ *     BOM hanya pembanding (kolom "Standar/pcs"); semua angka dari server (`core/hpp_aktual`).
+ *   • Maklon: isian overhead/margin yang diketik sendiri dihapus — margin = harga jasa − HPP, otomatis.
+ *   • Biaya umum produksi per pcs tampil sebagai INFORMASI (tidak masuk HPP).
+ *   • Rekap upah jahit per baris (dulu menu Biaya Jahit) ada di rincian PO; tarif diubah di form PO.
+ *   • Disaring per portal: Produksi = PO internal, Maklon = PO maklon (Keuangan: pilih jenis).
+ *   • PANDUAN_UI: PageLayout · tabel · rincian PO dibuka di halaman (DetailPanel), konfirmasi lewat dialog aplikasi.
+ *
+ *   GET  /api/rahaza/hpp/po?business_type&search&status&date_from&date_to&client_id&page
+ *   GET  /api/rahaza/hpp/po/{po_id}
+ *   POST /api/costing/po-wip/{po_id}/clear       (tutup sisa biaya PO internal yang sudah ditutup)
+ */
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, Calculator, Info, RefreshCw, Search } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import FilterChips from '@/components/ui/filter-chips';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import PaginationLite from '@/components/ui/pagination-lite';
 import { Skeleton } from '@/components/ui/skeleton';
-import { StatTile, StatusBadge, EmptyState } from './moduleAtoms';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PageLayout, { DetailPanel } from './layout/PageLayout';
-import Modal from './Modal';
-import { HppComparisonInline } from './HppComparisonInline';
-import { toast } from 'sonner';
-import { posToLegacyOrders } from '@/lib/maklonOrderAdapter';
-import { formatRupiah } from '@/lib/format';
-import { categoryLabel } from '@/lib/itemTaxonomy';
-import { MoneyInput } from '@/components/ui/money-input';
-import { todayWIB } from '@/lib/waktu';
-import { readNumber, FIELD } from '@/lib/materialFields';  // FASE 6.6-B
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
+import PeriodPicker, { ALL_TIME, PERIOD_PRESETS, periodFromPreset } from './finance/PeriodPicker';
+import { apiGet, apiPost } from '@/lib/api';
 
-const fmt = formatRupiah;
-const NO_DATA = 'belum ada data';
-const pct =(n) => `${Number(n || 0).toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
-
-// Status job produksi & order maklon dalam bahasa staf (dulu kode mentah: "In Progress", "in_production").
-const STATUS_ID = {
-  'in progress': { label: 'Sedang dikerjakan', tone: 'info' }, open: { label: 'Terbuka', tone: 'default' },
-  pending: { label: 'Menunggu', tone: 'warning' }, draft: { label: 'Draf', tone: 'muted' },
-  confirmed: { label: 'Dikonfirmasi', tone: 'info' }, released: { label: 'Dirilis', tone: 'info' },
-  'in production': { label: 'Diproduksi', tone: 'info' }, cutting: { label: 'Cutting', tone: 'info' },
-  packing: { label: 'Packing', tone: 'info' }, 'partial delivered': { label: 'Terkirim sebagian', tone: 'warning' },
-  completed: { label: 'Selesai', tone: 'success' }, done: { label: 'Selesai', tone: 'success' },
-  finished: { label: 'Selesai', tone: 'success' }, invoiced: { label: 'Sudah ditagih', tone: 'success' },
-  closed: { label: 'Ditutup', tone: 'muted' }, 'closed short': { label: 'Ditutup (kurang)', tone: 'muted' },
-  cancelled: { label: 'Dibatalkan', tone: 'muted' },
-  canceled: { label: 'Dibatalkan', tone: 'muted' },
+const PER_PAGE = 25;
+const rp = (v) => (v === null || v === undefined ? '—' : `Rp ${Math.round(Number(v || 0)).toLocaleString('id-ID')}`);
+const num = (v) => Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
+const pct = (v) => (v === null || v === undefined ? '—' : `${Number(v).toLocaleString('id-ID', { maximumFractionDigits: 1 })}%`);
+const BULAN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+const monthLabel = (ym) => {
+  const [y, m] = String(ym || '').split('-');
+  return m ? `${BULAN[Number(m) - 1] || m} ${y}` : '—';
 };
-function JobStatus({ status }) {
-  const key = String(status || '').toLowerCase().replace(/[_\s]+/g, ' ').trim();
-  const m = STATUS_ID[key] || { label: key || '—', tone: 'default' };
-  return <StatusBadge tone={m.tone} label={m.label} />;
+
+const STATUS = {
+  confirmed: ['Dikonfirmasi', 'info'], 'in production': ['Diproduksi', 'info'], 'in_production': ['Diproduksi', 'info'],
+  'partially shipped': ['Terkirim sebagian', 'warning'], completed: ['Selesai', 'success'], closed: ['Ditutup', 'muted'],
+  'closed short': ['Ditutup (kurang)', 'muted'], draft: ['Draf', 'muted'], cancelled: ['Dibatalkan', 'muted'],
+};
+function PoStatus({ status }) {
+  const [label, tone] = STATUS[String(status || '').toLowerCase()] || [status || '—', 'default'];
+  return <StatusBadge tone={tone} label={label} />;
+}
+const KIND_TONE = { potongan: 'info', aksesoris: 'default', bahan_pembantu: 'muted' };
+const FIN_ROLES = ['superadmin', 'admin', 'owner', 'accounting', 'finance', 'staff_keuangan', 'manager_keuangan'];
+const JENIS = { internal: 'Internal', maklon: 'Maklon' };
+
+/** Jenis PO dari portal: Produksi = internal, Maklon = maklon, Keuangan = pilihan. */
+export function portalBusinessType(portalId) {
+  if (portalId === 'production') return 'internal';
+  if (portalId === 'maklon') return 'maklon';
+  return '';
 }
 
-const TABS = [
-  { key: 'internal-wo', label: 'Work order internal', icon: Package },
-  { key: 'maklon', label: 'Maklon', icon: BarChart3 },
-  { key: 'client-analysis', label: 'Per klien', icon: Building2 },
-  { key: 'po-wip', label: 'Sisa WIP per PO', icon: Calculator },
-];
+export default function RahazaHPPModule({ portalId, userRole }) {
+  const fixedType = portalBusinessType(portalId);
+  const [jenis, setJenis] = useState(fixedType);
+  const businessType = fixedType || jenis;
+  const isMaklon = businessType === 'maklon';
+  const [status, setStatus] = useState('');
+  const [search, setSearch] = useState('');
+  const [period, setPeriod] = useState(() => periodFromPreset('all'));
+  const [clientId, setClientId] = useState('');
+  const [clients, setClients] = useState([]);
+  const [page, setPage] = useState(1);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [detail, setDetail] = useState(null);
+  const [residuals, setResiduals] = useState([]);
+  const canClear = FIN_ROLES.includes(String(userRole || '').toLowerCase());
 
-/**
- * HPP aktual (menu HPP › HPP aktual): job produksi internal, order maklon, dan analisa per klien.
- * 2026-11-05 (PANDUAN_UI G1/G4/G13): cetakan PageLayout; tiga tab Radix di dalam tab hub → pil penyaring di
- * toolbar; daftar job = tabel, rincian HPP job dibuka DI HALAMAN di atas tabel (dulu daftar tombol bergulir
- * 500 px + panel di sebelahnya); pengaturan biaya bawaan = formulir pendek di dialog (dulu kartu dengan
- * tombol "Simpan Settings" sendirian di satu baris); label Indonesia.
- */
-export default function RahazaHPPModule({ token }) {
-  const [activeTab, setActiveTab] = useState('internal-wo');
-  const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const qs = new URLSearchParams({ page: String(page), per_page: String(PER_PAGE) });
+      if (businessType) qs.set('business_type', businessType);
+      if (status) qs.set('status', status);
+      if (search.trim()) qs.set('search', search.trim());
+      if (period.from) qs.set('date_from', period.from);
+      if (period.to) qs.set('date_to', period.to);
+      if (clientId && businessType !== 'internal') qs.set('client_id', clientId);
+      setData(await apiGet(`/rahaza/hpp/po?${qs}`));
+      // PO internal yang sudah ditutup tetapi masih menyisakan biaya di barang dalam proses (dulu tab "Sisa WIP per PO")
+      if (businessType !== 'maklon') {
+        apiGet('/costing/po-wip').then((d) => setResiduals(d?.items || [])).catch(() => setResiduals([]));
+      } else setResiduals([]);
+    } catch (e) {
+      setError(e?.message || 'Gagal memuat HPP per PO');
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [businessType, status, search, period, clientId, page]);
 
-  const page = {
-    testId: 'rahaza-hpp-page',
-    title: 'HPP aktual',
-    subtitle: 'HPP dari data nyata: bahan keluar + upah CMT. Upah internal dan overhead tidak masuk HPP.',
-    chips: (
-      <div className="contents" data-testid="hpp-tabs">
-        <FilterChips value={activeTab} onChange={setActiveTab} testId="hpp-actual-tab" ariaLabel="Jenis HPP" hideWhenEmpty={false} options={TABS} />
-      </div>
-    ),
-  };
+  useEffect(() => { load(); }, [businessType, status, period, clientId, page]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (businessType === 'internal') { setClients([]); return; }
+    apiGet('/dewi/maklon/clients').then((d) => setClients(Array.isArray(d) ? d.filter((c) => c.status !== 'inactive') : [])).catch(() => setClients([]));
+  }, [businessType]);
 
-  if (activeTab === 'maklon') return <MaklonActualTab token={token} headers={headers} page={page} />;
-  if (activeTab === 'client-analysis') return <ClientAnalysisTab token={token} headers={headers} page={page} />;
-  if (activeTab === 'po-wip') return <PoWipTab headers={headers} page={page} />;
-  return <InternalWOTab token={token} headers={headers} page={page} />;
-}
+  const openDetail = useCallback(async (poId) => {
+    if (detail?.po_id === poId) { setDetail(null); return; }
+    setDetail({ po_id: poId, loading: true });
+    try { setDetail(await apiGet(`/rahaza/hpp/po/${poId}`)); }
+    catch (e) { toast.error(`Gagal memuat rincian HPP: ${e?.message || e}`); setDetail(null); }
+  }, [detail?.po_id]);
 
-/** Tabel rincian kecil di dalam panel/kartu (bahan atau upah). */
-function BreakdownTable({ columns, rows, testId }) {
+  const items = data?.items || [];
+  const counts = data?.counts || {};
+  const sum = data?.summary || {};
+  const oh = data?.overhead;
+  const filtered = !!(status || search.trim() || clientId || period.preset !== 'all');
+  const resetFilters = () => { setStatus(''); setSearch(''); setClientId(''); setPeriod(periodFromPreset('all')); setPage(1); };
+  const totalPages = Math.max(1, Math.ceil((data?.total || 0) / PER_PAGE));
+  const showMargin = isMaklon || (!businessType && items.some((r) => r.business_type === 'maklon'));
+
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm" data-testid={testId}>
-        <thead>
-          <tr>{columns.map((c) => <th key={c.key} className={c.right ? 'text-right' : 'text-left'}>{c.label}</th>)}</tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={i} className="border-t border-[var(--glass-border)]">
-              {columns.map((c) => (
-                <td key={c.key} className={c.right ? 'text-right tabular-nums whitespace-nowrap' : (c.muted ? 'text-muted-foreground' : '')}>{c.render(r)}</td>
+    <PageLayout
+      testId="hpp-po-page"
+      title="HPP per PO"
+      subtitle="HPP aktual = potongan + aksesoris yang diserahkan + upah CMT + permak. Biaya umum tidak masuk HPP."
+      filters={<>
+        <FilterChips value={status} onChange={(v) => { setStatus(v); setPage(1); }} testId="hpp-po-status" ariaLabel="Status PO"
+          hideWhenEmpty={false}
+          options={[{ key: '', label: 'Semua', count: counts.all ?? 0 }, { key: 'open', label: 'Berjalan', count: counts.open ?? 0 },
+            { key: 'closed', label: 'Selesai/ditutup', count: counts.closed ?? 0 }]} />
+        <div className="relative w-64 max-w-full">
+          <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { setPage(1); load(); } }}
+            placeholder="Cari nomor PO / vendor / klien…" className="pl-8 h-9" data-testid="hpp-po-search" />
+        </div>
+        {!fixedType && (
+          <SmartNativeSelect value={jenis} onChange={(e) => { setJenis(e.target.value); setPage(1); }} searchable={false}
+            className="h-9 w-40" aria-label="Jenis PO" data-testid="hpp-po-jenis">
+            <option value="">Semua jenis PO</option>
+            <option value="internal">PO internal</option>
+            <option value="maklon">PO maklon</option>
+          </SmartNativeSelect>
+        )}
+        {businessType !== 'internal' && clients.length > 0 && (
+          <SmartNativeSelect value={clientId} onChange={(e) => { setClientId(e.target.value); setPage(1); }}
+            className="h-9 w-60 max-w-full" aria-label="Klien maklon" data-testid="hpp-po-client">
+            <option value="">Semua klien maklon</option>
+            {clients.map((c) => <option key={c.id} value={c.id}>{c.code ? `${c.code} — ${c.name}` : c.name}</option>)}
+          </SmartNativeSelect>
+        )}
+        <PeriodPicker value={period} onChange={(p) => { setPeriod(p); setPage(1); }} presets={[ALL_TIME, ...PERIOD_PRESETS]} testId="hpp-po-period" />
+      </>}
+      tools={<Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="hpp-po-refresh">
+        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+      </Button>}
+      summary={<>
+        {error && <Notice tone="danger" icon={AlertTriangle} title="Gagal memuat data" testId="hpp-po-error">{error}</Notice>}
+        {(sum.po_count > 0) && (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <StatTile testId="hpp-kpi-total" label="Total HPP aktual" value={rp(sum.total_hpp)}
+              sub={`${num(sum.po_count)} PO · potongan + aksesoris + upah CMT + permak`} />
+            <StatTile testId="hpp-kpi-pcs" label="HPP per pcs" value={rp(sum.hpp_per_pcs)} accent="primary"
+              sub={`${num(sum.qty_accepted)} pcs lolos QC`} />
+            {showMargin ? (
+              <StatTile testId="hpp-kpi-margin" label="Margin maklon" value={rp(sum.margin)}
+                accent={Number(sum.margin) < 0 ? 'danger' : 'success'} sub={`pendapatan ${rp(sum.revenue)} · ${pct(sum.margin_pct)}`} />
+            ) : (
+              <StatTile testId="hpp-kpi-selisih" label="Bahan belum jadi barang" value={rp(sum.unabsorbed_cost)}
+                sub="bahan untuk pcs yang belum/tidak diterima; ditutup saat PO ditutup" />
+            )}
+            <StatTile testId="hpp-kpi-overhead" label="Biaya umum per pcs" value={oh?.per_pcs == null ? 'belum ada data' : rp(oh.per_pcs)}
+              sub={`informasi, tidak masuk HPP · ${monthLabel(oh?.month)}`} />
+          </div>
+        )}
+        {residuals.length > 0 && (
+          <Notice tone="warning" icon={AlertTriangle} testId="hpp-po-residuals"
+            title={`${residuals.length} PO yang sudah ditutup masih menyisakan biaya di barang dalam proses`}>
+            {residuals.slice(0, 8).map((r) => (
+              <Button key={r.po_id} variant="link" size="sm" className="h-auto p-0 mr-3" onClick={() => openDetail(r.po_id)}
+                data-testid={`hpp-residual-${r.po_number}`}>{r.po_number} · {rp(r.residual)}</Button>
+            ))}
+          </Notice>
+        )}
+        {oh && sum.po_count > 0 && (
+          <p className="text-sm text-muted-foreground" data-testid="hpp-overhead-sentence">
+            Biaya umum produksi {monthLabel(oh.month)} ({oh.entity === 'SMU' ? 'CV Sukma' : 'CV Dewi Aditya'}): {rp(oh.overhead)}
+            {' '}÷ {num(oh.pcs)} pcs lolos QC{oh.per_pcs != null ? ` = ${rp(oh.per_pcs)} per pcs` : ' (belum bisa dibagi)'}. Angka ini informasi saja dan tidak masuk HPP.
+          </p>
+        )}
+      </>}
+      detail={detail && <PoHppDetail detail={detail} canClear={canClear} onClose={() => setDetail(null)}
+        onChanged={async () => { await load(); const id = detail.po_id; setDetail(null); await openDetail(id); }} />}
+      footer={(data?.total || 0) > PER_PAGE && (
+        <PaginationLite page={page} totalPages={totalPages} total={data?.total || 0} pageSize={PER_PAGE} onPageChange={setPage} />
+      )}
+    >
+      <GlassCard className="p-0 overflow-hidden">
+        {loading && !items.length ? (
+          <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
+        ) : items.length === 0 ? (
+          <div data-testid="hpp-po-empty">
+            {filtered ? (
+              <EmptyState icon={Calculator} title="Tidak ada PO yang cocok dengan penyaring"
+                description="Ubah atau hapus penyaring untuk melihat PO lain."
+                action={<Button variant="outline" size="sm" onClick={resetFilters}>Tampilkan semua PO</Button>} />
+            ) : (
+              <EmptyState icon={Calculator} title="Belum ada PO dengan biaya"
+                description="HPP aktual muncul setelah PO dikonfirmasi dan bahan diserahkan ke CMT." />
+            )}
+          </div>
+        ) : (
+          <Table data-testid="hpp-po-table">
+            <TableHeader><TableRow>
+              <TableHead>PO</TableHead>
+              {!fixedType && <TableHead>Jenis</TableHead>}
+              <TableHead>{isMaklon ? 'Klien · vendor CMT' : 'Vendor CMT'}</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="text-right">Pesan</TableHead>
+              <TableHead className="text-right">Lolos QC</TableHead>
+              <TableHead className="text-right">Bahan</TableHead>
+              <TableHead className="text-right">Upah CMT</TableHead>
+              <TableHead className="text-right">Permak</TableHead>
+              <TableHead className="text-right">Total HPP</TableHead>
+              <TableHead className="text-right">HPP/pcs</TableHead>
+              {showMargin && <TableHead className="text-right">Harga jasa/pcs</TableHead>}
+              {showMargin && <TableHead className="text-right">Margin/pcs</TableHead>}
+            </TableRow></TableHeader>
+            <TableBody>
+              {items.map((r) => (
+                <TableRow key={r.po_id} data-testid={`hpp-po-row-${r.po_number}`}
+                  className={detail?.po_id === r.po_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
+                  <TableCell className="whitespace-nowrap">
+                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => openDetail(r.po_id)}
+                      data-testid={`hpp-po-open-${r.po_number}`}>{r.po_number}</Button>
+                  </TableCell>
+                  {!fixedType && <TableCell>{JENIS[r.business_type] || '—'}</TableCell>}
+                  <TableCell className="text-sm">
+                    {isMaklon && r.client_name ? <span className="block">{r.client_name}</span> : null}
+                    <span className={isMaklon ? 'text-xs text-muted-foreground' : ''}>{r.vendor_name || 'Belum ada penjahit'}</span>
+                  </TableCell>
+                  <TableCell><PoStatus status={r.status} /></TableCell>
+                  <TableCell className="text-right tabular-nums">{num(r.qty_ordered)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{num(r.qty_accepted)}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{rp(r.cut_cost + r.accessory_cost)}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">
+                    {rp(r.cmt_cost)}
+                    {r.items_missing_rate > 0 && <span className="block text-xs text-[hsl(var(--warning))]">{r.items_missing_rate} baris tanpa tarif</span>}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{rp(r.permak_cost)}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap font-semibold">{rp(r.total_hpp)}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{rp(r.hpp_per_pcs)}</TableCell>
+                  {showMargin && <TableCell className="text-right tabular-nums whitespace-nowrap">{r.business_type === 'maklon' ? rp(r.selling_price_per_pcs) : '—'}</TableCell>}
+                  {showMargin && (
+                    <TableCell className={`text-right tabular-nums whitespace-nowrap ${Number(r.margin_per_pcs) < 0 ? 'text-[hsl(var(--destructive))]' : ''}`}>
+                      {r.business_type === 'maklon' ? rp(r.margin_per_pcs) : '—'}
+                    </TableCell>
+                  )}
+                </TableRow>
               ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+            </TableBody>
+          </Table>
+        )}
+      </GlassCard>
+    </PageLayout>
   );
 }
 
-const MATERIAL_COLS = [
-  { key: 'name', label: 'Bahan', render: (m) => m.material_name },
-  { key: 'type', label: 'Jenis', muted: true, render: (m) => (m.type ? categoryLabel(m.type) : '—') },
-  { key: 'qty', label: 'Qty', right: true, render: (m) => `${Number(m.qty || 0).toLocaleString('id-ID')} ${m.unit || ''}` },
-  { key: 'unit_cost', label: 'Harga satuan', right: true, render: (m) => fmt(m.unit_cost) },
-  { key: 'source', label: 'Asal harga', muted: true, render: (m) => m.cost_source_label || '—' },
-  { key: 'amount', label: 'Jumlah', right: true, render: (m) => fmt(m.amount) },
-];
-const CMT_COLS = [
-  { key: 'sku', label: 'SKU', render: (c) => c.sku || '—' },
-  { key: 'qty', label: 'Qty jadi', right: true, render: (c) => `${Number(c.qty || 0).toLocaleString('id-ID')} pcs` },
-  { key: 'rate', label: 'Tarif jahit SPK', right: true, render: (c) => (c.rate > 0 ? fmt(c.rate) : 'belum diisi') },
-  { key: 'amount', label: 'Jumlah', right: true, render: (c) => fmt(c.amount) },
-];
-const LABOR_COLS = [
-  { key: 'op', label: 'Operator', render: (l) => l.operator_name || '—' },
-  { key: 'proc', label: 'Proses', muted: true, render: (l) => l.process_code || '—' },
-  { key: 'qty', label: 'Qty', right: true, render: (l) => `${Number(l.qty || 0).toLocaleString('id-ID')} pcs` },
-  { key: 'rate', label: 'Tarif', right: true, render: (l) => fmt(l.rate) },
-  { key: 'amount', label: 'Jumlah', right: true, render: (l) => fmt(l.amount) },
-];
+/** Rincian satu PO — di halaman, di atas tabel (PANDUAN_UI G13). */
+function PoHppDetail({ detail, canClear, onClose, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const d = detail;
+  const maklon = d.business_type === 'maklon';
+  const wip = d.wip;
+  const residual = Number(wip?.residual || 0);
+  const rows = useMemo(() => d.lines || [], [d.lines]);
+  if (d.loading) {
+    return <DetailPanel title="Memuat rincian HPP…" onClose={onClose} testId="hpp-po-detail"><Skeleton className="h-32 w-full" /></DetailPanel>;
+  }
 
-/** Angka ringkas tanpa kartu (dipakai di dalam panel — kartu di dalam kartu tidak dipakai). */
+  const clearWip = async () => {
+    const ok = await confirmDialog({
+      title: `Tutup sisa biaya PO ${d.po_number}?`,
+      body: `Sisa ${rp(Math.abs(residual))} dipindah dari barang dalam proses ke akun selisih biaya PO dengan satu jurnal.`,
+      confirmLabel: 'Tutup sisa biaya',
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await apiPost(`/costing/po-wip/${d.po_id}/clear`, {});
+      toast.success(`Sisa biaya PO ${d.po_number} dipindah ke selisih biaya PO.`);
+      await onChanged();
+    } catch (e) { toast.error(e?.message || 'Gagal menutup sisa biaya'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <DetailPanel testId="hpp-po-detail" closeTestId="hpp-po-detail-close" onClose={onClose}
+      title={`${d.po_number} · ${maklon ? (d.client_name || 'Klien maklon') : 'PO internal'}`}
+      description={`Vendor CMT ${d.vendor_name || '—'} · pesan ${num(d.qty_ordered)} · dikirim ke CMT ${num(d.qty_sent)}${d.sent_basis === 'pesanan' ? ' (belum ada surat jalan, dihitung dari pesanan)' : ''} · lolos QC ${num(d.qty_accepted)} pcs`}
+      actions={canClear && !maklon && d.closed && Math.abs(residual) >= 0.01 && (
+        <Button onClick={clearWip} disabled={busy} data-testid="hpp-po-clear-wip">Tutup sisa biaya</Button>
+      )}>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Figure label="Total HPP aktual" value={rp(d.total_hpp)} testId="hpp-detail-total" />
+        <Figure label="HPP per pcs lolos QC" value={rp(d.hpp_per_pcs)} testId="hpp-detail-per-pcs" strong />
+        {maklon ? (
+          <>
+            <Figure label="Harga jasa per pcs" value={rp(d.selling_price_per_pcs)} testId="hpp-detail-price" />
+            <Figure label="Margin per pcs (harga jasa − HPP)" value={`${rp(d.margin_per_pcs)} · ${pct(d.margin_pct)}`} testId="hpp-detail-margin" />
+          </>
+        ) : (
+          <>
+            <Figure label="Masuk barang jadi" value={rp(d.fg_layer_value)} testId="hpp-detail-fg" />
+            <Figure label="Bahan untuk pcs tidak diterima" value={rp(d.unabsorbed_cost)} testId="hpp-detail-unabsorbed" />
+          </>
+        )}
+      </div>
+
+      <Table data-testid="hpp-detail-components">
+        <TableHeader><TableRow>
+          <TableHead>Komponen HPP</TableHead><TableHead className="text-right">Nilai</TableHead>
+          <TableHead className="text-right">Bagian pcs lolos QC</TableHead><TableHead className="text-right">Per pcs</TableHead>
+        </TableRow></TableHeader>
+        <TableBody>
+          {(d.components || []).map((c) => (
+            <TableRow key={c.key} data-testid={`hpp-comp-${c.key}`}>
+              <TableCell>{c.label}</TableCell>
+              <TableCell className="text-right tabular-nums">{rp(c.amount)}</TableCell>
+              <TableCell className="text-right tabular-nums">{rp(c.absorbed)}</TableCell>
+              <TableCell className="text-right tabular-nums">{rp(c.per_pcs)}</TableCell>
+            </TableRow>
+          ))}
+          <TableRow className="font-semibold">
+            <TableCell>Total HPP aktual</TableCell>
+            <TableCell className="text-right tabular-nums">{rp(d.total_hpp)}</TableCell>
+            <TableCell className="text-right tabular-nums">{rp(d.absorbed_cost)}</TableCell>
+            <TableCell className="text-right tabular-nums">{rp(d.hpp_per_pcs)}</TableCell>
+          </TableRow>
+          {Number(d.unabsorbed_cost || 0) > 0 && (
+            <TableRow data-testid="hpp-comp-selisih">
+              <TableCell colSpan={2} className="text-muted-foreground">
+                Bahan untuk {num(Math.max(0, Number(d.qty_sent || 0) - Number(d.qty_accepted || 0)))} pcs yang {d.closed ? 'tidak diterima' : 'belum/tidak diterima'} — tetap biaya PO{maklon ? '' : '; ditutup sebagai selisih biaya PO saat PO ditutup'}
+              </TableCell>
+              <TableCell className="text-right tabular-nums text-muted-foreground">{rp(d.unabsorbed_cost)}</TableCell>
+              <TableCell />
+            </TableRow>
+          )}
+          {maklon && (
+            <TableRow>
+              <TableCell>Pendapatan jasa (qty diterima klien × harga jasa) · margin = pendapatan − HPP</TableCell>
+              <TableCell className="text-right tabular-nums">{rp(d.revenue)}</TableCell>
+              <TableCell colSpan={2} className={`text-right tabular-nums ${Number(d.margin) < 0 ? 'text-[hsl(var(--destructive))]' : ''}`} data-testid="hpp-detail-margin-total">margin {rp(d.margin)}</TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
+
+      <Notice tone="info" icon={Info} testId="hpp-detail-overhead" title={`Biaya umum per pcs: ${d.overhead_info?.per_pcs == null ? 'belum ada data' : rp(d.overhead_info.per_pcs)} — informasi, tidak masuk HPP`}>
+        {(d.overhead_info?.months || []).length > 0
+          ? `${d.overhead_info.months.map((m) => `${monthLabel(m.month)}: ${rp(m.overhead)} ÷ ${num(m.pcs)} pcs lolos QC${m.per_pcs != null ? ` = ${rp(m.per_pcs)}/pcs` : ''} (PO ini ${num(m.pcs_po)} pcs)`).join(' · ')}.`
+          : 'Belum ada barang PO ini yang lolos QC, jadi biaya umumnya belum bisa dibagi.'}
+        {Number(d.aux_cost_excluded || 0) > 0 && ` Bahan pembantu (benang dsb.) ${rp(d.aux_cost_excluded)} ikut terkirim; dibebankan langsung ke biaya produksi, tidak masuk HPP.`}
+      </Notice>
+
+      {(d.gaps || []).length > 0 && (
+        <Notice tone="warning" icon={AlertTriangle} title="Yang belum lengkap" testId="hpp-detail-gaps">
+          <ul className="list-disc pl-4 space-y-0.5">{d.gaps.map((g, i) => <li key={i}>{g}</li>)}</ul>
+        </Notice>
+      )}
+
+      <p className="text-sm font-semibold text-foreground">Per baris PO — upah jahit & bahan per pcs</p>
+      <Table data-testid="hpp-detail-lines">
+        <TableHeader><TableRow>
+          <TableHead>Barang</TableHead><TableHead className="text-right">Pesan</TableHead><TableHead className="text-right">Dikirim</TableHead>
+          <TableHead className="text-right">Lolos QC</TableHead><TableHead className="text-right">Tarif jahit/pcs</TableHead>
+          <TableHead className="text-right">Potongan/pcs</TableHead><TableHead className="text-right">Aksesoris/pcs</TableHead>
+          {!maklon && <TableHead className="text-right">Standar BOM/pcs</TableHead>}
+          {maklon && <TableHead className="text-right">Harga jasa/pcs</TableHead>}
+        </TableRow></TableHeader>
+        <TableBody>
+          {rows.map((ln) => (
+            <TableRow key={ln.po_item_id} data-testid={`hpp-line-${ln.sku}`}>
+              <TableCell>
+                <span className="block">{ln.product_name || ln.sku || '—'}</span>
+                <span className="text-xs text-muted-foreground">{[ln.sku, ln.color, ln.size].filter(Boolean).join(' · ')}</span>
+              </TableCell>
+              <TableCell className="text-right tabular-nums">{num(ln.qty_ordered)}</TableCell>
+              <TableCell className="text-right tabular-nums">{num(ln.qty_sent)}</TableCell>
+              <TableCell className="text-right tabular-nums">{num(ln.qty_accepted)}</TableCell>
+              <TableCell className={`text-right tabular-nums ${Number(ln.cmt_rate) > 0 ? '' : 'text-[hsl(var(--warning))]'}`}>
+                {Number(ln.cmt_rate) > 0 ? rp(ln.cmt_rate) : 'belum diisi'}
+              </TableCell>
+              <TableCell className="text-right tabular-nums">{rp(ln.cut_per_pcs)}</TableCell>
+              <TableCell className="text-right tabular-nums">{rp(ln.accessory_per_pcs)}</TableCell>
+              {!maklon && <TableCell className="text-right tabular-nums text-muted-foreground">{rp(ln.standard_per_pcs)}</TableCell>}
+              {maklon && <TableCell className="text-right tabular-nums">{rp(ln.selling_price)}</TableCell>}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      <p className="text-xs text-muted-foreground">Tarif jahit diubah di form PO (kolom upah jahit) sampai tagihan CMT terbit. {!maklon && 'Standar BOM = bahan BOM × harga master + tarif jahit — pembanding, bukan HPP.'}</p>
+
+      <p className="text-sm font-semibold text-foreground">Bahan & aksesoris yang diserahkan ({(d.issue_lines || []).length})</p>
+      {(d.issue_lines || []).length === 0 ? (
+        <EmptyState icon={Calculator} className="py-6" title="Belum ada penyerahan bahan" description="Bahan tercatat saat Kirim ke CMT atau permintaan aksesoris untuk PO ini." />
+      ) : (
+        <Table data-testid="hpp-detail-issues">
+          <TableHeader><TableRow>
+            <TableHead>Dokumen</TableHead><TableHead>Barang</TableHead><TableHead>Jenis</TableHead>
+            <TableHead className="text-right">Qty</TableHead><TableHead className="text-right">Harga</TableHead>
+            <TableHead className="text-right">Nilai</TableHead><TableHead>Asal harga</TableHead>
+          </TableRow></TableHeader>
+          <TableBody>
+            {d.issue_lines.map((ln, i) => (
+              <TableRow key={`${ln.doc}-${ln.material_id}-${i}`}>
+                <TableCell className="text-xs whitespace-nowrap">{ln.doc || ln.source}</TableCell>
+                <TableCell>{ln.material_name || ln.material_code}<span className="block text-xs text-muted-foreground">{ln.material_code}</span></TableCell>
+                <TableCell><StatusBadge tone={KIND_TONE[ln.kind] || 'default'} label={ln.kind_label} /></TableCell>
+                <TableCell className="text-right tabular-nums whitespace-nowrap">{num(ln.qty)} {ln.unit}</TableCell>
+                <TableCell className="text-right tabular-nums">{rp(ln.unit_cost)}</TableCell>
+                <TableCell className="text-right tabular-nums">{rp(ln.value)}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{ln.cost_source_label}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+
+      {!maklon && wip && !wip.error && (wip.groups || []).length > 0 && (
+        <>
+          <p className="text-sm font-semibold text-foreground" data-testid="hpp-detail-wip-title">
+            Barang dalam proses PO ini — sisa {rp(residual)}{d.closed ? '' : ' (ditutup otomatis saat PO ditutup)'}
+          </p>
+          <Table data-testid="hpp-detail-wip">
+            <TableHeader><TableRow>
+              <TableHead>Sumber</TableHead><TableHead className="text-right">Masuk</TableHead>
+              <TableHead className="text-right">Keluar</TableHead><TableHead className="text-right">Bersih</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>
+              {wip.groups.map((g) => (
+                <TableRow key={g.source}>
+                  <TableCell>{g.label}</TableCell>
+                  <TableCell className="text-right tabular-nums">{rp(g.debit)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{rp(g.credit)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{rp(g.net)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </>
+      )}
+    </DetailPanel>
+  );
+}
+
+/** Angka ringkas di dalam panel (tanpa kartu di dalam kartu). */
 function Figure({ label, value, testId, strong }) {
   return (
     <div>
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className={`text-lg font-semibold tabular-nums ${strong ? 'text-[hsl(var(--primary))]' : 'text-foreground'}`} data-testid={testId}>{value}</p>
     </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// TAB 1: Work order internal
-// ══════════════════════════════════════════════════════════════════════════════
-function InternalWOTab({ headers, page }) {
-  const [settings, setSettings] = useState(null);
-  const [draft, setDraft] = useState(null);           // salinan pengaturan yang sedang diubah di dialog
-  const [wos, setWos] = useState([]);
-  const [selected, setSelected] = useState(null);
-  const [hpp, setHpp] = useState(null);
-  const [savingSettings, setSavingSettings] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const { page: pg, setPage, totalPages, paged } = useClientPagination(wos, 25);
-
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [cs, ws] = await Promise.all([
-        fetch('/api/rahaza/costing-settings', { headers }).then(r => r.json()),
-        // FASE 5: HPP internal kini per JOB (engine baru)
-        fetch('/api/production-jobs?business_type=internal', { headers }).then(r => r.json()),
-      ]);
-      setSettings(cs || null);
-      setWos(Array.isArray(ws) ? ws : []);
-    } finally {
-      setLoading(false);
-    }
-  }, [headers]);
-
-  useEffect(() => {
-    fetchAll();
-  }, [fetchAll]);
-
-  const computeHPP = async (wo_id) => {
-    const r = await fetch(`/api/production-jobs/${wo_id}/hpp`, { headers });
-    if (r.ok) setHpp(await r.json());
-    else { toast.error(`Gagal menghitung HPP job (HTTP ${r.status})`); setSelected(null); }
-  };
-  const openJob = (w) => {
-    if (selected?.id === w.id) { setSelected(null); setHpp(null); return; }
-    setSelected(w); setHpp(null);
-    computeHPP(w.id);
-  };
-
-  const saveSettings = async () => {
-    setSavingSettings(true);
-    try {
-      const r = await fetch('/api/rahaza/costing-settings', { method: 'PUT', headers, body: JSON.stringify(draft) });
-      if (!r.ok) { toast.error(`Gagal menyimpan pengaturan (HTTP ${r.status})`); return; }
-      setSettings(draft);
-      setDraft(null);
-      toast.success('Pengaturan biaya tersimpan');
-      if (selected) computeHPP(selected.id);
-    } finally {
-      setSavingSettings(false);
-    }
-  };
-
-  const snapshot = async () => {
-    if (!selected) return;
-    const r = await fetch(`/api/production-jobs/${selected.id}/hpp-snapshot`, { method: 'POST', headers });
-    if (r.ok) {
-      toast.success('HPP job tersimpan sebagai catatan');
-    }
-  };
-
-  // Tahap 1 (6 Nov 2026): job belum menyimpan estimasi HPP. Dulu estimasi = aktual × 0,95
-  // (angka karangan); sekarang ditampilkan "belum ada data".
-  const detail = selected && (
-    <DetailPanel
-      testId="hpp-detail-panel"
-      title={hpp?.job_number || selected.job_number || selected.wo_number}
-      description={hpp ? `PO ${hpp.po_number || selected.po_number || '—'} · qty selesai ${hpp.qty_completed ?? hpp.qty ?? 0} pcs` : 'Menghitung HPP…'}
-      onClose={() => { setSelected(null); setHpp(null); }}
-      actions={hpp && (
-        <Button onClick={snapshot} title="Simpan HPP job ini sebagai catatan" data-testid="hpp-snapshot">
-          <Save className="w-4 h-4" />Simpan HPP
-        </Button>
-      )}
-    >
-      {!hpp ? (
-        <Skeleton className="h-32 w-full" />
-      ) : (
-        <div className="space-y-4" data-testid="hpp-detail">
-          <HppComparisonInline estimated={null} actual={hpp.total_cost} />
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <Figure label="Bahan" value={fmt(hpp.material_cost)} testId="hpp-material-cost" />
-            <Figure label="Upah CMT" value={fmt(hpp.cmt_cost ?? hpp.labor_cost)} testId="hpp-labor-cost" />
-            <Figure label="Total biaya" value={fmt(hpp.total_cost)} />
-            <Figure label="HPP per pcs" value={fmt(hpp.hpp_unit)} testId="hpp-unit-actual" strong />
-            <Figure label="Upah internal (tidak masuk HPP)" value={fmt(hpp.internal_labor_cost || 0)} />
-          </div>
-          {(hpp.gaps || []).length > 0 && (
-            <div className="space-y-1" data-testid="hpp-gaps">
-              <p className="text-sm font-semibold text-foreground">Yang belum lengkap</p>
-              {hpp.gaps.map((g, i) => (
-                <p key={i} className="text-sm text-muted-foreground"><StatusBadge tone="warning" label="Perlu dilengkapi" /> {g}</p>
-              ))}
-            </div>
-          )}
-          <div className="space-y-2">
-            <p className="text-sm font-semibold text-foreground">Rincian bahan ({hpp.material_breakdown?.length || 0})</p>
-            {(!hpp.material_breakdown || hpp.material_breakdown.length === 0) ? (
-              <p className="text-sm text-muted-foreground">Job ini belum punya pengeluaran bahan; angka bahan di atas memakai total agregat.</p>
-            ) : (
-              <BreakdownTable columns={MATERIAL_COLS} rows={hpp.material_breakdown} />
-            )}
-          </div>
-          <div className="space-y-2">
-            <p className="text-sm font-semibold text-foreground">Rincian upah CMT ({hpp.cmt_breakdown?.length || 0})</p>
-            {(!hpp.cmt_breakdown || hpp.cmt_breakdown.length === 0) ? (
-              <p className="text-sm text-muted-foreground">Job ini belum punya barang jadi atau tarif jahit SPK.</p>
-            ) : (
-              <BreakdownTable columns={CMT_COLS} rows={hpp.cmt_breakdown} />
-            )}
-          </div>
-          <div className="space-y-2">
-            <p className="text-sm font-semibold text-foreground">Rincian upah internal — tidak masuk HPP ({hpp.labor_breakdown?.length || 0})</p>
-            {(!hpp.labor_breakdown || hpp.labor_breakdown.length === 0) ? (
-              <p className="text-sm text-muted-foreground">Job ini belum punya hasil produksi bertanda; angka upah di atas memakai total agregat.</p>
-            ) : (
-              <BreakdownTable columns={LABOR_COLS} rows={hpp.labor_breakdown} />
-            )}
-          </div>
-        </div>
-      )}
-    </DetailPanel>
-  );
-
-  const setD = (k, v) => setDraft(s => ({ ...s, [k]: v }));
-
-  return (
-    <PageLayout
-      testId={page.testId}
-      title={page.title}
-      subtitle={page.subtitle}
-      filters={page.chips}
-      tools={<>
-        <Button variant="outline" size="icon" onClick={fetchAll} title="Muat ulang" aria-label="Muat ulang" data-testid="hpp-refresh"><RefreshCw className="w-4 h-4" /></Button>
-        <Button variant="outline" onClick={() => setDraft({ ...settings })} disabled={!settings} data-testid="hpp-open-settings">
-          <Settings2 className="w-4 h-4" />Pengaturan biaya
-        </Button>
-      </>}
-      summary={settings && (
-        <p className="text-sm text-muted-foreground" data-testid="hpp-settings-summary">
-          Pengaturan biaya: overhead {fmt(settings.overhead_rate_per_pcs || 0)}/pcs (tidak masuk HPP) · harga bawaan bila harga bahan belum ada (dilabeli estimasi) {fmt(readNumber(settings, FIELD.defaultMaterialCostPerKg))}/kg ·
-          aksesori bawaan {fmt(settings.default_accessory_cost_per_unit || 0)}/unit · upah cadangan {fmt(settings.labor_rate_fallback_per_pcs || 0)}/pcs
-        </p>
-      )}
-      detail={detail}
-    >
-      <GlassCard className="p-0 overflow-hidden">
-        {loading ? (
-          <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
-        ) : wos.length === 0 ? (
-          <EmptyState icon={Factory} title="Belum ada job produksi internal" description="Job produksi internal yang dibuat di portal Produksi muncul di sini." />
-        ) : (
-          <>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm" data-testid="hpp-wo-table">
-                <thead><tr><th className="text-left">Job produksi</th><th className="text-left">PO</th><th className="text-left">Status</th></tr></thead>
-                <tbody>
-                  {paged.map(w => (
-                    <tr key={w.id} className={`border-t border-[var(--glass-border)] ${selected?.id === w.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
-                      <td className="whitespace-nowrap">
-                        <Button variant="link" size="sm" className="h-auto p-0" onClick={() => openJob(w)} data-testid={`hpp-wo-${w.job_number || w.wo_number}`}>
-                          {w.job_number || w.wo_number}
-                        </Button>
-                      </td>
-                      <td className="whitespace-nowrap text-muted-foreground">{w.po_number || '—'}</td>
-                      <td><JobStatus status={w.status} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {totalPages > 1 && <div className="px-4 py-2"><PaginationLite page={pg} totalPages={totalPages} total={wos.length} pageSize={25} onPageChange={setPage} /></div>}
-          </>
-        )}
-      </GlassCard>
-
-      {draft && (
-        <Modal title="Pengaturan biaya bawaan" onClose={() => setDraft(null)} size="md">
-          <div className="space-y-4" data-testid="hpp-settings">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <label className="block space-y-1">
-                <span className="text-xs text-muted-foreground">Overhead per pcs</span>
-                <MoneyInput glass value={draft.overhead_rate_per_pcs || 0}
-                  onChange={e => setD('overhead_rate_per_pcs', Number(e.target.value))} data-testid="hpp-overhead-pcs" />
-              </label>
-              <label className="block space-y-1">
-                <span className="text-xs text-muted-foreground">Harga bahan bawaan per kg</span>
-                <MoneyInput glass value={readNumber(draft, FIELD.defaultMaterialCostPerKg)}
-                  onChange={e => setD('default_material_cost_per_kg', Number(e.target.value))} data-testid="hpp-yarn-kg" />
-              </label>
-              <label className="block space-y-1">
-                <span className="text-xs text-muted-foreground">Aksesori bawaan per unit</span>
-                <MoneyInput glass value={draft.default_accessory_cost_per_unit || 0}
-                  onChange={e => setD('default_accessory_cost_per_unit', Number(e.target.value))} />
-              </label>
-              <label className="block space-y-1">
-                <span className="text-xs text-muted-foreground">Upah cadangan per pcs</span>
-                <MoneyInput glass value={draft.labor_rate_fallback_per_pcs || 0}
-                  onChange={e => setD('labor_rate_fallback_per_pcs', Number(e.target.value))} />
-              </label>
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setDraft(null)}>Batal</Button>
-              <Button onClick={saveSettings} disabled={savingSettings} data-testid="hpp-save-settings">
-                <Save className="w-4 h-4" />
-                {savingSettings ? 'Menyimpan…' : 'Simpan pengaturan'}
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      )}
-    </PageLayout>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// TAB 2: HPP aktual order maklon
-// ══════════════════════════════════════════════════════════════════════════════
-function MaklonActualTab({ headers, page }) {
-  const [orders, setOrders] = useState([]);
-  const [selectedOrderId, setSelectedOrderId] = useState('');
-  const [hpp, setHpp] = useState(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    const fetchOrders = async () => {
-      try {
-        const r = await fetch('/api/dewi/maklon/pos', { headers });
-        if (r.ok) {
-          const data = posToLegacyOrders(await r.json());
-          setOrders(data.filter(o => !['draft', 'cancelled'].includes(o.status)));
-        }
-      } catch (e) {
-        toast.error('Gagal memuat order maklon');
-      }
-    };
-    fetchOrders();
-  }, [headers]);
-
-  const loadHPP = async (orderId) => {
-    if (!orderId) return;
-    setLoading(true);
-    try {
-      const r = await fetch(`/api/rahaza/hpp/maklon-order/${orderId}`, { headers });
-      if (r.ok) {
-        setHpp(await r.json());
-      } else {
-        toast.error('Gagal memuat HPP order maklon');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleOrderSelect = (orderId) => {
-    setSelectedOrderId(orderId);
-    loadHPP(orderId);
-  };
-
-  const ready = !loading && hpp;
-
-  return (
-    <PageLayout
-      testId={page.testId}
-      title={page.title}
-      subtitle={page.subtitle}
-      filters={<>
-        {page.chips}
-        <SmartNativeSelect value={selectedOrderId} onChange={e => handleOrderSelect(e.target.value)}
-          className="h-9 w-96 max-w-full" aria-label="Order maklon" data-testid="maklon-order-select">
-          <option value="">Pilih order maklon…</option>
-          {orders.map(o => (
-            <option key={o.id} value={o.id}>{`${o.order_code} — ${o.product_name} (${o.qty_ordered} pcs)`}</option>
-          ))}
-        </SmartNativeSelect>
-      </>}
-      summary={ready && <>
-        <p className="text-sm text-muted-foreground">
-          <span className="font-medium text-foreground">{hpp.order_code}</span> · {hpp.client_name} · {hpp.product_name} · {hpp.qty_ordered} pcs
-        </p>
-        <HppComparisonInline estimated={hpp.estimated_hpp_total} actual={hpp.total_cost_actual} />
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatTile label="Bahan" value={fmt(hpp.material_cost_actual)} testId="maklon-hpp-material" />
-          <StatTile label="Upah internal (tidak masuk HPP)" value={fmt(hpp.labor_cost_actual)} testId="maklon-hpp-labor" />
-          <StatTile label="Overhead (tidak masuk HPP)" value={fmt(hpp.overhead_cost_actual)} />
-          <StatTile label="HPP per pcs" value={fmt(hpp.hpp_unit_actual)} accent="primary" testId="maklon-hpp-unit" />
-        </div>
-      </>}
-    >
-      {loading ? (
-        <Skeleton className="h-48 w-full rounded-[var(--radius-lg)]" />
-      ) : hpp ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
-          <GlassCard className="p-4 space-y-2">
-            <p className="text-sm font-semibold text-foreground">Rincian bahan</p>
-            {(!hpp.material_breakdown || hpp.material_breakdown.length === 0) ? (
-              <EmptyState className="py-6" title="Belum ada pengeluaran bahan" description="Bahan yang dikeluarkan untuk order ini muncul di sini." />
-            ) : (
-              <BreakdownTable columns={MATERIAL_COLS.filter(c => ['name', 'qty', 'amount'].includes(c.key))} rows={hpp.material_breakdown} />
-            )}
-          </GlassCard>
-          <GlassCard className="p-4 space-y-2">
-            <p className="text-sm font-semibold text-foreground">Rincian upah</p>
-            {(!hpp.labor_breakdown || hpp.labor_breakdown.length === 0) ? (
-              <EmptyState className="py-6" title="Belum ada upah produksi" description="Upah dari hasil produksi order ini muncul di sini." />
-            ) : (
-              <BreakdownTable columns={LABOR_COLS.filter(c => ['op', 'proc', 'amount'].includes(c.key))} rows={hpp.labor_breakdown} />
-            )}
-          </GlassCard>
-        </div>
-      ) : (
-        <GlassCard className="p-0">
-          {selectedOrderId
-            ? <EmptyState icon={Calculator} title="Tidak ada data HPP untuk order ini" description="Pilih order lain atau periksa produksi order ini." />
-            : <EmptyState icon={Calculator} title="Pilih order maklon" description="Perhitungan HPP aktual order yang dipilih tampil di sini." />}
-        </GlassCard>
-      )}
-    </PageLayout>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// TAB 3: Analisa per klien
-// ══════════════════════════════════════════════════════════════════════════════
-function ClientAnalysisTab({ headers, page }) {
-  const [clients, setClients] = useState([]);
-  const [selectedClientId, setSelectedClientId] = useState('');
-  const [analysis, setAnalysis] = useState(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    const fetchClients = async () => {
-      try {
-        const r = await fetch('/api/dewi/maklon/clients', { headers });
-        if (r.ok) {
-          const data = await r.json();
-          setClients(data.filter(c => c.status === 'active'));
-        }
-      } catch (e) {
-        toast.error('Gagal memuat daftar klien');
-      }
-    };
-    fetchClients();
-  }, [headers]);
-
-  const loadAnalysis = async (clientId) => {
-    if (!clientId) return;
-    setLoading(true);
-    try {
-      const r = await fetch(`/api/rahaza/hpp/maklon-client/${clientId}`, { headers });
-      if (r.ok) {
-        setAnalysis(await r.json());
-      } else {
-        toast.error('Gagal memuat analisa klien');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleClientSelect = (clientId) => {
-    setSelectedClientId(clientId);
-    loadAnalysis(clientId);
-  };
-
-  const download = async (ext) => {
-    if (!selectedClientId) return;
-    try {
-      const r = await fetch(`/api/dewi/reports/maklon/client/${selectedClientId}/export.${ext}`, { headers });
-      if (!r.ok) { toast.error(`Gagal mengunduh (HTTP ${r.status})`); return; }
-      const blob = await r.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `client_analysis_${selectedClientId}_${todayWIB()}.${ext}`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      toast.error(`Gagal mengunduh: ${e.message}`);
-    }
-  };
-
-  const ready = !loading && analysis;
-
-  return (
-    <PageLayout
-      testId={page.testId}
-      title={page.title}
-      subtitle={page.subtitle}
-      filters={<>
-        {page.chips}
-        <SmartNativeSelect value={selectedClientId} onChange={e => handleClientSelect(e.target.value)}
-          className="h-9 w-80 max-w-full" aria-label="Klien maklon" data-testid="client-select">
-          <option value="">Pilih klien…</option>
-          {clients.map(c => <option key={c.id} value={c.id}>{`${c.code} — ${c.name}`}</option>)}
-        </SmartNativeSelect>
-      </>}
-      tools={analysis && <>
-        <Button variant="outline" onClick={() => download('csv')} data-testid="report-export-csv-button"><Download className="w-4 h-4" />Unduh CSV</Button>
-        <Button variant="outline" onClick={() => download('xlsx')} data-testid="report-export-excel-button"><FileSpreadsheet className="w-4 h-4" />Unduh Excel</Button>
-      </>}
-      summary={loading ? (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">{[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-20" />)}</div>
-      ) : ready && <>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatTile label="Jumlah order" value={analysis.total_orders} testId="client-report-total-orders" />
-          <StatTile label="Total qty" value={`${analysis.total_qty.toLocaleString('id-ID')} pcs`} />
-          <StatTile label="Pendapatan" value={fmt(analysis.total_revenue)} testId="client-report-revenue" />
-          <StatTile label="Margin" value={analysis.margin_pct == null ? NO_DATA : pct(analysis.margin_pct)} accent={analysis.margin_pct < 0 ? 'danger' : 'default'} testId="client-report-margin-kpi" />
-        </div>
-        {analysis.total_hpp_actual == null ? (
-          <p className="text-sm text-muted-foreground" data-testid="client-report-hpp-note">
-            Biaya bahan tercatat {fmt(analysis.total_material_cost)}. HPP dan margin belum ada data karena upah dan overhead order maklon belum tercatat.
-          </p>
-        ) : (
-          <HppComparisonInline estimated={analysis.total_hpp_estimated} actual={analysis.total_hpp_actual} />
-        )}
-      </>}
-    >
-      {ready ? (
-        <GlassCard className="p-0 overflow-hidden">
-          <div className="px-4 py-3 border-b border-[var(--glass-border)]">
-            <p className="text-sm font-semibold text-foreground">Rincian order ({analysis.orders.length})</p>
-          </div>
-          {analysis.orders.length === 0 ? (
-            <EmptyState title="Belum ada order untuk klien ini" description="Order maklon klien ini muncul di sini." />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm" data-testid="client-analysis-table">
-                <thead>
-                  <tr>
-                    <th className="text-left">Kode order</th>
-                    <th className="text-left">Produk</th>
-                    <th className="text-right">Qty</th>
-                    <th className="text-left">Status</th>
-                    <th className="text-right">Pendapatan</th>
-                    <th className="text-right">Biaya bahan</th>
-                    <th className="text-right">HPP aktual</th>
-                    <th className="text-right">Margin</th>
-                    <th className="text-center">Tepat waktu</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {analysis.orders.map((order, i) => (
-                    <tr key={i} className="border-b border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)]" data-testid="client-analysis-row">
-                      <td className="whitespace-nowrap">{order.order_code}</td>
-                      <td>{order.product_name}</td>
-                      <td className="text-right tabular-nums">{order.qty}</td>
-                      <td><JobStatus status={order.status} /></td>
-                      <td className="text-right tabular-nums">{fmt(order.revenue)}</td>
-                      <td className="text-right tabular-nums">{fmt(order.material_cost)}</td>
-                      <td className="text-right tabular-nums">{order.hpp_actual == null ? '–' : fmt(order.hpp_actual)}</td>
-                      <td className={`text-right tabular-nums ${order.margin > 0 ? 'text-[hsl(var(--success))]' : order.margin < 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>
-                        {order.margin == null ? '–' : fmt(order.margin)}
-                      </td>
-                      <td className="text-center">
-                        {order.is_on_time === true ? (
-                          <span className="text-[hsl(var(--success))]" title="Tepat waktu">✓</span>
-                        ) : order.is_on_time === false ? (
-                          <span className="text-[hsl(var(--destructive))]" title="Terlambat">✗</span>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </GlassCard>
-      ) : !loading && (
-        <GlassCard className="p-0">
-          {selectedClientId
-            ? <EmptyState icon={Building2} title="Tidak ada data untuk klien ini" description="Pilih klien lain atau periksa order maklon klien ini." />
-            : <EmptyState icon={Building2} title="Pilih klien maklon" description="Ringkasan order, pendapatan, margin, dan HPP klien tampil di sini." />}
-        </GlassCard>
-      )}
-    </PageLayout>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// TAB 4: Sisa WIP per PO (2026-11-06, Tahap 2) — bahan aktual vs standar BOM yang dikredit lapisan FG.
-// Sisa PO yang sudah ditutup dipindah ke Selisih Produksi otomatis saat PO ditutup; PO lama bisa
-// ditutup Keuangan di sini. Rincian per sumber dibuka di halaman (DetailPanel), konfirmasi di dialog.
-// ══════════════════════════════════════════════════════════════════════════════
-const WIP_COLS = [
-  { key: 'label', label: 'Sumber', render: (g) => g.label },
-  { key: 'debit', label: 'Masuk WIP', right: true, render: (g) => fmt(g.debit) },
-  { key: 'credit', label: 'Keluar WIP', right: true, render: (g) => fmt(g.credit) },
-  { key: 'net', label: 'Bersih', right: true, render: (g) => fmt(g.net) },
-];
-const WIP_ROW_COLS = (open) => [
-  { key: 'po', label: 'PO', render: (r) => (
-    <Button variant="link" size="sm" className="h-auto p-0" onClick={() => open(r)} data-testid={`po-wip-${r.po_number}`}>{r.po_number || r.po_id}</Button>
-  ) },
-  { key: 'status', label: 'Status', muted: true, render: (r) => <JobStatus status={r.status} /> },
-  { key: 'residual', label: 'Sisa WIP', right: true, render: (r) => fmt(r.residual) },
-];
-
-function PoWipTab({ headers, page }) {
-  const [rows, setRows] = useState([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState(null);
-  const [confirm, setConfirm] = useState(null);
-  const [busy, setBusy] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const r = await fetch('/api/costing/po-wip', { headers });
-      const d = r.ok ? await r.json() : { items: [] };
-      setRows(d.items || []);
-      setTotal(d.total_residual || 0);
-    } finally {
-      setLoading(false);
-    }
-  }, [headers]);
-  useEffect(() => { load(); }, [load]);
-
-  const clear = async () => {
-    setBusy(true);
-    try {
-      const r = await fetch(`/api/costing/po-wip/${confirm.po_id}/clear`, { method: 'POST', headers });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) { toast.error(d.detail || `Gagal menutup sisa WIP (HTTP ${r.status})`); return; }
-      toast.success(`Sisa WIP PO ${confirm.po_number} dipindah ke selisih produksi.`);
-      setConfirm(null); setSelected(null);
-      load();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const detail = selected && (
-    <DetailPanel testId="po-wip-detail" title={`PO ${selected.po_number || selected.po_id}`}
-      description={`Sisa WIP ${fmt(selected.residual)} — bahan & upah yang masuk WIP dikurangi nilai yang sudah pindah ke barang jadi.`}
-      onClose={() => setSelected(null)}
-      actions={<Button onClick={() => setConfirm(selected)} data-testid="po-wip-clear">Tutup sisa WIP</Button>}>
-      <BreakdownTable columns={WIP_COLS} rows={selected.groups || []} testId="po-wip-groups" />
-    </DetailPanel>
-  );
-
-  return (
-    <PageLayout testId={page.testId} title={page.title} subtitle={page.subtitle} filters={page.chips}
-      tools={<Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>}
-      summary={!loading && (
-        <p className="text-sm text-muted-foreground" data-testid="po-wip-summary">
-          {rows.length} PO yang sudah ditutup masih menyisakan WIP, total {fmt(total)}. Saat PO ditutup, sisanya otomatis dipindah ke akun selisih produksi.
-        </p>
-      )}
-      detail={detail}>
-      <GlassCard className="p-0 overflow-hidden">
-        {loading ? (
-          <div className="space-y-2 p-4">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
-        ) : rows.length === 0 ? (
-          <EmptyState icon={Calculator} title="Tidak ada sisa WIP" description="Semua PO produksi yang sudah ditutup sudah bersih dari saldo WIP." />
-        ) : (
-          <BreakdownTable columns={WIP_ROW_COLS(setSelected)} rows={rows} testId="po-wip-table" />
-        )}
-      </GlassCard>
-      {confirm && (
-        <Modal title="Tutup sisa WIP" onClose={() => setConfirm(null)} size="sm">
-          <div className="space-y-4">
-            <p className="text-sm text-foreground">
-              Sisa WIP PO {confirm.po_number} sebesar {fmt(confirm.residual)} dipindah ke akun selisih produksi dengan satu jurnal.
-            </p>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setConfirm(null)}>Batal</Button>
-              <Button onClick={clear} disabled={busy} data-testid="po-wip-confirm">{busy ? 'Menyimpan…' : 'Tutup sisa WIP'}</Button>
-            </div>
-          </div>
-        </Modal>
-      )}
-    </PageLayout>
   );
 }

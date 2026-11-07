@@ -18,10 +18,12 @@ const Spinner = () => (
  * (lihat CompactHubContext di moduleAtoms) — dulu judul hub + penjelasan + tab + judul modul + penjelasan
  * menumpuk sehingga angka pertama baru muncul di tengah layar.
  */
-export default function HubTabs({ hubId, title, subtitle, tabs, compactHeaders = false, ...rest }) {
+export default function HubTabs({ hubId, title, subtitle, tabs, compactHeaders = false, value, onValueChange, ...rest }) {
   // PANDUAN_UI G4 (2026-11-04): tab rata kiri selebar isi; aksi tab aktif di kanan baris yang sama
   const [actionsSlot, setActionsSlot] = useState(null);
-  const [tab, setTab] = useState(() => {
+  // Tahap 9 (7 Nov 2026): mode terkendali opsional (`value` + `onValueChange`) — dipakai Input atas nama CMT,
+  // yang modul di dalamnya memindah tab sendiri (mis. Ringkasan → "Penerimaan Material"). Tanpa prop = seperti dulu.
+  const [ownTab, setOwnTab] = useState(() => {
     try {
       const saved = sessionStorage.getItem(`hub_tab_${hubId}`);
       if (saved && tabs.some((t) => t.key === saved)) {
@@ -40,6 +42,9 @@ export default function HubTabs({ hubId, title, subtitle, tabs, compactHeaders =
     } catch (e) { /* sessionStorage tidak tersedia */ }
     return tabs[0]?.key;
   });
+  const controlled = value !== undefined && typeof onValueChange === 'function';
+  const tab = controlled ? value : ownTab;
+  const setTab = controlled ? onValueChange : setOwnTab;
 
   return (
     <div className="space-y-4" data-testid={`${hubId}`}>

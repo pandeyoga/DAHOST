@@ -607,6 +607,7 @@ async def record_buyer_short(db, *, shipment: dict, item: dict, qty_shipped: int
         "finance_decision": "", "finance_decided_by": "", "finance_decided_at": "",
         "resolved_at": "", "resolved_by": "",
         "stock_returned_at": "", "stock_writeoff_at": "",
+        "client_stock_key": item.get("client_stock_key") or "",   # Tahap 9C: barang titipan klien
         "created_by": (actor or {}).get("name", "sistem"),
         "created_at": _now(), "updated_at": _now(),
         "history": [{"at": _now(), "by": (actor or {}).get("name", "sistem"), "action": "open",
@@ -635,7 +636,22 @@ async def record_buyer_short(db, *, shipment: dict, item: dict, qty_shipped: int
     try:
         mat = (await qled.resolve_fg_material(db, material_id=item.get("fg_material_id", ""),
                                               sku=doc["sku"])
-               if item.get("fg_issued_at") else None)
+               if item.get("fg_issued_at") and not item.get("client_stock_key") else None)
+        if item.get("fg_issued_at") and item.get("client_stock_key"):
+            # Tahap 9C: barang klien maklon yang belum sampai kembali ke stok TITIPAN klien
+            from core import client_goods
+            await client_goods.record_for_key(
+                db, key=item["client_stock_key"], qty=short_qty, jenis="kembali_selisih_klien",
+                source_type="buyer_short", source_key=f"buyer_short:{doc['id']}:kembali",
+                ref={"short_id": doc["id"], "short_number": doc["short_number"],
+                     "shipment_id": doc["shipment_id"], "shipment_number": doc["shipment_number"],
+                     "shipment_item_id": item.get("id") or "", "po_id": po_id, "po_number": po_number},
+                actor=actor, notes=f"Selisih kirim {doc['short_number']} — {short_qty} pcs belum sampai di klien",
+                fallback=item)
+            await db.buyer_shipment_items.update_one(
+                {"id": item["id"]},
+                {"$set": {"fg_issued_qty": max(0, _i(item.get("fg_issued_qty")) - short_qty)}})
+            await db[BUYER_SHORT].update_one({"id": doc["id"]}, {"$set": {"stock_returned_at": _now()}})
         if mat:
             await db.buyer_shipment_items.update_one(
                 {"id": item["id"]},
@@ -791,6 +807,13 @@ async def _stock_back(db, item: dict, qty: int, ref: dict, actor: dict | None,
     from core import production_qty_ledger as qled
     if qty <= 0 or not item.get("fg_issued_at"):
         return 0
+    if item.get("client_stock_key"):              # Tahap 9C: barang klien → stok titipan klien
+        from core import client_goods
+        await client_goods.record_for_key(db, key=item["client_stock_key"], qty=qty, jenis="kembali_selisih_klien",
+                                          source_type="buyer_short", ref=ref, actor=actor,
+                                          notes=ref.get("notes", ""), fallback=item)
+        await db.buyer_shipment_items.update_one({"id": item["id"]}, {"$inc": {"fg_issued_qty": -qty}})
+        return qty
     mat = await qled.resolve_fg_material(db, material_id=item.get("fg_material_id", ""),
                                          sku=item.get("sku", ""))
     if not mat:
@@ -819,6 +842,13 @@ async def _stock_out_again(db, item: dict, qty: int, ref: dict, actor: dict | No
     from core import production_qty_ledger as qled
     if qty <= 0 or not item.get("fg_issued_at"):
         return 0
+    if item.get("client_stock_key"):              # Tahap 9C: barang klien → stok titipan klien
+        from core import client_goods
+        await client_goods.record_for_key(db, key=item["client_stock_key"], qty=-qty, jenis="keluar_selisih_batal",
+                                          source_type="buyer_short", ref=ref, actor=actor,
+                                          notes=ref.get("notes", ""), fallback=item)
+        await db.buyer_shipment_items.update_one({"id": item["id"]}, {"$inc": {"fg_issued_qty": qty}})
+        return qty
     mat = await qled.resolve_fg_material(db, material_id=item.get("fg_material_id", ""),
                                          sku=item.get("sku", ""))
     if not mat:
@@ -977,7 +1007,22 @@ async def resolve_buyer_short_manual(db, short_id: str, *, resolution: str, note
     await db[BUYER_SHORT].update_one({"id": short_id}, upd)
 
     writeoff = None
-    if is_loss and s.get("stock_returned_at") and not s.get("stock_writeoff_at"):
+    if is_loss and s.get("stock_returned_at") and not s.get("stock_writeoff_at") and s.get("client_stock_key"):
+        # Tahap 9C: barang klien yang dinyatakan hilang keluar dari stok TITIPAN klien (tanpa jurnal DA)
+        try:
+            from core import client_goods
+            await client_goods.record_for_key(
+                db, key=s["client_stock_key"], qty=-open_qty, jenis="keluar_hilang", source_type="buyer_short",
+                source_key=f"buyer_short:{short_id}:hilang",
+                ref={"short_id": short_id, "short_number": s.get("short_number"), "resolution": resolution,
+                     "po_id": s.get("po_id"), "po_number": s.get("po_number")},
+                actor=actor, notes=f"Selisih {s.get('short_number')} dinyatakan hilang ({BUYER_RESOLUTIONS[resolution]})",
+                allow_negative=True)
+            await db[BUYER_SHORT].update_one({"id": short_id}, {"$set": {"stock_writeoff_at": _now()}})
+            writeoff = open_qty
+        except Exception:  # noqa: BLE001
+            logger.exception("hapus stok titipan klien selisih %s gagal", s.get("short_number"))
+    elif is_loss and s.get("stock_returned_at") and not s.get("stock_writeoff_at"):
         try:
             mat = await qled.resolve_fg_material(db, sku=s.get("sku", ""))
             if mat:

@@ -1,51 +1,36 @@
 /**
- * CMTOverridePortalModule — pintu **"Input Vendor CMT"** (Portal CMT Override).
+ * CMTOverridePortalModule — menu **"Input atas nama CMT"** (Portal Produksi & Maklon, layar yang sama).
  *
- * ═══════════════════════════════════════════════════════════════════════════
- * MASALAH NYATA
- * ═══════════════════════════════════════════════════════════════════════════
- * Sebagian vendor CMT (sub-kontraktor jahit) TIDAK memakai sistem — tidak mau
- * atau tidak bisa login portal. Akibatnya seluruh rantai CMT berhenti di ERP,
- * padahal **tagihan CMT dihitung dari progress produksi**. Data yang tidak
- * masuk = uang yang tidak bisa ditagih/diverifikasi.
+ * MASALAH NYATA: sebagian vendor CMT tidak memakai sistem, padahal tagihan CMT dihitung dari progress yang
+ * mereka isi. Layar ini memberi staf DA jalan resmi untuk mengisi 11 modul Portal Vendor ATAS NAMA vendor —
+ * tanpa akun bayangan, dan jejak "diinput staf DA" tetap tercatat & terlihat (badge di pantau/tagihan).
  *
- * Layar ini memberi staf DA jalan resmi untuk MENGISI 11 modul Portal Vendor
- * CMT **atas nama** vendor — tanpa akun bayangan, tanpa menyamar, dan tanpa
- * menghilangkan jejak siapa yang mengetik.
+ * KEPUTUSAN OWNER (2026-08-08): 1a semua 11 modul di-mirror · 2b hanya admin · superadmin · admin_produksi ·
+ * supervisor_produksi · ppic · 3a jejak tercatat + kelihatan · 4a daftar = vendor aktif di master CMT ·
+ * 5a vendor yang punya akun portal aktif tetap boleh diisi, dengan peringatan dobel input.
  *
- * ═══════════════════════════════════════════════════════════════════════════
- * KEPUTUSAN OWNER (2026-08-08)
- * ═══════════════════════════════════════════════════════════════════════════
- *  1a  SEMUA 11 modul di-mirror (bukan sebagian) — kalau satu modul hilang,
- *      staf tetap mentok dan harus mengejar vendor lewat WhatsApp lagi.
- *  2b  Hanya admin · superadmin · admin_produksi · supervisor_produksi · ppic.
- *  3a  Jejak "diinput staf DA" TERCATAT + KELIHATAN (badge di monitoring/invoice).
- *  4a  Dropdown = SEMUA vendor aktif di master CMT (tanpa flag tambahan).
- *  5a  Vendor yang punya akun portal aktif TETAP BOLEH diisi, tapi diberi
- *      peringatan dobel input + tanggal login terakhirnya.
+ * Tahap 9 (7 Nov 2026, "menu & tampilan dua portal identik"):
+ *   • Vendor dipilih dari TABEL (cari, hanya vendor aktif) — dulu kartu tinggi per vendor (±58 kartu).
+ *   • Rekap harian/mingguan pindah ke tab "Rekap pengisian" (penyaring Harian · Mingguan).
+ *   • Mode isi: cetakan PageLayout + tab standar (HubTabs) untuk 11 modul + Jejak audit — dulu deret tombol
+ *     buatan sendiri dan judul h1 sendiri.
  *
- * ═══════════════════════════════════════════════════════════════════════════
- * CARA KERJA (kenapa 11 komponen vendor TIDAK disalin ulang)
- * ═══════════════════════════════════════════════════════════════════════════
- * Komponen `engine/Vendor*.jsx` dipakai ULANG APA ADANYA. Konteks "sedang
- * mewakili vendor X" dikirim lewat satu header (`setCmtOverrideVendor`) dan
- * scoping-nya dikerjakan backend (`backend/core/cmt_override.py`). Jadi layar
- * ini MUSTAHIL menampilkan angka berbeda dari yang vendor lihat — kodenya sama.
- * Header di-SET saat vendor dipilih dan DI-CLEAR saat keluar/unmount, supaya
- * layar staf yang lain tidak pernah ikut ter-scope tanpa sadar.
+ * CARA KERJA: komponen `engine/Vendor*.jsx` dipakai ULANG APA ADANYA. Konteks "mewakili vendor X" dikirim lewat
+ * satu header (`setCmtOverrideVendor`) dan scoping-nya dikerjakan backend (`core/cmt_override.py`), jadi angka
+ * di sini MUSTAHIL berbeda dari yang vendor lihat. Header di-SET saat vendor dipilih dan DI-CLEAR saat keluar.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  AlertTriangle, ArrowLeft, BarChart2, Bell, BookOpen, Briefcase, Building2,
-  ClipboardCheck, ClipboardList, Hash, Info, Package, RefreshCw, Search, Send,
-  ShieldCheck, TrendingUp, UserCog, Users, Loader2, CheckCircle2,
-} from 'lucide-react';
+import { AlertTriangle, ArrowLeft, RefreshCw, Search, ShieldCheck, UserCog, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { GlassCard } from '@/components/ui/glass';
-import { EmptyState, Notice, StatTile } from './moduleAtoms';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { formatDateTimeID } from '@/lib/format';
 import { apiGet, setCmtOverrideVendor, clearCmtOverrideVendor } from '../../lib/api';
+import PageLayout from './layout/PageLayout';
+import HubTabs from './hubs/HubTabs';
+import { EmptyState, Notice, StatTile } from './moduleAtoms';
 
 import VendorDashboard from './engine/VendorDashboard';
 import VendorReceiving from './engine/VendorReceiving';
@@ -62,212 +47,198 @@ import CMTOverrideRecapPanel from './cmt-override/CMTOverrideRecapPanel';
 
 // Role yang berwenang (harus sama dengan core/cmt_override.OVERRIDE_ROLES).
 const ALLOWED_ROLES = ['admin', 'superadmin', 'admin_produksi', 'supervisor_produksi', 'ppic'];
-
-// 11 modul — urutan & label PERSIS Portal Vendor CMT (VendorPortalApp.jsx),
-// supaya staf yang pernah memandu vendor lewat telepon tidak perlu belajar ulang.
-const MODULES = [
-  { id: 'dashboard', label: 'Ringkasan', icon: BarChart2, Comp: VendorDashboard },
-  { id: 'receiving', label: 'Penerimaan Material', icon: Package, Comp: VendorReceiving },
-  { id: 'inspeksi', label: 'Inspeksi Material', icon: ClipboardCheck, Comp: VendorMaterialInspection },
-  { id: 'material-requests', label: 'Permintaan Material', icon: ClipboardList, Comp: VendorMaterialRequests },
-  { id: 'production-jobs', label: 'Pekerjaan Produksi', icon: Briefcase, Comp: VendorProductionJobs },
-  { id: 'production-guide', label: 'Panduan Produksi', icon: BookOpen, Comp: VendorProductionGuide },
-  { id: 'progress', label: 'Progress Produksi', icon: TrendingUp, Comp: VendorProgress },
-  { id: 'buyer-shipments', label: 'Kirim ke Buyer', icon: Send, Comp: VendorBuyerShipments },
-  { id: 'serial-tracking', label: 'Serial Tracking', icon: Hash, Comp: VendorSerialTracking },
-  { id: 'variance-report', label: 'Laporan Variance', icon: AlertTriangle, Comp: VendorVarianceReport },
-  { id: 'reminders', label: 'Inbox Reminder', icon: Bell, Comp: VendorReminderInbox },
-];
-
-const fmtDateTime = (v) => {
-  if (!v) return '—';
-  try {
-    return new Date(v).toLocaleString('id-ID', {
-      day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
-    });
-  } catch { return String(v); }
+const ROLE_LABEL = {
+  admin: 'Admin', superadmin: 'Superadmin', admin_produksi: 'Admin produksi',
+  supervisor_produksi: 'Supervisor produksi', ppic: 'PPIC',
 };
 
-// ═════════════════════════════════════════════════════════════════════════════
+// 11 modul — urutan & label sama dengan Portal Vendor CMT (VendorPortalApp.jsx), supaya staf yang memandu
+// vendor lewat telepon tidak perlu belajar ulang.
+const MODULES = [
+  { id: 'dashboard', label: 'Ringkasan', Comp: VendorDashboard },
+  { id: 'receiving', label: 'Penerimaan material', Comp: VendorReceiving },
+  { id: 'inspeksi', label: 'Inspeksi material', Comp: VendorMaterialInspection },
+  { id: 'material-requests', label: 'Permintaan material', Comp: VendorMaterialRequests },
+  { id: 'production-jobs', label: 'Pekerjaan produksi', Comp: VendorProductionJobs },
+  { id: 'production-guide', label: 'Panduan produksi', Comp: VendorProductionGuide },
+  { id: 'progress', label: 'Progress produksi', Comp: VendorProgress },
+  { id: 'buyer-shipments', label: 'Kirim ke DA', Comp: VendorBuyerShipments },
+  { id: 'serial-tracking', label: 'Lacak serial', Comp: VendorSerialTracking },
+  { id: 'variance-report', label: 'Laporan selisih', Comp: VendorVarianceReport },
+  { id: 'reminders', label: 'Pengingat', Comp: VendorReminderInbox },
+];
+
+const fmtDT = (v) => (v ? formatDateTimeID(v) : '—');
+const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
+
 function AccessDenied({ role }) {
   return (
-    <div data-testid="cmt-override-denied">
-      <GlassCard className="p-4 text-center">
-        <ShieldCheck className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
-        <h2 className="text-lg font-semibold text-foreground">Tidak berwenang</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Mengisi data atas nama vendor CMT berpengaruh langsung ke <b>tagihan CMT</b>,
-          jadi hanya dibuka untuk staf yang memang memegang CMT harian.
-        </p>
-        <p className="mt-3 text-xs text-muted-foreground">
-          Role Anda: <span className="tabular-nums font-semibold text-foreground">{role || '—'}</span>
-          <br />Role yang diizinkan: <span className="tabular-nums">{ALLOWED_ROLES.join(' · ')}</span>
-        </p>
+    <PageLayout testId="cmt-override-denied" title="Input atas nama CMT"
+      subtitle="Mengisi data atas nama vendor CMT berpengaruh langsung ke tagihan CMT.">
+      <GlassCard>
+        <EmptyState icon={ShieldCheck} title="Tidak berwenang"
+          description={`Layar ini hanya untuk: ${ALLOWED_ROLES.map((r) => ROLE_LABEL[r]).join(', ')}. Peran Anda: ${ROLE_LABEL[role] || role || '—'}.`} />
       </GlassCard>
-    </div>
+    </PageLayout>
   );
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-function VendorCard({ v, onPick }) {
-  const pending = Number(v.pending_actions || 0);
+// ══════════════════════════════════════════════════════════════════════════════
+// Tab "Pilih vendor" — tabel vendor aktif
+// ══════════════════════════════════════════════════════════════════════════════
+function VendorPicker({ vendors, loading, err, onPick, onReload }) {
+  const [search, setSearch] = useState('');
+  const rows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const list = q ? vendors.filter((v) => `${v.name} ${v.code} ${v.contact_name}`.toLowerCase().includes(q)) : vendors.slice();
+    list.sort((a, b) => (Number(b.pending_actions || 0) - Number(a.pending_actions || 0)) || String(a.name).localeCompare(String(b.name)));
+    return list;
+  }, [vendors, search]);
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 25);
+  const withAccount = vendors.filter((v) => v.has_active_portal_account).length;
+
   return (
-    <button
-      type="button"
-      onClick={() => onPick(v)}
-      data-testid={`cmt-override-vendor-${v.id}`}
-      className="group flex w-full flex-col gap-3 rounded-xl border border-border bg-card p-4 text-left shadow-sm transition-all hover:border-[hsl(var(--primary)/0.35)] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate font-semibold text-foreground">{v.name}</p>
-          <p className="mt-0.5 tabular-nums text-xs text-muted-foreground">{v.code || '—'}</p>
-        </div>
-        <div className="flex flex-col items-end gap-1">
-          {pending > 0 && (
-            <span className="inline-flex items-center rounded-full bg-[hsl(var(--primary)/0.15)] px-2 py-0.5 text-[11px] font-bold text-[hsl(var(--primary))]">
-              {pending} perlu diisi
-            </span>
-          )}
-          {!v.is_active && (
-            <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-              non-aktif
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2 text-xs">
-        <div className="rounded-lg bg-muted/50 px-2 py-1.5">
-          <p className="text-muted-foreground">Kiriman masuk</p>
-          <p className="font-bold text-foreground">{v.incoming_shipments || 0}</p>
-        </div>
-        <div className="rounded-lg bg-muted/50 px-2 py-1.5">
-          <p className="text-muted-foreground">Belum inspeksi</p>
-          <p className="font-bold text-foreground">{v.uninspected_shipments || 0}</p>
-        </div>
-        <div className="rounded-lg bg-muted/50 px-2 py-1.5">
-          <p className="text-muted-foreground">Job jalan</p>
-          <p className="font-bold text-foreground">{v.active_jobs || 0}</p>
-        </div>
-        <div className="rounded-lg bg-muted/50 px-2 py-1.5">
-          <p className="text-muted-foreground">Reminder</p>
-          <p className="font-bold text-foreground">{v.open_reminders || 0}</p>
-        </div>
-      </div>
-
-      {v.has_active_portal_account ? (
-        <Notice tone="warning" icon={AlertTriangle} testId={`cmt-override-warn-${v.id}`}
-          className="px-2.5 py-2 text-[11px] leading-snug">
-          Punya akun portal aktif — terakhir login <b>{fmtDateTime(v.last_login_at)}</b>.
-          Hati-hati dobel input.
-        </Notice>
-      ) : (
-        <Notice tone="success" icon={CheckCircle2} className="px-2.5 py-2 text-[11px] font-medium">
-          Tanpa akun portal — memang harus diisi staf
-        </Notice>
-      )}
-
-      <span className="mt-auto text-xs font-semibold text-[hsl(var(--primary))] group-hover:underline">
-        Isi atas nama vendor ini →
-      </span>
-    </button>
+    <PageLayout testId="cmt-override-picker" title="Pilih vendor" subtitle="Vendor CMT aktif yang bisa diisi atas namanya."
+      filters={<div className="relative w-72 max-w-full">
+        <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nama / kode / kontak vendor…"
+          className="pl-8 h-9" data-testid="cmt-override-search" />
+      </div>}
+      tools={<Button variant="outline" size="icon" onClick={onReload} title="Muat ulang" aria-label="Muat ulang" data-testid="cmt-override-refresh">
+        <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+      </Button>}
+      summary={<>
+        {err && <Notice tone="danger" icon={AlertTriangle} testId="cmt-override-error">{err}</Notice>}
+        <p className="text-sm text-muted-foreground" data-testid="cmt-override-summary">
+          {fmtNum(vendors.length)} vendor aktif{withAccount > 0 ? ` · ${fmtNum(withAccount)} punya akun Portal Vendor (hati-hati dobel input)` : ''}.
+          Setiap dokumen yang Anda simpan tercatat atas nama vendor, dengan nama Anda dan tanda “diinput staf DA”.
+        </p>
+      </>}
+      footer={rows.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
+      <GlassCard className="p-0 overflow-hidden">
+        {loading && !vendors.length ? (
+          <div className="p-4 text-sm text-muted-foreground">Memuat vendor…</div>
+        ) : !paged.length ? (
+          <div data-testid="cmt-override-empty">
+            <EmptyState icon={Users} title={vendors.length ? 'Tidak ada vendor yang cocok' : 'Belum ada vendor CMT aktif'}
+              description={vendors.length ? 'Ubah kata pencarian.' : 'Tambahkan vendor lewat menu Vendor CMT.'}
+              action={search ? <Button variant="outline" size="sm" onClick={() => setSearch('')}><X className="w-3.5 h-3.5" />Hapus pencarian</Button> : null} />
+          </div>
+        ) : (
+          <Table data-testid="cmt-override-vendor-table">
+            <TableHeader><TableRow>
+              <TableHead>Vendor</TableHead><TableHead>Kontak</TableHead>
+              <TableHead className="text-right">Kiriman masuk</TableHead><TableHead className="text-right">Belum inspeksi</TableHead>
+              <TableHead className="text-right">Job jalan</TableHead><TableHead className="text-right">Pengingat</TableHead>
+              <TableHead className="text-right">Perlu diisi</TableHead><TableHead>Akun Portal Vendor</TableHead>
+              <TableHead className="text-right">Aksi</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>
+              {paged.map((v) => (
+                <TableRow key={v.id} data-testid={`cmt-override-vendor-${v.id}`}>
+                  <TableCell>
+                    <span className="block font-semibold text-foreground">{v.name}</span>
+                    <span className="block text-xs text-muted-foreground">{v.code || '—'}</span>
+                  </TableCell>
+                  <TableCell className="text-sm">{v.contact_name || '—'}{v.contact_phone ? <span className="block text-xs text-muted-foreground">{v.contact_phone}</span> : null}</TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtNum(v.incoming_shipments)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtNum(v.uninspected_shipments)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtNum(v.active_jobs)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtNum(v.open_reminders)}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {Number(v.pending_actions || 0) > 0
+                      ? <span className="font-semibold text-[hsl(var(--warning))]">{fmtNum(v.pending_actions)}</span>
+                      : <span className="text-muted-foreground">0</span>}
+                  </TableCell>
+                  <TableCell className="text-xs" data-testid={`cmt-override-account-${v.id}`}>
+                    {v.has_active_portal_account ? (
+                      <span className="text-[hsl(var(--warning))]">Aktif · {v.last_login_at ? `login terakhir ${fmtDT(v.last_login_at)}` : 'belum pernah login'}</span>
+                    ) : <span className="text-muted-foreground">Tanpa akun — memang diisi staf</span>}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button size="sm" variant="outline" onClick={() => onPick(v)} data-testid={`cmt-override-pick-${v.id}`}>
+                      <UserCog className="w-3.5 h-3.5" />Isi atas nama
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </GlassCard>
+    </PageLayout>
   );
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
+// Tab "Jejak audit" (mode isi)
+// ══════════════════════════════════════════════════════════════════════════════
 function AuditPanel({ vendorName }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-
   const load = useCallback(async () => {
     setLoading(true);
-    try {
-      setData(await apiGet('/cmt-override/audit?limit=100'));
-    } catch (e) {
-      toast.error(e.message || 'Gagal memuat jejak audit');
-      setData({ entries: [], totals: { staff: 0, vendor: 0 } });
-    } finally { setLoading(false); }
+    try { setData(await apiGet('/cmt-override/audit?limit=100')); }
+    catch (e) { toast.error(e.message || 'Gagal memuat jejak audit'); setData({ entries: [], totals: { staff: 0, vendor: 0 } }); }
+    finally { setLoading(false); }
   }, []);
-
   useEffect(() => { load(); }, [load]);
-
   const totals = data?.totals || { staff: 0, vendor: 0 };
   const entries = data?.entries || [];
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(entries, 25);
 
   return (
     <div className="space-y-4" data-testid="cmt-override-audit-panel">
-      <GlassCard className="p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 className="font-semibold text-foreground">Jejak input — {vendorName}</h3>
-            <p className="mt-1 max-w-2xl text-xs text-muted-foreground">
-              Tagihan CMT dihitung dari angka di dokumen-dokumen ini. Panel ini memisahkan
-              mana yang <b>diketik staf DA</b> dan mana yang <b>diisi vendor sendiri</b>,
-              supaya kalau nanti ada selisih tagihan sumbernya bisa ditelusuri.
-            </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <p className="text-sm text-muted-foreground max-w-3xl">
+          Tagihan CMT dihitung dari dokumen-dokumen ini. Daftar ini memisahkan yang diketik staf DA dari yang diisi
+          {` ${vendorName} `}sendiri, supaya selisih tagihan bisa ditelusuri.
+        </p>
+        <Button size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="cmt-override-audit-refresh">
+          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <StatTile label="Diinput staf DA" accent={Number(totals.staff) ? 'warning' : 'muted'}
+          value={<span data-testid="cmt-override-audit-staff">{totals.staff}</span>} />
+        <StatTile label="Diisi vendor sendiri" accent={Number(totals.vendor) ? 'success' : 'muted'}
+          value={<span data-testid="cmt-override-audit-vendor">{totals.vendor}</span>} />
+        <StatTile label="Total dokumen" value={(totals.staff || 0) + (totals.vendor || 0)} />
+      </div>
+      <GlassCard className="p-0 overflow-hidden">
+        {loading ? (
+          <div className="p-4 text-sm text-muted-foreground">Memuat jejak…</div>
+        ) : !entries.length ? (
+          <div data-testid="cmt-override-audit-empty">
+            <EmptyState icon={UserCog} title="Belum ada input staf DA untuk vendor ini"
+              description="Dokumen yang Anda simpan atas nama vendor akan tercatat di sini." />
           </div>
-          <Button size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang"
-            data-testid="cmt-override-audit-refresh">
-            <RefreshCw className="h-4 w-4" />
-          </Button>
-        </div>
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <StatTile label="Diinput staf DA" accent={Number(totals.staff) ? 'warning' : 'muted'}
-            value={<span data-testid="cmt-override-audit-staff">{totals.staff}</span>} />
-          <StatTile label="Diisi vendor sendiri" accent={Number(totals.vendor) ? 'success' : 'muted'}
-            value={<span data-testid="cmt-override-audit-vendor">{totals.vendor}</span>} />
-          <StatTile label="Total dokumen" value={(totals.staff || 0) + (totals.vendor || 0)} />
-        </div>
-      </GlassCard>
-
-      <GlassCard className="overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/60">
-              <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <th className="px-4 py-2.5">Modul</th>
-                <th className="px-4 py-2.5">Dokumen</th>
-                <th className="px-4 py-2.5">Diinput oleh</th>
-                <th className="px-4 py-2.5">Role</th>
-                <th className="px-4 py-2.5">Waktu</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {loading && (
-                <tr><td colSpan={5} className="py-4 text-center text-muted-foreground">
-                  <Loader2 className="mx-auto h-5 w-5 animate-spin" />
-                </td></tr>
-              )}
-              {!loading && entries.length === 0 && (
-                <tr><td colSpan={5} data-testid="cmt-override-audit-empty">
-                  <EmptyState icon={UserCog} title="Belum ada input staf DA untuk vendor ini"
-                    description="Dokumen yang Anda simpan atas nama vendor akan tercatat di sini." />
-                </td></tr>
-              )}
-              {!loading && entries.map((e, i) => (
-                <tr key={`${e.collection}-${e.doc_id}-${i}`} className="hover:bg-muted/40">
-                  <td className="px-4 py-2.5 font-medium text-foreground">{e.module}</td>
-                  <td className="px-4 py-2.5 tabular-nums text-xs text-[hsl(var(--primary))]">{e.reference || '—'}</td>
-                  <td className="px-4 py-2.5">
-                    <span className="inline-flex items-center gap-1.5">
-                      <UserCog className="h-3.5 w-3.5 text-[hsl(var(--warning))]" />
-                      <span className="font-medium text-foreground">{e.entered_by || '—'}</span>
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 tabular-nums text-xs text-muted-foreground">{e.entered_by_role || '—'}</td>
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">{fmtDateTime(e.entered_at)}</td>
-                </tr>
+        ) : (
+          <Table>
+            <TableHeader><TableRow>
+              <TableHead>Modul</TableHead><TableHead>Dokumen</TableHead><TableHead>Diinput oleh</TableHead>
+              <TableHead>Peran</TableHead><TableHead>Waktu</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>
+              {paged.map((e, i) => (
+                <TableRow key={`${e.collection}-${e.doc_id}-${i}`}>
+                  <TableCell className="font-medium">{e.module}</TableCell>
+                  <TableCell className="text-xs text-[hsl(var(--primary))]">{e.reference || '—'}</TableCell>
+                  <TableCell>{e.entered_by || '—'}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{ROLE_LABEL[e.entered_by_role] || e.entered_by_role || '—'}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{fmtDT(e.entered_at)}</TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        )}
       </GlassCard>
+      {entries.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}
     </div>
   );
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
 export default function CMTOverridePortalModule({ user, token }) {
   const role = (user?.role || '').toLowerCase();
   const allowed = ALLOWED_ROLES.includes(role);
@@ -275,21 +246,19 @@ export default function CMTOverridePortalModule({ user, token }) {
   const [vendors, setVendors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
-  const [search, setSearch] = useState('');
-  const [showInactive, setShowInactive] = useState(false);
   const [selected, setSelected] = useState(null);
   const [activeModule, setActiveModule] = useState('dashboard');
   const [warnOpen, setWarnOpen] = useState(true);
   const mounted = useRef(true);
 
-  const loadVendors = useCallback(async (inactive) => {
+  const loadVendors = useCallback(async () => {
     setLoading(true); setErr('');
-    // Daftar vendor dibaca TANPA konteks override (kita belum memilih siapa pun).
+    // Daftar vendor dibaca TANPA konteks override (kita belum memilih siapa pun). Hanya vendor aktif (4a).
     clearCmtOverrideVendor();
     try {
-      const d = await apiGet(`/cmt-override/vendors${inactive ? '?include_inactive=true' : ''}`);
+      const d = await apiGet('/cmt-override/vendors');
       if (!mounted.current) return;
-      setVendors(Array.isArray(d?.vendors) ? d.vendors : []);
+      setVendors(Array.isArray(d?.vendors) ? d.vendors.filter((v) => v.is_active !== false) : []);
     } catch (e) {
       if (!mounted.current) return;
       setErr(e.message || 'Gagal memuat daftar vendor CMT');
@@ -299,281 +268,91 @@ export default function CMTOverridePortalModule({ user, token }) {
 
   useEffect(() => {
     mounted.current = true;
-    if (allowed) loadVendors(showInactive);
-    // Jaring pengaman MUTLAK: begitu layar ini ditinggalkan, konteks override
-    // WAJIB hilang — kalau tidak, layar staf berikutnya bisa diam-diam ter-scope
-    // ke satu vendor dan menampilkan angka yang salah tanpa ada yang sadar.
+    if (allowed) loadVendors();
+    // Jaring pengaman MUTLAK: begitu layar ini ditinggalkan, konteks override WAJIB hilang — kalau tidak,
+    // layar staf berikutnya bisa diam-diam ter-scope ke satu vendor dan menampilkan angka yang salah.
     return () => { mounted.current = false; clearCmtOverrideVendor(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allowed, showInactive]);
+  }, [allowed, loadVendors]);
 
-  // Dipanggil dari klik: header di-set SINKRON sebelum state berubah, karena
-  // efek komponen ANAK berjalan LEBIH DULU daripada efek komponen induk di React
-  // — kalau menunggu useEffect, permintaan pertama tiap modul akan terkirim
-  // tanpa header dan staf melihat data seluruh vendor sekejap.
-  //
-  // `moduleId` opsional: dari **Rekap Harian**, chip "belum diisi" membawa modul
-  // tujuannya, jadi satu klik langsung membuka tab yang tepat. Tanpa ini staf
-  // harus mengingat kolom mana yang merah lalu menebak tabnya — dan rekapnya
-  // berhenti jadi alat kerja, cuma jadi laporan.
-  const pickVendor = (v, moduleId = null) => {
+  // Header di-set SINKRON sebelum state berubah: efek komponen ANAK berjalan lebih dulu daripada efek induk,
+  // jadi menunggu useEffect membuat permintaan pertama tiap modul terkirim tanpa header.
+  // `moduleId` opsional: dari Rekap Harian, kotak "belum diisi" membawa modul tujuannya.
+  const pickVendor = useCallback((v, moduleId = null) => {
     setCmtOverrideVendor(v.id);
     setSelected(v);
-    setActiveModule(MODULES.some(m => m.id === moduleId) ? moduleId : 'dashboard');
+    setActiveModule(MODULES.some((m) => m.id === moduleId) ? moduleId : 'dashboard');
     setWarnOpen(true);
-  };
+  }, []);
 
-  // Dari Rekap Harian: barisnya dikirim UTUH, tapi kartu vendor yang sudah dimuat
-  // lebih lengkap (daftar akun untuk peringatan dobel input) ⇒ pakai itu bila ada.
-  const pickFromRecap = (row, moduleId) => {
+  const pickFromRecap = useCallback((row, moduleId) => {
     if (!row?.vendor_id) return;
-    const known = vendors.find(v => v.id === row.vendor_id);
+    const known = vendors.find((v) => v.id === row.vendor_id);
     pickVendor(known || {
-      id: row.vendor_id,
-      name: row.vendor_name,
-      code: row.vendor_code,
-      has_active_portal_account: row.has_active_portal_account,
-      last_login_at: row.last_login_at,
-      accounts: [],
+      id: row.vendor_id, name: row.vendor_name, code: row.vendor_code,
+      has_active_portal_account: row.has_active_portal_account, last_login_at: row.last_login_at, accounts: [],
     }, moduleId);
-  };
+  }, [vendors, pickVendor]);
 
   const backToPicker = () => {
     clearCmtOverrideVendor();
     setSelected(null);
-    loadVendors(showInactive);
+    loadVendors();
   };
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const rows = q
-      ? vendors.filter(v => `${v.name} ${v.code} ${v.contact_name}`.toLowerCase().includes(q))
-      : vendors.slice();
-    rows.sort((a, b) => (Number(b.pending_actions || 0) - Number(a.pending_actions || 0))
-      || String(a.name).localeCompare(String(b.name)));
-    return rows;
-  }, [vendors, search]);
-
-  // `user` sintetis untuk komponen vendor: mereka hanya memakai `user.vendor_id`
-  // (payload) dan `user.name` (judul). Sumber kebenaran tetap backend.
+  // `user` sintetis untuk komponen vendor: mereka hanya memakai `user.vendor_id` (payload) dan `user.name` (judul).
   const vendorUser = useMemo(() => (selected ? {
-    id: user?.id,
-    name: selected.name,
-    role: 'cmt_vendor',
-    vendor_id: selected.id,
-    cmt_vendor_id: selected.id,
+    id: user?.id, name: selected.name, role: 'cmt_vendor', vendor_id: selected.id, cmt_vendor_id: selected.id,
   } : null), [selected, user?.id]);
 
-  if (!allowed) return <AccessDenied role={user?.role} />;
+  const moduleTabs = useMemo(() => (selected ? [
+    ...MODULES.map((m) => ({
+      key: m.id, label: m.label, Component: m.Comp,
+      props: { token, user: vendorUser, onNavigate: setActiveModule },
+    })),
+    { key: '__audit', label: 'Jejak audit', Component: AuditPanel, props: { vendorName: selected.name } },
+  ] : []), [selected, token, vendorUser]);
 
-  // ── LAYAR 1: pilih vendor ────────────────────────────────────────────────
+  const pickerTabs = useMemo(() => [
+    { key: 'vendor', label: 'Pilih vendor', Component: VendorPicker,
+      props: { vendors, loading, err, onPick: pickVendor, onReload: loadVendors } },
+    { key: 'rekap', label: 'Rekap pengisian', Component: CMTOverrideRecapPanel, props: { onOpenVendor: pickFromRecap } },
+  ], [vendors, loading, err, pickVendor, loadVendors, pickFromRecap]);
+
+  if (!allowed) return <AccessDenied role={role} />;
+
+  // ── LAYAR 1: pilih vendor / rekap ───────────────────────────────────────
   if (!selected) {
-    const withAccount = vendors.filter(v => v.has_active_portal_account).length;
-    return (
-      <div className="space-y-4" data-testid="cmt-override-picker">
-        <GlassCard className="p-4">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-[hsl(var(--primary))]">
-                <UserCog className="h-6 w-6 text-white" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-foreground">Input Vendor CMT</h1>
-                <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                  Untuk vendor CMT yang <b>tidak memakai sistem</b>. Anda membuka portal
-                  vendor mereka dan mengisinya <b>atas nama vendor</b> — 11 modul, sama
-                  persis dengan yang vendor lihat. Setiap dokumen yang Anda simpan
-                  menyimpan nama Anda dan muncul dengan badge{' '}
-                  <span className="whitespace-nowrap rounded-full border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.15)] px-1.5 py-0.5 text-[11px] font-semibold text-[hsl(var(--warning))]">
-                    diinput staf DA
-                  </span>{' '}
-                  di layar monitoring &amp; invoice.
-                </p>
-              </div>
-            </div>
-            <Button variant="outline" size="icon" onClick={() => loadVendors(showInactive)}
-              title="Muat ulang" aria-label="Muat ulang" data-testid="cmt-override-refresh">
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            </Button>
-          </div>
-        </GlassCard>
-
-        {/* ══ REKAP — blok PERTAMA (keputusan owner 4a) ══════════════════════
-            Staf membuka pintu ini tiap pagi. Yang pertama dia butuh bukan daftar
-            vendor, tapi jawaban "siapa yang belum diisi hari ini" — lalu klik
-            langsung dari situ. Kartu pilih vendor turun ke bawah sebagai
-            pelengkap (mencari vendor tertentu di luar urusan harian).
-
-            FASE 4: panelnya kini punya DUA tab — **Harian** (tetap yang pertama
-            tampil) dan **Mingguan** ("siapa yang sering bolong 7 hari terakhir").
-            Panel yang memegang tanggal, supaya klik kotak hari di tab Mingguan
-            bisa membuka tab Harian pada tanggal itu. */}
-        <CMTOverrideRecapPanel onOpenVendor={pickFromRecap} />
-
-        <GlassCard className="p-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
-              <Building2 className="h-4 w-4 text-muted-foreground" />
-              <h2 className="text-sm font-bold text-foreground">Semua vendor CMT</h2>
-            </div>
-            <div className="relative min-w-[240px] flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Cari nama / kode / kontak vendor…"
-                className="pl-9"
-                data-testid="cmt-override-search"
-              />
-            </div>
-            <label className="flex cursor-pointer select-none items-center gap-2 text-sm text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={showInactive}
-                onChange={e => setShowInactive(e.target.checked)}
-                className="h-4 w-4 rounded border-border"
-                data-testid="cmt-override-show-inactive"
-              />
-              Tampilkan vendor non-aktif
-            </label>
-            <span className="inline-flex items-center gap-1.5 rounded-lg bg-muted/60 px-2.5 py-1.5 text-xs text-muted-foreground">
-              <Building2 className="h-3.5 w-3.5" /> {vendors.length} vendor
-            </span>
-            {withAccount > 0 && (
-              <span className="inline-flex items-center gap-1.5 rounded-lg border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] px-2.5 py-1.5 text-xs font-medium text-[hsl(var(--warning))]">
-                <AlertTriangle className="h-3.5 w-3.5" /> {withAccount} punya akun portal aktif
-              </span>
-            )}
-          </div>
-        </GlassCard>
-
-        {err && (
-          <Notice tone="danger" icon={AlertTriangle} testId="cmt-override-error">{err}</Notice>
-        )}
-
-        {loading ? (
-          <GlassCard className="flex items-center justify-center p-4">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          </GlassCard>
-        ) : filtered.length === 0 ? (
-          <GlassCard data-testid="cmt-override-empty">
-            <EmptyState icon={Users} title="Tidak ada vendor CMT yang cocok"
-              description={<>Ubah kata pencarian, atau tambahkan vendor lewat menu <b>Vendor CMT</b>.</>} />
-          </GlassCard>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {filtered.map(v => <VendorCard key={v.id} v={v} onPick={pickVendor} />)}
-          </div>
-        )}
-      </div>
-    );
+    return <HubTabs hubId="cmt-override-portal" title="Input atas nama CMT" compactHeaders tabs={pickerTabs} />;
   }
 
-  // ── LAYAR 2: mode isi atas nama vendor ───────────────────────────────────
-  const Active = MODULES.find(m => m.id === activeModule);
-
+  // ── LAYAR 2: mode isi atas nama vendor ──────────────────────────────────
   return (
-    <div className="space-y-4" data-testid="cmt-override-active">
-      {/* Spanduk mode override — SELALU terlihat (sticky) supaya tidak ada yang
-          mengisi tanpa sadar sedang mewakili vendor. */}
-      <Notice tone="warning" icon={UserCog} title="Mode isi atas nama vendor"
-        className="sticky top-0 z-30 items-center shadow-sm"
-        action={
-          <Button size="sm" variant="outline" onClick={backToPicker}
-            className="border-[hsl(var(--warning)/0.35)] bg-card text-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.15)]"
-            data-testid="cmt-override-change-vendor">
-            <ArrowLeft className="h-3.5 w-3.5" /> Ganti vendor
-          </Button>
-        }>
-        <p className="truncate">
-          <b data-testid="cmt-override-vendor-name">{selected.name}</b>
-          {selected.code ? <span className="tabular-nums text-xs"> · {selected.code}</span> : null}
-          <span> — diinput oleh </span>
-          <b data-testid="cmt-override-staff-name">{user?.name || '—'}</b>
-          <span className="tabular-nums text-xs"> ({role})</span>
-        </p>
-      </Notice>
-
-      {/* Peringatan dobel input (keputusan 5a) — memberi tahu, TIDAK memblokir. */}
-      {selected.has_active_portal_account && warnOpen && (
-        <Notice tone="warning" icon={AlertTriangle} title="Hati-hati dobel input"
-          testId="cmt-override-double-warning"
-          action={
-            <Button size="sm" variant="outline" onClick={() => setWarnOpen(false)}
-              data-testid="cmt-override-warning-dismiss">
-              Mengerti
-            </Button>
-          }>
-          <p>
-            Vendor ini <b>punya akun portal aktif</b> (terakhir login{' '}
-            <b>{fmtDateTime(selected.last_login_at)}</b>). Kalau vendor juga mengisi
-            sendiri, angka progress bisa terhitung dua kali — dan tagihan CMT ikut
-            salah. Pastikan sudah sepakat siapa yang mengisi hari ini.
-          </p>
-          {Array.isArray(selected.accounts) && selected.accounts.length > 0 && (
-            <ul className="mt-2 space-y-0.5 text-xs text-muted-foreground">
-              {selected.accounts.map(a => (
-                <li key={a.email} className="tabular-nums">
-                  {a.email} — {a.is_active ? 'aktif' : 'non-aktif'} · login terakhir {fmtDateTime(a.last_login_at)}
-                </li>
-              ))}
-            </ul>
-          )}
+    <PageLayout testId="cmt-override-active" title={`Atas nama ${selected.name}`}
+      subtitle={`Layar ini sama persis dengan Portal Vendor milik ${selected.name}. Yang Anda simpan tercatat dengan nama Anda.`}
+      actions={<Button variant="outline" onClick={backToPicker} data-testid="cmt-override-change-vendor"><ArrowLeft className="h-4 w-4" />Ganti vendor</Button>}
+      summary={<>
+        {/* Spanduk mode override — SELALU terlihat (sticky) supaya tidak ada yang mengisi tanpa sadar. */}
+        <Notice tone="warning" icon={UserCog} title="Mode isi atas nama vendor" className="sticky top-0 z-30 shadow-sm">
+          <span data-testid="cmt-override-vendor-name" className="font-semibold">{selected.name}</span>
+          {selected.code ? ` · ${selected.code}` : ''} — diinput oleh{' '}
+          <span data-testid="cmt-override-staff-name" className="font-semibold">{user?.name || '—'}</span>
+          {` (${ROLE_LABEL[role] || role})`}
         </Notice>
-      )}
-
-      {/* Tab 11 modul + jejak audit */}
-      <GlassCard className="p-2">
-        <div className="flex gap-1 overflow-x-auto pb-1">
-          {MODULES.map(m => {
-            const Icon = m.icon;
-            const on = activeModule === m.id;
-            return (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => setActiveModule(m.id)}
-                data-testid={`cmt-override-tab-${m.id}`}
-                className={`flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
-                  on ? 'bg-[hsl(var(--primary))] text-white shadow-sm' : 'text-muted-foreground hover:bg-muted'
-                }`}
-              >
-                <Icon className="h-3.5 w-3.5" /> {m.label}
-              </button>
-            );
-          })}
-          <button
-            type="button"
-            onClick={() => setActiveModule('__audit')}
-            data-testid="cmt-override-tab-audit"
-            className={`flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
-              activeModule === '__audit'
-                ? 'bg-[hsl(var(--warning))] text-white shadow-sm'
-                : 'text-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.1)]'
-            }`}
-          >
-            <ShieldCheck className="h-3.5 w-3.5" /> Jejak audit
-          </button>
-        </div>
-      </GlassCard>
-
-      <GlassCard className="p-4">
-        <div className="mb-3 flex items-center gap-2 border-b border-border pb-3">
-          <Info className="h-4 w-4 flex-shrink-0 text-[hsl(var(--primary))]" />
-          <p className="text-xs text-muted-foreground">
-            {activeModule === '__audit'
-              ? 'Transparansi: dokumen mana yang diketik staf DA vs diisi vendor sendiri.'
-              : <>Layar ini <b>persis</b> yang dilihat vendor di portalnya. Yang Anda simpan
-                  tercatat atas nama <b>{selected.name}</b> dengan jejak nama Anda.</>}
-          </p>
-        </div>
-
-        {activeModule === '__audit'
-          ? <AuditPanel vendorName={selected.name} />
-          : Active
-            ? <Active.Comp token={token} user={vendorUser} onNavigate={setActiveModule} />
-            : null}
-      </GlassCard>
-    </div>
+        {/* Peringatan dobel input (keputusan 5a) — memberi tahu, TIDAK memblokir. */}
+        {selected.has_active_portal_account && warnOpen && (
+          <Notice tone="warning" icon={AlertTriangle} title="Hati-hati dobel input" testId="cmt-override-double-warning"
+            action={<Button size="sm" variant="outline" onClick={() => setWarnOpen(false)} data-testid="cmt-override-warning-dismiss">Mengerti</Button>}>
+            Vendor ini punya akun Portal Vendor aktif ({selected.last_login_at ? `terakhir login ${fmtDT(selected.last_login_at)}` : 'belum pernah login'}). Kalau vendor juga
+            mengisi sendiri, progress bisa terhitung dua kali dan tagihan CMT ikut salah.
+            {Array.isArray(selected.accounts) && selected.accounts.length > 0 && (
+              <span className="block mt-1 text-xs text-muted-foreground">
+                {selected.accounts.map((a) => `${a.email} (${a.is_active ? 'aktif' : 'nonaktif'}, ${a.last_login_at ? `login ${fmtDT(a.last_login_at)}` : 'belum pernah login'})`).join(' · ')}
+              </span>
+            )}
+          </Notice>
+        )}
+      </>}>
+      <HubTabs hubId="cmt-override-modules" tabs={moduleTabs} value={activeModule} onValueChange={setActiveModule} />
+    </PageLayout>
   );
 }

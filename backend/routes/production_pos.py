@@ -234,6 +234,13 @@ async def get_pos(request: Request):
                        'po_accessories': serialize_doc(po_accessories),
                        'po_accessories_count': len(po_accessories)})
 
+    # Tahap 9 (keputusan 10): tanda "Sampel belum disetujui" untuk PO maklon — satu helper
+    # (`core.sample_status`) dipakai daftar & rincian PO. Hanya peringatan, tidak memblokir apa pun.
+    from core import sample_status as smp
+    flags = await smp.sample_flags(db, pos)
+    for row in result:
+        row['sample_flag'] = flags.get(row.get('id'))
+
     if wants:
         return _paginated_envelope(result, total, page, per_page)
     return result
@@ -948,31 +955,11 @@ async def update_po(po_id: str, request: Request):
 
     # ─── Accessories delta update ─────────────────────────────────────
     if acc_payload is not None:
-        existing_accs = await db.po_accessories.find({'po_id': po_id}).to_list(None)
-        existing_acc_by_id = {a['id']: a for a in existing_accs}
-        payload_acc_ids = set()
-        for raw in acc_payload:
-            if not (raw.get('accessory_name') or raw.get('accessory_id')):
-                continue
-            acc_id = raw.get('id')
-            doc_fields = {
-                'po_id': po_id,
-                'accessory_id': raw.get('accessory_id'),
-                'accessory_name': raw.get('accessory_name', ''),
-                'accessory_code': raw.get('accessory_code', ''),
-                'qty_needed': accessory_qty(raw.get('qty_needed')),
-                'unit': raw.get('unit', 'pcs'),
-                'notes': raw.get('notes', ''),
-            }
-            if acc_id and acc_id in existing_acc_by_id:
-                payload_acc_ids.add(acc_id)
-                await db.po_accessories.update_one({'id': acc_id}, {'$set': {**doc_fields, 'updated_at': now()}})
-            else:
-                await db.po_accessories.insert_one({**doc_fields, 'id': new_id(), 'created_at': now()})
-        # delete accessories dropped from payload (accessory records are safe to delete)
-        for existing_id in existing_acc_by_id.keys():
-            if existing_id not in payload_acc_ids:
-                await db.po_accessories.delete_one({'id': existing_id})
+        # Tahap 9 (7 Nov 2026, keputusan 3): satu penulis rencana aksesoris (`core.rencana_aksesoris`) — baris BOM
+        # hanya berubah rencana serahnya (tidak dihapus/ditimpa), baris tambahan bersatuan material + satuan serah.
+        from core import rencana_aksesoris
+        await rencana_aksesoris.apply_rows(
+            db, po_id, [{**raw, 'qty_needed': accessory_qty(raw.get('qty_needed'))} for raw in acc_payload])
 
     # ── Fase 3 (ACC-1): re-explode aksesoris BOM bila items PO internal berubah ──
     if items_payload is not None and (body.get('business_type') or existing.get('business_type', 'internal')) == 'internal':
@@ -1680,20 +1667,15 @@ async def add_po_accessory(request: Request):
     from core.po_lock import assert_po_open
     await assert_po_open(db, po_id, 'penambahan aksesoris PO')  # 2026-11-06 (Tahap 2)
     items = body.get('items', [])
-    inserted = []
-    for item in items:
-        acc_doc = {
-            'id': new_id(), 'po_id': po_id,
-            'accessory_id': item.get('accessory_id'),
-            'accessory_name': item.get('accessory_name', ''),
-            'accessory_code': item.get('accessory_code', ''),
-            'qty_needed': accessory_qty(item.get('qty_needed')),
-            'unit': item.get('unit', 'pcs'),
-            'notes': item.get('notes', ''),
-            'created_at': now()
-        }
-        await db.po_accessories.insert_one(acc_doc)
-        inserted.append(acc_doc)
+    # Tahap 9 (7 Nov 2026, keputusan 3): satu penulis rencana aksesoris — satuan mengikuti material + satuan serah;
+    # baris `source='bom'` hanya mengubah rencana serah baris BOM PO ini.
+    from core import rencana_aksesoris
+    before = {r['id'] for r in await db.po_accessories.find({'po_id': po_id}, {'_id': 0, 'id': 1}).to_list(2000)}
+    await rencana_aksesoris.apply_rows(
+        db, po_id, [{**it, 'id': None, 'qty_needed': accessory_qty(it.get('qty_needed'))} if it.get('source') != 'bom'
+                    else it for it in items], replace_tambahan=False)
+    inserted = [r for r in await db.po_accessories.find({'po_id': po_id}, {'_id': 0}).to_list(2000)
+                if r.get('id') not in before]
     await log_activity(user['id'], user['name'], 'Add Accessories', 'Production PO',
                        f"Added {len(inserted)} accessories to PO")
     return JSONResponse(serialize_doc(inserted), status_code=201)

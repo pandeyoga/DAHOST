@@ -654,7 +654,7 @@ def test_kebutuhan_material_po_dikurangi_yang_sudah_keluar(monkeypatch):
     async def auth(_r):
         return WH
 
-    async def bom(db_, model_id, size_id, color=None):
+    async def bom(db_, model_id, size_id, color=None, color_code=None):  # Tahap 9: _active_bom kini juga menerima color_code
         return {"id": "B1", "version": 1}
 
     async def ensure(db_, b):
@@ -663,6 +663,9 @@ def test_kebutuhan_material_po_dikurangi_yang_sudah_keluar(monkeypatch):
     monkeypatch.setattr(mr, "require_auth", auth)
     monkeypatch.setattr(mr, "get_db", lambda: db)
     monkeypatch.setattr(mr, "_find_active_bom", bom)
+    # Tahap 9: sumber PO memakai hitungan bersama `material_issue_engine.bom_need_for_lines`
+    import core.material_issue_engine as mie
+    monkeypatch.setattr(mie, "_active_bom", bom)
     monkeypatch.setattr(mr.bom_uom, "ensure_uom", ensure)
     out = run(mr.aggregate_material_requirements(Req({"po_id": "PO1", "include_cost": False})))
     row = out["aggregated"][0]
@@ -790,12 +793,16 @@ def test_variance_qty_dari_sistem_dan_nilai_gl_wac(monkeypatch):
         return {"ok": True, "je_id": "j1", "je_number": "JE-1"}
     monkeypatch.setattr(fcl, "wac_state", wac)
     monkeypatch.setattr(rp, "post_production_variance", post)
-    out = run(ex.post_variance_to_gl(v["id"], Req({"unit_cost": 1})))  # harga ketikan diabaikan
-    assert out["variance_value"] == 50000.0 and posted == [50000.0] and out["value_basis"] == "wac"
-    db.production_variances.docs[0].update({"business_type": "maklon", "gl_je_id": None})
+    # Tahap 9 (7 Nov 2026): jurnal OVER/UNDER dipensiunkan — nilai buku tidak boleh berbeda dari stok.
+    # Endpoint lama tetap ada (tautan lama) dan menjawab 410 tanpa memposting apa pun.
+    for fn in (ex.post_variance_to_gl, ex.retry_variance_posting):
+        with pytest.raises(HTTPException) as e:
+            run(fn(v["id"], Req({"unit_cost": 1})))
+        assert e.value.status_code == 410 and "stok" in e.value.detail
+    assert posted == []
     with pytest.raises(HTTPException) as e:
-        run(ex.post_variance_to_gl(v["id"], Req()))
-    assert "maklon" in e.value.detail
+        run(ex.post_variance_to_gl("tidak-ada", Req()))
+    assert e.value.status_code == 404
 
 
 # ═════════════════════ MIGRASI · SJ internal lama ═════════════════════

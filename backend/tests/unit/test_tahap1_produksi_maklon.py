@@ -283,7 +283,9 @@ def test_angka_order_maklon_hanya_yang_tercatat():
     db = FakeDB()
     db.dewi_maklon_material_issues.docs = [{"order_id": "o1", "qty": 10, "unit_cost": 2000}]
     fig = run(rhpp.maklon_order_figures(db, {"id": "o1", "qty_ordered": 100, "price_per_pcs": 15000}))
-    assert fig["revenue"] == 1_500_000 and fig["material_cost"] == 20000
+    # Tahap 9 (keputusan No. 13): angka order = HPP per PO (core.hpp_aktual). Koleksi lama
+    # `dewi_maklon_material_issues` (tidak ditulis lagi) tidak dibaca; order tanpa PO = belum ada data.
+    assert fig["qty"] == 100 and fig["material_cost"] == 0.0 and fig["revenue"] == 0.0
     # dulu: hpp_actual = 20000 × 1,3 × 1,15 dan hpp_estimated = pendapatan
     assert fig["hpp_actual"] is None and fig["hpp_estimated"] is None and fig["margin"] is None
 
@@ -303,9 +305,9 @@ def test_hpp_po_tidak_lagi_menyamakan_estimasi_dengan_aktual(monkeypatch):
     monkeypatch.setattr(rhpp, "require_auth", _user)
     monkeypatch.setattr(rhpp, "get_db", lambda: db)
     out = run(rhpp.hpp_for_production_po("po1", FakeRequest()))
-    assert out["total_cost_actual"] == 750000
-    assert out["total_cost_estimated"] is None and out["delta_pct"] is None
-    assert out["wo_breakdown"][0]["total_cost_estimated"] is None
+    # Tahap 9: endpoint lama = HPP per PO (satu hitungan), bukan Σ HPP job; estimasi tetap "belum ada data"
+    assert out["source"] == "hpp_per_po" and out["total_cost_actual"] == 0.0
+    assert out["total_cost_estimated"] is None and out["delta_pct"] is None and out["wo_breakdown"] == []
 
 
 def test_unduhan_laporan_po_memakai_mesin_hpp_bukan_tarif_karangan(monkeypatch):

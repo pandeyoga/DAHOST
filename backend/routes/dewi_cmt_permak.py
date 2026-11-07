@@ -449,6 +449,7 @@ async def list_permak(
     q: Optional[str] = None,
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=500),
+    business_type: Optional[str] = None,
 ):
     user = await require_auth(request)
     _require_admin_or_vendor(user)
@@ -475,6 +476,8 @@ async def list_permak(
             {"product_name": {"$regex": q, "$options": "i"}},
             {"po_number": {"$regex": q, "$options": "i"}},
         ]
+    # Tahap 9 (keputusan 2): Portal Produksi = PO internal, Portal Maklon = PO maklon.
+    await _apply_portal_scope(db, query, business_type)
     total = await db.dewi_cmt_permak.count_documents(query)
     skip = (page - 1) * limit
     docs = await db.dewi_cmt_permak.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
@@ -489,14 +492,21 @@ async def list_permak(
     }
 
 
+async def _apply_portal_scope(db, query: dict, business_type: Optional[str]) -> dict:
+    """Saringan per portal (Tahap 9) — aturan tunggal `core.po_portal_scope`."""
+    from core.po_portal_scope import merge_query, portal_po_ids, portal_query
+    return merge_query(query, portal_query(await portal_po_ids(db, business_type), business_type))
+
+
 @router.get("/summary")
-async def permak_summary(request: Request, po_id: Optional[str] = None):
+async def permak_summary(request: Request, po_id: Optional[str] = None, business_type: Optional[str] = None):
     user = await require_auth(request)
     _require_admin(user)
     db = get_db()
     match: dict = {}
     if po_id:
         match["po_id"] = po_id
+    await _apply_portal_scope(db, match, business_type)
     docs = await db.dewi_cmt_permak.find(match, {"_id": 0}).to_list(None)
     _cfg = await db.dewi_system_config.find_one(
         {"key": "maklon_permak_return_grace_days"}, {"_id": 0, "value": 1})

@@ -1,443 +1,387 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Users, Plus, Star, Edit2, Eye, RefreshCw, Phone, Mail, MapPin, Ban, CheckCircle2, KeyRound, Copy, ShieldCheck } from 'lucide-react';
-import { GlassCard } from '@/components/ui/glass';
-import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { MoneyInput } from '@/components/ui/money-input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
+/**
+ * MaklonClientManagement — tab "Klien" di menu Klien & Katalog Buyer (Portal Maklon).
+ *
+ * Tahap 9 (7 Nov 2026, keputusan owner "menu & tampilan dua portal identik"):
+ *   • Cetakan PageLayout + tabel bisa dicari & berhalaman (dulu kartu 2 kolom + kartu angka warna-warni).
+ *   • Rincian, klien baru, dan ubah klien dibuka DI HALAMAN (DetailPanel), bukan popup.
+ *   • Akses portal klien (buat login, ganti sandi, aktif/nonaktif, hapus) tetap dialog singkat.
+ *   • Nonaktifkan/aktifkan dan aksi akun memakai confirmDialog.
+ *
+ *   - klien : GET/POST /api/dewi/maklon/clients · PUT /api/dewi/maklon/clients/{id}[/toggle]
+ *   - portal: /api/dewi/maklon/clients/{id}/portal-status · provision-portal · portal-accounts/{acc}/…
+ */
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Copy, KeyRound, Pencil, Plus, Power, RefreshCw, Search, ShieldCheck, Trash2, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { motion } from 'framer-motion';
-import { PageHeader, Notice } from './moduleAtoms';
-import { EmptyState } from './EmptyState';
+import { Button } from '@/components/ui/button';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { MoneyInput } from '@/components/ui/money-input';
+import { Textarea } from '@/components/ui/textarea';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { apiGet, apiPost, apiPut, apiDelete } from '../../lib/api';
+import { formatDateID, formatRupiah } from '@/lib/format';
+import PageLayout, { DetailPanel } from './layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import ImportExportToolbar from './ImportExportToolbar';
 
 const PRODUCT_SPECIALIZATIONS = ['Rok', 'Blouse', 'Dress', 'Celana', 'Set/Setelan', 'Baju Anak', 'Hijab', 'Aksesoris', 'Lainnya'];
+const TERMS = { net_7: '7 hari', net_14: '14 hari', net_30: '30 hari', net_60: '60 hari' };
+const QUALITY = { standard: 'Standar', premium: 'Premium', luxury: 'Mewah' };
+const EMPTY_FORM = {
+  code: '', name: '', pic_name: '', pic_phone: '', pic_email: '', address: '', city: '',
+  contract_type: 'per_order', standard_rate_per_pcs: '', payment_terms: 'net_30',
+  product_specialization: [], quality_standard: 'standard', notes: '',
+};
+const isActive = (c) => c?.status !== 'inactive';
+const ActiveBadge = ({ c }) => (
+  <StatusBadge status={isActive(c) ? 'aktif' : 'nonaktif'} label={isActive(c) ? 'Aktif' : 'Nonaktif'} tone={isActive(c) ? 'success' : 'muted'} />
+);
 
-export default function MaklonClientManagement({ token }) {
-  const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
-
-  const [clients, setClients] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [filterStatus, setFilterStatus] = useState('all');
-  const [clientDialog, setClientDialog] = useState(null);
-  const [viewDialog, setViewDialog] = useState(null);
-  const [portalDialog, setPortalDialog] = useState(null);
-
-  const fetchClients = useCallback(async () => {
-    setLoading(true);
-    try {
-      const url = filterStatus === 'all' ? '/api/dewi/maklon/clients' : `/api/dewi/maklon/clients?status=${filterStatus}`;
-      const r = await fetch(url, { headers });
-      if (r.ok) setClients(await r.json());
-    } catch(e) { toast.error('Gagal memuat data klien'); }
-    finally { setLoading(false); }
-  }, [headers, filterStatus]);
-
-  useEffect(() => { fetchClients(); }, [fetchClients]);
-
-  const toggleClient = async (client) => {
-    const r = await fetch(`/api/dewi/maklon/clients/${client.id}/toggle`, { method: 'PUT', headers });
-    if (r.ok) { toast.success(`Klien ${client.name} ${client.status === 'active' ? 'dinonaktifkan' : 'diaktifkan'}`); fetchClients(); }
-    else toast.error('Gagal mengubah status');
-  };
-
-  const filteredClients = clients;
-
+function Field({ label, children, className = '' }) {
   return (
-    <div className="space-y-4" data-testid="maklon-clients">
-      <PageHeader
-        title="Master Klien Maklon"
-        subtitle="Database klien jasa maklon, kontrak, dan riwayat kerjasama"
-        icon={Users}
-        actions={
-          <div className="flex gap-2">
-            <ImportExportToolbar collectionKey="maklon_clients" label="Klien Maklon" onImported={fetchClients} />
-            <Button size="icon" onClick={fetchClients} variant="outline" disabled={loading} title="Muat ulang" aria-label="Muat ulang">
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            </Button>
-            <Button onClick={() => setClientDialog({})} className="gap-1.5">
-              <Plus className="w-3.5 h-3.5" /> Tambah Klien
-            </Button>
-          </div>
-        }
-      />
-
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
-        {[
-          { label: 'Total Klien', value: clients.length, color: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.1)]  border-[hsl(var(--primary)/0.2)]', icon: Users },
-          { label: 'Aktif', value: clients.filter(c => c.status === 'active').length, color: 'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.1)]  border-[hsl(var(--success)/0.35)] ', icon: CheckCircle2 },
-          { label: 'Non-Aktif', value: clients.filter(c => c.status === 'inactive').length, color: 'text-[hsl(var(--warning))] bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.2)]', icon: Ban },
-        ].map((s, i) => (
-          <motion.div key={s.label} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.04 * i }}>
-            <GlassCard className={`p-4 border ${s.color.split(' ')[2]}`}>
-              <div className={`w-8 h-8 rounded-lg border ${s.color} flex items-center justify-center mb-2`}>
-                <s.icon className={`w-4 h-4 ${s.color.split(' ')[0]}`} />
-              </div>
-              <div className="text-2xl font-bold text-foreground">{s.value}</div>
-              <div className="text-xs text-foreground/50">{s.label}</div>
-            </GlassCard>
-          </motion.div>
-        ))}
-      </div>
-
-      {/* Filter */}
-      <FilterChips value={filterStatus} onChange={setFilterStatus} ariaLabel="Status klien" hideWhenEmpty={false}
-        options={[
-          { key: 'all', label: 'Semua' },
-          { key: 'active', label: 'Aktif' },
-          { key: 'inactive', label: 'Non-Aktif' },
-        ]} />
-
-      {/* Client Cards */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        {loading ? (
-          <div className="col-span-2 text-center py-8 text-foreground/40 text-sm">Memuat...</div>
-        ) : filteredClients.length === 0 ? (
-          <div className="col-span-2">
-            <EmptyState
-              icon={Users}
-              title="Belum ada klien terdaftar"
-              description="Tambahkan klien maklon pertama untuk mulai melacak kontrak dan pengiriman."
-            />
-          </div>
-        ) : (
-          filteredClients.map(c => (
-            <GlassCard key={c.id} className={`p-4 border transition-all ${c.status === 'active' ? 'border-foreground/[0.08] hover:border-foreground/[0.15]' : 'border-foreground/5 opacity-60'}`}>
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="font-semibold text-foreground">{c.name}</span>
-                    <span className="text-[10px] bg-foreground/[0.08] px-1.5 py-0.5 rounded text-foreground/50 tabular-nums">{c.code}</span>
-                    {c.status === 'inactive' && <span className="text-[10px] bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]  px-1.5 py-0.5 rounded border border-[hsl(var(--destructive)/0.35)] ">Nonaktif</span>}
-                  </div>
-                  <div className="space-y-1 text-xs text-foreground/50">
-                    {c.pic_name && <div className="flex items-center gap-1"><span className="text-foreground/70">{c.pic_name}</span></div>}
-                    {c.pic_phone && <div className="flex items-center gap-1"><Phone className="w-3 h-3" />{c.pic_phone}</div>}
-                    {c.city && <div className="flex items-center gap-1"><MapPin className="w-3 h-3" />{c.city}</div>}
-                  </div>
-                  <div className="flex items-center gap-2 mt-2">
-                    <span className="text-xs text-foreground/60"><strong className="text-foreground">Rp {(c.standard_rate_per_pcs || 0).toLocaleString('id-ID')}</strong>/pcs</span>
-                    <span className="text-xs text-foreground/40">•</span>
-                    <span className="text-xs text-foreground/40">{({ net_7: 'Termin 7 hari', net_14: 'Termin 14 hari', net_30: 'Termin 30 hari', net_60: 'Termin 60 hari' })[c.payment_terms || 'net_30'] || c.payment_terms}</span>
-                  </div>
-                  {(c.product_specialization || []).length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {c.product_specialization.slice(0,3).map(s => <span key={s} className="text-[10px] bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]  px-1.5 py-0.5 rounded border border-[hsl(var(--primary)/0.35)] ">{s}</span>)}
-                      {c.product_specialization.length > 3 && <span className="text-[10px] text-foreground/40">+{c.product_specialization.length-3}</span>}
-                    </div>
-                  )}
-                </div>
-                <div className="flex flex-col items-end gap-1">
-                  <div className="flex items-center gap-0.5">
-                    {[1,2,3,4,5].map(n => <Star key={n} className={`w-3 h-3 ${n <= Math.round(c.rating||0) ? 'text-[hsl(var(--warning))]  fill-[hsl(var(--warning))]' : 'text-foreground/20'}`} />)}
-                  </div>
-                  <div className="flex gap-1 mt-1">
-                    <Button size="icon-sm" variant="ghost" onClick={() => setViewDialog(c)} title="Lihat detail" aria-label="Lihat detail" data-testid={`maklon-client-view-${c.id}`}><Eye className="w-3.5 h-3.5" /></Button>
-                    <Button size="icon-sm" variant="ghost" onClick={() => setClientDialog({ data: c })} title="Ubah" aria-label="Ubah" data-testid={`maklon-client-edit-${c.id}`}><Edit2 className="w-3.5 h-3.5" /></Button>
-                    <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.15)] " onClick={() => setPortalDialog(c)} title="Akses Portal Klien" aria-label="Akses Portal Klien" data-testid={`maklon-client-portal-${c.id}`}><KeyRound className="w-3.5 h-3.5" /></Button>
-                    <Button size="sm" variant="outline" onClick={() => toggleClient(c)}>{c.status === 'active' ? 'Nonaktifkan' : 'Aktifkan'}</Button>
-                  </div>
-                </div>
-              </div>
-            </GlassCard>
-          ))
-        )}
-      </div>
-
-      {/* Dialogs */}
-      {clientDialog !== null && (
-        <ClientDialog data={clientDialog?.data || null} headers={headers} onClose={() => setClientDialog(null)} onSuccess={() => { setClientDialog(null); fetchClients(); }} />
-      )}
-      {viewDialog && <ViewClientDialog client={viewDialog} onClose={() => setViewDialog(null)} />}
-      {portalDialog && <PortalAccessDialog client={portalDialog} headers={headers} onClose={() => setPortalDialog(null)} />}
+    <label className={`block space-y-1 ${className}`}>
+      <span className="text-xs text-muted-foreground">{label}</span>
+      {children}
+    </label>
+  );
+}
+function Info({ label, value, className = '' }) {
+  return (
+    <div className={`min-w-0 ${className}`}>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-sm text-foreground break-words">{value || value === 0 ? value : '—'}</p>
     </div>
   );
 }
 
-// Portal Access Management Dialog (Phase 4)
-function PortalAccessDialog({ client, headers, onClose }) {
+// ── Form klien (baru / ubah) — di halaman ─────────────────────────────────────
+function ClientForm({ data, onCancel, onSaved }) {
+  const isEdit = !!data;
+  const [form, setForm] = useState(() => ({ ...EMPTY_FORM, ...(data || {}),
+    standard_rate_per_pcs: data?.standard_rate_per_pcs ?? '', product_specialization: data?.product_specialization || [] }));
+  const [saving, setSaving] = useState(false);
+  const set = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
+  const toggleSpec = (s) => setForm((p) => ({ ...p, product_specialization: p.product_specialization.includes(s)
+    ? p.product_specialization.filter((x) => x !== s) : [...p.product_specialization, s] }));
+
+  const save = async () => {
+    if (!String(form.code).trim() || !String(form.name).trim()) { toast.error('Kode dan nama klien wajib diisi'); return; }
+    setSaving(true);
+    const body = {
+      code: String(form.code).trim(), name: String(form.name).trim(), pic_name: form.pic_name, pic_phone: form.pic_phone,
+      pic_email: form.pic_email, address: form.address, city: form.city, contract_type: form.contract_type || 'per_order',
+      standard_rate_per_pcs: Number(form.standard_rate_per_pcs || 0), payment_terms: form.payment_terms,
+      product_specialization: form.product_specialization, quality_standard: form.quality_standard, notes: form.notes,
+    };
+    try {
+      const r = isEdit ? await apiPut(`/dewi/maklon/clients/${data.id}`, body) : await apiPost('/dewi/maklon/clients', body);
+      toast.success(isEdit ? `Klien ${body.name} diperbarui` : `Klien ${body.name} ditambahkan`);
+      onSaved(isEdit ? data.id : r?.id);
+    } catch (e) { toast.error(e.message || 'Gagal menyimpan'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <DetailPanel testId="maklon-client-form" onClose={onCancel}
+      title={isEdit ? `Ubah klien · ${data.name}` : 'Klien baru'}
+      description={isEdit ? 'Kode klien dipakai di nomor akun piutang & pendapatan klien.' : 'Akun piutang & pendapatan klien dibuat otomatis setelah disimpan.'}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <Field label="Kode klien *"><GlassInput value={form.code} onChange={set('code')} placeholder="mis. KLN01" data-testid="client-form-code" /></Field>
+        <Field label="Nama perusahaan / merek *" className="lg:col-span-3"><GlassInput value={form.name} onChange={set('name')} data-testid="client-form-name" /></Field>
+        <Field label="Nama PIC"><GlassInput value={form.pic_name} onChange={set('pic_name')} data-testid="client-form-pic" /></Field>
+        <Field label="No. HP PIC"><GlassInput value={form.pic_phone} onChange={set('pic_phone')} /></Field>
+        <Field label="Email PIC" className="lg:col-span-2"><GlassInput type="email" value={form.pic_email} onChange={set('pic_email')} /></Field>
+        <Field label="Alamat" className="sm:col-span-2 lg:col-span-3"><GlassInput value={form.address} onChange={set('address')} /></Field>
+        <Field label="Kota"><GlassInput value={form.city} onChange={set('city')} /></Field>
+        <Field label="Tarif standar (Rp/pcs)"><MoneyInput glass value={form.standard_rate_per_pcs} onChange={set('standard_rate_per_pcs')} data-testid="client-form-rate" /></Field>
+        <Field label="Termin pembayaran">
+          <SmartNativeSelect value={form.payment_terms} onChange={set('payment_terms')} className="w-full h-9" searchable={false}
+            data-testid="client-form-payment-terms" aria-label="Termin pembayaran">
+            {Object.entries(TERMS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </SmartNativeSelect>
+        </Field>
+        <Field label="Standar kualitas">
+          <SmartNativeSelect value={form.quality_standard} onChange={set('quality_standard')} className="w-full h-9" searchable={false}
+            data-testid="client-form-quality" aria-label="Standar kualitas">
+            {Object.entries(QUALITY).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </SmartNativeSelect>
+        </Field>
+      </div>
+      <div className="space-y-1">
+        <p className="text-xs text-muted-foreground">Spesialisasi produk</p>
+        <div className="flex flex-wrap gap-x-4 gap-y-1.5" data-testid="client-form-spec">
+          {PRODUCT_SPECIALIZATIONS.map((s) => (
+            <label key={s} className="inline-flex items-center gap-1.5 text-sm cursor-pointer">
+              <input type="checkbox" checked={form.product_specialization.includes(s)} onChange={() => toggleSpec(s)}
+                className="h-4 w-4 accent-[hsl(var(--primary))]" />{s}
+            </label>
+          ))}
+        </div>
+      </div>
+      <Field label="Catatan"><Textarea rows={2} value={form.notes} onChange={set('notes')} data-testid="client-form-notes" /></Field>
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={onCancel} disabled={saving}>Batal</Button>
+        <Button onClick={save} disabled={saving} data-testid="client-form-save">{isEdit ? 'Simpan perubahan' : 'Simpan klien'}</Button>
+      </div>
+    </DetailPanel>
+  );
+}
+
+// ── Rincian klien — di halaman ────────────────────────────────────────────────
+function ClientDetail({ client, onClose, onEdit, onPortal, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const toggle = async () => {
+    const off = isActive(client);
+    if (!(await confirmDialog({
+      title: off ? `Nonaktifkan klien ${client.name}?` : `Aktifkan lagi klien ${client.name}?`,
+      body: off ? 'Klien nonaktif tidak bisa dipilih untuk PO maklon baru. Riwayat order dan piutangnya tetap ada.'
+        : 'Klien bisa dipilih lagi untuk PO maklon baru.',
+      confirmLabel: off ? 'Nonaktifkan' : 'Aktifkan', danger: off,
+    }))) return;
+    setBusy(true);
+    try {
+      await apiPut(`/dewi/maklon/clients/${client.id}/toggle`, {});
+      toast.success(off ? `Klien ${client.name} dinonaktifkan` : `Klien ${client.name} diaktifkan`);
+      await onChanged(client.id);
+    } catch (e) { toast.error(e.message || 'Gagal mengubah status'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <DetailPanel testId="maklon-client-detail" onClose={onClose}
+      title={<span className="inline-flex items-center gap-2 flex-wrap">{client.name} <ActiveBadge c={client} /></span>}
+      description={`${client.code || '—'} · ${client.city || 'Kota belum diisi'}`}
+      actions={<>
+        <Button variant="outline" onClick={onEdit} disabled={busy} data-testid={`maklon-client-edit-${client.id}`}><Pencil className="w-4 h-4" />Ubah</Button>
+        <Button variant="outline" onClick={onPortal} disabled={busy} data-testid={`maklon-client-portal-${client.id}`}><KeyRound className="w-4 h-4" />Akses portal</Button>
+        <Button variant="outline" onClick={toggle} disabled={busy} data-testid={`maklon-client-toggle-${client.id}`}>
+          <Power className="w-4 h-4" />{isActive(client) ? 'Nonaktifkan' : 'Aktifkan'}
+        </Button>
+      </>}>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Info label="PIC" value={client.pic_name} />
+        <Info label="No. HP" value={client.pic_phone} />
+        <Info label="Email" value={client.pic_email} />
+        <Info label="Alamat" value={client.address} />
+        <Info label="Tarif standar" value={`${formatRupiah(client.standard_rate_per_pcs || 0)}/pcs`} />
+        <Info label="Termin pembayaran" value={TERMS[client.payment_terms] || client.payment_terms} />
+        <Info label="Standar kualitas" value={QUALITY[client.quality_standard] || client.quality_standard} />
+        <Info label="Penilaian" value={`${client.rating || 0} dari 5`} />
+        <Info label="Spesialisasi" value={(client.product_specialization || []).join(', ')} className="col-span-2" />
+        <Info label="Catatan" value={client.notes} className="col-span-2" />
+      </div>
+    </DetailPanel>
+  );
+}
+
+// ── Akses portal klien — dialog singkat ───────────────────────────────────────
+function PortalAccessDialog({ client, onClose }) {
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [provisionMode, setProvisionMode] = useState(false);
   const [email, setEmail] = useState(client.pic_email || '');
   const [picName, setPicName] = useState(client.pic_name || '');
   const [credential, setCredential] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
-    try {
-      const r = await fetch(`/api/dewi/maklon/clients/${client.id}/portal-status`, { headers });
-      if (r.ok) {
-        const d = await r.json();
-        setAccounts(d.accounts || []);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [client.id, headers]);
-
+    try { const d = await apiGet(`/dewi/maklon/clients/${client.id}/portal-status`); setAccounts(d?.accounts || []); }
+    catch (e) { toast.error(e.message || 'Gagal memuat akun portal'); }
+    finally { setLoading(false); }
+  }, [client.id]);
   useEffect(() => { load(); }, [load]);
 
+  const run = async (fn, okMsg) => {
+    setBusy(true);
+    try { const d = await fn(); if (okMsg) toast.success(okMsg); return d; }
+    catch (e) { toast.error(e.message || 'Gagal'); return null; }
+    finally { setBusy(false); }
+  };
   const provision = async () => {
-    if (!email) { toast.error('Email wajib diisi'); return; }
-    setSubmitting(true);
-    try {
-      const r = await fetch(`/api/dewi/maklon/clients/${client.id}/provision-portal`, {
-        method: 'POST', headers, body: JSON.stringify({ email, name: picName }),
-      });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.detail || 'Gagal');
-      setCredential({ email: d.email, password: d.password });
-      toast.success('Akun portal klien dibuat');
-      setProvisionMode(false);
-      load();
-    } catch (e) {
-      toast.error(e.message);
-    } finally {
-      setSubmitting(false);
-    }
+    if (!email.trim()) { toast.error('Email wajib diisi'); return; }
+    const d = await run(() => apiPost(`/dewi/maklon/clients/${client.id}/provision-portal`, { email: email.trim(), name: picName }), 'Akun portal klien dibuat');
+    if (d) { setCredential({ email: d.email, password: d.password }); setProvisionMode(false); load(); }
   };
-
   const reset = async (acc) => {
-    if (!(await confirmDialog({
-      title: `Reset password untuk ${acc.email}?`,
-      body: 'Password lama tidak berlaku lagi. Password baru ditampilkan sekali setelah ini.',
-      confirmLabel: 'Reset password',
-    }))) return;
-    try {
-      const r = await fetch(`/api/dewi/maklon/clients/${client.id}/portal-accounts/${acc.id}/reset-password`, {
-        method: 'POST', headers, body: JSON.stringify({}),
-      });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.detail || 'Gagal');
-      setCredential({ email: d.email, password: d.password });
-      toast.success('Password direset');
-    } catch (e) {
-      toast.error(e.message);
-    }
+    if (!(await confirmDialog({ title: `Ganti sandi ${acc.email}?`, body: 'Sandi lama tidak berlaku lagi. Sandi baru ditampilkan sekali setelah ini.',
+      confirmLabel: 'Ganti sandi' }))) return;
+    const d = await run(() => apiPost(`/dewi/maklon/clients/${client.id}/portal-accounts/${acc.id}/reset-password`, {}), 'Sandi diganti');
+    if (d) setCredential({ email: d.email, password: d.password });
   };
-
   const toggle = async (acc) => {
-    try {
-      const r = await fetch(`/api/dewi/maklon/clients/${client.id}/portal-accounts/${acc.id}/toggle`, {
-        method: 'POST', headers,
-      });
-      if (!r.ok) throw new Error('Gagal');
-      toast.success('Status akun diubah');
-      load();
-    } catch (e) {
-      toast.error(e.message);
-    }
+    const off = acc.status === 'active';
+    if (!(await confirmDialog({ title: off ? `Nonaktifkan akun ${acc.email}?` : `Aktifkan lagi akun ${acc.email}?`,
+      body: off ? 'Klien tidak bisa login dengan akun ini sampai diaktifkan lagi.' : 'Klien bisa login lagi dengan akun ini.',
+      confirmLabel: off ? 'Nonaktifkan' : 'Aktifkan', danger: off }))) return;
+    if (await run(() => apiPost(`/dewi/maklon/clients/${client.id}/portal-accounts/${acc.id}/toggle`, {}), 'Status akun diubah')) load();
   };
-
-  const removeAccount = async (acc) => {
-    if (!(await confirmDialog({
-      title: `Hapus akun portal ${acc.email}?`,
-      body: 'Klien tidak bisa login lagi dengan akun ini.',
-      confirmLabel: 'Hapus',
-      danger: true,
-    }))) return;
-    try {
-      const r = await fetch(`/api/dewi/maklon/clients/${client.id}/portal-accounts/${acc.id}`, {
-        method: 'DELETE', headers,
-      });
-      if (!r.ok) throw new Error('Gagal');
-      toast.success('Akun dihapus');
-      load();
-    } catch (e) {
-      toast.error(e.message);
-    }
+  const remove = async (acc) => {
+    if (!(await confirmDialog({ title: `Hapus akun portal ${acc.email}?`, body: 'Klien tidak bisa login lagi dengan akun ini. Tindakan ini tidak bisa dibatalkan.',
+      confirmLabel: 'Hapus akun', danger: true }))) return;
+    if (await run(() => apiDelete(`/dewi/maklon/clients/${client.id}/portal-accounts/${acc.id}`), 'Akun dihapus')) load();
   };
-
-  const copy = async (text) => {
-    try { await navigator.clipboard.writeText(text); toast.success('Disalin'); } catch (e) {}
-  };
+  const copy = async (text) => { try { await navigator.clipboard.writeText(text); toast.success('Disalin'); } catch { /* clipboard ditolak */ } };
 
   return (
-    <Dialog open={true} onOpenChange={onClose}>
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-xl" data-testid="maklon-portal-access-dialog">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <KeyRound className="w-4 h-4 text-[hsl(var(--primary))] " /> Akses Portal Klien — {client.name}
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-3 py-2 text-sm">
-          <Notice tone="info" title="Portal klien maklon">
-            <span className="text-xs">
-              Klien dapat login di <code className="tabular-nums text-[hsl(var(--primary))] ">/client</code> untuk melihat status order, menyetujui sample, dan melihat faktur secara mandiri.
-            </span>
+        <DialogHeader><DialogTitle>Akses portal klien · {client.name}</DialogTitle></DialogHeader>
+        <p className="text-sm text-muted-foreground">Klien login di alamat /client untuk melihat status order, menyetujui sampel, dan melihat faktur.</p>
+        {credential && (
+          <Notice tone="success" icon={ShieldCheck} title="Data login hanya tampil sekali — catat sekarang" testId="maklon-portal-credential">
+            <span className="flex items-center gap-2 text-xs">Email: <span className="font-semibold">{credential.email}</span>
+              <Button size="icon-sm" variant="ghost" onClick={() => copy(credential.email)} title="Salin email" aria-label="Salin email"><Copy className="w-3 h-3" /></Button></span>
+            <span className="flex items-center gap-2 text-xs">Sandi: <span className="font-semibold tabular-nums">{credential.password}</span>
+              <Button size="icon-sm" variant="ghost" onClick={() => copy(credential.password)} title="Salin sandi" aria-label="Salin sandi"><Copy className="w-3 h-3" /></Button></span>
+            <span className="block text-[11px] text-muted-foreground">Klien wajib mengganti sandi saat login pertama.</span>
           </Notice>
-
-          {credential && (
-            <Notice tone="success" icon={ShieldCheck} title="Kredensial sekali tampil — catat sekarang">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-foreground/55 text-xs w-16">Email:</span>
-                  <code className="tabular-nums text-xs text-foreground flex-1">{credential.email}</code>
-                  <Button size="icon-sm" variant="ghost" onClick={() => copy(credential.email)} title="Salin email" aria-label="Salin email"><Copy className="w-3 h-3" /></Button>
+        )}
+        {loading ? <p className="text-sm text-muted-foreground">Memuat akun…</p> : (
+          <div className="divide-y divide-border" data-testid="maklon-portal-accounts">
+            {accounts.map((acc) => (
+              <div key={acc.id} className="flex items-center justify-between gap-2 py-2" data-testid={`maklon-portal-account-${acc.id}`}>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">{acc.email}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {acc.status === 'active' ? 'Aktif' : 'Nonaktif'}{acc.must_change_password ? ' · wajib ganti sandi' : ''}
+                    {acc.last_login_at ? ` · login terakhir ${formatDateID(acc.last_login_at)}` : ' · belum pernah login'}
+                  </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-foreground/55 text-xs w-16">Password:</span>
-                  <code className="tabular-nums text-xs text-foreground flex-1">{credential.password}</code>
-                  <Button size="icon-sm" variant="ghost" onClick={() => copy(credential.password)} title="Salin password" aria-label="Salin password"><Copy className="w-3 h-3" /></Button>
+                <div className="flex gap-1 shrink-0">
+                  <Button size="sm" variant="outline" onClick={() => reset(acc)} disabled={busy} data-testid={`maklon-portal-reset-${acc.id}`}>Ganti sandi</Button>
+                  <Button size="sm" variant="outline" onClick={() => toggle(acc)} disabled={busy}>{acc.status === 'active' ? 'Nonaktifkan' : 'Aktifkan'}</Button>
+                  <Button size="icon-sm" variant="ghost" onClick={() => remove(acc)} disabled={busy} title="Hapus akun" aria-label="Hapus akun"><Trash2 className="w-3.5 h-3.5" /></Button>
                 </div>
               </div>
-              <div className="text-[11px] text-foreground/55 mt-1">Klien wajib mengganti password saat login pertama.</div>
-            </Notice>
-          )}
-
-          {loading ? (
-            <div className="text-foreground/40 text-xs py-4 text-center">Memuat akun...</div>
-          ) : accounts.length === 0 && !provisionMode ? (
-            <EmptyState
-              icon={KeyRound}
-              title="Belum ada akun portal untuk klien ini"
-              description="Buat akun supaya klien bisa memantau order dan sample sendiri."
-              action={
-                <Button size="sm" onClick={() => setProvisionMode(true)} data-testid="maklon-portal-provision-btn">
-                  <Plus className="w-3.5 h-3.5 mr-1.5" /> Buat Akun Portal
-                </Button>
-              }
-            />
-          ) : (
-            <div className="space-y-2">
-              {accounts.map((acc) => (
-                <div key={acc.id} className="rounded-lg border border-foreground/[0.08] p-3 flex items-center justify-between gap-2" data-testid={`maklon-portal-account-${acc.id}`}>
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium text-foreground text-sm truncate">{acc.email}</div>
-                    <div className="text-xs text-foreground/55 flex items-center gap-2 flex-wrap">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${acc.status === 'active' ? 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] ' : 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))]  '}`}>{acc.status === 'active' ? 'Aktif' : 'Nonaktif'}</span>
-                      {acc.must_change_password && <span className="text-[10px] text-[hsl(var(--warning))] ">Wajib ganti pwd</span>}
-                      {acc.last_login_at && <span className="text-[10px] text-foreground/40">Login terakhir: {new Date(acc.last_login_at).toLocaleDateString('id-ID')}</span>}
-                    </div>
-                  </div>
-                  <div className="flex gap-1 flex-shrink-0">
-                    <Button size="sm" variant="outline" onClick={() => reset(acc)} data-testid={`maklon-portal-reset-${acc.id}`}>Reset password</Button>
-                    <Button size="sm" variant="outline" onClick={() => toggle(acc)}>{acc.status === 'active' ? 'Nonaktifkan' : 'Aktifkan'}</Button>
-                    <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.15)] " onClick={() => removeAccount(acc)} title="Hapus akun" aria-label="Hapus akun"><Ban className="w-3.5 h-3.5" /></Button>
-                  </div>
-                </div>
-              ))}
-              {!provisionMode && (
-                <Button size="sm" variant="outline" onClick={() => setProvisionMode(true)} className="w-full"><Plus className="w-3.5 h-3.5 mr-1.5" /> Tambah Akun Lain</Button>
-              )}
-            </div>
-          )}
-
-          {provisionMode && (
-            <GlassCard className="p-4 space-y-2">
-              <div className="text-xs font-medium text-[hsl(var(--primary))] ">Buat Akun Portal Baru</div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Email Login *</Label>
-                <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="klien@perusahaan.id" data-testid="maklon-portal-email-input" />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Nama PIC (opsional)</Label>
-                <Input value={picName} onChange={(e) => setPicName(e.target.value)} />
-              </div>
-              <div className="text-[11px] text-foreground/55">Password dibuat otomatis dan ditampilkan setelah akun dibuat.</div>
-              <div className="flex gap-2 justify-end pt-1">
-                <Button size="sm" variant="outline" onClick={() => setProvisionMode(false)}>Batal</Button>
-                <Button size="sm" onClick={provision} disabled={submitting} data-testid="maklon-portal-provision-submit">
-                  {submitting ? 'Membuat...' : 'Buat Akun'}
-                </Button>
-              </div>
-            </GlassCard>
-          )}
-        </div>
-
-        <DialogFooter><Button variant="outline" onClick={onClose}>Tutup</Button></DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// Client Form Dialog
-function ClientDialog({ data, headers, onClose, onSuccess }) {
-  const isEdit = !!data;
-  const [form, setForm] = useState(data || {
-    code: '', name: '', pic_name: '', pic_phone: '', pic_email: '', address: '', city: 'Sragen',
-    contract_type: 'per_order', standard_rate_per_pcs: '', payment_terms: 'net_30',
-    product_specialization: [], quality_standard: 'standard', notes: ''
-  });
-  const [saving, setSaving] = useState(false);
-  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
-  const toggleSpec = (s) => setForm(p => ({ ...p, product_specialization: p.product_specialization.includes(s) ? p.product_specialization.filter(x => x !== s) : [...p.product_specialization, s] }));
-
-  const save = async () => {
-    if (!form.code || !form.name) { toast.error('Kode dan nama klien wajib diisi'); return; }
-    setSaving(true);
-    const url = isEdit ? `/api/dewi/maklon/clients/${data.id}` : '/api/dewi/maklon/clients';
-    const method = isEdit ? 'PUT' : 'POST';
-    const r = await fetch(url, { method, headers, body: JSON.stringify({ ...form, standard_rate_per_pcs: Number(form.standard_rate_per_pcs || 0) }) });
-    setSaving(false);
-    if (r.ok) { toast.success(isEdit ? 'Klien diperbarui' : 'Klien ditambahkan'); onSuccess(); }
-    else { const e = await r.json(); toast.error(e.detail || 'Gagal menyimpan'); }
-  };
-
-  return (
-    <Dialog open={true} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>{isEdit ? `Edit Klien: ${data.name}` : 'Tambah Klien Baru'}</DialogTitle></DialogHeader>
-        <div className="space-y-4 py-2">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1"><Label>Kode Klien *</Label><Input value={form.code} onChange={e => set('code', e.target.value)} placeholder="CLT001" /></div>
-            <div className="space-y-1 col-span-2"><Label>Nama Perusahaan/Brand *</Label><Input value={form.name} onChange={e => set('name', e.target.value)} /></div>
-            <div className="space-y-1"><Label>Nama PIC</Label><Input value={form.pic_name} onChange={e => set('pic_name', e.target.value)} /></div>
-            <div className="space-y-1"><Label>No. HP PIC</Label><Input value={form.pic_phone} onChange={e => set('pic_phone', e.target.value)} /></div>
-            <div className="space-y-1 col-span-2"><Label>Email PIC</Label><Input type="email" value={form.pic_email} onChange={e => set('pic_email', e.target.value)} /></div>
-            <div className="space-y-1 col-span-2"><Label>Alamat</Label><Input value={form.address} onChange={e => set('address', e.target.value)} /></div>
-            <div className="space-y-1"><Label>Kota</Label><Input value={form.city} onChange={e => set('city', e.target.value)} /></div>
-            <div className="space-y-1"><Label>Rate Standar (Rp/pcs)</Label><MoneyInput value={form.standard_rate_per_pcs} onChange={e => set('standard_rate_per_pcs', e.target.value)} /></div>
-            <div className="space-y-1"><Label>Termin pembayaran</Label><Select value={form.payment_terms} onValueChange={v => set('payment_terms', v)}><SelectTrigger data-testid="client-form-payment-terms"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="net_7">7 hari</SelectItem><SelectItem value="net_14">14 hari</SelectItem><SelectItem value="net_30">30 hari</SelectItem><SelectItem value="net_60">60 hari</SelectItem></SelectContent></Select></div>
-            <div className="space-y-1"><Label>Standar kualitas</Label><Select value={form.quality_standard} onValueChange={v => set('quality_standard', v)}><SelectTrigger data-testid="client-form-quality"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="standard">Standar</SelectItem><SelectItem value="premium">Premium</SelectItem><SelectItem value="luxury">Mewah</SelectItem></SelectContent></Select></div>
+            ))}
+            {!accounts.length && !provisionMode && (
+              <EmptyState icon={KeyRound} title="Belum ada akun portal untuk klien ini" className="py-6"
+                description="Buat akun supaya klien bisa memantau order dan sampel sendiri." />
+            )}
           </div>
-          <div className="space-y-1"><Label>Spesialisasi Produk</Label><div className="flex flex-wrap gap-1.5 pt-1">{PRODUCT_SPECIALIZATIONS.map(s => <button key={s} onClick={() => toggleSpec(s)} className={`text-xs px-2.5 py-1 rounded-full border transition-all ${form.product_specialization.includes(s) ? 'bg-[hsl(var(--primary)/0.2)] border-[hsl(var(--primary)/0.35)]  text-[hsl(var(--primary))] ' : 'bg-foreground/5 border-foreground/10 text-foreground/60 hover:border-foreground/25'}`}>{s}</button>)}</div></div>
-          <div className="space-y-1"><Label>Catatan</Label><Textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={2} /></div>
-        </div>
-        <DialogFooter><Button variant="outline" onClick={onClose}>Batal</Button><Button onClick={save} disabled={saving}>{saving ? 'Menyimpan...' : (isEdit ? 'Simpan' : 'Tambah Klien')}</Button></DialogFooter>
+        )}
+        {provisionMode ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="maklon-portal-provision-form">
+            <Field label="Email login *"><GlassInput value={email} onChange={(e) => setEmail(e.target.value)} placeholder="klien@perusahaan.id" data-testid="maklon-portal-email-input" /></Field>
+            <Field label="Nama PIC (opsional)"><GlassInput value={picName} onChange={(e) => setPicName(e.target.value)} /></Field>
+            <p className="text-[11px] text-muted-foreground sm:col-span-2">Sandi dibuat otomatis dan ditampilkan setelah akun dibuat.</p>
+          </div>
+        ) : null}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Tutup</Button>
+          {provisionMode ? (
+            <>
+              <Button variant="outline" onClick={() => setProvisionMode(false)} disabled={busy}>Batal</Button>
+              <Button onClick={provision} disabled={busy} data-testid="maklon-portal-provision-submit">Buat akun</Button>
+            </>
+          ) : (
+            <Button onClick={() => setProvisionMode(true)} data-testid="maklon-portal-provision-btn"><Plus className="w-4 h-4" />Akun portal baru</Button>
+          )}
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-// View Client Detail Dialog
-function ViewClientDialog({ client, onClose }) {
+// ══════════════════════════════════════════════════════════════════════════════
+export default function MaklonClientManagement() {
+  const [clients, setClients] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('');
+  const [panel, setPanel] = useState(null); // null | {mode:'view'|'edit', id} | {mode:'new'}
+  const [portalFor, setPortalFor] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
+    try { const d = await apiGet('/dewi/maklon/clients'); setClients(Array.isArray(d) ? d : []); }
+    catch (e) { setError(e.message || 'Gagal memuat data klien'); setClients([]); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const counts = useMemo(() => ({ all: clients.length, active: clients.filter(isActive).length,
+    inactive: clients.filter((c) => !isActive(c)).length }), [clients]);
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return clients.filter((c) => (!status || (status === 'active' ? isActive(c) : !isActive(c)))
+      && (!q || `${c.name} ${c.code} ${c.pic_name} ${c.city}`.toLowerCase().includes(q)));
+  }, [clients, search, status]);
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(filtered, 25);
+  const current = panel?.id ? clients.find((c) => c.id === panel.id) : null;
+  const afterSave = async (id) => { await load(); setPanel(id ? { mode: 'view', id } : null); };
+
+  let detail = null;
+  if (panel?.mode === 'new') detail = <ClientForm onCancel={() => setPanel(null)} onSaved={afterSave} />;
+  else if (panel?.mode === 'edit' && current) detail = <ClientForm data={current} onCancel={() => setPanel({ mode: 'view', id: current.id })} onSaved={afterSave} />;
+  else if (panel?.mode === 'view' && current) {
+    detail = <ClientDetail client={current} onClose={() => setPanel(null)} onEdit={() => setPanel({ mode: 'edit', id: current.id })}
+      onPortal={() => setPortalFor(current)} onChanged={afterSave} />;
+  }
+
   return (
-    <Dialog open={true} onOpenChange={onClose}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader><DialogTitle>Detail Klien: {client.name}</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-2 text-sm">
-          <InfoRow label="Kode" value={client.code} />
-          <InfoRow label="Nama" value={client.name} />
-          <InfoRow label="PIC" value={client.pic_name} />
-          <InfoRow label="No. HP" value={client.pic_phone} />
-          <InfoRow label="Email" value={client.pic_email} />
-          <InfoRow label="Alamat" value={client.address} />
-          <InfoRow label="Kota" value={client.city} />
-          <InfoRow label="Rate Standar" value={`Rp ${(client.standard_rate_per_pcs || 0).toLocaleString('id-ID')}/pcs`} />
-          <InfoRow label="Termin pembayaran" value={({ net_7: '7 hari', net_14: '14 hari', net_30: '30 hari', net_60: '60 hari' })[client.payment_terms] || client.payment_terms} />
-          <InfoRow label="Standar kualitas" value={({ standard: 'Standar', premium: 'Premium', luxury: 'Mewah' })[client.quality_standard] || client.quality_standard} />
-          <InfoRow label="Rating" value={`${client.rating || 0}/5`} />
-          <InfoRow label="Status" value={<span className={`px-2 py-0.5 rounded text-xs ${client.status === 'active' ? 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] ' : 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))] '}`}>{client.status === 'active' ? 'Aktif' : 'Non-Aktif'}</span>} />
-          {(client.product_specialization || []).length > 0 && <InfoRow label="Spesialisasi" value={(client.product_specialization || []).join(', ')} />}
-          <InfoRow label="Catatan" value={client.notes} />
+    <PageLayout testId="maklon-clients" title="Klien maklon" subtitle="Data klien jasa maklon: kontak, tarif standar, termin, dan akses portal klien."
+      actions={<Button onClick={() => setPanel({ mode: 'new' })} data-testid="maklon-client-add"><Plus className="w-4 h-4" />Klien baru</Button>}
+      filters={<>
+        <div className="relative w-72 max-w-full">
+          <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nama / kode / PIC / kota…" className="pl-8 h-9"
+            data-testid="maklon-client-search" />
         </div>
-        <DialogFooter><Button variant="outline" onClick={onClose}>Tutup</Button></DialogFooter>
-      </DialogContent>
-    </Dialog>
+        <FilterChips value={status} onChange={setStatus} testId="maklon-client-status" ariaLabel="Status klien"
+          options={[{ key: '', label: 'Semua', count: counts.all }, { key: 'active', label: 'Aktif', count: counts.active },
+            { key: 'inactive', label: 'Nonaktif', count: counts.inactive }]} />
+      </>}
+      tools={<>
+        <ImportExportToolbar collectionKey="maklon_clients" label="Klien Maklon" onImported={load} />
+        <Button size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="maklon-client-refresh">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </>}
+      summary={error && <Notice tone="danger" title="Gagal memuat data klien">{error}</Notice>}
+      detail={detail}
+      footer={filtered.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
+      <GlassCard className="p-0 overflow-hidden">
+        {loading && !clients.length ? (
+          <div className="p-4 text-sm text-muted-foreground">Memuat klien…</div>
+        ) : !paged.length ? (
+          <EmptyState icon={Users} title={clients.length ? 'Tidak ada klien yang cocok' : 'Belum ada klien terdaftar'}
+            description={clients.length ? 'Ubah kata pencarian atau penyaring status.' : 'Klik Klien baru untuk menambahkan klien maklon pertama.'}
+            action={clients.length && (search || status) ? <Button variant="outline" size="sm" onClick={() => { setSearch(''); setStatus(''); }}><X className="w-3.5 h-3.5" />Tampilkan semua</Button> : null} />
+        ) : (
+          <Table data-testid="maklon-client-table">
+            <TableHeader><TableRow>
+              <TableHead>Klien</TableHead><TableHead>PIC</TableHead><TableHead>Kota</TableHead>
+              <TableHead className="text-right">Tarif standar</TableHead><TableHead>Termin</TableHead>
+              <TableHead>Kualitas</TableHead><TableHead>Status</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>
+              {paged.map((c) => (
+                <TableRow key={c.id} data-testid={`maklon-client-row-${c.id}`} className={panel?.id === c.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
+                  <TableCell>
+                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold text-left" onClick={() => setPanel({ mode: 'view', id: c.id })}
+                      data-testid={`maklon-client-view-${c.id}`}>{c.name}</Button>
+                    <span className="block text-xs text-muted-foreground">{c.code}</span>
+                  </TableCell>
+                  <TableCell className="text-sm">{c.pic_name || '—'}{c.pic_phone ? <span className="block text-xs text-muted-foreground">{c.pic_phone}</span> : null}</TableCell>
+                  <TableCell className="text-sm">{c.city || '—'}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{formatRupiah(c.standard_rate_per_pcs || 0)}</TableCell>
+                  <TableCell className="text-sm">{TERMS[c.payment_terms || 'net_30'] || c.payment_terms}</TableCell>
+                  <TableCell className="text-sm">{QUALITY[c.quality_standard] || c.quality_standard || '—'}</TableCell>
+                  <TableCell><ActiveBadge c={c} /></TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </GlassCard>
+      {portalFor && <PortalAccessDialog client={portalFor} onClose={() => setPortalFor(null)} />}
+    </PageLayout>
   );
-}
-
-function InfoRow({ label, value }) {
-  if (!value && value !== 0) return null;
-  return <div className="flex gap-3"><span className="text-foreground/50 shrink-0 w-32">{label}:</span><span className="text-foreground/80">{value}</span></div>;
 }

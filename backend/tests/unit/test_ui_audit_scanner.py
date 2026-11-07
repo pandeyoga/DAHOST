@@ -50,3 +50,28 @@ def test_jarak_besar_ditandai(tmp_path):
 def test_entri_registri_lazy_langsung_terbaca():
     f = scan_ui._entry_file("lazyRetry(() => import('./cutting/CuttingDashboard')),", {})
     assert f is not None and f.name.startswith("CuttingDashboard")
+
+
+def test_kartu_per_baris_ditandai(tmp_path):
+    # 2026-11-07 (Tahap 9): daftar yang tiap barisnya kartu → harus tabel + RowDetail/DetailPanel
+    vendor = "{list.map(p => (\n  <GlassCard key={p.id}><b>{p.name}</b></GlassCard>\n))}"
+    custom = "{rows.map((r) => <VendorCard key={r.id} row={r} />)}"
+    div = '{rows.map(r => (<div key={r.id} className="rounded-xl border bg-card p-3">{r.x}</div>))}'
+    stat = "{kpi.map(k => <StatCard key={k.id} {...k} />)}"
+    plain = '{rows.map(r => (<div key={r.id} className="flex gap-2">{r.x}</div>))}'
+    assert "KARTU-PER-BARIS" in _hits(tmp_path, "V.jsx", vendor, screen=False)
+    assert "KARTU-PER-BARIS" in _hits(tmp_path, "W.jsx", custom, screen=False)
+    assert "KARTU-PER-BARIS" in _hits(tmp_path, "D.jsx", div, screen=False)
+    assert "KARTU-PER-BARIS" not in _hits(tmp_path, "S.jsx", stat, screen=False)
+    assert "KARTU-PER-BARIS" not in _hits(tmp_path, "P.jsx", plain, screen=False)
+
+
+def test_kartu_di_dalam_kartu_ditandai(tmp_path):
+    nested = "<GlassCard>\n  <h3>x</h3>\n  <GlassPanel className='p-2'>y</GlassPanel>\n</GlassCard>"
+    siblings = "<GlassCard>a</GlassCard>\n<GlassCard onClick={() => go(1)}>b</GlassCard>"
+    selfclose = "<GlassCard>\n  <Card />\n</GlassCard>"
+    content = "<Card>\n  <CardContent>x</CardContent>\n</Card>"
+    assert _hits(tmp_path, "N.jsx", nested, screen=False).count("KARTU-DALAM-KARTU") == 1
+    assert "KARTU-DALAM-KARTU" not in _hits(tmp_path, "B.jsx", siblings, screen=False)
+    assert "KARTU-DALAM-KARTU" in _hits(tmp_path, "C.jsx", selfclose, screen=False)
+    assert "KARTU-DALAM-KARTU" not in _hits(tmp_path, "E.jsx", content, screen=False)

@@ -1,740 +1,598 @@
 /**
- * VendorAccountsAdminModule — Admin kelola vendor CMT
- * Tab 1: Vendor Partners (entitas vendor)  — CRUD penuh (Tambah/Edit/Hapus)
- * Tab 2: Akun User Vendor (login credentials) — CRUD penuh (Tambah/Edit/Reset pw/Aktif/Hapus)
- * Tab 3: Semua Jobs lintas vendor — CRUD penuh (Buat/Edit/Hapus)
+ * VendorAccountsAdminModule — menu "Vendor CMT" (Portal Produksi & Maklon, satu layar yang sama).
+ *
+ * Tahap 9 (7 Nov 2026, keputusan owner "menu & tampilan dua portal identik"):
+ *   • Cetakan PageLayout + tabel bisa dicari & berhalaman; detail/ubah vendor DI HALAMAN (DetailPanel).
+ *     Dialog hanya untuk form singkat "Vendor baru" / "Akun baru".
+ *   • Tab: Vendor · Akun vendor. Tab "Semua job" DIHAPUS — model lama `vendor_jobs` tidak tersambung ke
+ *     PO, kiriman, maupun tagihan (backend kini menolak tulisnya, 410).
+ *   • Perbaikan: catatan vendor dulu TERHAPUS setiap kali vendor diubah (form tidak mengirim `notes`,
+ *     server menimpa dengan ''). Kini catatan tampil & bisa diubah, dan PUT hanya mengirim isian yang
+ *     berubah (server memperbarui sebagian).
+ *   • Hapus & nonaktifkan memakai confirmDialog.
+ *
+ *   - vendor : GET/POST /api/vendor-portal/partners · PUT/DELETE /api/vendor-portal/partners/{id}[?hard=true]
+ *   - akun   : GET/POST /api/vendor-portal/accounts · PUT/DELETE /api/vendor-portal/accounts/{id}[?hard=true]
  */
-import { useState, useEffect, useCallback } from 'react';
-import SmartNativeSelect from '@/components/ui/smart-native-select';
-import {
-  Users, Building2, Briefcase, Plus, Trash2, Pencil, KeyRound, Power,
-  Loader2, RefreshCw, CheckCircle2, AlertCircle, ChevronDown, X, AlertTriangle,
-} from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Building2, KeyRound, Pencil, Plus, Power, RefreshCw, Search, Trash2, Users, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { Textarea } from '@/components/ui/textarea';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
-import { EmptyState } from './moduleAtoms';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { apiDelete, apiGet, apiPost, apiPut } from '../../lib/api';
+import { formatDateTimeID } from '@/lib/format';
+import PageLayout, { DetailPanel } from './layout/PageLayout';
+import HubTabs from './hubs/HubTabs';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import ImportExportToolbar from './ImportExportToolbar';
 
-const TABS = [
-  { id: 'partners', label: 'Vendor partner', icon: Building2 },
-  { id: 'accounts', label: 'Akun vendor', icon: Users },
-  { id: 'jobs',     label: 'Semua job', icon: Briefcase },
-];
+const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
+const OWNER_LABEL = { '': 'Vendor CMT luar', SMU: 'Tim jahit CV Sukma' };
+const isActive = (r) => r?.is_active !== false;
+const ActiveBadge = ({ row, testId }) => (
+  <StatusBadge status={isActive(row) ? 'aktif' : 'nonaktif'} label={isActive(row) ? 'Aktif' : 'Nonaktif'}
+    tone={isActive(row) ? 'success' : 'muted'} testId={testId} />
+);
 
-// Kolom isian formulir vendor partner: [kunci, label, type input]
-const PARTNER_FIELDS = [
-  ['name', 'Nama Vendor *', 'text'], ['code', 'Kode (opsional)', 'text'],
-  ['contact_name', 'Nama Kontak', 'text'], ['contact_phone', 'No. HP', 'tel'],
-];
-
-const JOB_STATUS_COLOR = {
-  open:        'text-muted-foreground',
-  in_progress: 'text-[hsl(var(--primary))] ',
-  done:        'text-[hsl(var(--success))] ',
-  cancelled:   'text-[hsl(var(--destructive))] ',
-};
-const JOB_STATUS_OPTIONS = [
-  { value: 'open',        label: 'Belum Mulai' },
-  { value: 'in_progress', label: 'Berjalan' },
-  { value: 'done',        label: 'Selesai' },
-  { value: 'cancelled',   label: 'Dibatalkan' },
-];
-
-const INPUT_CLS = 'w-full px-3 py-2 rounded-lg bg-foreground/[0.08] border border-foreground/[0.15] text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50';
-
-function Toast({ msg, type, onClose }) {
+function Field({ label, children, hint, className = '' }) {
   return (
-    <GlassCard role="status"
-      className={`fixed top-5 right-5 z-[60] flex items-center gap-3 px-4 py-3 shadow-xl ${type==='ok' ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--destructive))]'}`}>
-      {type==='ok' ? <CheckCircle2 className="w-5 h-5 shrink-0" /> : <AlertCircle className="w-5 h-5 shrink-0" />}
-      <span className="text-sm font-medium">{msg}</span>
-      <Button variant="ghost" size="icon-sm" onClick={onClose} title="Tutup" aria-label="Tutup"><X className="w-4 h-4" /></Button>
-    </GlassCard>
+    <label className={`block space-y-1 ${className}`}>
+      <span className="text-xs text-muted-foreground">{label}</span>
+      {children}
+      {hint && <span className="block text-[11px] text-muted-foreground">{hint}</span>}
+    </label>
   );
 }
 
-// ── Reusable confirm dialog ────────────────────────────────────────────────────
-function ConfirmDialog({ open, title, message, confirmLabel = 'Hapus', busy, onConfirm, onCancel }) {
-  if (!open) return null;
+function Info({ label, value, testId }) {
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4" data-testid="confirm-dialog">
-      <div className="w-full max-w-md rounded-2xl bg-background border border-foreground/15 shadow-2xl p-5 space-y-4">
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-full bg-[hsl(var(--destructive)/0.15)] flex items-center justify-center shrink-0">
-            <AlertTriangle className="w-5 h-5 text-[hsl(var(--destructive))] " />
-          </div>
-          <div>
-            <h4 className="font-semibold text-foreground">{title}</h4>
-            <p className="text-sm text-muted-foreground mt-1">{message}</p>
-          </div>
-        </div>
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={onCancel} disabled={busy} data-testid="confirm-cancel">Batal</Button>
-          <Button size="sm" onClick={onConfirm} disabled={busy}
-            className="bg-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.9)] text-white" data-testid="confirm-ok">
-            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : confirmLabel}
-          </Button>
-        </div>
-      </div>
+    <div className="min-w-0">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-sm text-foreground break-words" data-testid={testId}>{value || '—'}</p>
     </div>
   );
 }
 
-// ── Partners Tab ──────────────────────────────────────────────────────────────
-
-function PartnersTab({ token, showToast }) {
-  const [list,    setList]    = useState([]);
-  const [loading, setLoading] = useState(true);
-  // Tahap 8 fase 2: owner_entity '' = vendor luar, 'SMU' = tim jahit CV Sukma (tagihan PO internal = antar CV,
-  // PO maklon tanpa tagihan CMT).
-  const emptyForm = { name:'', code:'', contact_name:'', contact_phone:'', address:'', capacity_pcs:'', capacity_note:'', owner_entity:'' };
-  const [form,    setForm]    = useState(emptyForm);
-  const [editId,  setEditId]  = useState(null);      // null = create mode
-  const [saving,  setSaving]  = useState(false);
-  const [showForm,setShowForm]= useState(false);
-  const [confirm, setConfirm] = useState(null);      // { partner } | null
-  const [deleting,setDeleting]= useState(false);
-  const [busyId,  setBusyId]  = useState(null);      // toggle active spinner
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try { const r = await fetch('/api/vendor-portal/partners', { headers }); if (r.ok) setList(await r.json()); }
-    finally { setLoading(false); }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
-
-  useEffect(() => { load(); }, [load]);
-
-  function openCreate() { setEditId(null); setForm(emptyForm); setShowForm(true); }
-  function openEdit(p) {
-    setEditId(p.id);
-    setForm({ name:p.name||'', code:p.code||'', contact_name:p.contact_name||'', contact_phone:p.contact_phone||'', address:p.address||'', capacity_pcs:(p.capacity_pcs ?? '')===0?0:(p.capacity_pcs || ''), capacity_note:p.capacity_note||'', owner_entity:p.owner_entity||'' });
-    setShowForm(true);
-  }
-
-  async function save(e) {
-    e.preventDefault();
-    if (!form.name.trim()) return;
-    setSaving(true);
-    try {
-      const url = editId ? `/api/vendor-portal/partners/${editId}` : '/api/vendor-portal/partners';
-      const method = editId ? 'PUT' : 'POST';
-      const body = { ...form, capacity_pcs: form.capacity_pcs === '' ? null : Number(form.capacity_pcs) };
-      const r = await fetch(url, { method, headers, body: JSON.stringify(body) });
-      if (!r.ok) { const er = await r.json().catch(()=>({})); throw new Error(er.detail || 'Gagal menyimpan.'); }
-      showToast('ok', editId ? `Partner "${form.name}" diperbarui.` : `Partner "${form.name}" berhasil dibuat.`);
-      setForm(emptyForm); setEditId(null); setShowForm(false); load();
-    } catch(e) { showToast('err', e.message); }
-    finally { setSaving(false); }
-  }
-
-  async function toggleActive(p) {
-    setBusyId(p.id);
-    try {
-      let r;
-      if (p.is_active === false) {
-        // Reactivate via PUT is_active=true (I-VP-5)
-        r = await fetch(`/api/vendor-portal/partners/${p.id}`, {
-          method:'PUT', headers,
-          body: JSON.stringify({ name:p.name||'', code:p.code||'', contact_name:p.contact_name||'',
-                                 contact_phone:p.contact_phone||'', address:p.address||'', notes:p.notes||'', is_active:true }),
-        });
-      } else {
-        // Soft deactivate via DELETE (guards: akun aktif / job berjalan)
-        r = await fetch(`/api/vendor-portal/partners/${p.id}`, { method:'DELETE', headers });
-      }
-      if (!r.ok) { const er = await r.json().catch(()=>({})); throw new Error(er.detail || 'Gagal.'); }
-      showToast('ok', p.is_active===false ? `Partner "${p.name}" diaktifkan.` : `Partner "${p.name}" dinonaktifkan.`);
-      load();
-    } catch(e) { showToast('err', e.message); }
-    finally { setBusyId(null); }
-  }
-
-  async function doDelete() {
-    if (!confirm?.partner) return;
-    setDeleting(true);
-    try {
-      const r = await fetch(`/api/vendor-portal/partners/${confirm.partner.id}?hard=true`, { method:'DELETE', headers });
-      if (!r.ok) { const er = await r.json().catch(()=>({})); throw new Error(er.detail || 'Gagal menghapus.'); }
-      showToast('ok', `Partner "${confirm.partner.name}" dihapus permanen.`);
-      setConfirm(null); load();
-    } catch(e) { showToast('err', e.message); }
-    finally { setDeleting(false); }
-  }
-
+function SearchBox({ value, onChange, placeholder, testId }) {
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="font-semibold text-sm text-foreground">Vendor Partner ({list.length})</h3>
-        <div className="flex items-center gap-2">
-          <ImportExportToolbar collectionKey="vendor_partners" label="Vendor CMT" onImported={load} />
-          <Button size="sm" onClick={openCreate} data-testid="btn-add-partner">
-            <Plus className="w-3.5 h-3.5 mr-1.5" /> Tambah Partner
-          </Button>
-        </div>
-      </div>
-
-      {showForm && (
-        <GlassCard as="form" onSubmit={save} className="p-4 space-y-3" data-testid="partner-form">
-          <h4 className="text-sm font-semibold">{editId ? 'Ubah vendor' : 'Vendor baru'}</h4>
-          <div className="grid grid-cols-2 gap-3">
-            {PARTNER_FIELDS.map(([k,l,t]) => (
-              <div key={k} className="space-y-1">
-                <label className="text-[11px] text-muted-foreground uppercase font-semibold">{l}</label>
-                <input type={t} value={form[k]} onChange={e=>setForm(p=>({...p,[k]:e.target.value}))}
-                  data-testid={`partner-${k}`} className={INPUT_CLS} />
-              </div>
-            ))}
-          </div>
-          <div className="space-y-1">
-            <label className="text-[11px] text-muted-foreground uppercase font-semibold">Alamat</label>
-            <input value={form.address} onChange={e=>setForm(p=>({...p,address:e.target.value}))} className={INPUT_CLS} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label className="text-[11px] text-muted-foreground uppercase font-semibold">Kapasitas Jahit (pcs)</label>
-              <input type="number" min="0" value={form.capacity_pcs} onChange={e=>setForm(p=>({...p,capacity_pcs:e.target.value}))}
-                data-testid="partner-capacity_pcs" className={INPUT_CLS} placeholder="mis. 200" />
-              <p className="text-[10px] text-muted-foreground">Maksimum pcs yang bisa ditangani pada satu waktu (dipakai monitoring beban vs kapasitas).</p>
-            </div>
-            <div className="space-y-1">
-              <label className="text-[11px] text-muted-foreground uppercase font-semibold">Catatan Kapasitas</label>
-              <input value={form.capacity_note} onChange={e=>setForm(p=>({...p,capacity_note:e.target.value}))}
-                data-testid="partner-capacity_note" className={INPUT_CLS} placeholder="mis. 2 lini jahit, kuat hoodie" />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <label className="text-[11px] text-muted-foreground uppercase font-semibold">Pemilik penjahit</label>
-            <SmartNativeSelect value={form.owner_entity} onChange={e=>setForm(p=>({...p,owner_entity:e.target.value}))}
-              className="w-full h-9" data-testid="partner-owner_entity" aria-label="Pemilik penjahit">
-              <option value="">Vendor CMT luar</option>
-              <option value="SMU">Tim jahit CV Sukma</option>
-            </SmartNativeSelect>
-            <p className="text-[10px] text-muted-foreground">Tim jahit CV Sukma: jahitan PO internal ditagih CV Sukma ke CV Dewi Aditya (antar CV); PO maklon tanpa tagihan CMT.</p>
-          </div>
-          <div className="flex gap-2">
-            <Button type="submit" size="sm" disabled={saving} data-testid="partner-save">
-              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : (editId ? 'Simpan Perubahan' : 'Simpan')}
-            </Button>
-            <Button type="button" variant="outline" size="sm" onClick={()=>{setShowForm(false);setEditId(null);}}>Batal</Button>
-          </div>
-        </GlassCard>
-      )}
-
-      {loading
-        ? <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground text-sm"><Loader2 className="w-4 h-4 animate-spin"/>Memuat...</div>
-        : list.length === 0
-          ? <EmptyState icon={Building2} title="Belum ada vendor partner" description="Klik Tambah Partner untuk mendaftarkan vendor CMT pertama." />
-          : (
-            <div className="space-y-2" data-testid="partners-list">
-              {list.map(p => (
-                <GlassCard key={p.id} className="flex items-center gap-3 p-3">
-                  <Building2 className="w-8 h-8 text-primary/60 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-sm text-foreground">{p.name}</span>
-                      {p.code && <span className="text-[11px] text-primary/70 tabular-nums bg-primary/10 px-1.5 rounded">{p.code}</span>}
-                      {p.owner_entity === 'SMU' && <span className="text-[11px] text-[hsl(var(--primary))]" data-testid={`partner-owner-${p.id}`}>Tim jahit CV Sukma</span>}
-                    </div>
-                    <p className="text-xs text-muted-foreground">{p.contact_name || '—'} · {p.contact_phone || '—'}</p>
-                    <p className="text-xs text-muted-foreground/70">{p.job_count || 0} job · {p.account_count || 0} akun{(p.capacity_pcs > 0) ? ` · Kapasitas ${Number(p.capacity_pcs).toLocaleString('id-ID')} pcs` : ' · Kapasitas belum diisi'}</p>
-                  </div>
-                  <span className={`text-xs px-2 py-0.5 rounded-full border shrink-0 ${
-                    p.is_active !== false ? 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ' : 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.35)] '
-                  }`} data-testid={`partner-status-${p.id}`}>{p.is_active !== false ? 'Aktif' : 'Nonaktif'}</span>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button onClick={()=>toggleActive(p)} title={p.is_active!==false ? 'Nonaktifkan' : 'Aktifkan'} disabled={busyId===p.id}
-                      className="p-2 rounded-lg hover:bg-[hsl(var(--warning)/0.1)] text-muted-foreground hover:text-[hsl(var(--warning))] transition-colors"
-                      data-testid={`partner-toggle-${p.id}`}>
-                      {busyId===p.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Power className="w-4 h-4" />}
-                    </button>
-                    <button onClick={()=>openEdit(p)} title="Ubah"
-                      className="p-2 rounded-lg hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
-                      data-testid={`partner-edit-${p.id}`}>
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button onClick={()=>setConfirm({ partner:p })} title="Hapus permanen"
-                      className="p-2 rounded-lg hover:bg-[hsl(var(--destructive)/0.1)] text-muted-foreground hover:text-[hsl(var(--destructive))] transition-colors"
-                      data-testid={`partner-delete-${p.id}`}>
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </GlassCard>
-              ))}
-            </div>
-          )
-      }
-
-      <ConfirmDialog
-        open={!!confirm}
-        title="Hapus Vendor Partner permanen?"
-        message={confirm ? `Vendor "${confirm.partner.name}" akan dihapus permanen. Hanya bisa jika tidak punya job/akun apa pun. Untuk sekadar menonaktifkan, pakai tombol Power.` : ''}
-        confirmLabel="Hapus permanen"
-        busy={deleting}
-        onConfirm={doDelete}
-        onCancel={()=>setConfirm(null)}
-      />
+    <div className="relative w-72 max-w-full">
+      <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+      <GlassInput value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+        className="pl-8 h-9" data-testid={testId} />
     </div>
   );
 }
 
-// ── Accounts Tab ──────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// Tab Vendor
+// ══════════════════════════════════════════════════════════════════════════════
+const PARTNER_EDIT_KEYS = ['name', 'code', 'contact_name', 'contact_phone', 'address', 'capacity_pcs', 'capacity_note',
+  'owner_entity', 'notes'];
+const partnerForm = (p = {}) => ({
+  name: p.name || '', code: p.code || '', contact_name: p.contact_name || '', contact_phone: p.contact_phone || '',
+  address: p.address || '', capacity_pcs: p.capacity_pcs === 0 || p.capacity_pcs ? String(p.capacity_pcs) : '',
+  capacity_note: p.capacity_note || '', owner_entity: p.owner_entity || '', notes: p.notes || '',
+});
+const normPartner = (f) => ({ ...f, capacity_pcs: f.capacity_pcs === '' ? null : Number(f.capacity_pcs) });
 
-function AccountsTab({ token, showToast }) {
-  const [list,     setList]     = useState([]);
-  const [partners, setPartners] = useState([]);
-  const [loading,  setLoading]  = useState(true);
-  const emptyCreate = { email:'', name:'', password:'', partner_id:'' };
-  const [form,     setForm]     = useState(emptyCreate);
-  const [saving,   setSaving]   = useState(false);
-  const [showForm, setShowForm] = useState(false);
-  const [editAcc,  setEditAcc]  = useState(null);   // account being edited | null
-  const [editForm, setEditForm] = useState({ name:'', partner_id:'', is_active:true, password:'' });
-  const [savingEdit,setSavingEdit] = useState(false);
-  const [confirm,  setConfirm]  = useState(null);   // { account } | null
-  const [deleting, setDeleting] = useState(false);
-  const [busyId,   setBusyId]   = useState(null);   // for toggle active spinner
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+/** Isian yang berubah saja — PUT diperbarui SEBAGIAN (Tahap 9: catatan tidak terhapus). */
+export function changedPartnerFields(original, form) {
+  const a = normPartner(partnerForm(original));
+  const b = normPartner(form);
+  const out = {};
+  PARTNER_EDIT_KEYS.forEach((k) => { if ((a[k] ?? null) !== (b[k] ?? null)) out[k] = b[k]; });
+  if ('capacity_pcs' in out && out.capacity_pcs === null) delete out.capacity_pcs;
+  return out;
+}
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [accRes, parRes] = await Promise.all([
-        fetch('/api/vendor-portal/accounts', { headers }),
-        fetch('/api/vendor-portal/partners',  { headers }),
-      ]);
-      if (accRes.ok) setList(await accRes.json());
-      if (parRes.ok) setPartners(await parRes.json());
-    } finally { setLoading(false); }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
-
-  useEffect(() => { load(); }, [load]);
-
-  async function create(e) {
-    e.preventDefault();
-    if (!form.email || !form.name || !form.password || !form.partner_id) {
-      showToast('err', 'Semua field wajib diisi.'); return;
-    }
-    setSaving(true);
-    try {
-      const r = await fetch('/api/vendor-portal/accounts', { method:'POST', headers, body: JSON.stringify(form) });
-      if (!r.ok) { const er = await r.json().catch(()=>({})); throw new Error(er.detail || 'Gagal membuat akun.'); }
-      showToast('ok', `Akun vendor "${form.email}" berhasil dibuat.`);
-      setForm(emptyCreate); setShowForm(false); load();
-    } catch(e) { showToast('err', e.message); }
-    finally { setSaving(false); }
-  }
-
-  function openEdit(u) {
-    setEditAcc(u);
-    setEditForm({ name:u.name||'', partner_id:u.cmt_vendor_id||'', is_active:u.is_active!==false, password:'' });
-  }
-
-  async function saveEdit(e) {
-    e.preventDefault();
-    if (!editForm.name.trim()) { showToast('err', 'Nama wajib diisi.'); return; }
-    if (editForm.password && editForm.password.length < 6) { showToast('err', 'Password minimal 6 karakter.'); return; }
-    setSavingEdit(true);
-    try {
-      const body = { name: editForm.name, partner_id: editForm.partner_id, is_active: editForm.is_active };
-      if (editForm.password) body.password = editForm.password;
-      const r = await fetch(`/api/vendor-portal/accounts/${editAcc.id}`, { method:'PUT', headers, body: JSON.stringify(body) });
-      if (!r.ok) { const er = await r.json().catch(()=>({})); throw new Error(er.detail || 'Gagal menyimpan.'); }
-      const res = await r.json().catch(()=>({}));
-      showToast('ok', res.password_reset ? 'Akun diperbarui + password direset.' : 'Akun diperbarui.');
-      setEditAcc(null); load();
-    } catch(e) { showToast('err', e.message); }
-    finally { setSavingEdit(false); }
-  }
-
-  async function toggleActive(u) {
-    setBusyId(u.id);
-    try {
-      const r = await fetch(`/api/vendor-portal/accounts/${u.id}`, { method:'PUT', headers, body: JSON.stringify({ is_active: u.is_active===false }) });
-      if (!r.ok) { const er = await r.json().catch(()=>({})); throw new Error(er.detail || 'Gagal.'); }
-      showToast('ok', u.is_active===false ? 'Akun diaktifkan.' : 'Akun dinonaktifkan.');
-      load();
-    } catch(e) { showToast('err', e.message); }
-    finally { setBusyId(null); }
-  }
-
-  async function doDelete() {
-    if (!confirm?.account) return;
-    setDeleting(true);
-    try {
-      const r = await fetch(`/api/vendor-portal/accounts/${confirm.account.id}?hard=true`, { method:'DELETE', headers });
-      if (!r.ok) { const er = await r.json().catch(()=>({})); throw new Error(er.detail || 'Gagal menghapus.'); }
-      showToast('ok', `Akun "${confirm.account.email}" dihapus.`);
-      setConfirm(null); load();
-    } catch(e) { showToast('err', e.message); }
-    finally { setDeleting(false); }
-  }
-
+function PartnerFormFields({ form, setForm, full = true }) {
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="font-semibold text-sm text-foreground">Akun Vendor ({list.length})</h3>
-        <Button size="sm" onClick={() => setShowForm(!showForm)} data-testid="btn-add-account">
-          <Plus className="w-3.5 h-3.5 mr-1.5" /> Tambah Akun
-        </Button>
-      </div>
-
-      {showForm && (
-        <GlassCard as="form" onSubmit={create} className="p-4 space-y-3" data-testid="account-form">
-          <h4 className="text-sm font-semibold">Akun Vendor Baru</h4>
-          <div className="space-y-1">
-            <label className="text-[11px] text-muted-foreground uppercase font-semibold">Partner Vendor *</label>
-            <div className="relative">
-              <SmartNativeSelect value={form.partner_id} onChange={e=>setForm(p=>({...p,partner_id:e.target.value}))}
-                data-testid="account-partner-select"
-                className="w-full px-3 py-2 rounded-lg bg-foreground/[0.08] border border-foreground/[0.15] text-sm text-foreground appearance-none focus:outline-none focus:ring-2 focus:ring-primary/50">
-                <option value="">— Pilih Partner —</option>
-                {partners.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </SmartNativeSelect>
-              <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label className="text-[11px] text-muted-foreground uppercase font-semibold">Nama Lengkap *</label>
-              <input value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))} data-testid="account-name" className={INPUT_CLS} />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[11px] text-muted-foreground uppercase font-semibold">Email Login *</label>
-              <input value={form.email} onChange={e=>setForm(p=>({...p,email:e.target.value}))} data-testid="account-email" className={INPUT_CLS} />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <label className="text-[11px] text-muted-foreground uppercase font-semibold">Password *</label>
-            <input type="password" value={form.password} onChange={e=>setForm(p=>({...p,password:e.target.value}))} data-testid="account-password" className={INPUT_CLS} />
-          </div>
-          <div className="flex gap-2">
-            <Button type="submit" size="sm" disabled={saving}>
-              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Buat Akun'}
-            </Button>
-            <Button type="button" variant="outline" size="sm" onClick={()=>setShowForm(false)}>Batal</Button>
-          </div>
-        </GlassCard>
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <Field label="Nama vendor *"><GlassInput value={form.name} onChange={set('name')} data-testid="partner-name" /></Field>
+      <Field label="Kode (opsional)"><GlassInput value={form.code} onChange={set('code')} data-testid="partner-code" /></Field>
+      <Field label="Nama kontak"><GlassInput value={form.contact_name} onChange={set('contact_name')} data-testid="partner-contact_name" /></Field>
+      <Field label="No. HP"><GlassInput type="tel" value={form.contact_phone} onChange={set('contact_phone')} data-testid="partner-contact_phone" /></Field>
+      <Field label="Pemilik penjahit" className="sm:col-span-2"
+        hint="Tim jahit CV Sukma: jahitan PO internal ditagih CV Sukma ke CV Dewi Aditya (antar CV); PO maklon tanpa tagihan CMT.">
+        <SmartNativeSelect value={form.owner_entity} onChange={set('owner_entity')} className="w-full h-9"
+          data-testid="partner-owner_entity" aria-label="Pemilik penjahit">
+          <option value="">Vendor CMT luar</option>
+          <option value="SMU">Tim jahit CV Sukma</option>
+        </SmartNativeSelect>
+      </Field>
+      {full && (
+        <>
+          <Field label="Alamat" className="sm:col-span-2"><GlassInput value={form.address} onChange={set('address')} data-testid="partner-address" /></Field>
+          <Field label="Kapasitas jahit (pcs)" hint="Maksimum pcs yang bisa ditangani pada satu waktu (dipakai pantau beban vs kapasitas).">
+            <GlassInput type="number" min="0" value={form.capacity_pcs} onChange={set('capacity_pcs')} placeholder="mis. 200"
+              data-testid="partner-capacity_pcs" />
+          </Field>
+          <Field label="Catatan kapasitas">
+            <GlassInput value={form.capacity_note} onChange={set('capacity_note')} placeholder="mis. 2 lini jahit, kuat hoodie"
+              data-testid="partner-capacity_note" />
+          </Field>
+          <Field label="Catatan" className="sm:col-span-2">
+            <Textarea rows={3} value={form.notes} onChange={set('notes')} placeholder="Catatan internal tentang vendor ini"
+              data-testid="partner-notes" />
+          </Field>
+        </>
       )}
-
-      {loading ? (
-        <div className="flex justify-center py-8 gap-2 text-muted-foreground text-sm"><Loader2 className="w-4 h-4 animate-spin"/>Memuat...</div>
-      ) : list.length === 0 ? (
-        <EmptyState icon={Users} title="Belum ada akun vendor" description="Klik Tambah Akun untuk membuat login portal bagi vendor partner." />
-      ) : (
-        <div className="space-y-2" data-testid="accounts-list">
-          {list.map(u => (
-            <GlassCard key={u.id} className="flex items-center gap-3 p-3">
-              <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center text-primary text-sm font-bold shrink-0">
-                {u.name?.charAt(0).toUpperCase()}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-sm text-foreground">{u.name}</p>
-                <p className="text-xs text-muted-foreground truncate">{u.email} · {u.partner_name}</p>
-              </div>
-              <span className={`text-xs px-2 py-0.5 rounded-full border shrink-0 ${
-                u.is_active !== false ? 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ' : 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.35)] '
-              }`}>{u.is_active !== false ? 'Aktif' : 'Nonaktif'}</span>
-              <div className="flex items-center gap-1 shrink-0">
-                <button onClick={()=>toggleActive(u)} title={u.is_active!==false ? 'Nonaktifkan' : 'Aktifkan'} disabled={busyId===u.id}
-                  className="p-2 rounded-lg hover:bg-[hsl(var(--warning)/0.1)] text-muted-foreground hover:text-[hsl(var(--warning))] transition-colors"
-                  data-testid={`account-toggle-${u.id}`}>
-                  {busyId===u.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Power className="w-4 h-4" />}
-                </button>
-                <button onClick={()=>openEdit(u)} title="Ubah"
-                  className="p-2 rounded-lg hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
-                  data-testid={`account-edit-${u.id}`}>
-                  <Pencil className="w-4 h-4" />
-                </button>
-                <button onClick={()=>setConfirm({ account:u })} title="Hapus"
-                  className="p-2 rounded-lg hover:bg-[hsl(var(--destructive)/0.1)] text-muted-foreground hover:text-[hsl(var(--destructive))] transition-colors"
-                  data-testid={`account-delete-${u.id}`}>
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </GlassCard>
-          ))}
-        </div>
-      )}
-
-      {/* Edit account dialog */}
-      {editAcc && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4" data-testid="account-edit-dialog">
-          <form onSubmit={saveEdit} className="w-full max-w-md rounded-2xl bg-background border border-foreground/15 shadow-2xl p-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <h4 className="font-semibold text-foreground">Edit Akun Vendor</h4>
-              <button type="button" onClick={()=>setEditAcc(null)}><X className="w-4 h-4 text-muted-foreground" /></button>
-            </div>
-            <p className="text-xs text-muted-foreground tabular-nums">{editAcc.email}</p>
-            <div className="space-y-1">
-              <label className="text-[11px] text-muted-foreground uppercase font-semibold">Nama Lengkap *</label>
-              <input value={editForm.name} onChange={e=>setEditForm(p=>({...p,name:e.target.value}))} data-testid="account-edit-name" className={INPUT_CLS} />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[11px] text-muted-foreground uppercase font-semibold">Partner Vendor</label>
-              <div className="relative">
-                <SmartNativeSelect value={editForm.partner_id} onChange={e=>setEditForm(p=>({...p,partner_id:e.target.value}))}
-                  data-testid="account-edit-partner"
-                  className="w-full px-3 py-2 rounded-lg bg-foreground/[0.08] border border-foreground/[0.15] text-sm text-foreground appearance-none focus:outline-none focus:ring-2 focus:ring-primary/50">
-                  <option value="">— Pilih Partner —</option>
-                  {partners.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </SmartNativeSelect>
-                <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-              </div>
-            </div>
-            <div className="space-y-1">
-              <label className="text-[11px] text-muted-foreground uppercase font-semibold flex items-center gap-1"><KeyRound className="w-3 h-3" /> Reset Password (opsional)</label>
-              <input type="password" value={editForm.password} onChange={e=>setEditForm(p=>({...p,password:e.target.value}))}
-                placeholder="Kosongkan jika tidak diubah" data-testid="account-edit-password" className={INPUT_CLS} />
-            </div>
-            <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
-              <input type="checkbox" checked={editForm.is_active} onChange={e=>setEditForm(p=>({...p,is_active:e.target.checked}))} data-testid="account-edit-active" className="w-4 h-4 accent-primary" />
-              Akun aktif (bisa login)
-            </label>
-            <div className="flex justify-end gap-2 pt-1">
-              <Button type="button" variant="outline" size="sm" onClick={()=>setEditAcc(null)}>Batal</Button>
-              <Button type="submit" size="sm" disabled={savingEdit} data-testid="account-edit-save">
-                {savingEdit ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Simpan Perubahan'}
-              </Button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      <ConfirmDialog
-        open={!!confirm}
-        title="Hapus Akun Vendor?"
-        message={confirm ? `Akun "${confirm.account.email}" akan dihapus permanen dan tidak bisa login lagi.` : ''}
-        busy={deleting}
-        onConfirm={doDelete}
-        onCancel={()=>setConfirm(null)}
-      />
     </div>
   );
 }
 
-// ── Jobs Tab ──────────────────────────────────────────────────────────────────
+function PartnerDetail({ partner, onClose, onChanged }) {
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState(() => partnerForm(partner));
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setForm(partnerForm(partner)); setEditing(false); }, [partner]);
 
-function AllJobsTab({ token, showToast }) {
-  const [jobs,    setJobs]    = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [partners, setPartners] = useState([]);
-  const [models,   setModels]   = useState([]);
-  const [showForm, setShowForm] = useState(false);
-  const [saving,   setSaving]   = useState(false);
-  const emptyForm = { title: '', partner_id: '', model_id: '', qty_target: 0, process: 'SEWING', due_date: '', status: 'open' };
-  const [form, setForm] = useState(emptyForm);
-  const [editId, setEditId] = useState(null);
-  const [confirm, setConfirm] = useState(null);   // { job } | null
-  const [deleting, setDeleting] = useState(false);
-  const [processes, setProcesses] = useState([]);
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-
-  const load = useCallback(async () => {
-    setLoading(true);
+  const save = async () => {
+    if (!form.name.trim()) { toast.error('Nama vendor wajib diisi'); return; }
+    const body = changedPartnerFields(partner, form);
+    if (!Object.keys(body).length) { setEditing(false); return; }
+    setBusy(true);
     try {
-      const [jr, pr, mr, prc] = await Promise.all([
-        fetch('/api/vendor-portal/jobs', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
-        fetch('/api/vendor-portal/partners', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
-        fetch('/api/rahaza/models', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
-        // 2026-11-07 (Tahap 5): proses job DARI MASTER PROSES (dulu daftar tetap berisi "EMBROIDERY" yang tidak
-        // ada di master, dan PACKING/PERMAK yang ada di master tidak bisa dipilih)
-        fetch('/api/rahaza/processes', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []).catch(() => []),
-      ]);
-      setJobs(jr || []); setPartners(pr || []); setModels((mr || []).filter(m => m.active !== false));
-      setProcesses((Array.isArray(prc) ? prc : (prc?.items || [])).filter(x => x.active !== false && x.code));
-    } finally { setLoading(false); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
-
-  useEffect(() => { load(); }, [load]);
-
-  function openCreate() { setEditId(null); setForm(emptyForm); setShowForm(true); }
-  function openEdit(j) {
-    setEditId(j.id);
-    setForm({ title:j.title||'', partner_id:j.partner_id||'', model_id:j.model_id||'', qty_target:j.qty_target||0, process:j.process||'SEWING', due_date:j.due_date||'', status:j.status||'open' });
-    setShowForm(true);
-  }
-
-  const saveJob = async () => {
-    if (!form.title || !form.partner_id) { showToast('err', 'Judul & vendor wajib diisi'); return; }
-    setSaving(true);
-    try {
-      const url = editId ? `/api/vendor-portal/jobs/${editId}` : '/api/vendor-portal/jobs';
-      const method = editId ? 'PUT' : 'POST';
-      const body = { ...form, qty_target: Number(form.qty_target) || 0 };
-      if (!editId) delete body.status;  // create menetapkan status default 'open'
-      const r = await fetch(url, { method, headers, body: JSON.stringify(body) });
-      if (!r.ok) { const e = await r.json().catch(() => ({})); showToast('err', e.detail || 'Gagal menyimpan job'); return; }
-      showToast('ok', editId ? 'Job diperbarui' : 'Job dibuat');
-      setForm(emptyForm); setEditId(null); setShowForm(false); load();
-    } finally { setSaving(false); }
+      await apiPut(`/vendor-portal/partners/${partner.id}`, body);
+      toast.success(`Vendor "${form.name}" diperbarui`);
+      setEditing(false);
+      await onChanged(partner.id);
+    } catch (e) { toast.error(e.message || 'Gagal menyimpan'); }
+    finally { setBusy(false); }
   };
 
-  async function quickStatus(job, status) {
+  const toggle = async () => {
+    const off = isActive(partner);
+    const ok = await confirmDialog({
+      title: off ? `Nonaktifkan vendor "${partner.name}"?` : `Aktifkan lagi vendor "${partner.name}"?`,
+      body: off ? 'Vendor nonaktif tidak bisa dipilih untuk PO dan Input atas nama CMT. Riwayatnya tetap ada. '
+        + 'Ditolak bila vendor masih punya akun aktif atau job berjalan.' : 'Vendor bisa dipilih lagi untuk PO baru.',
+      confirmLabel: off ? 'Nonaktifkan' : 'Aktifkan', danger: off,
+    });
+    if (!ok) return;
+    setBusy(true);
     try {
-      const r = await fetch(`/api/vendor-portal/jobs/${job.id}`, { method:'PUT', headers, body: JSON.stringify({ status }) });
-      if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.detail || 'Gagal'); }
-      showToast('ok', 'Status job diperbarui');
-      load();
-    } catch(e) { showToast('err', e.message); }
-  }
+      if (off) await apiDelete(`/vendor-portal/partners/${partner.id}`);
+      else await apiPut(`/vendor-portal/partners/${partner.id}`, { is_active: true });
+      toast.success(off ? `Vendor "${partner.name}" dinonaktifkan` : `Vendor "${partner.name}" diaktifkan`);
+      await onChanged(partner.id);
+    } catch (e) { toast.error(e.message || 'Gagal'); }
+    finally { setBusy(false); }
+  };
 
-  async function doDelete() {
-    if (!confirm?.job) return;
-    setDeleting(true);
+  const remove = async () => {
+    const ok = await confirmDialog({
+      title: `Hapus vendor "${partner.name}" permanen?`,
+      body: 'Hanya bisa bila vendor belum pernah dipakai (tanpa PO, job, kiriman, dan akun login). Tindakan ini tidak bisa dibatalkan — '
+        + 'untuk sekadar berhenti memakai vendor, pilih Nonaktifkan.',
+      confirmLabel: 'Hapus permanen', danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
     try {
-      const r = await fetch(`/api/vendor-portal/jobs/${confirm.job.id}`, { method:'DELETE', headers });
-      if (!r.ok) { const er = await r.json().catch(()=>({})); throw new Error(er.detail || 'Gagal menghapus.'); }
-      showToast('ok', `Job "${confirm.job.job_number}" dihapus.`);
-      setConfirm(null); load();
-    } catch(e) { showToast('err', e.message); }
-    finally { setDeleting(false); }
-  }
+      await apiDelete(`/vendor-portal/partners/${partner.id}?hard=true`);
+      toast.success(`Vendor "${partner.name}" dihapus`);
+      onClose();
+      await onChanged(null);
+    } catch (e) { toast.error(e.message || 'Gagal menghapus'); }
+    finally { setBusy(false); }
+  };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="font-semibold text-sm text-foreground">Semua job ({jobs.length})</h3>
-        <Button size="sm" onClick={openCreate} data-testid="job-create-toggle"><Plus className="w-4 h-4 mr-1" /> Buat Job</Button>
-      </div>
-
-      {showForm && (
-        <GlassCard className="p-3 space-y-2" data-testid="job-create-form">
-          <h4 className="text-sm font-semibold">{editId ? 'Ubah job' : 'Job baru'}</h4>
-          <input value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))}
-            placeholder="Judul job (cth: Jahit Sweater V-Neck 500 pcs)"
-            className="w-full px-3 py-2 rounded-lg bg-[var(--glass-bg)] border border-foreground/15 text-sm text-foreground" data-testid="job-form-title" />
-          <div className="grid grid-cols-2 gap-2">
-            <SmartNativeSelect value={form.partner_id} onChange={e => setForm(p => ({ ...p, partner_id: e.target.value }))} data-testid="job-form-partner"
-              className="w-full px-3 py-2 rounded-lg bg-[var(--glass-bg)] border border-foreground/15 text-sm text-foreground appearance-none">
-              <option value="">— Pilih Vendor —</option>
-              {partners.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </SmartNativeSelect>
-            <SmartNativeSelect value={form.model_id} onChange={e => setForm(p => ({ ...p, model_id: e.target.value }))} data-testid="job-form-model"
-              className="w-full px-3 py-2 rounded-lg bg-[var(--glass-bg)] border border-foreground/15 text-sm text-foreground appearance-none">
-              <option value="">— Model (untuk Panduan Produksi) —</option>
-              {models.map(m => <option key={m.id} value={m.id}>{m.code} — {m.name}</option>)}
-            </SmartNativeSelect>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <input type="number" value={form.qty_target} onChange={e => setForm(p => ({ ...p, qty_target: e.target.value }))}
-              placeholder="Qty target" className="px-3 py-2 rounded-lg bg-[var(--glass-bg)] border border-foreground/15 text-sm text-foreground" data-testid="job-form-qty" />
-            <SmartNativeSelect value={form.process} onChange={e => setForm(p => ({ ...p, process: e.target.value }))} data-testid="job-form-process"
-              className="w-full px-3 py-2 rounded-lg bg-[var(--glass-bg)] border border-foreground/15 text-sm text-foreground appearance-none">
-              {form.process && !processes.some(x => x.code === form.process) && <option value={form.process}>{form.process}</option>}
-              {processes.map(x => <option key={x.code} value={x.code}>{`${x.name} (${x.code})`}</option>)}
-            </SmartNativeSelect>
-            <GlassInput type="date" value={form.due_date} onChange={e => setForm(p => ({ ...p, due_date: e.target.value }))}
-              title="Tenggat job" data-testid="job-form-due" />
-          </div>
-          {editId && (
-            <SmartNativeSelect value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value }))} data-testid="job-form-status"
-              className="w-full px-3 py-2 rounded-lg bg-[var(--glass-bg)] border border-foreground/15 text-sm text-foreground appearance-none">
-              {JOB_STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </SmartNativeSelect>
-          )}
+    <DetailPanel testId="partner-detail" closeTestId="partner-detail-close" onClose={onClose}
+      title={<span className="inline-flex items-center gap-2 flex-wrap">{partner.name} <ActiveBadge row={partner} testId="partner-detail-status" /></span>}
+      description={`${partner.code || 'Tanpa kode'} · ${OWNER_LABEL[partner.owner_entity || ''] || 'Vendor CMT luar'}`}
+      actions={!editing && (
+        <>
+          <Button variant="outline" onClick={() => setEditing(true)} disabled={busy} data-testid="partner-edit"><Pencil className="w-4 h-4" />Ubah</Button>
+          <Button variant="outline" onClick={toggle} disabled={busy} data-testid="partner-toggle">
+            <Power className="w-4 h-4" />{isActive(partner) ? 'Nonaktifkan' : 'Aktifkan'}
+          </Button>
+          <Button variant="outline" size="icon" onClick={remove} disabled={busy} title="Hapus permanen" aria-label="Hapus permanen"
+            data-testid="partner-delete"><Trash2 className="w-4 h-4" /></Button>
+        </>
+      )}>
+      {editing ? (
+        <div className="space-y-3" data-testid="partner-form">
+          <PartnerFormFields form={form} setForm={setForm} />
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={() => {setShowForm(false);setEditId(null);}}>Batal</Button>
-            <Button size="sm" onClick={saveJob} disabled={saving} data-testid="job-form-submit">{saving ? 'Menyimpan...' : (editId ? 'Simpan Perubahan' : 'Simpan Job')}</Button>
+            <Button variant="outline" onClick={() => { setForm(partnerForm(partner)); setEditing(false); }} disabled={busy}>Batal</Button>
+            <Button onClick={save} disabled={busy} data-testid="partner-save">Simpan perubahan</Button>
           </div>
-        </GlassCard>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <Info label="Kontak" value={partner.contact_name} />
+            <Info label="No. HP" value={partner.contact_phone} />
+            <Info label="Kapasitas jahit" value={partner.capacity_pcs > 0 ? `${fmtNum(partner.capacity_pcs)} pcs` : 'Belum diisi'} />
+            <Info label="Dipakai" value={`${fmtNum(partner.po_count)} PO · ${fmtNum(partner.active_job_count)} job berjalan · ${fmtNum(partner.account_count)} akun`} />
+            <Info label="Alamat" value={partner.address} />
+            <Info label="Catatan kapasitas" value={partner.capacity_note} />
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Catatan</p>
+            <p className="text-sm text-foreground whitespace-pre-wrap" data-testid="partner-detail-notes">{partner.notes || '—'}</p>
+          </div>
+        </div>
       )}
-
-      {loading
-        ? <div className="flex justify-center py-8 gap-2 text-muted-foreground text-sm"><Loader2 className="w-4 h-4 animate-spin"/>Memuat...</div>
-        : jobs.length === 0
-          ? <EmptyState icon={Briefcase} title="Belum ada job" description="Klik Buat Job untuk memberi pekerjaan ke vendor CMT." />
-          : (
-            <div className="space-y-2" data-testid="all-jobs-list">
-              {jobs.map(j => {
-                const pct = j.qty_target > 0 ? Math.round((j.qty_done || 0) / j.qty_target * 100) : 0;
-                return (
-                  <GlassCard key={j.id} className="p-3">
-                    <div className="flex items-center justify-between gap-2 mb-1.5">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="tabular-nums text-xs text-primary">{j.job_number}</span>
-                        <span className={`text-xs font-semibold ${JOB_STATUS_COLOR[j.status]}`}>
-                          {j.status === 'open' ? 'Belum Mulai' : j.status === 'in_progress' ? 'Berjalan' : j.status === 'done' ? 'Selesai' : j.status === 'cancelled' ? 'Dibatalkan' : j.status}
-                        </span>
-                        {j.model_code && <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary" data-testid={`job-model-${j.job_number}`}>{j.model_code}</span>}
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <span className="text-xs text-muted-foreground mr-1">{j.partner_name}</span>
-                        <button onClick={()=>openEdit(j)} title="Ubah"
-                          className="p-1.5 rounded-lg hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
-                          data-testid={`job-edit-${j.id}`}>
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        <button onClick={()=>setConfirm({ job:j })} title="Hapus"
-                          className="p-1.5 rounded-lg hover:bg-[hsl(var(--destructive)/0.1)] text-muted-foreground hover:text-[hsl(var(--destructive))] transition-colors"
-                          data-testid={`job-delete-${j.id}`}>
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                    <p className="text-sm text-foreground mb-2">{j.title}</p>
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1 h-1.5 rounded-full bg-foreground/10 overflow-hidden">
-                        <div className="h-full rounded-full bg-primary transition-all" style={{width:`${pct}%`}} />
-                      </div>
-                      <span className="text-xs text-muted-foreground whitespace-nowrap">{j.qty_done || 0}/{j.qty_target} pcs ({pct}%)</span>
-                    </div>
-                  </GlassCard>
-                );
-              })}
-            </div>
-          )
-      }
-
-      <ConfirmDialog
-        open={!!confirm}
-        title="Hapus Job?"
-        message={confirm ? `Job "${confirm.job.job_number} — ${confirm.job.title}" akan dihapus. Jika sudah ada laporan progress, hapus akan ditolak (batalkan job saja).` : ''}
-        busy={deleting}
-        onConfirm={doDelete}
-        onCancel={()=>setConfirm(null)}
-      />
-    </div>
+    </DetailPanel>
   );
 }
 
-// ── Main Admin Module ─────────────────────────────────────────────────────────
+function NewPartnerDialog({ onClose, onCreated }) {
+  const [form, setForm] = useState(() => partnerForm());
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!form.name.trim()) { toast.error('Nama vendor wajib diisi'); return; }
+    setBusy(true);
+    try {
+      const r = await apiPost('/vendor-portal/partners', {
+        name: form.name.trim(), code: form.code.trim(), contact_name: form.contact_name, contact_phone: form.contact_phone,
+        owner_entity: form.owner_entity,
+      });
+      toast.success(`Vendor "${form.name}" dibuat`);
+      onCreated(r?.id);
+    } catch (e) { toast.error(e.message || 'Gagal menyimpan'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg" data-testid="partner-create-dialog">
+        <DialogHeader><DialogTitle>Vendor baru</DialogTitle></DialogHeader>
+        <PartnerFormFields form={form} setForm={setForm} full={false} />
+        <p className="text-xs text-muted-foreground">Alamat, kapasitas, dan catatan bisa dilengkapi dari rincian vendor setelah disimpan.</p>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy}>Batal</Button>
+          <Button onClick={save} disabled={busy} data-testid="partner-create-save">Simpan</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
-export default function VendorAccountsAdminModule({ token }) {
-  const [tab,   setTab]   = useState('partners');
-  const [toast, setToast] = useState(null);
+export function VendorPartnersTab() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('');
+  const [selectedId, setSelectedId] = useState(null);
+  const [creating, setCreating] = useState(false);
 
-  function showToast(type, msg) {
-    // normalize: accept ('ok'|'err', msg)
-    setToast({ type: type === 'ok' ? 'ok' : 'err', msg });
-    setTimeout(() => setToast(null), 3500);
-  }
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
+    try { const d = await apiGet('/vendor-portal/partners'); setRows(Array.isArray(d) ? d : []); }
+    catch (e) { setError(e.message || 'Gagal memuat vendor'); setRows([]); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const counts = useMemo(() => ({
+    all: rows.length, active: rows.filter(isActive).length, inactive: rows.filter((r) => !isActive(r)).length,
+  }), [rows]);
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((r) => (!status || (status === 'active' ? isActive(r) : !isActive(r)))
+      && (!q || `${r.name} ${r.code} ${r.contact_name} ${r.contact_phone}`.toLowerCase().includes(q)));
+  }, [rows, search, status]);
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(filtered, 25);
+  const selected = rows.find((r) => r.id === selectedId) || null;
+  const afterChange = async (id) => { await load(); setSelectedId(id); };
+  const resetFilters = () => { setSearch(''); setStatus(''); };
 
   return (
-    <div className="space-y-4 p-4 max-w-3xl mx-auto" data-testid="vendor-admin-module">
-      {toast && <Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)} />}
+    <PageLayout testId="vendor-partners-tab" title="Vendor CMT" subtitle="Daftar penjahit (CMT) beserta kontak, kapasitas, dan catatan."
+      actions={<Button onClick={() => setCreating(true)} data-testid="btn-add-partner"><Plus className="w-4 h-4" />Vendor baru</Button>}
+      filters={<>
+        <SearchBox value={search} onChange={setSearch} placeholder="Cari nama / kode / kontak…" testId="partner-search" />
+        <FilterChips value={status} onChange={setStatus} testId="partner-status-filter" ariaLabel="Status vendor"
+          options={[{ key: '', label: 'Semua', count: counts.all }, { key: 'active', label: 'Aktif', count: counts.active },
+            { key: 'inactive', label: 'Nonaktif', count: counts.inactive }]} />
+      </>}
+      tools={<>
+        <ImportExportToolbar collectionKey="vendor_partners" label="Vendor CMT" onImported={load} />
+        <Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="partner-refresh">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </>}
+      summary={error && <Notice tone="danger" title="Gagal memuat vendor" testId="partner-error">{error}</Notice>}
+      detail={selected && <PartnerDetail partner={selected} onClose={() => setSelectedId(null)} onChanged={afterChange} />}
+      footer={filtered.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
+      <GlassCard className="p-0 overflow-hidden">
+        {loading && !rows.length ? (
+          <div className="p-4 text-sm text-muted-foreground">Memuat vendor…</div>
+        ) : !paged.length ? (
+          rows.length ? (
+            <EmptyState icon={Building2} title="Tidak ada vendor yang cocok" description="Ubah kata pencarian atau penyaring status."
+              action={<Button variant="outline" size="sm" onClick={resetFilters}><X className="w-3.5 h-3.5" />Tampilkan semua vendor</Button>} />
+          ) : (
+            <EmptyState icon={Building2} title="Belum ada vendor CMT" description="Klik Vendor baru untuk mendaftarkan penjahit pertama." />
+          )
+        ) : (
+          <Table data-testid="partners-list">
+            <TableHeader><TableRow>
+              <TableHead>Vendor</TableHead><TableHead>Kode</TableHead><TableHead>Kontak</TableHead>
+              <TableHead className="text-right">Kapasitas (pcs)</TableHead><TableHead className="text-right">PO</TableHead>
+              <TableHead className="text-right">Job berjalan</TableHead><TableHead className="text-right">Akun</TableHead>
+              <TableHead>Pemilik</TableHead><TableHead>Status</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>
+              {paged.map((p) => (
+                <TableRow key={p.id} data-testid={`partner-row-${p.id}`} className={selectedId === p.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
+                  <TableCell>
+                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold text-left" onClick={() => setSelectedId(p.id)}
+                      data-testid={`partner-open-${p.id}`}>{p.name}</Button>
+                    {p.notes && <span className="block text-xs text-muted-foreground truncate max-w-[16rem]" title={p.notes}>{p.notes}</span>}
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{p.code || '—'}</TableCell>
+                  <TableCell className="text-sm">{p.contact_name || '—'}{p.contact_phone ? <span className="block text-xs text-muted-foreground">{p.contact_phone}</span> : null}</TableCell>
+                  <TableCell className="text-right tabular-nums">{p.capacity_pcs > 0 ? fmtNum(p.capacity_pcs) : '—'}</TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtNum(p.po_count)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtNum(p.active_job_count)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtNum(p.account_count)}</TableCell>
+                  <TableCell className="text-xs" data-testid={`partner-owner-${p.id}`}>{OWNER_LABEL[p.owner_entity || ''] || '—'}</TableCell>
+                  <TableCell><ActiveBadge row={p} testId={`partner-status-${p.id}`} /></TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </GlassCard>
+      {creating && <NewPartnerDialog onClose={() => setCreating(false)} onCreated={async (id) => { setCreating(false); await afterChange(id || null); }} />}
+    </PageLayout>
+  );
+}
 
-      {/* Header */}
-      <div className="flex items-center gap-2">
-        <Users className="w-6 h-6 text-primary" />
-        <div>
-          <h1 className="text-xl font-bold text-foreground">Kelola Vendor CMT</h1>
-          <p className="text-sm text-muted-foreground">Daftarkan vendor, buat akun login, dan pantau semua job — lengkap dengan ubah & hapus.</p>
+// ══════════════════════════════════════════════════════════════════════════════
+// Tab Akun vendor
+// ══════════════════════════════════════════════════════════════════════════════
+function AccountDetail({ account, partners, onClose, onChanged }) {
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({ name: account.name || '', partner_id: account.cmt_vendor_id || '', password: '' });
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setForm({ name: account.name || '', partner_id: account.cmt_vendor_id || '', password: '' }); setEditing(false); }, [account]);
+
+  const save = async () => {
+    if (!form.name.trim()) { toast.error('Nama wajib diisi'); return; }
+    if (form.password && form.password.length < 6) { toast.error('Sandi minimal 6 karakter'); return; }
+    const body = {};
+    if (form.name.trim() !== (account.name || '')) body.name = form.name.trim();
+    if (form.partner_id && form.partner_id !== (account.cmt_vendor_id || '')) body.partner_id = form.partner_id;
+    if (form.password) body.password = form.password;
+    if (!Object.keys(body).length) { setEditing(false); return; }
+    setBusy(true);
+    try {
+      const r = await apiPut(`/vendor-portal/accounts/${account.id}`, body);
+      toast.success(r?.password_reset ? 'Akun diperbarui dan sandi diganti' : 'Akun diperbarui');
+      setEditing(false);
+      await onChanged(account.id);
+    } catch (e) { toast.error(e.message || 'Gagal menyimpan'); }
+    finally { setBusy(false); }
+  };
+  const toggle = async () => {
+    const off = isActive(account);
+    if (!(await confirmDialog({
+      title: off ? `Nonaktifkan akun ${account.email}?` : `Aktifkan lagi akun ${account.email}?`,
+      body: off ? 'Akun tidak bisa login ke Portal Vendor sampai diaktifkan lagi.' : 'Akun bisa login lagi ke Portal Vendor.',
+      confirmLabel: off ? 'Nonaktifkan' : 'Aktifkan', danger: off,
+    }))) return;
+    setBusy(true);
+    try {
+      await apiPut(`/vendor-portal/accounts/${account.id}`, { is_active: !off });
+      toast.success(off ? 'Akun dinonaktifkan' : 'Akun diaktifkan');
+      await onChanged(account.id);
+    } catch (e) { toast.error(e.message || 'Gagal'); }
+    finally { setBusy(false); }
+  };
+  const remove = async () => {
+    if (!(await confirmDialog({
+      title: `Hapus akun ${account.email} permanen?`,
+      body: 'Akun dihapus dan tidak bisa login lagi. Tindakan ini tidak bisa dibatalkan.',
+      confirmLabel: 'Hapus permanen', danger: true,
+    }))) return;
+    setBusy(true);
+    try {
+      await apiDelete(`/vendor-portal/accounts/${account.id}?hard=true`);
+      toast.success('Akun dihapus');
+      onClose();
+      await onChanged(null);
+    } catch (e) { toast.error(e.message || 'Gagal menghapus'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <DetailPanel testId="account-detail" onClose={onClose}
+      title={<span className="inline-flex items-center gap-2 flex-wrap">{account.name} <ActiveBadge row={account} /></span>}
+      description={`${account.email} · ${account.partner_name || 'Vendor belum dipilih'}`}
+      actions={!editing && (
+        <>
+          <Button variant="outline" onClick={() => setEditing(true)} disabled={busy} data-testid="account-edit"><Pencil className="w-4 h-4" />Ubah</Button>
+          <Button variant="outline" onClick={toggle} disabled={busy} data-testid="account-toggle">
+            <Power className="w-4 h-4" />{isActive(account) ? 'Nonaktifkan' : 'Aktifkan'}
+          </Button>
+          <Button variant="outline" size="icon" onClick={remove} disabled={busy} title="Hapus akun" aria-label="Hapus akun"
+            data-testid="account-delete"><Trash2 className="w-4 h-4" /></Button>
+        </>
+      )}>
+      {editing ? (
+        <div className="space-y-3" data-testid="account-edit-form">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <Field label="Nama lengkap *"><GlassInput value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} data-testid="account-edit-name" /></Field>
+            <Field label="Vendor">
+              <SmartNativeSelect value={form.partner_id} onChange={(e) => setForm((f) => ({ ...f, partner_id: e.target.value }))}
+                className="w-full h-9" data-testid="account-edit-partner" aria-label="Vendor">
+                <option value="">— Pilih vendor —</option>
+                {partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </SmartNativeSelect>
+            </Field>
+            <Field label="Sandi baru (opsional)" hint="Kosongkan bila sandi tidak diganti.">
+              <GlassInput type="password" value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                data-testid="account-edit-password" />
+            </Field>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setEditing(false)} disabled={busy}>Batal</Button>
+            <Button onClick={save} disabled={busy} data-testid="account-edit-save">Simpan perubahan</Button>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <Info label="Email login" value={account.email} />
+          <Info label="Vendor" value={account.partner_name} />
+          <Info label="Login terakhir" value={account.last_login_at ? formatDateTimeID(account.last_login_at) : 'Belum pernah'} />
+          <Info label="Dibuat" value={account.created_at ? formatDateTimeID(account.created_at) : '—'} />
+        </div>
+      )}
+    </DetailPanel>
+  );
+}
 
-      {/* Tabs */}
-      <FilterChips value={tab} onChange={setTab} testId="tab" ariaLabel="Bagian kelola vendor"
-        options={TABS.map(t => ({ key: t.id, label: t.label, icon: t.icon }))} />
+function NewAccountDialog({ partners, onClose, onCreated }) {
+  const [form, setForm] = useState({ partner_id: '', name: '', email: '', password: '' });
+  const [busy, setBusy] = useState(false);
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const save = async () => {
+    if (!form.partner_id || !form.name.trim() || !form.email.trim() || !form.password) { toast.error('Semua isian wajib diisi'); return; }
+    setBusy(true);
+    try {
+      const r = await apiPost('/vendor-portal/accounts', form);
+      toast.success(`Akun ${form.email} dibuat`);
+      onCreated(r?.id);
+    } catch (e) { toast.error(e.message || 'Gagal membuat akun'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg" data-testid="account-form">
+        <DialogHeader><DialogTitle>Akun vendor baru</DialogTitle></DialogHeader>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Field label="Vendor *" className="sm:col-span-2">
+            <SmartNativeSelect value={form.partner_id} onChange={set('partner_id')} className="w-full h-9"
+              data-testid="account-partner-select" aria-label="Vendor">
+              <option value="">— Pilih vendor —</option>
+              {partners.filter(isActive).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </SmartNativeSelect>
+          </Field>
+          <Field label="Nama lengkap *"><GlassInput value={form.name} onChange={set('name')} data-testid="account-name" /></Field>
+          <Field label="Email login *"><GlassInput value={form.email} onChange={set('email')} data-testid="account-email" /></Field>
+          <Field label="Sandi *" className="sm:col-span-2"><GlassInput type="password" value={form.password} onChange={set('password')} data-testid="account-password" /></Field>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy}>Batal</Button>
+          <Button onClick={save} disabled={busy} data-testid="account-create-save"><KeyRound className="w-4 h-4" />Buat akun</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
-      {/* Tab Content */}
-      {tab === 'partners' && <PartnersTab token={token} showToast={showToast} />}
-      {tab === 'accounts' && <AccountsTab token={token} showToast={showToast} />}
-      {tab === 'jobs'     && <AllJobsTab  token={token} showToast={showToast} />}
-    </div>
+export function VendorAccountsTab() {
+  const [rows, setRows] = useState([]);
+  const [partners, setPartners] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('');
+  const [partnerId, setPartnerId] = useState('');
+  const [selectedId, setSelectedId] = useState(null);
+  const [creating, setCreating] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
+    try {
+      const [acc, par] = await Promise.all([apiGet('/vendor-portal/accounts'), apiGet('/vendor-portal/partners')]);
+      setRows(Array.isArray(acc) ? acc : []); setPartners(Array.isArray(par) ? par : []);
+    } catch (e) { setError(e.message || 'Gagal memuat akun vendor'); setRows([]); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const counts = useMemo(() => ({
+    all: rows.length, active: rows.filter(isActive).length, inactive: rows.filter((r) => !isActive(r)).length,
+  }), [rows]);
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((r) => (!status || (status === 'active' ? isActive(r) : !isActive(r)))
+      && (!partnerId || r.cmt_vendor_id === partnerId)
+      && (!q || `${r.name} ${r.email} ${r.partner_name}`.toLowerCase().includes(q)));
+  }, [rows, search, status, partnerId]);
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(filtered, 25);
+  const selected = rows.find((r) => r.id === selectedId) || null;
+  const afterChange = async (id) => { await load(); setSelectedId(id); };
+
+  return (
+    <PageLayout testId="vendor-accounts-tab" title="Akun vendor" subtitle="Login Portal Vendor untuk penjahit yang mengisi sendiri."
+      actions={<Button onClick={() => setCreating(true)} data-testid="btn-add-account"><Plus className="w-4 h-4" />Akun baru</Button>}
+      filters={<>
+        <SearchBox value={search} onChange={setSearch} placeholder="Cari nama / email / vendor…" testId="account-search" />
+        <FilterChips value={status} onChange={setStatus} testId="account-status-filter" ariaLabel="Status akun"
+          options={[{ key: '', label: 'Semua', count: counts.all }, { key: 'active', label: 'Aktif', count: counts.active },
+            { key: 'inactive', label: 'Nonaktif', count: counts.inactive }]} />
+        {partners.length > 0 && (
+          <SmartNativeSelect value={partnerId} onChange={(e) => setPartnerId(e.target.value)} className="h-9 w-64 max-w-full"
+            data-testid="account-partner-filter" aria-label="Vendor">
+            <option value="">Semua vendor</option>
+            {partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </SmartNativeSelect>
+        )}
+      </>}
+      tools={<Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="account-refresh">
+        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+      </Button>}
+      summary={error && <Notice tone="danger" title="Gagal memuat akun vendor">{error}</Notice>}
+      detail={selected && <AccountDetail account={selected} partners={partners} onClose={() => setSelectedId(null)} onChanged={afterChange} />}
+      footer={filtered.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
+      <GlassCard className="p-0 overflow-hidden">
+        {loading && !rows.length ? (
+          <div className="p-4 text-sm text-muted-foreground">Memuat akun…</div>
+        ) : !paged.length ? (
+          <EmptyState icon={Users} title={rows.length ? 'Tidak ada akun yang cocok' : 'Belum ada akun vendor'}
+            description={rows.length ? 'Ubah kata pencarian atau penyaring.' : 'Klik Akun baru untuk membuat login Portal Vendor.'} />
+        ) : (
+          <Table data-testid="accounts-list">
+            <TableHeader><TableRow>
+              <TableHead>Nama</TableHead><TableHead>Email login</TableHead><TableHead>Vendor</TableHead>
+              <TableHead>Login terakhir</TableHead><TableHead>Status</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>
+              {paged.map((u) => (
+                <TableRow key={u.id} data-testid={`account-row-${u.id}`} className={selectedId === u.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
+                  <TableCell>
+                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => setSelectedId(u.id)}
+                      data-testid={`account-open-${u.id}`}>{u.name}</Button>
+                  </TableCell>
+                  <TableCell className="text-sm">{u.email}</TableCell>
+                  <TableCell className="text-sm">{u.partner_name || '—'}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{u.last_login_at ? formatDateTimeID(u.last_login_at) : 'Belum pernah'}</TableCell>
+                  <TableCell><ActiveBadge row={u} /></TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </GlassCard>
+      {creating && <NewAccountDialog partners={partners} onClose={() => setCreating(false)}
+        onCreated={async (id) => { setCreating(false); await afterChange(id || null); }} />}
+    </PageLayout>
+  );
+}
+
+export default function VendorAccountsAdminModule(props) {
+  return (
+    <HubTabs hubId="vendor-admin" title="Vendor CMT" compactHeaders
+      tabs={[
+        { key: 'vendor', label: 'Vendor', Component: VendorPartnersTab },
+        { key: 'akun', label: 'Akun vendor', Component: VendorAccountsTab },
+      ]}
+      {...props} />
   );
 }

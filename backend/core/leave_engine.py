@@ -87,10 +87,9 @@ async def leave_period_info(db, from_date: str, to_date: str, half_day: bool = F
     if d_to < d_from:
         raise HTTPException(400, "Tanggal selesai tidak boleh lebih awal dari tanggal mulai.")
     cal = await workdays.get_work_calendar(db)
-    hol_docs = await db.rahaza_production_calendar.find(
-        {"date": {"$gte": d_from.isoformat(), "$lte": d_to.isoformat()}, "type": "holiday"},
-        {"_id": 0, "date": 1, "name": 1}).to_list(400)
-    hol = {str(h.get("date"))[:10] for h in hol_docs}
+    # Tahap 9: satu sumber kalender libur (Portal SDM › Kalender libur) lewat core.workdays.
+    hol_docs = await workdays.holidays_between(db, d_from, d_to)
+    hol = {h["date"] for h in hol_docs}
     days = workdays.working_days_between(d_from, d_to, cal["off_weekdays"], hol)
     calendar_days = (d_to - d_from).days + 1
     off_days = sum(1 for i in range(calendar_days)

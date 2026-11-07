@@ -58,22 +58,31 @@ async def validate_internal_item(db, raw: dict):
     return model, size
 
 
-async def _active_bom(db, model_id, size_id, color=None):
-    """Fase 4: color-aware BOM resolution. Prioritas: BOM spesifik-warna → BOM umum
-    (color kosong) → BOM apa pun utk model+size (last resort)."""
+async def _active_bom(db, model_id, size_id, color=None, color_code=None):
+    """Fase 4: color-aware BOM resolution. Prioritas: BOM spesifik-warna → BOM umum (color kosong).
+
+    Tahap 9 (7 Nov 2026, keputusan owner): bila baris PO punya WARNA dan BOM warna itu tidak ada, hasilnya
+    None — TIDAK lagi diam-diam memakai BOM warna lain ("last resort" lama). Pemanggil (kiriman ke CMT, SPP,
+    explode aksesoris) menolak / memberi peringatan dengan nama warnanya. Tanpa warna: BOM umum, lalu BOM
+    satu-satunya untuk model+ukuran (tidak ada warna yang bisa tertukar)."""
     base = {'model_id': model_id, 'size_id': size_id, 'is_active': True, 'active': {'$ne': False}}
     color = (color or '').strip()
-    if color:
+    code = (color_code or '').strip()
+    if color or code:
         # 2026-11-02 (butir 10): cocok ke NAMA atau KODE warna (BOM menyimpan keduanya)
+        keys = [v for v in dict.fromkeys([color, code]) if v]
         specific = await db.rahaza_boms.find_one(
-            {**base, '$or': [{'color': color}, {'color_code': color}]}, {'_id': 0})
+            {**base, '$or': [{'color': {'$in': keys}}, {'color_code': {'$in': keys}}]}, {'_id': 0})
         if specific:
             return specific
     general = await db.rahaza_boms.find_one(
         {**base, '$or': [{'color': ''}, {'color': {'$exists': False}}, {'color': None}]}, {'_id': 0})
     if general:
         return general
-    return await db.rahaza_boms.find_one(base, {'_id': 0})
+    if color or code:
+        return None
+    rows = await db.rahaza_boms.find(base, {'_id': 0}).to_list(2)
+    return rows[0] if len(rows) == 1 else None
 
 
 # ═══════════════════════════════ ACC-1: BOM explode ══════════════════════════
@@ -89,7 +98,14 @@ async def explode_po_accessories_from_bom(db, po_id: str) -> dict:
     kebutuhan hanya jadi teks. Agregasi juga dikunci per `material_id` bila ada
     (fallback code+nama) supaya dua baris BOM yang menunjuk material sama tidak
     terpecah gara-gara beda ejaan nama.
+
+    Tahap 9 (7 Nov 2026, keputusan owner no. 3): baris POTONGAN (hasil Cutting) BUKAN aksesoris — dulu ikut
+    tercatat (9 dari 26 baris). Setiap baris membawa kontrak satuan serah (`core.satuan_serah.plan_fields`):
+    perkiraan BOM (satuan dasar) + satuan serah + rencana serah (bawaan = perkiraan dibulatkan ke atas), dengan
+    `source='bom'` dan `bom_origin='bom_auto'`. Rencana yang sudah diubah user dipertahankan saat dihitung ulang.
     """
+    from core import satuan_serah as ss
+    from core.kirim_cmt import KIND_AKSESORIS, KIND_POTONGAN, kind_of
     po_items = await db.po_items.find({'po_id': po_id}, {'_id': 0}).to_list(None)
     agg = {}          # key → {'qty', 'material_id', 'code', 'name', 'unit'}
     warnings = []
@@ -97,9 +113,10 @@ async def explode_po_accessories_from_bom(db, po_id: str) -> dict:
     for it in po_items:
         if not it.get('model_id') or not it.get('size_id'):
             continue
-        bom = await _active_bom(db, it['model_id'], it['size_id'], it.get('color'))
+        bom = await _active_bom(db, it['model_id'], it['size_id'], it.get('color'), color_code=it.get('color_code'))
         if not bom:
-            warnings.append(f"BOM aktif tidak ditemukan utk model {it.get('sku') or it['model_id']} size {it.get('size','')}")
+            warnings.append(f"BOM aktif warna {it.get('color') or it.get('color_code') or '-'} tidak ditemukan utk "
+                            f"model {it.get('sku') or it['model_id']} size {it.get('size','')}")
             continue
         qty_pcs = int(it.get('qty', 0) or 0)
         # 2026-08-02 · SATUAN: pakai qty SATUAN DASAR (mis. baris "1 lusin" → 12 pcs),
@@ -109,8 +126,8 @@ async def explode_po_accessories_from_bom(db, po_id: str) -> dict:
             if w not in warnings:
                 warnings.append(w)
         for m in bom_mats:
-            # Kain/benang (kg-like) → Material Issue gudang, BUKAN po_accessories.
-            if _is_kglike({**m, 'unit': bom_uom.base_unit_of(m)}):
+            # Potongan (hasil Cutting) BUKAN aksesoris PO; kain/benang kiloan disaring di bawah (jenis master).
+            if kind_of(line=m) == KIND_POTONGAN:
                 continue
             mid = m.get('material_id') or None
             code = (m.get('code') or '').upper()
@@ -119,6 +136,7 @@ async def explode_po_accessories_from_bom(db, po_id: str) -> dict:
             key = ('id', mid) if mid else ('code', code, name, unit)
             slot = agg.setdefault(key, {'qty': 0.0, 'material_id': mid, 'code': code,
                                         'name': name, 'unit': unit,
+                                        'material_type': m.get('material_type') or '',
                                         'unit_input': m.get('unit'),
                                         'uom_status': m.get('uom_status')})
             slot['qty'] += bom_uom.qty_base_of(m) * qty_pcs
@@ -128,20 +146,29 @@ async def explode_po_accessories_from_bom(db, po_id: str) -> dict:
             if not mid and name and name not in unlinked_names:
                 unlinked_names.append(name)
 
-    await db.po_accessories.delete_many({'po_id': po_id, 'source': 'bom_auto'})
+    old_q = {'po_id': po_id, '$or': [{'source': ss.ORIGIN_BOM_INTERNAL}, {'bom_origin': ss.ORIGIN_BOM_INTERNAL}]}
+    old_rows = await db.po_accessories.find(old_q, {'_id': 0}).to_list(2000)
+    mat_ids = [s_['material_id'] for s_ in agg.values() if s_['material_id']]
+    mats = {m['id']: m async for m in db.rahaza_materials.find({'id': {'$in': mat_ids}}, {'_id': 0})} if mat_ids else {}
     rows = []
     for slot in agg.values():
-        row = {
+        mat = mats.get(slot['material_id'])
+        if kind_of(mat, {'code': slot['code'], 'material_type': slot['material_type'],
+                         'unit': slot['unit']}) != KIND_AKSESORIS:
+            continue                                  # potongan / kain-benang kiloan (keluar lewat Cutting)
+        rows.append({
             'id': new_id(), 'po_id': po_id,
             'accessory_id': slot['material_id'],          # ACC-1: kopling ke master material
             'accessory_name': slot['name'], 'accessory_code': slot['code'],
-            'qty_needed': round(slot['qty'], 3), 'unit': slot['unit'],
-            'notes': 'Auto-explode dari BOM (ACC-1)', 'source': 'bom_auto',
+            'notes': 'Otomatis dari BOM', 'bom_origin': ss.ORIGIN_BOM_INTERNAL,
             'unlinked': slot['material_id'] is None,
             'created_at': now(),
-        }
-        await db.po_accessories.insert_one(row)
-        rows.append(row)
+            **ss.plan_fields(mat, bom_qty_base=round(slot['qty'], 4), source=ss.SOURCE_BOM, usage_unit=slot['unit']),
+        })
+    ss.carry_plan(rows, old_rows)
+    await db.po_accessories.delete_many(old_q)
+    for row in rows:
+        await db.po_accessories.insert_one(dict(row))
     if unlinked_names:
         warnings.append(
             "Baris BOM berikut belum tertaut ke master material sehingga stoknya tidak bisa dicek: "
@@ -214,10 +241,16 @@ async def create_internal_job(db, body: dict, user: dict):
 
     await db.production_pos.update_one({'id': po['id']}, {'$set': {'status': 'In Production', 'updated_at': now()}})
 
-    # GDG-2: draft MI otomatis — gudang tinggal set lokasi → submit → approve
+    # GDG-2: draft MI otomatis — gudang tinggal set lokasi → submit → approve.
+    # Tahap 9 (7 Nov 2026): DIMATIKAN untuk PO yang dijahit CMT — material keluar otomatis saat Kirim ke CMT;
+    # draf di sini akan mengeluarkan stok kedua kali bila disetujui.
     mi_result = None
     try:
-        mi_result = await create_mi_draft_from_job(db, job, user)
+        from core.kirim_cmt import po_sewn_by_cmt
+        if await po_sewn_by_cmt(db, po['id']):
+            mi_result = {'skipped': True, 'reason': 'PO dijahit CMT — material keluar otomatis saat Kirim ke CMT'}
+        else:
+            mi_result = await create_mi_draft_from_job(db, job, user)
     except HTTPException as e:
         mi_result = {'error': str(e.detail)}
     except Exception:
@@ -235,12 +268,19 @@ async def create_internal_job(db, body: dict, user: dict):
 # ═══════════════════ GDG-2: Material Issue draft-from-job ════════════════════
 
 async def create_mi_draft_from_job(db, job: dict, user: dict, default_loc=None):
-    """Draft rahaza_material_issues dari BOM item-item job internal (anchor job_id)."""
+    """Draft rahaza_material_issues dari BOM item-item job internal (anchor job_id).
+
+    Tahap 9 (7 Nov 2026): DITOLAK untuk PO yang dijahit CMT (ber-vendor / sudah ada kiriman ke CMT) — material
+    PO itu keluar otomatis lewat Kirim ke CMT, jadi draf di sini = stok keluar dua kali bila disetujui."""
     from routes.rahaza_inventory_shared import _uid, _gen_mi_number, _enrich_mi
+    from core.kirim_cmt import po_sewn_by_cmt
     existing = await db.rahaza_material_issues.find_one(
-        {'job_id': job['id'], 'status': {'$ne': 'rejected'}}, {'_id': 0})
+        {'job_id': job['id'], 'status': {'$nin': ['rejected', 'cancelled']}}, {'_id': 0})
     if existing:
         return existing
+    if job.get('vendor_shipment_id') or job.get('vendor_id') or await po_sewn_by_cmt(db, job.get('po_id')):
+        raise HTTPException(400, 'PO ini dijahit CMT: material keluar otomatis saat Kirim ke CMT, jadi draf '
+                                 'pengeluaran dari job tidak dibuat (mencegah stok keluar dua kali).')
 
     job_items = await db.production_job_items.find({'job_id': job['id']}, {'_id': 0}).to_list(None)
     po_item_ids = [j['po_item_id'] for j in job_items if j.get('po_item_id')]
@@ -260,8 +300,8 @@ async def create_mi_draft_from_job(db, job: dict, user: dict, default_loc=None):
             missing_bom.append(f"item {ji.get('sku','?')}: tanpa model_id/size_id")
             continue
         # 2026-11-02 (butir 10, F1b): BOM per WARNA varian (dulu tanpa warna ⇒ BOM warna lain)
-        bom = await _active_bom(db, model_id, size_id,
-                                ji.get('color') or pi.get('color') or ji.get('color_code') or pi.get('color_code'))
+        bom = await _active_bom(db, model_id, size_id, ji.get('color') or pi.get('color'),
+                                color_code=ji.get('color_code') or pi.get('color_code'))
         if not bom:
             missing_bom.append(f"item {ji.get('sku','?')}: BOM aktif tidak ditemukan")
             continue

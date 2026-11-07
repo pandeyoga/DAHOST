@@ -113,97 +113,74 @@ async def production_dashboard(
         "panel_aktif": await db.rahaza_materials.count_documents({"is_cut_panel": True, "active": True}),
     }
 
-    # ── Di vendor CMT: dikirim vs sudah kembali ──────────────────────────────
-    vs = await db.vendor_shipments.find({"po_id": {"$in": po_ids}},
-                                        {"_id": 0, "id": 1, "status": 1, "vendor_name": 1,
-                                         "po_id": 1, "shipment_date": 1}).to_list(5000)
-    vs_ids = [s["id"] for s in vs]
-    vsi = await db.vendor_shipment_items.aggregate([
-        {"$match": {"shipment_id": {"$in": vs_ids}}},
-        {"$group": {"_id": "$shipment_id", "sent": {"$sum": "$qty_sent"}}},
-    ]).to_list(5000) if vs_ids else []
-    sent_by_ship = {r["_id"]: _i(r["sent"]) for r in vsi}
-
+    # ── Tahap 9 (7 Nov 2026): angka alur dari SATU sumber per baris PO (core.pantau_produksi) ──
+    # Dulu "Di Vendor CMT" dikurangi kiriman berstatus `Received` — status itu berarti CMT SUDAH MENERIMA
+    # BAHAN, bukan barang jadi kembali; QC membaca status lama (approved/draft) sehingga penerimaan
+    # `completed_qc` tidak terhitung; serah terima ikut menjumlah deklarasi CMT→DA.
+    from core import pantau_produksi as pp
+    run_pos = [p for p in pos if not pp.po_closed(p) and not pp.po_cancelled(p)]
+    lines = await pp.po_lines(db, run_pos)
+    po_rows = pp.rollup_pos(run_pos, lines)
+    tot = pp.sum_lines(lines)
     per_vendor: dict[str, dict] = {}
-    qty_terkirim = qty_kembali = 0
-    for s in vs:
-        q = sent_by_ship.get(s["id"], 0)
-        v = per_vendor.setdefault(s.get("vendor_name") or "(tanpa nama)",
-                                  {"vendor": s.get("vendor_name") or "(tanpa nama)",
-                                   "kirim": 0, "qty_kirim": 0, "qty_kembali": 0})
-        v["kirim"] += 1
-        v["qty_kirim"] += q
-        qty_terkirim += q
-        if s.get("status") == "Received":
-            v["qty_kembali"] += q
-            qty_kembali += q
+    for r in po_rows:
+        name = r.get("vendor_name") or "(tanpa nama)"
+        v = per_vendor.setdefault(name, {"vendor": name, "kirim": 0, "qty_kirim": 0, "qty_kembali": 0})
+        v["kirim"] += 1 if r["sent_cmt"] else 0
+        v["qty_kirim"] += r["sent_cmt"]
+        v["qty_kembali"] += r["returned"] + r["in_qc"]
     for v in per_vendor.values():
-        v["outstanding"] = v["qty_kirim"] - v["qty_kembali"]
+        v["outstanding"] = max(0, v["qty_kirim"] - v["qty_kembali"])
     vendor = {
-        "pengiriman": len(vs),
-        "qty_terkirim": qty_terkirim,
-        "qty_kembali": qty_kembali,
-        "outstanding": qty_terkirim - qty_kembali,
-        "per_vendor": sorted(per_vendor.values(), key=lambda v: -v["outstanding"])[:8],
+        "pengiriman": sum(v["kirim"] for v in per_vendor.values()),
+        "qty_terkirim": tot["sent_cmt"],
+        "qty_kembali": tot["returned"] + tot["in_qc"],
+        "outstanding": tot["di_cmt"],
+        "per_vendor": sorted((v for v in per_vendor.values() if v["qty_kirim"]),
+                             key=lambda v: -v["outstanding"])[:8],
     }
 
-    # ── Terima FG dari CMT + mutu ────────────────────────────────────────────
+    # ── Terima FG dari CMT + mutu (status kanonik; angka lolos/tolak dari baris PO) ──
+    from core.cmt_receipt_status import canon_status, ST_QC, ST_DONE
     rq = {"business_type": "internal"} if business_type == "internal" else {"business_type": {"$ne": "internal"}}
-    receipts = await db.cmt_receipts.find(rq, {"_id": 0, "id": 1, "status": 1, "total_actual": 1,
-                                               "total_rejected": 1, "approved_at": 1,
-                                               "receipt_date": 1, "cmt_name": 1}).to_list(5000)
+    receipts = await db.cmt_receipts.find(rq, {"_id": 0, "id": 1, "status": 1, "approved_at": 1,
+                                               "qc_completed_at": 1, "cmt_name": 1}).to_list(5000)
     today_iso = today_wib().isoformat()
-    qc = {"draft": 0, "submitted": 0, "approved": 0, "rejected": 0,
-          "qty_diterima": 0, "qty_ditolak": 0, "pcs_hari_ini": 0,
-          "menunggu_qty": 0, "vendor_aktif": len({r.get("cmt_name") for r in receipts if r.get("cmt_name")})}
-    for r in receipts:
-        st = (r.get("status") or "Draft").lower()
-        qc[st] = qc.get(st, 0) + 1
-        ok, rej = _i(r.get("total_actual")), _i(r.get("total_rejected"))
-        if st == "approved":
-            qc["qty_diterima"] += ok
-            qc["qty_ditolak"] += rej
-            if wib_date_of(r.get("approved_at")) == today_iso:
-                qc["pcs_hari_ini"] += ok
-        elif st in ("draft", "submitted"):
-            qc["menunggu_qty"] += ok
-    total_periksa = qc["qty_diterima"] + qc["qty_ditolak"]
-    qc["tingkat_cacat"] = round(qc["qty_ditolak"] / total_periksa * 100, 2) if total_periksa else 0.0
+    tested = tot["accepted"] + tot["reject"]
+    qc = {"draft": 0, "submitted": sum(1 for r in receipts if canon_status(r.get("status")) == ST_QC),
+          "approved": sum(1 for r in receipts if canon_status(r.get("status")) == ST_DONE), "rejected": 0,
+          "qty_diterima": tot["accepted"], "qty_ditolak": tot["reject"], "pcs_hari_ini": 0,
+          "menunggu_qty": tot["in_qc"],
+          "vendor_aktif": len({r.get("cmt_name") for r in receipts if r.get("cmt_name")}),
+          "tingkat_cacat": round(tot["reject"] / tested * 100, 2) if tested else 0.0}
+    done_ids = {r["id"] for r in receipts if canon_status(r.get("status")) == ST_DONE
+                and wib_date_of(r.get("qc_completed_at") or r.get("approved_at")) == today_iso}
+    if done_ids:
+        async for ln in db.cmt_receipt_lines.find({"receipt_id": {"$in": list(done_ids)}},
+                                                  {"_id": 0, "qty_actual": 1}):
+            qc["pcs_hari_ini"] += _i(ln.get("qty_actual"))
 
-    # ── Permak / perbaikan ───────────────────────────────────────────────────
-    permak_rows = await db.dewi_cmt_permak.aggregate([
-        {"$group": {"_id": "$status", "n": {"$sum": 1}, "qty": {"$sum": "$qty"}}},
-    ]).to_list(20)
-    permak = {"terbuka": 0, "selesai": 0, "qty_terbuka": 0}
-    for r in permak_rows:
-        st = str(r["_id"] or "").lower()
-        if st in ("done", "completed", "selesai", "closed"):
-            permak["selesai"] += _i(r["n"])
+    # ── Permak / perbaikan — hanya PO portal ini ─────────────────────────────
+    permak = {"terbuka": 0, "selesai": 0, "qty_terbuka": tot["reject_open"]}
+    async for pm in db.dewi_cmt_permak.find({"po_id": {"$in": po_ids}}, {"_id": 0, "status": 1}):
+        st = str(pm.get("status") or "").lower()
+        if st in ("open", "in_progress"):
+            permak["terbuka"] += 1
         else:
-            permak["terbuka"] += _i(r["n"])
-            permak["qty_terbuka"] += _i(r.get("qty"))
+            permak["selesai"] += 1
 
-    # ── Serah terima FG / dispatch ke buyer ──────────────────────────────────
-    bs = await db.buyer_shipments.find({"po_id": {"$in": po_ids}},
-                                       {"_id": 0, "id": 1}).to_list(5000)
-    bs_ids = [s["id"] for s in bs]
-    bsi = await db.buyer_shipment_items.aggregate([
-        {"$match": {"shipment_id": {"$in": bs_ids}}},
-        {"$group": {"_id": None, "qty": {"$sum": "$qty_shipped"}}},
-    ]).to_list(1) if bs_ids else []
-    # 2026-11-06 (pola P3): tanggal kirim ada di BARIS (`dispatch_date`, per kiriman bertahap) — kepala
-    # SJ buyer tidak pernah punya `shipment_date`, jadi "qty periode" dulu selalu 0.
-    rows_recent = await db.buyer_shipment_items.find(
-        {"shipment_id": {"$in": bs_ids}},
-        {"_id": 0, "shipment_id": 1, "qty_shipped": 1, "dispatch_date": 1, "created_at": 1}).to_list(20000) if bs_ids else []
-    rows_recent = [r for r in rows_recent if wib_date_of(r.get("dispatch_date") or r.get("created_at")) >= since]
-    qty_recent = sum(_i(r.get("qty_shipped")) for r in rows_recent)
+    # ── Serah terima FG / kirim ke klien — HANYA surat jalan ke penerima akhir (SSOT) ──
+    from core.dispatch_capacity import buyer_dispatch_items, item_dispatched
+    rows_all = await buyer_dispatch_items(db, po_ids=po_ids) if po_ids else []
+    # 2026-11-06 (pola P3): tanggal kirim ada di BARIS (`dispatch_date`, per kiriman bertahap).
+    rows_recent = [r for r in rows_all if wib_date_of(r.get("dispatch_date") or r.get("created_at")) >= since]
+    qty_recent = sum(item_dispatched(r) for r in rows_recent)
     recent_ids = {r.get("shipment_id") for r in rows_recent if r.get("shipment_id")}
     handover = {
-        "pengiriman": len(bs),
-        "qty_total": _i(bsi[0]["qty"]) if bsi else 0,
+        "pengiriman": len({r.get("shipment_id") for r in rows_all if r.get("shipment_id")}),
+        "qty_total": sum(item_dispatched(r) for r in rows_all),
         "qty_periode": qty_recent,
-        "label": "Serah Terima FG" if business_type == "internal" else "Dispatch ke Buyer",
+        "label": "Serah terima ke gudang" if business_type == "internal" else "Kirim ke klien",
     }
 
     # ── Rantai tahap (untuk visual alur) ─────────────────────────────────────
@@ -213,10 +190,10 @@ async def production_dashboard(
          "module": "prod-pos-internal" if business_type == "internal" else "maklon-pos-engine"},
         {"stage": "cutting", "label": "Cutting", "qty": cutting["qty_dalam_proses"],
          "count": cutting["draft"] + cutting["in_progress"], "module": "cutting-orders"},
-        {"stage": "vendor", "label": "Di Vendor CMT", "qty": vendor["outstanding"],
-         "count": len(per_vendor), "module": "prod-shipments-vendor"},
+        {"stage": "vendor", "label": "Di vendor CMT", "qty": vendor["outstanding"],
+         "count": sum(1 for v in per_vendor.values() if v["outstanding"]), "module": "prod-shipments-vendor"},
         {"stage": "qc", "label": "Terima & QC", "qty": qc["menunggu_qty"],
-         "count": qc["draft"] + qc["submitted"], "module": "da-cmt-receive"},
+         "count": qc["submitted"], "module": "da-cmt-receive"},
         {"stage": "permak", "label": "Permak", "qty": permak["qty_terbuka"],
          "count": permak["terbuka"], "module": "cmt-permak"},
         {"stage": "kirim", "label": handover["label"], "qty": handover["qty_periode"],

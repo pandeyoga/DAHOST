@@ -57,79 +57,7 @@ def _fmt_qty_id(v):
     return s.rstrip('0').rstrip(',')
 
 
-async def _aggregate_bom_for_po(db, po_id: str):
-    """Read-only: agregasi kebutuhan material dari BOM aktif (rahaza_boms) per item
-    PO × qty. Mendukung BOM per-varian (model+size+warna) — prefer BOM warna spesifik,
-    fallback ke BOM umum (color kosong). Kategori diambil dari entry BOM (`category_name`)
-    bila ada, else diresolusi dari master `rahaza_materials`.
-    Return list[{code, name, category, unit, qty}] terurut kategori→nama.
-    Khusus tampilan dokumen SPP Internal — tidak menulis master apa pun."""
-    po_items = await db.po_items.find({'po_id': po_id}, {'_id': 0}).to_list(1000)
-    need = {}
-    for it in po_items:
-        model_id = it.get('model_id')
-        size_id = it.get('size_id')
-        color = (it.get('color') or '').strip()
-        qty = int(it.get('qty') or 0)
-        if not model_id or not size_id or qty <= 0:
-            continue
-        bom = None
-        if color:
-            bom = await db.rahaza_boms.find_one(
-                {'model_id': model_id, 'size_id': size_id, 'color': color,
-                 'is_active': True, 'active': {'$ne': False}}, {'_id': 0})
-        if not bom:  # fallback BOM umum (warna kosong/tak ada)
-            bom = await db.rahaza_boms.find_one(
-                {'model_id': model_id, 'size_id': size_id,
-                 'color': {'$in': ['', None]}, 'is_active': True, 'active': {'$ne': False}},
-                {'_id': 0})
-        if not bom:  # fallback terakhir: tanpa filter color (BOM lama)
-            bom = await db.rahaza_boms.find_one(
-                {'model_id': model_id, 'size_id': size_id, 'is_active': True,
-                 'active': {'$ne': False}}, {'_id': 0})
-        if not bom:
-            continue
-        # BOM generik (Phase 7A Fase 1): satu daftar materials[]. Kain/benang
-        # (kg-like) & aksesoris digabung; kategori diambil dari entry/master.
-        # 2026-08-02 · SATUAN: qty dikonversi ke SATUAN DASAR material dulu supaya
-        # dokumen kebutuhan material tidak mencampur meter/gram dengan kg.
-        bom_mats, _uw = await bom_uom.ensure_uom(db, bom)
-        for m in bom_mats:
-            code = (m.get('code') or '').strip().upper()
-            if not code:
-                continue
-            base_unit = bom_uom.base_unit_of(m)
-            origin = 'yarn' if _is_kglike({**m, 'unit': base_unit}) else 'accessory'
-            e = need.setdefault(code, {'code': code, 'name': m.get('name') or code,
-                                       '_origin': origin, 'category_name': m.get('category_name') or '',
-                                       'unit': (base_unit or ('kg' if origin == 'yarn' else 'pcs')), 'qty': 0.0})
-            e['qty'] += bom_uom.qty_base_of(m) * qty
-    if not need:
-        return []
-    # Resolusi kategori & unit & nama dari master rahaza_materials (batch, by code)
-    codes = list(need.keys())
-    masters = {}
-    async for m in db.rahaza_materials.find({'code': {'$in': codes}}, {'_id': 0}):
-        masters[(m.get('code') or '').strip().upper()] = m
-    for code, e in need.items():
-        m = masters.get(code)
-        # Prioritas kategori: (1) category_name dari entry BOM, (2) master.category_name,
-        # (3) label dari master.type, (4) fallback origin.
-        cat = e.get('category_name') or ''
-        if not cat and m:
-            cat = m.get('category_name') or ''
-            if not cat and m.get('type'):
-                cat = _MATERIAL_TYPE_LABEL.get(m['type'], str(m['type']).title())
-        if not cat:
-            cat = 'Aksesoris' if e['_origin'] == 'accessory' else 'Benang'
-        e['category'] = cat
-        if m and m.get('unit'):
-            e['unit'] = m['unit']
-        if m and m.get('name'):
-            e['name'] = m['name']
-        e.pop('_origin', None)
-        e.pop('category_name', None)
-    return sorted(need.values(), key=lambda x: (x['category'].lower(), x['name'].lower()))
+# Tahap 9 (7 Nov 2026): `_aggregate_bom_for_po` (BOM SPP hanya PO internal, semua non-kg disebut aksesoris, jatuh ke BOM warna lain) DIHAPUS — SPP memakai `core.kirim_cmt.spp_lines`.
 
 
 MATERIAL_TYPE_LABEL = _MATERIAL_TYPE_LABEL  # alias publik (dipakai modul lain bila perlu)
@@ -241,6 +169,71 @@ def _append_accessory_table(elements, acc_rows, styles):
         "(termasuk pengiriman tambahan/pengganti). <b>Kebutuhan PO</b> = kebutuhan "
         "aksesoris pada PO terkait yang belum tercatat sebagai kiriman terpisah.</i>",
         styles['Normal']))
+    return elements
+
+
+def _append_kirim_sections(elements, styles, potongan, aksesoris, *, doc='sj', maklon=False,
+                           client_rows=None, bulk=None, problems=None, page='landscape'):
+    """Tahap 9 (7 Nov 2026): bagian POTONGAN dan AKSESORIS (satuan serah) — SPP dan surat jalan memakai angka
+    yang SAMA dengan dokumen pengeluaran (`core.kirim_cmt`). SPP = rencana seluruh PO; SJ = yang diserahkan."""
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, Spacer
+    elements.append(Spacer(1, 5 * mm))
+    elements.append(Paragraph("<b>POTONGAN (dari BOM, pcs per SKU)</b>", styles['Heading4']))
+    if potongan:
+        headers = ['No', 'SKU', 'Ukuran / Warna', 'Kode potongan', 'Potongan', 'Qty (pcs)']
+        data = [[i, _safe_str(p.get('sku'), 24), _safe_str(f"{p.get('size') or '-'} / {p.get('color') or '-'}", 28),
+                 _safe_str(p.get('code'), 30), _safe_str(p.get('name'), 50), _fmt_qty_id(p.get('qty'))]
+                for i, p in enumerate(potongan, 1)]
+        data.append(['', '', '', '', 'TOTAL POTONGAN', _fmt_qty_id(sum(float(p.get('qty') or 0) for p in potongan))])
+        elements.append(_pdf_data_table(headers, data, weights=[0.4, 1.4, 1.4, 1.8, 2.8, 0.9],
+                                        right_cols=[5], total_row=True, page=page))
+    else:
+        elements.append(Paragraph(
+            "<i>" + ("Kain dan potongan disediakan klien — tidak dikeluarkan dari gudang CV DA."
+                     if maklon else "Tidak ada potongan pada dokumen ini.") + "</i>", styles['Normal']))
+    if bulk:
+        elements.append(Spacer(1, 3 * mm))
+        elements.append(Paragraph("<b>Bahan dari klien (referensi BOM)</b>", styles['Heading4']))
+        bdata = [[i, _safe_str(b['name'], 50), _fmt_qty_id(b['per_pcs']), _fmt_qty_id(b['qty']), _safe_str(b['unit'], 10),
+                  b['owner']] for i, b in enumerate(bulk, 1)]
+        elements.append(_pdf_data_table(['No', 'Bahan', 'Per pcs', 'Kebutuhan', 'Satuan', 'Dipasok'], bdata,
+                                        weights=[0.4, 3.0, 0.9, 1.1, 0.8, 0.9], right_cols=[2, 3], page=page))
+    elements.append(Spacer(1, 4 * mm))
+    title = "AKSESORIS (rencana PO, satuan serah)" if doc == 'spp' else "AKSESORIS DISERAHKAN (satuan serah)"
+    elements.append(Paragraph(f"<b>{title}</b>", styles['Heading4']))
+    rows = [a for a in aksesoris or [] if float(a.get('qty_handover') or 0) > 0 or doc == 'spp']
+    if rows:
+        if doc == 'spp':
+            headers = ['No', 'Kode', 'Aksesoris', 'Perkiraan BOM', 'Satuan serah', 'Rencana serah', '= Satuan dasar',
+                       'Sumber']
+            data = [[i, _safe_str(a.get('code'), 20), _safe_str(a.get('name'), 44),
+                     f"{_fmt_qty_id(a.get('estimate_base'))} {a.get('usage_unit') or ''}",
+                     _safe_str(a.get('handover_label'), 34), _fmt_qty_id(a.get('qty_handover')),
+                     f"{_fmt_qty_id(a.get('qty_base'))} {a.get('usage_unit') or ''}",
+                     'Tambahan' if a.get('source') == 'tambahan' else 'BOM']
+                    for i, a in enumerate(rows, 1)]
+            weights, right = [0.4, 1.2, 2.6, 1.3, 1.9, 1.0, 1.3, 0.8], [3, 5, 6]
+        else:
+            headers = ['No', 'Kode', 'Aksesoris', 'Qty serah', 'Satuan serah', '= Satuan dasar']
+            data = [[i, _safe_str(a.get('code'), 20), _safe_str(a.get('name'), 50), _fmt_qty_id(a.get('qty_handover')),
+                     _safe_str(a.get('handover_label'), 34),
+                     f"{_fmt_qty_id(a.get('qty_base'))} {a.get('usage_unit') or ''}"]
+                    for i, a in enumerate(rows, 1)]
+            weights, right = [0.4, 1.3, 3.0, 0.9, 2.0, 1.4], [3, 5]
+        elements.append(_pdf_data_table(headers, data, weights=weights, right_cols=right, page=page))
+    else:
+        elements.append(Paragraph("<i>Tidak ada aksesoris dari gudang CV DA.</i>", styles['Normal']))
+    if client_rows:
+        elements.append(Spacer(1, 2 * mm))
+        elements.append(Paragraph(
+            "<i>Disediakan klien (bukan dari gudang CV DA): " + ", ".join(
+                _safe_str(c.get('accessory_name') or c.get('accessory_code'), 40) for c in client_rows[:12])
+            + (f" (+{len(client_rows) - 12})" if len(client_rows) > 12 else "") + ".</i>", styles['Normal']))
+    if problems:
+        elements.append(Spacer(1, 2 * mm))
+        elements.append(Paragraph("<b>Perlu dibereskan sebelum kirim:</b> " + _safe_str("; ".join(problems), 600),
+                                  styles['Normal']))
     return elements
 
 
@@ -544,7 +537,6 @@ async def export_pdf(request: Request):
             items = await db.po_items.find({'po_id': po_id}, {'_id': 0}).to_list(500)
             if not items:
                 raise HTTPException(404, 'No items in this PO')
-            accessories = await db.po_accessories.find({'po_id': po_id}, {'_id': 0}).to_list(500)
             profile = await _profile_for_pos(db, [po_id], profile)   # Tahap 8: kop ikut jenis PO
             # production_pos berisi Internal & Maklon → bedakan via business_type.
             is_internal = (po.get('business_type') != 'maklon')
@@ -590,35 +582,13 @@ async def export_pdf(request: Request):
                                 total_row=True, page='landscape',
                                 style=(doc_settings.get('_template') or {}).get('table'))
             elements.append(t)
-            # ── BOM section — HANYA untuk SPP Internal (Maklon dikecualikan) ──
-            if is_internal:
-                bom_rows = await _aggregate_bom_for_po(db, po_id)
-                elements.append(Spacer(1, 6*mm))
-                elements.append(Paragraph("<b>Kebutuhan Material (BOM)</b>", styles['Heading3']))
-                if bom_rows:
-                    bom_headers = ['No', 'Kode', 'Nama Material', 'Kategori', 'Qty Kebutuhan', 'Satuan']
-                    bom_data = [[i, b['code'], b['name'], b['category'], _fmt_qty_id(b['qty']), b['unit']]
-                                for i, b in enumerate(bom_rows, 1)]
-                    bt = _pdf_data_table(bom_headers, bom_data,
-                                         weights=[0.5, 1.5, 3.0, 1.4, 1.5, 1.0],
-                                         right_cols=[4], page='landscape')
-                    elements.append(bt)
-                else:
-                    elements.append(Paragraph(
-                        "<i>Belum ada BOM aktif untuk model/size pada PO ini.</i>", styles['Normal']))
-            # ── Accessories section (dari po_accessories) ──
-            if accessories:
-                elements.append(Spacer(1, 6*mm))
-                elements.append(Paragraph("<b>Aksesoris Dibutuhkan</b>", styles['Heading3']))
-                acc_headers = ['No', 'Aksesoris', 'Kode', 'Qty', 'Satuan', 'Catatan']
-                acc_rows = [[idx, acc.get('accessory_name', ''), acc.get('accessory_code', ''),
-                             _fmt_qty_id(acc.get('qty_needed', 0)), acc.get('unit', 'pcs'),
-                             _safe_str(acc.get('notes', ''), 80)]
-                            for idx, acc in enumerate(accessories, 1)]
-                at = _pdf_data_table(acc_headers, acc_rows,
-                                     weights=[0.5, 2.6, 1.5, 1.0, 1.0, 2.6],
-                                     right_cols=[3], page='landscape')
-                elements.append(at)
+            # ── BOM — Tahap 9 (7 Nov 2026): PO internal DAN maklon, dari hitungan yang SAMA dengan form kirim &
+            #    surat jalan (`core.kirim_cmt.spp_lines`): potongan per SKU dan aksesoris (satuan serah) terpisah. ──
+            from core import kirim_cmt as _kc
+            spp = await _kc.spp_lines(db, po)
+            _append_kirim_sections(elements, styles, spp['potongan'], spp['aksesoris'], doc='spp',
+                                   maklon=not is_internal, client_rows=spp['client_accessories'], bulk=spp['bulk'],
+                                   problems=spp['problems'])
             if po.get('notes'):
                 elements.append(Spacer(1, 4*mm))
                 elements.append(Paragraph(f"<b>Catatan:</b> {_safe_str(po.get('notes', ''), 300)}", styles['Normal']))
@@ -674,9 +644,20 @@ async def export_pdf(request: Request):
                                 total_row=True,
                                 style=(doc_settings.get('_template') or {}).get('table'))
             elements.append(t)
-            # AKSESORIS — dulu HILANG dari surat jalan (laporan owner 2026-08-01).
-            acc_rows = await _collect_shipment_accessories(db, ship, items)
-            _append_accessory_table(elements, acc_rows, styles)
+            # Tahap 9 (7 Nov 2026): POTONGAN + AKSESORIS (satuan serah) dari dokumen pengeluaran kiriman ini — angka
+            # yang SAMA dengan stok yang berkurang. Surat jalan lama (tanpa dokumen Tahap 9) memakai tabel lama.
+            from core import kirim_cmt as _kc
+            _kl = await _kc.shipment_lines(db, ship)
+            if (_kl.get('journal') or {}).get('mi_id') and (_kl['potongan'] or _kl['aksesoris']):
+                _append_kirim_sections(elements, styles, _kl['potongan'], _kl['aksesoris'], doc='sj',
+                                       maklon=(ship.get('business_type') == 'maklon'), page='portrait')
+                if _kl['journal'].get('mi_number'):
+                    elements.append(Paragraph(f"<i>Dokumen pengeluaran gudang: {_kl['journal']['mi_number']}</i>",
+                                              styles['Normal']))
+            else:
+                # AKSESORIS — dulu HILANG dari surat jalan (laporan owner 2026-08-01).
+                acc_rows = await _collect_shipment_accessories(db, ship, items)
+                _append_accessory_table(elements, acc_rows, styles)
             # KEBUTUHAN MATERIAL PER BOM (maklon) — sambungan BOM template → SJ.
             bom_rows, bom_templates = await _collect_maklon_bom_bulk(db, ship, items)
             _append_maklon_bom_table(elements, bom_rows, bom_templates, styles)

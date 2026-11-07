@@ -31,6 +31,15 @@ Endpoint (prefix /api/rahaza):
 
 SSOT: BOM materials via routes.rahaza_bom.get_bom_materials (skema materials[] terunifikasi).
 Stok fisik via core.stock_schema (read_qty/read_reserved) atas rahaza_material_stock.
+
+Tahap 9 (7 Nov 2026) — menu "Bahan › Kebutuhan" di Portal Produksi DAN Maklon:
+  GET /material-requirements/po/{po_id}   → `po_material_need()` — SATU hitungan per PO:
+    · PO internal → BOM × qty lewat `core.material_issue_engine.bom_need_for_lines`, hitungan yang SAMA
+      dengan kiriman ke CMT (yang mengurangi stok). Dulu layar ini menghitung BOM × qty sendiri.
+    · PO maklon  → rencana bahan & aksesoris PO (`po_accessories`) lewat
+      `core.accessory_procurement.po_requirements`, sama dengan layar PO.
+  POST /material-requirements dengan `po_id` kini memakai fungsi yang sama (bentuk jawaban lama tetap).
+  Sumber `lines` (model × ukuran tanpa PO) tetap untuk pemanggil lama; layar tidak memakainya lagi.
 """
 from __future__ import annotations
 
@@ -148,6 +157,165 @@ async def _resolve_unit_cost(db, rec: dict, settings: dict):
     return 0.0, "none"
 
 
+# ─── Tahap 9: kebutuhan bahan satu PO (tab Bahan › Kebutuhan, dua portal) ────────────────────
+# Label jenis baris. `kind` boleh dikirim `bom_need_for_lines` (pemisahan kain potongan dari aksesoris);
+# bila belum ada: master potongan (SSOT `core.cut_panel_master.is_panel_material`) = kain potongan, lalu
+# `type` lama (yarn = kain/benang, lainnya aksesoris).
+KIND_LABELS = {
+    "potongan": "Kain potongan", "cut_piece": "Kain potongan", "cut": "Kain potongan",
+    "panel": "Kain potongan", "kain_potongan": "Kain potongan",
+    "aksesoris": "Aksesoris", "accessory": "Aksesoris",
+    "yarn": "Kain / benang", "fabric": "Kain / benang", "bahan": "Kain / benang", "kain": "Kain / benang",
+}
+_KG_KINDS = ("yarn", "fabric", "bahan", "kain")
+_CUT_KINDS = ("potongan", "cut_piece", "cut", "panel", "kain_potongan")
+SOURCE_LABELS = {"bom": "BOM produk × qty PO", "rencana_po": "Rencana bahan & aksesoris PO"}
+
+
+def _kind_of(entry: dict, master: dict | None = None) -> str:
+    k = str(entry.get("kind") or "").strip().lower()
+    if k:
+        return k
+    from core.cut_panel_master import is_panel_material
+    if is_panel_material(master) or is_panel_material({"code": entry.get("code")}):
+        return "potongan"
+    return "yarn" if entry.get("type") == "yarn" else "aksesoris"
+
+
+async def _masters_by_code(db, codes: list) -> dict:
+    if not codes:
+        return {}
+    out = {}
+    async for m in db.rahaza_materials.find(
+            {"code": {"$in": codes}},
+            {"_id": 0, "id": 1, "code": 1, "name": 1, "unit": 1, "unit_cost": 1, "hpp": 1, "is_cut_panel": 1}):
+        out[(m.get("code") or "").strip().upper()] = m
+    return out
+
+
+async def po_material_need(db, po: dict, *, include_stock: bool = True) -> dict:
+    """Kebutuhan bahan SATU PO — satu sumber angka untuk tab Bahan › Kebutuhan (kedua portal).
+
+    Baris: kode, nama, jenis, satuan, dibutuhkan, sudah keluar untuk PO ini, sisa, tersedia di gudang,
+    kurang (= sisa − tersedia), perkiraan nilai. Tidak menulis apa pun."""
+    from core.entities import po_business_type
+    po_id = po.get("id")
+    bt = po_business_type(po)
+    items = await db.po_items.find({"po_id": po_id}, {"_id": 0}).to_list(5000)
+    total_pcs = sum(float(it.get("qty") or 0) for it in items)
+    rows: list = []
+    notes: list = []
+
+    if bt == "internal":
+        from core import material_issue_engine as mie
+        need, bom_notes, _pcs = await mie.bom_need_for_lines(
+            db, [{"po_item_id": it.get("id"), "qty": it.get("qty")} for it in items if it.get("id")])
+        notes = list(bom_notes or [])
+        masters = await _masters_by_code(db, sorted(need))
+        issued_map = await issued_for_po(db, po_id)
+        for code, e in need.items():
+            m = masters.get(code) or {}
+            mid = e.get("material_id") or m.get("id")
+            req = round(float(e.get("qty") or 0), 4)
+            issued = round(float(issued_map.get(mid, 0.0)), 4) if mid else 0.0
+            remaining = round(max(0.0, req - issued), 4)
+            available = None
+            if include_stock and mid:
+                _on, _res, available = await _stock_for_material(db, mid)
+            shortage = round(max(0.0, remaining - available), 4) if available is not None else None
+            unit_cost = float(m.get("unit_cost") or m.get("hpp") or 0)
+            kind = _kind_of({**e, "code": code}, m)
+            rows.append({
+                "material_id": mid, "code": code, "name": e.get("name") or m.get("name") or code,
+                "kind": kind, "kind_label": KIND_LABELS.get(kind, "Bahan"),
+                "unit": e.get("unit") or m.get("unit") or "",
+                "qty_required": req, "issued": issued, "remaining": remaining,
+                "available": available, "shortage": shortage,
+                "status": "unlinked" if not mid else ("shortage" if shortage else "ok"),
+                "unit_cost": unit_cost, "value_estimate": round(req * unit_cost, 2),
+            })
+        source = "bom"
+    else:
+        from core.accessory_procurement import po_requirements
+        res = await po_requirements(db, po)
+        for r in res.get("rows") or []:
+            da_owned = bool(r.get("da_owned"))
+            unit_cost = float(r.get("unit_cost") or 0)
+            req = round(float(r.get("qty_needed") or 0), 4)
+            rows.append({
+                "material_id": r.get("material_id"), "code": r.get("material_code") or "",
+                "name": r.get("material_name") or "", "kind": "aksesoris",
+                "kind_label": "Aksesoris" if da_owned else "Disediakan klien",
+                "unit": r.get("unit") or "",
+                "qty_required": req, "issued": round(float(r.get("issued") or 0), 4),
+                "remaining": round(float(r.get("remaining") or 0), 4),
+                "available": round(float(r.get("available") or 0), 4) if da_owned else None,
+                "shortage": round(float(r.get("shortage") or 0), 4) if da_owned else None,
+                "status": r.get("status") or "ok",
+                "unit_cost": unit_cost, "value_estimate": round(req * unit_cost, 2) if da_owned else 0.0,
+            })
+        if not rows:
+            notes.append("PO ini belum punya rencana bahan & aksesoris. Isi di form PO (bagian aksesoris).")
+        source = "rencana_po"
+
+    def _rank(r):
+        k = r["kind"]
+        return 0 if k in _CUT_KINDS else (1 if k in _KG_KINDS else 2)
+    rows.sort(key=lambda r: (_rank(r), (r.get("name") or "").lower()))
+    return {
+        "po": {"id": po_id, "po_number": po.get("po_number") or "", "business_type": bt,
+               "customer_name": po.get("customer_name") or "", "status": po.get("status") or "",
+               "total_qty": total_pcs},
+        "source": source, "source_label": SOURCE_LABELS[source],
+        "rows": rows, "notes": notes,
+        "totals": {
+            "lines": len(rows),
+            "shortage_lines": sum(1 for r in rows if r["status"] == "shortage"),
+            "unlinked_lines": sum(1 for r in rows if r["status"] == "unlinked"),
+            "client_lines": sum(1 for r in rows if r["status"] == "client"),
+            "total_pcs": total_pcs,
+            "value_estimate": round(sum(r["value_estimate"] for r in rows), 2),
+        },
+    }
+
+
+@router.get("/material-requirements/po/{po_id}")
+async def material_need_for_po(po_id: str, request: Request):
+    """Tab Bahan › Kebutuhan (Tahap 9): kebutuhan bahan satu PO, PO internal maupun maklon."""
+    await require_auth(request)
+    db = get_db()
+    po = await db.production_pos.find_one({"id": po_id}, {"_id": 0})
+    if not po:
+        raise HTTPException(404, "PO tidak ditemukan")
+    return serialize_doc(await po_material_need(db, po))
+
+
+def _legacy_rows_from_need(out: dict, rounding: str, include_stock: bool, include_cost: bool) -> tuple:
+    """Bentuk jawaban lama POST /material-requirements (sumber PO) dari `po_material_need`."""
+    aggregated, total_kg, short_lines, grand = [], 0.0, 0, 0.0
+    for r in out["rows"]:
+        kglike = r["kind"] in _KG_KINDS
+        req = _round(r["qty_required"], kglike, rounding)
+        avail = r.get("available") if include_stock else None
+        shortfall = round(max(0.0, r["remaining"] - avail), 4) if avail is not None else None
+        if shortfall:
+            short_lines += 1
+        sub = round(req * r["unit_cost"], 2) if include_cost else None
+        grand += sub or 0.0
+        if kglike:
+            total_kg += req
+        aggregated.append({
+            "material_id": r.get("material_id"), "code": r.get("code"), "name": r.get("name"),
+            "category": None, "category_name": r.get("kind_label"), "material_type": r.get("kind"),
+            "is_kglike": kglike, "unit": r.get("unit"), "total_required": req,
+            "issued": r.get("issued"), "remaining_required": r.get("remaining"),
+            "onhand": None, "reserved": None, "available": avail, "shortfall": shortfall,
+            "unit_cost": r["unit_cost"] if include_cost else None, "subtotal_cost": sub,
+            "cost_source": ("material" if r["unit_cost"] > 0 else "none") if include_cost else None,
+        })
+    return aggregated, total_kg, short_lines, grand
+
+
 @router.post("/material-requirements")
 async def aggregate_material_requirements(request: Request):
     await require_auth(request)
@@ -170,23 +338,31 @@ async def aggregate_material_requirements(request: Request):
 
     po_id = body.get("po_id")
     if po_id:
-        source = "po"
+        # Tahap 9: sumber PO memakai SATU hitungan (`po_material_need`) — bentuk jawaban lama tetap.
         po = await db.production_pos.find_one({"id": po_id}, {"_id": 0})
         if not po:
             raise HTTPException(404, "PO tidak ditemukan")
-        po_meta = {"id": po.get("id"), "po_number": po.get("po_number"),
-                   "business_type": po.get("business_type")}
-        items = await db.po_items.find({"po_id": po_id}, {"_id": 0}).to_list(5000)
-        if not items:
+        out = await po_material_need(db, po, include_stock=include_stock)
+        aggregated, total_kg, short_lines, grand = _legacy_rows_from_need(
+            out, rounding, include_stock, include_cost)
+        warnings = list(out["notes"])
+        if not out["po"]["total_qty"]:
             warnings.append("PO tidak memiliki item.")
-        for it in items:
-            raw_lines.append({
-                "model_id": it.get("model_id"),
-                "size_id": it.get("size_id"),
-                "color": it.get("color_code") or it.get("color") or "",
-                "qty_pcs": float(it.get("qty") or 0),
-                "_label": it.get("product_name") or it.get("sku") or "",
-            })
+        return serialize_doc({
+            "source": "po", "po": {"id": po.get("id"), "po_number": po.get("po_number"),
+                                   "business_type": po.get("business_type")},
+            "rounding": rounding, "include_stock": include_stock, "include_cost": include_cost,
+            "lines_resolved": [], "lines_without_bom": [], "aggregated": aggregated, "uom_notices": [],
+            "totals": {
+                "grand_qty_pcs": round(out["po"]["total_qty"], 4),
+                "total_material_lines": len(aggregated),
+                **material_fields.mirror("total_material_kg", round(total_kg, 4)),
+                "total_shortfall_lines": short_lines,
+                "grand_total_cost": round(grand, 2),
+                "lines_resolved_count": 0, "lines_without_bom_count": 0,
+            },
+            "warnings": warnings,
+        })
     else:
         lines_in = body.get("lines") or []
         if not isinstance(lines_in, list) or not lines_in:

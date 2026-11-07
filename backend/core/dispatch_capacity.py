@@ -494,6 +494,17 @@ async def _rows_for_po_items(db, po_item_ids) -> dict:
 
 async def _enrich_fg_stock(db, rows: dict) -> None:
     """Stok FG per SKU (informasi dini; pagar keras tetap di precheck dispatch)."""
+    # Tahap 9C: baris PO maklon = barang klien → saldo stok TITIPAN klien (artikel Katalog Buyer), bukan stok DA.
+    from core import client_goods
+    for r in rows.values():
+        if client_goods.is_maklon(r.get('business_type')) and r.get('po_item_id'):
+            try:
+                ident = await client_goods.resolve_identity(db, po_item_id=r['po_item_id'], sku=r.get('sku') or '')
+                r['fg_stock'] = await client_goods.balance(db, ident['stock_key']) if ident.get('ok') else None
+                r['client_goods'] = True
+            except Exception:  # noqa: BLE001
+                logger.exception('kapasitas kirim: gagal membaca stok titipan %s', r.get('sku'))
+    rows = {k: r for k, r in rows.items() if not r.get('client_goods')}
     skus = list({r['sku'] for r in rows.values() if r.get('sku')})
     if not skus:
         return

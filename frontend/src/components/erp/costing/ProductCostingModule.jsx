@@ -211,7 +211,7 @@ export default function ProductCostingModule({ token, onNavigate }) {
       subtitle="HPP/pcs = BOM × harga beli rata-rata + upah CMT. Upah internal dan overhead tidak masuk HPP."
       actions={<>
         <Button variant="outline" onClick={() => setShowSettings(true)} data-testid="costing-open-settings">
-          <Settings2 className="w-4 h-4" />Setelan upah &amp; margin
+          <Settings2 className="w-4 h-4" />Setelan margin
         </Button>
         <Button onClick={applyAll} disabled={applyingAll || !readyCount} data-testid="costing-apply-all">
           {applyingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
@@ -690,10 +690,11 @@ function CostDetail({ detail, token, onClose, onApply, onReload, onGoto }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SETELAN — tarif standar per proses, overhead, target margin
+   SETELAN — overhead (informasi), target margin, tarif cadangan
+   Tahap 9 (7 Nov 2026): tarif standar per tahap pindah ke tab "Tarif standar" di menu HPP (dulu tabel di
+   dialog ini + Master Proses) — satu tempat mengubah `process_rates`; dialog ini tidak mengirimnya lagi.
    ═══════════════════════════════════════════════════════════════════════ */
 function CostingSettingsModal({ token, onClose, onSaved }) {
-  const [rows, setRows] = useState([]);
   const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -701,32 +702,22 @@ function CostingSettingsModal({ token, onClose, onSaved }) {
   useEffect(() => {
     (async () => {
       try {
-        const d = await costingApi('GET', '/processes', token);
-        setRows(d.items || []);
-        setSettings(d.settings || null);
+        setSettings(await costingApi('GET', '/settings', token));
       } catch (e) {
         toast.error(`Gagal memuat setelan: ${e.message}`);
       } finally { setLoading(false); }
     })();
   }, [token]);
 
-  const setRate = (pid, v) => setRows(prev => prev.map(r =>
-    r.process_id === pid ? { ...r, rate_per_pcs: v } : r));
-
   const save = async () => {
     setSaving(true);
     try {
       await costingApi('PUT', '/settings', token, {
         overhead_rate_per_pcs: Number(settings.overhead_rate_per_pcs || 0),
-        include_overhead_in_product_hpp: !!settings.include_overhead_in_product_hpp,
         target_margin_pct: Number(settings.target_margin_pct || 0),
         labor_rate_fallback_per_pcs: Number(settings.labor_rate_fallback_per_pcs || 0),
-        process_rates: rows.filter(r => Number(r.rate_per_pcs) > 0).map(r => ({
-          process_id: r.process_id, code: r.code, name: r.name,
-          rate_per_pcs: Number(r.rate_per_pcs),
-        })),
       });
-      toast.success('Setelan upah & margin disimpan.');
+      toast.success('Setelan margin & tarif cadangan disimpan.');
       onSaved();
     } catch (e) {
       toast.error(`Gagal menyimpan setelan: ${e.message}`);
@@ -734,49 +725,15 @@ function CostingSettingsModal({ token, onClose, onSaved }) {
   };
 
   return (
-    <Modal title="Setelan upah, overhead & target margin" onClose={onClose} size="lg"
+    <Modal title="Setelan margin & tarif cadangan" onClose={onClose} size="lg"
       data-testid="costing-settings-modal">
       {loading || !settings ? (
         <div className="py-8 text-center text-muted-foreground text-sm">Memuat…</div>
       ) : (
         <div className="space-y-4">
-          <div className="text-xs text-muted-foreground">
-            Tarif standar per proses dipakai HANYA bila produk itu belum punya laporan produksi
-            bertarif (upah nyata selalu didahulukan). Proses jahit/CMT tidak diikutkan di sini
-            supaya upah CMT tidak dihitung dua kali.
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-muted-foreground border-b border-[var(--glass-border)]">
-                  <th className="py-2">Proses</th>
-                  <th className="py-2">Kode</th>
-                  <th className="py-2 text-right">Tarif standar / pcs</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(r => (
-                  <tr key={r.process_id} className="border-b border-[var(--glass-border)]/50">
-                    <td className="py-2 text-foreground">
-                      {r.name}
-                      {r.is_cmt && (
-                        <StatusBadge tone="warning" label="dihitung sebagai upah CMT" className="ml-1.5 normal-case tracking-normal" />
-                      )}
-                    </td>
-                    <td className="py-2 text-xs text-muted-foreground whitespace-nowrap">{r.code}</td>
-                    <td className="py-2 text-right">
-                      <MoneyInput unstyled value={r.rate_per_pcs || ''}
-                        onChange={e => setRate(r.process_id, e.target.value)}
-                        disabled={r.is_cmt}
-                        className={`${inputCls} w-28 text-right inline-block disabled:opacity-40`}
-                        data-testid={`costing-rate-${r.code}`} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <p className="text-xs text-muted-foreground" data-testid="costing-settings-rates-moved">
+            Tarif standar per tahap diatur di tab Tarif standar (menu HPP). Proses jahit/CMT memakai upah di form PO.
+          </p>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <label className="block">

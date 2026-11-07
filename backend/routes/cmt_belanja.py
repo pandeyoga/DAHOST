@@ -30,17 +30,19 @@ async def get_rekap_aksesoris(
     request: Request,
     po_id: Optional[str] = Query(None, description="Filter 1 PO"),
     include_closed: bool = Query(False, description="Ikutkan PO Closed/Cancelled"),
+    business_type: str = Query("maklon", pattern="^(maklon|internal|all)$"),
 ):
     """Rekap kebutuhan aksesoris (po_accessories + turunan BOM). READ-ONLY."""
     user = await require_auth(request)
     _require_admin(user)
     db = get_db()
-    return serialize_doc(await rekap_aksesoris(db, po_id=po_id, only_open=not include_closed))
+    return serialize_doc(await rekap_aksesoris(db, po_id=po_id, only_open=not include_closed,
+                                               business_type=None if business_type == "all" else business_type))
 
 
 @router.get("/kapasitas")
 async def get_kapasitas(request: Request):
-    """Beban vs kapasitas per vendor CMT (vendor_partners.capacity_pcs). READ-ONLY."""
+    """Beban (PO internal + maklon) vs kapasitas per vendor CMT (vendor_partners.capacity_pcs). READ-ONLY."""
     user = await require_auth(request)
     _require_admin(user)
     db = get_db()

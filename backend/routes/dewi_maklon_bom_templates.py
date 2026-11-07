@@ -593,12 +593,19 @@ async def explode_maklon_bom_for_po(db, po_id: str, user: Optional[dict] = None,
 
     # ── Turunkan baris pcs ke kebutuhan aksesoris PO (tercetak di Surat Jalan) ──
     rows, unlinked, uom_issues = await accessory_rows_from_materials(db, materials)
-    await db.po_accessories.delete_many({'po_id': po_id, 'source': ACC_SOURCE_TAG})
-    for row in rows:
-        await db.po_accessories.insert_one({
-            **row, 'id': _uid(), 'po_id': po_id,
-            'source': ACC_SOURCE_TAG, 'created_at': now_,
-        })
+    # Tahap 9 (7 Nov 2026, keputusan owner no. 3): baris membawa kontrak satuan serah (`core.satuan_serah`):
+    # source='bom' + perkiraan BOM + satuan serah + rencana serah; rencana yang diubah user dipertahankan.
+    from core import satuan_serah as ss
+    old_q = {'po_id': po_id, '$or': [{'source': ACC_SOURCE_TAG}, {'bom_origin': ACC_SOURCE_TAG}]}
+    old_rows = await db.po_accessories.find(old_q, {'_id': 0}).to_list(2000)
+    acc_mats = await _material_by_ids(db, [r.get('accessory_id') for r in rows])
+    new_rows = [{**row, **ss.plan_fields(acc_mats.get(row.get('accessory_id')), bom_qty_base=row.get('qty_needed'),
+                                         source=ss.SOURCE_BOM, usage_unit=row.get('unit') or ''),
+                 'id': _uid(), 'po_id': po_id, 'bom_origin': ACC_SOURCE_TAG, 'created_at': now_} for row in rows]
+    ss.carry_plan(new_rows, old_rows)
+    await db.po_accessories.delete_many(old_q)
+    for row in new_rows:
+        await db.po_accessories.insert_one(dict(row))
     acc_rows = len(rows)
     by_name, by_code = await _material_lookup(db)
     by_id = await _material_by_ids(db, [m.get('material_id') for m in materials])
@@ -750,7 +757,7 @@ async def get_po_bom_needs(po_id: str, user: dict = Depends(require_auth)):
         'po_id': po_id,
         'bom': serialize_doc(bom) if bom else None,
         'accessory_needs': serialize_doc(acc),
-        'auto_accessory_rows': sum(1 for a in acc if a.get('source') == ACC_SOURCE_TAG),
+        'auto_accessory_rows': sum(1 for a in acc if ACC_SOURCE_TAG in (a.get('source'), a.get('bom_origin'))),
     }
 
 

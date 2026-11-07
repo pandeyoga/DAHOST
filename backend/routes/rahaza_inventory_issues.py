@@ -206,6 +206,10 @@ async def approve_mi(mid: str, request: Request):
         raise HTTPException(404, "MI tidak ditemukan.")
     if mi.get("status") != "pending_approval":
         raise HTTPException(400, f"Hanya MI Pending Approval yang bisa di-approve. Status: {mi.get('status')}")
+    # Tahap 9 (7 Nov 2026): draf job/massal untuk PO yang materialnya SUDAH keluar lewat kiriman ke CMT tidak boleh
+    # disetujui (stok keluar dua kali) — contoh MI-20260924-004.
+    from core.kirim_cmt import assert_not_double
+    await assert_not_double(db, mi)
     await db.rahaza_material_issues.update_one(
         {"id": mid},
         {"$set": {"approved_at": _now(), "approved_by": user["id"], "approved_by_name": user.get("name", ""), "updated_at": _now()}}

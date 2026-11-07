@@ -326,6 +326,11 @@ async def list_maklon_pos(
 
     # Enrich: compute dispatch summary from dewi_maklon_dispatches
     for po in pos:
+        if po.get('mirror_of') == 'production_pos':
+            # Tahap 9: cermin PO utama sudah membawa angka kirim SSOT (K17) — jangan ditimpa koleksi lama
+            po['qty_remaining'] = max(0, (po.get('total_qty') or 0) - (po.get('qty_dispatched') or 0))
+            po.setdefault('dispatch_count', 0)
+            continue
         dispatches = await db.dewi_maklon_dispatches.find(
             {'po_id': po['id'], 'status': {'$ne': 'cancelled'}}
         ).to_list(length=None)

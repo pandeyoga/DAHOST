@@ -7,6 +7,10 @@ PO internal), tetapi DIKREDIT lapisan FG saat Terima FG = BOM standar × harga H
 Selisihnya (pemakaian kain lebih/kurang dari BOM, harga berubah, retur) tidak pernah ditutup —
 di data lokal WIP berakhir −3,4 juta tanpa satu pun PO yang bisa ditunjuk.
 
+Tahap 9 (7 Nov 2026): lapisan FG kini memakai bahan AKTUAL per pcs dikirim (`core.hpp_aktual`), jadi sisa
+WIP saat PO ditutup = biaya PO yang tidak menjadi barang jadi (bahan untuk pcs yang hilang/reject/sisa di CMT,
+permak) — dibukukan sebagai selisih biaya PO ke akun profil `production_po_wip_variance` (bawaan 5-1960).
+
 YANG DILAKUKAN
 --------------
 * :func:`po_wip_position` — saldo WIP satu PO dari BUKU BESAR, dikelompokkan per sumber. Jurnal
@@ -85,7 +89,8 @@ async def _je_sources(db, po_id: str) -> dict:
     """{je_id: kelompok} — jurnal yang menyentuh WIP untuk PO ini, ditelusuri dari dokumen sumber."""
     out: dict = {}
     jobs = [j["id"] async for j in db.production_jobs.find({"po_id": po_id}, {"_id": 0, "id": 1})]
-    mi_q = {"$or": [{"production_po_id": po_id}] + ([{"job_id": {"$in": jobs}}] if jobs else [])}
+    # Tahap 9: dokumen penyerahan baru menyebut `po_id` (kontrak Kirim ke CMT); dokumen lama `production_po_id`
+    mi_q = {"$or": [{"production_po_id": po_id}, {"po_id": po_id}] + ([{"job_id": {"$in": jobs}}] if jobs else [])}
     mi_ids = [m["id"] async for m in db.rahaza_material_issues.find(mi_q, {"_id": 0, "id": 1})]
     ret_ids = [r["id"] async for r in db.production_material_returns.find(
         {"material_issue_id": {"$in": mi_ids}}, {"_id": 0, "id": 1})] if mi_ids else []
@@ -167,10 +172,24 @@ async def clear_po_wip(db, po_id: str, user: dict, *, reason: str = "") -> dict:
     return {**pos, "ok": bool(res.get("ok")), "posted": bool(res.get("ok")), "posting": res}
 
 
-async def on_po_closed(db, po: dict, user: dict) -> dict:
-    """Kait penutupan PO: tutup sisa WIP. Tidak pernah menggagalkan penutupan PO."""
+async def residue_reason(db, po_id: str) -> str:
+    """Kalimat penjelas jurnal penutup dari HPP aktual PO (`core.hpp_aktual`) — mis. "bahan untuk 12 pcs
+    dikirim yang tidak lolos QC/tidak diterima". Kosong bila tidak bisa dihitung."""
     try:
-        return await clear_po_wip(db, (po or {}).get("id"), user, reason="PO ditutup")
+        from core import hpp_aktual
+        return hpp_aktual.close_residue_note(await hpp_aktual.po_hpp(db, po_id, detail=False))
+    except Exception:  # noqa: BLE001 — penjelas saja
+        log.exception("penjelas sisa WIP PO %s gagal", po_id)
+        return ""
+
+
+async def on_po_closed(db, po: dict, user: dict) -> dict:
+    """Kait penutupan PO: tutup sisa WIP (Tahap 9: biaya PO yang tidak menjadi barang jadi → selisih biaya PO,
+    dengan penjelasnya). Tidak pernah menggagalkan penutupan PO."""
+    try:
+        note = await residue_reason(db, (po or {}).get("id"))
+        return await clear_po_wip(db, (po or {}).get("id"), user,
+                                  reason="PO ditutup" + (f" · {note}" if note else ""))
     except Exception as e:  # noqa: BLE001
         log.exception("penutupan sisa WIP PO %s gagal", (po or {}).get("po_number"))
         return {"ok": False, "posted": False, "error": str(e)}
