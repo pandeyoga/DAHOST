@@ -13,7 +13,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { FINANCE_ROLES as ADMIN_ROLES } from '../../lib/financeRoles'; // FIN-02
 import {
   Plus, Pencil, Trash2, RefreshCw, Tag,
-  Search, Database, AlertCircle, Loader2
+  Search, Database, Loader2
 } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -25,9 +25,8 @@ import PageLayout from './layout/PageLayout';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import {
-  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
@@ -106,84 +105,32 @@ function CategoryFormDialog({ open, onClose, category, onSaved }) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>{category ? 'Ubah kategori' : 'Kategori baru'}</DialogTitle>
-          <DialogDescription>
-            {category ? 'Perbarui data kategori klaim.' : 'Tambahkan kategori klaim biaya baru.'}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-4 py-2">
-          {error && (
-            <div className="flex items-center gap-2 rounded-[var(--radius-sm)] bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              <AlertCircle size={14} />
-              <span>{error}</span>
-            </div>
-          )}
-
-          <div className="space-y-1.5">
-            <Label htmlFor="cat-name">Nama kategori <span className="text-destructive">*</span></Label>
-            <Input
-              id="cat-name"
-              data-testid="category-name-input"
-              placeholder="mis. Biaya Training, Sewa Kendaraan"
-              value={form.name}
-              onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="cat-code">Kode kategori <span className="text-muted-foreground text-xs">(opsional)</span></Label>
-            <Input
-              id="cat-code"
-              data-testid="category-code-input"
-              placeholder="mis. CAT-014"
-              value={form.code}
-              onChange={e => setForm(p => ({ ...p, code: e.target.value }))}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="cat-desc">Deskripsi <span className="text-muted-foreground text-xs">(opsional)</span></Label>
-            <Input
-              id="cat-desc"
-              data-testid="category-description-input"
-              placeholder="Penjelasan singkat kategori ini"
-              value={form.description}
-              onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
-            />
-          </div>
-
-          <div className="flex items-center justify-between rounded-lg border border-border p-3">
-            <div>
-              <p className="text-sm font-medium">Aktif</p>
-              <p className="text-xs text-muted-foreground">Kategori nonaktif tidak muncul di pilihan klaim.</p>
-            </div>
-            <Switch
-              data-testid="category-active-switch"
-              checked={form.is_active}
-              onCheckedChange={v => setForm(p => ({ ...p, is_active: v }))}
-            />
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={saving}>
-            Batal
-          </Button>
-          <Button
-            data-testid="category-save-button"
-            onClick={handleSave}
-            disabled={saving}
-          >
-            {saving && <Loader2 size={14} className="mr-2 animate-spin" />}
-            {category ? 'Simpan perubahan' : 'Tambah kategori'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open={open} onClose={onClose} ukuran="pendek" testId="category-form"
+      judul={category ? 'Ubah kategori' : 'Kategori baru'}
+      keterangan={category ? 'Perbarui data kategori klaim.' : 'Tambahkan kategori klaim biaya baru.'}
+      onSimpan={handleSave} menyimpan={saving} galat={error}
+      labelSimpan={category ? 'Simpan perubahan' : 'Tambah kategori'}>
+      <Isian label="Nama kategori" wajib htmlFor="cat-name">
+        <Input id="cat-name" data-testid="category-name-input" placeholder="mis. Biaya Training, Sewa Kendaraan"
+          value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} />
+      </Isian>
+      <Isian label="Kode kategori" htmlFor="cat-code" petunjuk="Opsional.">
+        <Input id="cat-code" data-testid="category-code-input" placeholder="mis. CAT-014"
+          value={form.code} onChange={e => setForm(p => ({ ...p, code: e.target.value }))} />
+      </Isian>
+      <Isian label="Deskripsi" htmlFor="cat-desc" petunjuk="Opsional.">
+        <Input id="cat-desc" data-testid="category-description-input" placeholder="Penjelasan singkat kategori ini"
+          value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} />
+      </Isian>
+      <label className="flex items-center justify-between gap-3 text-sm" htmlFor="cat-active">
+        <span>
+          <span className="font-medium">Aktif</span>
+          <span className="block text-xs text-muted-foreground">Kategori nonaktif tidak muncul di pilihan klaim.</span>
+        </span>
+        <Switch id="cat-active" data-testid="category-active-switch" checked={form.is_active}
+          onCheckedChange={v => setForm(p => ({ ...p, is_active: v }))} />
+      </label>
+    </FormPopup>
   );
 }
 
@@ -310,7 +257,7 @@ export default function EmployeeExpenseCategoryMasterModule() {
         </Button>
       </>}
       filters={<>
-        <div className="relative w-72 max-w-full">
+        <div className="relative w-full sm:w-64">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <GlassInput
             data-testid="category-search-input"
@@ -333,7 +280,14 @@ export default function EmployeeExpenseCategoryMasterModule() {
           </Label>
         </div>
       </>}
-      tools={
+      tools={<>
+        <TombolUnduh namaBerkas="kategori-klaim-biaya" namaLembar="Kategori klaim" baris={filtered} testId="category-unduh"
+          kolom={[
+            { label: 'Kode', nilai: (c) => c.code || '' },
+            { label: 'Nama kategori', nilai: (c) => c.name },
+            { label: 'Deskripsi', nilai: (c) => c.description || '' },
+            { label: 'Status', nilai: (c) => (c.is_active === false ? 'Nonaktif' : 'Aktif') },
+          ]} />
         <Button
           variant="outline"
           size="icon"
@@ -345,7 +299,7 @@ export default function EmployeeExpenseCategoryMasterModule() {
         >
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
         </Button>
-      }
+      </>}
       summary={!loading && categories.length > 0 && (
         <p className="text-sm text-muted-foreground" data-testid="category-summary">
           {activeCount} aktif dari {categories.length} kategori
@@ -367,13 +321,13 @@ export default function EmployeeExpenseCategoryMasterModule() {
         ) : (
           <Table>
             <TableHeader>
-              <TableRow className="bg-muted/30">
-                <TableHead className="text-xs uppercase tracking-wide w-24">Kode</TableHead>
-                <TableHead className="text-xs uppercase tracking-wide">Nama kategori</TableHead>
-                <TableHead className="text-xs uppercase tracking-wide hidden md:table-cell">Deskripsi</TableHead>
-                <TableHead className="text-xs uppercase tracking-wide w-24">Status</TableHead>
+              <TableRow>
+                <TableHead className="w-24">Kode</TableHead>
+                <TableHead>Nama kategori</TableHead>
+                <TableHead className="hidden md:table-cell">Deskripsi</TableHead>
+                <TableHead className="w-24">Status</TableHead>
                 {canEdit && (
-                  <TableHead className="text-xs uppercase tracking-wide w-24 text-right">Aksi</TableHead>
+                  <TableHead className="w-24 text-right">Aksi</TableHead>
                 )}
               </TableRow>
             </TableHeader>
