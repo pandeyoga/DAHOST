@@ -359,7 +359,8 @@ export default function RnDSamplesTab({ token, onNavigate }) {
         {typeof onNavigate === 'function' && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" data-testid="sample-onward">Langkah berikutnya<ArrowRight /></Button>
+              <Button variant="outline" className="max-sm:px-2.5" aria-label="Langkah berikutnya" title="Langkah berikutnya"
+                data-testid="sample-onward"><span className="hidden sm:inline">Langkah berikutnya</span><ArrowRight /></Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onSelect={() => onNavigate('rnd-techpack')} data-testid="onward-rnd-techpack">

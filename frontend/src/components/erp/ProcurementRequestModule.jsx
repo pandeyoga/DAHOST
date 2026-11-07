@@ -1107,7 +1107,8 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
         {typeof onNavigate === 'function' && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" data-testid="onward-cta">Langkah berikutnya<ChevronDown /></Button>
+              <Button variant="outline" className="max-sm:px-2.5" aria-label="Langkah berikutnya" title="Langkah berikutnya"
+                data-testid="onward-cta"><span className="hidden sm:inline">Langkah berikutnya</span><ChevronDown /></Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-72">
               <DropdownMenuItem onSelect={() => onNavigate('proc-purchase-orders', {})} data-testid="onward-proc-purchase-orders">
@@ -1156,7 +1157,8 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
           <TombolUnduh namaBerkas="menunggu-keputusan-saya" namaLembar="Menunggu keputusan" baris={inbox}
             testId="pr-inbox-unduh" kolom={KOLOM_UNDUH} />
         ) : (<>
-          <ViewToggle value={view} onChange={setView} testId="pr-view" />
+          {/* Di HP daftar selalu kartu ringkas → pilihan tampilan hanya di layar lebar (penyaring dapat ruang). */}
+          <div className="hidden sm:block"><ViewToggle value={view} onChange={setView} testId="pr-view" /></div>
           <TombolUnduh namaBerkas="permintaan-pengadaan" namaLembar="Permintaan" baris={prRows}
             ambilSemua={ambilSemua} testId="pr-export-csv" kolom={KOLOM_UNDUH} />
         </>)}
