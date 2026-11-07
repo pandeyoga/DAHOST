@@ -15,15 +15,20 @@
  *   · Rekonsiliasi ditampilkan HIDUP: jumlah rincian vs omzet sesi. Rincian yang
  *     melebihi omzet sesi berarti uang dihitung dua kali — dan itu ditolak server,
  *     jadi lebih baik terlihat di sini sebelum tombol simpan ditekan.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): tabel isian = ui/table (dulu <table> buatan sendiri), pilihan produk =
+ * SmartNativeSelect yang bisa dicari, tombol type="button" (form kini FormPopup: tanpa itu tombol ikut
+ * menyimpan), warna token, huruf besar hanya di awal. Katalog dimuat sampai 1000 produk: dulu dikirim
+ * `page_size` yang diabaikan server (parameternya `limit`, bawaan 100) → produk ke-101 dst. tidak bisa dipilih
+ * (katalog uji terbesar 197 produk).
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2, Package, AlertTriangle, CheckCircle2, Loader2, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import axios from 'axios';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -54,72 +59,65 @@ export function reconcileLocal(lines, sessionRevenue) {
   return { totalRevenue, totalUnits, sRev, over, unallocated, coverage };
 }
 
-/** Baris rincian: produk (select katalog) + unit + omzet. */
+/** Baris rincian: produk (pilihan katalog) + unit + omzet. */
 function Row({ items, line, onChange, onRemove, index, disabled }) {
   const item = items.find((i) => i.id === line.catalog_item_id) || null;
   const priceAvg = num(line.units_sold) ? num(line.revenue) / num(line.units_sold) : 0;
   const margin = item ? num(line.revenue) - num(item.hpp) * num(line.units_sold) : null;
 
   return (
-    <tr className="border-b last:border-0 align-top" data-testid={`lp-row-${index}`}>
-      <td className="px-2 py-2 min-w-[220px]">
-        <Select
+    <TableRow className="align-top" data-testid={`lp-row-${index}`}>
+      <TableCell className="min-w-[220px]">
+        <SmartNativeSelect
           value={line.catalog_item_id || ''}
-          onValueChange={(v) => onChange({ ...line, catalog_item_id: v })}
+          onChange={(e) => onChange({ ...line, catalog_item_id: e.target.value })}
           disabled={disabled || items.length === 0}
+          searchable
+          data-testid={`lp-item-${index}`}
         >
-          <SelectTrigger className="h-8 text-xs" data-testid={`lp-item-${index}`}>
-            <SelectValue placeholder={items.length ? 'Pilih produk katalog…' : 'Katalog kosong'} />
-          </SelectTrigger>
-          <SelectContent className="max-h-72">
-            {items.map((i) => (
-              <SelectItem key={i.id} value={i.id}>
-                <span className="tabular-nums text-xs text-muted-foreground mr-1.5">{i.sku}</span>
-                {i.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          <option value="">{items.length ? 'Pilih produk katalog…' : 'Katalog kosong'}</option>
+          {items.map((i) => <option key={i.id} value={i.id}>{`${i.sku ? `${i.sku} · ` : ''}${i.name}`}</option>)}
+        </SmartNativeSelect>
         {item && (
-          <p className="text-xs text-muted-foreground mt-1">
+          <p className="mt-1 text-xs text-muted-foreground">
             HPP master {rp(item.hpp)} · harga jual {rp(item.harga_jual || item.price)}
           </p>
         )}
-      </td>
-      <td className="px-2 py-2 w-[110px]">
-        <Input type="number" min="0" className="h-8 text-xs tabular-nums"
+      </TableCell>
+      <TableCell className="w-[110px]">
+        <Input type="number" min="0" className="tabular-nums" aria-label="Unit terjual"
           value={line.units_sold ?? ''} disabled={disabled}
           data-testid={`lp-units-${index}`}
           onChange={(e) => onChange({ ...line, units_sold: e.target.value })} />
-      </td>
-      <td className="px-2 py-2 w-[150px]">
-        <MoneyInput className="h-8 text-xs tabular-nums"
+      </TableCell>
+      <TableCell className="w-[150px]">
+        <MoneyInput className="tabular-nums" aria-label="Omzet"
           value={line.revenue ?? ''} disabled={disabled}
           data-testid={`lp-revenue-${index}`}
           onChange={(e) => onChange({ ...line, revenue: e.target.value })} />
-      </td>
-      <td className="px-2 py-2 w-[110px]">
-        <Input type="number" min="0" className="h-8 text-xs tabular-nums"
+      </TableCell>
+      <TableCell className="w-[110px]">
+        <Input type="number" min="0" className="tabular-nums" aria-label="Pesanan"
           value={line.orders ?? ''} disabled={disabled}
           data-testid={`lp-orders-${index}`}
           onChange={(e) => onChange({ ...line, orders: e.target.value })} />
-      </td>
-      <td className="px-2 py-2 text-xs tabular-nums text-muted-foreground whitespace-nowrap">
+      </TableCell>
+      <TableCell className="whitespace-nowrap text-sm tabular-nums text-muted-foreground">
         {rp(Math.round(priceAvg))}
         {margin !== null && (
           <div className={margin >= 0 ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--danger-text))]'}>
             margin {rp(Math.round(margin))}
           </div>
         )}
-      </td>
-      <td className="px-2 py-2">
-        <Button variant="ghost" size="sm" className="h-7 px-2 text-[hsl(var(--danger-text))]"
-          disabled={disabled} data-testid={`lp-remove-${index}`}
+      </TableCell>
+      <TableCell>
+        <Button type="button" variant="ghost" size="icon-sm" className="text-[hsl(var(--danger-text))]"
+          disabled={disabled} data-testid={`lp-remove-${index}`} title="Hapus baris" aria-label="Hapus baris"
           onClick={onRemove}>
-          <Trash2 size={13} />
+          <Trash2 />
         </Button>
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -142,7 +140,7 @@ export default function LiveSessionProductsEditor({
         const all = [];
         for (const c of list) {
           const r = await axios.get(`${API}/api/marketing/catalogs/${c.id}/items`, {
-            headers: authHeader(token), params: { page_size: 200 },
+            headers: authHeader(token), params: { page_size: 200, limit: 1000 },
           });
           all.push(...(r.data?.items || r.data?.data || []));
         }
@@ -179,70 +177,65 @@ export default function LiveSessionProductsEditor({
   }, [lines]);
 
   return (
-    <div className="rounded-[var(--radius-sm)] border border-border bg-card"
+    <div className="rounded-[var(--radius-sm)] border border-[var(--glass-border)] bg-card"
       data-testid="live-products-editor">
-      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b bg-muted/40">
-        <p className="text-xs font-medium flex items-center gap-1.5">
-          <Package className="w-3.5 h-3.5" /> Rincian Produk Terjual
-          <span className="text-muted-foreground font-normal">
-            — menjawab “barang mana yang paling laku saat live”
-          </span>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--glass-border)] px-3 py-2">
+        <p className="flex items-center gap-1.5 text-sm font-medium">
+          <Package className="h-4 w-4" /> Rincian produk terjual
+          <span className="font-normal text-muted-foreground">— barang mana yang paling laku saat live</span>
         </p>
-        <Button size="sm" variant="outline" className="h-7" onClick={addLine}
+        <Button type="button" size="sm" variant="outline" onClick={addLine}
           disabled={disabled || !accountId} data-testid="live-products-add">
-          <Plus size={13} className="mr-1" /> Tambah produk
+          <Plus /> Tambah produk
         </Button>
       </div>
 
       {!accountId ? (
-        <p className="px-3 py-4 text-xs text-muted-foreground">
+        <p className="px-3 py-4 text-sm text-muted-foreground">
           Pilih toko dulu — produk hanya boleh diambil dari katalog toko itu.
         </p>
       ) : loading ? (
-        <p className="px-3 py-4 text-xs text-muted-foreground flex items-center gap-1.5">
-          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Memuat katalog toko…
+        <p className="flex items-center gap-1.5 px-3 py-4 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> Memuat katalog toko…
         </p>
       ) : items.length === 0 ? (
-        <p className="px-3 py-4 text-xs text-[hsl(var(--warning-text))] flex items-start gap-1.5">
-          <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />
-          Katalog toko ini masih kosong. Isi dulu di <b className="mx-1">Manajemen Katalog</b>
-          — rincian live harus menunjuk produk master supaya bisa dijumlahkan per produk.
+        <p className="flex items-start gap-1.5 px-3 py-4 text-sm text-[hsl(var(--warning-text))]">
+          <AlertTriangle className="mt-px h-4 w-4 shrink-0" />
+          <span>Katalog toko ini masih kosong. Isi dulu di <b>Manajemen katalog</b> — rincian live harus menunjuk
+            produk master supaya bisa dijumlahkan per produk.</span>
         </p>
       ) : (lines || []).length === 0 ? (
-        <div className="px-3 py-4 text-xs text-muted-foreground flex items-start gap-1.5">
-          <Info className="w-3.5 h-3.5 mt-px shrink-0" />
+        <div className="flex items-start gap-1.5 px-3 py-4 text-sm text-muted-foreground">
+          <Info className="mt-px h-4 w-4 shrink-0" />
           <span>
             Belum ada rincian. Tekan <b>Tambah produk</b> untuk mencatat apa saja yang
-            laku di sesi ini — atau impor massal lewat
-            <b> Impor Data → Rincian Produk per Sesi Live</b>. Total sesi tetap terhitung
-            tanpa rincian, hanya laporan per produk yang kosong.
+            laku di sesi ini — atau impor massal lewat <b>Impor data › Rincian produk per sesi live</b>.
+            Total sesi tetap terhitung tanpa rincian, hanya laporan per produk yang kosong.
           </span>
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/20">
-                {['Produk (katalog toko)', 'Unit terjual', 'Omzet (Rp)', 'Order', 'Harga rata-rata', ''].map((h) => (
-                  <th key={h} className="px-2 py-1.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((l, i) => (
-                <Row key={l.id || `new-${i}`} items={items} line={l} index={i}
-                  disabled={disabled}
-                  onChange={(n) => setLine(i, n)} onRemove={() => removeLine(i)} />
+        <Table>
+          <TableHeader>
+            <TableRow>
+              {['Produk (katalog toko)', 'Unit terjual', 'Omzet (Rp)', 'Pesanan', 'Harga rata-rata', ''].map((h) => (
+                <TableHead key={h} className="whitespace-nowrap">{h}</TableHead>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {lines.map((l, i) => (
+              <Row key={l.id || `new-${i}`} items={items} line={l} index={i}
+                disabled={disabled}
+                onChange={(n) => setLine(i, n)} onRemove={() => removeLine(i)} />
+            ))}
+          </TableBody>
+        </Table>
       )}
 
       {/* Rekonsiliasi — satu tempat, angka sama dengan yang dipakai server */}
       {(lines || []).length > 0 && (
-        <div className="px-3 py-2 border-t space-y-1.5" data-testid="live-products-recon">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs tabular-nums">
+        <div className="space-y-1.5 border-t border-[var(--glass-border)] px-3 py-2" data-testid="live-products-recon">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm tabular-nums">
             <span>Rincian: <b>{rec.totalUnits}</b> unit · <b>{rp(rec.totalRevenue)}</b></span>
             <span className="text-muted-foreground">Omzet sesi: {rp(rec.sRev)}</span>
             {rec.sRev > 0 && !rec.over && (
@@ -252,32 +245,32 @@ export default function LiveSessionProductsEditor({
             )}
           </div>
           {rec.sRev > 0 && (
-            <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-              <div className={`h-full ${rec.over ? 'bg-red-500' : 'bg-emerald-500'}`}
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div className={`h-full ${rec.over ? 'bg-[hsl(var(--destructive))]' : 'bg-[hsl(var(--success))]'}`}
                 style={{ width: `${Math.min(rec.coverage, 100)}%` }} />
             </div>
           )}
           {dupe && (
-            <p className="text-xs text-[hsl(var(--danger-text))] flex items-start gap-1">
-              <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />
+            <p className="flex items-start gap-1 text-sm text-[hsl(var(--danger-text))]">
+              <AlertTriangle className="mt-px h-4 w-4 shrink-0" />
               Ada produk yang sama dua kali. Gabungkan jadi satu baris — kalau dobel,
               “produk terlaris” menghitungnya dua kali.
             </p>
           )}
           {rec.over && (
-            <p className="text-xs text-[hsl(var(--danger-text))] flex items-start gap-1">
-              <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />
-              Rincian ({rp(rec.totalRevenue)}) MELEBIHI omzet sesi ({rp(rec.sRev)}).
+            <p className="flex items-start gap-1 text-sm text-[hsl(var(--danger-text))]">
+              <AlertTriangle className="mt-px h-4 w-4 shrink-0" />
+              Rincian ({rp(rec.totalRevenue)}) melebihi omzet sesi ({rp(rec.sRev)}).
               Salah satunya keliru — server akan menolak sampai diperbaiki.
             </p>
           )}
           {!rec.over && rec.sRev > 0 && rec.unallocated <= Math.max(rec.sRev * 0.02, 1) && (
-            <p className="text-xs text-[hsl(var(--success-text))] flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Rincian sudah menjelaskan seluruh omzet sesi.
+            <p className="flex items-center gap-1 text-sm text-[hsl(var(--success-text))]">
+              <CheckCircle2 className="h-4 w-4" /> Rincian sudah menjelaskan seluruh omzet sesi.
             </p>
           )}
           {rec.sRev <= 0 && rec.totalRevenue > 0 && (
-            <p className="text-xs text-[hsl(var(--warning-text))] ">
+            <p className="text-sm text-[hsl(var(--warning-text))]">
               Omzet sesi masih Rp 0 sementara rincian sudah {rp(rec.totalRevenue)}.
               Isi omzet sesi, atau pakai tombol <b>Samakan total sesi</b> sesudah disimpan.
             </p>

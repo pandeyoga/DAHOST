@@ -1,19 +1,24 @@
+/**
+ * Shift host live (Live Selling › Host live › Shift).
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, penyaring satu baris (periode = PeriodPicker, dulu dua input tanggal),
+ * tabel + unduh, label Indonesia (dulu Clock In/Clock Out/Record, Scheduled/On Time…). Aksi & permintaan ke server sama.
+ */
 import { useState, useEffect, useCallback } from 'react';
-import {
-  Clock, Plus, RefreshCw, ChevronLeft, ChevronRight, Loader2,
-  UserCheck, UserX, BarChart3,
-} from 'lucide-react';
+import { Clock, Plus, RefreshCw, ChevronLeft, ChevronRight, UserCheck, UserX, BarChart3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { toast } from 'sonner';
+import { formatDateID } from '@/lib/format';
+import PageLayout from '../../layout/PageLayout';
+import PeriodPicker, { ALL_TIME, PERIOD_PRESETS } from '../../finance/PeriodPicker';
+import { EmptyState } from '../../moduleAtoms';
 import { API, fmtRp } from './utils';
-import { AttendanceBadge } from './Badges';
+import { AttendanceBadge, LABEL_KEHADIRAN } from './Badges';
 import AddShiftModal from './AddShiftModal';
 import RecordPerformanceModal from './RecordPerformanceModal';
-import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 
 export default function ShiftsTab({ authH }) {
   const [shifts, setShifts] = useState([]);
@@ -31,6 +36,7 @@ export default function ShiftsTab({ authH }) {
   const [showAddShiftModal, setShowAddShiftModal] = useState(false);
   const [showPerformanceModal, setShowPerformanceModal] = useState(false);
   const [selectedShift, setSelectedShift] = useState(null);
+  const [periode, setPeriode] = useState({ preset: 'all', from: '', to: '' });
 
   const fetchShifts = useCallback(
     async (page = 1) => {
@@ -96,259 +102,104 @@ export default function ShiftsTab({ authH }) {
         fetchShifts(pagination.page);
       } else {
         const err = await res.json();
-        toast.error(err.detail || `Gagal ${action}`);
+        toast.error(err.detail || (action === 'clock_in' ? 'Gagal memulai shift' : 'Gagal mengakhiri shift'));
       }
     } catch (e) {
-      toast.error(`Gagal ${action}`);
+      toast.error(action === 'clock_in' ? 'Gagal memulai shift' : 'Gagal mengakhiri shift');
     }
   };
 
   const { page, setPage, totalPages, total, paged } = useClientPagination(shifts, 10);
+  const SHIFT = { morning: 'Pagi', afternoon: 'Siang', evening: 'Sore', night: 'Malam', custom: 'Atur sendiri' };
+  const tgl = (v) => (v ? formatDateID(v) : '—');
+
+  const aksiShift = (shift) => (
+    <div className="flex justify-end gap-1">
+      {shift.attendance_status === 'scheduled' && (
+        <Button variant="outline" size="sm" onClick={() => handleClockAction(shift, 'clock_in')} data-testid={`clock-in-${shift.id}`}><UserCheck />Mulai shift</Button>
+      )}
+      {(shift.attendance_status === 'on_time' || shift.attendance_status === 'late') && !shift.clock_out_time && (
+        <Button variant="outline" size="sm" onClick={() => handleClockAction(shift, 'clock_out')} data-testid={`clock-out-${shift.id}`}><UserX />Akhiri shift</Button>
+      )}
+      {shift.attendance_status === 'completed' && shift.revenue === 0 && (
+        <Button variant="outline" size="sm" onClick={() => { setSelectedShift(shift); setShowPerformanceModal(true); }}
+          data-testid={`record-performance-${shift.id}`}><BarChart3 />Catat performa</Button>
+      )}
+    </div>
+  );
+  const kolom = [
+    { kunci: 'tgl', label: 'Tanggal', hp: 'keterangan', isi: (s) => <span className="tabular-nums md:whitespace-nowrap">{tgl(s.date)}</span> },
+    { kunci: 'host', label: 'Host live', hp: 'judul', isi: (s) => <span className="font-medium">{s.host_name}</span> },
+    { kunci: 'shift', label: 'Shift', isi: (s) => <span>{SHIFT[s.shift_type] || s.shift_type}<span className="block text-xs tabular-nums text-muted-foreground">{s.shift_start_time} – {s.shift_end_time}</span></span> },
+    { kunci: 'status', label: 'Kehadiran', isi: (s) => <AttendanceBadge status={s.attendance_status} /> },
+    { kunci: 'perf', label: 'Performa', rata: 'kanan', isi: (s) => (s.revenue > 0
+      ? <span className="tabular-nums">{fmtRp(s.revenue)}<span className="block text-xs text-muted-foreground">{s.orders} pesanan</span></span>
+      : <span className="text-muted-foreground">—</span>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: aksiShift },
+  ];
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row gap-3 items-end justify-between">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 w-full">
-          <div>
-            <Label className="text-xs mb-1">LiveHost</Label>
-            <Select value={filters.host_id} onValueChange={(v) => setFilters((f) => ({ ...f, host_id: v }))}>
-              <SelectTrigger className="h-9" data-testid="filter-host">
-                <SelectValue placeholder="Semua Host" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Semua Host</SelectItem>
-                {hosts.map((h) => (
-                  <SelectItem key={h.id} value={h.id}>
-                    {h.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="text-xs mb-1">Dari Tanggal</Label>
-            <Input
-              type="date"
-              value={filters.date_from}
-              onChange={(e) => setFilters((f) => ({ ...f, date_from: e.target.value }))}
-              className="h-9"
-              data-testid="filter-date-from"
-            />
-          </div>
-          <div>
-            <Label className="text-xs mb-1">Sampai Tanggal</Label>
-            <Input
-              type="date"
-              value={filters.date_to}
-              onChange={(e) => setFilters((f) => ({ ...f, date_to: e.target.value }))}
-              className="h-9"
-              data-testid="filter-date-to"
-            />
-          </div>
-          <div>
-            <Label className="text-xs mb-1">Status</Label>
-            <Select
-              value={filters.attendance_status}
-              onValueChange={(v) => setFilters((f) => ({ ...f, attendance_status: v }))}
-            >
-              <SelectTrigger className="h-9" data-testid="filter-attendance">
-                <SelectValue placeholder="Semua Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Semua Status</SelectItem>
-                <SelectItem value="scheduled">Scheduled</SelectItem>
-                <SelectItem value="on_time">On Time</SelectItem>
-                <SelectItem value="late">Late</SelectItem>
-                <SelectItem value="no_show">No Show</SelectItem>
-                <SelectItem value="completed">Completed</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
-        <div className="flex gap-2 w-full sm:w-auto">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => fetchShifts(pagination.page)}
-            className="h-9"
-            data-testid="refresh-shifts"
-          >
-            <RefreshCw size={14} className="mr-1.5" />
-            Refresh
-          </Button>
-          <Button size="sm" onClick={() => setShowAddShiftModal(true)} className="h-9" data-testid="add-shift-btn">
-            <Plus size={14} className="mr-1.5" />
-            Tambah Shift
-          </Button>
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="flex justify-center py-6">
-          <Loader2 size={28} className="animate-spin text-muted-foreground" />
-        </div>
-      ) : shifts.length === 0 ? (
-        <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-6 gap-3">
-            <Clock size={40} className="text-muted-foreground opacity-40" />
-            <p className="font-medium">Belum ada shift</p>
-            <Button size="sm" onClick={() => setShowAddShiftModal(true)}>
-              <Plus size={14} className="mr-1.5" />
-              Tambah Shift
-            </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <>
-          <Card>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm" data-testid="shifts-table">
-                  <thead>
-                    <tr className="border-b bg-muted/30">
-                      <th className="px-4 py-3 text-left text-xs font-semibold">Tanggal</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold">LiveHost</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold">Shift</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold">Waktu</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold">Status</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold">Performance</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {paged.map((shift) => (
-                      <tr key={shift.id} className="hover:bg-muted/30 transition-colors">
-                        <td className="px-4 py-3 font-medium">{shift.date}</td>
-                        <td className="px-4 py-3">{shift.host_name}</td>
-                        <td className="px-4 py-3 capitalize">{shift.shift_type}</td>
-                        <td className="px-4 py-3 text-xs tabular-nums">
-                          {shift.shift_start_time} - {shift.shift_end_time}
-                        </td>
-                        <td className="px-4 py-3">
-                          <AttendanceBadge status={shift.attendance_status} />
-                        </td>
-                        <td className="px-4 py-3">
-                          {shift.revenue > 0 ? (
-                            <div className="text-xs">
-                              <div className="font-medium">{fmtRp(shift.revenue)}</div>
-                              <div className="text-muted-foreground">{shift.orders} orders</div>
-                            </div>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">-</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1">
-                            {shift.attendance_status === 'scheduled' && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 text-xs"
-                                onClick={() => handleClockAction(shift, 'clock_in')}
-                                data-testid={`clock-in-${shift.id}`}
-                              >
-                                <UserCheck size={12} className="mr-1" />
-                                Clock In
-                              </Button>
-                            )}
-                            {(shift.attendance_status === 'on_time' || shift.attendance_status === 'late') &&
-                              !shift.clock_out_time && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-8 text-xs"
-                                  onClick={() => handleClockAction(shift, 'clock_out')}
-                                  data-testid={`clock-out-${shift.id}`}
-                                >
-                                  <UserX size={12} className="mr-1" />
-                                  Clock Out
-                                </Button>
-                              )}
-                            {shift.attendance_status === 'completed' && shift.revenue === 0 && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 text-xs"
-                                onClick={() => {
-                                  setSelectedShift(shift);
-                                  setShowPerformanceModal(true);
-                                }}
-                                data-testid={`record-performance-${shift.id}`}
-                              >
-                                <BarChart3 size={12} className="mr-1" />
-                                Record
-                              </Button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
-              </div>
-            </CardContent>
-          </Card>
-
-          {pagination.total_pages > 1 && (
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-muted-foreground">
-                Showing {shifts.length} of {pagination.total} shifts
-              </p>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fetchShifts(pagination.page - 1)}
-                  disabled={!pagination.has_prev}
-                >
-                  <ChevronLeft size={14} />
-                </Button>
-                <span className="text-sm">
-                  Page {pagination.page} of {pagination.total_pages}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fetchShifts(pagination.page + 1)}
-                  disabled={!pagination.has_next}
-                >
-                  <ChevronRight size={14} />
-                </Button>
-              </div>
+    <PageLayout testId="shifts-tab" title="Shift host live" subtitle="Jadwal shift, kehadiran, dan performa tiap shift."
+      actions={<Button onClick={() => setShowAddShiftModal(true)} data-testid="add-shift-btn"><Plus />Tambah shift</Button>}
+      filters={<>
+        <SmartNativeSelect value={filters.host_id} onChange={(e) => setFilters((f) => ({ ...f, host_id: e.target.value }))} className="w-48" data-testid="filter-host">
+          <option value="all">Semua host</option>
+          {hosts.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+        </SmartNativeSelect>
+        <PeriodPicker value={periode} presets={[ALL_TIME, ...PERIOD_PRESETS]} testId="filter-shift-period"
+          onChange={(v) => { setPeriode(v); setFilters((f) => ({ ...f, date_from: v.from || '', date_to: v.to || '' })); }} />
+        <SmartNativeSelect value={filters.attendance_status} onChange={(e) => setFilters((f) => ({ ...f, attendance_status: e.target.value }))}
+          className="w-44" searchable={false} data-testid="filter-attendance">
+          <option value="all">Semua kehadiran</option>
+          {Object.entries(LABEL_KEHADIRAN).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </SmartNativeSelect>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="shift-host-live" namaLembar="Shift" baris={shifts} testId="shift-unduh"
+          kolom={[
+            { label: 'Tanggal', nilai: (s) => tgl(s.date) }, { label: 'Host live', nilai: (s) => s.host_name || '' },
+            { label: 'Shift', nilai: (s) => SHIFT[s.shift_type] || s.shift_type || '' }, { label: 'Jam', nilai: (s) => `${s.shift_start_time || ''} – ${s.shift_end_time || ''}` },
+            { label: 'Kehadiran', nilai: (s) => LABEL_KEHADIRAN[s.attendance_status] || '' }, { label: 'Omzet', nilai: (s) => Number(s.revenue) || 0 },
+            { label: 'Pesanan', nilai: (s) => Number(s.orders) || 0 },
+          ]} />
+        <Button variant="outline" size="icon" onClick={() => fetchShifts(pagination.page)} data-testid="refresh-shifts" title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      footer={<>
+        {shifts.length > 10 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}
+        {pagination.total_pages > 1 && (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-muted-foreground">Menampilkan {shifts.length} dari {pagination.total} shift</p>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="icon-sm" onClick={() => fetchShifts(pagination.page - 1)} disabled={!pagination.has_prev}
+                title="Halaman sebelumnya" aria-label="Halaman sebelumnya"><ChevronLeft /></Button>
+              <span className="text-sm">Halaman {pagination.page} dari {pagination.total_pages}</span>
+              <Button variant="outline" size="icon-sm" onClick={() => fetchShifts(pagination.page + 1)} disabled={!pagination.has_next}
+                title="Halaman berikutnya" aria-label="Halaman berikutnya"><ChevronRight /></Button>
             </div>
-          )}
-        </>
+          </div>
+        )}
+      </>}>
+      {loading && shifts.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat shift…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={paged} testId="shifts-table"
+          kosong={<EmptyState icon={Clock} title="Belum ada shift" description="Tambahkan jadwal shift host live."
+            action={<Button onClick={() => setShowAddShiftModal(true)}><Plus />Tambah shift</Button>} />} />
       )}
 
       {showAddShiftModal && (
-        <AddShiftModal
-          hosts={hosts}
-          accounts={accounts}
-          authH={authH}
+        <AddShiftModal hosts={hosts} accounts={accounts} authH={authH}
           onClose={() => setShowAddShiftModal(false)}
-          onSuccess={() => {
-            setShowAddShiftModal(false);
-            fetchShifts(pagination.page);
-          }}
-        />
+          onSuccess={() => { setShowAddShiftModal(false); fetchShifts(pagination.page); }} />
       )}
 
       {showPerformanceModal && selectedShift && (
-        <RecordPerformanceModal
-          shift={selectedShift}
-          authH={authH}
-          onClose={() => {
-            setShowPerformanceModal(false);
-            setSelectedShift(null);
-          }}
-          onSuccess={() => {
-            setShowPerformanceModal(false);
-            setSelectedShift(null);
-            fetchShifts(pagination.page);
-          }}
-        />
+        <RecordPerformanceModal shift={selectedShift} authH={authH}
+          onClose={() => { setShowPerformanceModal(false); setSelectedShift(null); }}
+          onSuccess={() => { setShowPerformanceModal(false); setSelectedShift(null); fetchShifts(pagination.page); }} />
       )}
-    </div>
+    </PageLayout>
   );
 }

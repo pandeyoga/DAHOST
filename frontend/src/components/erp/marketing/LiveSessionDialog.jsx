@@ -11,19 +11,19 @@
  *     Server menolak host yang belum di-assign — supaya jam kerja & bayarannya
  *     tidak dibebankan ke toko yang tidak memakainya.
  *   · Engagement / conversion / AOV dihitung, tidak diketik.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): FormPopup panjang (dulu Dialog buatan sendiri), tanggal = DatePicker (dulu
+ * input type="date"), status = SmartNativeSelect, label Indonesia (Likes/Shares/Revenue/AOV → Suka/Dibagikan/
+ * Omzet/Rata-rata per pesanan). Tombol Simpan kini ber-testid live-form-simpan (dulu live-save).
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { Video, Loader2, Calculator } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Calculator } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { useToast } from '@/hooks/use-toast';
 import axios from 'axios';
 import { MarketingAccountSelect, MarketingHostSelect } from './pickers/MarketingPickers';
@@ -32,7 +32,7 @@ import { todayWIB } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const STATUS_LABEL = {
-  scheduled: 'Dijadwalkan', live: 'Sedang Live',
+  scheduled: 'Dijadwalkan', live: 'Sedang live',
   completed: 'Selesai', cancelled: 'Dibatalkan',
 };
 const rp = (n) => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
@@ -129,111 +129,82 @@ export default function LiveSessionDialog({ open, onClose, onSaved, token, sessi
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose?.()}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Video className="w-4 h-4" />
-            {session?.id ? 'Ubah Sesi Live' : 'Catat Sesi Live'}
-          </DialogTitle>
-        </DialogHeader>
+    <FormPopup open={open} onClose={onClose} ukuran="panjang" testId="live-form"
+      judul={session?.id ? 'Ubah sesi live' : 'Catat sesi live'}
+      keterangan="Angka diambil dari dasbor platform sesudah live selesai."
+      onSimpan={submit} labelSimpan={session?.id ? 'Simpan perubahan' : 'Simpan'} menyimpan={saving}>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <MarketingAccountSelect token={token} value={form.account_id}
+          onChange={(v) => {
+            // Ganti toko ⇒ rincian produk lama (milik katalog toko lain) tidak
+            // sah lagi; dibersihkan di sini supaya penolakan server tidak
+            // datang sebagai kejutan saat menyimpan.
+            setForm((f) => ({ ...f, account_id: v, host_id: '' }));
+            setLines([]);
+          }}
+          testId="live-account-select" />
+        <MarketingHostSelect token={token} accountId={form.account_id}
+          value={form.host_id} onChange={(v) => setForm((f) => ({ ...f, host_id: v }))}
+          testId="live-host-select" />
+        <Isian label="Tanggal sesi" wajib>
+          <DatePicker value={form.session_date || ''} onChange={(v) => setForm((f) => ({ ...f, session_date: v }))} testId="live-date" />
+        </Isian>
+        <Isian label="Jam mulai" htmlFor="live-start">
+          <Input id="live-start" type="time" value={form.start_time} onChange={set('start_time')} data-testid="live-start" />
+        </Isian>
+        <Isian label="Judul / tema sesi" wajib htmlFor="live-title" className="sm:col-span-2">
+          <Input id="live-title" value={form.title} onChange={set('title')}
+            placeholder="Live Gamis Malam — Flash Sale" data-testid="live-title" />
+        </Isian>
+      </div>
 
-        <div className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <MarketingAccountSelect token={token} value={form.account_id}
-              onChange={(v) => {
-                // Ganti toko ⇒ rincian produk lama (milik katalog toko lain) tidak
-                // sah lagi; dibersihkan di sini supaya penolakan server tidak
-                // datang sebagai kejutan saat menyimpan.
-                setForm((f) => ({ ...f, account_id: v, host_id: '' }));
-                setLines([]);
-              }}
-              testId="live-account-select" />
-            <MarketingHostSelect token={token} accountId={form.account_id}
-              value={form.host_id} onChange={(v) => setForm((f) => ({ ...f, host_id: v }))}
-              testId="live-host-select" />
-            <div>
-              <label className="text-xs font-medium mb-1 block">Tanggal Sesi <span className="text-[hsl(var(--danger-text))]">*</span></label>
-              <Input type="date" value={form.session_date} onChange={set('session_date')}
-                className="h-9" data-testid="live-date" />
-            </div>
-            <div>
-              <label className="text-xs font-medium mb-1 block">Jam Mulai</label>
-              <Input type="time" value={form.start_time} onChange={set('start_time')}
-                className="h-9" data-testid="live-start" />
-            </div>
-            <div className="sm:col-span-2">
-              <label className="text-xs font-medium mb-1 block">Judul / Tema Sesi <span className="text-[hsl(var(--danger-text))]">*</span></label>
-              <Input value={form.title} onChange={set('title')}
-                placeholder="Live Gamis Malam — Flash Sale" className="h-9" data-testid="live-title" />
-            </div>
-          </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        {/* money=true → nominal Rupiah (MoneyInput, titik ribuan otomatis); sisanya hitungan. */}
+        {[['duration_minutes', 'Durasi (menit)'], ['peak_viewers', 'Penonton puncak'],
+          ['total_viewers', 'Total penonton'], ['likes', 'Suka'],
+          ['comments', 'Komentar'], ['shares', 'Dibagikan'],
+          ['orders', 'Jumlah pesanan'], ['revenue', 'Omzet (Rp)', true],
+          ['units_sold', 'Item terjual'], ['products_featured', 'Produk dibawakan']]
+          .map(([k, l, money]) => (
+            <Isian key={k} label={l} htmlFor={`live-${k}`}>
+              {money ? (
+                <MoneyInput id={`live-${k}`} value={form[k]} onChange={set(k)}
+                  className="tabular-nums" data-testid={`live-${k}`} />
+              ) : (
+                <Input id={`live-${k}`} type="number" min="0" value={form[k]} onChange={set(k)}
+                  className="tabular-nums" data-testid={`live-${k}`} />
+              )}
+            </Isian>
+          ))}
+        <Isian label="Status">
+          <SmartNativeSelect value={form.status} onChange={set('status')} searchable={false} data-testid="live-status">
+            {Object.entries(STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+      </div>
 
-          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            {/* money=true → nominal Rupiah (MoneyInput, titik ribuan otomatis); sisanya hitungan. */}
-            {[['duration_minutes', 'Durasi (menit)'], ['peak_viewers', 'Penonton Puncak'],
-              ['total_viewers', 'Total Penonton'], ['likes', 'Likes'],
-              ['comments', 'Komentar'], ['shares', 'Shares'],
-              ['orders', 'Jumlah Order'], ['revenue', 'Revenue (Rp)', true],
-              ['units_sold', 'Item Terjual'], ['products_featured', 'Produk Dibawakan']]
-              .map(([k, l, money]) => (
-                <div key={k}>
-                  <label className="text-xs font-medium mb-1 block">{l}</label>
-                  {money ? (
-                    <MoneyInput value={form[k]} onChange={set(k)}
-                      className="h-9 tabular-nums" data-testid={`live-${k}`} />
-                  ) : (
-                    <Input type="number" min="0" value={form[k]} onChange={set(k)}
-                      className="h-9 tabular-nums" data-testid={`live-${k}`} />
-                  )}
-                </div>
-              ))}
-            <div>
-              <label className="text-xs font-medium mb-1 block">Status</label>
-              <Select value={form.status} onValueChange={set('status')}>
-                <SelectTrigger className="h-9" data-testid="live-status"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Object.entries(STATUS_LABEL).map(([k, v]) => (
-                    <SelectItem key={k} value={k}>{v}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="rounded-[var(--radius-sm)] border border-border bg-muted/40 p-3">
-            <p className="text-xs font-medium flex items-center gap-1.5 mb-2">
-              <Calculator className="w-3.5 h-3.5" /> Dihitung otomatis (tidak bisa diketik)
-            </p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs" data-testid="live-derived">
-              <div><span className="text-muted-foreground">Engagement</span><br /><b>{derived.engagement.toFixed(2)}%</b></div>
-              <div><span className="text-muted-foreground">Conversion</span><br /><b>{derived.conversion.toFixed(2)}%</b></div>
-              <div><span className="text-muted-foreground">AOV</span><br /><b>{rp(derived.aov.toFixed(0))}</b></div>
-              <div><span className="text-muted-foreground">Revenue / menit</span><br /><b>{rp(derived.rpm.toFixed(0))}</b></div>
-            </div>
-          </div>
-
-          <LiveSessionProductsEditor
-            token={token} accountId={form.account_id} lines={lines}
-            onChange={setLines} sessionRevenue={n('revenue')} disabled={saving}
-          />
-
-          <div>
-            <label className="text-xs font-medium mb-1 block">Catatan sesi</label>
-            <Textarea value={form.notes_text} onChange={set('notes_text')} rows={2}
-              placeholder="mis. kendala jaringan menit 40, produk X paling laku…"
-              data-testid="live-notes" />
-          </div>
+      <div className="rounded-[var(--radius-sm)] border border-[var(--glass-border)] p-3">
+        <p className="mb-2 flex items-center gap-1.5 text-sm font-medium">
+          <Calculator className="h-4 w-4" /> Dihitung otomatis (tidak bisa diketik)
+        </p>
+        <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4" data-testid="live-derived">
+          <div><span className="text-muted-foreground">Interaksi</span><br /><b className="tabular-nums">{derived.engagement.toFixed(2).replace('.', ',')}%</b></div>
+          <div><span className="text-muted-foreground">Konversi</span><br /><b className="tabular-nums">{derived.conversion.toFixed(2).replace('.', ',')}%</b></div>
+          <div><span className="text-muted-foreground">Rata-rata per pesanan</span><br /><b className="tabular-nums">{rp(derived.aov.toFixed(0))}</b></div>
+          <div><span className="text-muted-foreground">Omzet per menit</span><br /><b className="tabular-nums">{rp(derived.rpm.toFixed(0))}</b></div>
         </div>
+      </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={submit} disabled={saving} data-testid="live-save">
-            {saving && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
-            {session?.id ? 'Simpan perubahan' : 'Simpan'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      <LiveSessionProductsEditor
+        token={token} accountId={form.account_id} lines={lines}
+        onChange={setLines} sessionRevenue={n('revenue')} disabled={saving}
+      />
+
+      <Isian label="Catatan sesi" htmlFor="live-notes">
+        <Textarea id="live-notes" value={form.notes_text} onChange={set('notes_text')} rows={2}
+          placeholder="mis. kendala jaringan menit 40, produk X paling laku…"
+          data-testid="live-notes" />
+      </Isian>
+    </FormPopup>
   );
 }

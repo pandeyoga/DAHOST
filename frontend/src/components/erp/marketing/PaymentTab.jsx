@@ -1,20 +1,32 @@
 /**
- * Payment Tab - LiveHost Payment Management & Sync to Finance
+ * Pembayaran host live (Live Selling › Host live › Pembayaran).
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, bulan = pilihan berlabel (dulu input type="month"), label Indonesia.
+ *
+ * Koreksi isi layar (keputusan 9 brief — angka/teks menyesatkan):
+ *  - Kartu "Payment Calculation Formula" (jam × tarif + bonus 10% − denda telat) DIHAPUS: server sudah tidak menghitung
+ *    upah per sesi sejak keputusan pemilik 23 Agu 2026 (host digaji bulanan lewat payroll SDM). Diganti penjelasan.
+ *  - Tombol "Calculate Payment" sebenarnya menolkan upah per sesi & menandai shift sebagai gaji bulanan → label
+ *    "Tandai gaji bulanan". "Sync to Finance" tidak menulis apa pun ke Keuangan (hanya menandai final + memberi tahu
+ *    host) → label "Finalkan rekap".
+ *  - Kartu "Total Shifts"/"Total Amount" dihapus: server tidak menghitung shift berstatus gaji bulanan, jadi
+ *    angkanya tidak sama dengan jumlah shift selesai. Tiga kartu tahap tetap (angka langsung dari server).
+ * Permintaan ke server & konfirmasi sama.
  */
-
 import { useState, useEffect, useCallback } from 'react';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { DollarSign, RefreshCw, ChevronLeft, ChevronRight, Loader2, CheckCircle, Clock } from 'lucide-react';
+import { RefreshCw, ChevronLeft, ChevronRight, Loader2, CheckCircle, Info, Wallet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { toast } from 'sonner';
 import { thisMonthWIB, addMonthsYM } from '@/lib/waktu';
+import PageLayout from '../layout/PageLayout';
+import { monthOptions } from '../finance/PeriodPicker';
+import { EmptyState, Notice, StatTile } from '../moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmt = (n) => new Intl.NumberFormat('id-ID').format(n || 0);
 const fmtRp = (n) => `Rp ${fmt(n)}`;
+const BULAN = monthOptions(24, 1);
 
 export default function PaymentTab({ authH }) {
   const [month, setMonth] = useState(() => thisMonthWIB());
@@ -22,6 +34,7 @@ export default function PaymentTab({ authH }) {
   const [loading, setLoading] = useState(true);
   const [calculating, setCalculating] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const labelBulan = BULAN.find((b) => b.value === month)?.label || month;
 
   const fetchPaymentStatus = useCallback(async () => {
     setLoading(true);
@@ -32,7 +45,7 @@ export default function PaymentTab({ authH }) {
         setPaymentStatus(data);
       }
     } catch (e) {
-      toast.error('Gagal memuat payment status');
+      toast.error('Gagal memuat status pembayaran');
     } finally {
       setLoading(false);
     }
@@ -43,7 +56,11 @@ export default function PaymentTab({ authH }) {
   }, [fetchPaymentStatus]);
 
   const handleCalculate = async () => {
-    if (!(await confirmDialog(`Calculate payment untuk semua shift bulan ${month}?`))) return;
+    if (!(await confirmDialog({
+      title: `Tandai shift ${labelBulan} sebagai gaji bulanan?`,
+      body: 'Upah per sesi pada shift bulan ini dinolkan (nilai lama tetap disimpan). Gaji host dibayar lewat payroll SDM.',
+      confirmLabel: 'Tandai',
+    }))) return;
     setCalculating(true);
     try {
       const res = await fetch(`${API}/api/marketing/livehost/payment/calculate?month=${month}`, {
@@ -57,17 +74,21 @@ export default function PaymentTab({ authH }) {
         fetchPaymentStatus();
       } else {
         const err = await res.json();
-        toast.error(err.detail || 'Gagal calculate payment');
+        toast.error(err.detail || 'Gagal menandai shift');
       }
     } catch (e) {
-      toast.error('Gagal calculate payment');
+      toast.error('Gagal menandai shift');
     } finally {
       setCalculating(false);
     }
   };
 
   const handleSync = async () => {
-    if (!(await confirmDialog(`Sync payment ke Finance untuk bulan ${month}? Ini akan membuat payroll entries di Finance module.`))) return;
+    if (!(await confirmDialog({
+      title: `Finalkan rekap ${labelBulan}?`,
+      body: 'Shift yang sudah dihitung ditandai final dan host mendapat pemberitahuan. Tidak ada jurnal atau payroll yang dibuat di Keuangan.',
+      confirmLabel: 'Finalkan',
+    }))) return;
     setSyncing(true);
     try {
       const res = await fetch(`${API}/api/marketing/livehost/payment/sync-to-finance?month=${month}`, {
@@ -81,10 +102,10 @@ export default function PaymentTab({ authH }) {
         fetchPaymentStatus();
       } else {
         const err = await res.json();
-        toast.error(err.detail || 'Gagal sync payment');
+        toast.error(err.detail || 'Gagal memfinalkan rekap');
       }
     } catch (e) {
-      toast.error('Gagal sync payment');
+      toast.error('Gagal memfinalkan rekap');
     } finally {
       setSyncing(false);
     }
@@ -93,215 +114,52 @@ export default function PaymentTab({ authH }) {
   // Aritmetika bulan murni (lib/waktu) — `new Date(y, m, 1).toISOString()` di browser
   // WIB mundur ke bulan sebelumnya.
   const changeMonth = (offset) => setMonth(addMonthsYM(month, offset));
+  const ss = paymentStatus?.status_summary;
 
   return (
-    <div className="space-y-4">
-      {/* Month Selector & Actions */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => changeMonth(-1)} className="h-9">
-            <ChevronLeft size={14} />
-          </Button>
-          <Input
-            type="month"
-            value={month}
-            onChange={e => setMonth(e.target.value)}
-            className="w-40 h-9"
-            data-testid="payment-month-selector"
-          />
-          <Button variant="outline" size="sm" onClick={() => changeMonth(1)} className="h-9">
-            <ChevronRight size={14} />
-          </Button>
+    <PageLayout testId="livehost-payment" title="Pembayaran host live" subtitle="Status rekap shift host live per bulan."
+      actions={<>
+        <Button variant="outline" onClick={handleCalculate} disabled={calculating} data-testid="calculate-payment-btn">
+          {calculating ? <Loader2 className="animate-spin" /> : <Wallet />}Tandai gaji bulanan
+        </Button>
+        <Button onClick={handleSync} disabled={syncing} data-testid="sync-to-finance-btn">
+          {syncing ? <Loader2 className="animate-spin" /> : <CheckCircle />}Finalkan rekap
+        </Button>
+      </>}
+      filters={
+        <div className="flex items-center gap-1">
+          <Button variant="outline" size="icon" onClick={() => changeMonth(-1)} title="Bulan sebelumnya" aria-label="Bulan sebelumnya"><ChevronLeft /></Button>
+          <SmartNativeSelect value={month} onChange={(e) => setMonth(e.target.value)} className="w-44" searchable={false} data-testid="payment-month-selector">
+            {!BULAN.some((b) => b.value === month) && <option value={month}>{month}</option>}
+            {BULAN.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+          </SmartNativeSelect>
+          <Button variant="outline" size="icon" onClick={() => changeMonth(1)} title="Bulan berikutnya" aria-label="Bulan berikutnya"><ChevronRight /></Button>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={fetchPaymentStatus} className="h-9">
-            <RefreshCw size={14} className="mr-1.5" />
-            Refresh
-          </Button>
-          <Button
-            size="sm"
-            onClick={handleCalculate}
-            disabled={calculating}
-            className="h-9"
-            data-testid="calculate-payment-btn"
-          >
-            {calculating ? (
-              <>
-                <Loader2 size={14} className="mr-1.5 animate-spin" />
-                Calculating...
-              </>
-            ) : (
-              <>
-                <DollarSign size={14} className="mr-1.5" />
-                Calculate Payment
-              </>
-            )}
-          </Button>
-          <Button
-            size="sm"
-            onClick={handleSync}
-            disabled={syncing}
-            className="h-9 bg-[hsl(var(--success-strong))] hover:bg-[hsl(var(--success-strong)/0.9)]"
-            data-testid="sync-to-finance-btn"
-          >
-            {syncing ? (
-              <>
-                <Loader2 size={14} className="mr-1.5 animate-spin" />
-                Syncing...
-              </>
-            ) : (
-              <>
-                <CheckCircle size={14} className="mr-1.5" />
-                Sync to Finance
-              </>
-            )}
-          </Button>
+      }
+      tools={
+        <Button variant="outline" size="icon" onClick={fetchPaymentStatus} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      }
+      summary={ss && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3" data-testid="payment-summary">
+          <StatTile label="Belum diproses" value={fmt(ss.pending?.count)} suffix="shift" sub={fmtRp(ss.pending?.total_pay)}
+            hint="Shift selesai yang belum ditandai." testId="payment-pending" />
+          <StatTile label="Sudah dihitung" value={fmt(ss.calculated?.count)} suffix="shift" sub={fmtRp(ss.calculated?.total_pay)}
+            hint="Shift yang dihitung dengan cara lama (upah per sesi), siap difinalkan." testId="payment-calculated" />
+          <StatTile label="Sudah final" value={fmt(ss.synced_to_finance?.count)} suffix="shift" sub={fmtRp(ss.synced_to_finance?.total_pay)}
+            hint="Rekap yang sudah difinalkan." testId="payment-synced" />
         </div>
-      </div>
-
-      {loading ? (
-        <div className="flex justify-center py-6">
-          <Loader2 size={28} className="animate-spin text-muted-foreground" />
-        </div>
-      ) : !paymentStatus ? (
-        <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-6 gap-3">
-            <DollarSign size={40} className="text-muted-foreground opacity-40" />
-            <p className="font-medium">No payment data</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <>
-          {/* Summary Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Card>
-              <CardContent className="pt-6">
-                <div className="text-center">
-                  <p className="text-sm text-muted-foreground mb-1">Total Shifts</p>
-                  <p className="text-2xl font-bold">{paymentStatus.total_completed_shifts}</p>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="text-center">
-                  <p className="text-sm text-muted-foreground mb-1">Total Amount</p>
-                  <p className="text-2xl font-bold text-[hsl(var(--success-text))]">{fmtRp(paymentStatus.total_amount)}</p>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="text-center">
-                  <p className="text-sm text-muted-foreground mb-1">Pending</p>
-                  <p className="text-2xl font-bold text-[hsl(var(--warning-text))]">{paymentStatus.status_summary.pending.count}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{fmtRp(paymentStatus.status_summary.pending.total_pay)}</p>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="text-center">
-                  <p className="text-sm text-muted-foreground mb-1">Synced</p>
-                  <p className="text-2xl font-bold text-[hsl(var(--success-text))]">{paymentStatus.status_summary.synced_to_finance.count}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{fmtRp(paymentStatus.status_summary.synced_to_finance.total_pay)}</p>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Payment Pipeline Status */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Payment Pipeline - {month}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {/* Pending */}
-                <div className="flex items-center justify-between p-4 bg-[hsl(var(--warning)/0.08)] rounded-lg border border-[hsl(var(--warning)/0.35)] ">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-[hsl(var(--warning)/0.12)] flex items-center justify-center">
-                      <Clock size={20} className="text-[hsl(var(--warning-text))]" />
-                    </div>
-                    <div>
-                      <p className="font-medium">Pending Calculation</p>
-                      <p className="text-sm text-muted-foreground">Shift yang belum dihitung paymentnya</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-lg font-bold">{paymentStatus.status_summary.pending.count} shifts</p>
-                    <p className="text-sm text-muted-foreground">{fmtRp(paymentStatus.status_summary.pending.total_pay)}</p>
-                  </div>
-                </div>
-
-                {/* Calculated */}
-                <div className="flex items-center justify-between p-4 bg-[hsl(var(--primary)/0.08)] rounded-lg border border-[hsl(var(--primary)/0.35)] ">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-[hsl(var(--primary)/0.12)] flex items-center justify-center">
-                      <DollarSign size={20} className="text-[hsl(var(--primary))]" />
-                    </div>
-                    <div>
-                      <p className="font-medium">Calculated</p>
-                      <p className="text-sm text-muted-foreground">Sudah dihitung, siap di-sync ke Finance</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-lg font-bold">{paymentStatus.status_summary.calculated.count} shifts</p>
-                    <p className="text-sm text-muted-foreground">{fmtRp(paymentStatus.status_summary.calculated.total_pay)}</p>
-                  </div>
-                </div>
-
-                {/* Synced */}
-                <div className="flex items-center justify-between p-4 bg-[hsl(var(--success)/0.08)] rounded-lg border border-[hsl(var(--success)/0.35)] ">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-[hsl(var(--success)/0.12)] flex items-center justify-center">
-                      <CheckCircle size={20} className="text-[hsl(var(--success-text))]" />
-                    </div>
-                    <div>
-                      <p className="font-medium">Synced to Finance</p>
-                      <p className="text-sm text-muted-foreground">Sudah masuk payroll Finance module</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-lg font-bold">{paymentStatus.status_summary.synced_to_finance.count} shifts</p>
-                    <p className="text-sm text-muted-foreground">{fmtRp(paymentStatus.status_summary.synced_to_finance.total_pay)}</p>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Payment Calculation Formula */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Payment Calculation Formula</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3 text-sm">
-                <div className="flex items-start gap-2">
-                  <Badge variant="outline" className="mt-0.5">Base Pay</Badge>
-                  <p className="flex-1">= (Actual Hours Worked) × (Hourly Rate)</p>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Badge variant="outline" className="mt-0.5 bg-[hsl(var(--success)/0.08)] text-[hsl(var(--success-text))] ">Bonus</Badge>
-                  <p className="flex-1">= 10% of Revenue (if revenue &gt; Rp 5,000,000)</p>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Badge variant="outline" className="mt-0.5 bg-[hsl(var(--destructive)/0.08)] text-[hsl(var(--danger-text))] ">Penalty</Badge>
-                  <p className="flex-1">= Rp 50,000 (if attendance = late)</p>
-                </div>
-                <div className="flex items-start gap-2 pt-2 border-t">
-                  <Badge className="mt-0.5">Total Pay</Badge>
-                  <p className="flex-1 font-medium">= Base Pay + Bonus - Penalty</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </>
+      )}>
+      <Notice tone="info" icon={Info} title="Host live digaji bulanan lewat payroll SDM" testId="payment-info">
+        Tidak ada upah per sesi. Data shift (jam tayang, omzet, penonton) tetap dicatat untuk penilaian kinerja.
+        Shift yang sudah ditandai gaji bulanan tidak dihitung di kartu di atas.
+      </Notice>
+      {loading && !paymentStatus ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat status pembayaran…</p>
+      ) : !paymentStatus && (
+        <EmptyState icon={Wallet} title="Data pembayaran tidak tersedia" action={<Button variant="outline" onClick={fetchPaymentStatus}>Coba lagi</Button>} />
       )}
-    </div>
+    </PageLayout>
   );
 }
