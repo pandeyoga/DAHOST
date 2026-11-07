@@ -406,7 +406,7 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
     setSelectedPO(po);
     const ok = await confirmDialog({
       title: `Ajukan PO ${po.po_number} untuk persetujuan?`,
-      body: 'Setelah diajukan, status PO menjadi Menunggu persetujuan dan menunggu approver menyetujui sebelum dapat dibuatkan penerimaan barang.',
+      body: 'Setelah diajukan, status PO menjadi Menunggu persetujuan dan menunggu penyetuju menyetujui sebelum dapat dibuatkan penerimaan barang.',
       confirmLabel: 'Ya, ajukan',
     });
     if (ok) submitPO(po);
@@ -684,7 +684,7 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
         )}
         {po.status === 'pending_approval' && !po.can_approve && (
           <p className="max-w-[16rem] text-xs text-muted-foreground" data-testid={`po-blocked-${po.id}`}>
-            {po.blocked_reason || 'Menunggu approver yang berhak.'}
+            {po.blocked_reason || 'Menunggu penyetuju yang berhak.'}
           </p>
         )}
         {po.exceeds_pr_value && (

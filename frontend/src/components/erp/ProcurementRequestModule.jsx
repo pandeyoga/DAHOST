@@ -261,7 +261,7 @@ function CreatePRModal({ onClose, onCreated, token }) {
   return (
     <FormPopup open onClose={onClose} ukuran="panjang" testId="pr-create-form"
       judul="Buat permintaan pengadaan"
-      keterangan="Disimpan sebagai draf. Ajukan ke approver dari detail permintaan."
+      keterangan="Disimpan sebagai draf. Ajukan ke penyetuju dari rincian permintaan."
       onSimpan={submit} menyimpan={saving} galat={error} labelSimpan="Simpan draf"
       aksiKiri={
         // Total selalu terlihat di kaki popup (dulu di ujung daftar item, tertutup kaki saat item banyak).
@@ -515,7 +515,7 @@ function ApprovalStepper({ chain, compact = false }) {
             <p className="text-xs text-muted-foreground">
               {s.done
                 ? `Oleh ${s.actor_name || '—'}${s.timestamp ? ` · ${fmtDT(s.timestamp)}` : ''}`
-                : `Menunggu ${s.role_hint || 'approver'}`}
+                : `Menunggu ${s.role_hint || 'penyetuju'}`}
             </p>
           </div>
         </li>
@@ -753,7 +753,7 @@ function DetailModal({ item, onClose, onAction, token, focusReject = false }) {
               {canSubmit && (
                 <Button onClick={() => doAction('submit')} disabled={!!acting} data-testid="btn-submit-pr">
                   {acting === 'submit' ? <Loader2 className="animate-spin" /> : <Send />}
-                  {acting === 'submit' ? 'Mengirim…' : 'Ajukan ke approver'}
+                  {acting === 'submit' ? 'Mengirim…' : 'Ajukan ke penyetuju'}
                 </Button>
               )}
               {canReject && (
@@ -1217,7 +1217,7 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
       ) : prRows.length === 0 ? (
         <EmptyState icon={ShoppingCart}
           title={adaSaringan ? 'Tidak ada permintaan yang cocok' : tab === 'mine' ? 'Anda belum pernah membuat permintaan pengadaan' : 'Belum ada permintaan pengadaan'}
-          description={adaSaringan ? 'Ubah kata pencarian atau saringan status dan prioritas.' : 'Buat permintaan untuk barang atau jasa yang perlu dibeli; approver akan menerimanya sesuai nilai.'}
+          description={adaSaringan ? 'Ubah kata pencarian atau saringan status dan prioritas.' : 'Buat permintaan untuk barang atau jasa yang perlu dibeli; penyetuju akan menerimanya sesuai nilai.'}
           action={!adaSaringan && <Button onClick={() => setShowCreate(true)}><Plus />Buat permintaan pertama</Button>} />
       ) : (
         <>
