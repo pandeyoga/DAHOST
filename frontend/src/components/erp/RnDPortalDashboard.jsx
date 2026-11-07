@@ -66,6 +66,8 @@ const NAMA_SUMBER = {
 const kalimat = (s) => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t; };
 
 const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
+const STATUS_DOK = { draft: 'draf', approved: 'disetujui', rejected: 'ditolak', pending: 'menunggu', submitted: 'diajukan', in_progress: 'dikerjakan', done: 'selesai', completed: 'selesai' };
+const statusDok = (s) => STATUS_DOK[String(s || '').toLowerCase()] || String(s || '-').replace(/_/g, ' ');
 
 export default function RnDPortalDashboard({ token, onNavigate }) {
   const [pending, setPending] = useState(null);
@@ -187,7 +189,7 @@ export default function RnDPortalDashboard({ token, onNavigate }) {
       )}
       summary={(
         <div className="space-y-2">
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="rnd-kpis">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="rnd-kpis" data-konten-utama="">
             <StatTile testId="rnd-kpi-Menunggu" label="Menunggu keputusan" value={loading && !pending ? '…' : fmtNum(items.length)}
               accent={pending?.overdue > 0 ? 'danger' : items.length ? 'warning' : 'default'}
               sub={pending?.overdue > 0 ? `${fmtNum(pending.overdue)} terlambat (≥ ${pending?.thresholds?.stale_days ?? 7} hari)` : 'Style, sample, dan tech pack'} />
@@ -208,7 +210,7 @@ export default function RnDPortalDashboard({ token, onNavigate }) {
       )}
     >
       {/* ── 1. Antrean keputusan ─────────────────────────────────────────── */}
-      <GlassCard className="space-y-3 p-4" data-konten-utama="">
+      <GlassCard className="space-y-3 p-4">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
             <p className="text-base font-semibold text-foreground">Antrean keputusan</p>
@@ -317,9 +319,9 @@ export default function RnDPortalDashboard({ token, onNavigate }) {
               { label: 'Menunggu (hari)', nilai: (r) => r.waiting_days || 0 },
               { label: 'Varian', nilai: (r) => r.variants || 0 },
               { label: 'Foto', nilai: (r) => r.photos || 0 },
-              { label: 'Tech pack', nilai: (r) => (r.techpack?.count ? `${r.techpack.version || '-'} · ${r.techpack.status || 'draf'}` : 'Belum ada') },
+              { label: 'Tech pack', nilai: (r) => (r.techpack?.count ? `${r.techpack.version || '-'} · ${statusDok(r.techpack.status || 'draft')}` : 'Belum ada') },
               { label: 'Pola', nilai: (r) => r.patterns || 0 },
-              { label: 'Sample', nilai: (r) => (r.sample?.count ? `${r.sample.code || '-'} · ${r.sample.status || '-'} · PIC ${r.sample.pic || '(belum ditentukan)'}` : 'Belum ada') },
+              { label: 'Sample', nilai: (r) => (r.sample?.count ? `${r.sample.code || '-'} · ${statusDok(r.sample.status)} · PIC ${r.sample.pic || '(belum ditentukan)'}` : 'Belum ada') },
               { label: 'HPP', nilai: (r) => r.hpp || 0 },
               { label: 'Langkah berikutnya', nilai: (r) => r.next_action || '' },
             ]} />
@@ -362,10 +364,10 @@ export default function RnDPortalDashboard({ token, onNavigate }) {
                       <TableCell className="hidden text-right tabular-nums xl:table-cell">{fmtNum(r.variants)}</TableCell>
                       <TableCell className="hidden text-right tabular-nums xl:table-cell">{fmtNum(r.photos)}</TableCell>
                       <TableCell className="hidden lg:table-cell">
-                        {r.techpack?.count ? `${r.techpack.version || '-'} · ${r.techpack.status || 'draf'}` : <span className="text-muted-foreground">Belum ada</span>}
+                        {r.techpack?.count ? `${r.techpack.version || '-'} · ${statusDok(r.techpack.status || 'draft')}` : <span className="text-muted-foreground">Belum ada</span>}
                       </TableCell>
                       <TableCell className="hidden lg:table-cell">
-                        {r.sample?.count ? `${r.sample.code || '-'} · ${r.sample.status || '-'} · PIC ${r.sample.pic || '(belum ditentukan)'}`
+                        {r.sample?.count ? `${r.sample.code || '-'} · ${statusDok(r.sample.status)} · PIC ${r.sample.pic || '(belum ditentukan)'}`
                           : <span className="text-muted-foreground">Belum ada</span>}
                       </TableCell>
                       <TableCell className="hidden max-w-[280px] whitespace-normal text-muted-foreground md:table-cell">{r.next_action}</TableCell>

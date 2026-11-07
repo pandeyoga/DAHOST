@@ -95,7 +95,7 @@ export default function UnifiedApprovalHub({ token, onNavigate }) {
     <PageLayout
       testId="unified-approval-hub"
       title="Pusat Approval"
-      subtitle="Semua persetujuan yang menunggu (SDM, bertingkat, marketing, keuangan). Klik kartu untuk membuka kotak masuknya."
+      subtitle="Persetujuan yang menunggu dari SDM, alur bertingkat, marketing, dan keuangan."
       tools={(
         <Button variant="outline" size="icon" onClick={fetchCounts} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
           data-testid="refresh-hub">

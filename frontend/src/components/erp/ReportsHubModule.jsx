@@ -169,7 +169,7 @@ export default function ReportsHubModule({ token, onNavigate }) {
       subtitle="Data penting setiap portal dalam satu tempat: pilih kategori, lihat angkanya, lalu tindak lanjuti."
       filters={(
         <>
-          <FilterChips options={categories.map((c) => ({ key: c.id, label: String(c.label || '').replace(/\s*\/\s*HRIS/i, '') }))} value={active} onChange={setActive}
+          <FilterChips options={categories.map((c) => ({ key: c.id, label: String(c.label || '').replace(/HRIS/i, '').replace(/[^\p{L}\p{N})]+$/u, '').trim() }))} value={active} onChange={setActive}
             hideWhenEmpty={false} ariaLabel="Kategori laporan" testId="reports-hub-cat" />
           <PeriodPicker value={period} onChange={setPeriod} compareEnabled={false} testId="reports-hub-period" />
         </>

@@ -46,7 +46,7 @@ function ProgressBar({ pct, status }) {
 }
 
 function CapaianBadge({ status, pct }) {
-  if (status === 'no_target') return <StatusBadge status="no_target" label="Belum ada target" tone="muted" />;
+  if (status === 'no_target' || pct === null || pct === undefined) return <StatusBadge status="no_target" label="Belum ada target" tone="muted" />;
   const tone = { on_track: 'success', warning: 'warning', behind: 'danger' }[status] || 'default';
   return <StatusBadge status={status} label={`${pct}%`} tone={tone} />;
 }
@@ -275,7 +275,7 @@ export default function AccountTargetsModule({ token, scope = 'marketing', modul
     <PageLayout
       testId="account-targets-module"
       title={scope === 'management' ? 'Siklus Marketing' : 'Siklus target, anggaran & omzet'}
-      subtitle={`Target → rencana anggaran → omzet nyata → realisasi → marjin → ROI, per toko & gabungan${scope === 'management' ? ' (tampilan Manajemen)' : ''}.`}
+      subtitle="Target, anggaran, omzet, marjin, dan ROI per toko dalam satu layar."
       filters={(
         <div className="flex items-center gap-1">
           <Button variant="outline" size="icon" onClick={prevMonth} data-testid="cycle-prev-month" title="Bulan sebelumnya" aria-label="Bulan sebelumnya"><ChevronLeft /></Button>
@@ -291,10 +291,10 @@ export default function AccountTargetsModule({ token, scope = 'marketing', modul
     >
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList className="h-auto w-auto flex-wrap justify-start">
-          <TabsTrigger value="cycle" data-testid="tab-cycle">Siklus bulan ini</TabsTrigger>
-          <TabsTrigger value="accounts" data-testid="tab-accounts">Platform akun</TabsTrigger>
-          <TabsTrigger value="creators" data-testid="tab-creators">KOL / kreator</TabsTrigger>
-          <TabsTrigger value="budget" data-testid="tab-budget">Anggaran &amp; alokasi</TabsTrigger>
+          <TabsTrigger value="cycle" data-testid="tab-cycle">Siklus</TabsTrigger>
+          <TabsTrigger value="accounts" data-testid="tab-accounts">Target akun</TabsTrigger>
+          <TabsTrigger value="creators" data-testid="tab-creators">Target KOL</TabsTrigger>
+          <TabsTrigger value="budget" data-testid="tab-budget">Anggaran</TabsTrigger>
         </TabsList>
 
         {/* ── TAB SIKLUS (F5) ── */}

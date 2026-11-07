@@ -173,7 +173,7 @@ export default function MarketingChangeLogModule({ token, scope = 'marketing' })
     <PageLayout
       testId="marketing-changelog"
       title={scope === 'management' ? 'Jejak Marketing' : 'Jejak perubahan marketing'}
-      subtitle={`Siapa mengubah apa — target, rencana anggaran, kunci periode, dan kewenangan toko. Hanya bisa dibaca${scope === 'management' ? ' (Portal Manajemen)' : ''}.`}
+      subtitle="Siapa mengubah target, anggaran, kunci periode, dan kewenangan toko (hanya baca)."
       filters={(
         <>
           <div className="relative w-full sm:w-64">
@@ -231,7 +231,7 @@ export default function MarketingChangeLogModule({ token, scope = 'marketing' })
       summary={(
         <div className="space-y-3">
           <NoStoreScopeNotice token={token} what="Jejak & angka di layar ini" />
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="changelog-stats">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="changelog-stats" data-konten-utama="">
             <StatTile label="Perubahan 30 hari" value={fmtNum(stats?.total)} sub={`${fmtNum(stats?.without_reason)} tanpa alasan`} />
             <StatTile label="Perubahan angka" value={fmtNum(stats?.number_changes)} sub="Target, anggaran, kunci periode" />
             <StatTile label="Perubahan kewenangan" value={fmtNum(stats?.permission_changes)} sub="Siapa pemegang toko" />

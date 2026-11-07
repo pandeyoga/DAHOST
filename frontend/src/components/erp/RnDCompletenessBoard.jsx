@@ -59,7 +59,7 @@ export function RnDCompletenessBoard({ token, onNavigate }) {
             <span className="font-medium text-foreground tabular-nums" data-testid="rnd-completeness-summary">{data.complete_models}/{data.total_models}</span>{' '}
             model lengkap ({pct}%). Pilih kriteria untuk melihat model yang kurang; klik silang untuk langsung mengisinya.
             {data.discontinued_models > 0 && (
-              <span className="ml-1" data-testid="rnd-completeness-discontinued">
+              <span className="mt-0.5 block" data-testid="rnd-completeness-discontinued">
                 {data.discontinued_models} model dihentikan (semua SKU nonaktif) tidak dihitung kurang.
               </span>
             )}
@@ -77,7 +77,7 @@ export function RnDCompletenessBoard({ token, onNavigate }) {
       </div>
       <FilterChips options={opsi} value={filter} onChange={(k) => { setFilter(k); setShowAll(false); }} hideWhenEmpty={false}
         ariaLabel="Kriteria kelengkapan" testId="rnd-completeness-filter" />
-      <div className="max-h-[46vh] overflow-auto">
+      <div className="overflow-x-auto">
         <Table data-testid="rnd-completeness-table">
           <TableHeader>
             <TableRow>

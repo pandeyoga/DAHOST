@@ -48,6 +48,9 @@ const fmtRp = formatRupiah;
 const fmtNum = (n) => new Intl.NumberFormat('id-ID').format(Math.round(n || 0));
 const pct = (n) => `${Number(n || 0).toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 const VIEW_KEY = 'marketing_cycle_view';
+/** Teks dari server: istilah Inggris / kode program → bahasa biasa (tampilan saja). */
+const teks = (s) => String(s || '').replace(/\s*\/\s*Settlement/gi, '').replace(/\bSettlement\b/gi, 'pencairan')
+  .replace(/\b([a-z]+(?:_[a-z]+)+)\b/g, (m) => m.replace(/_/g, ' '));
 const VIEWS = { table: 'table', grid: 'grid' };
 
 const CAT_LABEL = {
@@ -332,9 +335,9 @@ function DetailDialog({ open, onOpenChange, row, period, token }) {
   return (
     <DetailPopup open onClose={() => onOpenChange(false)} testId="cycle-detail-dialog"
       judul={`${row.account.account_name} · ${period}`}
-      keterangan={`${row.account.account_code} · ${row.account.platform} · basis omzet: ${row.revenue_basis}`}
+      keterangan={`${row.account.account_code} · ${row.account.platform} · basis omzet: ${teks(row.revenue_basis)}`}
       status={<Kunci locked={row.locked} />}>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-konten-utama="">
         <StatTile label="Omzet produk" value={fmtRp(row.actual?.revenue_product)} />
         <StatTile label="Order amount" value={fmtRp(row.actual?.revenue_order_amount)} />
         <StatTile label="Diskon penjual" value={fmtRp(row.actual?.seller_discount)} />
@@ -360,8 +363,8 @@ function DetailDialog({ open, onOpenChange, row, period, token }) {
             accent={(row.actual?.returned_amount || 0) > 0 ? 'warning' : 'default'} />
           <StatTile label="Omzet setelah retur" value={fmtRp(row.actual?.revenue_net_returns)} />
         </div>
-        {row.returns?.label_gross && <p className="text-sm text-muted-foreground">{row.returns.label_gross}</p>}
-        {row.returns?.label_net && <p className="text-sm text-muted-foreground">{row.returns.label_net}</p>}
+        {row.returns?.label_gross && <p className="text-sm text-muted-foreground">{teks(row.returns.label_gross)}</p>}
+        {row.returns?.label_net && <p className="text-sm text-muted-foreground">{teks(row.returns.label_net)}</p>}
         {row.returns?.coverage?.complete === false && (
           <Notice tone="warning">
             Cakupan data retur {pct(row.returns?.coverage?.coverage_pct)} hari ({fmtNum(row.returns?.coverage?.days_known)}/{fmtNum(row.returns?.coverage?.days_total)}) —
@@ -446,7 +449,7 @@ function DetailDialog({ open, onOpenChange, row, period, token }) {
           {(row.flags || []).map((f, i) => (
             <div key={i} className="flex items-start gap-2 text-sm">
               <SevBadge severity={f.severity}>{FLAG_SHORT[f.code] || f.title}</SevBadge>
-              <span className="text-foreground">{f.title} — {f.message}</span>
+              <span className="text-foreground">{teks(f.title)} — {teks(f.message)}</span>
             </div>
           ))}
         </div>
@@ -456,7 +459,7 @@ function DetailDialog({ open, onOpenChange, row, period, token }) {
 
       <Notice tone="info" icon={Info} title="Catatan kejujuran data" testId="cycle-detail-notes">
         <ul className="list-disc space-y-0.5 pl-4">
-          {(row.data_notes || []).map((n, i) => <li key={i}>{n}</li>)}
+          {(row.data_notes || []).map((n, i) => <li key={i}>{teks(n)}</li>)}
         </ul>
       </Notice>
     </DetailPopup>
@@ -585,7 +588,7 @@ export default function CycleView({ token, period, monthLabel, scope = 'marketin
       </div>
       <p className="text-sm text-muted-foreground" data-testid="cycle-label">
         Marjin kotor {fmtRp(t.gross_profit)} (cakupan HPP {pct(t.hpp_coverage_pct)}) · sisa {Math.max((prog.days_total || 0) - (prog.days_elapsed || 0), 0)} hari
-        ({prog.days_elapsed || 0}/{prog.days_total || 0} hari berjalan, {monthLabel}).{data?.label ? ` ${data.label}` : ''}
+        ({prog.days_elapsed || 0}/{prog.days_total || 0} hari berjalan, {monthLabel}).{data?.label ? ` ${teks(data.label)}` : ''}
       </p>
 
       {/* ── baris alat ──────────────────────────────────────────────────── */}

@@ -272,9 +272,6 @@ function DailyReportTab({ headers }) {
 
       {loading || !data ? <Memuat /> : (
         <div ref={printRef} className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            Laporan harian {fmtDate(data.date)} · CV. Dewi Aditya · dibuat {dibuatPada()}
-          </p>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-konten-utama="">
             <StatTile testId="stat-Total Diproses" label="Barang diproses" value={fmtNum(prod.total_processed)} sub="pcs, hari ini" />
             <StatTile testId="stat-Lolos QC" label="Lolos QC" value={fmtNum(prod.total_passed)}
@@ -322,6 +319,9 @@ function DailyReportTab({ headers }) {
             <StatTile label="Kirim ke buyer" value={fmtNum(data.buyer_delivery?.qty_today)} sub={`pcs · ${fmtNum(data.buyer_delivery?.po_with_dispatch)} PO`} />
             <StatTile label="Pesanan online dikirim" value={fmtNum(data.fulfillment.dispatched_orders)} sub={`${fmtNum(data.fulfillment.dispatched_qty)} pcs`} />
           </div>
+          <p className="text-sm text-muted-foreground">
+            Laporan harian {fmtDate(data.date)} · CV. Dewi Aditya · dibuat {dibuatPada()}
+          </p>
           <SourceTrace data={data} />
         </div>
       )}

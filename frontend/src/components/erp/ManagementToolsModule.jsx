@@ -43,23 +43,6 @@ const KONDISI = {
   critical: { label: 'Perlu tindakan', tone: 'danger' },
 };
 
-/** Satu bagian digest: judul + pasangan label–nilai. */
-function Bagian({ judul, baris }) {
-  return (
-    <GlassCard className="p-4">
-      <p className="mb-2 text-base font-semibold text-foreground">{judul}</p>
-      <dl className="divide-y divide-[var(--glass-border)]">
-        {baris.map(([k, v]) => (
-          <div key={k} className="flex items-baseline justify-between gap-3 py-1.5 text-sm">
-            <dt className="text-muted-foreground">{k}</dt>
-            <dd className="text-right font-medium tabular-nums text-foreground">{v}</dd>
-          </div>
-        ))}
-      </dl>
-    </GlassCard>
-  );
-}
-
 function WeeklyDigestTab() {
   const { toast } = useToast();
   const [digest, setDigest] = useState(null);
@@ -109,6 +92,23 @@ function WeeklyDigestTab() {
     </div>
   );
 
+  const barisDigest = digest ? [
+    ['Produksi', 'Work order baru', fmtNum(digest.production?.new_work_orders)],
+    ['Produksi', 'Work order selesai', fmtNum(digest.production?.completed_work_orders)],
+    ['Keuangan', 'Faktur baru', fmtNum(digest.finance?.new_invoices)],
+    ['Keuangan', 'Faktur lunas', fmtNum(digest.finance?.paid_invoices)],
+    ['Keuangan', 'Nilai faktur baru', fmtRp(digest.finance?.total_invoiced)],
+    ['Maklon', 'Order baru', fmtNum(digest.maklon?.new_orders)],
+    ['Maklon', 'Order selesai', fmtNum(digest.maklon?.completed_orders)],
+    ['SDM', 'Pengajuan cuti', fmtNum(digest.hr?.leave_requests)],
+    ['SDM', 'Izin / sakit', fmtNum(digest.hr?.attendance_issues)],
+    ['Marketing', 'Sesi live', fmtNum(digest.marketing?.live_sessions)],
+    ['Marketing', 'Omzet live', fmtRp(digest.marketing?.live_revenue)],
+    ['Marketing', 'Pesanan live', fmtNum(digest.marketing?.live_orders)],
+    ['Peringatan sistem', 'Material di bawah stok minimum', stok === null ? '—' : fmtNum(stok)],
+    ['Peringatan sistem', 'Rak terisi lebih dari 90%', `${fmtNum(rak)}${digest.alerts?.high_occupancy_rack_codes?.length ? ` (${digest.alerts.high_occupancy_rack_codes.join(', ')})` : ''}`],
+  ] : [];
+
   if (loading && !digest) return <div className="space-y-4">{alat}<p className="py-8 text-center text-sm text-muted-foreground">Memuat digest…</p></div>;
   if (!digest) return <div className="space-y-4">{alat}<EmptyState title="Digest tidak dapat dimuat" description="Coba muat ulang." /></div>;
 
@@ -122,34 +122,27 @@ function WeeklyDigestTab() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3" data-konten-utama="">
-        <Bagian judul="Produksi" baris={[
-          ['Work order baru', fmtNum(digest.production?.new_work_orders)],
-          ['Work order selesai', fmtNum(digest.production?.completed_work_orders)],
-        ]} />
-        <Bagian judul="Keuangan" baris={[
-          ['Faktur baru', fmtNum(digest.finance?.new_invoices)],
-          ['Faktur lunas', fmtNum(digest.finance?.paid_invoices)],
-          ['Nilai faktur baru', fmtRp(digest.finance?.total_invoiced)],
-        ]} />
-        <Bagian judul="Maklon" baris={[
-          ['Order baru', fmtNum(digest.maklon?.new_orders)],
-          ['Order selesai', fmtNum(digest.maklon?.completed_orders)],
-        ]} />
-        <Bagian judul="SDM" baris={[
-          ['Pengajuan cuti', fmtNum(digest.hr?.leave_requests)],
-          ['Izin / sakit', fmtNum(digest.hr?.attendance_issues)],
-        ]} />
-        <Bagian judul="Marketing" baris={[
-          ['Sesi live', fmtNum(digest.marketing?.live_sessions)],
-          ['Omzet live', fmtRp(digest.marketing?.live_revenue)],
-          ['Pesanan live', fmtNum(digest.marketing?.live_orders)],
-        ]} />
-        <Bagian judul="Peringatan sistem" baris={[
-          ['Material di bawah stok minimum', stok === null ? '—' : fmtNum(stok)],
-          ['Rak terisi lebih dari 90%', `${fmtNum(rak)}${digest.alerts?.high_occupancy_rack_codes?.length ? ` (${digest.alerts.high_occupancy_rack_codes.join(', ')})` : ''}`],
-        ]} />
-      </div>
+      <GlassCard className="space-y-3 p-4" data-konten-utama="">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <p className="text-base font-semibold text-foreground">Ringkasan {days} hari terakhir</p>
+          <TombolUnduh namaBerkas={`digest-${days}-hari`} namaLembar="Digest" baris={barisDigest} testId="digest-unduh"
+            kolom={[{ label: 'Bagian', nilai: (r) => r[0] }, { label: 'Indikator', nilai: (r) => r[1] }, { label: 'Nilai', nilai: (r) => r[2] }]} />
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow><TableHead>Bagian</TableHead><TableHead>Indikator</TableHead><TableHead className="text-right">Nilai</TableHead></TableRow>
+          </TableHeader>
+          <TableBody>
+            {barisDigest.map(([bag, ind, nil], idx) => (
+              <TableRow key={`${bag}-${ind}`}>
+                <TableCell className="font-medium">{idx === 0 || barisDigest[idx - 1][0] !== bag ? bag : ''}</TableCell>
+                <TableCell className="text-muted-foreground">{ind}</TableCell>
+                <TableCell className="text-right tabular-nums">{nil}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </GlassCard>
       {stok === null && (
         <Notice tone="info">Jumlah material di bawah stok minimum tidak terbaca dari pembaca stok resmi; muat ulang untuk mencoba lagi.</Notice>
       )}
