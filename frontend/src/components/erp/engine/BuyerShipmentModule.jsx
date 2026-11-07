@@ -31,7 +31,6 @@ import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PageLayout, { DetailPanel, RowDetail, RowToggle } from '../layout/PageLayout';
-import { PageLayoutSatuBaris } from './DataTable';
 import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import { Field } from './FormDialog';
 import FormPopup from '@/components/ui/form-popup';
@@ -247,7 +246,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
   const KEY_VIEW = { 'shipment-list': 'list', 'receipt-variance': 'variance', 'dispatch-outstanding': 'outstanding', 'buyer-shorts': 'shorts' };
 
   return (
-    <PageLayoutSatuBaris
+    <PageLayout
       testId="buyer-shipment-module"
       title="Kirim hasil"
       subtitle={businessType === 'internal'
@@ -288,8 +287,8 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
             onChange={(v) => { setOutShowSettled(v); loadOutstanding(outBuyer, v); }}
             options={[{ key: 'open', label: 'Belum lunas' }, { key: 'all', label: 'Termasuk yang lunas' }]} />
         </>)}
-      </>}
-      tools={<>
+        {/* Alat (unduh, muat ulang) satu baris dengan penyaring supaya tidak terjepit di layar HP. */}
+        <div className="ml-auto flex flex-wrap items-center gap-2" data-alat-baris="">
         {/* Standar UI/UX v2: tiap tampilan bertabel bisa diunduh Excel + CSV (TombolUnduh). Unduhan lama tetap. */}
         {view === 'outstanding' ? (<>
           <TombolUnduh namaBerkas="kekurangan-kirim" namaLembar="Kekurangan kirim" baris={outstanding.items || []} testId="outstanding-unduh" kolom={[
@@ -322,6 +321,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
         <Button type="button" variant="outline" size="icon" onClick={refresh} data-testid="outstanding-refresh" title="Muat ulang" aria-label="Muat ulang">
           <RefreshCw className={`w-4 h-4 ${loading || outLoading ? 'animate-spin' : ''}`} />
         </Button>
+        </div>
       </>}
       summary={view === 'list' ? (<>
         {(buyerShorts.items || []).length > 0 && (
@@ -459,7 +459,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
         <BuyerShortDialog short={resolveBShort} onClose={() => setResolveBShort(null)}
           onSaved={() => { setResolveBShort(null); fetchAll(); }} />
       )}
-    </PageLayoutSatuBaris>
+    </PageLayout>
   );
 }
 
