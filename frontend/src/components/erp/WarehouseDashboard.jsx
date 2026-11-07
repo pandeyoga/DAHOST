@@ -197,7 +197,7 @@ export default function WarehouseDashboard({ token }) {
       subtitle="Ringkasan stok, penerimaan terbuka, barang di bawah ambang stok, dan isi rak."
       filters={adaGedung ? (
         <SmartNativeSelect data-testid="warehouse-building-selector" value={selectedBldg}
-          onChange={e => setSelectedBldg(e.target.value)} className="w-full sm:w-56" title="Saring antrean & isi rak per gedung">
+          onChange={e => setSelectedBldg(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-56" title="Saring antrean & isi rak per gedung">
           <option value="">Semua gedung</option>
           {wmsBuildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
         </SmartNativeSelect>

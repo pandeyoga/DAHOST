@@ -565,7 +565,7 @@ function ReportTab({ token }) {
       filters={<>
         <div className="w-full sm:w-44"><DatePicker value={day} onChange={(v) => setDay(v || todayWIB())} bolehKosong={false}
           testId="scan-out-report-date" /></div>
-        <SmartNativeSelect value={loc} onChange={(e) => setLoc(e.target.value)} className="w-full sm:w-52" aria-label="Lokasi">
+        <SmartNativeSelect value={loc} onChange={(e) => setLoc(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-52" aria-label="Lokasi">
           <option value="">Semua lokasi</option>
           {locations.map((l) => <option key={l.id} value={l.id}>{l.code} {l.name ? `· ${l.name}` : ''}</option>)}
         </SmartNativeSelect>

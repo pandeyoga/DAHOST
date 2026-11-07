@@ -277,7 +277,7 @@ export default function RahazaStockModule({ token }) {
         <Button onClick={openReceive} data-testid="stock-receive-btn"><ArrowDown />Penerimaan</Button>
       </>}
       filters={<>
-        <SmartNativeSelect value={filterLocation} onChange={e => setFilterLocation(e.target.value)} className="w-full sm:w-52"
+        <SmartNativeSelect value={filterLocation} onChange={e => setFilterLocation(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-52"
           aria-label="Lokasi" data-testid="stock-loc-filter" searchable={stockFilterLocations.length > 8}>
           <option value="">Semua lokasi</option>
           {stockFilterLocations.map(l => <option key={l.id} value={l.id}>{l.name ? `${l.code} · ${l.name}` : l.code}</option>)}
