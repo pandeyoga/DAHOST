@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import TombolUnduh from '@/components/ui/tombol-unduh';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import PaginationLite from '@/components/ui/pagination-lite';
 import { toast } from 'sonner';
 import { formatRupiah, formatPercent } from '@/lib/format';
@@ -384,45 +384,45 @@ export default function BudgetModule({ token }) {
             description="Buat anggaran pertama lewat tombol Anggaran baru." />
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full" data-testid="budget-table">
-              <thead>
-                <tr>
-                  <th className="text-left">Nama anggaran</th>
-                  <th className="text-left">Tahun</th>
-                  <th className="text-left">Tipe</th>
-                  <th className="text-left">Departemen</th>
-                  <th className="text-right">Total anggaran</th>
-                  <th className="text-left">Status</th>
-                  <th className="text-right">Aksi</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table className="w-full" data-testid="budget-table">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-left">Nama anggaran</TableHead>
+                  <TableHead className="text-left">Tahun</TableHead>
+                  <TableHead className="text-left">Tipe</TableHead>
+                  <TableHead className="text-left">Departemen</TableHead>
+                  <TableHead className="text-right">Total anggaran</TableHead>
+                  <TableHead className="text-left">Status</TableHead>
+                  <TableHead className="text-right">Aksi</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {budgets.map(b => {
                   const st = STATUS_MAP[b.status] || STATUS_MAP.draft;
                   const open = selected?.id === b.id;
                   return (
-                    <tr key={b.id} className={open ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
-                      <td className="font-medium">
+                    <TableRow key={b.id} className={open ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
+                      <TableCell className="font-medium">
                         <Button variant="link" size="sm" className="h-auto p-0 text-foreground" onClick={() => toggleDetail(b)}>{b.name}</Button>
-                      </td>
-                      <td className="whitespace-nowrap">{b.year}</td>
-                      <td>{PERIOD_TYPE_LABEL[b.period_type] || b.period_type}</td>
-                      <td className="text-muted-foreground">{b.department || '—'}</td>
-                      <td className="text-right tabular-nums font-medium">{fmtRp(b.total_budgeted)}</td>
-                      <td><StatusBadge tone={st.tone} label={st.label} /></td>
-                      <td className="text-right">
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">{b.year}</TableCell>
+                      <TableCell>{PERIOD_TYPE_LABEL[b.period_type] || b.period_type}</TableCell>
+                      <TableCell className="text-muted-foreground">{b.department || '—'}</TableCell>
+                      <TableCell className="text-right tabular-nums font-medium">{fmtRp(b.total_budgeted)}</TableCell>
+                      <TableCell><StatusBadge tone={st.tone} label={st.label} /></TableCell>
+                      <TableCell className="text-right">
                         <div className="flex gap-1 justify-end">
                           <Button variant="ghost" size="icon-sm" onClick={() => toggleDetail(b)} title={open ? 'Tutup rincian' : 'Rincian'} aria-label={open ? 'Tutup rincian' : 'Rincian'}><Eye className="w-4 h-4" /></Button>
                           {b.status === 'draft' && (
                             <Button variant="ghost" size="icon-sm" onClick={() => deleteBudget(b.id)} title="Hapus" aria-label="Hapus" className="text-[hsl(var(--danger-text))]"><Trash2 className="w-4 h-4" /></Button>
                           )}
                         </div>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         )}
       </GlassCard>

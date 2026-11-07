@@ -35,7 +35,7 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import DatePicker from '@/components/ui/date-picker';
 import TombolUnduh from '@/components/ui/tombol-unduh';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableHeader, TableBody, TableFooter, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { EmptyState, StatusBadge as AtomStatusBadge } from './moduleAtoms';
 import PageLayout, { DetailPanel } from './layout/PageLayout';
 import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
@@ -509,58 +509,58 @@ function OutstandingAdvancePanel({ token }) {
       </div>
       <GlassCard className="p-0 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr>
-                <th className="text-left p-3 font-medium">Perjalanan / karyawan</th>
-                <th className="text-left p-3 font-medium">Tujuan</th>
-                <th className="text-left p-3 font-medium">Tanggal kembali</th>
-                <th className="text-right p-3 font-medium">Uang muka</th>
-                <th className="text-right p-3 font-medium">Hari belum selesai</th>
-                <th className="text-left p-3 font-medium">Status penyelesaian</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table className="w-full text-sm">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="text-left p-3 font-medium">Perjalanan / karyawan</TableHead>
+                <TableHead className="text-left p-3 font-medium">Tujuan</TableHead>
+                <TableHead className="text-left p-3 font-medium">Tanggal kembali</TableHead>
+                <TableHead className="text-right p-3 font-medium">Uang muka</TableHead>
+                <TableHead className="text-right p-3 font-medium">Hari belum selesai</TableHead>
+                <TableHead className="text-left p-3 font-medium">Status penyelesaian</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {(data.items || []).map(item => {
                 const daysOverdue = item.days_since_return;
                 const isOverdue = daysOverdue !== null && daysOverdue > 7;
                 return (
-                  <tr key={item.id} className={`border-t ${ isOverdue ? 'bg-[hsl(var(--destructive)/0.06)]' : '' }`}>
-                    <td className="p-3">
+                  <TableRow key={item.id} className={`border-t ${ isOverdue ? 'bg-[hsl(var(--destructive)/0.06)]' : '' }`}>
+                    <TableCell className="p-3">
                       <div className="text-xs text-muted-foreground whitespace-nowrap">{item.trip_number}</div>
                       <div className="font-medium">{item.employee_name}</div>
                       <div className="text-xs text-muted-foreground">{item.employee_dept}</div>
-                    </td>
-                    <td className="p-3">{item.destination}</td>
-                    <td className="p-3 whitespace-nowrap">{fmtDate(item.end_date)}</td>
-                    <td className="p-3 text-right tabular-nums whitespace-nowrap font-bold">{fmt(item.cash_advance_paid)}</td>
-                    <td className="p-3 text-right tabular-nums whitespace-nowrap">
+                    </TableCell>
+                    <TableCell className="p-3">{item.destination}</TableCell>
+                    <TableCell className="p-3 whitespace-nowrap">{fmtDate(item.end_date)}</TableCell>
+                    <TableCell className="p-3 text-right tabular-nums whitespace-nowrap font-bold">{fmt(item.cash_advance_paid)}</TableCell>
+                    <TableCell className="p-3 text-right tabular-nums whitespace-nowrap">
                       {daysOverdue !== null ? (
                         <span className={`font-bold ${ isOverdue ? 'text-[hsl(var(--danger-text))]' : 'text-[hsl(var(--warning-text))]' }`}>
                           {daysOverdue} hari
                         </span>
                       ) : '—'}
-                    </td>
-                    <td className="p-3">
+                    </TableCell>
+                    <TableCell className="p-3">
                       {item.pending_settlement ? (
                         <AtomStatusBadge status={item.pending_settlement.status} tone="warning"
                           label={`${item.pending_settlement.settlement_number}: ${STATUS_CONFIG[item.pending_settlement.status]?.label || item.pending_settlement.status}`} />
                       ) : (
                         <AtomStatusBadge status="none" tone="danger" label="Belum ada penyelesaian" />
                       )}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-            <tfoot className="border-t">
-              <tr>
-                <td colSpan={3} className="p-3 text-sm font-bold">Total sisa (1-1610)</td>
-                <td className="p-3 text-right tabular-nums whitespace-nowrap font-bold text-[hsl(var(--warning-text))]">{fmt(data.total_outstanding)}</td>
-                <td colSpan={2} />
-              </tr>
-            </tfoot>
-          </table>
+            </TableBody>
+            <TableFooter className="border-t">
+              <TableRow>
+                <TableCell colSpan={3} className="p-3 text-sm font-bold">Total sisa (1-1610)</TableCell>
+                <TableCell className="p-3 text-right tabular-nums whitespace-nowrap font-bold text-[hsl(var(--warning-text))]">{fmt(data.total_outstanding)}</TableCell>
+                <TableCell colSpan={2} />
+              </TableRow>
+            </TableFooter>
+          </Table>
         </div>
       </GlassCard>
     </div>
@@ -889,79 +889,79 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
           ) : (
             <>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr>
+                <Table className="w-full text-sm">
+                  <TableHeader>
+                    <TableRow>
                       {canSelect && (
-                        <th className="text-left p-3 w-12">
+                        <TableHead className="text-left p-3 w-12">
                           <Checkbox
                             checked={selectedIds.length === filteredItems.length && filteredItems.length > 0}
                             onCheckedChange={toggleSelectAll}
                             data-testid="select-all-checkbox"
                           />
-                        </th>
+                        </TableHead>
                       )}
-                      <th className="text-left p-3 font-medium">Nomor / perjalanan</th>
-                      <th className="text-left p-3 font-medium">Karyawan</th>
-                      <th className="text-left p-3 font-medium">Tujuan</th>
-                      <th className="text-right p-3 font-medium">Biaya aktual</th>
-                      <th className="text-right p-3 font-medium">Uang muka</th>
-                      <th className="text-right p-3 font-medium">Selisih</th>
-                      <th className="text-left p-3 font-medium">Status</th>
-                      <th className="p-3" aria-label="Rincian" />
-                    </tr>
-                  </thead>
-                  <tbody>
+                      <TableHead className="text-left p-3 font-medium">Nomor / perjalanan</TableHead>
+                      <TableHead className="text-left p-3 font-medium">Karyawan</TableHead>
+                      <TableHead className="text-left p-3 font-medium">Tujuan</TableHead>
+                      <TableHead className="text-right p-3 font-medium">Biaya aktual</TableHead>
+                      <TableHead className="text-right p-3 font-medium">Uang muka</TableHead>
+                      <TableHead className="text-right p-3 font-medium">Selisih</TableHead>
+                      <TableHead className="text-left p-3 font-medium">Status</TableHead>
+                      <TableHead className="p-3" aria-label="Rincian" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {paged.map(s => {
                       const diff = s.difference || 0;
                       const stlType = s.settlement_type || 'exact';
                       const open = selected?.id === s.id;
                       return (
-                        <tr key={s.id} className={`border-t hover:bg-muted/30 transition-colors ${open ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
+                        <TableRow key={s.id} className={`border-t hover:bg-muted/30 transition-colors ${open ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
                           {canSelect && (
-                            <td className="p-3">
+                            <TableCell className="p-3">
                               <Checkbox
                                 checked={selectedIds.includes(s.id)}
                                 onCheckedChange={() => toggleSelect(s.id)}
                                 data-testid={`select-checkbox-${s.id}`}
                               />
-                            </td>
+                            </TableCell>
                           )}
-                          <td className="p-3 whitespace-nowrap">
+                          <TableCell className="p-3 whitespace-nowrap">
                             <Button variant="link" size="sm" className="h-auto p-0" onClick={() => openDetail(s)}
                               data-testid={`settlement-open-${s.id}`}>
                               {s.settlement_number}
                             </Button>
                             <div className="text-xs text-muted-foreground">{s.trip_number}</div>
-                          </td>
-                          <td className="p-3">
+                          </TableCell>
+                          <TableCell className="p-3">
                             <div className="font-medium">{s.employee_name}</div>
                             <div className="text-xs text-muted-foreground">{s.employee_dept}</div>
-                          </td>
-                          <td className="p-3">
+                          </TableCell>
+                          <TableCell className="p-3">
                             <div>{s.destination}</div>
                             <div className="text-xs text-muted-foreground whitespace-nowrap">{fmtDate(s.start_date)} – {fmtDate(s.end_date)}</div>
-                          </td>
-                          <td className="p-3 text-right tabular-nums whitespace-nowrap font-bold">{fmt(s.total_actual)}</td>
-                          <td className="p-3 text-right tabular-nums whitespace-nowrap">{fmt(s.advance_received)}</td>
-                          <td className="p-3 text-right tabular-nums whitespace-nowrap">
+                          </TableCell>
+                          <TableCell className="p-3 text-right tabular-nums whitespace-nowrap font-bold">{fmt(s.total_actual)}</TableCell>
+                          <TableCell className="p-3 text-right tabular-nums whitespace-nowrap">{fmt(s.advance_received)}</TableCell>
+                          <TableCell className="p-3 text-right tabular-nums whitespace-nowrap">
                             <span className={`font-semibold ${(STL_TYPE_CONFIG[stlType] || STL_TYPE_CONFIG.exact).color}`}
                               title={(STL_TYPE_CONFIG[stlType] || STL_TYPE_CONFIG.exact).label}>
                               {stlType === 'return' ? '↓' : stlType === 'additional' ? '↑' : '='} {fmt(Math.abs(diff))}
                             </span>
-                          </td>
-                          <td className="p-3"><StatusBadge status={s.status} /></td>
-                          <td className="p-3 text-right">
+                          </TableCell>
+                          <TableCell className="p-3"><StatusBadge status={s.status} /></TableCell>
+                          <TableCell className="p-3 text-right">
                             <Button size="icon-sm" variant="ghost" onClick={() => openDetail(s)}
                               title={open ? 'Tutup rincian' : 'Lihat rincian'} aria-label={open ? 'Tutup rincian' : 'Lihat rincian'} aria-expanded={open}>
                               <Eye className="w-3.5 h-3.5" />
                             </Button>
-                          </td>
-                        </tr>
+                          </TableCell>
+                        </TableRow>
                       );
                     })}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
               </div>
               {totalPages > 1 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-3" />}
             </>

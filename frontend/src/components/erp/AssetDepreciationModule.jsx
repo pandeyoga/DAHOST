@@ -6,7 +6,7 @@ import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { GlassCard } from '@/components/ui/glass';
 import { Checkbox } from '@/components/ui/checkbox';
 import TombolUnduh from '@/components/ui/tombol-unduh';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState, StatusBadge } from './moduleAtoms';
@@ -206,50 +206,50 @@ export default function AssetDepreciationModule({ token }) {
             description="Aset aktif dengan metode garis lurus atau saldo menurun muncul di sini." />
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full" data-testid="depr-asset-table">
-              <thead>
-                <tr>
-                  <th className="w-10">
+            <Table className="w-full" data-testid="depr-asset-table">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-10">
                     <Checkbox
                       checked={selectedAssets.length === assets.length}
                       onCheckedChange={v => (v ? selectAll() : clearSelection())}
                       aria-label="Pilih semua aset"
                     />
-                  </th>
-                  <th className="text-left">Kode</th>
-                  <th className="text-left">Nama aset</th>
-                  <th className="text-left">Kategori</th>
-                  <th className="text-left">Metode</th>
-                  <th className="text-right">Harga perolehan</th>
-                  <th className="text-right">Nilai buku</th>
-                </tr>
-              </thead>
-              <tbody>
+                  </TableHead>
+                  <TableHead className="text-left">Kode</TableHead>
+                  <TableHead className="text-left">Nama aset</TableHead>
+                  <TableHead className="text-left">Kategori</TableHead>
+                  <TableHead className="text-left">Metode</TableHead>
+                  <TableHead className="text-right">Harga perolehan</TableHead>
+                  <TableHead className="text-right">Nilai buku</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {assets.map(a => (
-                  <tr
+                  <TableRow
                     key={a.id}
                     className={`cursor-pointer ${selectedAssets.includes(a.id) ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}
                     onClick={() => toggleAsset(a.id)}
                     data-testid={`depr-asset-row-${a.id}`}
                   >
-                    <td>
+                    <TableCell>
                       <Checkbox
                         checked={selectedAssets.includes(a.id)}
                         onCheckedChange={() => toggleAsset(a.id)}
                         onClick={e => e.stopPropagation()}
                         aria-label={`Pilih ${a.name}`}
                       />
-                    </td>
-                    <td className="whitespace-nowrap">{a.code}</td>
-                    <td>{a.name}</td>
-                    <td>{catLabel(a.category)}</td>
-                    <td className="whitespace-nowrap">{METHOD_LABEL[a.depreciation_method] || a.depreciation_method}</td>
-                    <td className="text-right tabular-nums">{fmt(a.purchase_cost)}</td>
-                    <td className="text-right tabular-nums">{fmt(a.book_value_current)}</td>
-                  </tr>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">{a.code}</TableCell>
+                    <TableCell>{a.name}</TableCell>
+                    <TableCell>{catLabel(a.category)}</TableCell>
+                    <TableCell className="whitespace-nowrap">{METHOD_LABEL[a.depreciation_method] || a.depreciation_method}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmt(a.purchase_cost)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmt(a.book_value_current)}</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         )}
       </GlassCard>

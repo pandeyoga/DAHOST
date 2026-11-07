@@ -27,7 +27,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateID, formatRupiah, formatPercent } from '@/lib/format';
 import { humanMemo } from '@/lib/financeLabels';
 import TombolUnduh from '@/components/ui/tombol-unduh';
-import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableHeader, TableBody, TableFooter, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import PeriodPicker, { ALL_TIME, PERIOD_PRESETS, periodFromPreset } from './finance/PeriodPicker';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -242,40 +242,40 @@ function TopDebtorsTable({ debtors, search, selectedId, onPickCustomer }) {
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full">
-        <thead>
-          <tr>
-            <th className="text-right w-10">#</th>
-            <th className="text-left py-2 px-2">Pelanggan</th>
-            <th className="text-right py-2 px-2">Faktur</th>
-            <th className="text-right py-2 px-2">Terlama terlambat</th>
-            <th className="text-right py-2 px-2">Lewat jatuh tempo</th>
-            <th className="text-right py-2 px-2">Sisa piutang</th>
-          </tr>
-        </thead>
-        <tbody>
+      <Table className="w-full">
+        <TableHeader>
+          <TableRow>
+            <TableHead className="text-right w-10">#</TableHead>
+            <TableHead className="text-left py-2 px-2">Pelanggan</TableHead>
+            <TableHead className="text-right py-2 px-2">Faktur</TableHead>
+            <TableHead className="text-right py-2 px-2">Terlama terlambat</TableHead>
+            <TableHead className="text-right py-2 px-2">Lewat jatuh tempo</TableHead>
+            <TableHead className="text-right py-2 px-2">Sisa piutang</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {filtered.map((d, idx) => (
-            <tr key={d.customer_id} className={`border-b border-foreground/5 hover:bg-foreground/[0.03] ${selectedId === d.customer_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
-              <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">{idx + 1}</td>
-              <td className="py-2 px-2">
+            <TableRow key={d.customer_id} className={`border-b border-foreground/5 hover:bg-foreground/[0.03] ${selectedId === d.customer_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
+              <TableCell className="py-2 px-2 text-right tabular-nums text-muted-foreground">{idx + 1}</TableCell>
+              <TableCell className="py-2 px-2">
                 <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => onPickCustomer(d)}
                   data-testid={`ar360-debtor-${d.customer_id}`} title="Buka rekening koran pelanggan">
                   {d.customer_name}
                 </Button>
                 {d.customer_code && <span className="block text-xs text-muted-foreground">{d.customer_code}</span>}
-              </td>
-              <td className="py-2 px-2 text-right tabular-nums">{d.invoice_count}</td>
-              <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">
+              </TableCell>
+              <TableCell className="py-2 px-2 text-right tabular-nums">{d.invoice_count}</TableCell>
+              <TableCell className="py-2 px-2 text-right tabular-nums whitespace-nowrap">
                 {d.oldest_days_overdue > 0 ? <span className="text-[hsl(var(--warning-text))]">{d.oldest_days_overdue} hari</span> : <span className="text-muted-foreground">—</span>}
-              </td>
-              <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">
+              </TableCell>
+              <TableCell className="py-2 px-2 text-right tabular-nums whitespace-nowrap">
                 {d.overdue_amount > 0 ? <span className="text-[hsl(var(--danger-text))]">{fmtRp(d.overdue_amount)}</span> : <span className="text-muted-foreground">—</span>}
-              </td>
-              <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap font-semibold text-foreground">{fmtRp(d.outstanding)}</td>
-            </tr>
+              </TableCell>
+              <TableCell className="py-2 px-2 text-right tabular-nums whitespace-nowrap font-semibold text-foreground">{fmtRp(d.outstanding)}</TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }
@@ -295,20 +295,20 @@ function AgingMatrixTable({ rows, totals, selectedId, onPickCustomer }) {
   const hasSched = rows.some((r) => Number(r.scheduled || 0) > 0);
   return (
     <div className="overflow-x-auto">
-      <table className="w-full">
-        <thead>
-          <tr>
-            <th className="text-left">Pelanggan</th>
-            {BUCKET_KEYS.map((k) => <th key={k} className="text-right py-2 px-2 whitespace-nowrap">{BUCKET_META[k].label}</th>)}
-            <th className="text-right py-2 px-2 border-l border-foreground/10">Total</th>
-            {hasSched && <th className="text-right py-2 px-2 whitespace-nowrap">Terjadwal (belum jatuh tempo)</th>}
-            <th className="text-right py-2 px-2">Aksi</th>
-          </tr>
-        </thead>
-        <tbody>
+      <Table className="w-full">
+        <TableHeader>
+          <TableRow>
+            <TableHead className="text-left">Pelanggan</TableHead>
+            {BUCKET_KEYS.map((k) => <TableHead key={k} className="text-right py-2 px-2 whitespace-nowrap">{BUCKET_META[k].label}</TableHead>)}
+            <TableHead className="text-right py-2 px-2 border-l border-foreground/10">Total</TableHead>
+            {hasSched && <TableHead className="text-right py-2 px-2 whitespace-nowrap">Terjadwal (belum jatuh tempo)</TableHead>}
+            <TableHead className="text-right py-2 px-2">Aksi</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {rows.map(r => (
-            <tr key={r.customer_id} className={`border-b border-foreground/5 hover:bg-foreground/[0.03] ${selectedId === r.customer_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
-              <td className="py-2 px-2">
+            <TableRow key={r.customer_id} className={`border-b border-foreground/5 hover:bg-foreground/[0.03] ${selectedId === r.customer_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
+              <TableCell className="py-2 px-2">
                 <div className="flex items-center gap-2">
                   <span className="text-foreground font-semibold truncate max-w-[200px]" title={r.customer_name}>{r.customer_name}</span>
                   {r.customer_code && <span className="text-xs text-muted-foreground">{r.customer_code}</span>}
@@ -316,36 +316,36 @@ function AgingMatrixTable({ rows, totals, selectedId, onPickCustomer }) {
                 <div className="text-xs text-muted-foreground mt-0.5">
                   {r.count} faktur · terlama {r.oldest_days_overdue} hari
                 </div>
-              </td>
+              </TableCell>
               {BUCKET_KEYS.map((k) => (
-                <td key={k} className={`py-2 px-2 text-right tabular-nums whitespace-nowrap ${k === '90_plus' ? 'font-bold' : ''}`}>{cell(r, k)}</td>
+                <TableCell key={k} className={`py-2 px-2 text-right tabular-nums whitespace-nowrap ${k === '90_plus' ? 'font-bold' : ''}`}>{cell(r, k)}</TableCell>
               ))}
-              <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap border-l border-foreground/10">
+              <TableCell className="py-2 px-2 text-right tabular-nums whitespace-nowrap border-l border-foreground/10">
                 <span className="text-foreground font-bold">{fmtRp(r.total)}</span>
-              </td>
-              {hasSched && <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap text-muted-foreground">{Number(r.scheduled || 0) > 0 ? fmtRp(r.scheduled) : '—'}</td>}
-              <td className="py-2 px-2 text-right whitespace-nowrap">
+              </TableCell>
+              {hasSched && <TableCell className="py-2 px-2 text-right tabular-nums whitespace-nowrap text-muted-foreground">{Number(r.scheduled || 0) > 0 ? fmtRp(r.scheduled) : '—'}</TableCell>}
+              <TableCell className="py-2 px-2 text-right whitespace-nowrap">
                 <Button variant="link" size="sm" className="h-auto p-0"
                   data-testid={`ar360-matrix-statement-${r.customer_id}`}
                   onClick={() => onPickCustomer(r)}>
                   {selectedId === r.customer_id ? 'Tutup rekening koran' : 'Rekening koran'}
                 </Button>
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-        <tfoot>
-          <tr className="border-t-2 border-[var(--glass-border)] font-bold">
-            <td className="py-2 px-2 text-foreground">Total ({totals.count || 0} faktur)</td>
+        </TableBody>
+        <TableFooter>
+          <TableRow className="border-t-2 border-[var(--glass-border)] font-bold">
+            <TableCell className="py-2 px-2 text-foreground">Total ({totals.count || 0} faktur)</TableCell>
             {BUCKET_KEYS.map((k) => (
-              <td key={k} className="py-2 px-2 text-right tabular-nums whitespace-nowrap">{fmtRp(totals[k])}</td>
+              <TableCell key={k} className="py-2 px-2 text-right tabular-nums whitespace-nowrap">{fmtRp(totals[k])}</TableCell>
             ))}
-            <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap text-foreground border-l border-foreground/10">{fmtRp(totals.total)}</td>
-            {hasSched && <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap text-muted-foreground">{fmtRp(totals.scheduled)}</td>}
-            <td></td>
-          </tr>
-        </tfoot>
-      </table>
+            <TableCell className="py-2 px-2 text-right tabular-nums whitespace-nowrap text-foreground border-l border-foreground/10">{fmtRp(totals.total)}</TableCell>
+            {hasSched && <TableCell className="py-2 px-2 text-right tabular-nums whitespace-nowrap text-muted-foreground">{fmtRp(totals.scheduled)}</TableCell>}
+            <TableCell></TableCell>
+          </TableRow>
+        </TableFooter>
+      </Table>
     </div>
   );
 }

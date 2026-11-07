@@ -11,7 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import DatePicker from '@/components/ui/date-picker';
 import TombolUnduh from '@/components/ui/tombol-unduh';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import PaginationLite from '@/components/ui/pagination-lite';
 import { toast } from 'sonner';
 import { formatRupiah, formatDateID } from '@/lib/format';
@@ -455,46 +455,46 @@ export default function FixedAssetsModule({ token }) {
             description={filterCat || filterStatus !== 'active' ? 'Tidak ada aset yang cocok dengan penyaring.' : 'Daftarkan aset pertama lewat tombol Aset baru.'} />
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full" data-testid="fa-table">
-              <thead>
-                <tr>
-                  <th className="text-left">Kode</th>
-                  <th className="text-left">Nama</th>
-                  <th className="text-left">Kategori</th>
-                  <th className="text-left">Tgl beli</th>
-                  <th className="text-right">Harga perolehan</th>
-                  <th className="text-right">Nilai buku</th>
-                  <th className="text-left">Metode</th>
-                  <th className="text-left">Status</th>
-                  <th className="text-right">Aksi</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table className="w-full" data-testid="fa-table">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-left">Kode</TableHead>
+                  <TableHead className="text-left">Nama</TableHead>
+                  <TableHead className="text-left">Kategori</TableHead>
+                  <TableHead className="text-left">Tgl beli</TableHead>
+                  <TableHead className="text-right">Harga perolehan</TableHead>
+                  <TableHead className="text-right">Nilai buku</TableHead>
+                  <TableHead className="text-left">Metode</TableHead>
+                  <TableHead className="text-left">Status</TableHead>
+                  <TableHead className="text-right">Aksi</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {assets.map(a => {
                   const st = STATUS_META[a.status] || { label: a.status, tone: 'default' };
                   const open = selected?.id === a.id;
                   return (
-                    <tr key={a.id} className={open ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
-                      <td className="whitespace-nowrap">
+                    <TableRow key={a.id} className={open ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
+                      <TableCell className="whitespace-nowrap">
                         <Button variant="link" size="sm" className="h-auto p-0" onClick={() => toggleDetail(a)}>{a.code}</Button>
-                      </td>
-                      <td className="font-medium">{a.name}</td>
-                      <td>{CAT_LABELS[a.category] || a.category}</td>
-                      <td className="whitespace-nowrap text-muted-foreground">{formatDateID(a.purchase_date)}</td>
-                      <td className="text-right tabular-nums">{fmtRp(a.purchase_cost)}</td>
-                      <td className="text-right tabular-nums font-medium">{fmtRp(a.book_value_current)}</td>
-                      <td className="whitespace-nowrap">{metodeLabel(a.depreciation_method)}</td>
-                      <td><StatusBadge tone={st.tone} label={st.label} /></td>
-                      <td className="text-right">
+                      </TableCell>
+                      <TableCell className="font-medium">{a.name}</TableCell>
+                      <TableCell>{CAT_LABELS[a.category] || a.category}</TableCell>
+                      <TableCell className="whitespace-nowrap text-muted-foreground">{formatDateID(a.purchase_date)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtRp(a.purchase_cost)}</TableCell>
+                      <TableCell className="text-right tabular-nums font-medium">{fmtRp(a.book_value_current)}</TableCell>
+                      <TableCell className="whitespace-nowrap">{metodeLabel(a.depreciation_method)}</TableCell>
+                      <TableCell><StatusBadge tone={st.tone} label={st.label} /></TableCell>
+                      <TableCell className="text-right">
                         <Button variant="ghost" size="icon-sm" onClick={() => toggleDetail(a)} title={open ? 'Tutup rincian' : 'Rincian & jadwal'} aria-label={open ? 'Tutup rincian' : 'Rincian & jadwal'}>
                           <Eye className="w-4 h-4" />
                         </Button>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         )}
       </GlassCard>

@@ -2,7 +2,7 @@ import { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
 import { Plus, RefreshCw, Wallet, AlertTriangle, MoreHorizontal } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { EmptyState, Notice } from './moduleAtoms';
@@ -234,37 +234,37 @@ export default function RahazaCashAccountsModule({ token }) {
           <EmptyState icon={Wallet} title="Belum ada rekening" description="Tambahkan rekening kas atau bank untuk mulai mencatat mutasi." />
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full" data-testid="ca-table">
-              <thead>
-                <tr><th className="text-left">Rekening</th><th className="text-left hidden md:table-cell">No. rekening</th><th className="text-left hidden md:table-cell">Milik</th><th className="text-right">Saldo</th><th className="text-right hidden sm:table-cell">Mutasi</th><th className="w-12" /></tr>
-              </thead>
-              <tbody>
+            <Table className="w-full" data-testid="ca-table">
+              <TableHeader>
+                <TableRow><TableHead className="text-left">Rekening</TableHead><TableHead className="text-left hidden md:table-cell">No. rekening</TableHead><TableHead className="text-left hidden md:table-cell">Milik</TableHead><TableHead className="text-right">Saldo</TableHead><TableHead className="text-right hidden sm:table-cell">Mutasi</TableHead><TableHead className="w-12" /></TableRow>
+              </TableHeader>
+              <TableBody>
                 {groups.map((g) => (
                   <Fragment key={g.name}>
-                    <tr className="bg-[hsl(var(--muted))]/50">
-                      <td className="font-semibold text-foreground">{g.name}</td>
-                      <td className="hidden md:table-cell" /><td className="hidden md:table-cell" />
-                      <td className="text-right font-semibold tabular-nums">{formatNumber(g.total)}</td>
-                      <td className="hidden sm:table-cell" /><td />
-                    </tr>
+                    <TableRow className="bg-[hsl(var(--muted))]/50">
+                      <TableCell className="font-semibold text-foreground">{g.name}</TableCell>
+                      <TableCell className="hidden md:table-cell" /><TableCell className="hidden md:table-cell" />
+                      <TableCell className="text-right font-semibold tabular-nums">{formatNumber(g.total)}</TableCell>
+                      <TableCell className="hidden sm:table-cell" /><TableCell />
+                    </TableRow>
                     {g.list.map((a) => (
-                      <tr key={a.id} data-testid={`ca-card-${a.code}`} className={selected?.id === a.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
-                        <td className="pl-6">
+                      <TableRow key={a.id} data-testid={`ca-card-${a.code}`} className={selected?.id === a.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
+                        <TableCell className="pl-6">
                           <Button variant="link" size="sm" className="h-auto p-0 text-left text-foreground whitespace-normal" onClick={() => toggleAccount(a)} title={`Akun buku besar ${a.gl_account_code || '—'}`}>
                             {shortName(a, g.name)}
                           </Button>
                           {a.balance_source !== 'gl' && <span className="ml-2 text-xs text-[hsl(var(--warning))]">belum tertaut buku besar</span>}
                           {a.balance_source === 'gl' && a.balance_diff !== 0 && <span className="ml-2 text-xs text-[hsl(var(--warning))]" data-testid={`ca-diff-${a.code}`}>selisih {formatNumber(a.balance_diff)}</span>}
-                        </td>
-                        <td className="text-muted-foreground hidden md:table-cell">{a.account_number || '—'}</td>
-                        <td className="text-muted-foreground whitespace-nowrap hidden md:table-cell" data-testid={`ca-owner-${a.code}`}>{ownerLabel(a.entity)}</td>
-                        <td className={`text-right tabular-nums ${Number(a.balance) < 0 ? 'text-[hsl(var(--destructive))]' : 'text-foreground'}`} data-testid={`ca-balance-${a.code}`}>{formatNumber(a.balance)}</td>
-                        <td className="text-right hidden sm:table-cell">
+                        </TableCell>
+                        <TableCell className="text-muted-foreground hidden md:table-cell">{a.account_number || '—'}</TableCell>
+                        <TableCell className="text-muted-foreground whitespace-nowrap hidden md:table-cell" data-testid={`ca-owner-${a.code}`}>{ownerLabel(a.entity)}</TableCell>
+                        <TableCell className={`text-right tabular-nums ${Number(a.balance) < 0 ? 'text-[hsl(var(--destructive))]' : 'text-foreground'}`} data-testid={`ca-balance-${a.code}`}>{formatNumber(a.balance)}</TableCell>
+                        <TableCell className="text-right hidden sm:table-cell">
                           <Button variant="link" size="sm" className="h-auto p-0" onClick={() => toggleAccount(a)}>
                             {selected?.id === a.id ? 'Tutup mutasi' : 'Lihat mutasi'}
                           </Button>
-                        </td>
-                        <td className="text-right">
+                        </TableCell>
+                        <TableCell className="text-right">
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="icon-sm" aria-label={`Menu ${a.name}`} title="Lainnya"><MoreHorizontal className="w-4 h-4" /></Button>
@@ -275,13 +275,13 @@ export default function RahazaCashAccountsModule({ token }) {
                               <DropdownMenuItem className="text-[hsl(var(--destructive))]" onClick={() => del(a)}>Nonaktifkan</DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     ))}
                   </Fragment>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         )}
       </GlassCard>
