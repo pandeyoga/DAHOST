@@ -33,6 +33,9 @@ const TOKEN_HELP = [
   ['{SEQ:4}', 'nomor urut 4 digit — 0001 (wajib di akhir)'],
 ];
 
+// Catatan dari server kadang memuat catatan pengembang ("SESI #27: dulu …") — hanya bagian sebelum itu yang tampil.
+const catatanBersih = (c) => String(c || '').split(/\s*SESI #\d+/)[0].trim();
+
 const labelMode = (item) => (!item.policy_enforced
   ? { label: item.auto_only ? 'Selalu otomatis' : 'Otomatis saja', tone: 'muted' }
   : item.mode === 'manual' ? { label: 'Manual', tone: 'warning' } : { label: 'Otomatis', tone: 'primary' });
@@ -253,7 +256,7 @@ export default function DocNumberingModule({ token }) {
               ))}
             </ul>
           </Notice>
-          {item.catatan && <p className="text-sm text-muted-foreground">{item.catatan}</p>}
+          {catatanBersih(item.catatan) && <p className="text-sm text-muted-foreground">{catatanBersih(item.catatan)}</p>}
 
           {/* FASE G — mode penomoran per jenis dokumen.
               SESI #18 — KEJUJURAN: mode hanya bisa dipindah untuk jenis dokumen
@@ -289,7 +292,7 @@ export default function DocNumberingModule({ token }) {
                   testId={`docnum-mode-locked-${item.key}`} />
                 <p className="text-sm text-muted-foreground" data-testid={`docnum-mode-hint-${item.key}`}>
                   {item.auto_only ? (
-                    <>{item.alasan_otomatis || 'Dokumen ini dibuat sistem, bukan diketik.'}{' '}Formatnya tetap bisa diubah di sini.</>
+                    <>{item.alasan_otomatis || 'Dokumen ini dibuat sistem, bukan diketik.'}{/formatnya tetap/i.test(item.alasan_otomatis || '') ? '' : ' Formatnya tetap bisa diubah di sini.'}</>
                   ) : (
                     <>Jalur dokumen ini <b>belum menegakkan</b> mode manual, jadi pilihannya belum ditampilkan agar setelan
                       tidak berbohong. Formatnya tetap berlaku.</>
