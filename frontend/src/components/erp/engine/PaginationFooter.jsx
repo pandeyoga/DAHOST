@@ -1,4 +1,5 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 
 /**
@@ -48,7 +49,7 @@ export default function PaginationFooter({
 
   return (
     <div
-      className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 px-4 py-3 border-t border-border/60 bg-card"
+      className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 px-4 py-3 border-t border-[var(--glass-border)]"
       data-testid={`${testIdPrefix}-footer`}
     >
       <div className="flex items-center gap-3 text-sm text-muted-foreground">
@@ -59,7 +60,7 @@ export default function PaginationFooter({
         </span>
         {onPerPageChange && (
           <label className="flex items-center gap-2 text-xs">
-            <span className="text-muted-foreground/70">Per halaman:</span>
+            <span className="text-muted-foreground">Per halaman:</span>
             {/* 2026-11-07 (Tahap 5): pemilih aplikasi, bukan pemilih bawaan browser (PANDUAN_UI) */}
             <SmartNativeSelect
               value={String(perPage)}
@@ -81,68 +82,62 @@ export default function PaginationFooter({
       </div>
 
       <div className="flex items-center gap-1">
-        <button
+        <Button variant="ghost" size="icon-sm"
           onClick={() => onPageChange(Math.max(1, page - 1))}
           disabled={disabled || page <= 1}
-          className="p-1 rounded disabled:opacity-40 disabled:cursor-not-allowed hover:bg-muted transition-colors"
-          aria-label="Halaman sebelumnya"
+          aria-label="Halaman sebelumnya" title="Halaman sebelumnya"
           data-testid={`${testIdPrefix}-prev`}
         >
           <ChevronLeft className="w-4 h-4" />
-        </button>
+        </Button>
         {pageNumbers[0] > 1 && (
           <>
-            <button
+            <Button variant="ghost" size="icon-sm"
               onClick={() => onPageChange(1)}
-              disabled={loading}
-              className="w-8 h-8 rounded text-sm hover:bg-muted text-muted-foreground"
+              disabled={loading} aria-label="Halaman 1"
               data-testid={`${testIdPrefix}-page-1`}
             >
               1
-            </button>
+            </Button>
             {pageNumbers[0] > 2 && <span className="px-1 text-muted-foreground/70 text-xs">…</span>}
           </>
         )}
         {pageNumbers.map((p) => (
-          <button
+          <Button
             key={p}
+            size="icon-sm"
+            variant={page === p ? 'default' : 'ghost'}
             onClick={() => onPageChange(p)}
             disabled={loading}
             aria-current={page === p ? 'page' : undefined}
-            className={`w-8 h-8 rounded text-sm transition-colors ${
-              page === p
-                ? 'bg-[hsl(var(--primary))] text-white shadow-sm'
-                : 'hover:bg-muted text-muted-foreground'
-            }`}
+            aria-label={`Halaman ${p}`}
             data-testid={`${testIdPrefix}-page-${p}`}
           >
             {p}
-          </button>
+          </Button>
         ))}
         {pageNumbers[pageNumbers.length - 1] < totalPages && (
           <>
             {pageNumbers[pageNumbers.length - 1] < totalPages - 1 && (
               <span className="px-1 text-muted-foreground/70 text-xs">…</span>
             )}
-            <button
+            <Button variant="ghost" size="icon-sm"
               onClick={() => onPageChange(totalPages)}
-              disabled={loading}
-              className="w-8 h-8 rounded text-sm hover:bg-muted text-muted-foreground"
+              disabled={loading} aria-label={`Halaman ${totalPages}`}
               data-testid={`${testIdPrefix}-page-last`}
             >
               {totalPages}
-            </button>
+            </Button>
           </>
         )}
-        <button
+        <Button variant="ghost" size="icon-sm"
           onClick={() => onPageChange(Math.min(totalPages, page + 1))}
           disabled={disabled || page >= totalPages}
-          className="p-1 rounded disabled:opacity-40 disabled:cursor-not-allowed hover:bg-muted transition-colors"
-          aria-label="Halaman berikutnya"
+          aria-label="Halaman berikutnya" title="Halaman berikutnya"
           data-testid={`${testIdPrefix}-next`}
         >
           <ChevronRight className="w-4 h-4" />
-        </button>
+        </Button>
       </div>
     </div>
   );

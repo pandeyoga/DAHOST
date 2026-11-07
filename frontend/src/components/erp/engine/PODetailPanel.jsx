@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, Clipboard, Edit2, FileDown, History, Layers, Package, Pencil, Plus, RefreshCw, RotateCcw,
-  Send, CheckCircle2, Trash2, Truck, Wallet, XCircle, Zap,
+  Send, CheckCircle2, Trash2, Truck, Wallet, XCircle, Zap, MoreHorizontal,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiDelete, apiFetch, apiGet, apiPost, apiPut } from '../../../lib/api';
@@ -22,7 +22,11 @@ import { formatDateID, formatDateTimeID, formatRupiah } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { GlassInput } from '@/components/ui/glass';
 import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import PanelTabs from '@/components/ui/panel-tabs';
@@ -72,12 +76,22 @@ export function POStatusBadge({ status, testId }) {
   return <StatusBadge status={status} label={PO_STATUS_LABEL[status] || status} tone={PO_STATUS_TONE[status] || 'default'} testId={testId} />;
 }
 
-function Section({ title, aside, children, testId }) {
+// Standar UI/UX v2: tiap tabel di rincian bisa diunduh (Excel + CSV) — `unduh={{ namaBerkas, kolom, baris }}`.
+function Section({ title, aside, unduh, children, testId }) {
+  const adaUnduh = unduh && (unduh.baris || []).length > 0;
   return (
     <section className="space-y-2" data-testid={testId}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-semibold text-foreground">{title}</p>
-        {aside}
+        {(aside || adaUnduh) && (
+          <div className="flex flex-wrap items-center gap-2">
+            {aside}
+            {adaUnduh && (
+              <TombolUnduh namaBerkas={unduh.namaBerkas} namaLembar={unduh.namaLembar} kolom={unduh.kolom}
+                baris={unduh.baris} testId={`${testId}-unduh`} />
+            )}
+          </div>
+        )}
       </div>
       {children}
     </section>
@@ -104,12 +118,12 @@ function Facts({ items }) {
 // Angka ringkas di dalam rincian — tanpa kartu (rincian sudah satu kartu; G5: tidak ada kartu di dalam kartu).
 function Figures({ items, testId }) {
   return (
-    <dl className="grid grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-3 border-y border-border py-3" data-testid={testId}>
+    <dl className="grid grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-3 border-y border-[var(--glass-border)] py-3" data-testid={testId}>
       {items.map(({ label, value, sub, tone, testId: tid }) => (
         <div key={label} className="min-w-0" data-testid={tid}>
-          <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
+          <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
           <dd className="text-lg font-semibold tabular-nums text-foreground">{value}</dd>
-          {sub && <dd className={`text-xs ${tone === 'warning' ? 'text-[hsl(var(--warning))]' : 'text-muted-foreground'}`}>{sub}</dd>}
+          {sub && <dd className={`text-xs ${tone === 'warning' ? 'text-[hsl(var(--warning-text))]' : 'text-muted-foreground'}`}>{sub}</dd>}
         </div>
       ))}
     </dl>
@@ -363,7 +377,14 @@ function ItemsTab({ qty, isInternal }) {
   if (!items.length) return <Empty icon={Package} title="PO ini belum punya baris" description="Tambahkan baris lewat tombol Ubah PO." />;
   const sum = (k) => items.reduce((s, i) => s + (Number(i[k]) || 0), 0);
   return (
-    <Section title="Barang per baris" testId="po-detail-items">
+    <Section title="Barang per baris" testId="po-detail-items" unduh={{ namaBerkas: 'po-barang-per-baris', baris: items, kolom: [
+      { label: 'Produk', nilai: (i) => i.product_name }, { label: 'SKU', nilai: (i) => i.sku || '' },
+      { label: 'No. seri', nilai: (i) => i.serial_number || '' }, { label: 'Ukuran', nilai: (i) => i.size || '' },
+      { label: 'Warna', nilai: (i) => i.color || '' }, { label: 'Dipesan', nilai: (i) => Number(i.ordered_qty) || 0 },
+      { label: 'Bahan di CMT', nilai: (i) => Number(i.received_qty) || 0 }, { label: 'Diproduksi', nilai: (i) => Number(i.produced_qty) || 0 },
+      { label: 'Diterima (lolos QC)', nilai: (i) => Number(i.accepted_total_qty ?? i.accepted_qty) || 0 },
+      { label: isInternal ? 'Diserahkan' : 'Dikirim ke klien', nilai: (i) => Number(i.shipped_qty) || 0 },
+    ] }}>
       <Table data-testid="po-detail-items-table">
         <TableHeader><TableRow>
           <TableHead>Produk / SKU</TableHead><TableHead>No. seri</TableHead><TableHead>Ukuran / warna</TableHead>
@@ -439,6 +460,13 @@ function MaterialsTab({ poId, po, detail, isInternal, canEdit, accReq, onReloadA
   return (
     <>
       <Section title={isInternal ? 'BOM (kebutuhan dari model)' : 'BOM PO'} testId="po-detail-bom"
+        unduh={{ namaBerkas: `bom-po-${po.po_number}`, baris: bom.lines || [], kolom: [
+          { label: 'Bahan', nilai: (l) => l.name }, { label: 'Kode', nilai: (l) => l.code || '' },
+          { label: 'Jenis', nilai: (l) => l.type_label || '' },
+          ...(isInternal ? [] : [{ label: 'Per pcs', nilai: (l) => Number(l.qty_per_pcs) || 0 }]),
+          { label: 'Perkiraan total', nilai: (l) => Number(l.qty_total) || 0 }, { label: 'Satuan', nilai: (l) => l.unit || '' },
+          { label: 'Disediakan', nilai: (l) => l.supplied_by || '' },
+        ] }}
         aside={!isInternal && canEdit && (
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" onClick={() => syncBom(null)} disabled={syncing} data-testid="po-bom-sync">
@@ -499,6 +527,14 @@ function MaterialsTab({ poId, po, detail, isInternal, canEdit, accReq, onReloadA
       </Section>
 
       <Section title="Rencana aksesoris" testId="po-detail-acc-plan"
+        unduh={{ namaBerkas: `rencana-aksesoris-${po.po_number}`, baris: plan, kolom: [
+          { label: 'Aksesoris', nilai: (a) => a.name }, { label: 'Kode', nilai: (a) => a.code || '' },
+          { label: 'Sumber', nilai: (a) => a.source_label || '' }, { label: 'Kebutuhan BOM', nilai: (a) => Number(a.bom_qty_base) || 0 },
+          { label: 'Satuan pakai', nilai: (a) => a.usage_unit || '' },
+          { label: 'Satuan serah', nilai: (a) => (a.has_handover ? `${a.handover_uom} isi ${a.handover_factor} ${a.usage_unit}` : '') },
+          { label: 'Rencana serah', nilai: (a) => (a.has_handover && a.plan_qty_handover !== null ? Number(a.plan_qty_handover) || 0 : Number(a.bom_qty_base) || 0) },
+          { label: 'Satuan rencana', nilai: (a) => (a.has_handover && a.plan_qty_handover !== null ? a.handover_uom : a.usage_unit) || '' },
+        ] }}
         aside={<span className="text-xs text-muted-foreground">Angka BOM = perkiraan; jumlah serah final diatur di form PO.</span>}>
         {plan.length === 0 ? (
           <Empty icon={Clipboard} title="Belum ada rencana aksesoris" description="Aksesoris dari BOM dan tambahan diatur lewat tombol Ubah PO." />
@@ -522,6 +558,15 @@ function MaterialsTab({ poId, po, detail, isInternal, canEdit, accReq, onReloadA
       </Section>
 
       <Section title="Stok & pembelian aksesoris" testId="po-accessory-requirements"
+        unduh={{ namaBerkas: `stok-aksesoris-${po.po_number}`, baris: reqs, kolom: [
+          { label: 'Aksesoris', nilai: (a) => a.material_name || a.accessory_name || '' },
+          { label: 'Kode', nilai: (a) => a.material_code || a.accessory_code || '' },
+          { label: 'Dibutuhkan', nilai: (a) => Number(a.qty_needed) || 0 }, { label: 'Satuan', nilai: (a) => a.unit || '' },
+          { label: 'Sudah keluar', nilai: (a) => (a.linked ? Number(a.issued) || 0 : '') },
+          { label: 'Tersedia', nilai: (a) => (a.linked ? Number(a.available) || 0 : '') },
+          { label: 'Kurang', nilai: (a) => (a.linked ? Number(a.shortage) || 0 : '') },
+          { label: 'Status', nilai: (a) => (ACC_STATUS[a.status] || [a.status || ''])[0] },
+        ] }}
         aside={canEdit && accReq?.summary?.shortage_lines > 0 && (
           <Button variant="outline" size="sm" onClick={createRequest} disabled={creating} data-testid="po-acc-create-request-btn">
             {creating ? 'Mengajukan…' : `Ajukan pembelian (${accReq.summary.shortage_lines} kurang)`}
@@ -548,7 +593,7 @@ function MaterialsTab({ poId, po, detail, isInternal, canEdit, accReq, onReloadA
                       <TableCell><div className="font-medium">{a.material_name || a.accessory_name}</div><div className="text-xs text-muted-foreground tabular-nums">{a.material_code || a.accessory_code || '—'}</div></TableCell>
                       <Num>{n(a.qty_needed)} {a.unit}</Num>
                       <Num>{a.linked ? n(a.issued) : '—'}</Num><Num>{a.linked ? n(a.available) : '—'}</Num>
-                      <Num className={a.shortage > 0 ? 'text-[hsl(var(--destructive))] font-semibold' : ''}>{a.linked ? n(a.shortage) : '—'}</Num>
+                      <Num className={a.shortage > 0 ? 'text-[hsl(var(--danger-text))] font-semibold' : ''}>{a.linked ? n(a.shortage) : '—'}</Num>
                       <TableCell><StatusBadge status={a.status} label={lbl} tone={tone} /></TableCell>
                     </TableRow>
                   );
@@ -574,7 +619,11 @@ function ShipTab({ detail, isInternal }) {
   const rs = detail.result_shipments || [];
   return (
     <>
-      <Section title={`Kiriman ke CMT (${vs.length})`} testId="po-detail-vendor-shipments">
+      <Section title={`Kiriman ke CMT (${vs.length})`} testId="po-detail-vendor-shipments" unduh={{ namaBerkas: 'po-kiriman-ke-cmt', baris: vs, kolom: [
+        { label: 'No. kiriman', nilai: (s) => s.number }, { label: 'Tanggal', nilai: (s) => dt(s.date) },
+        { label: 'CMT', nilai: (s) => s.vendor_name || '' }, { label: 'Jenis', nilai: (s) => s.type_label || '' },
+        { label: 'Qty', nilai: (s) => Number(s.qty) || 0 }, { label: 'Status', nilai: (s) => s.status_label || '' },
+      ] }}>
         {vs.length === 0 ? <Empty icon={Truck} title="Belum ada kiriman ke CMT" description="Kiriman dibuat di menu Kirim ke CMT." /> : (
           <Table>
             <TableHeader><TableRow><TableHead>No. kiriman</TableHead><TableHead>Tanggal</TableHead><TableHead>CMT</TableHead><TableHead>Jenis</TableHead><HeadNum>Qty</HeadNum><TableHead>Status</TableHead></TableRow></TableHeader>
@@ -586,20 +635,30 @@ function ShipTab({ detail, isInternal }) {
           </Table>
         )}
       </Section>
-      <Section title={`Penerimaan & QC (${rc.length})`} testId="po-detail-receipts">
+      <Section title={`Penerimaan & QC (${rc.length})`} testId="po-detail-receipts" unduh={{ namaBerkas: 'po-penerimaan-qc', baris: rc, kolom: [
+        { label: 'No. terima', nilai: (r) => r.number }, { label: 'Tanggal', nilai: (r) => dt(r.date) },
+        { label: 'CMT', nilai: (r) => r.vendor_name || '' }, { label: 'Dikirim CMT', nilai: (r) => Number(r.qty_claimed) || 0 },
+        { label: 'Lolos', nilai: (r) => Number(r.qty_good) || 0 }, { label: 'Tolak', nilai: (r) => Number(r.qty_reject) || 0 },
+        { label: 'Status', nilai: (r) => r.status_label || '' },
+      ] }}>
         {rc.length === 0 ? <Empty icon={CheckCircle2} title="Belum ada penerimaan dari CMT" description="Penerimaan dan QC dicatat di menu Terima & QC." /> : (
           <Table>
             <TableHeader><TableRow><TableHead>No. terima</TableHead><TableHead>Tanggal</TableHead><TableHead>CMT</TableHead><HeadNum>Dikirim CMT</HeadNum><HeadNum>Lolos</HeadNum><HeadNum>Tolak</HeadNum><TableHead>Status</TableHead></TableRow></TableHeader>
             <TableBody>{rc.map(r => (
               <TableRow key={r.id}><TableCell className="tabular-nums">{r.number}</TableCell><TableCell>{dt(r.date)}</TableCell>
                 <TableCell>{r.vendor_name || '—'}</TableCell><Num>{n(r.qty_claimed)}</Num><Num>{n(r.qty_good)}</Num>
-                <Num className={r.qty_reject ? 'text-[hsl(var(--destructive))]' : ''}>{n(r.qty_reject)}</Num>
+                <Num className={r.qty_reject ? 'text-[hsl(var(--danger-text))]' : ''}>{n(r.qty_reject)}</Num>
                 <TableCell><StatusBadge status={r.status} label={r.status_label} tone={r.status === 'completed_qc' ? 'success' : r.status === 'cancelled' ? 'danger' : 'warning'} /></TableCell></TableRow>
             ))}</TableBody>
           </Table>
         )}
       </Section>
-      <Section title={`Permak (${pm.length})`} testId="po-detail-permak">
+      <Section title={`Permak (${pm.length})`} testId="po-detail-permak" unduh={{ namaBerkas: 'po-permak', baris: pm, kolom: [
+        { label: 'No. permak', nilai: (x) => x.number || '' }, { label: 'SKU', nilai: (x) => `${x.sku || ''} ${x.size || ''}`.trim() },
+        { label: 'Tempat', nilai: (x) => x.where_label || '' }, { label: 'Qty', nilai: (x) => Number(x.qty) || 0 },
+        { label: 'Berhasil', nilai: (x) => Number(x.qty_fixed) || 0 }, { label: 'Dibuang', nilai: (x) => Number(x.qty_scrap) || 0 },
+        { label: 'Status', nilai: (x) => x.status_label || '' },
+      ] }}>
         {pm.length === 0 ? <Empty icon={RotateCcw} title="Tidak ada permak" description="Barang tolak yang dipermak tercatat di menu Perbaikan." /> : (
           <Table>
             <TableHeader><TableRow><TableHead>No. permak</TableHead><TableHead>SKU</TableHead><TableHead>Tempat</TableHead><HeadNum>Qty</HeadNum><HeadNum>Berhasil</HeadNum><HeadNum>Dibuang</HeadNum><TableHead>Status</TableHead></TableRow></TableHeader>
@@ -611,7 +670,11 @@ function ShipTab({ detail, isInternal }) {
           </Table>
         )}
       </Section>
-      <Section title={`${isInternal ? 'Serah ke gudang DA' : 'Kiriman ke klien'} (${rs.length})`} testId="po-detail-result-shipments">
+      <Section title={`${isInternal ? 'Serah ke gudang DA' : 'Kiriman ke klien'} (${rs.length})`} testId="po-detail-result-shipments"
+        unduh={{ namaBerkas: 'po-kiriman-hasil', baris: rs, kolom: [
+          { label: 'No. surat jalan', nilai: (x) => x.number }, { label: 'Tanggal', nilai: (x) => dt(x.date) },
+          { label: 'Qty', nilai: (x) => Number(x.qty) || 0 }, { label: 'Status', nilai: (x) => x.status_label || '' },
+        ] }}>
         {rs.length === 0 ? <Empty icon={Send} title="Belum ada kiriman hasil" description="Kiriman hasil dibuat di menu Kirim hasil." /> : (
           <Table>
             <TableHeader><TableRow><TableHead>No. surat jalan</TableHead><TableHead>Tanggal</TableHead><HeadNum>Qty</HeadNum><TableHead>Status</TableHead></TableRow></TableHeader>
@@ -637,7 +700,15 @@ function BillingTab({ po, detail, isInternal, costCheck, onNavigate }) {
   const totalSell = tot(i => i.selling_price_snapshot);
   return (
     <>
-      <Section title="Nilai per baris" testId="po-detail-values">
+      <Section title="Nilai per baris" testId="po-detail-values" unduh={{ namaBerkas: `nilai-po-${po.po_number}`, baris: items, kolom: [
+        { label: 'Produk', nilai: (i) => i.product_name }, { label: 'SKU', nilai: (i) => i.sku || '' },
+        { label: 'Qty', nilai: (i) => Number(i.qty) || 0 }, { label: 'Upah jahit / pcs', nilai: (i) => Number(i.cmt_price_snapshot) || 0 },
+        { label: 'Total upah', nilai: (i) => (Number(i.qty) || 0) * (Number(i.cmt_price_snapshot) || 0) },
+        ...(isInternal ? [] : [
+          { label: 'Harga jasa / pcs', nilai: (i) => Number(i.selling_price_snapshot) || 0 },
+          { label: 'Selisih / pcs', nilai: (i) => (Number(i.selling_price_snapshot) || 0) - (Number(i.cmt_price_snapshot) || 0) },
+        ]),
+      ] }}>
         <Table data-testid="po-detail-values-table">
           <TableHeader><TableRow>
             <TableHead>Produk / SKU</TableHead><HeadNum>Qty</HeadNum><HeadNum>Upah jahit / pcs</HeadNum><HeadNum>Total upah</HeadNum>
@@ -650,7 +721,7 @@ function BillingTab({ po, detail, isInternal, costCheck, onNavigate }) {
                 <TableCell><div className="font-medium">{it.product_name}</div><div className="text-xs text-muted-foreground tabular-nums">{it.sku || '—'}</div></TableCell>
                 <Num>{n(it.qty)}</Num><Num>{rp(it.cmt_price_snapshot)}</Num><Num>{rp((it.qty || 0) * (it.cmt_price_snapshot || 0))}</Num>
                 {!isInternal && <Num>{rp(it.selling_price_snapshot)}</Num>}
-                {!isInternal && <Num className={m < 0 ? 'text-[hsl(var(--destructive))]' : ''}>{rp(m)}</Num>}
+                {!isInternal && <Num className={m < 0 ? 'text-[hsl(var(--danger-text))]' : ''}>{rp(m)}</Num>}
               </TableRow>
             );
           })}</TableBody>
@@ -681,7 +752,12 @@ function BillingTab({ po, detail, isInternal, costCheck, onNavigate }) {
         )}
         <Button variant="link" size="sm" className="px-0" onClick={() => onNavigate?.('prod-cmt-billing', { po_id: po.id })}>Buka Tagihan CMT</Button>
       </div>
-      <Section title={`Tagihan CMT (${bills.length})`} testId="po-detail-cmt-bills">
+      <Section title={`Tagihan CMT (${bills.length})`} testId="po-detail-cmt-bills" unduh={{ namaBerkas: `tagihan-cmt-${po.po_number}`, baris: bills, kolom: [
+        { label: 'No. tagihan', nilai: (b) => b.number || '' }, { label: 'CMT', nilai: (b) => b.vendor_name || '' },
+        { label: 'Dari penerimaan', nilai: (b) => b.receipt_code || '' }, { label: 'Nilai', nilai: (b) => Number(b.amount) || 0 },
+        { label: 'Dibayar', nilai: (b) => Number(b.paid) || 0 }, { label: 'Sisa', nilai: (b) => Number(b.outstanding) || 0 },
+        { label: 'Status', nilai: (b) => b.status_label || '' },
+      ] }}>
         {bills.length === 0 ? <Empty icon={Wallet} title="Belum ada tagihan CMT" description="Tagihan CMT terbentuk setelah barang lolos QC di Terima & QC." /> : (
           <Table>
             <TableHeader><TableRow><TableHead>No. tagihan</TableHead><TableHead>CMT</TableHead><TableHead>Dari penerimaan</TableHead><HeadNum>Nilai</HeadNum><HeadNum>Dibayar</HeadNum><HeadNum>Sisa</HeadNum><TableHead>Status</TableHead></TableRow></TableHeader>
@@ -736,6 +812,12 @@ function SamplesTab({ po, detail, canEdit, onReload }) {
   };
   return (
     <Section title={`Sampel (${samples.length})`} testId="po-detail-samples"
+      unduh={{ namaBerkas: `sampel-${po.po_number}`, baris: samples, kolom: [
+        { label: 'Kode', nilai: (x) => x.sample_code }, { label: 'Produk', nilai: (x) => x.product_name || '' },
+        { label: 'Ukuran', nilai: (x) => x.target_size || '' }, { label: 'Qty', nilai: (x) => Number(x.sample_qty) || 0 },
+        { label: 'Revisi', nilai: (x) => Number(x.revision_number) || 0 }, { label: 'Status', nilai: (x) => x.status_label || '' },
+        { label: 'Diperbarui', nilai: (x) => dt(x.updated_at || x.created_at) },
+      ] }}
       aside={canEdit && (
         <Button variant="outline" size="sm" onClick={() => setForm({})} data-testid="sample-create-btn"><Plus className="w-3.5 h-3.5" /> Buat sampel</Button>
       )}>
@@ -762,10 +844,25 @@ function SamplesTab({ po, detail, canEdit, onReload }) {
                   <div className="flex justify-end gap-1">
                     {s.can?.edit && <Button size="icon-sm" variant="ghost" onClick={() => setForm(s)} title="Ubah sampel" aria-label="Ubah sampel" data-testid={`sample-edit-${s.sample_code}`}><Edit2 className="w-3.5 h-3.5" /></Button>}
                     {s.can?.submit && <Button size="icon-sm" variant="ghost" onClick={() => submit(s)} title="Kirim ke klien" aria-label="Kirim ke klien" data-testid={`sample-submit-${s.sample_code}`}><Send className="w-3.5 h-3.5" /></Button>}
-                    {s.can?.approve && <Button size="icon-sm" variant="ghost" onClick={() => approve(s)} title="Setujui" aria-label="Setujui" data-testid={`sample-approve-${s.sample_code}`}><CheckCircle2 className="w-3.5 h-3.5 text-[hsl(var(--success))]" /></Button>}
-                    {s.can?.revision && <Button size="icon-sm" variant="ghost" onClick={() => setReason({ kind: 'revision', sample: s })} title="Minta revisi" aria-label="Minta revisi" data-testid={`sample-revise-${s.sample_code}`}><RotateCcw className="w-3.5 h-3.5 text-[hsl(var(--warning))]" /></Button>}
-                    {s.can?.reject && <Button size="icon-sm" variant="ghost" onClick={() => setReason({ kind: 'reject', sample: s })} title="Tolak" aria-label="Tolak" data-testid={`sample-reject-${s.sample_code}`}><XCircle className="w-3.5 h-3.5 text-[hsl(var(--destructive))]" /></Button>}
-                    {s.can?.delete && <Button size="icon-sm" variant="ghost" onClick={() => remove(s)} title="Hapus sampel" aria-label="Hapus sampel" data-testid={`sample-delete-${s.sample_code}`}><Trash2 className="w-3.5 h-3.5" /></Button>}
+                    {(s.can?.approve || s.can?.revision || s.can?.reject || s.can?.delete) && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button size="icon-sm" variant="ghost" title="Aksi lainnya" aria-label="Aksi lainnya" data-testid={`sample-more-${s.sample_code}`}><MoreHorizontal className="w-3.5 h-3.5" /></Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {s.can?.approve && <DropdownMenuItem onSelect={() => approve(s)} data-testid={`sample-approve-${s.sample_code}`}><CheckCircle2 className="mr-2 h-4 w-4" />Setujui</DropdownMenuItem>}
+                          {s.can?.revision && <DropdownMenuItem onSelect={() => setReason({ kind: 'revision', sample: s })} data-testid={`sample-revise-${s.sample_code}`}><RotateCcw className="mr-2 h-4 w-4" />Minta revisi</DropdownMenuItem>}
+                          {s.can?.reject && <DropdownMenuItem onSelect={() => setReason({ kind: 'reject', sample: s })} data-testid={`sample-reject-${s.sample_code}`}><XCircle className="mr-2 h-4 w-4" />Tolak</DropdownMenuItem>}
+                          {s.can?.delete && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onSelect={() => remove(s)} data-testid={`sample-delete-${s.sample_code}`}
+                                className="text-[hsl(var(--danger-text))] focus:text-[hsl(var(--danger-text))]"><Trash2 className="mr-2 h-4 w-4" />Hapus sampel</DropdownMenuItem>
+                            </>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
                   </div>
                 )}
               </TableCell>
@@ -843,35 +940,28 @@ function SampleFormDialog({ po, sample, onClose, onSaved }) {
     } catch (e) { toast.error(e.message || 'Gagal menyimpan sampel'); }
     finally { setSaving(false); }
   };
-  const L = ({ children }) => <label className="block text-xs font-medium text-muted-foreground mb-1">{children}</label>;
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto" data-testid="sample-dialog">
-        <DialogHeader><DialogTitle>{isEdit ? `Ubah sampel ${sample.sample_code}` : `Sampel baru · PO ${po.po_number}`}</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="sm:col-span-2">
-            <L>Artikel Katalog Buyer (opsional)</L>
-            <SmartNativeSelect className="w-full" value={f.buyer_catalog_id} onChange={e => pickCatalog(e.target.value)} data-testid="sample-catalog-select">
-              <option value="">Tanpa tautan katalog</option>
-              {sorted.map(c => <option key={c.id} value={c.id}>{c.artikel_code} — {c.product_name}{poCats.has(c.id) ? ' (di PO ini)' : ''}</option>)}
-            </SmartNativeSelect>
-          </div>
-          <div className="sm:col-span-2"><L>Nama produk sampel *</L><GlassInput value={f.product_name} onChange={e => set('product_name', e.target.value)} data-testid="sample-product-name-input" /></div>
-          <div><L>Ukuran</L><GlassInput value={f.target_size} onChange={e => set('target_size', e.target.value)} data-testid="sample-size-input" /></div>
-          <div><L>Qty sampel</L><GlassInput type="number" min="1" value={f.sample_qty} onChange={e => set('sample_qty', e.target.value)} data-testid="sample-qty-input" /></div>
-          <div><L>Kain</L><GlassInput value={f.fabric_used} onChange={e => set('fabric_used', e.target.value)} placeholder="Contoh: rayon" /></div>
-          <div><L>Warna</L><GlassInput value={f.color_used} onChange={e => set('color_used', e.target.value)} placeholder="Contoh: navy" /></div>
-          <div className="sm:col-span-2"><L>Deskripsi</L><Textarea rows={2} value={f.description} onChange={e => set('description', e.target.value)} /></div>
-          <div className="sm:col-span-2"><L>Catatan</L><Textarea rows={2} value={f.notes} onChange={e => set('notes', e.target.value)} data-testid="sample-notes-input" /></div>
-          {!isEdit && <div className="sm:col-span-2"><DocNumberField policy={policy} value={code} onChange={setCode} testId="sample-docnum" label="Kode sampel" /></div>}
-        </div>
-        <p className="text-xs text-muted-foreground">Foto sampel diunggah dari rincian baris sampel (Lampiran) setelah disimpan.</p>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={save} disabled={saving} data-testid="sample-save-btn">{saving ? 'Menyimpan…' : (isEdit ? 'Simpan' : 'Buat sampel')}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="sample-dialog" onSimpan={save} menyimpan={saving}
+      judul={isEdit ? `Ubah sampel ${sample.sample_code}` : `Sampel baru · PO ${po.po_number}`}
+      keterangan="Foto sampel diunggah dari rincian baris sampel (Lampiran) setelah disimpan."
+      labelSimpan={isEdit ? 'Simpan' : 'Buat sampel'}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Isian label="Artikel katalog buyer (opsional)" htmlFor="sample-catalog" className="sm:col-span-2">
+          <SmartNativeSelect id="sample-catalog" className="w-full" value={f.buyer_catalog_id} onChange={e => pickCatalog(e.target.value)} data-testid="sample-catalog-select">
+            <option value="">Tanpa tautan katalog</option>
+            {sorted.map(c => <option key={c.id} value={c.id}>{c.artikel_code} — {c.product_name}{poCats.has(c.id) ? ' (di PO ini)' : ''}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Nama produk sampel" wajib className="sm:col-span-2"><GlassInput value={f.product_name} onChange={e => set('product_name', e.target.value)} data-testid="sample-product-name-input" /></Isian>
+        <Isian label="Ukuran"><GlassInput value={f.target_size} onChange={e => set('target_size', e.target.value)} data-testid="sample-size-input" /></Isian>
+        <Isian label="Qty sampel"><GlassInput type="number" min="1" value={f.sample_qty} onChange={e => set('sample_qty', e.target.value)} data-testid="sample-qty-input" /></Isian>
+        <Isian label="Kain"><GlassInput value={f.fabric_used} onChange={e => set('fabric_used', e.target.value)} placeholder="Contoh: rayon" /></Isian>
+        <Isian label="Warna"><GlassInput value={f.color_used} onChange={e => set('color_used', e.target.value)} placeholder="Contoh: navy" /></Isian>
+        <Isian label="Deskripsi" className="sm:col-span-2"><Textarea rows={2} value={f.description} onChange={e => set('description', e.target.value)} /></Isian>
+        <Isian label="Catatan" className="sm:col-span-2"><Textarea rows={2} value={f.notes} onChange={e => set('notes', e.target.value)} data-testid="sample-notes-input" /></Isian>
+        {!isEdit && <div className="sm:col-span-2"><DocNumberField policy={policy} value={code} onChange={setCode} testId="sample-docnum" label="Kode sampel" /></div>}
+      </div>
+    </FormPopup>
   );
 }
 
@@ -891,23 +981,16 @@ function ReasonDialog({ kind, sample, onClose, onDone }) {
     finally { setSaving(false); }
   };
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-lg" data-testid={`sample-${kind}-dialog`}>
-        <DialogHeader><DialogTitle>{isRev ? `Minta revisi ${sample.sample_code}` : `Tolak sampel ${sample.sample_code}`}</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          <div><label className="block text-xs font-medium text-muted-foreground mb-1">{isRev ? 'Alasan revisi *' : 'Alasan penolakan *'}</label>
-            <Textarea rows={2} value={reason} onChange={e => setReason(e.target.value)} data-testid="sample-reason-input" /></div>
-          <div><label className="block text-xs font-medium text-muted-foreground mb-1">Perubahan yang diminta</label>
-            <Textarea rows={3} value={changes} onChange={e => setChanges(e.target.value)} /></div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button variant={isRev ? 'default' : 'destructive'} onClick={submit} disabled={saving} data-testid="sample-reason-save">
-            {saving ? 'Menyimpan…' : (isRev ? 'Minta revisi' : 'Tolak sampel')}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId={`sample-${kind}-dialog`} onSimpan={submit} menyimpan={saving}
+      judul={isRev ? `Minta revisi ${sample.sample_code}` : `Tolak sampel ${sample.sample_code}`}
+      labelSimpan={isRev ? 'Minta revisi' : 'Tolak sampel'}>
+      <Isian label={isRev ? 'Alasan revisi' : 'Alasan penolakan'} wajib>
+        <Textarea rows={2} value={reason} onChange={e => setReason(e.target.value)} data-testid="sample-reason-input" />
+      </Isian>
+      <Isian label="Perubahan yang diminta">
+        <Textarea rows={3} value={changes} onChange={e => setChanges(e.target.value)} />
+      </Isian>
+    </FormPopup>
   );
 }
 
@@ -918,7 +1001,11 @@ function TimelineTab({ timeline }) {
   if (!timeline) return <p className="text-sm text-muted-foreground">Memuat riwayat…</p>;
   if (!events.length) return <Empty icon={History} title="Belum ada riwayat untuk PO ini" description="Perubahan PO, kiriman, penerimaan, dan sampel tercatat di sini." />;
   return (
-    <Section title={`Riwayat (${events.length} kejadian)`} testId="po-detail-timeline">
+    <Section title={`Riwayat (${events.length} kejadian)`} testId="po-detail-timeline" unduh={{ namaBerkas: 'riwayat-po', baris: events, kolom: [
+      { label: 'Waktu', nilai: (e) => formatDateTimeID(e.when) }, { label: 'Kejadian', nilai: (e) => e.label || '' },
+      { label: 'Nilai', nilai: (e) => (e.amount ? Number(e.amount) : '') }, { label: 'Oleh', nilai: (e) => e.actor || '' },
+      { label: 'Keterangan', nilai: (e) => e.note || '' },
+    ] }}>
       <Table data-testid="po-detail-timeline-table">
         <TableHeader><TableRow><TableHead>Waktu</TableHead><TableHead>Kejadian</TableHead><TableHead>Oleh</TableHead><TableHead>Keterangan</TableHead></TableRow></TableHeader>
         <TableBody>{pg.paged.map((e, i) => (

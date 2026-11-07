@@ -1,11 +1,16 @@
 
 import { useState, useEffect, useRef } from 'react';
-import { Plus, Eye, Pencil, Trash2, X, Zap, AlertTriangle, Loader2, Lock, ChevronDown, ChevronRight } from 'lucide-react';
-import DataTable from './DataTable';
-import Modal from './Modal';
+import { Plus, Eye, Pencil, Trash2, X, Zap, AlertTriangle, Loader2, Lock, ChevronDown, ChevronRight, MoreHorizontal, Search } from 'lucide-react';
+import DataTable, { ambilSemuaHalaman } from './DataTable';
 import StatusBadge from './StatusBadge';
-import ConfirmDialog from './ConfirmDialog';
 import POWorkflowIndicator from './POWorkflowIndicator';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 // Tahap 9 (keputusan 8): rincian PO dibuka DI HALAMAN, sama untuk PO internal & maklon (pengganti popup Detail
 // dan menu Detail PO maklon).
 import PODetailPanel, { POStatusBadge, PO_STATUS_LABEL } from './PODetailPanel';
@@ -20,7 +25,7 @@ import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB, toWIBDate } from '@/lib/waktu';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { GlassInput } from '@/components/ui/glass';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
@@ -61,14 +66,11 @@ const rupiah = (v) => formatRupiah(Number(v) || 0);
 const stripUi = (it) => Object.fromEntries(Object.entries(it).filter(([k]) => !k.startsWith('__')));
 const USED_DEEP_LINKS = new WeakSet();
 
+// Standar UI/UX v2: satu bentuk isian form (Isian dari ui/form-popup) — label 14 px, petunjuk 12 px.
 function Field({ label, required, hint, children, className = '', testId }) {
   return (
     <div className={`min-w-0 ${className}`} data-testid={testId}>
-      <label className="block text-xs font-medium text-muted-foreground mb-1">
-        {label}{required && <span className="text-[hsl(var(--destructive))]"> *</span>}
-      </label>
-      {children}
-      {hint && <p className="text-[11px] text-muted-foreground mt-1">{hint}</p>}
+      <Isian label={label} wajib={required} petunjuk={hint}>{children}</Isian>
     </div>
   );
 }
@@ -105,7 +107,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
   const [detailReload, setDetailReload] = useState(0);
   const [closeTargetPO, setCloseTargetPO] = useState(null);
   const [filterStatus, setFilterStatus] = useState('');
-  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [cari, setCari] = useState('');
   const [closeForm, setCloseForm] = useState({ close_reason: CLOSE_REASONS[0], close_notes: '' });
   const [refetchKey, setRefetchKey] = useState(0);
   const [form, setForm] = useState({ po_number: '', customer_name: '', buyer_id: '', vendor_id: '', po_date: '', deadline: '', delivery_deadline: '', notes: '', items: [], po_accessories: [] });
@@ -419,7 +421,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     const fail = (text, itemIdx = null) => { setFormError({ text, itemIdx }); return false; };
     setFormError(null);
     if (!isInternal && !editData && !form.buyer_id) { fail('Pilih buyer (klien maklon) dulu — artikel katalog selalu milik satu buyer.'); return; }
@@ -593,7 +595,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
   };
 
   const handleClosePO = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     try {
       await apiPost(`/production-pos/${closeTargetPO.id}/close`, closeForm);
       setShowCloseModal(false);
@@ -602,12 +604,17 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
     } catch (e) { toast.error(e.message || 'Gagal menutup PO'); }
   };
 
-  const handleDelete = async () => {
-    if (!confirmDelete) return;
+  // Standar UI/UX v2: konfirmasi hapus lewat dialog aplikasi (confirmDialog), bukan popup buatan.
+  const handleDelete = async (row) => {
+    const ok = await confirmDialog({
+      title: 'Hapus PO produksi?',
+      body: `PO "${row.po_number}" beserta semua work order dan progres akan dihapus permanen.`,
+      confirmLabel: 'Hapus', danger: true,
+    });
+    if (!ok) return;
     try {
-      await apiDelete(`/production-pos/${confirmDelete.id}`);
-      if (detailPo?.id === confirmDelete.id) setDetailPo(null);
-      setConfirmDelete(null);
+      await apiDelete(`/production-pos/${row.id}`);
+      if (detailPo?.id === row.id) setDetailPo(null);
       refetchPOs();
     } catch (e) { toast.error(e.message || 'Gagal menghapus PO'); }
   };
@@ -651,8 +658,8 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
       const late = (d) => d && toWIBDate(d) < todayWIB();
       return (
         <div className="text-xs whitespace-nowrap space-y-0.5">
-          <div className={late(v) ? 'text-[hsl(var(--destructive))] font-medium' : ''}>Produksi {v ? fmtDate(v) : '-'}</div>
-          <div className={late(row.delivery_deadline) ? 'text-[hsl(var(--warning))] font-medium' : 'text-muted-foreground'}>Kirim {row.delivery_deadline ? fmtDate(row.delivery_deadline) : '-'}</div>
+          <div className={late(v) ? 'text-[hsl(var(--danger-text))] font-medium' : ''}>Produksi {v ? fmtDate(v) : '-'}</div>
+          <div className={late(row.delivery_deadline) ? 'text-[hsl(var(--warning-text))] font-medium' : 'text-muted-foreground'}>Kirim {row.delivery_deadline ? fmtDate(row.delivery_deadline) : '-'}</div>
         </div>
       );
     }},
@@ -666,26 +673,49 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
         )}
       </div>
     )},
-    { key: 'actions', label: 'Aksi', render: (_, row) => (
-      <div className="flex items-center gap-1">
-        <Button variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); openDetail(row); }} data-testid={`po-detail-btn-${row.id}`}
-          title="Lihat rincian" aria-label="Lihat rincian"><Eye className="w-4 h-4" /></Button>
-        {canEdit && !CLOSED_PO.includes(row.status) && (
-          <>
+    // Standar UI/UX v2: paling banyak 2 aksi tampil (Rincian, Ubah); sisanya di menu "Lainnya".
+    { key: 'actions', label: 'Aksi', sortable: false, render: (_, row) => {
+      const bisaUbah = canEdit && !CLOSED_PO.includes(row.status);
+      return (
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); openDetail(row); }} data-testid={`po-detail-btn-${row.id}`}
+            title="Lihat rincian" aria-label="Lihat rincian"><Eye className="w-4 h-4" /></Button>
+          {bisaUbah && (
             <Button variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); openEdit(row); }} data-testid={`po-edit-btn-${row.id}`}
               title="Ubah PO" aria-label="Ubah PO"><Pencil className="w-4 h-4" /></Button>
-            <Button variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); setQuickCompletePO(row); }} data-testid={`quick-complete-btn-${row.id}`}
-              title="Selesaikan cepat — semua alur produksi sekaligus" aria-label="Selesaikan cepat"><Zap className="w-4 h-4" /></Button>
-            <Button variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); openCloseModal(row); }} data-testid={`po-close-btn-${row.id}`}
-              title="Tutup PO" aria-label="Tutup PO"><Lock className="w-4 h-4" /></Button>
-          </>
-        )}
-        {canDelete && (
-          <Button variant="ghost" size="icon-sm" className="text-[hsl(var(--destructive))]" onClick={(e) => { e.stopPropagation(); setConfirmDelete(row); }}
-            data-testid={`po-delete-btn-${row.id}`} title="Hapus PO" aria-label="Hapus PO"><Trash2 className="w-4 h-4" /></Button>
-        )}
-      </div>
-    )}
+          )}
+          {(bisaUbah || canDelete) && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" onClick={(e) => e.stopPropagation()} data-testid={`po-more-btn-${row.id}`}
+                  title="Aksi lainnya" aria-label="Aksi lainnya"><MoreHorizontal className="w-4 h-4" /></Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {bisaUbah && (
+                  <>
+                    <DropdownMenuItem onSelect={() => setQuickCompletePO(row)} data-testid={`quick-complete-btn-${row.id}`}>
+                      <Zap className="mr-2 h-4 w-4" />Selesaikan cepat
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => openCloseModal(row)} data-testid={`po-close-btn-${row.id}`}>
+                      <Lock className="mr-2 h-4 w-4" />Tutup PO
+                    </DropdownMenuItem>
+                  </>
+                )}
+                {canDelete && (
+                  <>
+                    {bisaUbah && <DropdownMenuSeparator />}
+                    <DropdownMenuItem onSelect={() => handleDelete(row)} data-testid={`po-delete-btn-${row.id}`}
+                      className="text-[hsl(var(--danger-text))] focus:text-[hsl(var(--danger-text))]">
+                      <Trash2 className="mr-2 h-4 w-4" />Hapus PO
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+      );
+    }}
   ];
 
   // Isi baris PO yang dibuka/tutup (tombol "n baris") — tabel standar, tanpa kartu berwarna.
@@ -729,7 +759,16 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
       subtitle={isInternal
         ? 'Pesanan produksi untuk stok sendiri: model, varian, qty, dan upah jahit per baris.'
         : 'Pesanan jasa maklon per klien: artikel katalog, varian, qty, harga jasa, dan upah jahit.'}
-      actions={canCreate ? <Button onClick={openCreate} data-testid="create-po-btn"><Plus className="w-4 h-4" /> Buat PO</Button> : null}
+      // Standar UI/UX v2: impor & unduh rinci (alat jarang) di kepala sebagai tombol garis; satu tombol utama Buat PO.
+      actions={<>
+        {/* 2026-11-06 (T6): impor PO lama (/import-data) dihentikan — satu jalur impor PO berjalan saat
+            cutoff lewat Data Transfer (pratinjau per baris; hanya admin/owner yang melihat tombolnya). */}
+        <ImportExportPanel importType={null} exportType="production-pos" exportFilters={{ status: filterStatus }}
+          exportLabel="Unduh per baris produk" exportTitle="Excel dari server: satu baris per produk PO" />
+        <ImportExportToolbar collectionKey="po_berjalan" label="PO berjalan saat cutoff"
+          importLabel="Impor PO berjalan" size="default" onImported={() => refetchPOs()} />
+        {canCreate && <Button onClick={openCreate} data-testid="create-po-btn"><Plus className="w-4 h-4" /> Buat PO</Button>}
+      </>}
       detail={detailPo && (
         <PODetailPanel
           key={detailPo.id}
@@ -748,13 +787,20 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
         />
       )}
       filters={(
-        <FilterChips
-          value={filterStatus}
-          onChange={setFilterStatus}
-          testId="po-filter"
-          ariaLabel="Penyaring status PO"
-          options={['', ...STATUS_OPTIONS].map(s => ({ key: s, label: s ? (PO_STATUS_LABEL[s] || s) : 'Semua' }))}
-        />
+        <>
+          <div className="relative w-full sm:w-64">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={cari} onChange={(e) => setCari(e.target.value)} placeholder="Cari no. PO, klien, no. seri"
+              className="pl-8" data-testid="datatable-search-input" />
+          </div>
+          <FilterChips
+            value={filterStatus}
+            onChange={setFilterStatus}
+            testId="po-filter"
+            ariaLabel="Penyaring status PO"
+            options={['', ...STATUS_OPTIONS].map(s => ({ key: s, label: s ? (PO_STATUS_LABEL[s] || s) : 'Semua' }))}
+          />
+        </>
       )}
     >
       <DataTable
@@ -771,28 +817,41 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
           virtualizeHeight: 650,
           estimatedRowHeight: 80,
         }}
-        actions={
-          <div className="flex items-center gap-2">
-            {/* 2026-11-06 (T6): impor PO lama (/import-data) dihentikan — satu jalur impor PO berjalan saat
-                cutoff lewat Data Transfer (pratinjau per baris; hanya admin/owner yang melihat tombolnya). */}
-            <ImportExportPanel importType={null} exportType="production-pos" exportFilters={{ status: filterStatus }} />
-            <ImportExportToolbar collectionKey="po_berjalan" label="PO berjalan saat cutoff"
-              importLabel="Impor PO berjalan" size="default" onImported={() => refetchPOs()} />
-          </div>
-        }
+        searchValue={cari}
+        unduh={{
+          namaBerkas: isInternal ? 'po-produksi-internal' : 'po-maklon', namaLembar: 'PO',
+          // semua PO hasil saringan (status + kata cari), bukan hanya halaman yang tampil
+          ambilSemua: () => ambilSemuaHalaman(({ page, per_page }) => {
+            const q = new URLSearchParams({ page: String(page), per_page: String(per_page), sort_by: 'created_at', sort_dir: 'desc' });
+            if (cari.trim()) q.set('search', cari.trim());
+            if (filterStatus) q.set('status', filterStatus);
+            if (businessType) q.set('business_type', businessType);
+            return apiGet(`/production-pos?${q.toString()}`);
+          }),
+          kolom: [
+            { label: 'No. PO', nilai: (r) => r.po_number },
+            { label: isInternal ? 'Tujuan' : 'Klien', nilai: (r) => r.customer_name || '' },
+            { label: 'Penjahit (CMT)', nilai: (r) => r.vendor_name || '' },
+            { label: 'Tanggal PO', nilai: (r) => formatDateID(r.po_date || r.created_at, { fallback: '' }) },
+            { label: 'Baris', nilai: (r) => Number(r.item_count) || 0 },
+            { label: 'Total qty', nilai: (r) => Number(r.total_qty) || 0 },
+            { label: 'Tenggat produksi', nilai: (r) => formatDateID(r.deadline, { fallback: '' }) },
+            { label: 'Tenggat kirim', nilai: (r) => formatDateID(r.delivery_deadline, { fallback: '' }) },
+            { label: 'Status', nilai: (r) => PO_STATUS_LABEL[r.status] || r.status || '' },
+            { label: 'No. seri', nilai: (r) => (r.serial_numbers || []).join(', ') },
+          ],
+        }}
       />
 
       {/* Form PO — K12 (7 Nov 2026): SATU bentuk untuk PO internal & maklon.
           Urutan bagian: kepala → baris → aksesoris → total. */}
+      {/* Standar UI/UX v2: form PO = FormPopup panjang (kepala & kaki tetap terlihat, galat di kaki, Simpan hijau). */}
       {showModal && (
-        <Modal title={editData ? `Ubah PO ${editData.po_number}` : (isInternal ? 'Buat PO produksi internal' : 'Buat PO maklon')} onClose={() => { setShowModal(false); setFormError(null); }} size="xl">
-          <form onSubmit={handleSubmit} className="space-y-4" data-testid="po-form" data-business-type={bizKey}>
-            {formError && (
-              <Notice tone="danger" icon={AlertTriangle} testId="po-form-error"
-                action={<Button type="button" size="icon-sm" variant="ghost" onClick={() => setFormError(null)} className="text-[hsl(var(--destructive))]" title="Tutup pesan" aria-label="Tutup pesan"><X className="w-3.5 h-3.5" /></Button>}>
-                {formError.text}
-              </Notice>
-            )}
+        <FormPopup open onClose={() => { setShowModal(false); setFormError(null); }} ukuran="panjang" testId="po-form"
+          judul={editData ? `Ubah PO ${editData.po_number}` : (isInternal ? 'Buat PO produksi internal' : 'Buat PO maklon')}
+          keterangan={isInternal ? 'Kepala → baris produk → aksesoris → total.' : 'Kepala → baris artikel klien → aksesoris → total.'}
+          onSimpan={handleSubmit} labelSimpan={editData ? 'Simpan perubahan' : 'Buat PO'} galat={formError?.text}>
+          <div className="space-y-4" data-testid="po-form-body" data-business-type={bizKey}>
             {rateLocked && (
               <Notice tone="warning" icon={Lock} testId="po-rate-locked">{editData.rate_lock.message}</Notice>
             )}
@@ -859,14 +918,14 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
                   />
                 </Field>
                 <Field label="Tanggal PO">
-                  <GlassInput type="date" value={form.po_date} onChange={e => setForm({ ...form, po_date: e.target.value })} data-testid="po-date" />
+                  <DatePicker value={form.po_date} onChange={(v) => setForm(f => ({ ...f, po_date: v }))} testId="po-date" />
                 </Field>
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Tenggat produksi">
-                    <GlassInput type="date" value={form.deadline} onChange={e => setForm({ ...form, deadline: e.target.value })} data-testid="po-deadline" />
+                    <DatePicker value={form.deadline} onChange={(v) => setForm(f => ({ ...f, deadline: v }))} placeholder="Belum diisi" testId="po-deadline" />
                   </Field>
                   <Field label="Tenggat kirim">
-                    <GlassInput type="date" value={form.delivery_deadline} onChange={e => setForm({ ...form, delivery_deadline: e.target.value })} data-testid="po-delivery-deadline" />
+                    <DatePicker value={form.delivery_deadline} onChange={(v) => setForm(f => ({ ...f, delivery_deadline: v }))} placeholder="Belum diisi" testId="po-delivery-deadline" />
                   </Field>
                 </div>
               </div>
@@ -878,9 +937,9 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
                 <Button type="button" variant="outline" size="sm" onClick={addItem} data-testid="po-add-line">
                   <Plus className="w-3.5 h-3.5" /> Tambah item
                 </Button>
-              )}>Baris produk <span className="text-[hsl(var(--destructive))]">*</span></SectionTitle>
+              )}>Baris produk <span className="text-[hsl(var(--danger-text))]">*</span></SectionTitle>
               {form.items.length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-3 border border-dashed border-border rounded-lg">
+                <p className="text-sm text-muted-foreground text-center py-3 border border-dashed border-[var(--glass-border)] rounded-lg">
                   Klik "Tambah item" untuk menambahkan produk ke PO.
                 </p>
               )}
@@ -897,16 +956,16 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
                 const sug = item.__sug;
                 const sugDiffers = sug && Number(sug.rate) > 0 && Number(sug.rate) !== rate;
                 return (
-                  <GlassCard key={item.__key || idx} className={`p-3 space-y-2 ${formError?.itemIdx === idx ? 'ring-1 ring-[hsl(var(--destructive)/0.6)]' : hasShipments ? 'ring-1 ring-[hsl(var(--warning)/0.5)]' : ''}`} data-testid={`po-item-row-${idx}`}>
+                  <div key={item.__key || idx} className={`rounded-lg border border-[var(--glass-border)] p-3 space-y-2 ${formError?.itemIdx === idx ? 'ring-1 ring-[hsl(var(--destructive)/0.6)]' : hasShipments ? 'ring-1 ring-[hsl(var(--warning)/0.5)]' : ''}`} data-testid={`po-item-row-${idx}`}>
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-semibold text-muted-foreground">
                         Baris #{idx + 1}
-                        {hasShipments && <span className="ml-2 text-[hsl(var(--warning))]">sudah dikirim — qty minimal {minQty}</span>}
+                        {hasShipments && <span className="ml-2 text-[hsl(var(--warning-text))]">sudah dikirim — qty minimal {minQty}</span>}
                       </span>
                       {hasShipments ? (
                         <span className="text-xs text-muted-foreground" title="Tidak dapat dihapus karena sudah ada kiriman/produksi">Tidak dapat dihapus</span>
                       ) : (
-                        <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeItem(idx)} className="text-[hsl(var(--destructive))]"
+                        <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeItem(idx)} className="text-[hsl(var(--danger-text))]"
                           title="Hapus baris" aria-label="Hapus baris" data-testid={`po-item-${idx}-remove`}><X className="w-4 h-4" /></Button>
                       )}
                     </div>
@@ -957,7 +1016,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
                             data-testid={`po-item-${idx}-variant`}
                           />
                           {item.model_id && (rahazaVariants[item.model_id] || []).length === 0 && (
-                            <p className="text-[11px] text-[hsl(var(--warning))] mt-1">Model ini belum punya varian — buat di Master Produk → tab Varian.</p>
+                            <p className="text-xs text-[hsl(var(--warning-text))] mt-1">Model ini belum punya varian — buat di Master Produk → tab Varian.</p>
                           )}
                         </Field>
                       ) : (
@@ -973,7 +1032,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
                               data-testid={`po-item-${idx}-variant`}
                             />
                           ) : (
-                            <p className="text-[11px] text-[hsl(var(--warning))] h-9 flex items-center">Artikel ini belum punya varian ber-SKU — isi ukuran, warna, dan SKU di bawah.</p>
+                            <p className="text-xs text-[hsl(var(--warning-text))] h-9 flex items-center">Artikel ini belum punya varian ber-SKU — isi ukuran, warna, dan SKU di bawah.</p>
                           )}
                         </Field>
                       )}
@@ -1019,12 +1078,12 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
                       const inFormDup = form.items.some((o, j) => j !== idx && (o.serial_number || '').trim().toUpperCase().replace(/\s+/g, ' ') === cur);
                       const chk = serialChecks[idx];
                       if (chk?.loading) {
-                        return <p className="text-[11px] text-muted-foreground inline-flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Mengecek nomor seri…</p>;
+                        return <p className="text-xs text-muted-foreground inline-flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Mengecek nomor seri…</p>;
                       }
                       const dbUsages = (chk && chk.usages) || [];
                       if (inFormDup || dbUsages.length > 0) {
                         return (
-                          <p className="text-[11px] text-[hsl(var(--destructive))] flex items-start gap-1" data-testid={`po-item-serial-warn-${idx}`}>
+                          <p className="text-xs text-[hsl(var(--danger-text))] flex items-start gap-1" data-testid={`po-item-serial-warn-${idx}`}>
                             <AlertTriangle size={11} className="mt-px flex-shrink-0" />
                             <span>
                               Nomor seri dobel.{inFormDup ? ' Sama dengan baris lain di PO ini.' : ''}
@@ -1034,15 +1093,15 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
                           </p>
                         );
                       }
-                      return chk && !chk.loading ? <p className="text-[11px] text-[hsl(var(--success))]">Nomor seri unik.</p> : null;
+                      return chk && !chk.loading ? <p className="text-xs text-[hsl(var(--success-text))]">Nomor seri unik.</p> : null;
                     })()}
-                    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px]">
+                    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
                       <span className="text-muted-foreground" data-testid={`po-item-${idx}-rate-hint`} data-source={sug?.source || ''}>
                         {sug ? (
                           <>
                             {sugDiffers ? `Usulan ${rupiah(sug.rate)} — ` : (Number(sug.rate) > 0 ? 'Usulan: ' : '')}{sug.note}
                             {sugDiffers && !rateLocked && (
-                              <Button type="button" variant="link" size="sm" className="h-auto p-0 ml-1 text-[11px]"
+                              <Button type="button" variant="link" size="sm" className="h-auto p-0 ml-1 text-xs"
                                 onClick={() => updateItem(idx, 'cmt_price_snapshot', sug.rate)} data-testid={`po-item-${idx}-rate-use`}>Pakai usulan</Button>
                             )}
                           </>
@@ -1055,7 +1114,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
                         {!isInternal && <> · Nilai jasa: <b>{rupiah((Number(item.selling_price_snapshot) || 0) * qty)}</b></>}
                       </span>
                     </div>
-                  </GlassCard>
+                  </div>
                 );
               })}
             </section>
@@ -1081,43 +1140,30 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
             </section>
 
             <Field label="Catatan">
-              <textarea rows="2" className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-transparent focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} data-testid="po-notes" />
+              <Textarea rows={2} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} data-testid="po-notes" />
             </Field>
-            <div className="flex gap-3">
-              <Button type="button" variant="outline" onClick={() => setShowModal(false)} className="flex-1">Batal</Button>
-              <Button type="submit" className="flex-1" data-testid="po-submit">{editData ? 'Simpan perubahan' : 'Buat PO'}</Button>
-            </div>
-          </form>
-        </Modal>
+          </div>
+        </FormPopup>
       )}
 
-      {/* Manual Close PO Modal */}
+      {/* Tutup PO manual — FormPopup pendek */}
       {showCloseModal && closeTargetPO && (
-        <Modal title={`Tutup PO Manual: ${closeTargetPO.po_number}`} onClose={() => setShowCloseModal(false)}>
-          <form onSubmit={handleClosePO} className="space-y-4">
-            <Notice tone="warning" icon={AlertTriangle}>
-              Qty diperiksa per ukuran. Semua terpenuhi ⇒ PO <strong>Ditutup</strong>; ada ukuran yang kurang ⇒ pilih alasan dan PO
-              menjadi <strong>Ditutup kurang</strong>. PO yang ditutup terkunci dari kiriman dan perubahan.
-            </Notice>
-            <div>
-              <label className="block text-sm font-medium text-foreground/90 mb-1">Alasan penutupan</label>
-              <SmartNativeSelect className="w-full" value={closeForm.close_reason} onChange={e => setCloseForm({...closeForm, close_reason: e.target.value, closed_reason: e.target.value})}>
-                {CLOSE_REASONS.map(r => <option key={r} value={r}>{CLOSE_REASON_LABELS[r] || r}</option>)}
-              </SmartNativeSelect>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground/90 mb-1">Keterangan Tambahan</label>
-              <textarea rows="3" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]" value={closeForm.close_notes} onChange={e => setCloseForm({...closeForm, close_notes: e.target.value})} placeholder="Jelaskan detail alasan penutupan PO..." />
-            </div>
-            <div className="flex gap-3">
-              <Button type="submit" className="flex-1">Tutup PO</Button>
-              <Button type="button" variant="outline" onClick={() => setShowCloseModal(false)} className="flex-1">Batal</Button>
-            </div>
-          </form>
-        </Modal>
+        <FormPopup open onClose={() => setShowCloseModal(false)} ukuran="pendek" testId="po-close-form"
+          judul={`Tutup PO ${closeTargetPO.po_number}`} onSimpan={handleClosePO} labelSimpan="Tutup PO">
+          <Notice tone="warning" icon={AlertTriangle}>
+            Qty diperiksa per ukuran. Semua terpenuhi ⇒ PO <strong>Ditutup</strong>; ada ukuran yang kurang ⇒ pilih alasan dan PO
+            menjadi <strong>Ditutup kurang</strong>. PO yang ditutup terkunci dari kiriman dan perubahan.
+          </Notice>
+          <Isian label="Alasan penutupan" htmlFor="po-close-reason">
+            <SmartNativeSelect id="po-close-reason" className="w-full" value={closeForm.close_reason} onChange={e => setCloseForm({...closeForm, close_reason: e.target.value, closed_reason: e.target.value})}>
+              {CLOSE_REASONS.map(r => <option key={r} value={r}>{CLOSE_REASON_LABELS[r] || r}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Keterangan tambahan" htmlFor="po-close-notes">
+            <Textarea id="po-close-notes" rows={3} value={closeForm.close_notes} onChange={e => setCloseForm({...closeForm, close_notes: e.target.value})} placeholder="Jelaskan detail alasan penutupan PO…" />
+          </Isian>
+        </FormPopup>
       )}
-
-      {confirmDelete && <ConfirmDialog title="Hapus Production PO?" message={`PO "${confirmDelete.po_number}" beserta semua work order dan progres akan dihapus permanen.`} onConfirm={handleDelete} onCancel={() => setConfirmDelete(null)} />}
 
       {/* Quick Complete Modal */}
       {quickCompletePO && (

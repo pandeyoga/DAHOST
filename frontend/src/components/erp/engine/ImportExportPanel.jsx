@@ -1,13 +1,15 @@
 
 import { useState, useRef } from 'react';
-import { Upload, Download, FileSpreadsheet, Loader2, CheckCircle, AlertCircle, X } from 'lucide-react';
+import { Upload, Download, FileSpreadsheet, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { Notice } from '../moduleAtoms';
 import { apiFetch, apiPost } from '../../../lib/api';
 import { todayWIB } from '../../../lib/waktu';
 
-export default function ImportExportPanel({ token, importType, exportType, exportFilters = {}, onImportSuccess }) {
+// Standar UI/UX v2 (8 Nov 2026): label tombol unduh bisa diatur (exportLabel/exportTitle); popup impor = FormPopup.
+export default function ImportExportPanel({ token, importType, exportType, exportFilters = {}, onImportSuccess, exportLabel = 'Unduh Excel', exportTitle }) {
   const [showImportModal, setShowImportModal] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
@@ -34,7 +36,7 @@ export default function ImportExportPanel({ token, importType, exportType, expor
   };
 
   const handleImport = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     const file = fileRef.current?.files?.[0];
     if (!file) { toast.error('Pilih file terlebih dahulu'); return; }
 
@@ -92,67 +94,35 @@ export default function ImportExportPanel({ token, importType, exportType, expor
           </Button>
         )}
         {exportType && (
-          <Button variant="outline" onClick={handleExport} disabled={exporting}>
+          <Button variant="outline" onClick={handleExport} disabled={exporting} title={exportTitle} data-testid="export-excel-btn">
             {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />}
-            Unduh Excel
+            {exportLabel}
           </Button>
         )}
       </div>
 
-      {/* Import Modal */}
+      {/* Popup impor — FormPopup pendek */}
       {showImportModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-card rounded-xl shadow-2xl max-w-lg w-full max-h-[80vh] overflow-auto">
-            <div className="flex items-center justify-between p-4 border-b">
-              <h3 className="text-lg font-bold text-gray-800">
-                <Upload className="w-5 h-5 inline mr-2 text-[hsl(var(--success))]" />
-                Impor data
-              </h3>
-              <Button variant="ghost" size="icon-sm" onClick={() => setShowImportModal(false)} title="Tutup" aria-label="Tutup">
-                <X className="w-5 h-5" />
-              </Button>
-            </div>
-
-            <div className="p-4 space-y-4">
-              {/* Template Download */}
-              <div className="bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] rounded-lg p-3">
-                <p className="text-sm text-[hsl(var(--primary))] mb-2">
-                  <strong>Langkah 1:</strong> Unduh template Excel terlebih dahulu
-                </p>
-                <Button variant="outline" size="sm" onClick={downloadTemplate}>
-                  <Download className="w-4 h-4" />
-                  Unduh template
-                </Button>
-              </div>
-
-              {/* File Upload */}
-              <form onSubmit={handleImport} className="space-y-3">
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                  <p className="text-sm text-gray-700 mb-2">
-                    <strong>Langkah 2:</strong> Isi template lalu unggah filenya
-                  </p>
-                  <input
-                    type="file"
-                    ref={fileRef}
-                    accept=".xlsx,.xls"
-                    className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[hsl(var(--success)/0.1)] file:text-[hsl(var(--success))] hover:file:bg-[hsl(var(--success)/0.15)]"
-                  />
+        <FormPopup open onClose={() => setShowImportModal(false)} ukuran="pendek" judul="Impor data"
+          keterangan="Unduh template, isi, lalu unggah berkasnya." onSimpan={handleImport} menyimpan={importing}
+          labelSimpan="Unggah & impor" testId="import-panel-form">
+              <Isian label="Langkah 1 · template Excel">
+                <div>
+                  <Button type="button" variant="outline" size="sm" onClick={downloadTemplate}>
+                    <Download className="w-4 h-4" />
+                    Unduh template
+                  </Button>
                 </div>
-
-                <Button type="submit" disabled={importing} className="w-full">
-                  {importing ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Mengimpor...
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-4 h-4" />
-                      Unggah & impor
-                    </>
-                  )}
-                </Button>
-              </form>
+              </Isian>
+              <Isian label="Langkah 2 · berkas yang sudah diisi" htmlFor="import-panel-file">
+                <input
+                  id="import-panel-file"
+                  type="file"
+                  ref={fileRef}
+                  accept=".xlsx,.xls"
+                  className="block w-full text-sm text-foreground file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-[hsl(var(--primary)/0.1)] file:text-[hsl(var(--primary))]"
+                />
+              </Isian>
 
               {/* Import Result */}
               {importResult && (
@@ -162,27 +132,27 @@ export default function ImportExportPanel({ token, importType, exportType, expor
                   <Notice tone="success" icon={CheckCircle} title="Impor berhasil">
                       <div className="space-y-1">
                         {importResult.imported_products !== undefined && (
-                          <p>✅ {importResult.imported_products} produk diimpor</p>
+                          <p>{importResult.imported_products} produk diimpor</p>
                         )}
                         {importResult.imported_variants !== undefined && (
-                          <p>✅ {importResult.imported_variants} varian diimpor</p>
+                          <p>{importResult.imported_variants} varian diimpor</p>
                         )}
                         {importResult.imported_garments !== undefined && (
-                          <p>✅ {importResult.imported_garments} vendor diimpor</p>
+                          <p>{importResult.imported_garments} vendor diimpor</p>
                         )}
                         {importResult.imported_pos !== undefined && (
-                          <p>✅ {importResult.imported_pos} PO diimpor</p>
+                          <p>{importResult.imported_pos} PO diimpor</p>
                         )}
                         {importResult.imported_items !== undefined && (
-                          <p>✅ {importResult.imported_items} item PO diimpor</p>
+                          <p>{importResult.imported_items} item PO diimpor</p>
                         )}
                         {importResult.skipped > 0 && (
-                          <p className="text-[hsl(var(--warning))]">⚠️ {importResult.skipped} baris dilewati (kosong)</p>
+                          <p className="text-[hsl(var(--warning-text))]">{importResult.skipped} baris dilewati (kosong)</p>
                         )}
                         {importResult.errors?.length > 0 && (
                           <div className="mt-2 pt-2 border-t border-[hsl(var(--success)/0.35)]">
-                            <p className="font-medium text-[hsl(var(--warning))] mb-1">⚠️ {importResult.errors.length} peringatan:</p>
-                            <ul className="list-disc list-inside text-xs text-[hsl(var(--warning))] max-h-32 overflow-auto">
+                            <p className="font-medium text-[hsl(var(--warning-text))] mb-1">{importResult.errors.length} peringatan:</p>
+                            <ul className="list-disc list-inside text-xs text-[hsl(var(--warning-text))] max-h-32 overflow-auto">
                               {importResult.errors.map((err, i) => <li key={i}>{err}</li>)}
                             </ul>
                           </div>
@@ -190,7 +160,7 @@ export default function ImportExportPanel({ token, importType, exportType, expor
                         {/* Show vendor accounts if garments import */}
                         {importResult.vendor_accounts?.length > 0 && (
                           <div className="mt-2 pt-2 border-t border-[hsl(var(--success)/0.35)]">
-                            <p className="font-medium text-[hsl(var(--success))] mb-1">Akun Vendor yang Dibuat:</p>
+                            <p className="font-medium text-[hsl(var(--success-text))] mb-1">Akun Vendor yang Dibuat:</p>
                             <div className="max-h-40 overflow-auto">
                               <table className="w-full text-xs">
                                 <thead>
@@ -217,9 +187,7 @@ export default function ImportExportPanel({ token, importType, exportType, expor
                   </Notice>
                 )
               )}
-            </div>
-          </div>
-        </div>
+        </FormPopup>
       )}
     </>
   );

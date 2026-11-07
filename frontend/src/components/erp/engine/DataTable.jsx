@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Search, Download, Loader2, Inbox } from 'lucide-react';
+import { Search, Download, Loader2, Inbox, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { EmptyState } from '../moduleAtoms';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useSortableTable } from './useSortableTable';
@@ -40,7 +42,26 @@ import PaginationFooter from './PaginationFooter';
  *   actions     : ReactNode rendered in header
  *   exportData  : function to trigger CSV/Excel export (server-mode aware)
  *   expandedRow : (row) => ReactNode | null
+ *
+ * Standar UI/UX v2 (8 Nov 2026):
+ *   searchValue : string — kata cari dikendalikan dari luar (kotak cari di slot `filters` PageLayout); kotak cari
+ *                 di kepala tabel lalu disembunyikan, sehingga penyaring tetap satu baris.
+ *   unduh       : { namaBerkas, kolom:[{label,nilai}], ambilSemua?, namaLembar? } — tombol Unduh (Excel + CSV) di
+ *                 kepala tabel. Mode server: tanpa `ambilSemua` yang diunduh baris halaman yang tampil.
  */
+
+/** Ambil SEMUA halaman dari endpoint berhalaman ({items,total_pages}) — untuk `ambilSemua` TombolUnduh. */
+export async function ambilSemuaHalaman(ambilHalaman, { perHalaman = 200, maksHalaman = 50 } = {}) {
+  const semua = [];
+  for (let page = 1; page <= maksHalaman; page += 1) {
+    const env = await ambilHalaman({ page, per_page: perHalaman });
+    const items = Array.isArray(env?.items) ? env.items : (Array.isArray(env) ? env : []);
+    semua.push(...items);
+    const totalPages = Number(env?.total_pages) || 1;
+    if (Array.isArray(env) || page >= totalPages || items.length === 0) break;
+  }
+  return semua;
+}
 export default function DataTable({
   columns,
   data,
@@ -58,6 +79,8 @@ export default function DataTable({
   // TIDAK BISA DIBUKA SAMA SEKALI — pengguna menyimpulkan "datanya tidak bisa
   // diambil" padahal hanya pemicunya yang hilang (keluhan #6 owner).
   onRowClick,
+  searchValue,
+  unduh,
 }) {
   const isServerMode = !!serverPagination?.fetcher;
 
@@ -247,6 +270,14 @@ export default function DataTable({
     if (!isServerMode) setClientPage(1);
     if (onSearch) onSearch(val);
   };
+  // Kotak cari di luar tabel (slot filters PageLayout) → ikuti nilainya.
+  const searchOutside = searchValue !== undefined;
+  useEffect(() => {
+    if (!searchOutside) return;
+    setSearch(searchValue || '');
+    if (!isServerMode) setClientPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchOutside, searchValue]);
 
   // ─── Render data choice ────────────────────────────────────────────────────
   const renderRows = isServerMode ? serverItems : clientPaginated;
@@ -287,24 +318,31 @@ export default function DataTable({
   }, [serverPage, debouncedSearch, serverSort.key, serverSort.dir, serverPerPage]);
 
   return (
-    <div className="bg-card rounded-xl border border-border shadow-sm">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 border-b border-border/60">
-        <div className="relative flex-1 max-w-xs">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/70 w-4 h-4" />
-          <input
+    <div className="rounded-[var(--radius-lg)] border border-[var(--glass-border)] bg-[var(--card-surface)]">
+      {/* Kepala tabel: cari (kiri) · unduh/aksi (kanan). Tanpa isi → tidak digambar. */}
+      {(!searchOutside || exportData || unduh || actions) && (
+      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--glass-border)] px-3 py-2.5">
+        {!searchOutside && (
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
             type="text"
-            placeholder="Cari..."
+            placeholder="Cari…"
             value={search}
             onChange={(e) => handleSearch(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
+            className="pl-8"
             data-testid="datatable-search-input"
           />
           {isServerMode && serverLoading && (
             <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 text-[hsl(var(--primary))] w-4 h-4 animate-spin" />
           )}
         </div>
-        <div className="flex items-center gap-2">
+        )}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {unduh && (
+            <TombolUnduh namaBerkas={unduh.namaBerkas} namaLembar={unduh.namaLembar} kolom={unduh.kolom}
+              baris={renderRows} ambilSemua={unduh.ambilSemua} testId={unduh.testId || 'datatable-unduh'} />
+          )}
           {exportData && (
             <Button
               variant="outline"
@@ -317,11 +355,12 @@ export default function DataTable({
           {actions}
         </div>
       </div>
+      )}
 
       {/* Server-mode error banner */}
       {isServerMode && serverError && (
-        <div className="px-4 py-2 bg-[hsl(var(--destructive)/0.1)] border-b border-[hsl(var(--destructive)/0.35)] text-sm text-[hsl(var(--destructive))]" data-testid="datatable-error">
-          ⚠️ {serverError}
+        <div className="px-4 py-2 border-b border-[var(--glass-border)] text-sm text-[hsl(var(--danger-text))]" role="alert" data-testid="datatable-error">
+          Gagal memuat data: {serverError}
         </div>
       )}
 
@@ -332,9 +371,9 @@ export default function DataTable({
         style={shouldVirtualize ? { maxHeight: virtualizeMaxHeight } : undefined}
         data-testid={shouldVirtualize ? 'datatable-virtual-scroller' : undefined}
       >
-        <table className="w-full">
+        <table className="w-full text-sm">
           <thead className={shouldVirtualize ? 'sticky top-0 z-10' : undefined}>
-            <tr className="bg-muted/40">
+            <tr>
               {columns.map((col) => {
                 const isSortable = col.sortable !== false && col.key !== 'actions';
                 const active = isSortable && activeSortKey === col.key && !!activeSortDir;
@@ -345,15 +384,15 @@ export default function DataTable({
                     aria-sort={active ? (activeSortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
                     data-testid={isSortable ? `sort-header-${col.key}` : undefined}
                     onClick={isSortable ? () => toggleSort(col.key) : undefined}
-                    className={`text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap bg-muted/40 ${
-                      isSortable ? 'cursor-pointer select-none hover:bg-muted' : ''
+                    className={`text-left px-3 py-2.5 text-xs font-medium text-muted-foreground whitespace-nowrap bg-[var(--card-surface)] ${
+                      isSortable ? 'cursor-pointer select-none hover:text-foreground' : ''
                     }`}
                   >
                     <span className="inline-flex items-center gap-1">
                       {col.label}
                       {isSortable && (
                         <span
-                          className={`text-[10px] ${active ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground/50'}`}
+                          className={`text-xs ${active ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground/50'}`}
                           aria-hidden="true"
                         >
                           {indicatorFor(col.key)}
@@ -385,10 +424,10 @@ export default function DataTable({
                     data-index={vi.index}
                     ref={rowVirtualizer.measureElement}
                   >
-                    <tr className={`hover:bg-muted/60 transition-colors border-t border-border/60 ${onRowClick ? 'cursor-pointer' : ''}`}
+                    <tr className={`hover:bg-foreground/[0.03] transition-colors border-t border-[var(--glass-border)] ${onRowClick ? 'cursor-pointer' : ''}`}
                       onClick={onRowClick ? () => onRowClick(row) : undefined}>
                       {columns.map((col) => (
-                        <td key={col.key} className="px-4 py-3 text-sm text-foreground/90">
+                        <td key={col.key} className="px-3 py-2.5 text-sm text-foreground align-top">
                           {col.render ? col.render(row[col.key], row) : (row[col.key] ?? '-')}
                         </td>
                       ))}
@@ -397,7 +436,7 @@ export default function DataTable({
                       <tr>
                         {/* FASE 9: sel expand tidak boleh memaksa lebar tabel induk;
                             kontennya membawa scroll horizontal sendiri. */}
-                        <td colSpan={columns.length} className="p-0 border-b border-border/60 max-w-0">
+                        <td colSpan={columns.length} className="p-0 border-b border-[var(--glass-border)] max-w-0">
                           {exp}
                         </td>
                       </tr>
@@ -414,7 +453,7 @@ export default function DataTable({
               )}
             </>
           ) : (
-            <tbody className="divide-y divide-border/60">
+            <tbody className="divide-y divide-[var(--glass-border)]">
               {isServerMode && serverLoading && renderRows.length === 0 ? (
                 <tr>
                   <td colSpan={columns.length} className="text-center py-4 text-muted-foreground/70 text-sm">
@@ -432,10 +471,10 @@ export default function DataTable({
               ) : (
                 renderRows.map((row, i) => (
                   <React.Fragment key={row.id || i}>
-                    <tr className={`hover:bg-muted/60 transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}
+                    <tr className={`hover:bg-foreground/[0.03] transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}
                       onClick={onRowClick ? () => onRowClick(row) : undefined}>
                       {columns.map((col) => (
-                        <td key={col.key} className="px-4 py-3 text-sm text-foreground/90">
+                        <td key={col.key} className="px-3 py-2.5 text-sm text-foreground align-top">
                           {col.render ? col.render(row[col.key], row) : (row[col.key] ?? '-')}
                         </td>
                       ))}
@@ -444,7 +483,7 @@ export default function DataTable({
                       <tr>
                         {/* FASE 9: sel expand tidak boleh memaksa lebar tabel induk;
                             kontennya membawa scroll horizontal sendiri. */}
-                        <td colSpan={columns.length} className="p-0 border-b border-border/60 max-w-0">
+                        <td colSpan={columns.length} className="p-0 border-b border-[var(--glass-border)] max-w-0">
                           {expandedRow(row)}
                         </td>
                       </tr>
@@ -471,39 +510,28 @@ export default function DataTable({
         />
       ) : (
         clientTotalPages > 1 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-border/60">
+          <div className="flex items-center justify-between px-4 py-3 border-t border-[var(--glass-border)]">
             <span className="text-sm text-muted-foreground">
               {(clientPage - 1) * clientPageSize + 1}–{Math.min(clientPage * clientPageSize, clientFiltered.length)} dari {clientFiltered.length}
             </span>
             <div className="flex items-center gap-1">
-              <button
-                onClick={() => setClientPage((p) => Math.max(1, p - 1))}
-                disabled={clientPage === 1}
-                className="p-1 rounded disabled:opacity-40 hover:bg-muted"
-              >
-                ‹
-              </button>
+              <Button variant="ghost" size="icon-sm" onClick={() => setClientPage((p) => Math.max(1, p - 1))}
+                disabled={clientPage === 1} title="Halaman sebelumnya" aria-label="Halaman sebelumnya">
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
               {Array.from({ length: Math.min(5, clientTotalPages) }, (_, i) => {
                 const p = i + 1;
                 return (
-                  <button
-                    key={p}
-                    onClick={() => setClientPage(p)}
-                    className={`w-8 h-8 rounded text-sm ${
-                      clientPage === p ? 'bg-[hsl(var(--primary))] text-white' : 'hover:bg-muted text-muted-foreground'
-                    }`}
-                  >
+                  <Button key={p} size="icon-sm" variant={clientPage === p ? 'default' : 'ghost'}
+                    onClick={() => setClientPage(p)} aria-label={`Halaman ${p}`} aria-current={clientPage === p ? 'page' : undefined}>
                     {p}
-                  </button>
+                  </Button>
                 );
               })}
-              <button
-                onClick={() => setClientPage((p) => Math.min(clientTotalPages, p + 1))}
-                disabled={clientPage === clientTotalPages}
-                className="p-1 rounded disabled:opacity-40 hover:bg-muted"
-              >
-                ›
-              </button>
+              <Button variant="ghost" size="icon-sm" onClick={() => setClientPage((p) => Math.min(clientTotalPages, p + 1))}
+                disabled={clientPage === clientTotalPages} title="Halaman berikutnya" aria-label="Halaman berikutnya">
+                <ChevronRight className="h-4 w-4" />
+              </Button>
             </div>
           </div>
         )

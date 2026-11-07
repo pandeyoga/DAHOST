@@ -12,31 +12,29 @@
  */
 import { useState } from 'react';
 import {
-  Zap, X, Truck, ClipboardCheck, Factory, TrendingUp,
-  Package, CheckCircle2, AlertTriangle, Loader2, ChevronRight,
-  Info, SkipForward, RefreshCcw, Check
+  Truck, ClipboardCheck, Factory, TrendingUp,
+  Package, CheckCircle2, AlertTriangle, Loader2,
+  Info, SkipForward, Check
 } from 'lucide-react';
 import { apiPost } from '../../../lib/api';
 import { toast } from 'sonner';
+import FormPopup from '@/components/ui/form-popup';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Notice, StatusBadge } from '../moduleAtoms';
+import { PO_STATUS_LABEL } from './PODetailPanel';
 
 const STEP_META = [
-  { step: 1, icon: Truck,         label: 'Vendor Shipment',          desc: 'Buat pengiriman material dari vendor ke produksi' },
-  { step: 2, icon: CheckCircle2,  label: 'Terima Shipment',           desc: 'Tandai shipment sebagai diterima' },
-  { step: 3, icon: ClipboardCheck,label: 'Inspeksi Material',         desc: 'Rekam semua material diterima tanpa defect' },
-  { step: 4, icon: Factory,       label: 'Production Job',            desc: 'Buat job produksi dari shipment' },
-  { step: 5, icon: TrendingUp,    label: 'Progress Produksi (100%)', desc: 'Rekam progres produksi 100% untuk semua item' },
-  { step: 6, icon: Package,       label: 'Buyer Shipment',            desc: 'Buat shipment ke buyer untuk semua barang jadi' },
-  { step: 7, icon: CheckCircle2,  label: 'PO → Completed',            desc: 'Tandai PO sebagai selesai' },
+  { step: 1, icon: Truck,         label: 'Kirim bahan ke CMT',       desc: 'Buat kiriman bahan ke penjahit' },
+  { step: 2, icon: CheckCircle2,  label: 'Kiriman diterima CMT',     desc: 'Tandai kiriman sudah diterima' },
+  { step: 3, icon: ClipboardCheck,label: 'Inspeksi bahan',           desc: 'Catat semua bahan diterima tanpa cacat' },
+  { step: 4, icon: Factory,       label: 'Job produksi',             desc: 'Buat job produksi dari kiriman' },
+  { step: 5, icon: TrendingUp,    label: 'Kemajuan produksi (100%)', desc: 'Catat kemajuan produksi 100% untuk semua baris' },
+  { step: 6, icon: Package,       label: 'Kiriman ke buyer',         desc: 'Buat kiriman ke buyer untuk semua barang jadi' },
+  { step: 7, icon: CheckCircle2,  label: 'PO selesai',               desc: 'Tandai PO sebagai selesai' },
 ];
 
-const STATUS_CLASS = {
-  created:  'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]',
-  done:     'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]',
-  reused:   'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]',
-  skipped:  'bg-muted text-muted-foreground border-border',
-  pending:  'bg-muted/40 text-muted-foreground border-border',
-  running:  'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]',
-  error:    'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.35)]',
+const STATUS_TONE = {
+  created: 'success', done: 'success', reused: 'primary', skipped: 'muted', pending: 'muted', running: 'warning', error: 'danger',
 };
 
 const STATUS_LABEL = {
@@ -45,8 +43,8 @@ const STATUS_LABEL = {
   reused:  'Sudah ada (digunakan)',
   skipped: 'Dilewati',
   pending: 'Menunggu',
-  running: 'Memproses...',
-  error:   'Error',
+  running: 'Memproses…',
+  error:   'Gagal',
 };
 
 // ─── Main component ──────────────────────────────────────────────────────────
@@ -92,56 +90,41 @@ export default function QuickCompleteModal({ po, onClose, onSuccess }) {
       await animateSteps(data.steps);
       setPhase('result');
       onSuccess?.();
-      toast.success(`PO ${po.po_number} berhasil di-Quick Complete!`);
+      toast.success(`PO ${po.po_number} selesai dijalankan cepat.`);
     } catch (e) {
       setError(e.message || 'Terjadi kesalahan');
       setPhase('error');
     }
   };
 
+  // Standar UI/UX v2 (8 Nov 2026): popup standar (FormPopup) — kepala tipis, tombol Batal · aksi hijau di kaki,
+  // layar penuh di HP. Dulu popup buatan sendiri dengan judul putih di atas latar ungu pudar (tidak terbaca).
+  const kaki = {
+    confirm: { label: 'Jalankan selesaikan cepat', onSimpan: handleRun, bisa: canRun },
+    running: { label: 'Memproses…', onSimpan: () => {}, bisa: false },
+    result: { label: 'Selesai', onSimpan: onClose, bisa: true },
+    error: { label: 'Coba lagi', onSimpan: () => { setPhase('confirm'); setError(null); }, bisa: true },
+  }[phase] || { label: 'Tutup', onSimpan: onClose, bisa: true };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-card rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
-
-        {/* ── Header ── */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border/60 bg-gradient-to-r from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)]">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-card/20 rounded-lg">
-              <Zap className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <p className="font-bold text-white text-lg leading-tight">Quick Complete</p>
-              <p className="text-[hsl(var(--primary))] text-xs">{po.po_number}</p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-card/20 transition-colors text-white"
-            data-testid="quick-complete-close"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
+    <FormPopup open onClose={phase === 'running' ? () => {} : onClose} ukuran="pendek" testId="quick-complete-dialog"
+      judul="Selesaikan cepat" keterangan={`PO ${po.po_number} — semua alur produksi dijalankan sekaligus.`}
+      onSimpan={kaki.onSimpan} labelSimpan={kaki.label} bisaSimpan={kaki.bisa} menyimpan={phase === 'running'}>
 
           {/* ── CONFIRM phase ── */}
           {phase === 'confirm' && (
             <>
               {/* Pre-flight checks */}
               <div className="space-y-2">
-                <p className="text-sm font-semibold text-foreground/90 mb-2">Status PO</p>
+                <p className="text-sm font-medium text-foreground">Pemeriksaan PO</p>
                 {[
-                  { ok: itemsOk,  pass: `${(po.items||[]).length} item, total ${totalItems} pcs`, fail: 'PO tidak memiliki item / qty = 0' },
-                  { ok: vendorOk, pass: `Vendor: ${po.vendor_name || po.vendor_id}`, fail: 'Vendor belum ditetapkan' },
-                  { ok: !['Completed','Closed'].includes(po.status), pass: `Status: ${po.status}`, fail: `PO sudah ${po.status}` },
+                  { ok: itemsOk,  pass: `${(po.items||[]).length} baris, total ${totalItems} pcs`, fail: 'PO tidak punya baris / qty = 0' },
+                  { ok: vendorOk, pass: `Penjahit: ${po.vendor_name || po.vendor_id}`, fail: 'Penjahit (CMT) belum dipilih' },
+                  { ok: !['Completed','Closed'].includes(po.status), pass: `Status: ${PO_STATUS_LABEL[po.status] || po.status}`, fail: `PO sudah ${PO_STATUS_LABEL[po.status] || po.status}` },
                 ].map((chk, i) => (
-                  <div key={i} className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-sm ${
-                    chk.ok ? 'bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.35)] text-[hsl(var(--success))]' : 'bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]'
-                  }`}>
+                  <div key={i} className={`flex items-center gap-2.5 text-sm ${chk.ok ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--danger-text))]'}`}>
                     {chk.ok
-                      ? <Check className="w-4 h-4 text-[hsl(var(--success))] flex-shrink-0" />
-                      : <AlertTriangle className="w-4 h-4 text-[hsl(var(--destructive))] flex-shrink-0" />}
+                      ? <Check className="w-4 h-4 flex-shrink-0" />
+                      : <AlertTriangle className="w-4 h-4 flex-shrink-0" />}
                     {chk.ok ? chk.pass : chk.fail}
                   </div>
                 ))}
@@ -149,74 +132,44 @@ export default function QuickCompleteModal({ po, onClose, onSuccess }) {
 
               {/* Flow preview */}
               <div>
-                <p className="text-sm font-semibold text-foreground/90 mb-2">Langkah yang akan dijalankan</p>
-                <div className="border border-border rounded-xl overflow-hidden divide-y divide-border/60">
-                  {STEP_META.filter(m => !(skipBuyerShipment && m.step === 6)).map((m, idx, arr) => (
-                    <div key={m.step} className="flex items-start gap-3 px-4 py-3 bg-card hover:bg-muted/60/50">
-                      <div className="flex items-center justify-center w-6 h-6 rounded-full bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] text-xs font-bold flex-shrink-0 mt-0.5">
+                <p className="text-sm font-medium text-foreground mb-2">Langkah yang akan dijalankan</p>
+                <ol className="rounded-lg border border-[var(--glass-border)] divide-y divide-[var(--glass-border)]">
+                  {STEP_META.filter(m => !(skipBuyerShipment && m.step === 6)).map((m) => (
+                    <li key={m.step} className="flex items-start gap-3 px-3 py-2">
+                      <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] text-xs font-semibold flex-shrink-0">
                         {m.step}
-                      </div>
+                      </span>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-foreground">{m.label}</p>
-                        <p className="text-xs text-muted-foreground/70 mt-0.5">{m.desc}</p>
+                        <p className="text-xs text-muted-foreground">{m.desc}</p>
                       </div>
-                      {idx < arr.length - 1 && <ChevronRight className="w-4 h-4 text-muted-foreground/50 flex-shrink-0 mt-1" />}
-                    </div>
+                    </li>
                   ))}
-                </div>
+                </ol>
               </div>
 
               {/* Options */}
-              <div className="flex items-start gap-3 bg-muted/40 border border-border rounded-xl p-4">
-                <input
-                  type="checkbox"
-                  id="skip-buyer"
-                  checked={skipBuyerShipment}
-                  onChange={e => setSkipBuyerShipment(e.target.checked)}
-                  className="mt-0.5 w-4 h-4 accent-violet-600 cursor-pointer"
-                  data-testid="skip-buyer-checkbox"
-                />
-                <label htmlFor="skip-buyer" className="cursor-pointer">
-                  <p className="text-sm font-medium text-foreground/90">Lewati Buyer Shipment</p>
-                  <p className="text-xs text-muted-foreground/70 mt-0.5">Centang jika tidak ingin langsung membuat buyer shipment</p>
-                </label>
-              </div>
+              <label htmlFor="skip-buyer" className="flex items-start gap-3 cursor-pointer">
+                <Checkbox id="skip-buyer" checked={skipBuyerShipment} onCheckedChange={(v) => setSkipBuyerShipment(!!v)}
+                  className="mt-0.5" data-testid="skip-buyer-checkbox" />
+                <span>
+                  <span className="block text-sm font-medium text-foreground">Lewati kiriman ke buyer</span>
+                  <span className="block text-xs text-muted-foreground">Centang bila tidak ingin langsung membuat kiriman ke buyer.</span>
+                </span>
+              </label>
 
-              {/* Warning */}
-              <div className="flex items-start gap-2.5 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-xl p-4">
-                <Info className="w-4 h-4 text-[hsl(var(--warning))] flex-shrink-0 mt-0.5" />
-                <p className="text-xs text-[hsl(var(--warning))]">
-                  Quick Complete akan membuat semua data produksi secara otomatis dengan asumsi <strong>100% material diterima, 0 defect</strong>. Langkah yang sudah ada akan digunakan ulang (tidak digandakan).
-                </p>
-              </div>
-
-              {/* Actions */}
-              <div className="flex gap-3">
-                <button
-                  onClick={onClose}
-                  className="flex-1 px-4 py-2.5 border-2 border-border rounded-xl text-sm font-medium text-foreground/90 hover:bg-muted/60 transition-colors"
-                >
-                  Batal
-                </button>
-                <button
-                  onClick={handleRun}
-                  disabled={!canRun}
-                  data-testid="quick-complete-run-btn"
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] text-white text-sm font-bold hover:from-[hsl(var(--primary)/0.1)] hover:to-[hsl(var(--primary)/0.1)] disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg"
-                >
-                  <Zap className="w-4 h-4" />
-                  Jalankan Quick Complete
-                </button>
-              </div>
+              <Notice tone="warning" icon={Info}>
+                Selesaikan cepat membuat semua data produksi otomatis dengan anggapan <strong>bahan 100% diterima, tanpa cacat</strong>. Langkah yang sudah ada dipakai ulang (tidak digandakan).
+              </Notice>
             </>
           )}
 
           {/* ── RUNNING phase ── */}
           {(phase === 'running') && (
             <div className="space-y-3">
-              <div className="flex items-center justify-center gap-3 py-4">
-                <Loader2 className="w-6 h-6 text-[hsl(var(--primary))] animate-spin" />
-                <p className="text-sm font-semibold text-foreground/90">Memproses alur produksi...</p>
+              <div className="flex items-center justify-center gap-3 py-2">
+                <Loader2 className="w-5 h-5 text-[hsl(var(--primary))] animate-spin" />
+                <p className="text-sm font-medium text-foreground">Memproses alur produksi…</p>
               </div>
               <StepList stepStatuses={stepStatuses} currentStep={currentStep} skipBuyerShipment={skipBuyerShipment} />
             </div>
@@ -225,96 +178,54 @@ export default function QuickCompleteModal({ po, onClose, onSuccess }) {
           {/* ── RESULT phase ── */}
           {phase === 'result' && result && (
             <div className="space-y-4">
-              <div className="flex items-center gap-3 bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] rounded-xl p-4">
-                <CheckCircle2 className="w-7 h-7 text-[hsl(var(--success))] flex-shrink-0" />
-                <div>
-                  <p className="font-bold text-[hsl(var(--success))] text-lg">Berhasil!</p>
-                  <p className="text-sm text-[hsl(var(--success))]">{result.message}</p>
-                </div>
-              </div>
+              <Notice tone="success" icon={CheckCircle2} title="Berhasil">{result.message}</Notice>
               <StepList stepStatuses={stepStatuses} skipBuyerShipment={skipBuyerShipment} />
-              <div className="grid grid-cols-2 gap-3">
+              <dl className="grid grid-cols-2 gap-3 text-sm">
                 {[
-                  { label: 'Nomor Job', value: result.job_number },
-                  { label: 'Total Item', value: `${result.total_items} pcs` },
+                  { label: 'Nomor job', value: result.job_number },
+                  { label: 'Total barang', value: `${result.total_items} pcs` },
                 ].map(kv => (
-                  <div key={kv.label} className="bg-muted/40 border border-border rounded-xl p-3 text-center">
-                    <p className="text-xs text-muted-foreground">{kv.label}</p>
-                    <p className="font-bold text-foreground mt-1">{kv.value || '—'}</p>
+                  <div key={kv.label}>
+                    <dt className="text-xs text-muted-foreground">{kv.label}</dt>
+                    <dd className="font-semibold text-foreground">{kv.value || '—'}</dd>
                   </div>
                 ))}
-              </div>
-              <button
-                onClick={onClose}
-                className="w-full px-4 py-2.5 rounded-xl bg-gradient-to-r from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] text-white text-sm font-bold hover:from-[hsl(var(--primary)/0.1)] hover:to-[hsl(var(--primary)/0.1)] transition-all"
-                data-testid="quick-complete-done-btn"
-              >
-                Selesai
-              </button>
+              </dl>
             </div>
           )}
 
           {/* ── ERROR phase ── */}
           {phase === 'error' && (
-            <div className="space-y-4">
-              <div className="flex items-start gap-3 bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.35)] rounded-xl p-4">
-                <AlertTriangle className="w-6 h-6 text-[hsl(var(--destructive))] flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-bold text-[hsl(var(--destructive))]">Gagal</p>
-                  <p className="text-sm text-[hsl(var(--destructive))] mt-1">{error}</p>
-                </div>
-              </div>
-              <div className="flex gap-3">
-                <button onClick={onClose} className="flex-1 px-4 py-2.5 border-2 border-border rounded-xl text-sm font-medium text-foreground/90 hover:bg-muted/60">Tutup</button>
-                <button
-                  onClick={() => { setPhase('confirm'); setError(null); }}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[hsl(var(--primary))] text-white text-sm font-bold hover:bg-[hsl(var(--primary)/0.9)]"
-                >
-                  <RefreshCcw className="w-4 h-4" /> Coba Lagi
-                </button>
-              </div>
-            </div>
+            <Notice tone="danger" icon={AlertTriangle} title="Gagal">{error}</Notice>
           )}
-        </div>
-      </div>
-    </div>
+    </FormPopup>
   );
 }
 
 // ── Step list sub-component ───────────────────────────────────────────────────
 function StepList({ stepStatuses, currentStep, skipBuyerShipment }) {
   return (
-    <div className="border border-border rounded-xl overflow-hidden divide-y divide-border/60">
+    <div className="rounded-lg border border-[var(--glass-border)] divide-y divide-[var(--glass-border)]">
       {STEP_META.map(m => {
         const st = stepStatuses[m.step] || 'pending';
         const isSkipped = skipBuyerShipment && m.step === 6;
         const effectiveSt = isSkipped ? 'skipped' : st;
         const isCurrent = currentStep === m.step;
         const Icon = m.icon;
-        const badgeCls = STATUS_CLASS[effectiveSt] || STATUS_CLASS.pending;
         return (
-          <div
-            key={m.step}
-            className={`flex items-center gap-3 px-4 py-3 transition-colors ${
-              isCurrent ? 'bg-[hsl(var(--warning)/0.1)]' : 'bg-card'
-            }`}
-          >
-            <div className={`flex items-center justify-center w-7 h-7 rounded-full flex-shrink-0 border ${badgeCls}`}>
+          <div key={m.step} className={`flex items-center gap-3 px-3 py-2 ${isCurrent ? 'bg-[hsl(var(--warning)/0.08)]' : ''}`}>
+            <span className="flex items-center justify-center w-6 h-6 flex-shrink-0 text-muted-foreground">
               {isCurrent
                 ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 : effectiveSt === 'created' || effectiveSt === 'done'
-                  ? <Check className="w-3.5 h-3.5" />
+                  ? <Check className="w-3.5 h-3.5 text-[hsl(var(--success-text))]" />
                   : effectiveSt === 'skipped'
                     ? <SkipForward className="w-3.5 h-3.5" />
                     : <Icon className="w-3.5 h-3.5" />
               }
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-foreground truncate">{m.label}</p>
-            </div>
-            <span className={`text-xs px-2 py-0.5 rounded-full border font-medium flex-shrink-0 ${badgeCls}`}>
-              {isCurrent ? 'Memproses...' : STATUS_LABEL[effectiveSt]}
             </span>
+            <p className="flex-1 min-w-0 text-sm text-foreground truncate">{m.label}</p>
+            <StatusBadge status={effectiveSt} label={isCurrent ? 'Memproses…' : STATUS_LABEL[effectiveSt]} tone={isCurrent ? 'warning' : STATUS_TONE[effectiveSt]} />
           </div>
         );
       })}

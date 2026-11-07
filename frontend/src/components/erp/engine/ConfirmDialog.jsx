@@ -1,45 +1,32 @@
+/**
+ * ConfirmDialog (engine) — Standar UI/UX v2 (8 Nov 2026): tampil sama dengan `confirmDialog()` (ui/confirm-dialog):
+ * dialog aplikasi Radix (Esc/Batal menutup), tombol Hapus merah, tombol Lanjutkan utama.
+ * API lama tetap: <ConfirmDialog title message onConfirm onCancel type="danger|warning" confirmLabel? />
+ * Layar baru memakai `await confirmDialog({...})` langsung.
+ */
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { buttonVariants } from '@/components/ui/button';
 
-import { AlertTriangle } from 'lucide-react';
-
-export default function ConfirmDialog({ title, message, onConfirm, onCancel, type = 'danger' }) {
-  const styles = {
-    danger: {
-      icon: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]',
-      btn: 'bg-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.9)] text-white',
-      label: 'Hapus'
-    },
-    warning: {
-      icon: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]',
-      btn: 'bg-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.9)] text-white',
-      label: 'Lanjutkan'
-    }
-  };
-  const s = styles[type] || styles.danger;
-
+export default function ConfirmDialog({ title, message, onConfirm, onCancel, type = 'danger', confirmLabel }) {
+  const danger = type !== 'warning';
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50" onClick={onCancel} />
-      <div className="relative w-full max-w-sm bg-card rounded-2xl shadow-2xl p-6">
-        <div className={`w-12 h-12 rounded-full ${s.icon} flex items-center justify-center mx-auto mb-4`}>
-          <AlertTriangle className="w-6 h-6" />
-        </div>
-        <h3 className="text-lg font-bold text-foreground text-center">{title}</h3>
-        <p className="text-sm text-muted-foreground text-center mt-2 leading-relaxed">{message}</p>
-        <div className="flex gap-3 mt-6">
-          <button
-            onClick={onCancel}
-            className="flex-1 border border-border py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted/60 transition-colors"
-          >
-            Batal
-          </button>
-          <button
-            onClick={onConfirm}
-            className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors ${s.btn}`}
-          >
-            {s.label}
-          </button>
-        </div>
-      </div>
-    </div>
+    <AlertDialog open onOpenChange={(o) => { if (!o) onCancel?.(); }}>
+      <AlertDialogContent data-testid="engine-confirm-dialog">
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          {message && <AlertDialogDescription>{message}</AlertDialogDescription>}
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={() => onCancel?.()}>Batal</AlertDialogCancel>
+          <AlertDialogAction onClick={() => onConfirm?.()}
+            className={danger ? buttonVariants({ variant: 'destructive' }) : undefined}>
+            {confirmLabel || (danger ? 'Hapus' : 'Lanjutkan')}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
