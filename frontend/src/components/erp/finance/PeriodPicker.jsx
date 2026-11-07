@@ -9,7 +9,7 @@
  *   <PeriodPicker value={period} onChange={setPeriod} />
  *   // period = { preset, from: 'YYYY-MM-DD', to: 'YYYY-MM-DD' }
  */
-import { GlassInput } from '@/components/ui/glass';
+import DatePicker from '@/components/ui/date-picker';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { formatDateID } from '@/lib/format';
 import { addMonthsYM, lastMonthPeriodWIB, monthEndISO, monthStartWIB, thisMonthWIB, todayWIB, yearStartWIB } from '@/lib/waktu';
@@ -70,11 +70,12 @@ export default function PeriodPicker({ value, onChange, presets = PERIOD_PRESETS
       </SmartNativeSelect>
       {cur.preset === 'custom' ? (
         <>
-          <GlassInput type="date" value={cur.from} onChange={(e) => onChange({ ...cur, from: e.target.value })}
-                      className="h-9 w-36" aria-label="Dari tanggal" data-testid={`${testId}-from`} />
+          {/* v2: satu pemilih tanggal aplikasi (dulu input tanggal bawaan peramban) */}
+          <div className="w-40"><DatePicker value={cur.from} max={cur.to || undefined} bolehKosong={false}
+            onChange={(v) => onChange({ ...cur, from: v })} testId={`${testId}-from`} /></div>
           <span className="text-xs text-muted-foreground">s/d</span>
-          <GlassInput type="date" value={cur.to} onChange={(e) => onChange({ ...cur, to: e.target.value })}
-                      className="h-9 w-36" aria-label="Sampai tanggal" data-testid={`${testId}-to`} />
+          <div className="w-40"><DatePicker value={cur.to} min={cur.from || undefined} bolehKosong={false}
+            onChange={(v) => onChange({ ...cur, to: v })} testId={`${testId}-to`} /></div>
         </>
       ) : cur.preset === 'all' ? null : (
         <span className="text-xs text-muted-foreground" data-testid={`${testId}-range`}>{formatDateID(cur.from)} – {formatDateID(cur.to)}</span>
