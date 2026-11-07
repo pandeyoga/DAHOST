@@ -492,9 +492,9 @@ export default function CatalogItemsView({
         <p className="text-xs text-muted-foreground">{r.hpp_source_label || 'belum ada'}</p>
       </div>) },
     { kunci: 'marjin', label: 'Marjin', rata: 'kanan', isi: (r) => <Marjin r={r} /> },
-    { kunci: 'stok', label: 'Stok jual', rata: 'kanan', isi: (r) => <StokJual r={r} /> },
-    { kunci: 'tautan', label: 'Tautan master', isi: (r) => (r.fg_code
-      ? <span className="text-sm">{r.fg_code}</span>
+    // Stok jual + tautan master dalam satu kolom: item belum tertaut memang tidak punya stok jual.
+    { kunci: 'stok', label: 'Stok jual', rata: 'kanan', isi: (r) => (r.fg_code
+      ? <span title={`Tautan master: ${r.fg_code}`}><StokJual r={r} /></span>
       : <StatusBadge status="belum" label="Belum tertaut" tone="warning" />) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => aksiBaris(r) },
   ];
