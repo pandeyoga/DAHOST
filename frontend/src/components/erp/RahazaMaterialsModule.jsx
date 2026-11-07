@@ -299,7 +299,7 @@ export default function RahazaMaterialsModule({ token }) {
       </>}
       footer={pagination && pagination.total_pages > 1 ? <PaginationBar pagination={pagination} onPageChange={setPage} /> : null}>
       {loading && rows.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat material…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat material…</p>
       ) : (
         <TabelData kolom={kolom} baris={rows} testId="mat-table"
           kosong={<EmptyState title={filterLowStock ? 'Tidak ada material yang stoknya menipis' : 'Belum ada material'}

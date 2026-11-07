@@ -164,7 +164,7 @@ export default function MasterDataCRUD({
         )}
       </> : null}>
       {loading && rows.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat data…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat data…</p>
       ) : (
         <div className="overflow-x-auto">
           <DataTable

@@ -17,7 +17,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { MinusCircle, RefreshCw, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import FilterChips from '@/components/ui/filter-chips';
 import { useToast } from '@/hooks/use-toast';
 import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
@@ -234,17 +234,17 @@ export default function RahazaFGInventoryModule({ token }) {
   ) : null;
 
   return (
-    <Tabs value={activeTab} onValueChange={setActiveTab}>
       <PageLayout testId="fg-inventory-page" title="Produk jadi"
         subtitle="Stok barang jadi dari produksi internal dan Customer PO, beserta pengeluarannya."
         actions={<Button onClick={() => bukaForm()} data-testid="fg-issue-btn"><MinusCircle />Keluarkan stok</Button>}
         filters={<>
-          <TabsList>
-            <TabsTrigger value="stock" data-testid="fg-tab-stock">Stok</TabsTrigger>
-            <TabsTrigger value="matrix" data-testid="fg-tab-matrix">Matriks ukuran × warna</TabsTrigger>
-            <TabsTrigger value="issues" data-testid="fg-tab-issues">Pengeluaran</TabsTrigger>
-            <TabsTrigger value="movements" data-testid="fg-tab-movements">Riwayat</TabsTrigger>
-          </TabsList>
+          <FilterChips value={activeTab} onChange={setActiveTab} hideWhenEmpty={false} testId="fg-tab" ariaLabel="Tampilan"
+            options={[
+              { key: 'stock', label: 'Stok' },
+              { key: 'matrix', label: 'Matriks ukuran × warna' },
+              { key: 'issues', label: 'Pengeluaran' },
+              { key: 'movements', label: 'Riwayat' },
+            ]} />
           {activeTab === 'stock' && (
             <div className="relative w-full sm:w-64">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -273,18 +273,18 @@ export default function RahazaFGInventoryModule({ token }) {
         ) : null}>
 
         {/* ── STOK ── */}
-        <TabsContent value="stock" className="mt-0">
+        {activeTab === 'stock' && (<>
           {loading && items.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">Memuat produk jadi…</p>
+            <p className="py-6 text-center text-sm text-muted-foreground">Memuat produk jadi…</p>
           ) : (
             <TabelData kolom={kolomStok} baris={itemsPg.paged} testId="fg-stock-table"
               kosong={<EmptyState title={search ? 'Tidak ada produk jadi yang cocok' : 'Belum ada produk jadi'}
                 description={search ? 'Ubah kata pencarian.' : 'Otomatis muncul saat WO selesai atau hasil packing dicatat.'} />} />
           )}
-        </TabsContent>
+        </>)}
 
         {/* ── MATRIKS (P1-WH-3) ── */}
-        <TabsContent value="matrix" className="mt-0">
+        {activeTab === 'matrix' && (<>
           <FGStockMatrixView
             token={token}
             onCellAction={(action, cell) => {
@@ -294,22 +294,22 @@ export default function RahazaFGInventoryModule({ token }) {
               }
             }}
           />
-        </TabsContent>
+        </>)}
 
         {/* ── PENGELUARAN ── */}
-        <TabsContent value="issues" className="mt-0 space-y-2">
+        {activeTab === 'issues' && (<div className="space-y-2">
           {issues.length > 0 && <p className="text-xs text-muted-foreground">Menampilkan 50 pengeluaran terakhir.</p>}
           <TabelData kolom={kolomPengeluaran} baris={issuesPg.paged} testId="fg-issues-table"
             kosong={<EmptyState title="Belum ada pengeluaran stok produk jadi"
               action={<Button variant="outline" onClick={() => bukaForm()}><MinusCircle />Keluarkan stok</Button>} />} />
-        </TabsContent>
+        </div>)}
 
         {/* ── RIWAYAT ── */}
-        <TabsContent value="movements" className="mt-0 space-y-2">
+        {activeTab === 'movements' && (<div className="space-y-2">
           {movements.length > 0 && <p className="text-xs text-muted-foreground">Menampilkan 100 pergerakan terakhir.</p>}
           <TabelData kolom={kolomRiwayat} baris={movementsPg.paged} testId="fg-movements-table"
             kosong={<EmptyState title="Belum ada pergerakan stok produk jadi" />} />
-        </TabsContent>
+        </div>)}
 
         {/* ── FORM KELUARKAN STOK (popup) ── */}
         <FormPopup open={showIssueForm} onClose={() => { setShowIssueForm(false); setForm(EMPTY_FORM); }} ukuran="panjang"
@@ -379,6 +379,5 @@ export default function RahazaFGInventoryModule({ token }) {
             testId="fg-issue-docnum" label="Nomor pengeluaran barang jadi" />
         </FormPopup>
       </PageLayout>
-    </Tabs>
   );
 }

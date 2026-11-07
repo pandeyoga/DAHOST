@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import FilterChips from '@/components/ui/filter-chips';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import TabelData from '@/components/ui/tabel-data';
@@ -191,7 +191,6 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
   ];
 
   return (
-    <Tabs value={tab} onValueChange={setTab}>
       <PageLayout testId="shopping-list-page" title="Belanja mingguan"
         subtitle="Barang yang perlu dibeli minggu ini, dihitung dari ambang minimum / titik pesan ulang dan stok semua lokasi."
         actions={
@@ -200,10 +199,8 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
           </Button>
         }
         filters={<>
-          <TabsList>
-            <TabsTrigger value="list" data-testid="shopping-tab-list">Perlu dibeli</TabsTrigger>
-            <TabsTrigger value="history" data-testid="shopping-tab-history">PR dari layar ini</TabsTrigger>
-          </TabsList>
+          <FilterChips value={tab} onChange={setTab} hideWhenEmpty={false} testId="shopping-tab" ariaLabel="Tampilan"
+            options={[{ key: 'list', label: 'Perlu dibeli' }, { key: 'history', label: 'PR dari layar ini' }]} />
           {tab === 'list' && <>
             <div className="relative w-full sm:w-64">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -297,9 +294,9 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
           </div>
         ) : null}>
 
-        <TabsContent value="list" className="mt-0 space-y-3">
+        {tab === 'list' && (<div className="space-y-3">
           {loading && rows.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">Memuat daftar belanja…</p>
+            <p className="py-6 text-center text-sm text-muted-foreground">Memuat daftar belanja…</p>
           ) : rows.length === 0 ? (
             <div data-testid="shopping-empty">
               {summary && summary.with_threshold === 0 ? (
@@ -425,9 +422,9 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
               </span>
             </p>
           )}
-        </TabsContent>
+        </div>)}
 
-        <TabsContent value="history" className="mt-0 space-y-2">
+        {tab === 'history' && (<div className="space-y-2">
           <p className="text-sm text-muted-foreground">
             {history?.summary
               ? `${history.summary.requests} PR · total ${rp(history.summary.total_value)}`
@@ -437,7 +434,7 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
             <TabelData kolom={kolomRiwayat} baris={history.items || []} kunci={(h) => h.id} testId="shopping-history-table"
               kosong={<EmptyState title="Belum ada PR yang dibuat dari Belanja mingguan" />} />
           )}
-        </TabsContent>
+        </div>)}
 
         <FormPopup open={dialogOpen} onClose={() => setDialogOpen(false)} ukuran="panjang" testId="shopping-pr-dialog"
           judul={`Buat permintaan pengadaan · ${chosen.length} barang`}
@@ -487,6 +484,5 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
           </div>
         </FormPopup>
       </PageLayout>
-    </Tabs>
   );
 }

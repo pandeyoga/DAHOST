@@ -244,7 +244,7 @@ export default function MaterialCostHistoryModule({ token }) {
       )}
 
       {loadingData && items.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat riwayat harga…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat riwayat harga…</p>
       ) : (
         <TabelData kolom={kolom} baris={items} testId="cost-history-table"
           kosong={

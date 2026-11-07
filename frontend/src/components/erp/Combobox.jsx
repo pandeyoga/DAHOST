@@ -16,7 +16,7 @@ import {
 import { cn } from '@/lib/utils';
 
 /* PT Rahaza ERP — Combobox (Sprint 27)
-   Drop-in replacement for native <select>.
+   Pengganti pilihan bawaan peramban (select).
 
    Features:
    - Searchable filter

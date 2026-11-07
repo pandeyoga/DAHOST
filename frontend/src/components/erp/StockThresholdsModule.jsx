@@ -383,7 +383,7 @@ export default function StockThresholdsModule({ token, onNavigate }) {
         <PaginationLite page={pg.page} totalPages={pg.totalPages} total={pg.total} pageSize={pg.pageSize} onPageChange={pg.setPage} />
       ) : null}>
       {loading && rows.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat ambang stok…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat ambang stok…</p>
       ) : rows.length === 0 ? (
         <EmptyState title="Tidak ada barang pada saringan ini" description="Ubah jenis, status, atau kata pencarian." />
       ) : (

@@ -250,7 +250,7 @@ export default function FGStockMatrixView({ token, onCellAction }) {
       ) : null}
 
       {loading && (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat matriks…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat matriks…</p>
       )}
       {!loading && filteredModels.length === 0 && (
         <EmptyState
