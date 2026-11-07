@@ -1,66 +1,87 @@
 /**
- * HROnboardingModule — Onboarding Karyawan (Improved)
- * Features:
- *  - Custom activities: add/delete tasks to running checklist
- *  - Template builder: full CRUD with task editor
- *  - Task completion with notes
- *  - Checklist status management (pause/resume)
- *  - Rich checklist detail with descriptions & assigned_to
+ * HROnboardingModule — Onboarding Karyawan
+ * Fitur:
+ *  - Aktivitas kustom: tambah/hapus tugas di checklist yang berjalan
+ *  - Pembuat template: buat/ubah/hapus template beserta daftar tugasnya
+ *  - Selesaikan tugas dengan catatan
+ *  - Status checklist (tunda/lanjutkan/tandai selesai)
+ *
+ * Standar UI/UX v2 (8 Nov 2026): tab halaman (HubTabs) + cetakan PageLayout, checklist & template = tabel
+ * + unduh Excel/CSV (dulu kartu besar berulang), detail checklist = DetailPopup, semua form = FormPopup,
+ * tenggat = DatePicker (dulu input tanggal bawaan), kartu angka StatTile, warna token, bahasa Indonesia.
+ * Daftar checklist dulu diam-diam 50 pertama — kini semua halaman.
  */
-import { useState, useEffect, useMemo, useRef } from 'react';
-import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  UserPlus, CheckCircle2, Circle, AlertCircle, RefreshCw, Plus, X,
-  Clock, Users, ClipboardList, User, Pencil, Trash2, Calendar,
-  BarChart3, BookOpen, ChevronDown, ChevronRight, Settings,
-  GripVertical, Check, PlayCircle, PauseCircle, SquareCheckBig
+  Check, ChevronDown, ChevronRight, Pencil, PauseCircle, PlayCircle, Plus, RefreshCw, Search,
+  SquareCheckBig, Trash2, X,
 } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker from '@/components/ui/date-picker';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { cn } from '@/lib/utils';
+import { formatDateID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import HubTabs from './hubs/HubTabs';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import { EmployeeSelect, useActiveEmployees } from './hr/hrPickers';
 
 const BASE = process.env.REACT_APP_BACKEND_URL;
 const api = (path, opts = {}) =>
   fetch(`${BASE}/api/dewi/onboarding${path}`, { cache: 'no-store', ...opts });
 
-const fmtDate = d =>
-  d ? new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
+const fmtDate = (d) => (d ? formatDateID(d) : '—');
 
 const STATUS_CFG = {
-  active:    { label: 'Aktif',    color: 'bg-blue-50 dark:bg-blue-400/15 text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-400/20' },
-  completed: { label: 'Selesai', color: 'bg-emerald-50 dark:bg-emerald-400/15 text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-400/20' },
-  paused:    { label: 'Ditunda', color: 'bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-400/20' },
-  in_progress: { label: 'Berjalan', color: 'bg-blue-50 dark:bg-blue-400/15 text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-400/20' },
+  active:      { label: 'Aktif',    tone: 'info' },
+  completed:   { label: 'Selesai',  tone: 'success' },
+  paused:      { label: 'Ditunda',  tone: 'warning' },
+  in_progress: { label: 'Berjalan', tone: 'info' },
 };
+const labelStatus = (s) => (STATUS_CFG[s] || STATUS_CFG.active).label;
+function Status({ status }) {
+  const c = STATUS_CFG[status] || STATUS_CFG.active;
+  return <StatusBadge status={status} label={c.label} tone={c.tone} />;
+}
 
 const CATEGORIES = ['HR', 'IT', 'Legal', 'Keselamatan', 'Training', 'Administrasi', 'Kustom', 'Umum'];
-const CAT_COLORS = { HR: '#6366f1', IT: '#10b981', Legal: '#f59e0b', Keselamatan: '#ef4444', Training: '#8b5cf6', Administrasi: '#14b8a6', Kustom: '#f97316', Umum: '#64748b', default: '#64748b' };
-
-function StatusBadge({ status }) {
-  const c = STATUS_CFG[status] || STATUS_CFG.active;
-  return <span className={`text-xs px-2 py-0.5 rounded-full font-medium border ${c.color}`}>{c.label}</span>;
-}
 
 function ProgressBar({ pct }) {
   return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-xs">
-        <span className="text-muted-foreground">Progress</span>
-        <span className="font-semibold">{pct || 0}%</span>
+    <div className="flex items-center gap-2">
+      <div className="h-2 min-w-16 flex-1 overflow-hidden rounded-full bg-[var(--glass-border)]">
+        <div className={cn('h-full rounded-full transition-all duration-500', pct >= 100 ? 'bg-[hsl(var(--success))]' : 'bg-primary')}
+          style={{ width: `${pct || 0}%` }} />
       </div>
-      <div className="h-2 rounded-full bg-[var(--glass-border)] overflow-hidden">
-        <div className="h-full rounded-full transition-all duration-500"
-          style={{ width: `${pct || 0}%`, background: pct >= 100 ? '#10b981' : 'hsl(var(--primary))' }} />
-      </div>
+      <span className="w-10 text-right text-sm font-medium tabular-nums">{pct || 0}%</span>
     </div>
   );
 }
 
+/** Ambil semua checklist (server membatasi 200 per halaman). */
+async function ambilSemuaChecklist(headers) {
+  const semua = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const r = await api(`/checklists?limit=200&page=${page}`, { headers });
+    const d = await r.json();
+    const rows = d.checklists || [];
+    semua.push(...rows);
+    if (rows.length < 200 || (d.total != null && semua.length >= d.total)) break;
+  }
+  return semua;
+}
+
 // ────────────────────────────────────────────────────────────────────────────
-// TASK COMPLETION NOTE MODAL
+// SELESAIKAN TUGAS (form popup)
 // ────────────────────────────────────────────────────────────────────────────
 function TaskNoteModal({ task, checklistId, headers, onSuccess, onClose }) {
   const [notes, setNotes] = useState('');
@@ -80,37 +101,19 @@ function TaskNoteModal({ task, checklistId, headers, onSuccess, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-[var(--card-surface)] rounded-2xl border border-[var(--glass-border)] shadow-2xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
-        <div className="p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-foreground">Selesaikan Tugas</h3>
-            <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-[var(--nav-pill-active)] flex items-center justify-center"><X className="w-4 h-4" /></button>
-          </div>
-          <div className="p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)] mb-3">
-            <p className="text-sm font-medium text-foreground">{task.title}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">{task.category} · {task.assigned_to && `PIC: ${task.assigned_to}`}</p>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1">Catatan Penyelesaian (opsional)</label>
-            <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Apa yang dilakukan, temuan, atau kendala..."
-              className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm h-20 resize-none" />
-          </div>
-          <div className="flex gap-3 mt-4">
-            <button onClick={onClose} className="flex-1 h-9 rounded-xl border border-[var(--glass-border)] text-sm text-muted-foreground">Batal</button>
-            <button onClick={handleComplete} disabled={saving}
-              className="flex-1 h-9 rounded-xl bg-emerald-500 text-white text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-1.5">
-              <Check className="w-4 h-4" />{saving ? '...' : 'Selesai'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+    <FormPopup open onClose={onClose} ukuran="pendek" onSimpan={handleComplete} menyimpan={saving}
+      judul="Selesaikan tugas" labelSimpan="Selesai" testId="onb-task-done"
+      keterangan={`${task.title} · ${task.category || 'Umum'}${task.assigned_to ? ` · PIC: ${task.assigned_to}` : ''}`}>
+      <Isian label="Catatan penyelesaian (opsional)" htmlFor="onb-catatan">
+        <Textarea id="onb-catatan" rows={3} value={notes} onChange={e => setNotes(e.target.value)}
+          placeholder="Apa yang dilakukan, temuan, atau kendala" />
+      </Isian>
+    </FormPopup>
   );
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// ADD CUSTOM TASK MODAL
+// TAMBAH AKTIVITAS KUSTOM (form popup)
 // ────────────────────────────────────────────────────────────────────────────
 function AddTaskModal({ checklistId, headers, onSuccess, onClose }) {
   const [form, setForm] = useState({ title: '', description: '', category: 'Kustom', assigned_to: '', day: 0, due_date: '' });
@@ -133,66 +136,39 @@ function AddTaskModal({ checklistId, headers, onSuccess, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-[var(--card-surface)] rounded-2xl border border-[var(--glass-border)] shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
-        <div className="p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-foreground">Tambah Aktivitas Kustom</h3>
-            <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-[var(--nav-pill-active)] flex items-center justify-center"><X className="w-4 h-4" /></button>
-          </div>
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Nama Aktivitas *</label>
-              <input value={form.title} onChange={e => setForm(p => ({...p, title: e.target.value}))} placeholder="Contoh: Meeting perkenalan dengan tim Finance"
-                className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" autoFocus />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Deskripsi</label>
-              <textarea value={form.description} onChange={e => setForm(p => ({...p, description: e.target.value}))} placeholder="Penjelasan detail aktivitas..."
-                className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm h-16 resize-none" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Kategori</label>
-                <SmartNativeSelect searchable={false} value={form.category} onChange={e => setForm(p => ({...p, category: e.target.value}))}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                  {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                </SmartNativeSelect>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Hari ke-</label>
-                <input type="number" min={0} value={form.day} onChange={e => setForm(p => ({...p, day: +e.target.value}))}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">PIC / Penanggung Jawab</label>
-                <input value={form.assigned_to} onChange={e => setForm(p => ({...p, assigned_to: e.target.value}))} placeholder="HR / IT / Manager / Nama"
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Deadline (Tanggal)</label>
-                <GlassInput type="date" value={form.due_date} onChange={e => setForm(p => ({...p, due_date: e.target.value}))}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-              </div>
-            </div>
-          </div>
-          <div className="flex gap-3 mt-5">
-            <button onClick={onClose} className="flex-1 h-10 rounded-xl border border-[var(--glass-border)] text-sm text-muted-foreground">Batal</button>
-            <button onClick={handleSave} disabled={saving || !form.title.trim()}
-              className="flex-1 h-10 rounded-xl bg-[hsl(var(--primary))] text-foreground text-sm font-medium disabled:opacity-50">
-              {saving ? 'Menyimpan...' : 'Tambah Aktivitas'}
-            </button>
-          </div>
-        </div>
+    <FormPopup open onClose={onClose} ukuran="pendek" onSimpan={handleSave} menyimpan={saving} bisaSimpan={!!form.title.trim()}
+      judul="Tambah aktivitas kustom" labelSimpan="Tambah aktivitas" testId="onb-add-task">
+      <Isian label="Nama aktivitas" wajib htmlFor="onb-akt-nama">
+        <Input id="onb-akt-nama" autoFocus value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))}
+          placeholder="Contoh: Perkenalan dengan tim keuangan" />
+      </Isian>
+      <Isian label="Deskripsi" htmlFor="onb-akt-desk">
+        <Textarea id="onb-akt-desk" rows={2} value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
+          placeholder="Penjelasan aktivitas" />
+      </Isian>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Kategori">
+          <SmartNativeSelect searchable={false} value={form.category} onChange={e => setForm(p => ({ ...p, category: e.target.value }))}>
+            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Hari ke-" htmlFor="onb-akt-hari">
+          <Input id="onb-akt-hari" type="number" min={0} value={form.day} onChange={e => setForm(p => ({ ...p, day: +e.target.value }))} />
+        </Isian>
+        <Isian label="Penanggung jawab" htmlFor="onb-akt-pic">
+          <Input id="onb-akt-pic" value={form.assigned_to} onChange={e => setForm(p => ({ ...p, assigned_to: e.target.value }))}
+            placeholder="SDM / IT / atasan / nama" />
+        </Isian>
+        <Isian label="Tenggat" petunjuk="Kosong = mengikuti hari ke-.">
+          <DatePicker value={form.due_date} onChange={v => setForm(p => ({ ...p, due_date: v }))} placeholder="Tanpa tenggat" testId="onb-akt-tenggat" />
+        </Isian>
       </div>
-    </div>
+    </FormPopup>
   );
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// CHECKLIST DETAIL
+// DETAIL CHECKLIST (popup)
 // ────────────────────────────────────────────────────────────────────────────
 function ChecklistDetail({ cl: initCl, headers, onUpdate, onClose }) {
   const [cl, setCl] = useState(initCl);
@@ -259,149 +235,92 @@ function ChecklistDetail({ cl: initCl, headers, onUpdate, onClose }) {
   const totalTasks = (cl.tasks || []).length;
 
   return (
-    <div className="space-y-5">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h2 className="text-xl font-bold text-foreground">{cl.employee_name}</h2>
-          <p className="text-sm text-muted-foreground">{cl.employee_position} · {cl.employee_dept}</p>
-        </div>
-        <StatusBadge status={cl.status} />
-      </div>
-
+    <DetailPopup open onClose={onClose} testId="onb-detail" judul={cl.employee_name || 'Onboarding'}
+      keterangan={[cl.employee_position, cl.employee_dept].filter(Boolean).join(' · ')}
+      status={<Status status={cl.status} />}
+      aksi={<>
+        {cl.status === 'active' || cl.status === 'in_progress' ? (
+          <Button size="sm" variant="outline" onClick={() => handleStatusChange('paused')} disabled={savingStatus}>
+            <PauseCircle />Tunda
+          </Button>
+        ) : cl.status === 'paused' ? (
+          <Button size="sm" variant="outline" onClick={() => handleStatusChange('active')} disabled={savingStatus}>
+            <PlayCircle />Lanjutkan
+          </Button>
+        ) : null}
+        {cl.status !== 'completed' && cl.progress_pct === 100 && (
+          <Button size="sm" variant="success" onClick={() => handleStatusChange('completed')} disabled={savingStatus}>
+            <SquareCheckBig />Tandai selesai
+          </Button>
+        )}
+        <Button size="sm" onClick={() => setAddingTask(true)} data-testid="onb-add-task-btn"><Plus />Tambah aktivitas</Button>
+      </>}>
       <ProgressBar pct={cl.progress_pct} />
+      <dl className="divide-y divide-[var(--glass-border)]">
+        <BarisDetail label="Tugas selesai">{doneTasks} dari {totalTasks}</BarisDetail>
+        <BarisDetail label="Buddy">{cl.buddy || '—'}</BarisDetail>
+        {cl.supervisor && <BarisDetail label="Supervisor">{cl.supervisor}</BarisDetail>}
+        <BarisDetail label="Mulai">{fmtDate(cl.start_date)}</BarisDetail>
+        <BarisDetail label="Target selesai">{fmtDate(cl.target_completion)}</BarisDetail>
+      </dl>
 
-      {/* Stats grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
-        <div className="p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-          <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400">{doneTasks}</p>
-          <p className="text-xs text-muted-foreground">Selesai</p>
-        </div>
-        <div className="p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-          <p className="text-lg font-bold">{totalTasks}</p>
-          <p className="text-xs text-muted-foreground">Total Tugas</p>
-        </div>
-        <div className="p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-          <p className="text-sm font-medium">{cl.buddy || '—'}</p>
-          <p className="text-xs text-muted-foreground">Buddy</p>
-        </div>
-        <div className="p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-          <p className="text-sm font-medium">{fmtDate(cl.target_completion)}</p>
-          <p className="text-xs text-muted-foreground">Target</p>
-        </div>
-      </div>
-
-      {/* Checklist Controls */}
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-2">
-          {cl.status === 'active' || cl.status === 'in_progress' ? (
-            <button onClick={() => handleStatusChange('paused')} disabled={savingStatus}
-              className="h-8 px-3 rounded-lg border border-amber-300 dark:border-amber-400/30 text-amber-700 dark:text-amber-400 text-xs flex items-center gap-1.5 hover:bg-amber-50 dark:hover:bg-amber-400/10 disabled:opacity-50">
-              <PauseCircle className="w-3.5 h-3.5" />Tunda
-            </button>
-          ) : cl.status === 'paused' ? (
-            <button onClick={() => handleStatusChange('active')} disabled={savingStatus}
-              className="h-8 px-3 rounded-lg border border-blue-300 dark:border-blue-400/30 text-blue-600 dark:text-blue-400 text-xs flex items-center gap-1.5 hover:bg-blue-50 dark:hover:bg-blue-400/10 disabled:opacity-50">
-              <PlayCircle className="w-3.5 h-3.5" />Lanjutkan
-            </button>
-          ) : null}
-          {cl.status !== 'completed' && cl.progress_pct === 100 && (
-            <button onClick={() => handleStatusChange('completed')} disabled={savingStatus}
-              className="h-8 px-3 rounded-lg border border-emerald-300 dark:border-emerald-400/30 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-1.5 hover:bg-emerald-50 dark:hover:bg-emerald-400/10 disabled:opacity-50">
-              <SquareCheckBig className="w-3.5 h-3.5" />Tandai Selesai
-            </button>
-          )}
-        </div>
-        <button onClick={() => setAddingTask(true)}
-          className="h-8 px-3 rounded-lg bg-[hsl(var(--primary))] text-foreground text-xs font-medium flex items-center gap-1.5 hover:opacity-90">
-          <Plus className="w-3.5 h-3.5" />Tambah Aktivitas
-        </button>
-      </div>
-
-      {/* Tasks by Category */}
+      {/* Tugas per kategori */}
       {Object.entries(byCategory).map(([cat, tasks]) => (
-        <div key={cat}>
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-2 h-2 rounded-full" style={{ background: CAT_COLORS[cat] || CAT_COLORS.default }} />
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{cat}</span>
-            <span className="text-xs text-muted-foreground">({tasks.filter(t => t.status === 'done').length}/{tasks.length})</span>
-          </div>
-          <div className="space-y-1.5">
+        <div key={cat} className="space-y-1.5">
+          <p className="text-sm font-medium text-foreground">
+            {cat} <span className="font-normal text-muted-foreground">({tasks.filter(t => t.status === 'done').length}/{tasks.length})</span>
+          </p>
+          <ul className="divide-y divide-[var(--glass-border)] rounded-lg border border-[var(--glass-border)]">
             {tasks.map(t => {
               const isExpanded = expandedTask === t.task_id;
+              const selesai = t.status === 'done';
+              const lewat = !selesai && t.due_date && new Date(t.due_date) < new Date();
               return (
-                <div key={t.task_id}
-                  className={`rounded-xl border transition-all ${t.status === 'done' ? 'border-emerald-200 dark:border-emerald-500/20 bg-emerald-50/50 dark:bg-emerald-500/5' : 'border-[var(--glass-border)] bg-[var(--glass-bg)]'}`}>
-                  <div className="flex items-center gap-3 p-3">
-                    {/* Toggle checkbox */}
-                    <button onClick={() => handleToggleTask(t)}
-                      className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 transition-all"
-                      style={{ background: t.status === 'done' ? '#10b98120' : 'transparent', border: `2px solid ${t.status === 'done' ? '#10b981' : '#475569'}` }}>
-                      {t.status === 'done' && <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />}
-                    </button>
-
-                    {/* Title & meta */}
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-sm ${t.status === 'done' ? 'line-through text-muted-foreground' : 'text-foreground'}`}>{t.title}</p>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
+                <li key={t.task_id} data-testid={`onb-task-${t.task_id}`}>
+                  <div className="flex items-center gap-2 px-2 py-2">
+                    <Button variant="ghost" size="icon-sm" onClick={() => handleToggleTask(t)}
+                      aria-label={selesai ? 'Tandai belum selesai' : 'Tandai selesai'} title={selesai ? 'Tandai belum selesai' : 'Tandai selesai'}
+                      className={cn('rounded-full border-2', selesai ? 'border-[hsl(var(--success))] text-[hsl(var(--success-text))]' : 'border-[var(--glass-border)]')}>
+                      {selesai && <Check />}
+                    </Button>
+                    <div className="min-w-0 flex-1">
+                      <p className={cn('text-sm', selesai ? 'text-muted-foreground line-through' : 'text-foreground')}>{t.title}</p>
+                      <p className="flex flex-wrap gap-x-2 text-xs text-muted-foreground">
                         <span>Hari ke-{t.day}</span>
-                        {t.assigned_to && <span className="flex items-center gap-0.5"><User className="w-3 h-3" />{t.assigned_to}</span>}
-                        {t.due_date && (
-                          <span className={`flex items-center gap-0.5 ${
-                            t.status !== 'done' && new Date(t.due_date) < new Date()
-                              ? 'text-red-500 dark:text-red-400 font-medium'
-                              : ''
-                          }`}>
-                            <Calendar className="w-3 h-3" />{fmtDate(t.due_date)}
-                          </span>
-                        )}
-                        {t.is_custom && <span className="px-1.5 py-0.5 rounded-full bg-orange-100 dark:bg-orange-400/10 text-orange-700 dark:text-orange-400">Kustom</span>}
-                        {t.status === 'done' && t.completed_at && <span className="text-emerald-600 dark:text-emerald-400">· Selesai {fmtDate(t.completed_at)}</span>}
-                      </div>
+                        {t.assigned_to && <span>PIC: {t.assigned_to}</span>}
+                        {t.due_date && <span className={lewat ? 'font-medium text-[hsl(var(--danger-text))]' : ''}>Tenggat {fmtDate(t.due_date)}</span>}
+                        {t.is_custom && <span>Kustom</span>}
+                        {selesai && t.completed_at && <span className="text-[hsl(var(--success-text))]">Selesai {fmtDate(t.completed_at)}</span>}
+                      </p>
                     </div>
-
-                    {/* Expand & Delete */}
-                    <div className="flex items-center gap-1 shrink-0">
-                      {(t.description || t.notes || t.completed_by) && (
-                        <button onClick={() => setExpandedTask(isExpanded ? null : t.task_id)}
-                          className="w-6 h-6 rounded-md hover:bg-foreground/10 flex items-center justify-center text-muted-foreground">
-                          {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                        </button>
-                      )}
-                      {t.is_custom && (
-                        <button onClick={() => handleDeleteTask(t)}
-                          className="w-6 h-6 rounded-md hover:bg-red-100 dark:hover:bg-red-400/10 flex items-center justify-center text-muted-foreground hover:text-red-600 dark:hover:text-red-400">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
+                    {(t.description || t.notes || t.completed_by) && (
+                      <Button variant="ghost" size="icon-sm" onClick={() => setExpandedTask(isExpanded ? null : t.task_id)}
+                        aria-label={isExpanded ? 'Tutup rincian' : 'Lihat rincian'} title={isExpanded ? 'Tutup rincian' : 'Lihat rincian'}>
+                        {isExpanded ? <ChevronDown /> : <ChevronRight />}
+                      </Button>
+                    )}
+                    {t.is_custom && (
+                      <Button variant="ghost" size="icon-sm" onClick={() => handleDeleteTask(t)} className="text-[hsl(var(--danger-text))]"
+                        aria-label="Hapus aktivitas" title="Hapus aktivitas">
+                        <Trash2 />
+                      </Button>
+                    )}
                   </div>
-
-                  {/* Expanded detail */}
                   {isExpanded && (
-                    <div className="px-3 pb-3 pt-0 ml-9 space-y-1.5">
-                      {t.description && (
-                        <div className="text-xs text-muted-foreground bg-[var(--glass-bg)] rounded-lg px-3 py-2 border border-[var(--glass-border)]">
-                          {t.description}
-                        </div>
-                      )}
-                      {t.notes && (
-                        <div className="text-xs bg-emerald-50 dark:bg-emerald-400/5 rounded-lg px-3 py-2 border border-emerald-200 dark:border-emerald-400/20">
-                          <span className="text-emerald-700 dark:text-emerald-400 font-medium">Catatan: </span>
-                          <span className="text-emerald-700 dark:text-emerald-300">{t.notes}</span>
-                        </div>
-                      )}
+                    <div className="space-y-1 px-12 pb-2 text-sm">
+                      {t.description && <p className="text-muted-foreground">{t.description}</p>}
+                      {t.notes && <p><span className="font-medium text-[hsl(var(--success-text))]">Catatan: </span>{t.notes}</p>}
                       {t.completed_by && <p className="text-xs text-muted-foreground">Diselesaikan oleh: {t.completed_by}</p>}
                     </div>
                   )}
-                </div>
+                </li>
               );
             })}
-          </div>
+          </ul>
         </div>
       ))}
+      {totalTasks === 0 && <p className="text-sm text-muted-foreground">Checklist ini belum punya tugas. Klik "Tambah aktivitas".</p>}
 
-      {/* Modals */}
       {completingTask && (
         <TaskNoteModal
           task={completingTask} checklistId={cl.checklist_id} headers={headers}
@@ -416,12 +335,12 @@ function ChecklistDetail({ cl: initCl, headers, onUpdate, onClose }) {
           onClose={() => setAddingTask(false)}
         />
       )}
-    </div>
+    </DetailPopup>
   );
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// TEMPLATE TASK ROW
+// BARIS TUGAS TEMPLATE
 // ────────────────────────────────────────────────────────────────────────────
 function TemplateTaskRow({ task, onDelete, onEdit, index }) {
   const [editing, setEditing] = useState(false);
@@ -434,61 +353,48 @@ function TemplateTaskRow({ task, onDelete, onEdit, index }) {
 
   if (editing) {
     return (
-      <div className="p-3 rounded-xl border-2 border-[hsl(var(--primary)/0.4)] bg-[hsl(var(--primary)/0.03)] space-y-2">
-        <p className="text-xs font-semibold text-foreground truncate">{task.title}</p>
+      <li className="space-y-2 px-3 py-2">
+        <p className="truncate text-sm font-medium text-foreground">{task.title}</p>
         <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Deadline (Hari ke-)</label>
-            <input type="number" min={0} value={editForm.day} onChange={e => setEditForm(p => ({...p, day: +e.target.value}))}
-              className="w-full h-8 px-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">PIC / Penanggung Jawab</label>
-            <input value={editForm.assigned_to} onChange={e => setEditForm(p => ({...p, assigned_to: e.target.value}))}
-              placeholder="HR / IT / Karyawan" className="w-full h-8 px-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-          </div>
+          <Isian label="Hari ke-">
+            <Input type="number" min={0} value={editForm.day} onChange={e => setEditForm(p => ({ ...p, day: +e.target.value }))} />
+          </Isian>
+          <Isian label="Penanggung jawab">
+            <Input value={editForm.assigned_to} onChange={e => setEditForm(p => ({ ...p, assigned_to: e.target.value }))} placeholder="SDM / IT / karyawan" />
+          </Isian>
         </div>
         <div className="flex justify-end gap-2">
-          <button onClick={() => setEditing(false)} className="h-7 px-3 text-xs text-muted-foreground hover:text-foreground">Batal</button>
-          <button onClick={handleSave}
-            className="h-7 px-3 text-xs bg-[hsl(var(--primary))] text-foreground rounded-lg font-medium">Simpan</button>
+          <Button type="button" size="sm" variant="outline" onClick={() => setEditing(false)}>Batal</Button>
+          <Button type="button" size="sm" variant="success" onClick={handleSave}>Simpan</Button>
         </div>
-      </div>
+      </li>
     );
   }
 
   return (
-    <div className="flex items-center gap-2 p-2.5 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)] group">
-      <GripVertical className="w-3.5 h-3.5 text-muted-foreground/30 shrink-0" />
-      <div className="w-2 h-2 rounded-full shrink-0" style={{ background: CAT_COLORS[task.category] || CAT_COLORS.default }} />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-foreground truncate">{task.title}</p>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span>{task.category}</span>
-          <span>·</span>
-          <span className="flex items-center gap-0.5"><Clock className="w-3 h-3" />Hari ke-{task.day}</span>
-          {task.assigned_to && <><span>·</span><span className="flex items-center gap-0.5"><User className="w-3 h-3" />{task.assigned_to}</span></>}
-        </div>
+    <li className="flex items-center gap-2 px-3 py-2">
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-foreground">{task.title}</p>
+        <p className="text-xs text-muted-foreground">
+          {task.category} · hari ke-{task.day}{task.assigned_to ? ` · PIC: ${task.assigned_to}` : ''}
+        </p>
       </div>
-      <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button onClick={() => { setEditForm({ day: task.day, assigned_to: task.assigned_to || '' }); setEditing(true); }}
-          className="w-6 h-6 rounded-md hover:bg-[var(--nav-pill-active)] flex items-center justify-center text-muted-foreground"
-          title="Edit deadline & PIC">
-          <Pencil className="w-3.5 h-3.5" />
-        </button>
-        <button onClick={() => onDelete(task.task_id || index)}
-          className="w-6 h-6 rounded-md hover:bg-red-100 dark:hover:bg-red-400/10 flex items-center justify-center text-muted-foreground hover:text-red-600 dark:hover:text-red-400">
-          <X className="w-3.5 h-3.5" />
-        </button>
-      </div>
-    </div>
+      <Button type="button" variant="ghost" size="icon-sm" title="Ubah hari & penanggung jawab" aria-label="Ubah hari & penanggung jawab"
+        onClick={() => { setEditForm({ day: task.day, assigned_to: task.assigned_to || '' }); setEditing(true); }}>
+        <Pencil />
+      </Button>
+      <Button type="button" variant="ghost" size="icon-sm" className="text-[hsl(var(--danger-text))]" title="Hapus dari templat"
+        aria-label="Hapus dari templat" onClick={() => onDelete(task.task_id || index)}>
+        <X />
+      </Button>
+    </li>
   );
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// TEMPLATE EDITOR MODAL
+// EDITOR TEMPLATE (form popup panjang)
 // ────────────────────────────────────────────────────────────────────────────
-function TemplateEditorModal({ template, headers, onSuccess, onClose }) {
+function TemplateEditorModal({ template, headers, onSuccess, onClose, onDelete }) {
   const isNew = !template?.template_id;
   const [meta, setMeta] = useState({
     name: template?.name || '',
@@ -519,7 +425,7 @@ function TemplateEditorModal({ template, headers, onSuccess, onClose }) {
   };
 
   const handleSave = async () => {
-    if (!meta.name.trim()) { toast.error('Nama template diperlukan'); return; }
+    if (!meta.name.trim()) { toast.error('Nama templat diperlukan'); return; }
     setSaving(true);
     try {
       const body = { ...meta, tasks };
@@ -531,121 +437,99 @@ function TemplateEditorModal({ template, headers, onSuccess, onClose }) {
       }
       const d = await r.json();
       if (d.ok) {
-        toast.success(isNew ? 'Template dibuat' : 'Template diperbarui');
+        toast.success(isNew ? 'Templat dibuat' : 'Templat disimpan');
         onSuccess();
+      } else {
+        toast.error(typeof d.detail === 'string' ? d.detail : 'Gagal menyimpan');
       }
     } catch { toast.error('Gagal menyimpan'); }
     finally { setSaving(false); }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-[var(--card-surface)] rounded-2xl border border-[var(--glass-border)] shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col" onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className="p-5 border-b border-[var(--glass-border)] shrink-0">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold">{isNew ? 'Buat Template Baru' : `Edit: ${template.name}`}</h2>
-            <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-[var(--nav-pill-active)] flex items-center justify-center"><X className="w-4 h-4" /></button>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
-          {/* Meta */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2">
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Nama Template *</label>
-              <input value={meta.name} onChange={e => setMeta(p => ({...p, name: e.target.value}))} placeholder="Contoh: Onboarding Operator Produksi"
-                className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Departemen</label>
-              <input value={meta.dept} onChange={e => setMeta(p => ({...p, dept: e.target.value}))} placeholder="Semua / Produksi / HR..."
-                className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Durasi (hari)</label>
-              <input type="number" min={1} value={meta.duration_days} onChange={e => setMeta(p => ({...p, duration_days: +e.target.value}))}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-            </div>
-            <div className="col-span-2">
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Deskripsi</label>
-              <textarea value={meta.description} onChange={e => setMeta(p => ({...p, description: e.target.value}))} rows={2}
-                className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm resize-none" />
-            </div>
-            <div className="col-span-2 flex items-center gap-2">
-              <input type="checkbox" id="is_default" checked={meta.is_default} onChange={e => setMeta(p => ({...p, is_default: e.target.checked}))}
-                className="w-4 h-4 rounded" />
-              <label htmlFor="is_default" className="text-sm text-muted-foreground">Jadikan template default (dipakai otomatis saat candidate di-hire)</label>
-            </div>
-          </div>
-
-          {/* Tasks */}
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <p className="text-sm font-semibold text-foreground">Daftar Aktivitas</p>
-                <p className="text-xs text-muted-foreground">{tasks.length} aktivitas · Diurutkan berdasarkan hari</p>
-              </div>
-              <button onClick={() => setShowAddTask(!showAddTask)}
-                className="h-8 px-3 rounded-lg bg-[hsl(var(--primary))] text-foreground text-xs font-medium flex items-center gap-1.5">
-                <Plus className="w-3.5 h-3.5" />Tambah Aktivitas
-              </button>
-            </div>
-
-            {showAddTask && (
-              <div className="mb-3 p-4 rounded-xl border-2 border-dashed border-[hsl(var(--primary)/0.4)] bg-[hsl(var(--primary)/0.03)] space-y-2">
-                <p className="text-xs font-semibold text-primary">Aktivitas Baru</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="col-span-2">
-                    <input value={addTaskForm.title} onChange={e => setAddTaskForm(p => ({...p, title: e.target.value}))} placeholder="Nama aktivitas *"
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" autoFocus />
-                  </div>
-                  <SmartNativeSelect searchable={false} value={addTaskForm.category} onChange={e => setAddTaskForm(p => ({...p, category: e.target.value}))}
-                    className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                  </SmartNativeSelect>
-                  <input value={addTaskForm.assigned_to} onChange={e => setAddTaskForm(p => ({...p, assigned_to: e.target.value}))} placeholder="PIC (HR/IT/Karyawan)"
-                    className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs text-muted-foreground whitespace-nowrap">Hari ke-</label>
-                    <input type="number" min={0} value={addTaskForm.day} onChange={e => setAddTaskForm(p => ({...p, day: +e.target.value}))}
-                      className="flex-1 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-                  </div>
-                  <input value={addTaskForm.description} onChange={e => setAddTaskForm(p => ({...p, description: e.target.value}))} placeholder="Deskripsi (opsional)"
-                    className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-                </div>
-                <div className="flex gap-2 justify-end">
-                  <button onClick={() => setShowAddTask(false)} className="h-8 px-3 rounded-lg border border-[var(--glass-border)] text-xs text-muted-foreground">Batal</button>
-                  <button onClick={handleAddTask} disabled={!addTaskForm.title.trim()}
-                    className="h-8 px-3 rounded-lg bg-[hsl(var(--primary))] text-foreground text-xs font-medium disabled:opacity-50">Tambah</button>
-                </div>
-              </div>
-            )}
-
-            <div className="space-y-1.5">
-              {tasks.length === 0 ? (
-                <div className="text-center py-6 text-muted-foreground text-sm border border-dashed border-[var(--glass-border)] rounded-xl">
-                  Belum ada aktivitas. Klik &quot;Tambah Aktivitas&quot; untuk mulai.
-                </div>
-              ) : (
-                tasks.map((t, i) => <TemplateTaskRow key={t.task_id || i} task={t} index={i} onDelete={handleDeleteTask} onEdit={handleEditTask} />)
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="p-4 border-t border-[var(--glass-border)] shrink-0 flex gap-3">
-          <button onClick={onClose} className="flex-1 h-10 rounded-xl border border-[var(--glass-border)] text-sm text-muted-foreground">Batal</button>
-          <button onClick={handleSave} disabled={saving || !meta.name.trim()}
-            className="flex-1 h-10 rounded-xl bg-[hsl(var(--primary))] text-foreground text-sm font-medium disabled:opacity-50">
-            {saving ? 'Menyimpan...' : isNew ? 'Buat Template' : 'Simpan Perubahan'}
-          </button>
-        </div>
+    <FormPopup open onClose={onClose} ukuran="panjang" onSimpan={handleSave} menyimpan={saving} bisaSimpan={!!meta.name.trim()}
+      judul={isNew ? 'Buat templat baru' : `Ubah templat: ${template.name}`}
+      labelSimpan={isNew ? 'Buat templat' : 'Simpan perubahan'} testId="onb-template-form"
+      aksiKiri={!isNew && !template.is_default && onDelete ? (
+        <Button type="button" variant="destructive" onClick={() => onDelete(template)} data-testid="onb-template-delete">
+          <Trash2 />Hapus templat
+        </Button>) : null}>
+      <Isian label="Nama templat" wajib htmlFor="onb-tpl-nama">
+        <Input id="onb-tpl-nama" value={meta.name} onChange={e => setMeta(p => ({ ...p, name: e.target.value }))}
+          placeholder="Contoh: Onboarding operator produksi" />
+      </Isian>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Departemen" htmlFor="onb-tpl-dept">
+          <Input id="onb-tpl-dept" value={meta.dept} onChange={e => setMeta(p => ({ ...p, dept: e.target.value }))} placeholder="Semua / Produksi / SDM" />
+        </Isian>
+        <Isian label="Durasi (hari)" htmlFor="onb-tpl-durasi">
+          <Input id="onb-tpl-durasi" type="number" min={1} value={meta.duration_days} onChange={e => setMeta(p => ({ ...p, duration_days: +e.target.value }))} />
+        </Isian>
       </div>
-    </div>
+      <Isian label="Deskripsi" htmlFor="onb-tpl-desk">
+        <Textarea id="onb-tpl-desk" rows={2} value={meta.description} onChange={e => setMeta(p => ({ ...p, description: e.target.value }))} />
+      </Isian>
+      <label className="flex items-center gap-3 text-sm" htmlFor="onb-tpl-bawaan">
+        <Switch id="onb-tpl-bawaan" checked={meta.is_default} onCheckedChange={v => setMeta(p => ({ ...p, is_default: v }))} />
+        <span>Jadikan templat bawaan (dipakai otomatis saat pelamar diterima)</span>
+      </label>
+
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-medium text-foreground">Daftar aktivitas</p>
+            <p className="text-xs text-muted-foreground">{tasks.length} aktivitas · diurutkan menurut hari</p>
+          </div>
+          <Button type="button" size="sm" variant="outline" onClick={() => setShowAddTask(!showAddTask)}>
+            <Plus />Tambah aktivitas
+          </Button>
+        </div>
+
+        {showAddTask && (
+          <div className="space-y-2 rounded-lg border border-[var(--glass-border)] p-3">
+            <Input autoFocus value={addTaskForm.title} onChange={e => setAddTaskForm(p => ({ ...p, title: e.target.value }))} placeholder="Nama aktivitas" />
+            <div className="grid gap-2 sm:grid-cols-2">
+              <SmartNativeSelect searchable={false} value={addTaskForm.category} onChange={e => setAddTaskForm(p => ({ ...p, category: e.target.value }))}>
+                {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </SmartNativeSelect>
+              <Input value={addTaskForm.assigned_to} onChange={e => setAddTaskForm(p => ({ ...p, assigned_to: e.target.value }))} placeholder="Penanggung jawab (SDM/IT/karyawan)" />
+              <div className="flex items-center gap-2">
+                <span className="whitespace-nowrap text-sm text-muted-foreground">Hari ke-</span>
+                <Input type="number" min={0} value={addTaskForm.day} onChange={e => setAddTaskForm(p => ({ ...p, day: +e.target.value }))} />
+              </div>
+              <Input value={addTaskForm.description} onChange={e => setAddTaskForm(p => ({ ...p, description: e.target.value }))} placeholder="Deskripsi (opsional)" />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button type="button" size="sm" variant="outline" onClick={() => setShowAddTask(false)}>Batal</Button>
+              <Button type="button" size="sm" onClick={handleAddTask} disabled={!addTaskForm.title.trim()}>Tambah</Button>
+            </div>
+          </div>
+        )}
+
+        {tasks.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-[var(--glass-border)] py-6 text-center text-sm text-muted-foreground">
+            Templat ini belum punya aktivitas. Klik "Tambah aktivitas" untuk mulai.
+          </p>
+        ) : (
+          <ul className="divide-y divide-[var(--glass-border)] rounded-lg border border-[var(--glass-border)]">
+            {tasks.map((t, i) => <TemplateTaskRow key={t.task_id || i} task={t} index={i} onDelete={handleDeleteTask} onEdit={handleEditTask} />)}
+          </ul>
+        )}
+      </div>
+    </FormPopup>
   );
 }
+
+/** Isi satu tab: cetakan PageLayout di dalam hub. */
+function IsiTab({ actions, filters, tools, summary, children }) {
+  return <PageLayout actions={actions} filters={filters} tools={tools} summary={summary}>{children}</PageLayout>;
+}
+
+const ringkasKategori = (tasks = []) => Object.entries(tasks.reduce((acc, task) => {
+  const cat = task.category || 'Umum';
+  acc[cat] = (acc[cat] || 0) + 1;
+  return acc;
+}, {})).map(([cat, n]) => `${cat} ${n}`).join(' · ');
 
 // ────────────────────────────────────────────────────────────────────────────
 // MAIN MODULE
@@ -677,42 +561,33 @@ export default function HROnboardingModule({ token }) {
   const empIdByName = (name) => (employees.find(e => e.name === name) || {}).id || '';
   const nameOf = (id) => (employees.find(e => e.id === id) || {}).name || '';
 
-  // ── Effects
-  useEffect(() => {
-    (async () => {
-      setLoading(true); setError(null);
-      try {
-        const [clRes, tRes, aRes] = await Promise.all([
-          api(`/checklists?limit=50`, { headers }),
-          api(`/templates`, { headers }),
-          api(`/analytics`, { headers }),
-        ]);
-        const [cl, tpl, an] = await Promise.all([clRes.json(), tRes.json(), aRes.json()]);
-        setChecklists(cl.checklists || []);
-        setTemplates(tpl.templates || []);
-        setAnalytics(an);
-      } catch (e) { setError(e.message); }
-      finally { setLoading(false); }
-    })();
-  }, [headers]);
-
-  const refreshAll = async () => {
+  const refreshAll = useCallback(async () => {
     try {
-      const [clRes, tRes, aRes] = await Promise.all([
-        api(`/checklists?limit=50`, { headers }),
+      const [cl, tRes, aRes] = await Promise.all([
+        ambilSemuaChecklist(headers),
         api(`/templates`, { headers }),
         api(`/analytics`, { headers }),
       ]);
-      const [cl, tpl, an] = await Promise.all([clRes.json(), tRes.json(), aRes.json()]);
-      setChecklists(cl.checklists || []);
+      const [tpl, an] = await Promise.all([tRes.json(), aRes.json()]);
+      setChecklists(cl);
       setTemplates(tpl.templates || []);
       setAnalytics(an);
-    } catch (_e) { /* ignore */ }
-  };
+      setError(null);
+    } catch (e) { setError(e.message); }
+  }, [headers]);
+
+  // ── Effects
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      await refreshAll();
+      setLoading(false);
+    })();
+  }, [refreshAll]);
 
   const handleSeed = async () => {
     // Tahap 5: data contoh hanya untuk onboarding yang masih kosong (server menolak bila sudah ada data)
-    if (!(await confirmDialog({ title: 'Muat data contoh onboarding?', body: 'Hanya bisa bila belum ada template dan checklist.', confirmLabel: 'Muat contoh' }))) return;
+    if (!(await confirmDialog({ title: 'Muat data contoh onboarding?', body: 'Hanya bisa bila belum ada templat dan checklist.', confirmLabel: 'Muat contoh' }))) return;
     setSeeding(true);
     try {
       const r = await api(`/seed`, { method: 'POST', headers });
@@ -731,7 +606,7 @@ export default function HROnboardingModule({ token }) {
       if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(typeof d.detail === 'string' ? d.detail : `HTTP ${r.status}`); }  // 2026-11-06 (pola P6): sukses hanya bila server menerima
       setShowForm(false);
       await refreshAll();
-      toast.success('Onboarding checklist dibuat');
+      toast.success('Checklist onboarding dibuat');
     } catch (e) { toast.error(`Gagal membuat checklist${e?.message && !e.message.startsWith('HTTP') ? `: ${e.message}` : ''}`); } finally { setSaving(false); }
   };
 
@@ -741,13 +616,14 @@ export default function HROnboardingModule({ token }) {
   };
 
   const handleDeleteTemplate = async (tplId, name) => {
-    if (!(await confirmDialog({ title: `Hapus template "${name}"?`, confirmLabel: 'Hapus', danger: true }))) return;
+    if (!(await confirmDialog({ title: `Hapus templat "${name}"?`, confirmLabel: 'Hapus', danger: true }))) return false;
     try {
       const r = await api(`/templates/${tplId}`, { method: 'DELETE', headers });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);  // 2026-11-06 (pola P6): sukses hanya bila server menerima
       await refreshAll();
-      toast.success('Template dihapus');
-    } catch { toast.error('Gagal menghapus'); }
+      toast.success('Templat dihapus');
+      return true;
+    } catch { toast.error('Gagal menghapus'); return false; }
   };
 
   const filtered = useMemo(() =>
@@ -758,313 +634,177 @@ export default function HROnboardingModule({ token }) {
     }),
   [checklists, q, filterStatus]);
 
-  if (loading) return (
-    <div className="space-y-4 p-4" data-testid="hr-onboarding-skeleton">
-      <Skeleton className="h-16 rounded-xl" />
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">{Array.from({length:4}).map((_,i) => <Skeleton key={i} className="h-20 rounded-xl" />)}</div>
-      <Skeleton className="h-48 rounded-xl" />
+  const s = analytics?.summary || {};
+  const ringkasan = analytics && (
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <StatTile label="Sedang berjalan" value={s.active ?? 0} sub={`Dari ${s.total ?? 0} checklist, status aktif.`} />
+      <StatTile label="Selesai" value={s.completed ?? 0} sub="Semua tugas sudah dikerjakan." />
+      <StatTile label="Lewat target" value={s.overdue ?? 0} accent={s.overdue ? 'danger' : 'default'}
+        sub="Masih aktif tetapi tanggal target sudah lewat." />
+      <StatTile label="Rata-rata kemajuan" value={`${s.avg_progress || 0}%`} sub="Rata-rata semua checklist." />
     </div>
   );
+  const muatUlang = (
+    <Button variant="outline" size="icon" onClick={refreshAll} title="Muat ulang" aria-label="Muat ulang"><RefreshCw /></Button>
+  );
+  const galat = error && <Notice tone="danger" title="Gagal memuat data onboarding">{error}</Notice>;
+  const memuat = <p className="py-10 text-center text-sm text-muted-foreground">Memuat onboarding…</p>;
+
+  const kolomChecklist = [
+    { kunci: 'karyawan', label: 'Karyawan', hp: 'judul', isi: (c) => (
+      <div className="min-w-0" data-testid={`checklist-card-${c.checklist_id}`}>
+        <p className="font-medium text-foreground">{c.employee_name}</p>
+        <p className="text-xs text-muted-foreground">{[c.employee_position, c.employee_dept].filter(Boolean).join(' · ') || '—'}</p>
+      </div>) },
+    { kunci: 'status', label: 'Status', isi: (c) => <Status status={c.status} /> },
+    { kunci: 'kemajuan', label: 'Kemajuan', isi: (c) => (
+      <div className="w-40 max-w-full">
+        <ProgressBar pct={c.progress_pct} />
+        <p className="text-xs text-muted-foreground">{c.completed_tasks ?? 0}/{c.total_tasks ?? 0} tugas selesai</p>
+      </div>) },
+    { kunci: 'target', label: 'Target', isi: (c) => <span className="text-sm md:whitespace-nowrap">{fmtDate(c.target_completion)}</span> },
+    { kunci: 'buddy', label: 'Buddy', isi: (c) => <span className="text-sm">{c.buddy || '—'}</span> },
+  ];
+  const kolomTemplate = [
+    { kunci: 'nama', label: 'Templat', hp: 'judul', isi: (t) => (
+      <div className="min-w-0 md:max-w-[24rem]">
+        <p className="font-medium text-foreground">
+          {t.name}
+          {t.is_default && <StatusBadge className="ml-2 align-middle" status="default" label="Bawaan" tone="primary" />}
+        </p>
+        {t.description && <p className="truncate text-xs text-muted-foreground" title={t.description}>{t.description}</p>}
+      </div>) },
+    { kunci: 'dept', label: 'Departemen', isi: (t) => <span className="text-sm">{t.dept || '—'}</span> },
+    { kunci: 'durasi', label: 'Durasi', rata: 'kanan', isi: (t) => <span className="tabular-nums">{t.duration_days} hari</span> },
+    { kunci: 'tugas', label: 'Tugas', rata: 'kanan', isi: (t) => <span className="tabular-nums">{(t.tasks || []).length}</span> },
+    { kunci: 'kategori', label: 'Kategori', isi: (t) => <span className="text-sm text-muted-foreground">{ringkasKategori(t.tasks) || '—'}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (t) => (
+      <Button size="sm" variant="outline" onClick={() => setEditTemplate(t)} data-testid={`onb-template-edit-${t.template_id}`}><Pencil />Ubah</Button>) },
+  ];
 
   return (
-    <div className="space-y-5" data-testid="hr-onboarding-module">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><UserPlus className="w-6 h-6 text-primary" />Onboarding Karyawan</h1>
-          <p className="text-sm text-muted-foreground">Checklist onboarding dengan aktivitas kustom & template builder</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={handleSeed} disabled={seeding}
-            className="h-9 px-3 rounded-lg border border-dashed border-[var(--glass-border)] text-xs text-muted-foreground hover:text-foreground">
-            {seeding ? 'Memuat...' : 'Muat Demo'}
-          </button>
-          <button onClick={refreshAll} className="h-9 w-9 rounded-lg border border-[var(--glass-border)] flex items-center justify-center text-muted-foreground hover:text-foreground">
-            <RefreshCw className="w-4 h-4" />
-          </button>
-          <button onClick={() => setShowForm(true)} data-testid="onboarding-add-btn"
-            className="h-9 px-4 rounded-xl bg-[hsl(var(--primary))] text-foreground text-sm font-medium hover:opacity-90 flex items-center gap-1.5">
-            <Plus className="w-4 h-4" /> Onboarding Baru
-          </button>
-        </div>
-      </div>
+    <div data-testid="hr-onboarding-module">
+      <HubTabs hubId="hr-onboarding" title="Onboarding"
+        subtitle="Daftar tugas karyawan baru dari hari pertama sampai masa orientasi selesai."
+        value={tab} onValueChange={setTab}
+        tabs={[
+          { key: 'checklists', label: `Checklist (${checklists.length})`, Component: IsiTab, props: {
+            actions: <>
+              <Button variant="outline" onClick={handleSeed} disabled={seeding}>{seeding ? 'Memuat…' : 'Muat contoh'}</Button>
+              <Button onClick={() => setShowForm(true)} data-testid="onboarding-add-btn"><Plus />Onboarding baru</Button>
+            </>,
+            filters: <>
+              <div className="relative w-full sm:w-64">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Cari karyawan" className="pl-8" data-testid="onb-search" />
+              </div>
+              <SmartNativeSelect searchable={false} value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="w-40">
+                <option value="">Semua status</option>
+                <option value="active">Aktif</option>
+                <option value="in_progress">Berjalan</option>
+                <option value="completed">Selesai</option>
+                <option value="paused">Ditunda</option>
+              </SmartNativeSelect>
+            </>,
+            tools: <>
+              <TombolUnduh namaBerkas="checklist-onboarding" namaLembar="Checklist" baris={filtered} testId="onb-unduh"
+                kolom={[
+                  { label: 'Karyawan', nilai: (c) => c.employee_name || '' },
+                  { label: 'Jabatan', nilai: (c) => c.employee_position || '' },
+                  { label: 'Departemen', nilai: (c) => c.employee_dept || '' },
+                  { label: 'Status', nilai: (c) => labelStatus(c.status) },
+                  { label: 'Kemajuan (%)', nilai: (c) => c.progress_pct || 0 },
+                  { label: 'Tugas selesai', nilai: (c) => c.completed_tasks ?? 0 },
+                  { label: 'Total tugas', nilai: (c) => c.total_tasks ?? 0 },
+                  { label: 'Mulai', nilai: (c) => fmtDate(c.start_date) },
+                  { label: 'Target', nilai: (c) => fmtDate(c.target_completion) },
+                  { label: 'Buddy', nilai: (c) => c.buddy || '' },
+                  { label: 'Supervisor', nilai: (c) => c.supervisor || '' },
+                ]} />
+              {muatUlang}
+            </>,
+            summary: ringkasan,
+            children: <>
+              {galat}
+              {loading ? memuat : (
+                <TabelData kolom={kolomChecklist} baris={filtered} kunci={(c) => c.checklist_id} onKlikBaris={setSelected} testId="onb-checklists"
+                  kosong={<EmptyState title={checklists.length ? 'Tidak ada checklist yang cocok' : 'Belum ada checklist onboarding'}
+                    description={checklists.length ? 'Ubah saringan atau kata pencarian.' : 'Buat checklist untuk karyawan baru, atau muat contoh.'}
+                    action={!checklists.length && <Button onClick={() => setShowForm(true)}><Plus />Onboarding baru</Button>} />} />
+              )}
+            </>,
+          } },
+          { key: 'templates', label: `Templat (${templates.length})`, Component: IsiTab, props: {
+            actions: <Button onClick={() => setEditTemplate(null)} data-testid="onb-template-add"><Plus />Templat baru</Button>,
+            tools: <>
+              <TombolUnduh namaBerkas="templat-onboarding" namaLembar="Templat" baris={templates} testId="onb-unduh-template"
+                kolom={[
+                  { label: 'Templat', nilai: (t) => t.name }, { label: 'Deskripsi', nilai: (t) => t.description || '' },
+                  { label: 'Departemen', nilai: (t) => t.dept || '' }, { label: 'Durasi (hari)', nilai: (t) => t.duration_days },
+                  { label: 'Jumlah tugas', nilai: (t) => (t.tasks || []).length }, { label: 'Kategori', nilai: (t) => ringkasKategori(t.tasks) },
+                  { label: 'Bawaan', nilai: (t) => (t.is_default ? 'Ya' : 'Tidak') },
+                ]} />
+              {muatUlang}
+            </>,
+            children: loading ? memuat : (
+              <TabelData kolom={kolomTemplate} baris={templates} kunci={(t) => t.template_id} onKlikBaris={setEditTemplate} testId="onb-templates"
+                kosong={<EmptyState title="Belum ada templat" description="Templat berisi daftar tugas standar untuk karyawan baru."
+                  action={<Button onClick={() => setEditTemplate(null)}><Plus />Buat templat pertama</Button>} />} />
+            ),
+          } },
+          { key: 'analytics', label: 'Terbaru', Component: IsiTab, props: {
+            tools: muatUlang, summary: ringkasan,
+            children: (
+              <TabelData kolom={kolomChecklist} baris={analytics?.recent || []} kunci={(c) => c.checklist_id} testId="onb-recent"
+                onKlikBaris={(c) => { setTab('checklists'); setSelected(c); }}
+                kosong={<EmptyState title="Belum ada onboarding" description="Lima checklist yang terakhir dibuat tampil di sini." />} />
+            ),
+          } },
+        ]} />
 
-      {/* Stats */}
-      {analytics && (
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-          {[
-            { label: 'Total', value: analytics.summary?.total, color: '#6366f1' },
-            { label: 'Aktif', value: analytics.summary?.active, color: '#3b82f6' },
-            { label: 'Selesai', value: analytics.summary?.completed, color: '#10b981' },
-            { label: 'Overdue', value: analytics.summary?.overdue, color: '#ef4444' },
-            { label: 'Avg Progress', value: `${analytics.summary?.avg_progress || 0}%`, color: '#8b5cf6' },
-          ].map((k, i) => (
-            <GlassCard key={i} hover={false} className="p-4 text-center">
-              <p className="text-2xl font-bold" style={{ color: k.color }}>{k.value}</p>
-              <p className="text-xs text-muted-foreground mt-1">{k.label}</p>
-            </GlassCard>
-          ))}
-        </div>
-      )}
-
-      {/* Tabs */}
-      <div className="flex gap-1 p-1 rounded-xl bg-[var(--nav-pill-bg)] border border-[var(--glass-border)] w-fit">
-        {[['checklists','Checklist'],['analytics','Analitik'],['templates','Template Builder']].map(([k,l]) => (
-          <button key={k} onClick={() => setTab(k)}
-            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${tab === k ? 'bg-[var(--nav-pill-active)] text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>{l}</button>
-        ))}
-      </div>
-
-      {error && (
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-400/10 border border-red-300 dark:border-red-400/20 text-sm text-red-700 dark:text-red-400">
-          <AlertCircle className="w-4 h-4" />{error}
-        </div>
-      )}
-
-      {/* CHECKLISTS */}
-      {tab === 'checklists' && (
-        <div className="space-y-4">
-          <div className="flex flex-wrap gap-2">
-            <div className="flex items-center gap-2 flex-1 min-w-48 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)]">
-              <User className="w-4 h-4 text-muted-foreground" />
-              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Cari karyawan..."
-                className="flex-1 bg-transparent text-sm focus:outline-none" />
-            </div>
-            <SmartNativeSelect searchable={false} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-              className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-              <option value="">Semua Status</option>
-              <option value="active">Aktif</option>
-              <option value="in_progress">Berjalan</option>
-              <option value="completed">Selesai</option>
-              <option value="paused">Ditunda</option>
-            </SmartNativeSelect>
-          </div>
-
-          {filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-48 gap-3">
-              <ClipboardList className="w-10 h-10 text-muted-foreground/30" />
-              <p className="text-muted-foreground text-sm">Belum ada checklist onboarding</p>
-              <button onClick={() => setShowForm(true)} className="h-8 px-4 rounded-lg bg-[hsl(var(--primary))] text-foreground text-xs font-medium">Buat Onboarding Baru</button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {filtered.map(cl => (
-                <GlassCard key={cl.checklist_id} hover className="p-5 cursor-pointer" onClick={() => setSelected(cl)} data-testid={`checklist-card-${cl.checklist_id}`}>
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-[hsl(var(--primary)/0.15)] flex items-center justify-center text-primary font-bold">
-                        {cl.employee_name?.[0]?.toUpperCase() || 'K'}
-                      </div>
-                      <div>
-                        <p className="font-semibold text-foreground">{cl.employee_name}</p>
-                        <p className="text-xs text-muted-foreground">{cl.employee_position} · {cl.employee_dept}</p>
-                      </div>
-                    </div>
-                    <StatusBadge status={cl.status} />
-                  </div>
-                  <ProgressBar pct={cl.progress_pct} />
-                  <div className="flex items-center justify-between mt-3 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
-                      <ClipboardList className="w-3.5 h-3.5" />{cl.completed_tasks}/{cl.total_tasks} selesai
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                      <Calendar className="w-3.5 h-3.5" />Target: {fmtDate(cl.target_completion)}
-                    </span>
-                  </div>
-                  {cl.buddy && <p className="text-xs text-muted-foreground mt-1.5">Buddy: {cl.buddy}</p>}
-                </GlassCard>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ANALYTICS */}
-      {tab === 'analytics' && analytics && (
-        <div className="space-y-5">
-          <GlassCard hover={false} className="p-5">
-            <h3 className="text-sm font-semibold mb-4 flex items-center gap-2"><ClipboardList className="w-4 h-4 text-primary" />Onboarding Terbaru</h3>
-            <div className="space-y-3">
-              {(analytics.recent || []).map(cl => (
-                <div key={cl.checklist_id} className="flex items-center gap-3 p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)] cursor-pointer hover:border-[hsl(var(--primary)/0.3)]"
-                  onClick={() => { setTab('checklists'); setSelected(cl); }}>
-                  <div className="w-8 h-8 rounded-full bg-[hsl(var(--primary)/0.15)] flex items-center justify-center text-primary text-sm font-bold">
-                    {cl.employee_name?.[0]?.toUpperCase() || 'K'}
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">{cl.employee_name}</p>
-                    <p className="text-xs text-muted-foreground">{cl.employee_position}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-bold">{cl.progress_pct}%</p>
-                    <StatusBadge status={cl.status} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </GlassCard>
-        </div>
-      )}
-
-      {/* TEMPLATE BUILDER */}
-      {tab === 'templates' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-semibold text-foreground">Template Onboarding</p>
-              <p className="text-xs text-muted-foreground">{templates.length} template tersedia</p>
-            </div>
-            <button onClick={() => setEditTemplate(null)}
-              className="h-9 px-4 rounded-xl bg-[hsl(var(--primary))] text-foreground text-sm font-medium flex items-center gap-1.5 hover:opacity-90">
-              <Plus className="w-4 h-4" />Template Baru
-            </button>
-          </div>
-
-          {templates.length === 0 ? (
-            <div className="text-center py-12">
-              <BookOpen className="w-10 h-10 mx-auto mb-3 text-muted-foreground/30" />
-              <p className="text-muted-foreground text-sm">Belum ada template</p>
-              <button onClick={() => setEditTemplate(null)} className="mt-3 h-8 px-4 rounded-lg bg-[hsl(var(--primary))] text-foreground text-xs font-medium">Buat Template Pertama</button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {templates.map(t => (
-                <GlassCard key={t.template_id} hover={false} className="p-5">
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <h3 className="font-semibold text-foreground">{t.name}</h3>
-                        {t.is_default && <span className="text-xs px-2 py-0.5 rounded-full bg-[hsl(var(--primary)/0.15)] text-primary border border-[hsl(var(--primary)/0.3)]">Default</span>}
-                      </div>
-                      <p className="text-xs text-muted-foreground">{t.description}</p>
-                    </div>
-                    <div className="flex gap-1 shrink-0 ml-2">
-                      <button onClick={() => setEditTemplate(t)}
-                        className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-[var(--nav-pill-active)] text-muted-foreground">
-                        <Settings className="w-3.5 h-3.5" />
-                      </button>
-                      {!t.is_default && (
-                        <button onClick={() => handleDeleteTemplate(t.template_id, t.name)}
-                          className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-red-100 dark:hover:bg-red-400/10 text-muted-foreground hover:text-red-600 dark:hover:text-red-400">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-4 text-xs text-muted-foreground mt-3 mb-3">
-                    <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" />{t.dept}</span>
-                    <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{t.duration_days} hari</span>
-                    <span className="flex items-center gap-1"><ClipboardList className="w-3.5 h-3.5" />{(t.tasks || []).length} tugas</span>
-                  </div>
-
-                  {/* Category summary */}
-                  {t.tasks?.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {Object.entries((t.tasks || []).reduce((acc, task) => {
-                        const cat = task.category || 'Umum';
-                        acc[cat] = (acc[cat] || 0) + 1;
-                        return acc;
-                      }, {})).map(([cat, count]) => (
-                        <span key={cat} className="text-[10px] px-2 py-0.5 rounded-full font-medium"
-                          style={{ background: `${CAT_COLORS[cat] || CAT_COLORS.default}20`, color: CAT_COLORS[cat] || CAT_COLORS.default }}>
-                          {cat} ({count})
-                        </span>
-                      ))}
-                    </div>
-                  )}
-
-                  <button onClick={() => setEditTemplate(t)}
-                    className="mt-3 w-full h-8 rounded-lg border border-[var(--glass-border)] text-xs text-muted-foreground hover:text-foreground hover:border-[hsl(var(--primary)/0.3)] transition-colors flex items-center justify-center gap-1.5">
-                    <Pencil className="w-3.5 h-3.5" />Edit Aktivitas
-                  </button>
-                </GlassCard>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* CHECKLIST DETAIL MODAL */}
+      {/* DETAIL CHECKLIST */}
       {selected && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setSelected(null)}>
-          <div className="bg-[var(--card-surface)] rounded-2xl border border-[var(--glass-border)] shadow-2xl max-w-2xl w-full max-h-[88vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="font-bold text-lg">Detail Onboarding</h2>
-                <button onClick={() => setSelected(null)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-[var(--nav-pill-active)]"><X className="w-4 h-4" /></button>
-              </div>
-              <ChecklistDetail cl={selected} headers={headers} onUpdate={handleUpdateChecklist} onClose={() => setSelected(null)} />
-            </div>
-          </div>
-        </div>
+        <ChecklistDetail cl={selected} headers={headers} onUpdate={handleUpdateChecklist} onClose={() => setSelected(null)} />
       )}
 
-      {/* CREATE CHECKLIST MODAL */}
-      {showForm && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-[var(--card-surface)] rounded-2xl border border-[var(--glass-border)] shadow-2xl w-full max-w-lg">
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-5">
-                <h2 className="text-lg font-bold">Buat Onboarding Baru</h2>
-                <button onClick={() => setShowForm(false)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-[var(--nav-pill-active)]"><X className="w-4 h-4" /></button>
-              </div>
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="col-span-2">
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Karyawan *</label>
-                    <EmployeeSelect employees={employees} value={form.employee_id} onChange={pickNewEmployee} testId="onb-employee"
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Jabatan</label>
-                    <div className="h-9 flex items-center text-sm text-muted-foreground" data-testid="onb-position">{form.employee_position || '— (dari data karyawan)'}</div>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Departemen</label>
-                    <div className="h-9 flex items-center text-sm text-muted-foreground" data-testid="onb-dept">{form.employee_dept || '— (dari data karyawan)'}</div>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Buddy</label>
-                    <EmployeeSelect employees={employees} value={empIdByName(form.buddy)} exclude={[form.employee_id]} placeholder="— Tanpa buddy —"
-                      onChange={v => setForm(p => ({...p, buddy: nameOf(v)}))} testId="onb-buddy"
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Supervisor</label>
-                    <EmployeeSelect employees={employees} value={empIdByName(form.supervisor)} exclude={[form.employee_id]} placeholder="— Tanpa supervisor —"
-                      onChange={v => setForm(p => ({...p, supervisor: nameOf(v)}))} testId="onb-supervisor"
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-                  </div>
-                  <div className="col-span-2">
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Template</label>
-                    <SmartNativeSelect value={form.template_id} onChange={e => setForm(p => ({...p, template_id: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                      <option value="">Gunakan Default</option>
-                      {templates.map(t => <option key={t.template_id} value={t.template_id}>{t.name}{t.is_default ? ' (Default)' : ''}</option>)}
-                    </SmartNativeSelect>
-                  </div>
-                </div>
-              </div>
-              <div className="flex gap-3 mt-6">
-                <button onClick={() => setShowForm(false)} className="flex-1 h-10 rounded-xl border border-[var(--glass-border)] text-sm text-muted-foreground">Batal</button>
-                <button onClick={handleSave} disabled={saving || !form.employee_id} data-testid="onb-save"
-                  className="flex-1 h-10 rounded-xl bg-[hsl(var(--primary))] text-foreground text-sm font-medium disabled:opacity-50">
-                  {saving ? 'Membuat...' : 'Buat Checklist'}
-                </button>
-              </div>
-            </div>
-          </div>
+      {/* BUAT CHECKLIST */}
+      <FormPopup open={showForm} onClose={() => setShowForm(false)} ukuran="pendek" onSimpan={handleSave} menyimpan={saving}
+        bisaSimpan={!!form.employee_id} judul="Buat onboarding baru" labelSimpan="Buat checklist" testId="onb-form">
+        <Isian label="Karyawan" wajib>
+          <EmployeeSelect employees={employees} value={form.employee_id} onChange={pickNewEmployee} testId="onb-employee" className="w-full" />
+        </Isian>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Jabatan">
+            <p className="flex h-9 items-center text-sm text-muted-foreground" data-testid="onb-position">{form.employee_position || '— (dari data karyawan)'}</p>
+          </Isian>
+          <Isian label="Departemen">
+            <p className="flex h-9 items-center text-sm text-muted-foreground" data-testid="onb-dept">{form.employee_dept || '— (dari data karyawan)'}</p>
+          </Isian>
+          <Isian label="Buddy">
+            <EmployeeSelect employees={employees} value={empIdByName(form.buddy)} exclude={[form.employee_id]} placeholder="— Tanpa buddy —"
+              onChange={v => setForm(p => ({ ...p, buddy: nameOf(v) }))} testId="onb-buddy" className="w-full" />
+          </Isian>
+          <Isian label="Supervisor">
+            <EmployeeSelect employees={employees} value={empIdByName(form.supervisor)} exclude={[form.employee_id]} placeholder="— Tanpa supervisor —"
+              onChange={v => setForm(p => ({ ...p, supervisor: nameOf(v) }))} testId="onb-supervisor" className="w-full" />
+          </Isian>
         </div>
-      )}
+        <Isian label="Templat">
+          <SmartNativeSelect value={form.template_id} onChange={e => setForm(p => ({ ...p, template_id: e.target.value }))}>
+            <option value="">Pakai templat bawaan</option>
+            {templates.map(t => <option key={t.template_id} value={t.template_id}>{t.name}{t.is_default ? ' (bawaan)' : ''}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+      </FormPopup>
 
-      {/* TEMPLATE EDITOR MODAL */}
+      {/* EDITOR TEMPLATE */}
       {editTemplate !== undefined && (
         <TemplateEditorModal
           template={editTemplate}
           headers={headers}
           onSuccess={() => { setEditTemplate(undefined); refreshAll(); }}
           onClose={() => setEditTemplate(undefined)}
+          onDelete={async (t) => { if (await handleDeleteTemplate(t.template_id, t.name)) setEditTemplate(undefined); }}
         />
       )}
     </div>
