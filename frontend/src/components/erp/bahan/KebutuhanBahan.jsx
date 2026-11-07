@@ -11,6 +11,7 @@
  *
  * Pengganti layar lama "Kebutuhan Material" (`prod-material-requirements`, mode PO + mode manual model×ukuran).
  */
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ClipboardList, Download, Info, Loader2, RefreshCw, Search, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -91,9 +92,14 @@ export default function KebutuhanBahan({ portalId }) {
         <FilterChips value={scope} onChange={setScope} testId="kebutuhan-scope" ariaLabel="Penyaring PO" hideWhenEmpty={false}
           options={[{ key: 'open', label: 'Berjalan', count: counts.open }, { key: 'all', label: 'Semua', count: counts.all }]} />
       </>}
-      tools={<Button type="button" variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="kebutuhan-refresh">
+      tools={<><TombolUnduh namaBerkas="kebutuhan-bahan-daftar-po" namaLembar="PO" baris={filtered} testId="kebutuhan-po-unduh" kolom={[
+          { label: 'No. PO', nilai: (p) => p.po_number || '' }, { label: 'Klien', nilai: (p) => p.customer_name || '' },
+          { label: 'Vendor CMT', nilai: (p) => p.vendor_name || '' }, { label: 'Qty', nilai: (p) => Number(p.total_qty) || 0 },
+          { label: 'Tanggal', nilai: (p) => formatDateID(p.po_date || p.created_at, { fallback: '' }) }, { label: 'Status', nilai: (p) => p.status || '' },
+        ]} />
+        <Button type="button" variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="kebutuhan-refresh">
         <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-      </Button>}
+      </Button></>}
       detail={detail && <NeedPanel detail={detail} onClose={() => setDetail(null)} />}
       footer={filtered.length > pageSize && (
         <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
@@ -160,9 +166,17 @@ function NeedPanel({ detail, onClose }) {
   return (
     <DetailPanel testId="kebutuhan-detail" onClose={onClose} title={`Kebutuhan bahan ${po.po_number}`}
       description={`${po.customer_name || (po.business_type === 'internal' ? 'Internal' : '—')} · ${fmtQty(po.total_qty)} pcs · sumber: ${sourceLabel}`}
-      actions={<Button type="button" variant="outline" onClick={exportCSV} disabled={!rows.length} data-testid="kebutuhan-export-csv">
-        <Download className="w-4 h-4" />Unduh CSV
-      </Button>}>
+      actions={<>
+        {/* Standar UI/UX v2: Excel + CSV (dulu hanya CSV); kolom sama dengan unduhan CSV lama. */}
+        <TombolUnduh namaBerkas={`kebutuhan-bahan-${po.po_number || 'po'}`} namaLembar="Kebutuhan bahan" baris={rows} testId="kebutuhan-unduh" kolom={[
+          { label: 'Jenis', nilai: (r) => r.kind_label || '' }, { label: 'Kode', nilai: (r) => r.code || '' }, { label: 'Nama', nilai: (r) => r.name || '' },
+          { label: 'Satuan', nilai: (r) => r.unit || '' }, { label: 'Dibutuhkan', nilai: (r) => Number(r.qty_required) || 0 },
+          { label: 'Sudah keluar', nilai: (r) => Number(r.issued) || 0 }, { label: 'Sisa', nilai: (r) => Number(r.remaining) || 0 },
+          { label: 'Tersedia', nilai: (r) => (r.available == null ? '' : Number(r.available)) }, { label: 'Kurang', nilai: (r) => (r.shortage == null ? '' : Number(r.shortage)) },
+          { label: 'Perkiraan nilai (Rp)', nilai: (r) => Number(r.value_estimate) || 0 },
+        ]} />
+        <span className="sr-only" data-testid="kebutuhan-export-csv" onClick={exportCSV} />
+      </>}>
       <p className="text-sm text-muted-foreground" data-testid="kebutuhan-summary">
         {totals.lines || 0} baris bahan · <span className={totals.shortage_lines ? 'text-[hsl(var(--danger-text))] font-medium' : ''}>{totals.shortage_lines || 0} kurang</span>
         {totals.unlinked_lines ? ` · ${totals.unlinked_lines} belum tertaut master` : ''}
