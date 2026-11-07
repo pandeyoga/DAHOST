@@ -1,12 +1,13 @@
 import { Fragment, useState, useEffect, useCallback } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { journalSourceLabel } from '@/lib/financeLabels';
+import { humanMemo, journalSourceLabel } from '@/lib/financeLabels';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { formatDateID } from '@/lib/format';
-import { RefreshCw, FileText, Download } from 'lucide-react';
+import { RefreshCw, FileText } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { StatTile, EmptyState } from './moduleAtoms';
+import { EmptyState } from './moduleAtoms';
 import PageLayout, { RowDetail } from './layout/PageLayout';
 import JournalLinesInline from './finance/JournalLinesInline';
 import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
@@ -19,6 +20,8 @@ const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigit
  * 2026-11-05 (PANDUAN_UI G1/G6/G7): cetakan PageLayout; periode lewat PeriodPicker (dulu dua kotak tanggal
  * berlabel KAPITAL di atasnya); nomor jurnal & angka tidak dipatah ke 2 baris; tanpa huruf mesin ketik dan
  * warna hijau/biru; tabel tidak lagi bergulir di wadah setinggi 600 px.
+ * 2026-11-08 (Standar UI/UX v2): unduh Excel/CSV; 4 kartu (nama akun, saldo awal, debit/kredit, saldo akhir — semuanya
+ * sudah ada sebagai baris tabel) diganti satu kalimat; keterangan berbahasa Inggris dari server lewat humanMemo.
  */
 export default function RahazaGeneralLedgerModule({ token }) {
   const [accounts, setAccounts] = useState([]);
@@ -51,26 +54,10 @@ export default function RahazaGeneralLedgerModule({ token }) {
   }, [code, from, to, token]);
   useEffect(() => { fetchGL(); }, [fetchGL]);
 
-  const exportCSV = () => {
-    if (!data?.lines) return;
-    const rows = data.lines.map(l => [l.date, l.je_number, l.description, journalSourceLabel(l.source), l.debit, l.credit, l.balance]);
-    const csv = [
-      ['Tanggal', 'Jurnal', 'Keterangan', 'Sumber', 'Debit', 'Kredit', 'Saldo'],
-      ...rows,
-    ].map(r => r.map(c => typeof c === 'string' && c.includes(',') ? `"${c}"` : c).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `buku-besar-${code}-${from}-${to}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
   const acc = data?.account;
   const totalDebit = (data?.lines || []).reduce((s, l) => s + (l.debit || 0), 0);
   const totalCredit = (data?.lines || []).reduce((s, l) => s + (l.credit || 0), 0);
-  const neg = (n) => (Number(n) < 0 ? 'text-[hsl(var(--destructive))]' : '');
+  const neg = (n) => (Number(n) < 0 ? 'text-[hsl(var(--danger-text))]' : '');
 
   return (
     <PageLayout
@@ -78,7 +65,7 @@ export default function RahazaGeneralLedgerModule({ token }) {
       title="Mutasi per akun"
       subtitle="Semua transaksi satu akun dengan saldo berjalan, dari buku besar."
       filters={<>
-        <SmartNativeSelect value={code} onChange={e => setCode(e.target.value)} className="h-9 w-72 max-w-full" aria-label="Akun" data-testid="gl-account">
+        <SmartNativeSelect value={code} onChange={e => setCode(e.target.value)} className="h-9 w-full sm:w-64" aria-label="Akun" data-testid="gl-account">
           <option value="">Pilih akun…</option>
           {accounts.map(a => <option key={a.code} value={a.code}>{`${a.code} · ${a.name}`}</option>)}
         </SmartNativeSelect>
@@ -86,15 +73,24 @@ export default function RahazaGeneralLedgerModule({ token }) {
       </>}
       tools={<>
         <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchGL} data-testid="gl-refresh"><RefreshCw className="w-4 h-4" /></Button>
-        <Button variant="outline" onClick={exportCSV} disabled={!data?.lines?.length} data-testid="gl-export"><Download className="w-4 h-4" />Unduh CSV</Button>
+        <TombolUnduh namaBerkas={`buku-besar-${code}-${from}-${to}`} namaLembar={`Akun ${code}`} baris={data?.lines || []} testId="gl-export"
+          kolom={[
+            { label: 'Tanggal', nilai: (l) => formatDateID(l.date) },
+            { label: 'No. jurnal', nilai: (l) => l.je_number || '' },
+            { label: 'Keterangan', nilai: (l) => humanMemo(l.description || '') },
+            { label: 'Sumber', nilai: (l) => journalSourceLabel(l.source) },
+            { label: 'Debit', nilai: (l) => Number(l.debit) || 0 },
+            { label: 'Kredit', nilai: (l) => Number(l.credit) || 0 },
+            { label: 'Saldo', nilai: (l) => Number(l.balance) || 0 },
+          ]} />
       </>}
       summary={acc && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatTile label="Akun" value={acc.name} testId="gl-kpi-acc" />
-          <StatTile label="Saldo awal" value={fmt(data.opening_balance)} testId="gl-kpi-open" />
-          <StatTile label="Total debit / kredit" value={`${fmt(totalDebit)} / ${fmt(totalCredit)}`} testId="gl-kpi-mv" />
-          <StatTile label="Saldo akhir" value={fmt(data.end_balance)} testId="gl-kpi-end" />
-        </div>
+        <p className="text-sm text-muted-foreground" data-testid="gl-ringkas">
+          <b className="text-foreground" data-testid="gl-kpi-acc">{acc.code ? `${acc.code} · ` : ''}{acc.name}</b>
+          {' '}· saldo awal <b className={`tabular-nums ${neg(data.opening_balance) || 'text-foreground'}`} data-testid="gl-kpi-open">{fmt(data.opening_balance)}</b>
+          {' '}· debit <b className="text-foreground tabular-nums" data-testid="gl-kpi-mv">{fmt(totalDebit)}</b> · kredit <b className="text-foreground tabular-nums">{fmt(totalCredit)}</b>
+          {' '}· saldo akhir <b className={`tabular-nums ${neg(data.end_balance) || 'text-foreground'}`} data-testid="gl-kpi-end">{fmt(data.end_balance)}</b>
+        </p>
       )}
     >
       <GlassCard className="p-0 overflow-hidden">
@@ -136,7 +132,7 @@ export default function RahazaGeneralLedgerModule({ token }) {
                             ? <Button variant="link" size="sm" className="h-auto p-0" onClick={() => setOpenLine(open ? null : key)} data-testid={`gl-je-${l.je_number}`}>{l.je_number}</Button>
                             : l.je_number}
                         </td>
-                        <td>{l.description || '—'}</td>
+                        <td className="min-w-[12rem]">{humanMemo(l.description) || '—'}</td>
                         <td className="text-muted-foreground">{journalSourceLabel(l.source)}</td>
                         <td className="text-right tabular-nums">{l.debit ? fmt(l.debit) : ''}</td>
                         <td className="text-right tabular-nums">{l.credit ? fmt(l.credit) : ''}</td>

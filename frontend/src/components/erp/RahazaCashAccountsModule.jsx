@@ -10,7 +10,11 @@ import PageLayout, { DetailPanel, RowDetail, RowToggle } from './layout/PageLayo
 import JournalLinesInline from './finance/JournalLinesInline';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { journalSourceLabel } from '@/lib/financeLabels';
+import { JOURNAL_SOURCE_LABELS, journalSourceLabel } from '@/lib/financeLabels';
+
+// Jenis mutasi: label Indonesia dari peta sumber jurnal bila kodenya dikenal (server kadang mengirim label Inggris,
+// mis. "Petty Cash Expense").
+const jenisMutasi = (m) => (JOURNAL_SOURCE_LABELS[m.category] ? journalSourceLabel(m.category) : (m.category_label || journalSourceLabel(m.category)));
 import { formatRupiah, formatDateID, formatNumber } from '@/lib/format';
 import PaginationLite from '@/components/ui/pagination-lite';
 import { MoneyInput } from '@/components/ui/money-input';
@@ -145,7 +149,7 @@ export default function RahazaCashAccountsModule({ token }) {
           kolom={[
             { label: 'Tanggal', nilai: (m) => formatDateID(m.date) },
             { label: 'Jurnal', nilai: (m) => m.je_number || '' },
-            { label: 'Jenis', nilai: (m) => m.category_label || journalSourceLabel(m.category) },
+            { label: 'Jenis', nilai: jenisMutasi },
             { label: 'Keterangan', nilai: (m) => m.ref_label || m.description || '' },
             { label: 'Masuk', nilai: (m) => (m.direction === 'in' ? Number(m.amount) || 0 : '') },
             { label: 'Keluar', nilai: (m) => (m.direction === 'out' ? Number(m.amount) || 0 : '') },
@@ -173,7 +177,7 @@ export default function RahazaCashAccountsModule({ token }) {
                   <TableCell className="whitespace-nowrap">
                     {m.je_id ? <Button variant="link" size="sm" className="h-auto p-0" onClick={toggle}>{m.je_number}</Button> : (m.je_number || '—')}
                   </TableCell>
-                  <TableCell className="hidden md:table-cell">{m.category_label || journalSourceLabel(m.category)}</TableCell>
+                  <TableCell className="hidden md:table-cell">{jenisMutasi(m)}</TableCell>
                   <TableCell className="min-w-[12rem] whitespace-normal">{m.ref_label || m.description || '—'}</TableCell>
                   <TableCell className="text-right tabular-nums whitespace-nowrap">{m.direction === 'in' ? formatNumber(m.amount) : ''}</TableCell>
                   <TableCell className="text-right tabular-nums whitespace-nowrap">{m.direction === 'out' ? formatNumber(m.amount) : ''}</TableCell>
