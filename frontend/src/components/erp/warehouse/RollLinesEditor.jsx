@@ -9,9 +9,15 @@
  *     sementara laporan memakai stoknya. Dua angka berbeda = gudang berdebat
  *     dengan dirinya sendiri.
  *   · maksimum 200 gulungan per baris penerimaan
+ *
+ * Standar UI/UX v2 (8 Nov 2026): kotak netral (dulu latar ungu pekat 70%), tabel & isian komponen bersama,
+ * semua tombol `type="button"` karena editor ini dipakai di dalam FormPopup (tidak boleh mengirim form).
  */
-import { Trash2, Plus, Layers, CheckCircle2, AlertTriangle, Wand2 } from 'lucide-react';
+import { Trash2, Plus, CheckCircle2, AlertTriangle, Wand2 } from 'lucide-react';
 import { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   rollLine, rollLinesState, splitEvenly, fmtQty, rollUomOf, num,
 } from './rollLines';
@@ -24,7 +30,7 @@ export default function RollLinesEditor({
   testPrefix = 'roll-lines',
   nextNumberHint = '',
   disabled = false,
-  title = 'Rincian Gulungan',
+  title = 'Rincian gulungan',
   subtitle = '',
 }) {
   const [bulk, setBulk] = useState('');
@@ -42,22 +48,22 @@ export default function RollLinesEditor({
 
   const badge = {
     empty: {
-      cls: 'bg-[hsl(var(--warning)/0.1)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)] ',
+      cls: 'text-[hsl(var(--warning-text))]',
       icon: AlertTriangle,
       text: 'Belum ada gulungan — kain ini akan masuk daftar "Penerimaan tanpa roll"',
     },
     match: {
-      cls: 'bg-[hsl(var(--success)/0.1)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ',
+      cls: 'text-[hsl(var(--success-text))]',
       icon: CheckCircle2,
       text: `Cocok — ${st.count} gulungan = ${fmtQty(st.total)} ${uom}`,
     },
     over: {
-      cls: 'bg-[hsl(var(--destructive)/0.1)]  text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.35)] ',
+      cls: 'text-[hsl(var(--danger-text))]',
       icon: AlertTriangle,
       text: `Kelebihan ${fmtQty(Math.abs(st.diff), 3)} ${uom} — total gulungan ${fmtQty(st.total)} vs diterima ${fmtQty(accepted)}`,
     },
     under: {
-      cls: 'bg-[hsl(var(--destructive)/0.1)]  text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.35)] ',
+      cls: 'text-[hsl(var(--danger-text))]',
       icon: AlertTriangle,
       text: st.hasZero
         ? 'Ada gulungan yang berat/panjangnya masih 0 — isi angkanya'
@@ -67,116 +73,89 @@ export default function RollLinesEditor({
   const BadgeIcon = badge.icon;
 
   return (
-    <div className="rounded-xl border border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary)/0.7)]  p-3 space-y-2.5"
-      data-testid={`${testPrefix}-panel`}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-start gap-2">
-          <Layers className="w-4 h-4 mt-0.5 text-[hsl(var(--primary))] shrink-0" />
-          <div>
-            <p className="text-xs font-semibold text-[hsl(var(--primary))] ">
-              {title} <span className="font-normal text-[hsl(var(--primary)/0.8)] ">· nomor roll otomatis{nextNumberHint ? ` (berikutnya ${nextNumberHint})` : ''}</span>
-            </p>
-            <p className="text-[11px] text-[hsl(var(--primary)/0.8)] ">
-              {subtitle || `Isi berat/panjang tiap gulungan. Totalnya harus sama dengan qty diterima (${fmtQty(accepted)} ${uom}).`}
-            </p>
-          </div>
+    // Enter di isian gulungan tidak mengirim form popup di sekelilingnya (mengetik berat lalu Enter ≠ Simpan).
+    <div className="space-y-3 rounded-lg border border-[var(--glass-border)] p-3" data-testid={`${testPrefix}-panel`}
+      onKeyDown={(e) => { if (e.key === 'Enter' && e.target.tagName === 'INPUT') e.preventDefault(); }}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground">
+            {title} <span className="font-normal text-muted-foreground">· nomor roll otomatis{nextNumberHint ? ` (berikutnya ${nextNumberHint})` : ''}</span>
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {subtitle || `Isi berat/panjang tiap gulungan. Totalnya harus sama dengan qty diterima (${fmtQty(accepted)} ${uom}).`}
+          </p>
         </div>
         {!disabled && (
-          <div className="flex items-center gap-1.5">
-            <input
-              type="number" min="1" max="200" value={bulk}
-              onChange={(e) => setBulk(e.target.value)}
-              placeholder="jml roll"
-              className="h-8 w-24 px-2 rounded-lg border border-[hsl(var(--primary)/0.35)] bg-[var(--input-surface)] text-xs text-foreground"
-              data-testid={`${testPrefix}-bulk-count`}
-            />
-            <button type="button" onClick={doSplit}
-              className="h-8 px-2.5 rounded-lg bg-[hsl(var(--primary))] text-white text-xs font-medium hover:brightness-110 inline-flex items-center gap-1"
-              data-testid={`${testPrefix}-split`}>
-              <Wand2 className="w-3.5 h-3.5" /> Bagi rata
-            </button>
+          <div className="flex items-center gap-2">
+            <Input type="number" min="1" max="200" value={bulk} onChange={(e) => setBulk(e.target.value)}
+              placeholder="Jumlah roll" aria-label="Jumlah gulungan untuk dibagi rata" className="h-8 w-28"
+              data-testid={`${testPrefix}-bulk-count`} />
+            <Button type="button" size="sm" variant="outline" onClick={doSplit} data-testid={`${testPrefix}-split`}>
+              <Wand2 />Bagi rata
+            </Button>
           </div>
         )}
       </div>
 
       {lines.length > 0 && (
-        <div className="rounded-lg border border-[hsl(var(--primary)/0.35)] overflow-hidden bg-[var(--card-surface)]">
-          <table className="w-full text-xs" data-testid={`${testPrefix}-table`}>
-            <thead className="bg-[hsl(var(--primary)/0.7)] ">
-              <tr className="text-left text-[hsl(var(--primary))] ">
-                <th className="px-2 py-1.5 font-semibold w-10">#</th>
-                <th className="px-2 py-1.5 font-semibold">Nomor roll</th>
-                <th className="px-2 py-1.5 font-semibold w-32">{uom === 'kg' ? 'Berat (kg)' : `Panjang (${uom || 'm'})`}</th>
-                <th className="px-2 py-1.5 font-semibold w-32">Lot warna</th>
-                <th className="px-2 py-1.5 font-semibold">Catatan</th>
-                {!disabled && <th className="px-2 py-1.5 w-8" />}
-              </tr>
-            </thead>
-            <tbody>
+        <div className="overflow-x-auto">
+          <Table data-testid={`${testPrefix}-table`} className="min-w-[34rem]">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-10">#</TableHead>
+                <TableHead>Nomor roll</TableHead>
+                <TableHead className="w-32">{uom === 'kg' ? 'Berat (kg)' : `Panjang (${uom || 'm'})`}</TableHead>
+                <TableHead className="w-32">Lot warna</TableHead>
+                <TableHead>Catatan</TableHead>
+                {!disabled && <TableHead className="w-10" />}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {lines.map((l, i) => (
-                <tr key={i} className="border-t border-[hsl(var(--primary)/0.6)] "
-                  data-testid={`${testPrefix}-row-${i}`}>
-                  <td className="px-2 py-1 text-muted-foreground">{i + 1}</td>
-                  <td className="px-2 py-1 tabular-nums text-[11px] text-muted-foreground">
-                    {l.roll_no || 'otomatis'}
-                  </td>
-                  <td className="px-2 py-1">
-                    <input
-                      type="number" step="0.001" min="0" value={l.qty}
-                      disabled={disabled}
-                      onChange={(e) => update(i, 'qty', e.target.value)}
-                      className={`h-8 w-full px-2 rounded-lg border bg-[var(--input-surface)] text-xs text-foreground tabular-nums ${
-                        num(l.qty) > 0 ? 'border-[hsl(var(--primary)/0.35)] ' : 'border-[hsl(var(--destructive)/0.35)] '}`}
-                      data-testid={`${testPrefix}-qty-${i}`}
-                    />
-                  </td>
-                  <td className="px-2 py-1">
-                    <input
-                      value={l.color_lot || ''} disabled={disabled}
-                      onChange={(e) => update(i, 'color_lot', e.target.value)}
-                      placeholder="LOT-A"
-                      className="h-8 w-full px-2 rounded-lg border border-[hsl(var(--primary)/0.35)] bg-[var(--input-surface)] text-xs text-foreground"
-                      data-testid={`${testPrefix}-lot-${i}`}
-                    />
-                  </td>
-                  <td className="px-2 py-1">
-                    <input
-                      value={l.notes || ''} disabled={disabled}
-                      onChange={(e) => update(i, 'notes', e.target.value)}
-                      placeholder="mis. ujung basah"
-                      className="h-8 w-full px-2 rounded-lg border border-[hsl(var(--primary)/0.35)] bg-[var(--input-surface)] text-xs text-foreground"
-                      data-testid={`${testPrefix}-notes-${i}`}
-                    />
-                  </td>
+                <TableRow key={i} data-testid={`${testPrefix}-row-${i}`}>
+                  <TableCell className="text-muted-foreground">{i + 1}</TableCell>
+                  <TableCell className="tabular-nums text-muted-foreground">{l.roll_no || 'otomatis'}</TableCell>
+                  <TableCell>
+                    <Input type="number" step="0.001" min="0" value={l.qty} disabled={disabled}
+                      onChange={(e) => update(i, 'qty', e.target.value)} aria-label={`Qty gulungan ${i + 1}`}
+                      className={`h-8 tabular-nums ${num(l.qty) > 0 ? '' : 'border-[hsl(var(--destructive)/0.5)]'}`}
+                      data-testid={`${testPrefix}-qty-${i}`} />
+                  </TableCell>
+                  <TableCell>
+                    <Input value={l.color_lot || ''} disabled={disabled} onChange={(e) => update(i, 'color_lot', e.target.value)}
+                      placeholder="LOT-A" aria-label={`Lot warna gulungan ${i + 1}`} className="h-8"
+                      data-testid={`${testPrefix}-lot-${i}`} />
+                  </TableCell>
+                  <TableCell>
+                    <Input value={l.notes || ''} disabled={disabled} onChange={(e) => update(i, 'notes', e.target.value)}
+                      placeholder="mis. ujung basah" aria-label={`Catatan gulungan ${i + 1}`} className="h-8"
+                      data-testid={`${testPrefix}-notes-${i}`} />
+                  </TableCell>
                   {!disabled && (
-                    <td className="px-2 py-1 text-right">
-                      <button type="button" onClick={() => remove(i)}
-                        className="text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]"
-                        aria-label={`Hapus gulungan ${i + 1}`}
+                    <TableCell className="text-right">
+                      <Button type="button" variant="ghost" size="icon-sm" onClick={() => remove(i)}
+                        aria-label={`Hapus gulungan ${i + 1}`} title={`Hapus gulungan ${i + 1}`}
                         data-testid={`${testPrefix}-remove-${i}`}>
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </td>
+                        <Trash2 className="text-[hsl(var(--danger-text))]" />
+                      </Button>
+                    </TableCell>
                   )}
-                </tr>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         {!disabled ? (
-          <button type="button" onClick={add}
-            className="h-8 px-2.5 rounded-lg border border-[hsl(var(--primary)/0.35)] text-xs font-medium text-[hsl(var(--primary))]  hover:bg-[hsl(var(--primary)/0.15)]  inline-flex items-center gap-1"
-            data-testid={`${testPrefix}-add`}>
-            <Plus className="w-3.5 h-3.5" /> Tambah gulungan
-          </button>
+          <Button type="button" size="sm" variant="outline" onClick={add} data-testid={`${testPrefix}-add`}>
+            <Plus />Tambah gulungan
+          </Button>
         ) : <span />}
-        <div className={`inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-full border ${badge.cls}`}
-          data-testid={`${testPrefix}-status`}>
-          <BadgeIcon className="w-3.5 h-3.5" /> {badge.text}
-        </div>
+        <p className={`inline-flex items-center gap-1.5 text-xs font-medium ${badge.cls}`} data-testid={`${testPrefix}-status`}>
+          <BadgeIcon className="h-3.5 w-3.5 shrink-0" /> {badge.text}
+        </p>
       </div>
     </div>
   );
