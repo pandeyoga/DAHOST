@@ -1,7 +1,7 @@
 // Cek Sinkron Akun — audit akun <-> peran <-> hak akses efektif (superadmin).
 //
-// Standar UI/UX v2 (8 Nov 2026): PageLayout (di hub judul disembunyikan), 4 kartu angka StatTile dari daftar yang
-// sama, tabel (kartu ringkas di HP) + unduh Excel/CSV, nama peran & portal manusiawi (dulu kode `finance`,
+// Standar UI/UX v2 (8 Nov 2026): PageLayout (di hub judul disembunyikan), jumlah per status di pil penyaring (dari
+// daftar yang sama), tabel (kartu ringkas di HP) + unduh Excel/CSV, nama peran & portal manusiawi (dulu kode `finance`,
 // `admin_gudang`), pesan masalah tanpa istilah program (`role_id`), detail akses = DetailPopup, sinkronkan lewat
 // konfirmasi. Logika audit & perbaikan di server tidak berubah.
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -15,7 +15,7 @@ import TombolUnduh from '../ui/tombol-unduh';
 import DetailPopup, { BarisDetail } from '../ui/detail-popup';
 import { confirmDialog } from '../ui/confirm-dialog';
 import PageLayout from './layout/PageLayout';
-import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
+import { EmptyState, StatusBadge } from './moduleAtoms';
 import { NAMA_PORTAL } from './portalAccess';
 import { petaLabelPeran } from './akses/labelPeran';
 
@@ -184,6 +184,7 @@ export default function AccessSyncModule({ token }) {
       filters={data && <>
         <FilterChips value={saring} onChange={setSaring} hideWhenEmpty={false} testId="access-sync-filter" options={[
           { key: '', label: 'Semua', count: users.length },
+          { key: 'ok', label: 'Sinkron', count: nOk },
           { key: 'error', label: 'Bermasalah', count: nError },
           { key: 'rapikan', label: 'Bisa dirapikan', count: nRapikan },
         ]} />
@@ -206,14 +207,7 @@ export default function AccessSyncModule({ token }) {
           <RefreshCw className={busy ? 'animate-spin' : ''} />
         </Button>
       </>}
-      summary={data && (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="access-sync-summary">
-          <StatTile label="Total akun" value={users.length} sub="Semua akun pengguna" />
-          <StatTile label="Sinkron" value={nOk} accent={nOk ? 'success' : 'default'} sub="Peran dan hak akses sesuai" testId="access-sync-ok" />
-          <StatTile label="Bermasalah" value={nError} accent={nError ? 'danger' : 'default'} sub="Perlu diperiksa manual" testId="access-sync-error" />
-          <StatTile label="Bisa dirapikan otomatis" value={nRapikan} sub="Lewat tombol Sinkronkan" />
-        </div>
-      )}>
+      >
       {!data ? (
         <p className="py-10 text-center text-sm text-muted-foreground">{busy ? 'Memeriksa akun…' : 'Data akun belum bisa dimuat.'}</p>
       ) : (

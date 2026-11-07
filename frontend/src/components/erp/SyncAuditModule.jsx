@@ -79,6 +79,8 @@ const GANTI = [
   [/\s*lewat SSOT core\/catalog_stock/g, ' dari sumber stok resmi'],
   [/\bSSOT\b/g, 'sumber data resmi'],
   [/\bfulfillment\b/g, 'pemenuhan pesanan'],
+  [/Stock Opname/g, 'Stok opname'],
+  [/Integritas Rujukan Lintas Koleksi/g, 'Keutuhan rujukan antar data'],
   [/option_code\s*=\s*['"]NA['"]/g, 'kode opsi "NA"'],
   [/\boption_code\b/g, 'kode opsi'],
   // "marketing_catalog_items.variant_id kosong di SELURUH 682 dokumen (item katalog → varian)"
@@ -193,7 +195,7 @@ export default function SyncAuditModule({ onNavigate }) {
 
   return (
     <PageLayout testId="sync-audit-module" title="Sinkronisasi data"
-      subtitle="Memeriksa apakah data yang saling menunjuk memang tersambung: Marketing → Gudang, Katalog → Master FG, Varian → Stok, Opname → Master."
+      subtitle="Memeriksa apakah data yang saling menunjuk memang tersambung (Marketing, Katalog, Varian, Stok, Opname)."
       tools={<>
         <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Periksa ulang" aria-label="Periksa ulang"
           data-testid="refresh-audit">
@@ -206,7 +208,7 @@ export default function SyncAuditModule({ onNavigate }) {
             sub={<StatusBadge status={report.verdict} label={v.text} tone={v.tone} testId="verdict-badge" />} />
           <StatTile label="Temuan kritis" value={fmt(sc.CRITICAL)} accent={sc.CRITICAL ? 'danger' : 'default'} sub="Tautan rusak yang harus segera diperbaiki" />
           <StatTile label="Temuan tinggi" value={fmt(sc.HIGH)} accent={sc.HIGH ? 'warning' : 'default'} sub="Data tidak bisa dihitung dengan benar" />
-          <StatTile label="Temuan sedang" value={fmt(sc.MED)} sub={`Ditambah ${fmt(sc.INFO)} catatan info`} />
+          <StatTile label="Temuan sedang" value={fmt(sc.MED)} sub={`Ditambah ${fmt(sc.INFO)} catatan`} />
         </div>
       )}>
       {loading && !report ? (
@@ -247,7 +249,7 @@ export default function SyncAuditModule({ onNavigate }) {
               kolom={[
                 { kunci: 'sev', label: 'Tingkat', hp: 'keterangan', isi: (f) => <StatusBadge status={f.severity} label={sev(f.severity).label} tone={sev(f.severity).tone} /> },
                 { kunci: 'text', label: 'Temuan', hp: 'judul', isi: (f) => <p className="text-sm md:max-w-[40rem]">{manusiawi(f.text)}</p> },
-                { kunci: 'bagian', label: 'Bagian', isi: (f) => <span className="text-sm text-muted-foreground">{f.section}. {f.section_title} · {f.code}</span> },
+                { kunci: 'bagian', label: 'Bagian', isi: (f) => <span className="text-sm text-muted-foreground">{f.section}. {manusiawi(f.section_title)} · {f.code}</span> },
                 { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (f) => (f.action === 'sku_bridge' && onNavigate ? (
                   <Button size="sm" variant="outline" onClick={() => onNavigate('sku-bridge')} data-testid={`finding-action-${f.code}`}>
                     Buka Jembatan SKU
@@ -259,7 +261,7 @@ export default function SyncAuditModule({ onNavigate }) {
             const rujukan = key === 'E' ? (sec.rows || []) : [];
             const drift = sec.samples?.drift || [];
             return (
-              <Bagian key={key} judul={`${key}. ${sec.title}`} testId={`audit-section-${key}`}
+              <Bagian key={key} judul={`${key}. ${manusiawi(sec.title)}`} testId={`audit-section-${key}`}
                 keterangan={(sec.findings || []).length > 0 ? `${sec.findings.length} temuan di bagian ini.` : null}
                 alat={rujukan.length > 0 && (
                   <TombolUnduh namaBerkas="sinkronisasi-data-rujukan" namaLembar="Rujukan" baris={rujukan} testId="sync-rujukan-unduh"

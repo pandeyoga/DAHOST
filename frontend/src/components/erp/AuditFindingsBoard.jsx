@@ -74,7 +74,7 @@ export default function AuditFindingsBoard() {
     <PageLayout testId="audit-findings-board" title="Papan temuan audit"
       subtitle="Status temuan audit 23 Sep 2026 untuk Keuangan, Produksi/Maklon, dan R&D beserta perbaikannya."
       filters={data && <>
-        <FilterChips value={status} onChange={setStatus} hideWhenEmpty={false} testId="audit-filter-status" options={[
+        <FilterChips value={status} onChange={setStatus} hideWhenEmpty={false} testId="audit-filter-status" className="w-full sm:w-auto" options={[
           { key: '', label: 'Semua', count: total },
           { key: 'selesai', label: 'Selesai', count: hitung('selesai') },
           { key: 'diterima', label: 'Diterima', count: hitung('diterima') },
@@ -93,7 +93,6 @@ export default function AuditFindingsBoard() {
         </div>
       </>}
       tools={data && <>
-        <Button variant="outline" onClick={() => setLihatSumber(true)} data-testid="audit-sumber"><FileText />Sumber</Button>
         <TombolUnduh namaBerkas="papan-temuan-audit" namaLembar="Temuan" baris={rows} testId="audit-unduh" kolom={[
           { label: 'ID', nilai: (f) => f.id }, { label: 'Portal', nilai: (f) => namaPortal(f.portal) },
           { label: 'Temuan', nilai: (f) => f.judul }, { label: 'Tingkat', nilai: (f) => f.tingkat },
@@ -115,10 +114,16 @@ export default function AuditFindingsBoard() {
         <Notice tone="danger" title="Papan temuan gagal dimuat" testId="audit-board-error">{err}</Notice>
       ) : !data ? (
         <p className="py-10 text-center text-sm text-muted-foreground" data-testid="audit-board-loading">Memuat papan temuan…</p>
-      ) : (
+      ) : (<>
+        <p className="text-xs text-muted-foreground">
+          Sumber: {(data.sumber || []).length} dokumen temuan & rencana perbaikan.{' '}
+          <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setLihatSumber(true)} data-testid="audit-sumber">
+            <FileText />Lihat sumber
+          </Button>
+        </p>
         <TabelData kolom={kolom} baris={rows} onKlikBaris={setDetail} testId="audit-findings-table"
           kosong={<EmptyState title="Tidak ada temuan yang cocok" description="Ubah saringan atau kata pencarian." />} />
-      )}
+      </>)}
 
       {detail && (
         <DetailPopup open onClose={() => setDetail(null)} judul={`${detail.id} · ${detail.judul}`} testId="audit-detail"

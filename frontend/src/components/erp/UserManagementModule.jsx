@@ -231,14 +231,13 @@ export default function UserManagementModule({ token }) {
   const nAktif = users.filter((u) => u.status === 'active').length;
 
   const columns = [
-    { kunci: 'name', label: 'Nama', hp: 'judul', isi: (row) => (
-      <div className="min-w-0">
+    { kunci: 'name', label: 'Nama & email', hp: 'judul', isi: (row) => (
+      <div className="min-w-0 md:max-w-[18rem]">
         <p className="font-medium text-foreground">{row.name}</p>
-        <p className="truncate text-xs text-muted-foreground md:hidden">{row.email}</p>
+        <p className="break-all text-xs text-muted-foreground">{row.email}</p>
       </div>) },
-    { kunci: 'email', label: 'Email', hp: false, isi: (row) => <span className="text-sm">{row.email}</span> },
     { kunci: 'role', label: 'Peran', isi: (row) => <span className="text-sm">{namaPeran(row.role)}</span> },
-    { kunci: 'link', label: 'Tautan', isi: (row) => <span className="text-sm text-muted-foreground">{tautan(row) || '—'}</span> },
+    { kunci: 'link', label: 'Tautan', isi: (row) => <span className="text-sm text-muted-foreground md:max-w-[14rem] md:inline-block">{tautan(row) || '—'}</span> },
     { kunci: 'status', label: 'Status', isi: (row) => (
       <StatusBadge status={row.status} label={row.status === 'active' ? 'Aktif' : 'Nonaktif'} tone={row.status === 'active' ? 'success' : 'muted'} />) },
     { kunci: 'created_at', label: 'Dibuat', isi: (row) => <span className="whitespace-nowrap text-sm">{formatDateID(instan(row.created_at))}</span> },
