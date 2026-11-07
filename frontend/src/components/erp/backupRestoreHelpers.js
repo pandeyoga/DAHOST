@@ -73,7 +73,7 @@ export const downloadBackup = async (backupId, token) => {
     const response = await fetch(`${API}/download/${encodeURIComponent(backupId)}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!response.ok) throw new Error(await readError(response, 'Download gagal'));
+    if (!response.ok) throw new Error(await readError(response, 'Unduhan gagal'));
 
     const blob = await response.blob();
     if (!blob || blob.size === 0) throw new Error('Berkas backup kosong (0 byte)');
@@ -110,7 +110,7 @@ const xhrPost = (path, formData, token, onProgress) =>
       let body = null;
       try { body = JSON.parse(xhr.responseText); } catch { /* biarkan null */ }
       if (xhr.status >= 200 && xhr.status < 300) resolve(body || {});
-      else reject(new Error(describeError(body?.detail ?? body, `Gagal (HTTP ${xhr.status})`)));
+      else reject(new Error(describeError(body?.detail ?? body, `Gagal (kode ${xhr.status})`)));
     };
     xhr.onerror = () => reject(new Error('Koneksi terputus saat mengunggah'));
     xhr.ontimeout = () => reject(new Error('Unggahan melewati batas waktu'));
@@ -201,7 +201,7 @@ export const restoreSelective = async (backupId, collections, mode, token) => {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ backup_id: backupId, collections, mode, confirm: true }),
     });
-    if (!response.ok) throw new Error(await readError(response, 'Restore gagal'));
+    if (!response.ok) throw new Error(await readError(response, 'Pemulihan gagal'));
     return await response.json();
   } catch (e) {
     return { ok: false, error: e.message };
