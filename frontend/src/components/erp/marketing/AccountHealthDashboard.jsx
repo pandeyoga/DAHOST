@@ -319,7 +319,7 @@ export default function AccountHealthDashboard({ token }) {
     { kunci: 'platform', label: 'Platform', hp: 'keterangan', isi: (s) => labelPlatform(s.platform) },
     { kunci: 'ses', label: 'Skor SES', rata: 'kanan', isi: (s) => (
       <span className="inline-flex items-center gap-1">
-        <span className="font-semibold tabular-nums">{s.ses_score ?? '—'}</span>
+        <span className="font-semibold tabular-nums">{s.ses_score == null ? '—' : Number(s.ses_score).toLocaleString('id-ID')}</span>
         <TrendIndicator current={s.ses_score} previous={sebelumnya[s.id]?.ses_score} />
       </span>) },
     { kunci: 'late', label: 'Telat kirim', rata: 'kanan', isi: (s) => <span className="tabular-nums">{persen(s.late_shipment_rate)}</span> },

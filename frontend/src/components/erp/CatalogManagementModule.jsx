@@ -531,7 +531,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
   );
 
   const pemilihKatalog = (tab === 'items' || tab === 'history') && (
-    <SmartNativeSelect className="w-full sm:w-72" value={selectedCatalog?.id || ''} placeholder="Pilih katalog"
+    <SmartNativeSelect className="w-72" value={selectedCatalog?.id || ''} placeholder="Pilih katalog"
       onChange={(e) => setSelectedCatalog(catalogs.find((c) => c.id === e.target.value) || null)}
       data-testid="catalog-picker">
       <option value="">Pilih katalog…</option>
@@ -589,14 +589,14 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
             <TabsTrigger value="stock" className="shrink-0" data-testid="catalog-tab-stock">Ringkasan stok</TabsTrigger>
             <TabsTrigger value="history" className="shrink-0" data-testid="catalog-tab-history">Riwayat stok</TabsTrigger>
           </TabsList>
-          {pemilihKatalog && <div className="w-full sm:ml-auto sm:w-auto">{pemilihKatalog}</div>}
+          {pemilihKatalog && <div className="sm:ml-auto">{pemilihKatalog}</div>}
         </div>
 
         {/* ── TAB 1: KATALOG ── */}
         <TabsContent value="catalogs" className="mt-4 space-y-4">
           <Toolbar
             filters={(
-              <SmartNativeSelect className="w-full sm:w-64" value={filterAccount}
+              <SmartNativeSelect className="w-64" value={filterAccount}
                 onChange={e => setFilterAccount(e.target.value)} data-testid="catalog-filter-account">
                 <option value="">Semua toko</option>
                 {accounts.map(a => <option key={a.id} value={a.id}>{labelPlatform(a.platform)} — {a.account_name || a.name}</option>)}

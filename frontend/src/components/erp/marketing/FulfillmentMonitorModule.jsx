@@ -281,7 +281,7 @@ export default function FulfillmentMonitorModule({ token }) {
           <Input className="pl-8" placeholder="Cari no. pesanan, toko, kurir" value={q}
             onChange={(e) => setQ(e.target.value)} data-testid="monitor-search" />
         </div>
-        <SmartNativeSelect className="w-full sm:w-56" value={accountId} data-testid="monitor-account"
+        <SmartNativeSelect className="w-56" value={accountId} data-testid="monitor-account"
           onChange={(e) => { setAccountId(e.target.value); setPage(1); }}>
           <option value="">Semua toko</option>
           {accounts.map((a) => <option key={a.id} value={a.id}>{a.account_name}</option>)}

@@ -35,6 +35,8 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 import { Button } from '@/components/ui/button';
+import { CHIP_CLASS, CHIP_ACTIVE_CLASS } from '@/components/ui/tabs';
+import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 
@@ -52,7 +54,7 @@ const ACTIONS = [
   { key: 'diperbarui', label: 'diperbarui', help: 'baris yang sudah ada akan BERUBAH',
     cls: 'bg-[hsl(var(--info)/0.12)] text-[hsl(var(--info-text))]' },
   { key: 'sebagian', label: 'sebagian', help: 'hanya sebagian field yang boleh ditimpa',
-    cls: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300' },
+    cls: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))]' },
   { key: 'dilewati', label: 'dilewati', help: 'dibiarkan apa adanya (tidak ada perubahan)',
     cls: 'bg-muted text-muted-foreground' },
   { key: 'ditolak', label: 'ditolak', help: 'TIDAK masuk — alasannya disebut per baris',
@@ -184,22 +186,19 @@ export default function ImportPlanPanel({
       {/* Chip jumlah = penyaring. Angka yang tidak bisa diklik memaksa staf
           menggulir mencari barisnya sendiri. */}
       <div className="flex flex-wrap items-center gap-1.5 px-3 py-2 border-b border-border">
-        <button type="button" onClick={() => { setOnly(''); setPage(1); }}
-          className={`px-2 py-0.5 rounded-full text-xs border ${
-            only ? 'border-border text-muted-foreground' : 'border-primary text-primary font-semibold'}`}
+        <Button type="button" variant="outline" aria-pressed={!only} onClick={() => { setOnly(''); setPage(1); }}
+          className={cn(CHIP_CLASS, !only && CHIP_ACTIVE_CLASS)}
           data-testid="import-plan-filter-all">
-          semua {counts.total || 0}
-        </button>
+          Semua ({counts.total || 0})
+        </Button>
         {ACTIONS.map((a) => (
-          <button key={a.key} type="button" title={a.help}
+          <Button key={a.key} type="button" variant="outline" title={a.help} aria-pressed={only === a.key}
             disabled={!counts[a.key]}
             onClick={() => { setOnly(a.key); setPage(1); }}
-            className={`px-2 py-0.5 rounded-full text-xs ${a.cls}
-              ${only === a.key ? 'ring-2 ring-primary/60' : ''}
-              ${!counts[a.key] ? 'opacity-40' : ''}`}
+            className={cn(CHIP_CLASS, only === a.key && CHIP_ACTIVE_CLASS)}
             data-testid={`import-plan-filter-${a.key}`}>
-            {counts[a.key] || 0} {a.label}
-          </button>
+            {a.label} ({counts[a.key] || 0})
+          </Button>
         ))}
         <span className="text-xs text-muted-foreground ml-auto" data-testid="import-plan-count">
           {changed} baris menyentuh data · {counts.dilewati || 0} tidak diapa-apakan
