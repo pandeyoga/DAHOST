@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Plus, Trash2, Wand2, Package, Pencil } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -10,12 +11,14 @@ import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite from '@/components/ui/pagination-lite';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import FormPopup from '@/components/ui/form-popup';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   PRODUCT_STATUS_OPTIONS, PRODUCT_STATUS_UNSET, PRODUCT_STATUS_MIXED, productStatusLabel, productStatusTone,
 } from '@/lib/productStatus';
 import { toast } from 'sonner';
 import PageLayout from './layout/PageLayout';
+import { PageLayoutSatuBaris } from './engine/DataTable';
 import { EmptyState, StatusBadge } from './moduleAtoms';
 
 const PAGE_SIZE = 25;
@@ -184,7 +187,7 @@ export function RahazaVariantsModule({ token }) {
   const allModels = selectedModelId === ALL_MODELS;
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="rahaza-variants-module"
       title="Varian produk (SKU)"
       subtitle="Warna × ukuran dengan SKU otomatis KODE-WARNA-UKURAN; status Stop tidak direncanakan cutting."
@@ -196,7 +199,7 @@ export function RahazaVariantsModule({ token }) {
       filters={(
         <>
           <SmartNativeSelect value={selectedModelId || ALL_MODELS} onChange={(e) => setSelectedModelId(e.target.value)}
-            className="h-9 w-72" aria-label="Model" data-testid="variant-model-selector">
+            className="w-56" aria-label="Model" data-testid="variant-model-selector">
             <option value={ALL_MODELS}>Semua model</option>
             {models.map(m => (
               <option key={m.id} value={m.id}>{m.code} · {m.name}</option>
@@ -206,11 +209,17 @@ export function RahazaVariantsModule({ token }) {
             ariaLabel="Status produk" testId="variant-status-filter" />
         </>
       )}
+      tools={<TombolUnduh namaBerkas="varian-produk" namaLembar="Varian" baris={shown} testId="variant-unduh" kolom={[
+        { label: 'SKU', nilai: (v) => v.sku || '' }, { label: 'Model', nilai: (v) => v.model_code || selectedModel?.code || '' },
+        { label: 'Warna', nilai: (v) => v.color_name || '' }, { label: 'Kode warna', nilai: (v) => v.color_code || '' },
+        { label: 'Ukuran', nilai: (v) => v.size_code || '' }, { label: 'Status produk', nilai: (v) => productStatusLabel(v.product_status) || '' },
+        { label: 'Barcode', nilai: (v) => v.barcode || '' },
+      ]} />}
       footer={shown.length > PAGE_SIZE ? (
         <PaginationLite page={page} totalPages={totalPages} total={shown.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
       ) : null}
     >
-      <GlassCard className="p-0 overflow-hidden">
+      <GlassCard className="p-0 overflow-x-auto">
         <div className="px-4 py-3 border-b border-[var(--glass-border)] flex items-center justify-between gap-3 flex-wrap">
           <div className="text-sm flex items-center gap-2 flex-wrap" data-testid="variant-model-summary">
             {allModels ? (
@@ -282,12 +291,10 @@ export function RahazaVariantsModule({ token }) {
       </GlassCard>
 
       {/* Ubah varian — formulir pendek (PANDUAN_UI G13: popup hanya untuk isian pendek) */}
-      <Dialog open={!!editing} onOpenChange={(o) => { if (!o) setEditing(null); }}>
-        <DialogContent className="sm:max-w-[440px]" data-testid="variant-edit-dialog">
-          <DialogHeader>
-            <DialogTitle>Ubah varian · {editing?.sku}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 py-2">
+      {/* Standar UI/UX v2: FormPopup pendek (kaki Batal · Simpan hijau) */}
+      <FormPopup open={!!editing} onClose={() => setEditing(null)} ukuran="pendek" testId="variant-edit-dialog"
+        judul={`Ubah varian ${editing?.sku || ''}`} onSimpan={saveEdit} menyimpan={saving}>
+          <div className="space-y-4">
             <div className="space-y-1">
               <Label htmlFor="variant-edit-status">Status produk</Label>
               <SmartNativeSelect id="variant-edit-status" value={form.product_status} searchable={false} className="h-9"
@@ -312,20 +319,13 @@ export function RahazaVariantsModule({ token }) {
                 onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))} />
             </div>
           </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setEditing(null)}>Batal</Button>
-            <Button type="button" onClick={saveEdit} disabled={saving} data-testid="variant-edit-save">{saving ? 'Menyimpan…' : 'Simpan'}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      </FormPopup>
 
       {/* Generate Dialog */}
-      <Dialog open={genOpen} onOpenChange={setGenOpen}>
-        <DialogContent className="sm:max-w-[600px]" data-testid="variant-generate-dialog">
-          <DialogHeader>
-            <DialogTitle>Buat varian · {selectedModel?.code}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
+      <FormPopup open={genOpen} onClose={() => setGenOpen(false)} ukuran="panjang" testId="variant-generate-dialog"
+        judul={`Buat varian ${selectedModel?.code || ''}`} keterangan="Kombinasi yang sudah ada dilewati otomatis."
+        onSimpan={runGenerate} menyimpan={generating} labelSimpan="Buat varian">
+          <div className="space-y-4">
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-semibold text-foreground">Pilih warna</span>
@@ -335,16 +335,16 @@ export function RahazaVariantsModule({ token }) {
                   {genColorIds.length === colors.length ? 'Kosongkan' : 'Pilih semua'}
                 </Button>
               </div>
-              <div className="grid grid-cols-3 gap-2 max-h-48 overflow-y-auto">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto">
                 {colors.map(c => {
                   const checked = genColorIds.includes(c.id);
                   return (
                     <label key={c.id}
                       className={`flex items-center gap-2 border rounded-lg px-2.5 py-2 cursor-pointer text-sm transition-colors ${
-                        checked ? 'bg-primary/10 border-primary/40 text-foreground' : 'bg-[var(--glass-bg)] border-[var(--glass-border)] text-foreground/70 hover:bg-[var(--glass-bg-hover)]'
+                        checked ? 'bg-primary/10 border-primary/40 text-foreground' : 'border-[var(--glass-border)] text-foreground hover:bg-[var(--glass-bg-hover)]'
                       }`}
                       data-testid={`variant-gen-color-${c.code}`}>
-                      <input type="checkbox" checked={checked} onChange={() => toggleColor(c.id)} />
+                      <Checkbox checked={checked} onCheckedChange={() => toggleColor(c.id)} />
                       <span className="inline-block w-4 h-4 rounded border border-[var(--glass-border)]" style={{ backgroundColor: c.hex }} />
                       <span className="truncate">{c.name}</span>
                     </label>
@@ -361,36 +361,28 @@ export function RahazaVariantsModule({ token }) {
                   {genSizeIds.length === sizes.length ? 'Kosongkan' : 'Pilih semua'}
                 </Button>
               </div>
-              <div className="grid grid-cols-5 gap-2">
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
                 {sizes.map(s => {
                   const checked = genSizeIds.includes(s.id);
                   return (
                     <label key={s.id}
                       className={`flex items-center justify-center gap-1.5 border rounded-lg px-2 py-2 cursor-pointer text-sm tabular-nums transition-colors ${
-                        checked ? 'bg-primary/10 border-primary/40 text-foreground' : 'bg-[var(--glass-bg)] border-[var(--glass-border)] text-foreground/70 hover:bg-[var(--glass-bg-hover)]'
+                        checked ? 'bg-primary/10 border-primary/40 text-foreground' : 'border-[var(--glass-border)] text-foreground hover:bg-[var(--glass-bg-hover)]'
                       }`}
                       data-testid={`variant-gen-size-${s.code}`}>
-                      <input type="checkbox" checked={checked} onChange={() => toggleSize(s.id)} />
+                      <Checkbox checked={checked} onCheckedChange={() => toggleSize(s.id)} />
                       {s.code}
                     </label>
                   );
                 })}
               </div>
             </div>
-            <div className="text-xs text-muted-foreground bg-[var(--glass-bg)] rounded-lg p-2.5 border border-[var(--glass-border)]">
+            <p className="text-sm text-muted-foreground" data-testid="variant-gen-run-btn">
               Akan dibuat <b className="text-foreground">{genColorIds.length * genSizeIds.length}</b> kombinasi SKU.
-              Kombinasi yang sudah ada akan dilewati otomatis.
-            </div>
+            </p>
           </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setGenOpen(false)}>Batal</Button>
-            <Button type="button" onClick={runGenerate} disabled={generating} data-testid="variant-gen-run-btn">
-              <Plus className="w-4 h-4" /> {generating ? 'Membuat…' : 'Buat'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </PageLayout>
+      </FormPopup>
+    </PageLayoutSatuBaris>
   );
 }
 
