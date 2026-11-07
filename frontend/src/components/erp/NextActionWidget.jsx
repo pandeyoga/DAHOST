@@ -1,15 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Sparkles, RefreshCw, AlertTriangle, AlertCircle, Info, CheckCircle2,
-  ArrowRight, X, ChevronRight, Lightbulb,
+  RefreshCw, AlertTriangle, AlertCircle, Info, CheckCircle2, ArrowRight, X, ChevronRight, Lightbulb,
 } from 'lucide-react';
-import { GlassCard, GlassPanel } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { IconButton } from './IconButton';
+import { cn } from '@/lib/utils';
+import { StatusBadge } from './moduleAtoms';
 
 /* ─── PT Rahaza ERP · NextActionWidget (Phase 16.2) ───────────────────────────
-   Menampilkan kartu "apa yang harus dikerjakan selanjutnya" berdasarkan
-   hasil rule engine backend (/api/rahaza/next-actions).
+   Menampilkan "apa yang harus dikerjakan selanjutnya" berdasarkan hasil rule engine backend
+   (/api/rahaza/next-actions).
 
    Props:
      - token: JWT
@@ -19,46 +19,16 @@ import { IconButton } from './IconButton';
      - autoRefreshMs: default 60000 (1 menit)
      - maxCards: default 5
 
-   Fitur UX:
-     - Dismissible per-card (simpan di localStorage 4 jam snooze)
-     - Severity color coding
-     - Empty state positif "Tidak ada yang perlu ditindaklanjuti"
-     - Refresh manual dengan animasi
+   Standar UI/UX v2 (8 Nov 2026): satu kartu berisi daftar baris (bukan kartu berwarna per butir), tingkat
+   kepentingan memakai StatusBadge, tombol aksi standar, tanpa label HURUF BESAR / huruf 9–11 px.
+   Fitur tetap: sembunyikan 4 jam per butir (localStorage), "Kenapa ini penting?", muat ulang, muat otomatis.
 ───────────────────────────────────────────────────────────────────────────── */
 
 const SEVERITY_META = {
-  error: {
-    icon: AlertCircle,
-    bg: 'bg-[hsl(var(--destructive)/0.08)]',
-    border: 'border-[hsl(var(--destructive)/0.30)]',
-    iconColor: 'text-[hsl(var(--destructive))]',
-    tag: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]',
-    label: 'Kritikal',
-  },
-  warning: {
-    icon: AlertTriangle,
-    bg: 'bg-[hsl(var(--warning)/0.08)] ',
-    border: 'border-[hsl(var(--warning)/0.3)]',
-    iconColor: 'text-[hsl(var(--warning))] ',
-    tag: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] ',
-    label: 'Perlu Perhatian',
-  },
-  info: {
-    icon: Info,
-    bg: 'bg-[hsl(var(--primary)/0.06)]',
-    border: 'border-[hsl(var(--primary)/0.25)]',
-    iconColor: 'text-[hsl(var(--primary))]',
-    tag: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))]',
-    label: 'Saran',
-  },
-  success: {
-    icon: CheckCircle2,
-    bg: 'bg-[hsl(var(--success)/0.08)] ',
-    border: 'border-[hsl(var(--success)/0.3)]',
-    iconColor: 'text-[hsl(var(--success))] ',
-    tag: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] ',
-    label: 'OK',
-  },
+  error: { icon: AlertCircle, tone: 'danger', label: 'Kritis', iconColor: 'text-[hsl(var(--danger-text))]' },
+  warning: { icon: AlertTriangle, tone: 'warning', label: 'Perlu perhatian', iconColor: 'text-[hsl(var(--warning-text))]' },
+  info: { icon: Info, tone: 'info', label: 'Saran', iconColor: 'text-[hsl(var(--info-text))]' },
+  success: { icon: CheckCircle2, tone: 'success', label: 'Beres', iconColor: 'text-[hsl(var(--success-text))]' },
 };
 
 const SNOOZE_MS = 4 * 60 * 60 * 1000; // 4 jam
@@ -101,8 +71,9 @@ export function NextActionWidget({
   const [actions, setActions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState('');
+  // eslint-disable-next-line no-unused-vars
   const [snoozedTick, setSnoozedTick] = useState(0);
-  const [expanded, setExpanded] = useState(null); // card id yang sedang di-expand "why"
+  const [expanded, setExpanded] = useState(null); // butir yang sedang dibuka "kenapa"
 
   const fetchActions = useCallback(async () => {
     if (!token) return;
@@ -128,7 +99,7 @@ export function NextActionWidget({
   }, [fetchActions]);
 
   useEffect(() => {
-    if (!autoRefreshMs) return;
+    if (!autoRefreshMs) return undefined;
     const id = setInterval(fetchActions, autoRefreshMs);
     return () => clearInterval(id);
   }, [fetchActions, autoRefreshMs]);
@@ -153,160 +124,86 @@ export function NextActionWidget({
     setSnoozedTick((x) => x + 1);
   };
 
-  // Empty positive state
+  const tombolMuat = (testId) => (
+    <Button variant="ghost" size="icon-sm" onClick={fetchActions} disabled={loading}
+      title="Muat ulang tindakan" aria-label="Muat ulang tindakan" data-testid={testId}>
+      <RefreshCw className={loading ? 'animate-spin' : ''} />
+    </Button>
+  );
+
+  // Tidak ada yang perlu dikerjakan → satu baris ringkas
   if (!loading && visibleActions.length === 0) {
     return (
-      <GlassPanel
-        className="p-4 border-[hsl(var(--primary)/0.15)]"
-        data-testid="next-action-widget-empty"
-      >
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.25)] grid place-items-center flex-shrink-0">
-            <CheckCircle2 className="w-4.5 h-4.5 text-[hsl(var(--success))] " />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-foreground">Semua terkendali</div>
-            <div className="text-xs text-muted-foreground">Tidak ada tindakan mendesak. Terus pantau line board dan dashboard.</div>
-          </div>
-          <IconButton
-            label="Muat ulang tindakan"
-            onClick={fetchActions}
-            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 p-1 rounded"
-            data-testid="next-action-refresh-empty"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-          </IconButton>
-        </div>
-      </GlassPanel>
+      <GlassCard className="flex items-center gap-3 px-4 py-3" data-testid="next-action-widget-empty">
+        <CheckCircle2 className="h-4 w-4 shrink-0 text-[hsl(var(--success-text))]" aria-hidden="true" />
+        <p className="min-w-0 flex-1 text-sm text-foreground">
+          <span className="font-medium">Semua terkendali.</span>{' '}
+          <span className="text-muted-foreground">Tidak ada tindakan mendesak saat ini.</span>
+        </p>
+        {tombolMuat('next-action-refresh-empty')}
+      </GlassCard>
     );
   }
 
   return (
-    <div className="space-y-2" data-testid="next-action-widget">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2 px-1">
-        <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-lg bg-[hsl(var(--primary)/0.12)] border border-[hsl(var(--primary)/0.25)] grid place-items-center">
-            <Sparkles className="w-3.5 h-3.5 text-[hsl(var(--primary))]" />
-          </div>
-          <span className="text-sm font-semibold text-foreground">Yang Perlu Ditindaklanjuti</span>
-          {visibleActions.length > 0 && (
-            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))]">
-              {visibleActions.length}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {lastUpdated && (
-            <span className="text-[10px] text-muted-foreground">{lastUpdated}</span>
-          )}
-          <IconButton
-            label="Muat ulang tindakan"
-            onClick={fetchActions}
-            disabled={loading}
-            className="p-1 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground hover:text-foreground disabled:opacity-50"
-            data-testid="next-action-refresh"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          </IconButton>
+    <GlassCard className="p-0" data-testid="next-action-widget">
+      <div className="flex items-center justify-between gap-2 border-b border-[var(--glass-border)] px-4 py-2">
+        <p className="text-sm font-semibold text-foreground">
+          Yang perlu ditindaklanjuti{visibleActions.length > 0 ? ` (${visibleActions.length})` : ''}
+        </p>
+        <div className="flex items-center gap-1">
+          {lastUpdated && <span className="text-xs text-muted-foreground">Diperbarui {lastUpdated}</span>}
+          {tombolMuat('next-action-refresh')}
         </div>
       </div>
 
-      {/* Loading state */}
       {loading && visibleActions.length === 0 && (
-        <div className="space-y-2">
-          {[1, 2].map((i) => (
-            <GlassPanel key={i} className="p-3 animate-pulse">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-[var(--glass-bg)]" />
-                <div className="flex-1 space-y-1.5">
-                  <div className="h-3 w-1/2 rounded bg-[var(--glass-bg)]" />
-                  <div className="h-2 w-3/4 rounded bg-[var(--glass-bg)]" />
-                </div>
-              </div>
-            </GlassPanel>
-          ))}
+        <div className="space-y-2 p-4">
+          {[1, 2].map((i) => <div key={i} className="h-10 animate-pulse rounded-md bg-[var(--glass-bg)]" />)}
         </div>
       )}
 
-      {/* Cards */}
-      <div className="space-y-2">
+      <ul className="divide-y divide-[var(--glass-border)]">
         {visibleActions.map((a) => {
           const meta = SEVERITY_META[a.severity] || SEVERITY_META.info;
           const Icon = meta.icon;
           const isExpanded = expanded === a.id;
           return (
-            <GlassPanel
-              key={a.id}
-              className={`p-3 border ${meta.border} ${meta.bg} transition-colors`}
-              data-testid={`nae-card-${a.id}`}
-            >
-              <div className="flex items-start gap-3">
-                <div className={`w-9 h-9 rounded-xl ${meta.tag.split(' ')[0]} grid place-items-center flex-shrink-0 border ${meta.border}`}>
-                  <Icon className={`w-4 h-4 ${meta.iconColor}`} strokeWidth={2.2} />
+            <li key={a.id} className="flex flex-wrap items-start gap-3 px-4 py-3 sm:flex-nowrap" data-testid={`nae-card-${a.id}`}>
+              <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', meta.iconColor)} aria-hidden="true" />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium text-foreground">{a.title}</span>
+                  <StatusBadge status={a.severity} label={meta.label} tone={meta.tone} />
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-semibold text-foreground leading-tight">{a.title}</span>
-                        <span className={`text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ${meta.tag}`}>
-                          {meta.label}
-                        </span>
-                      </div>
-                      {a.description && (
-                        <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">{a.description}</p>
-                      )}
-                    </div>
-          <button
-            onClick={() => handleSnooze(a.id)}
-            className="p-1 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground/60 hover:text-muted-foreground flex-shrink-0"
-            title="Sembunyikan 4 jam"
-            aria-label="Sembunyikan 4 jam"
-            data-testid={`nae-snooze-${a.id}`}
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-                  </div>
-
-                  {/* Why expandable */}
-                  {a.why && (
-                    <button
-                      onClick={() => setExpanded(isExpanded ? null : a.id)}
-                      className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/80 hover:text-foreground mt-1.5"
-                      data-testid={`nae-why-${a.id}`}
-                    >
-                      <Lightbulb className="w-3 h-3" />
-                      {isExpanded ? 'Tutup penjelasan' : 'Kenapa ini penting?'}
-                      <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
-                    </button>
-                  )}
-                  {isExpanded && a.why && (
-                    <p className="mt-1.5 text-[11px] text-muted-foreground leading-relaxed border-l-2 border-[var(--glass-border)] pl-2">
-                      {a.why}
-                    </p>
-                  )}
-
-                  {/* CTA */}
-                  <div className="flex items-center justify-end mt-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleCTA(a)}
-                      className="h-7 px-2.5 text-xs hover:border-[hsl(var(--primary)/0.4)]"
-                      data-testid={`nae-cta-${a.id}`}
-                    >
-                      {a.cta_label || 'Buka'}
-                      <ArrowRight className="w-3 h-3 ml-1" />
-                    </Button>
-                  </div>
-                </div>
+                {a.description && <p className="mt-0.5 text-sm text-muted-foreground">{a.description}</p>}
+                {a.why && (
+                  <Button variant="link" size="sm" className="h-auto gap-1 px-0 text-xs"
+                    onClick={() => setExpanded(isExpanded ? null : a.id)} aria-expanded={isExpanded}
+                    data-testid={`nae-why-${a.id}`}>
+                    <Lightbulb />
+                    {isExpanded ? 'Tutup penjelasan' : 'Kenapa ini penting?'}
+                    <ChevronRight className={cn('transition-transform', isExpanded && 'rotate-90')} />
+                  </Button>
+                )}
+                {isExpanded && a.why && (
+                  <p className="mt-1 border-l-2 border-[var(--glass-border)] pl-2 text-sm text-muted-foreground">{a.why}</p>
+                )}
               </div>
-            </GlassPanel>
+              <div className="ml-7 flex items-center gap-1 sm:ml-0">
+                <Button size="sm" variant="outline" onClick={() => handleCTA(a)} data-testid={`nae-cta-${a.id}`}>
+                  {a.cta_label || 'Buka'}<ArrowRight />
+                </Button>
+                <Button variant="ghost" size="icon-sm" onClick={() => handleSnooze(a.id)}
+                  title="Sembunyikan 4 jam" aria-label="Sembunyikan 4 jam" data-testid={`nae-snooze-${a.id}`}>
+                  <X />
+                </Button>
+              </div>
+            </li>
           );
         })}
-      </div>
-    </div>
+      </ul>
+    </GlassCard>
   );
 }
 
