@@ -1,93 +1,88 @@
+/**
+ * Order Terpadu (Portal Marketing) — pesanan dari semua platform marketplace.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, kartu angka StatTile (ikut toko yang dipilih — dulu kartu
+ * selalu semua toko walau tabel disaring toko), pil status FilterChips, tabel standar + unduh Excel/CSV semua
+ * baris hasil saringan, rincian pesanan = popup, ubah status / ubah massal = FormPopup, tanpa emoji.
+ */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  ShoppingBag, Package, Truck, CheckCircle2, XCircle, RotateCcw,
-  Search, Filter, RefreshCw, ChevronRight, ChevronDown, List,
-  TrendingUp, DollarSign, AlertCircle, AlertTriangle, Download, Loader2, X, ClipboardList
+  ShoppingBag, Truck, RotateCcw, Search, RefreshCw, AlertCircle, AlertTriangle, X, ClipboardList,
+  ChevronDown, Pencil, Eye,
 } from 'lucide-react';
-import OnwardCTA from '../OnwardCTA';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Textarea } from '@/components/ui/textarea';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import PaginationLite from '@/components/ui/pagination-lite';
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue
-} from '@/components/ui/select';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
-} from '@/components/ui/dialog';
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
-} from '@/components/ui/alert-dialog';
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
 import axios from 'axios';
+import { formatDateID, formatDateTimeID } from '@/lib/format';
+import { parseServerTime } from '@/lib/waktu';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import { MarketingAccountSelect } from './pickers/MarketingPickers';
-// F10 (sesi #10) — angka yang benar di layar tidak ada gunanya kalau tidak bisa
-// dibawa ke rapat. Satu pembuat CSV untuk semua layar daftar (lib/csv.js).
-import ExportCsvButton from '@/components/ui/export-csv-button';
-
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
 // ── Constants ──
 const STATUS_CONFIG = {
-  new:       { label: 'Baru',      color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',      icon: ShoppingBag,   dot: 'bg-blue-500'   },
-  packed:    { label: 'Dikemas',   color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',  icon: Package,       dot: 'bg-amber-500'  },
-  shipped:   { label: 'Dikirim',   color: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300', icon: Truck,        dot: 'bg-indigo-500' },
-  delivered: { label: 'Terkirim', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', icon: CheckCircle2, dot: 'bg-emerald-500' },
-  cancelled: { label: 'Batal',    color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',         icon: XCircle,       dot: 'bg-red-500'    },
-  returned:  { label: 'Retur',    color: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300', icon: RotateCcw,    dot: 'bg-orange-500' },
+  new:       { label: 'Baru',     tone: 'info' },
+  packed:    { label: 'Dikemas',  tone: 'warning' },
+  shipped:   { label: 'Dikirim',  tone: 'primary' },
+  delivered: { label: 'Terkirim', tone: 'success' },
+  cancelled: { label: 'Batal',    tone: 'danger' },
+  returned:  { label: 'Retur',    tone: 'warning' },
 };
-
-const PLATFORM_ICONS = { shopee: '🛒', tiktok: '🎵', tokopedia: '🟢', default: '🚧' };
+const PLATFORM_LABEL = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', lazada: 'Lazada' };
+const labelPlatform = (p) => PLATFORM_LABEL[String(p || '').toLowerCase()] || p || '—';
+const labelStatus = (s) => STATUS_CONFIG[s]?.label || s || '—';
 
 function fmt(n) { return new Intl.NumberFormat('id-ID').format(n || 0); }
 function fmtRp(n) { return `Rp ${fmt(n)}`; }
-function fmtDate(d) {
-  if (!d) return '-';
-  return new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
+// order_date = jam dinding WIB tanpa zona; stempel lain = UTC tanpa zona → parseServerTime
+const fmtDate = (d) => (d ? formatDateTimeID(parseServerTime(d)) : '—');
+const fmtTgl = (d) => (d ? formatDateID(parseServerTime(d)) : '—');
 
-function StatusBadge({ status }) {
+function StatusPesanan({ status }) {
   const c = STATUS_CONFIG[status] || STATUS_CONFIG.new;
-  const Icon = c.icon;
-  return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${c.color}`}>
-      <Icon size={11} />{c.label}
-    </span>
-  );
+  return <StatusBadge status={status} label={c.label} tone={c.tone} />;
 }
 
-function PlatformBadge({ platform }) {
-  const icon = PLATFORM_ICONS[platform] || PLATFORM_ICONS.default;
-  return (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-muted font-medium capitalize">
-      {icon} {platform}
-    </span>
-  );
-}
+const VALID_NEXT = {
+  new: ['packed', 'cancelled'],
+  packed: ['shipped', 'cancelled'],
+  shipped: ['delivered', 'returned'],
+  delivered: ['returned'],
+  cancelled: [],
+  returned: [],
+};
 
-// ── Order Detail Drawer ──
-function OrderDetailDrawer({ order, open, onClose, onStatusChange }) {
+// ── Rincian pesanan (popup) + ubah status (form popup) ──
+function OrderDetailPopup({ order, onClose, onStatusChange }) {
+  const [formOpen, setFormOpen] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [newStatus, setNewStatus] = useState('');
   const [note, setNote] = useState('');
+  const [galat, setGalat] = useState('');
   const { toast } = useToast();
 
   if (!order) return null;
-
-  const validNextStatuses = {
-    new: ['packed', 'cancelled'],
-    packed: ['shipped', 'cancelled'],
-    shipped: ['delivered', 'returned'],
-    delivered: ['returned'],
-    cancelled: [],
-    returned: [],
-  };
+  const nexts = VALID_NEXT[order.status] || [];
 
   const handleStatusUpdate = async () => {
-    if (!newStatus) return;
+    if (!newStatus) { setGalat('Pilih status baru.'); return; }
     setUpdating(true);
+    setGalat('');
     try {
       const res = await axios.patch(`${API}/api/marketing/orders/${order.id}/status`,
         { status: newStatus, note },
@@ -95,126 +90,81 @@ function OrderDetailDrawer({ order, open, onClose, onStatusChange }) {
       );
       const freed = Number(res?.data?.reservation_released || 0);
       toast({
-        title: `Status diubah ke ${STATUS_CONFIG[newStatus]?.label || newStatus}`,
+        title: `Status diubah ke ${labelStatus(newStatus)}`,
         description: freed > 0
           ? `Reservasi stok ${freed.toLocaleString('id-ID')} pcs dilepas kembali ke stok jual.`
           : undefined,
       });
+      setFormOpen(false);
       onStatusChange();
       onClose();
     } catch (e) {
-      // F10 — alasan penolakan WAJIB sampai ke layar. Backend sekarang menolak
-      // transisi berbahaya (mis. menghidupkan order yang sudah dibatalkan, yang
-      // akan menjual stok yang sama dua kali) dengan penjelasan lengkap; pesan
-      // generik "Gagal update status" membuat staf mengira sistemnya rusak.
-      toast({
-        title: 'Status tidak bisa diubah',
-        description: e?.response?.data?.detail || e.message,
-        variant: 'destructive',
-      });
+      // F10 — alasan penolakan WAJIB sampai ke layar (mis. menghidupkan order yang sudah dibatalkan).
+      setGalat(e?.response?.data?.detail || e.message);
     } finally {
       setUpdating(false);
     }
   };
 
-  const nexts = validNextStatuses[order.status] || [];
-
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <ShoppingBag size={16} />
-            {order.order_id}
-          </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
-          {/* Status */}
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Status</span>
-            <StatusBadge status={order.status} />
-          </div>
-          {/* Order Info */}
-          <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Info Pesanan</p>
-            {[
-              { label: 'Platform', value: <PlatformBadge platform={order.platform} /> },
-              { label: 'Akun',     value: order.account_name },
-              { label: 'Produk',   value: order.product_name },
-              { label: 'Variasi',  value: order.variation },
-              { label: 'SKU',      value: <span className="font-mono text-xs">{order.sku_id}</span> },
-              { label: 'Qty',      value: order.quantity },
-              { label: 'Harga',    value: fmtRp(order.price_final) },
-              { label: 'Diskon',   value: order.discount_seller > 0 ? fmtRp(order.discount_seller) : '-' },
-              { label: 'Ongkir',   value: fmtRp(order.shipping_cost) },
-              { label: 'Total',    value: <strong>{fmtRp(order.total_payment)}</strong> },
-              { label: 'Metode',   value: order.payment_method },
-            ].map(r => (
-              <div key={r.label} className="flex justify-between text-sm">
-                <span className="text-muted-foreground w-24 flex-shrink-0">{r.label}</span>
-                <span className="text-right flex-1">{r.value}</span>
-              </div>
-            ))}
-          </div>
-          {/* Shipping Info */}
-          <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Info Pengiriman</p>
-            {[
-              { label: 'Penerima',  value: order.customer_name },
-              { label: 'Kota',      value: order.city },
-              { label: 'Kurir',     value: order.courier },
-              { label: 'Resi',      value: order.tracking_number || '-' },
-              { label: 'Pesan',     value: order.order_date ? fmtDate(order.order_date) : '-' },
-              { label: 'Dikemas',   value: order.packed_date ? fmtDate(order.packed_date) : '-' },
-              { label: 'Dikirim',   value: order.shipped_date ? fmtDate(order.shipped_date) : '-' },
-              { label: 'Terkirim',  value: order.delivered_date ? fmtDate(order.delivered_date) : '-' },
-            ].map(r => (
-              <div key={r.label} className="flex justify-between text-sm">
-                <span className="text-muted-foreground w-24 flex-shrink-0">{r.label}</span>
-                <span className="text-right flex-1">{r.value}</span>
-              </div>
-            ))}
-          </div>
-          {/* Update Status */}
-          {nexts.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Update Status</p>
-              <Select value={newStatus} onValueChange={setNewStatus}>
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder="Pilih status baru..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {nexts.map(s => (
-                    <SelectItem key={s} value={s}>{STATUS_CONFIG[s]?.label || s}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Input placeholder="Catatan (opsional)" value={note} onChange={e => setNote(e.target.value)} className="h-9 text-sm" />
-            </div>
-          )}
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Tutup</Button>
-          {nexts.length > 0 && (
-            <Button onClick={handleStatusUpdate} disabled={!newStatus || updating}>
-              {updating && <Loader2 size={13} className="mr-1 animate-spin" />}
-              Simpan
-            </Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <>
+      <DetailPopup open onClose={onClose} judul={order.order_id} testId="order-detail"
+        keterangan={`${labelPlatform(order.platform)} · ${order.account_name || 'toko belum diketahui'}`}
+        status={<StatusPesanan status={order.status} />}
+        aksi={nexts.length > 0 && (
+          <Button size="sm" onClick={() => { setNewStatus(''); setNote(''); setGalat(''); setFormOpen(true); }}
+            data-testid="order-detail-ubah-status"><Pencil />Ubah status</Button>
+        )}>
+        <section className="space-y-1">
+          <p className="text-sm font-medium">Pesanan</p>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Produk">{order.product_name || '—'}</BarisDetail>
+            <BarisDetail label="Variasi">{order.variation || '—'}</BarisDetail>
+            <BarisDetail label="SKU">{order.sku_id || '—'}</BarisDetail>
+            <BarisDetail label="Jumlah">{fmt(order.quantity)}</BarisDetail>
+            <BarisDetail label="Harga">{fmtRp(order.price_final)}</BarisDetail>
+            <BarisDetail label="Diskon penjual">{order.discount_seller > 0 ? fmtRp(order.discount_seller) : '—'}</BarisDetail>
+            <BarisDetail label="Ongkir">{fmtRp(order.shipping_cost)}</BarisDetail>
+            <BarisDetail label="Total dibayar"><b>{fmtRp(order.total_payment)}</b></BarisDetail>
+            <BarisDetail label="Metode bayar">{order.payment_method || '—'}</BarisDetail>
+          </dl>
+        </section>
+        <section className="space-y-1">
+          <p className="text-sm font-medium">Pengiriman</p>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Penerima">{order.customer_name || '—'}</BarisDetail>
+            <BarisDetail label="Kota">{order.city || '—'}</BarisDetail>
+            <BarisDetail label="Kurir">{order.courier || '—'}</BarisDetail>
+            <BarisDetail label="Resi">{order.tracking_number || '—'}</BarisDetail>
+            <BarisDetail label="Dipesan">{fmtDate(order.order_date)}</BarisDetail>
+            <BarisDetail label="Dikemas">{fmtDate(order.packed_date)}</BarisDetail>
+            <BarisDetail label="Dikirim">{fmtDate(order.shipped_date)}</BarisDetail>
+            <BarisDetail label="Terkirim">{fmtDate(order.delivered_date)}</BarisDetail>
+          </dl>
+        </section>
+      </DetailPopup>
+      <FormPopup open={formOpen} onClose={() => setFormOpen(false)} ukuran="pendek" onSimpan={handleStatusUpdate}
+        menyimpan={updating} galat={galat} bisaSimpan={!!newStatus} judul="Ubah status pesanan" testId="order-status-form"
+        keterangan={`${order.order_id} · sekarang ${labelStatus(order.status)}`}>
+        <Isian label="Status baru" wajib htmlFor="order-status-baru">
+          <SmartNativeSelect id="order-status-baru" className="w-full" value={newStatus}
+            onChange={(e) => setNewStatus(e.target.value)} data-testid="order-status-select">
+            <option value="">Pilih status baru…</option>
+            {nexts.map(s => <option key={s} value={s}>{labelStatus(s)}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Catatan" htmlFor="order-status-catatan">
+          <Input id="order-status-catatan" placeholder="Opsional" value={note} onChange={e => setNote(e.target.value)} />
+        </Isian>
+      </FormPopup>
+    </>
   );
 }
 
-// ── Picking List Modal ──
-// BUG (ditemukan lewat lint, 2026-08-14): komponen ini dulu memakai
-// `accountFilter` yang HANYA ADA di komponen induk ⇒ `ReferenceError` begitu
-// modal dibuka (layar putih). Tidak pernah terlihat sebagai galat build karena
-// JavaScript baru mengeluh saat baris itu benar-benar dijalankan. Sekarang
-// lingkup toko DIKIRIM sebagai prop — jadi daftar picking mengikuti toko yang
-// sedang dipilih di layar, bukan diam-diam semua toko.
-function PickingListModal({ open, onClose, token, accountFilter = '' }) {
+// ── Daftar ambil barang (picking list) ──
+// BUG (2026-08-14): komponen ini dulu memakai `accountFilter` milik induk ⇒ ReferenceError. Lingkup toko
+// DIKIRIM sebagai prop — daftar picking mengikuti toko yang sedang dipilih di layar.
+function PickingListPopup({ open, onClose, token, accountFilter = '' }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [platform, setPlatform] = useState('');
@@ -227,12 +177,8 @@ function PickingListModal({ open, onClose, token, accountFilter = '' }) {
       if (platform) params.platform = platform;
       const res = await axios.get(`${API}/api/marketing/orders/picking-list`, {
         params,
-        headers: {
-          // Kunci token yang benar untuk app ini adalah `erp_token`
-          // (lihat `lib/apiFetch.js`); `auth_token` tidak pernah ada ⇒ tanpa
-          // prop `token`, permintaan ini akan 401 tanpa penjelasan.
-          Authorization: `Bearer ${token || localStorage.getItem('erp_token') || ''}`,
-        },
+        // Kunci token app ini `erp_token` (lihat lib/apiFetch.js)
+        headers: { Authorization: `Bearer ${token || localStorage.getItem('erp_token') || ''}` },
       });
       setData(res.data);
     } catch (e) {
@@ -243,78 +189,45 @@ function PickingListModal({ open, onClose, token, accountFilter = '' }) {
   }, [platform, token, accountFilter]);
 
   useEffect(() => { if (open) load(); }, [open, load]);
+  const daftar = data?.picking_list || [];
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <ClipboardList size={16} /> Picking List
-          </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <div className="flex items-center gap-3">
-            <Select value={platform || 'all'} onValueChange={v => setPlatform(v === 'all' ? '' : v)}>
-              <SelectTrigger className="w-[140px] h-8 text-xs">
-                <SelectValue placeholder="Semua Platform" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Semua Platform</SelectItem>
-                <SelectItem value="shopee">🛒 Shopee</SelectItem>
-                <SelectItem value="tiktok">🎵 TikTok</SelectItem>
-                <SelectItem value="tokopedia">🟢 Tokopedia</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button size="sm" variant="outline" className="h-8" onClick={load}>
-              <RefreshCw size={12} className="mr-1" /> Refresh
-            </Button>
-            {data && (
-              <span className="text-xs text-muted-foreground ml-auto">
-                {data.total_items} SKU | {data.total_orders} order
-              </span>
-            )}
-          </div>
-          <div className="max-h-96 overflow-y-auto border rounded-lg">
-            {loading ? (
-              <div className="flex items-center justify-center h-32">
-                <Loader2 className="animate-spin" size={20} />
-              </div>
-            ) : !data || data.picking_list.length === 0 ? (
-              <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
-                Tidak ada order untuk dikemas
-              </div>
-            ) : (
-              <table className="w-full text-xs">
-                <thead className="bg-muted/50 sticky top-0">
-                  <tr>
-                    {['SKU', 'Variasi', 'Produk', 'Total Qty', 'Order'].map(h => (
-                      <th key={h} className="text-left px-3 py-2 font-semibold text-muted-foreground">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {data.picking_list.map((item, i) => (
-                    <tr key={i} className="hover:bg-muted/30">
-                      <td className="px-3 py-2 font-mono font-semibold">{item.sku_id}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{item.variation}</td>
-                      <td className="px-3 py-2 max-w-[180px] truncate" title={item.product_name}>{item.product_name}</td>
-                      <td className="px-3 py-2">
-                        <span className="font-bold text-base text-primary">{item.total_qty}</span>
-                        <span className="text-muted-foreground ml-1">pcs</span>
-                      </td>
-                      <td className="px-3 py-2 text-muted-foreground">{item.order_count} order</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Tutup</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <DetailPopup open={open} onClose={onClose} judul="Daftar ambil barang" testId="picking-list"
+      keterangan="SKU dari pesanan berstatus Baru dan Dikemas — untuk disiapkan gudang."
+      aksi={<>
+        <SmartNativeSelect className="w-40" value={platform} onChange={(e) => setPlatform(e.target.value)}
+          data-testid="picking-platform">
+          <option value="">Semua platform</option>
+          <option value="shopee">Shopee</option>
+          <option value="tiktok">TikTok</option>
+          <option value="tokopedia">Tokopedia</option>
+        </SmartNativeSelect>
+        <TombolUnduh namaBerkas="daftar-ambil-barang" namaLembar="Ambil barang" baris={daftar} testId="picking-unduh"
+          kolom={[
+            { label: 'SKU', nilai: (i) => i.sku_id }, { label: 'Variasi', nilai: (i) => i.variation || '' },
+            { label: 'Produk', nilai: (i) => i.product_name || '' }, { label: 'Jumlah (pcs)', nilai: (i) => Number(i.total_qty || 0) },
+            { label: 'Pesanan', nilai: (i) => Number(i.order_count || 0) },
+          ]} />
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}>
+      {data && <p className="text-sm text-muted-foreground">{fmt(data.total_items)} SKU dari {fmt(data.total_orders)} pesanan.</p>}
+      {loading && !data ? (
+        <p className="py-8 text-center text-sm text-muted-foreground">Memuat daftar…</p>
+      ) : (
+        <TabelData baris={daftar} kunci={(i) => `${i.sku_id}-${i.variation}`} testId="picking-table"
+          kosong={<EmptyState icon={ClipboardList} title="Tidak ada pesanan untuk dikemas"
+            description="Pesanan berstatus Baru atau Dikemas akan muncul di sini." />}
+          kolom={[
+            { kunci: 'sku', label: 'SKU', hp: 'judul', isi: (i) => <span className="font-medium">{i.sku_id}</span> },
+            { kunci: 'var', label: 'Variasi', isi: (i) => i.variation || '—' },
+            { kunci: 'produk', label: 'Produk', isi: (i) => <span className="block max-w-[16rem] truncate" title={i.product_name}>{i.product_name}</span> },
+            { kunci: 'qty', label: 'Jumlah', rata: 'kanan', isi: (i) => <span className="tabular-nums font-semibold">{fmt(i.total_qty)} pcs</span> },
+            { kunci: 'order', label: 'Pesanan', rata: 'kanan', isi: (i) => <span className="tabular-nums">{fmt(i.order_count)}</span> },
+          ]} />
+      )}
+    </DetailPopup>
   );
 }
 
@@ -340,37 +253,40 @@ export default function UnifiedOrdersDashboard({ token, onNavigate }) {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkStatus, setBulkStatus] = useState('');
   const [bulkDialog, setBulkDialog] = useState(false);
+  const [bulkSaving, setBulkSaving] = useState(false);
   // 2026-11-02 (K6) — alasan WAJIB untuk membatalkan pesanan yang sudah dikirim
   // (server menolak tanpa alasan; pembatalan itu membuat pengajuan Retur Fisik RTS).
   const [bulkNote, setBulkNote] = useState('');
-  // F10 — hasil bulk per-order (order mana yang GAGAL & kenapa). Sebelum ini
-  // jalur bulk selalu melapor sukses, jadi order yang tidak berubah tidak pernah
-  // terlihat oleh staf.
+  // F10 — hasil massal per-order (order mana yang GAGAL & kenapa).
   const [bulkResult, setBulkResult] = useState(null);
 
   const authH = { Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` };
-  const searchRef = useRef(null);
   const debounceRef = useRef(null);
 
   const fetchSummary = useCallback(async () => {
     setSummaryLoading(true);
     try {
-      const res = await axios.get(`${API}/api/marketing/orders/summary`, { headers: authH });
+      // F14 — ringkasan memakai lingkup toko yang SAMA dengan tabel (dulu kartu selalu semua toko)
+      const params = accountFilter ? { account_id: accountFilter } : {};
+      const res = await axios.get(`${API}/api/marketing/orders/summary`, { params, headers: authH });
       setSummary(res.data);
     } finally { setSummaryLoading(false); }
-  }, [token]); // eslint-disable-line
+  }, [token, accountFilter]); // eslint-disable-line
+
+  const paramsSaring = () => {
+    const params = {};
+    // F14 — filter per TOKO memakai `account_id` (SSOT), bukan mencocokkan nama.
+    if (accountFilter)  params.account_id = accountFilter;
+    if (statusFilter)   params.status   = statusFilter;
+    if (platformFilter) params.platform = platformFilter;
+    if (search)         params.search   = search;
+    return params;
+  };
 
   const fetchOrders = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { page, page_size: 25 };
-      // F14 — filter per TOKO memakai `account_id` (SSOT), bukan mencocokkan nama.
-      // Sebelum ini 60/60 order tidak punya `account_id` sehingga pemilih akun di
-      // layar ini selalu mengembalikan daftar kosong.
-      if (accountFilter)  params.account_id = accountFilter;
-      if (statusFilter)   params.status   = statusFilter;
-      if (platformFilter) params.platform = platformFilter;
-      if (search)         params.search   = search;
+      const params = { page, page_size: 25, ...paramsSaring() };
       const res = await axios.get(`${API}/api/marketing/orders`, { params, headers: authH });
       setOrders(res.data.orders || []);
       setPagination(res.data.pagination);
@@ -379,6 +295,17 @@ export default function UnifiedOrdersDashboard({ token, onNavigate }) {
 
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
+
+  // Unduh = SEMUA pesanan hasil saringan (bukan hanya halaman yang tampil)
+  const ambilSemua = async () => {
+    const out = [];
+    for (let p = 1; p <= 200; p += 1) {
+      const res = await axios.get(`${API}/api/marketing/orders`, { params: { page: p, page_size: 200, ...paramsSaring() }, headers: authH });
+      out.push(...(res.data.orders || []));
+      if (p >= (res.data.pagination?.total_pages || 1)) break;
+    }
+    return out;
+  };
 
   const handleSearchChange = (e) => {
     const val = e.target.value;
@@ -389,367 +316,217 @@ export default function UnifiedOrdersDashboard({ token, onNavigate }) {
 
   const handleBulkStatus = async () => {
     if (!bulkStatus || selectedIds.size === 0) return;
+    setBulkSaving(true);
     try {
       const res = await axios.post(`${API}/api/marketing/orders/bulk-status`,
         { order_ids: Array.from(selectedIds), status: bulkStatus, note: bulkNote.trim() || null },
         { headers: authH }
       );
-      // F10 — backend sekarang melapor per-order. Kegagalan TIDAK boleh ditelan:
-      // dulu jalur ini selalu bilang "N order diupdate" walau tidak ada yang
-      // berubah, dan (lebih buruk) membatalkan order TANPA melepas reservasi
-      // stoknya. Sekarang staf melihat berapa yang berhasil, berapa yang tidak,
-      // alasannya, dan berapa stok yang dilepas kembali.
+      // F10 — backend melapor per-order; kegagalan TIDAK boleh ditelan.
       const d = res.data || {};
       const done = d.updated_count ?? selectedIds.size;
       const failed = d.failed_count || 0;
       const freed = Number(d.reservation_released || 0);
       setBulkResult(failed ? { failed: d.failed || [], done, status: bulkStatus } : null);
       toast({
-        title: `${done} order diubah ke ${STATUS_CONFIG[bulkStatus]?.label}`
+        title: `${done} pesanan diubah ke ${labelStatus(bulkStatus)}`
           + (failed ? ` · ${failed} gagal` : ''),
         description: freed > 0
           ? `Reservasi stok ${freed.toLocaleString('id-ID')} pcs dilepas kembali ke stok jual.`
           : (failed ? (d.failed || [])[0]?.reason : undefined),
         variant: failed ? 'destructive' : undefined,
       });
-      setSelectedIds(new Set()); setBulkStatus('');
+      setSelectedIds(new Set()); setBulkStatus(''); setBulkNote('');
       fetchOrders(); fetchSummary();
     } catch (e) {
       toast({
-        title: 'Bulk update gagal',
+        title: 'Ubah status massal gagal',
         description: e?.response?.data?.detail || e.message,
         variant: 'destructive',
       });
+    } finally {
+      setBulkSaving(false);
     }
     setBulkDialog(false);
   };
 
-  // KPI Cards data
-  const kpis = [
-    { label: 'Total Order',   value: fmt(summary?.total_orders),        sub: `${fmt(summary?.by_platform?.shopee?.count || 0)} Shopee + ${fmt(summary?.by_platform?.tiktok?.count || 0)} TikTok`,           icon: ShoppingBag, color: 'text-indigo-600',  bg: 'bg-indigo-50 dark:bg-indigo-900/20' },
-    { label: 'Perlu Tindakan', value: fmt(summary?.need_action),          sub: `${fmt(summary?.by_status?.new || 0)} Baru + ${fmt(summary?.by_status?.packed || 0)} Dikemas`,                             icon: AlertCircle, color: 'text-amber-600',   bg: 'bg-amber-50 dark:bg-amber-900/20' },
-    { label: 'Total Revenue', value: fmtRp(summary?.total_revenue),      sub: `Hari ini: ${fmtRp(summary?.today?.revenue)}`,                                                                              icon: DollarSign,  color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20' },
-    { label: 'Minggu Ini',    value: fmt(summary?.this_week?.orders),    sub: fmtRp(summary?.this_week?.revenue),                                                                                         icon: TrendingUp,  color: 'text-blue-600',    bg: 'bg-blue-50 dark:bg-blue-900/20' },
+  const byStatus = summary?.by_status || {};
+  const byPlatform = summary?.by_platform || {};
+  const rincianPlatform = Object.entries(byPlatform)
+    .map(([p, v]) => `${fmt(v?.count)} ${labelPlatform(p)}`).join(' · ');
+  const lingkup = accountFilter ? 'toko terpilih' : 'semua toko';
+  const nilai = (v) => (summaryLoading && !summary ? '…' : v);
+  const opsiStatus = [
+    { key: '', label: 'Semua', count: summary?.total_orders || 0 },
+    ...Object.entries(STATUS_CONFIG).filter(([s]) => byStatus[s] || statusFilter === s)
+      .map(([s, cfg]) => ({ key: s, label: cfg.label, count: byStatus[s] || 0 })),
   ];
 
+  const semuaDipilih = orders.length > 0 && orders.every(o => selectedIds.has(o.id));
+  const kolom = [
+    { kunci: 'pilih', hp: 'aksi', lebar: 'w-8',
+      label: <Checkbox checked={semuaDipilih} aria-label="Pilih semua di halaman ini"
+        onCheckedChange={(v) => setSelectedIds(v ? new Set(orders.map(o => o.id)) : new Set())} />,
+      isi: (o) => <Checkbox checked={selectedIds.has(o.id)} aria-label={`Pilih ${o.order_id}`}
+        onCheckedChange={(v) => { const n = new Set(selectedIds); if (v) n.add(o.id); else n.delete(o.id); setSelectedIds(n); }} /> },
+    { kunci: 'order', label: 'Pesanan', hp: 'judul', isi: (o) => (
+      <div data-testid={`order-row-${o.id}`}>
+        <p className="font-medium text-foreground">{o.order_id}</p>
+        <p className="text-xs text-muted-foreground">{labelPlatform(o.platform)}{o.account_name ? ` · ${o.account_name}` : ''}</p>
+      </div>) },
+    { kunci: 'produk', label: 'Produk', isi: (o) => (
+      <div className="min-w-0 md:max-w-[16rem]">
+        <p className="truncate text-sm" title={o.product_name}>{o.product_name}</p>
+        <p className="truncate text-xs text-muted-foreground">{[o.variation, o.sku_id].filter(Boolean).join(' · ')}</p>
+      </div>) },
+    { kunci: 'qty', label: 'Jumlah', rata: 'kanan', isi: (o) => <span className="tabular-nums">{fmt(o.quantity)}</span> },
+    { kunci: 'total', label: 'Total', rata: 'kanan', isi: (o) => <span className="tabular-nums md:whitespace-nowrap">{fmtRp(o.total_payment)}</span> },
+    { kunci: 'pembeli', label: 'Pembeli', isi: (o) => (
+      <div><p className="text-sm">{o.customer_name || '—'}</p><p className="text-xs text-muted-foreground">{o.city}</p></div>) },
+    { kunci: 'status', label: 'Status', isi: (o) => <StatusPesanan status={o.status} /> },
+    { kunci: 'tgl', label: 'Tanggal pesan', isi: (o) => <span className="text-sm text-muted-foreground md:whitespace-nowrap">{fmtTgl(o.order_date)}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (o) => (
+      <Button size="sm" variant="outline" onClick={() => setSelectedOrder(o)} data-testid={`btn-order-detail-${o.id}`}>
+        <Eye />Rincian
+      </Button>) },
+  ];
+
+  const alurLanjut = typeof onNavigate === 'function' && (
+    // RC-FLOW-UX-CORE — lanjutan alur pesanan (dulu kotak "Lanjutkan alur order" selebar halaman)
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" data-testid="orders-alur-lanjut">Alur berikutnya<ChevronDown /></Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-64">
+        {/* 2026-11-02 (K6) — pesanan marketplace dikirim lewat Seller Center → Monitoring kirim */}
+        <DropdownMenuItem onSelect={() => onNavigate('marketing-fulfillment', {})}><Truck className="mr-2 h-4 w-4" />Monitoring kirim</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onNavigate('marketing-complaints', {})}><AlertCircle className="mr-2 h-4 w-4" />Komplain pelanggan</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onNavigate('marketing-returns', {})}><RotateCcw className="mr-2 h-4 w-4" />Retur &amp; refund</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
   return (
-    <div className="min-h-screen bg-background p-4 md:p-6" data-testid="orders-dashboard">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard Order</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Manajemen pesanan dari semua platform marketplace</p>
+    <PageLayout testId="orders-dashboard" title="Order terpadu"
+      subtitle="Pesanan dari semua platform marketplace, statusnya, dan daftar ambil barang."
+      actions={<>
+        {alurLanjut}
+        <Button onClick={() => setShowPickingList(true)} data-testid="btn-picking-list"><ClipboardList />Daftar ambil barang</Button>
+      </>}
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Cari nomor pesanan, produk, pembeli" className="pl-8" value={search}
+            onChange={handleSearchChange} data-testid="search-orders" />
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => { fetchSummary(); fetchOrders(); }}>
-            <RefreshCw size={13} className="mr-1" /> Refresh
-          </Button>
-          <Button size="sm" onClick={() => setShowPickingList(true)} data-testid="btn-picking-list">
-            <ClipboardList size={13} className="mr-1" /> Picking List
-          </Button>
+        <div className="w-full sm:w-52">
+          <MarketingAccountSelect token={token} value={accountFilter}
+            onChange={(v) => { setAccountFilter(v); setPage(1); }} label=""
+            includeAll allLabel="Semua toko" required={false} testId="orders-filter-account" />
         </div>
-      </div>
-
-      {/* RC-FLOW-UX-CORE — onward CTA: continue the order flow into Warehouse (cross-portal) + after-sales (Alur 7/8) */}
-      <OnwardCTA
-        onNavigate={onNavigate}
-        title="Lanjutkan Alur Order"
-        className="mb-6"
-        actions={[
-          // 2026-11-02 (K6) — Fulfillment gudang disembunyikan: pesanan marketplace dikirim lewat Seller Center.
-          { module: 'marketing-fulfillment', label: 'Monitoring Kirim', icon: Truck, primary: true, hint: 'Pantau pengiriman Seller Center' },
-          { module: 'marketing-complaints', label: 'Komplain Pelanggan', icon: AlertCircle, hint: 'Kelola komplain terkait order (Alur 7)' },
-          { module: 'marketing-returns', label: 'Retur & Refund', icon: RotateCcw, hint: 'Proses retur/refund order (Alur 8)' },
-        ]}
-      />
-
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-        {kpis.map(k => (
-          <div key={k.label} className={`rounded-xl border p-4 ${k.bg}`}>
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-xs text-muted-foreground font-medium">{k.label}</span>
-              <k.icon size={15} className={k.color} />
-            </div>
-            <p className={`text-2xl font-bold tabular-nums ${k.color}`}>{summaryLoading ? '...' : (k.value || '0')}</p>
-            <p className="text-xs text-muted-foreground mt-0.5 truncate">{summaryLoading ? '' : k.sub}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Status Mini Bar */}
-      {summary && (
-        <div className="flex flex-wrap gap-2 mb-5">
-          {Object.entries(STATUS_CONFIG).map(([s, cfg]) => {
-            const count = summary.by_status?.[s] || 0;
-            if (!count) return null;
-            return (
-              <button
-                key={s}
-                onClick={() => { setStatusFilter(statusFilter === s ? '' : s); setPage(1); }}
-                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-all ${
-                  statusFilter === s ? 'border-primary ring-1 ring-primary' : 'border-border hover:border-primary/50'
-                } ${cfg.color}`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
-                {cfg.label} <span className="font-bold">{count}</span>
-              </button>
-            );
-          })}
+        <SmartNativeSelect className="w-40" value={platformFilter} data-testid="orders-filter-platform"
+          onChange={(e) => { setPlatformFilter(e.target.value); setPage(1); }}>
+          <option value="">Semua platform</option>
+          <option value="shopee">Shopee</option>
+          <option value="tiktok">TikTok</option>
+          <option value="tokopedia">Tokopedia</option>
+        </SmartNativeSelect>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="pesanan-marketplace" namaLembar="Pesanan" baris={orders} ambilSemua={ambilSemua}
+          testId="orders-export-csv"
+          kolom={[
+            { label: 'Nomor pesanan', nilai: (o) => o.order_id }, { label: 'Platform', nilai: (o) => labelPlatform(o.platform) },
+            { label: 'Toko', nilai: (o) => o.account_name || '' }, { label: 'Produk', nilai: (o) => o.product_name || '' },
+            { label: 'Variasi', nilai: (o) => o.variation || '' }, { label: 'SKU', nilai: (o) => o.sku_id || '' },
+            { label: 'Jumlah', nilai: (o) => Number(o.quantity || 0) }, { label: 'Total (Rp)', nilai: (o) => Number(o.total_payment || 0) },
+            { label: 'Pembeli', nilai: (o) => o.customer_name || '' }, { label: 'Kota', nilai: (o) => o.city || '' },
+            { label: 'Status', nilai: (o) => labelStatus(o.status) }, { label: 'Tanggal pesan', nilai: (o) => fmtTgl(o.order_date) },
+          ]} />
+        <Button variant="outline" size="icon" onClick={() => { fetchSummary(); fetchOrders(); }} disabled={loading}
+          title="Muat ulang" aria-label="Muat ulang" data-testid="orders-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={<>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="orders-kpi">
+          <StatTile label="Pesanan" value={nilai(fmt(summary?.total_orders))}
+            sub={`Semua status, ${lingkup}${rincianPlatform ? ` · ${rincianPlatform}` : ''}`} />
+          <StatTile label="Perlu tindakan" value={nilai(fmt(summary?.need_action))} accent={summary?.need_action ? 'warning' : 'default'}
+            sub={`${fmt(byStatus.new || 0)} baru + ${fmt(byStatus.packed || 0)} dikemas`} />
+          <StatTile label="Omzet (semua waktu)" value={nilai(fmtRp(summary?.total_revenue))}
+            sub={`Hari ini ${fmtRp(summary?.today?.revenue)}${summary?.returned_revenue ? ` · retur ${fmtRp(summary.returned_revenue)}` : ''}`} />
+          <StatTile label="Minggu ini" value={nilai(`${fmt(summary?.this_week?.orders)} pesanan`)}
+            sub={`Omzet ${fmtRp(summary?.this_week?.revenue)} sejak Senin`} />
+        </div>
+        <FilterChips options={opsiStatus} value={statusFilter} hideWhenEmpty={false} testId="orders-status-chips"
+          onChange={(v) => { setStatusFilter(v); setPage(1); }} />
+      </>}
+      footer={pagination && pagination.total > 0 && (
+        <PaginationLite page={page} totalPages={pagination.total_pages || 1} total={pagination.total || 0} pageSize={25}
+          onPageChange={setPage} />
+      )}>
+      {selectedIds.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2" data-testid="orders-bulk-bar">
+          <span className="text-sm font-medium">{selectedIds.size} pesanan dipilih</span>
+          <SmartNativeSelect className="w-40" value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)}
+            data-testid="orders-bulk-status">
+            <option value="">Ubah status ke…</option>
+            {['packed', 'shipped', 'delivered', 'cancelled'].map(s => <option key={s} value={s}>{labelStatus(s)}</option>)}
+          </SmartNativeSelect>
+          <Button size="sm" variant="outline" onClick={() => bulkStatus && setBulkDialog(true)} disabled={!bulkStatus}>Terapkan</Button>
+          <Button size="sm" variant="link" onClick={() => setSelectedIds(new Set())}><X />Batalkan pilihan</Button>
         </div>
       )}
 
-      {/* Table Card */}
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-2 flex-1">
-              <div className="relative flex-1 max-w-xs">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Cari order ID, produk, pembeli..."
-                  className="pl-9 h-9 text-sm"
-                  value={search}
-                  onChange={handleSearchChange}
-                  data-testid="search-orders"
-                />
-              </div>
-              <div className="w-52">
-                <MarketingAccountSelect token={token} value={accountFilter}
-                  onChange={(v) => { setAccountFilter(v); setPage(1); }} label=""
-                  includeAll allLabel="Semua Toko" required={false}
-                  testId="orders-filter-account" />
-              </div>
-              <Select value={platformFilter || 'all'} onValueChange={v => { setPlatformFilter(v === 'all' ? '' : v); setPage(1); }}>
-                <SelectTrigger className="w-[140px] h-9 text-xs">
-                  <SelectValue placeholder="Platform" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Semua Platform</SelectItem>
-                  <SelectItem value="shopee">🛒 Shopee</SelectItem>
-                  <SelectItem value="tiktok">🎵 TikTok</SelectItem>
-                  <SelectItem value="tokopedia">🟢 Tokopedia</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {/* Unduh yang TERLIHAT (halaman & filter yang sedang aktif) */}
-            <ExportCsvButton
-              filename="pesanan-marketplace"
-              testId="orders-export-csv"
-              note={pagination && pagination.total > orders.length
-                ? `halaman ini saja dari ${pagination.total} pesanan` : 'semua yang cocok filter'}
-              head={['Order ID', 'Platform', 'Toko', 'Produk', 'Variasi', 'SKU', 'Qty',
-                'Total (Rp)', 'Pembeli', 'Kota', 'Status', 'Tgl Pesan']}
-              rows={orders.map((o) => [o.order_id, o.platform, o.account_name || '',
-                o.product_name, o.variation, o.sku_id, o.quantity, o.total_payment,
-                o.customer_name, o.city, o.status,
-                o.order_date ? String(o.order_date).slice(0, 10) : ''])}
-            />
-            {/* Bulk Actions */}
-            {selectedIds.size > 0 && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">{selectedIds.size} dipilih</span>
-                <Select value={bulkStatus} onValueChange={setBulkStatus}>
-                  <SelectTrigger className="w-[130px] h-8 text-xs">
-                    <SelectValue placeholder="Ubah status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {['packed', 'shipped', 'delivered', 'cancelled'].map(s => (
-                      <SelectItem key={s} value={s}>{STATUS_CONFIG[s]?.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button size="sm" variant="outline" className="h-8" onClick={() => bulkStatus && setBulkDialog(true)} disabled={!bulkStatus}>
-                  Terapkan
-                </Button>
-                <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setSelectedIds(new Set())}>
-                  <X size={13} />
-                </Button>
-              </div>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          {loading ? (
-            <div className="flex items-center justify-center h-48">
-              <Loader2 className="animate-spin text-muted-foreground" size={24} />
-            </div>
-          ) : orders.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
-              <ShoppingBag size={32} className="opacity-30 mb-2" />
-              <p className="text-sm">Tidak ada order ditemukan</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-muted/30">
-                    <th className="px-3 py-2 text-left w-8">
-                      <input type="checkbox"
-                        checked={selectedIds.size === orders.length && orders.length > 0}
-                        onChange={e => setSelectedIds(e.target.checked ? new Set(orders.map(o => o.id)) : new Set())}
-                        className="rounded"
-                      />
-                    </th>
-                    {['Order ID', 'Platform', 'Produk', 'Qty', 'Total', 'Pembeli', 'Status', 'Tgl Pesan', ''].map(h => (
-                      <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {orders.map(order => (
-                    <tr key={order.id}
-                      className="hover:bg-muted/30 transition-colors group"
-                      data-testid={`order-row-${order.id}`}
-                    >
-                      <td className="px-3 py-2">
-                        <input type="checkbox"
-                          checked={selectedIds.has(order.id)}
-                          onChange={e => {
-                            const next = new Set(selectedIds);
-                            e.target.checked ? next.add(order.id) : next.delete(order.id);
-                            setSelectedIds(next);
-                          }}
-                          className="rounded"
-                        />
-                      </td>
-                      <td className="px-3 py-2 font-mono text-xs font-semibold">{order.order_id}</td>
-                      <td className="px-3 py-2"><PlatformBadge platform={order.platform} /></td>
-                      <td className="px-3 py-2">
-                        <div className="max-w-[180px]">
-                          <p className="truncate text-sm font-medium" title={order.product_name}>{order.product_name}</p>
-                          <p className="text-xs text-muted-foreground">{order.variation} • {order.sku_id}</p>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2 tabular-nums text-center">{order.quantity}</td>
-                      <td className="px-3 py-2 tabular-nums whitespace-nowrap">{fmtRp(order.total_payment)}</td>
-                      <td className="px-3 py-2">
-                        <div>
-                          <p className="text-sm">{order.customer_name}</p>
-                          <p className="text-xs text-muted-foreground">{order.city}</p>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2"><StatusBadge status={order.status} /></td>
-                      <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
-                        {order.order_date ? new Date(order.order_date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' }) : '-'}
-                      </td>
-                      <td className="px-3 py-2">
-                        <Button size="sm" variant="ghost" className="h-7 opacity-0 group-hover:opacity-100 transition-opacity"
-                          onClick={() => setSelectedOrder(order)}
-                          data-testid={`btn-order-detail-${order.id}`}
-                        >
-                          <ChevronRight size={14} />
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {/* Pagination */}
-          {pagination && pagination.total_pages > 1 && (
-            <div className="flex items-center justify-between px-4 py-3 border-t">
-              <span className="text-xs text-muted-foreground">{pagination.total} order</span>
-              <div className="flex items-center gap-2">
-                <Button size="sm" variant="outline" className="h-7" disabled={page === 1} onClick={() => setPage(p => p - 1)}>Sebelumnya</Button>
-                <span className="text-xs">{page} / {pagination.total_pages}</span>
-                <Button size="sm" variant="outline" className="h-7" disabled={page >= pagination.total_pages} onClick={() => setPage(p => p + 1)}>Berikutnya</Button>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {loading && orders.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat pesanan…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={orders} onKlikBaris={setSelectedOrder} testId="orders-table"
+          kosong={<EmptyState icon={ShoppingBag} title="Tidak ada pesanan"
+            description={summary?.total_orders ? 'Ubah pencarian atau saringan.' : 'Belum ada pesanan. Impor ekspor pesanan Seller Center di menu Impor Data.'} />} />
+      )}
 
-      {/* Order Detail Drawer */}
-      <OrderDetailDrawer
-        order={selectedOrder}
-        open={!!selectedOrder}
-        onClose={() => setSelectedOrder(null)}
-        onStatusChange={() => { fetchOrders(); fetchSummary(); }}
-      />
+      {selectedOrder && (
+        <OrderDetailPopup order={selectedOrder} onClose={() => setSelectedOrder(null)}
+          onStatusChange={() => { fetchOrders(); fetchSummary(); }} />
+      )}
 
-      {/* Picking List Modal */}
-      <PickingListModal
-        open={showPickingList}
-        onClose={() => setShowPickingList(false)}
-        token={token}
-        accountFilter={accountFilter}
-      />
+      <PickingListPopup open={showPickingList} onClose={() => setShowPickingList(false)} token={token} accountFilter={accountFilter} />
 
-      {/* Bulk Update Confirmation */}
-      <AlertDialog open={bulkDialog} onOpenChange={setBulkDialog}>
-        <AlertDialogContent data-testid="bulk-status-dialog">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Update {selectedIds.size} Order?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Status akan diubah ke <strong>{STATUS_CONFIG[bulkStatus]?.label}</strong> untuk {selectedIds.size} order yang dipilih.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {/* F10 — konsekuensi STOK ditulis di depan, bukan disimpan di kode.
-              Membatalkan order melepas reservasinya: barangnya kembali bisa
-              dijual, dan order itu TIDAK bisa dihidupkan lagi. */}
-          {(bulkStatus === 'cancelled' || bulkStatus === 'returned') && (
-            <div className="flex items-start gap-2 rounded-lg border border-amber-400/40 bg-amber-500/10 p-3 text-[12px] text-amber-800 dark:text-amber-200"
-              data-testid="bulk-cancel-stock-note">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              <div>
-                <b>Reservasi stok akan dilepas.</b> Stok yang tadinya ditahan untuk order
-                ini kembali menjadi stok jual. Order yang sudah dibatalkan/diretur
-                <b> tidak bisa dihidupkan lagi</b> — bila pembeli memesan ulang, buat order baru.
-              </div>
+      {/* Konfirmasi ubah status massal */}
+      <FormPopup open={bulkDialog} onClose={() => setBulkDialog(false)} ukuran="pendek" onSimpan={handleBulkStatus}
+        menyimpan={bulkSaving} labelSimpan="Terapkan" testId="bulk-status-dialog"
+        judul={`Ubah status ${selectedIds.size} pesanan?`}
+        keterangan={`Status diubah ke ${labelStatus(bulkStatus)} untuk ${selectedIds.size} pesanan yang dipilih.`}>
+        {/* F10 — konsekuensi STOK ditulis di depan: membatalkan order melepas reservasinya. */}
+        {(bulkStatus === 'cancelled' || bulkStatus === 'returned') && (
+          <Notice tone="warning" icon={AlertTriangle} testId="bulk-cancel-stock-note" title="Reservasi stok akan dilepas">
+            Stok yang ditahan untuk pesanan ini kembali menjadi stok jual. Pesanan yang sudah dibatalkan/diretur tidak bisa
+            dihidupkan lagi — bila pembeli memesan ulang, buat pesanan baru.
+          </Notice>
+        )}
+        {bulkStatus === 'cancelled' && (
+          <Isian label="Alasan pembatalan" htmlFor="bulk-cancel-reason"
+            petunjuk='Wajib untuk pesanan yang SUDAH dikirim: otomatis menjadi pengajuan Retur Fisik "RTS" di Gudang, stok bertambah setelah gudang menerima paketnya. Tanpa alasan, pesanan terkirim dilewati.'>
+            <div data-testid="bulk-cancel-reason">
+              <Textarea id="bulk-cancel-reason" value={bulkNote} onChange={(e) => setBulkNote(e.target.value)} rows={2}
+                placeholder="Contoh: gagal kirim / paket ditolak pembeli" data-testid="bulk-cancel-reason-input" />
             </div>
-          )}
-          {bulkStatus === 'cancelled' && (
-            <div className="space-y-1" data-testid="bulk-cancel-reason">
-              <label className="text-[12px] font-medium">
-                Alasan pembatalan <span className="text-muted-foreground">(wajib untuk pesanan yang SUDAH dikirim)</span>
-              </label>
-              <textarea value={bulkNote} onChange={(e) => setBulkNote(e.target.value)} rows={2}
-                placeholder="mis. gagal kirim / paket ditolak pembeli"
-                className="w-full rounded-md border border-[var(--glass-border)] bg-background px-2 py-1 text-sm"
-                data-testid="bulk-cancel-reason-input" />
-              <p className="text-[11px] text-muted-foreground">
-                Pesanan yang sudah dikirim lalu dibatalkan otomatis menjadi pengajuan Retur Fisik "RTS" di Gudang —
-                stok baru bertambah setelah gudang menerima paketnya. Tanpa alasan, pesanan terkirim dilewati.
-              </p>
-            </div>
-          )}
-          <AlertDialogFooter>
-            <AlertDialogCancel>Batal</AlertDialogCancel>
-            <AlertDialogAction onClick={handleBulkStatus} data-testid="bulk-status-confirm">Terapkan</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+          </Isian>
+        )}
+      </FormPopup>
 
-      {/* F10 — laporan kegagalan per-order (mis. order yang sudah batal tidak bisa
-          dihidupkan). Dulu kegagalan seperti ini tidak pernah sampai ke layar. */}
-      <AlertDialog open={!!bulkResult} onOpenChange={(o) => !o && setBulkResult(null)}>
-        <AlertDialogContent data-testid="bulk-status-result">
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {bulkResult?.done || 0} berhasil · {bulkResult?.failed?.length || 0} tidak bisa diubah
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              Order berikut tidak diubah. Alasannya ditulis apa adanya supaya bisa ditindaklanjuti.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="max-h-64 space-y-2 overflow-y-auto">
-            {(bulkResult?.failed || []).map((f) => (
-              <div key={f.order_id}
-                className="rounded-md border border-border bg-muted/40 p-2 text-[12px]">
-                <div className="font-mono text-[11px] text-foreground">
-                  {f.order_ref || f.order_id}
-                </div>
-                <div className="text-muted-foreground">{f.reason}</div>
-              </div>
-            ))}
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogAction onClick={() => setBulkResult(null)}>Mengerti</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+      {/* F10 — laporan kegagalan per-order */}
+      <DetailPopup open={!!bulkResult} onClose={() => setBulkResult(null)} testId="bulk-status-result"
+        judul={`${bulkResult?.done || 0} berhasil · ${bulkResult?.failed?.length || 0} tidak bisa diubah`}
+        keterangan="Pesanan berikut tidak diubah. Alasannya ditulis apa adanya supaya bisa ditindaklanjuti.">
+        <TabelData baris={bulkResult?.failed || []} kunci={(f) => f.order_id} testId="bulk-status-failed"
+          kolom={[
+            { kunci: 'order', label: 'Pesanan', hp: 'judul', isi: (f) => f.order_ref || f.order_id },
+            { kunci: 'alasan', label: 'Alasan', isi: (f) => f.reason },
+          ]} />
+      </DetailPopup>
+    </PageLayout>
   );
 }
