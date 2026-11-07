@@ -44,41 +44,30 @@ import {
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
-import { EmptyState, Notice, StatTile } from '../moduleAtoms';
-import { ResponsiveTableWrapper } from '@/components/ui/responsive-table-wrapper';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import DatePicker from '@/components/ui/date-picker';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { Toolbar } from '../layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import { apiGet, apiPost, apiFetch } from '../../../lib/api';
 import { dayLabel, isoToday, shiftDay } from './recapDates';
 
 // ── Tampilan per status kolom (empat status, bukan dua — lihat SSOT backend) ──
+// Standar UI/UX v2 (8 Nov 2026): sel tanpa kotak berwarna tebal (dulu tiap sel kotak bergaris → baris setinggi
+// 120 px); warna hanya pada ikon & teks status.
 const CELL_STYLE = {
-  done: {
-    Icon: CheckCircle2,
-    cls: 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))] hover:bg-[hsl(var(--success)/0.15)]',
-    label: 'Sudah diisi',
-  },
-  partial: {
-    Icon: AlertTriangle,
-    cls: 'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning-text))] hover:bg-[hsl(var(--warning)/0.15)]',
-    label: 'Sudah diisi, masih ada sisa',
-  },
-  pending: {
-    Icon: XCircle,
-    cls: 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--danger-text))] hover:bg-[hsl(var(--destructive)/0.15)]',
-    label: 'BELUM diisi',
-  },
-  none: {
-    Icon: MinusCircle,
-    cls: 'border-border bg-muted/40 text-muted-foreground hover:bg-muted/70',
-    label: 'Tidak ada pekerjaan',
-  },
+  done: { Icon: CheckCircle2, cls: 'text-[hsl(var(--success-text))]', label: 'Sudah diisi' },
+  partial: { Icon: AlertTriangle, cls: 'text-[hsl(var(--warning-text))]', label: 'Sudah diisi, masih ada sisa' },
+  pending: { Icon: XCircle, cls: 'text-[hsl(var(--danger-text))]', label: 'Belum diisi' },
+  none: { Icon: MinusCircle, cls: 'text-muted-foreground', label: 'Tidak ada pekerjaan' },
 };
 
 const ROW_STATUS = {
-  pending: { text: 'Belum diisi', cls: 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--danger-text))]' },
-  partial: { text: 'Sebagian', cls: 'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]' },
-  done: { text: 'Lengkap', cls: 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))]' },
-  idle: { text: 'Tidak ada pekerjaan', cls: 'border-border bg-muted text-muted-foreground' },
+  pending: { text: 'Belum diisi', tone: 'danger' },
+  partial: { text: 'Sebagian', tone: 'warning' },
+  done: { text: 'Lengkap', tone: 'success' },
+  idle: { text: 'Tidak ada pekerjaan', tone: 'muted' },
 };
 
 const SOURCE_TEXT = { staff: 'staf DA', vendor: 'vendor', mixed: 'staf + vendor' };
@@ -107,42 +96,29 @@ function TaskCell({ row, taskKey, task, onOpen, canFill }) {
   // sulit ditemukan — padahal justru itu yang dicari staf).
   const detail = (task?.detail && task.detail !== st.label) ? task.detail : '';
   const body = (
-    <>
+    <span className={`block min-w-0 ${st.cls}`}>
       <span className="flex items-center gap-1.5">
         <Icon className="h-3.5 w-3.5 flex-shrink-0" />
-        <span className="text-xs font-semibold">{st.label}</span>
+        <span className="text-xs font-medium">{st.label}</span>
       </span>
-      {detail ? (
-        <span className="mt-0.5 block text-xs leading-snug opacity-90">{detail}</span>
-      ) : null}
-      {src ? (
-        <span className="mt-1 inline-flex items-center rounded-full border border-current/30 px-1.5 py-px text-xs font-medium opacity-90">
-          diisi {src}
-        </span>
-      ) : null}
-    </>
+      {detail ? <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">{detail}</span> : null}
+      {src ? <span className="mt-0.5 block text-xs text-muted-foreground">diisi {src}</span> : null}
+    </span>
   );
 
   if (!clickable) {
     return (
-      <div className={`rounded-lg border px-2.5 py-2 ${st.cls}`}
-        data-testid={`cmt-recap-cell-${vendorId}-${taskKey}`}
-        data-state={task?.state || 'none'}>
+      <div className="px-2 py-1" data-testid={`cmt-recap-cell-${vendorId}-${taskKey}`} data-state={task?.state || 'none'}>
         {body}
       </div>
     );
   }
   return (
-    <button
-      type="button"
-      onClick={() => onOpen(row, task?.module)}
-      title={`Buka modul ini untuk ${taskKey}`}
-      className={`w-full rounded-lg border px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] ${st.cls}`}
-      data-testid={`cmt-recap-cell-${vendorId}-${taskKey}`}
-      data-state={task?.state || 'none'}
-    >
+    <Button type="button" variant="ghost" onClick={() => onOpen(row, task?.module)} title={`Buka modul ini untuk ${taskKey}`}
+      className="h-auto w-full justify-start whitespace-normal px-2 py-1 text-left font-normal"
+      data-testid={`cmt-recap-cell-${vendorId}-${taskKey}`} data-state={task?.state || 'none'}>
       {body}
-    </button>
+    </Button>
   );
 }
 
@@ -173,7 +149,7 @@ export default function CMTOverrideDailyRecap({
   const [onlyPending, setOnlyPending] = useState(false);
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState('');
-  const [confirmRemind, setConfirmRemind] = useState(false);
+  const [confirmRemind, setConfirmRemind] = useState(false);   // dipertahankan: sendReminders menutupnya
 
   const load = useCallback(async (d) => {
     setLoading(true); setErr('');
@@ -261,199 +237,100 @@ export default function CMTOverrideDailyRecap({
     if (typeof onOpenVendor === 'function') onOpenVendor(row, moduleId);
   };
 
+  // Konfirmasi reminder lewat dialog aplikasi — staf tetap MELIHAT siapa yang akan ditegur (daftar di badan dialog).
+  const askRemind = async () => {
+    const daftar = pendingRows.map((r) => `• ${r.vendor_name} — ${(r.pending_tasks || []).join(', ')}`).join('\n');
+    const ok = await confirmDialog({
+      title: `Kirim reminder ke ${pendingRows.length} vendor yang belum diisi?`,
+      body: `Reminder masuk ke Pengingat vendor; satu vendor hanya menerima satu reminder rekap per tanggal.\n\n${daftar}`,
+      confirmLabel: 'Ya, kirim sekarang',
+    });
+    if (ok) sendReminders();
+  };
+
   return (
-    <GlassCard data-testid="cmt-recap-panel">
-      {/* ── Kepala ───────────────────────────────────────────────────────── */}
-      <div className="border-b border-border p-4 sm:p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div>
-              <p className="text-base font-semibold text-foreground">Rekap harian</p>
-              <p className="mt-0.5 max-w-2xl text-sm text-muted-foreground">
-                Vendor mana yang <b>belum diisi</b> untuk tanggal ini — per jenis pekerjaan,
-                supaya tidak ada yang terlewat. Klik kotak <b>Belum diisi</b> untuk langsung
-                membuka modulnya atas nama vendor itu.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1">
-              <Button variant="outline" size="icon-sm"
-                onClick={() => setDay(d => shiftDay(d, -1))}
-                title="Hari sebelumnya" aria-label="Hari sebelumnya" data-testid="cmt-recap-prev-day">
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <div className="relative">
-                <CalendarDays className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <GlassInput
-                  type="date"
-                  value={day}
-                  max={shiftDay(isoToday(), 1)}
-                  onChange={e => e.target.value && setDay(e.target.value)}
-                  className="h-8 w-auto pl-7 pr-2 text-xs"
-                  data-testid="cmt-recap-date-input"
-                />
-              </div>
-              <Button variant="outline" size="icon-sm"
-                onClick={() => setDay(d => shiftDay(d, 1))}
-                title="Hari berikutnya" aria-label="Hari berikutnya" data-testid="cmt-recap-next-day">
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-              {!isToday && (
-                <Button variant="link" size="sm"
-                  onClick={() => setDay(isoToday())} data-testid="cmt-recap-today">
-                  Hari ini
-                </Button>
-              )}
-            </div>
-
-            <Button variant="outline" size="icon-sm" onClick={() => load(day)}
-              title="Muat ulang" aria-label="Muat ulang" data-testid="cmt-recap-refresh">
-              <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+    <div className="space-y-4" data-testid="cmt-recap-panel">
+      <p className="text-sm text-muted-foreground">
+        Vendor yang <b>belum diisi</b> untuk tanggal ini, per jenis pekerjaan. Klik <b>Belum diisi</b> untuk langsung membuka modulnya atas nama vendor itu.
+      </p>
+      <Toolbar testId="cmt-recap-day-toolbar"
+        filters={<>
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="icon" onClick={() => setDay(d => shiftDay(d, -1))}
+              title="Hari sebelumnya" aria-label="Hari sebelumnya" data-testid="cmt-recap-prev-day">
+              <ChevronLeft className="h-4 w-4" />
             </Button>
-            <Button variant="outline" size="sm" onClick={() => download('xlsx')}
-              disabled={busy === 'xlsx'} data-testid="cmt-recap-export-xlsx">
-              {busy === 'xlsx'
-                ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                : <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5" />}
-              Excel
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => download('pdf')}
-              disabled={busy === 'pdf'} data-testid="cmt-recap-export-pdf">
-              {busy === 'pdf'
-                ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                : <FileText className="mr-1.5 h-3.5 w-3.5" />}
-              PDF
+            <div className="w-44">
+              <DatePicker value={day} max={shiftDay(isoToday(), 1)} bolehKosong={false}
+                onChange={(v) => v && setDay(v)} testId="cmt-recap-date-input" />
+            </div>
+            <Button variant="outline" size="icon" onClick={() => setDay(d => shiftDay(d, 1))}
+              title="Hari berikutnya" aria-label="Hari berikutnya" data-testid="cmt-recap-next-day">
+              <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
-        </div>
+          {isToday ? <StatusBadge status="today" tone="primary" label="Hari ini" testId="cmt-recap-day-label" />
+            : <Button variant="link" size="sm" onClick={() => setDay(isoToday())} data-testid="cmt-recap-today">Kembali ke hari ini</Button>}
+        </>}
+        tools={<>
+          <Button variant="outline" size="icon" onClick={() => load(day)}
+            title="Muat ulang" aria-label="Muat ulang" data-testid="cmt-recap-refresh">
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          </Button>
+          <Button variant="outline" onClick={() => download('xlsx')} disabled={busy === 'xlsx'} data-testid="cmt-recap-export-xlsx"
+            title="Unduh Excel (isinya sama dengan layar ini)">
+            {busy === 'xlsx' ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+            Excel
+          </Button>
+          <Button variant="outline" onClick={() => download('pdf')} disabled={busy === 'pdf'} data-testid="cmt-recap-export-pdf"
+            title="Unduh PDF (isinya sama dengan layar ini)">
+            {busy === 'pdf' ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+            PDF
+          </Button>
+        </>} />
 
-        <p className="mt-3 text-xs font-medium text-foreground" data-testid="cmt-recap-day-label">
-          {dayLabel(day)}
-          {isToday
-            ? <span className="ml-2 rounded-full bg-[hsl(var(--primary)/0.15)] px-2 py-0.5 text-xs font-bold text-[hsl(var(--primary))]">HARI INI</span>
-            : <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-xs font-bold text-muted-foreground">TANGGAL LAIN</span>}
-        </p>
-
-        {/* ── Kartu ringkasan ─────────────────────────────────────────────── */}
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-          <StatCard testid="cmt-recap-summary-pending" tone="red" label="Belum diisi"
-            value={summary.vendors_pending ?? 0} hint="ada tugas merah" />
-          <StatCard testid="cmt-recap-summary-partial" tone="amber" label="Sebagian"
-            value={summary.vendors_partial ?? 0} hint="terisi, masih ada sisa" />
-          <StatCard testid="cmt-recap-summary-done" tone="green" label="Lengkap"
-            value={summary.vendors_done ?? 0} hint="tidak ada sisa" />
-          <StatCard testid="cmt-recap-summary-idle" tone="grey" label="Tanpa pekerjaan"
-            value={summary.vendors_idle ?? 0} hint="tidak perlu diisi" />
-          <StatCard testid="cmt-recap-summary-tasks" tone="blue" label="Tugas belum diisi"
-            value={summary.tasks_pending_total ?? 0}
-            hint={`${summary.qty_progress_today ?? 0} pcs progress masuk`} />
-        </div>
+      {/* Kartu ringkasan — dari server (`summary`), dihitung atas SEMUA vendor aktif untuk tanggal ini. */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard testid="cmt-recap-summary-pending" tone="red" label="Vendor belum diisi"
+          value={summary.vendors_pending ?? '—'} hint={`${summary.tasks_pending_total ?? 0} tugas belum diisi`} />
+        <StatCard testid="cmt-recap-summary-partial" tone="amber" label="Vendor sebagian"
+          value={summary.vendors_partial ?? '—'} hint="Terisi, masih ada sisa" />
+        <StatCard testid="cmt-recap-summary-done" tone="green" label="Vendor lengkap"
+          value={summary.vendors_done ?? '—'} hint={`${summary.qty_progress_today ?? 0} pcs progress masuk`} />
+        <StatCard testid="cmt-recap-summary-idle" tone="grey" label="Vendor tanpa pekerjaan"
+          value={summary.vendors_idle ?? '—'} hint="Tidak perlu diisi" />
       </div>
+      <span className="sr-only" data-testid="cmt-recap-summary-tasks">{summary.tasks_pending_total ?? 0}</span>
 
-      {/* ── Bar aksi ─────────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-3 border-b border-border bg-muted/30 px-4 py-3">
-        <div className="relative min-w-[200px] flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Cari vendor di rekap…" className="h-9 pl-9"
-            data-testid="cmt-recap-search" />
-        </div>
-        <label className="flex cursor-pointer select-none items-center gap-2 text-xs font-medium text-foreground">
-          <input type="checkbox" checked={onlyPending}
-            onChange={e => setOnlyPending(e.target.checked)}
-            className="h-4 w-4 rounded border-border"
-            data-testid="cmt-recap-filter-pending" />
-          Hanya yang belum lengkap
-        </label>
-        <Button size="sm" onClick={() => setConfirmRemind(true)}
-          disabled={pendingRows.length === 0 || busy === 'remind'}
-          className="bg-[hsl(var(--warning))] text-white hover:bg-[hsl(var(--warning)/0.9)]"
-          data-testid="cmt-recap-remind">
-          <BellRing className="mr-1.5 h-3.5 w-3.5" />
+      <Toolbar testId="cmt-recap-filter-toolbar"
+        filters={<>
+          <div className="relative w-full sm:w-64">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari vendor" className="pl-8" data-testid="cmt-recap-search" />
+          </div>
+          <label className="flex cursor-pointer select-none items-center gap-2 text-sm text-foreground">
+            <Checkbox checked={onlyPending} onCheckedChange={(v) => setOnlyPending(!!v)} data-testid="cmt-recap-filter-pending" />
+            Hanya yang belum lengkap
+          </label>
+        </>}
+        tools={<Button variant="outline" onClick={askRemind} disabled={pendingRows.length === 0 || busy === 'remind'} data-testid="cmt-recap-remind">
+          {busy === 'remind' ? <Loader2 className="h-4 w-4 animate-spin" /> : <BellRing className="h-4 w-4" />}
           Kirim reminder ({pendingRows.length})
-        </Button>
-      </div>
+        </Button>} />
 
-      {/* ── Konfirmasi reminder (bukan window.confirm: staf harus LIHAT dulu
-             siapa yang akan ditegur — menegur vendor yang sudah setor merusak
-             kepercayaan, dan itu tidak bisa ditarik kembali) ─────────────── */}
-      {confirmRemind && (
-        <div className="border-b border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] p-4" data-testid="cmt-recap-remind-confirm">
-          <div className="flex items-start gap-3">
-            <BellRing className="mt-0.5 h-5 w-5 flex-shrink-0 text-[hsl(var(--warning-text))]" />
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold text-[hsl(var(--warning-text))]">
-                Kirim reminder ke {pendingRows.length} vendor yang belum diisi?
-              </p>
-              <p className="mt-1 text-xs text-[hsl(var(--warning-text))]">
-                Reminder masuk ke <b>Inbox Reminder</b> vendor. Satu vendor hanya menerima
-                satu reminder rekap per tanggal — klik dua kali tidak menggandakan.
-              </p>
-              <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto text-xs text-[hsl(var(--warning-text))]">
-                {pendingRows.map(r => (
-                  <li key={r.vendor_id}>
-                    • <b>{r.vendor_name}</b>
-                    <span className="opacity-80"> — {(r.pending_tasks || []).join(', ')}</span>
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-3 flex gap-2">
-                <Button size="sm" onClick={sendReminders} disabled={busy === 'remind'}
-                  className="bg-[hsl(var(--warning))] text-white hover:bg-[hsl(var(--warning)/0.9)]"
-                  data-testid="cmt-recap-remind-confirm-yes">
-                  {busy === 'remind' && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-                  Ya, kirim sekarang
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => setConfirmRemind(false)}
-                  data-testid="cmt-recap-remind-confirm-no">
-                  Batal
-                </Button>
-              </div>
-            </div>
-            <Button size="icon-sm" variant="ghost" title="Tutup" aria-label="Tutup"
-              onClick={() => setConfirmRemind(false)}>
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Job WARISAN tanpa stempel waktu tutup (fase 5 `closed_at`) ───── */}
-      {/* Sejak `closed_at` ada, rekap tanggal lampau tidak lagi memaafkan kelalaian
-          yang sudah terjadi. Sisa ketidaktahuannya HANYA job yang sudah tertutup
-          sebelum fitur itu ada — dan obatnya satu perintah migrasi. Dinaikkan jadi
-          amber (bukan diselipkan di ujung paragraf abu-abu 11px) karena catatan yang
-          tidak terbaca sama saja dengan tidak mengaku, dan rekap yang diam soal
-          batasnya sendiri akan dipercaya lebih daripada yang seharusnya. */}
+      {/* Job WARISAN tanpa stempel waktu tutup (fase 5 `closed_at`) — batas kemampuan rekap untuk tanggal lampau. */}
       {data?.legacy_jobs_without_closed_at > 0 && data?.legacy_note && (
-        <div className="flex items-start gap-2 border-b border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] px-4 py-2.5"
-          data-testid="cmt-recap-legacy-jobs">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-[hsl(var(--warning-text))]" />
-          <p className="text-xs leading-snug text-[hsl(var(--warning-text))]">
-            <span className="font-semibold">Sebagian tanggal lampau belum bisa dihitung penuh — </span>
-            {data.legacy_note}
-          </p>
-        </div>
+        <Notice tone="warning" icon={AlertTriangle} testId="cmt-recap-legacy-jobs" title="Sebagian tanggal lampau belum bisa dihitung penuh">
+          {data.legacy_note}
+        </Notice>
       )}
-
-      {/* ── Catatan kejujuran data untuk tanggal lampau ──────────────────── */}
+      {/* Catatan kejujuran data untuk tanggal lampau */}
       {!isToday && (data?.as_of_note_base || data?.as_of_note) && (
-        <div className="flex items-start gap-2 border-b border-border bg-muted/40 px-4 py-2.5"
-          data-testid="cmt-recap-as-of-note">
-          <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-[hsl(var(--primary))]" />
-          <p className="text-xs leading-snug text-muted-foreground">
-            {data.as_of_note_base || data.as_of_note}
-          </p>
-        </div>
+        <Notice tone="info" icon={Info} testId="cmt-recap-as-of-note">{data.as_of_note_base || data.as_of_note}</Notice>
       )}
 
-      {/* ── Tabel ────────────────────────────────────────────────────────── */}
       {err ? (
-        <div className="p-4">
-          <Notice tone="danger" icon={XCircle} testId="cmt-recap-error">{err}</Notice>
-        </div>
+        <Notice tone="danger" icon={XCircle} testId="cmt-recap-error">{err}</Notice>
       ) : loading ? (
         <div className="flex items-center justify-center py-8" data-testid="cmt-recap-loading">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -471,31 +348,23 @@ export default function CMTOverrideDailyRecap({
               ? 'Matikan "Hanya yang belum lengkap" untuk melihat semua vendor.'
               : 'Ubah kata pencarian atau kosongkan kotak cari.'} />
       ) : (
-        <ResponsiveTableWrapper stickyFirstCol>
-          <table className="w-full min-w-[980px] text-sm">
-            <thead className="bg-muted/60">
-              <tr className="text-left text-xs text-muted-foreground">
-                <th className="px-4 py-2.5">Vendor</th>
-                {tasks.map(t => (
-                  <th key={t.key} className="px-2 py-2.5 font-semibold">{t.label}</th>
-                ))}
-                <th className="px-3 py-2.5 text-right">Aksi</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
+        <div className="overflow-x-auto">
+          <Table className="min-w-[56rem]">
+            <TableHeader><TableRow>
+              <TableHead>Vendor</TableHead>
+              {tasks.map(t => <TableHead key={t.key}>{t.label}</TableHead>)}
+              <TableHead className="text-right">Aksi</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>
               {visible.map(r => {
                 const stat = ROW_STATUS[r.status] || ROW_STATUS.idle;
                 return (
-                  <tr key={r.vendor_id} className="align-top hover:bg-muted/30"
-                    data-testid={`cmt-recap-row-${r.vendor_id}`} data-status={r.status}>
-                    <td className="px-4 py-3">
-                      <p className="font-semibold text-foreground">{r.vendor_name}</p>
-                      <p className="mt-0.5 tabular-nums text-xs text-muted-foreground">
-                        {r.vendor_code || '—'}
-                      </p>
-                      <span className={`mt-1.5 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-bold ${stat.cls}`}
-                        data-testid={`cmt-recap-status-${r.vendor_id}`}>
-                        {stat.text}
+                  <TableRow key={r.vendor_id} className="align-top" data-testid={`cmt-recap-row-${r.vendor_id}`} data-status={r.status}>
+                    <TableCell>
+                      <p className="font-medium text-foreground">{r.vendor_name}</p>
+                      <p className="text-xs text-muted-foreground tabular-nums">{r.vendor_code || '—'}</p>
+                      <span className="mt-1 inline-flex" data-testid={`cmt-recap-status-${r.vendor_id}`}>
+                        <StatusBadge status={r.status} label={stat.text} tone={stat.tone} />
                       </span>
                       {r.has_active_portal_account && (
                         <span className="mt-1 flex items-center gap-1 text-xs text-[hsl(var(--warning-text))]"
@@ -503,37 +372,34 @@ export default function CMTOverrideDailyRecap({
                           <AlertTriangle className="h-3 w-3" /> punya akun portal
                         </span>
                       )}
-                    </td>
+                    </TableCell>
                     {tasks.map(t => (
-                      <td key={t.key} className="px-2 py-3">
-                        <TaskCell row={r} taskKey={t.key}
-                          task={(r.tasks || {})[t.key]} onOpen={openVendor} canFill={canFill} />
-                      </td>
+                      <TableCell key={t.key} className="px-1">
+                        <TaskCell row={r} taskKey={t.key} task={(r.tasks || {})[t.key]} onOpen={openVendor} canFill={canFill} />
+                      </TableCell>
                     ))}
-                    <td className="px-3 py-3 text-right">
-                      <Button size="sm" variant="outline" className="whitespace-nowrap"
-                        onClick={() => openVendor(r, null)}
+                    <TableCell className="text-right">
+                      <Button size="sm" variant="outline" className="whitespace-nowrap" onClick={() => openVendor(r, null)}
                         data-testid={`cmt-recap-fill-${r.vendor_id}`}>
-                        <UserCog className="mr-1.5 h-3.5 w-3.5" /> Isi
+                        <UserCog className="h-3.5 w-3.5" /> Isi
                       </Button>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </table>
-        </ResponsiveTableWrapper>
+            </TableBody>
+          </Table>
+        </div>
       )}
 
-      {/* ── Legenda ─────────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-2.5 text-xs text-muted-foreground">
-        <span className="font-semibold text-foreground">Keterangan:</span>
+      <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">Keterangan:</span>
         <span className="inline-flex items-center gap-1"><XCircle className="h-3.5 w-3.5 text-[hsl(var(--danger-text))]" /> belum diisi (ada pekerjaan menunggu)</span>
         <span className="inline-flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5 text-[hsl(var(--warning-text))]" /> sudah diisi, masih ada sisa</span>
         <span className="inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5 text-[hsl(var(--success-text))]" /> sudah diisi</span>
-        <span className="inline-flex items-center gap-1"><MinusCircle className="h-3.5 w-3.5" /> memang tidak ada pekerjaan</span>
-        <span className="ml-auto inline-flex items-center gap-1"><Download className="h-3 w-3" /> Excel/PDF isinya sama dengan layar ini</span>
-      </div>
-    </GlassCard>
+        <span className="inline-flex items-center gap-1"><MinusCircle className="h-3.5 w-3.5" /> tidak ada pekerjaan</span>
+        <span className="inline-flex items-center gap-1"><Download className="h-3 w-3" /> Excel/PDF isinya sama dengan layar ini</span>
+      </p>
+    </div>
   );
 }

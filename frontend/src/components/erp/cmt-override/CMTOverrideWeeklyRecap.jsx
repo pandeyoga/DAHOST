@@ -53,7 +53,9 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
-import { EmptyState, Notice, StatTile } from '../moduleAtoms';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
+import DatePicker from '@/components/ui/date-picker';
+import { Checkbox } from '@/components/ui/checkbox';
 import { ResponsiveTableWrapper } from '@/components/ui/responsive-table-wrapper';
 import { apiGet, apiPost, apiFetch } from '../../../lib/api';
 import { dayLabel, isoToday, shiftDay as shiftDayUtil } from './recapDates';
@@ -76,7 +78,7 @@ const DAY_STYLE = {
   pending: {
     Icon: XCircle,
     cls: 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--danger-text))] hover:bg-[hsl(var(--destructive)/0.15)]',
-    label: 'BELUM diisi',
+    label: 'Belum diisi',
   },
   idle: {
     Icon: MinusCircle,
@@ -124,16 +126,16 @@ function Sparkline({ values = [], testid, title }) {
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img"
       aria-label={title || `Tren pcs per hari: ${nums.join(', ')}`}
       title={title} data-testid={testid} data-values={nums.join(',')}>
-      <line x1="0" y1={H - 0.5} x2={W} y2={H - 0.5} stroke="#d4d4d8" strokeWidth="1" />
+      <line x1="0" y1={H - 0.5} x2={W} y2={H - 0.5} stroke="hsl(var(--border))" strokeWidth="1" />
       {nums.map((v, i) => {
         const h = v > 0 ? Math.max(3, (v / max) * (H - 5)) : 1.5;
         return (
           <rect key={i} x={i * bw + 1} y={H - 1 - h} width={Math.max(2.5, bw - 2.5)}
-            height={h} rx="1" fill={v > 0 ? '#2563eb' : '#e4e4e7'} />
+            height={h} rx="1" fill={v > 0 ? 'hsl(var(--primary))' : 'hsl(var(--muted))'} />
         );
       })}
       {kosong && (
-        <text x={W / 2} y={H / 2 + 3} textAnchor="middle" fontSize="8" fill="#a1a1aa">
+        <text x={W / 2} y={H / 2 + 3} textAnchor="middle" fontSize="8" fill="hsl(var(--muted-foreground))">
           tanpa setoran
         </text>
       )}
@@ -180,11 +182,11 @@ function DayBox({ cell, vendorId, onOpen }) {
     );
   }
   return (
-    <button type="button" onClick={() => onOpen(cell?.date)}
-      className={`w-full rounded-lg border px-1 py-1.5 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] ${st.cls}`}
+    <Button type="button" variant="ghost" onClick={() => onOpen(cell?.date)}
+      className={`h-auto w-full flex-col gap-0 rounded-lg border px-1 py-1.5 text-center font-normal ${st.cls}`}
       {...common}>
       {body}
-    </button>
+    </Button>
   );
 }
 
@@ -224,12 +226,12 @@ function DeltaNum({ diff, lowerIsBetter, unit = '', testid }) {
  * jadi hiasan.
  */
 function MoverRow({ v, tone, onOpen }) {
-  const border = tone === 'worse' ? 'border-[hsl(var(--destructive)/0.35)] bg-white' : 'border-[hsl(var(--success)/0.35)] bg-white';
+  const border = tone === 'worse' ? 'border-[hsl(var(--destructive)/0.35)]' : 'border-[hsl(var(--success)/0.35)]';
   const statusFrom = ROW_STATUS[v.status_prev]?.text || '—';
   const statusTo = ROW_STATUS[v.status_now]?.text || '—';
   return (
-    <button type="button" onClick={() => onOpen(v)}
-      className={`w-full rounded-md border px-2 py-1.5 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] ${border}`}
+    <Button type="button" variant="ghost" onClick={() => onOpen(v)}
+      className={`h-auto w-full flex-col items-stretch gap-0 whitespace-normal rounded-md border bg-[var(--card-surface)] px-2 py-1.5 text-left font-normal ${border}`}
       title={`Buka ${v.vendor_name}`}
       data-testid={`cmt-week-mover-${v.vendor_id}`} data-direction={v.direction}>
       <p className="flex items-center justify-between gap-2">
@@ -246,7 +248,7 @@ function MoverRow({ v, tone, onOpen }) {
         terlambat {v.days_late_prev} → <b className="text-foreground">{v.days_late_now}</b> hari
         {' · '}pcs {v.qty_prev} → <b className="text-foreground">{v.qty_now}</b>
       </p>
-    </button>
+    </Button>
   );
 }
 
@@ -443,17 +445,9 @@ export default function CMTOverrideWeeklyRecap({
                 title="7 hari sebelumnya" aria-label="7 hari sebelumnya" data-testid="cmt-week-prev">
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <div className="relative">
-                <CalendarDays className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <GlassInput
-                  type="date"
-                  value={end}
-                  max={shiftDayUtil(isoToday(), 1)}
-                  onChange={e => e.target.value && setEnd(e.target.value)}
-                  className="h-9 w-auto pl-7 pr-2 text-xs"
-                  title="Hari TERAKHIR jendela 7 hari"
-                  data-testid="cmt-week-date-input"
-                />
+              <div className="w-44" title="Hari terakhir jendela 7 hari">
+                <DatePicker value={end} max={shiftDayUtil(isoToday(), 1)} bolehKosong={false}
+                  onChange={(v) => v && setEnd(v)} testId="cmt-week-date-input" />
               </div>
               <Button variant="outline" size="icon"
                 onClick={() => setEnd(d => shiftDayUtil(d, 7))}
@@ -498,17 +492,15 @@ export default function CMTOverrideWeeklyRecap({
         <p className="mt-3 text-xs font-medium text-foreground" data-testid="cmt-week-range-label">
           {data ? `${dayLabel(data.start)} — ${dayLabel(data.end)}` : '…'}
           {isCurrent
-            ? <span className="ml-2 rounded-full bg-[hsl(var(--primary)/0.15)] px-2 py-0.5 text-xs font-bold text-[hsl(var(--primary))]">7 HARI TERAKHIR</span>
-            : <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-xs font-bold text-muted-foreground">JENDELA LAIN</span>}
+            ? <span className="ml-2 inline-flex"><StatusBadge status="current" tone="primary" label="7 hari terakhir" /></span>
+            : <span className="ml-2 inline-flex"><StatusBadge status="other" tone="muted" label="Jendela lain" /></span>}
           {summary.days_elapsed < summary.days && (
-            <span className="ml-2 rounded-full bg-[hsl(var(--warning)/0.15)] px-2 py-0.5 text-xs font-bold text-[hsl(var(--warning-text))]">
-              {summary.days - summary.days_elapsed} hari belum terjadi
-            </span>
+            <span className="ml-2 inline-flex"><StatusBadge status="future" tone="warning" label={`${summary.days - summary.days_elapsed} hari belum terjadi`} /></span>
           )}
         </p>
 
         {/* ── Kartu ringkasan ─────────────────────────────────────────────── */}
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
           <StatCard testid="cmt-week-summary-late" tone="red" label="Pernah terlambat"
             value={summary.vendors_late ?? 0} hint="ada hari nol bukti" />
           <StatCard testid="cmt-week-summary-unfinished" tone="amber" label="Belum beres"
@@ -666,10 +658,7 @@ export default function CMTOverrideWeeklyRecap({
             data-testid="cmt-week-search" />
         </div>
         <label className="flex cursor-pointer select-none items-center gap-2 text-xs font-medium text-foreground">
-          <input type="checkbox" checked={onlyProblem}
-            onChange={e => setOnlyProblem(e.target.checked)}
-            className="h-4 w-4 rounded border-border"
-            data-testid="cmt-week-filter-problem" />
+          <Checkbox checked={onlyProblem} onCheckedChange={(v) => setOnlyProblem(!!v)} data-testid="cmt-week-filter-problem" />
           Hanya yang bermasalah
         </label>
         {/* Filter ini hanya muncul saat perbandingan menyala: tanpa data pekan
@@ -677,10 +666,7 @@ export default function CMTOverrideWeeklyRecap({
             tabel tanpa alasan yang terlihat. */}
         {compare && comparison && (
           <label className="flex cursor-pointer select-none items-center gap-2 rounded-md border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] px-2 py-1 text-xs font-medium text-[hsl(var(--danger-text))]">
-            <input type="checkbox" checked={onlyWorse}
-              onChange={e => setOnlyWorse(e.target.checked)}
-              className="h-4 w-4 rounded border-[hsl(var(--destructive)/0.35)]"
-              data-testid="cmt-week-filter-worse" />
+            <Checkbox checked={onlyWorse} onCheckedChange={(v) => setOnlyWorse(!!v)} data-testid="cmt-week-filter-worse" />
             Hanya yang memburuk ({movers?.counts?.worsened ?? 0})
           </label>
         )}
@@ -808,11 +794,9 @@ export default function CMTOverrideWeeklyRecap({
                   const npend = Number(pd.vendors_pending || 0);
                   return (
                     <th key={d.date} className="px-1 py-2 text-center font-semibold">
-                      <button type="button" onClick={() => openDay(d.date)}
+                      <Button type="button" variant="ghost" onClick={() => openDay(d.date)}
                         disabled={d.is_future}
-                        className={`w-full rounded-md px-1 py-0.5 leading-tight ${
-                          d.is_future ? 'cursor-default opacity-60' : 'hover:bg-muted'
-                        }`}
+                        className="h-auto w-full flex-col gap-0 rounded-md px-1 py-0.5 font-normal leading-tight"
                         title={d.is_future
                           ? `${d.date} — belum terjadi`
                           : `${d.date} — buka Rekap Harian tanggal ini`}
@@ -832,7 +816,7 @@ export default function CMTOverrideWeeklyRecap({
                             {npend > 0 ? `${npend} belum` : 'aman'}
                           </span>
                         )}
-                      </button>
+                      </Button>
                     </th>
                   );
                 })}

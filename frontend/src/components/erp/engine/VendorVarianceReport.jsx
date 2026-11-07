@@ -1,9 +1,16 @@
 import { useState, useEffect } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { Plus, X, AlertTriangle } from 'lucide-react';
+import { Plus, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
-import Modal from './Modal';
-import StatusBadge from './StatusBadge';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { formatDateID } from '@/lib/format';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, StatTile, StatusBadge } from '../moduleAtoms';
 import { apiGet, apiPost } from '../../../lib/api';
 
 export default function VendorVarianceReport({ token, user }) {
@@ -82,175 +89,93 @@ export default function VendorVarianceReport({ token, user }) {
     }
   };
 
-  const getTypeBadge = (type) => {
-    return type === 'OVERPRODUCTION' 
-      ? <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]">Over</span>
-      : <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]">Under</span>;
-  };
-
-  const getStatusBadge = (status) => {
-    const cfg = {
-      'Reported': 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]',
-      'Acknowledged': 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]',
-      'Resolved': 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))]'
-    };
-    return <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${cfg[status] || 'bg-gray-100 text-gray-700'}`}>{status}</span>;
-  };
-
-  if (loading) return <div className="p-8">Loading...</div>;
+  // Standar UI/UX v2 (8 Nov 2026): PageLayout, kartu angka StatTile, tabel TabelData (+ unduh), form FormPopup.
+  const JENIS = { OVERPRODUCTION: ['Produksi lebih', 'warning'], UNDERPRODUCTION: ['Produksi kurang', 'info'] };
+  const STATUS_V = { Reported: ['Dilaporkan', 'warning'], Acknowledged: ['Diterima DA', 'info'], Resolved: ['Selesai', 'success'] };
+  const lbl = (map, k) => map[k] || [k || '—', 'default'];
+  const kolom = [
+    { kunci: 'job', label: 'No. job', hp: 'judul', isi: (v) => <span className="font-medium tabular-nums">{v.job_number}</span> },
+    { kunci: 'po', label: 'No. PO', isi: (v) => <span className="tabular-nums">{v.po_number || '—'}</span> },
+    { kunci: 'jenis', label: 'Jenis', isi: (v) => { const [l, t] = lbl(JENIS, v.variance_type); return <StatusBadge status={v.variance_type} label={l} tone={t} />; } },
+    { kunci: 'qty', label: 'Total selisih (pcs)', rata: 'kanan', isi: (v) => <span className="tabular-nums">{v.total_variance_qty}</span> },
+    { kunci: 'alasan', label: 'Alasan', hp: 'keterangan', isi: (v) => <span className="block max-w-xs truncate text-sm text-muted-foreground" title={v.reason}>{v.reason}</span> },
+    { kunci: 'status', label: 'Status', isi: (v) => { const [l, t] = lbl(STATUS_V, v.status); return <StatusBadge status={v.status} label={l} tone={t} />; } },
+    { kunci: 'tgl', label: 'Tanggal', isi: (v) => formatDateID(v.created_at, { fallback: '—' }) },
+  ];
+  const nOver = variances.filter((v) => v.variance_type === 'OVERPRODUCTION').length;
+  const nUnder = variances.filter((v) => v.variance_type === 'UNDERPRODUCTION').length;
 
   return (
-    <div className="p-6">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h2 className="text-2xl font-bold text-foreground">Laporan Variance Produksi</h2>
-          <p className="text-sm text-muted-foreground">Laporkan overproduction atau underproduction</p>
+    <PageLayout testId="vendor-variance-report" title="Laporan selisih produksi" subtitle="Laporkan produksi yang lebih atau kurang dari pesanan."
+      actions={<Button onClick={openCreate} data-testid="vendor-variance-create"><Plus className="w-4 h-4" /> Buat laporan</Button>}
+      tools={<TombolUnduh namaBerkas="laporan-selisih-produksi" baris={variances} kolom={[
+        { label: 'No. job', nilai: (v) => v.job_number || '' }, { label: 'No. PO', nilai: (v) => v.po_number || '' },
+        { label: 'Jenis', nilai: (v) => lbl(JENIS, v.variance_type)[0] }, { label: 'Total selisih (pcs)', nilai: (v) => Number(v.total_variance_qty) || 0 },
+        { label: 'Alasan', nilai: (v) => v.reason || '' }, { label: 'Status', nilai: (v) => lbl(STATUS_V, v.status)[0] },
+        { label: 'Tanggal', nilai: (v) => formatDateID(v.created_at, { fallback: '' }) },
+      ]} />}
+      summary={variances.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <StatTile label="Total laporan" value={variances.length} sub="Semua laporan selisih vendor ini" />
+          <StatTile label="Produksi lebih" value={nOver} accent={nOver ? 'warning' : 'default'} sub="Laporan jenis lebih" />
+          <StatTile label="Produksi kurang" value={nUnder} sub="Laporan jenis kurang" />
         </div>
-        <button onClick={openCreate} className="px-4 py-2 bg-[hsl(var(--primary))] text-white rounded-lg hover:bg-[hsl(var(--primary)/0.9)] flex items-center gap-2">
-          <Plus className="w-4 h-4" /> Buat Laporan
-        </button>
-      </div>
-
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <div className="bg-card p-4 rounded-lg border border-border">
-          <p className="text-xs text-muted-foreground mb-1">Total Laporan</p>
-          <p className="text-2xl font-bold text-foreground">{variances.length}</p>
-        </div>
-        <div className="bg-[hsl(var(--warning)/0.1)] p-4 rounded-lg border border-[hsl(var(--warning)/0.35)]">
-          <p className="text-xs text-[hsl(var(--warning-text))] mb-1">Overproduction</p>
-          <p className="text-2xl font-bold text-[hsl(var(--warning-text))]">{variances.filter(v => v.variance_type === 'OVERPRODUCTION').length}</p>
-        </div>
-        <div className="bg-[hsl(var(--primary)/0.1)] p-4 rounded-lg border border-[hsl(var(--primary)/0.35)]">
-          <p className="text-xs text-[hsl(var(--primary))] mb-1">Underproduction</p>
-          <p className="text-2xl font-bold text-[hsl(var(--primary))]">{variances.filter(v => v.variance_type === 'UNDERPRODUCTION').length}</p>
-        </div>
-      </div>
-
-      {/* Variance List */}
-      <div className="bg-card rounded-lg border border-border overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-muted/40 border-b border-border">
-            <tr>
-              {['No. Job', 'No. PO', 'Type', 'Total Variance (pcs)', 'Alasan', 'Status', 'Tanggal'].map(h => (
-                <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-foreground/90">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {variances.map(v => (
-              <tr key={v.id} className="border-b border-border/60 hover:bg-muted/60">
-                <td className="px-4 py-3 text-sm">{v.job_number}</td>
-                <td className="px-4 py-3 text-sm">{v.po_number}</td>
-                <td className="px-4 py-3">{getTypeBadge(v.variance_type)}</td>
-                <td className="px-4 py-3 text-sm font-medium text-foreground">{v.total_variance_qty}</td>
-                <td className="px-4 py-3 text-sm text-muted-foreground max-w-xs truncate">{v.reason}</td>
-                <td className="px-4 py-3">{getStatusBadge(v.status)}</td>
-                <td className="px-4 py-3 text-sm text-muted-foreground">{new Date(v.created_at).toLocaleDateString('id-ID')}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {variances.length === 0 && (
-          <div className="p-8 text-center text-muted-foreground">
-            <AlertTriangle className="w-12 h-12 mx-auto mb-2 text-muted-foreground/50" />
-            <p>Belum ada laporan variance</p>
-          </div>
-        )}
-      </div>
-
-      {/* Create Modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-card rounded-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-card border-b border-border px-6 py-4 flex justify-between items-center">
-              <h3 className="text-lg font-bold text-foreground">Buat Laporan Variance</h3>
-              <button onClick={() => setShowModal(false)} className="text-muted-foreground/70 hover:text-muted-foreground">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-6 space-y-4">
-              {/* Job Selection */}
-              <div>
-                <label className="block text-sm font-medium text-foreground/90 mb-1">Pilih Job Produksi</label>
-                <SmartNativeSelect value={form.job_id} onChange={(e) => handleJobChange(e.target.value)}
-                  className="w-full px-3 py-2 border border-border rounded-lg">
-                  <option value="">-- Pilih Job --</option>
-                  {jobs.map(j => (
-                    <option key={j.id} value={j.id}>{j.job_number} | PO: {j.po_number}</option>
-                  ))}
-                </SmartNativeSelect>
-              </div>
-
-              {/* Variance Type */}
-              <div>
-                <label className="block text-sm font-medium text-foreground/90 mb-1">Tipe Variance</label>
-                <SmartNativeSelect value={form.variance_type} onChange={(e) => setForm({ ...form, variance_type: e.target.value })}
-                  className="w-full" data-testid="vendor-variance-type">
-                  <option value="OVERPRODUCTION">Produksi lebih</option>
-                  <option value="UNDERPRODUCTION">Produksi kurang</option>
-                </SmartNativeSelect>
-              </div>
-
-              {/* Reason */}
-              <div>
-                <label className="block text-sm font-medium text-foreground/90 mb-1">Alasan *</label>
-                <textarea value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })}
-                  className="w-full px-3 py-2 border border-border rounded-lg" rows={2}
-                  placeholder="Jelaskan alasan variance (contoh: Material surplus/defisit, permintaan mendadak)"></textarea>
-              </div>
-
-              {/* Notes */}
-              <div>
-                <label className="block text-sm font-medium text-foreground/90 mb-1">Catatan Tambahan</label>
-                <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                  className="w-full px-3 py-2 border border-border rounded-lg" rows={2}
-                  placeholder="Catatan internal (opsional)"></textarea>
-              </div>
-
-              {/* Items Table */}
-              {form.items.length > 0 && (
-                <div>
-                  <label className="block text-sm font-medium text-foreground/90 mb-2">Item produksi — selisih dihitung dari catatan produksi</label>
-                  <div className="border border-border rounded-lg overflow-hidden">
-                    <table className="w-full">
-                      <thead className="bg-muted/40">
-                        <tr>
-                          {['Produk', 'SKU', 'Size', 'Color', 'Dipesan', 'Diproduksi', 'Selisih'].map(h => (
-                            <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-foreground/90">{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {form.items.map((item, idx) => (
-                          <tr key={idx} className="border-t border-border/60">
-                            <td className="px-3 py-2 text-sm">{item.product_name}</td>
-                            <td className="px-3 py-2 text-sm">{item.sku}</td>
-                            <td className="px-3 py-2 text-sm">{item.size}</td>
-                            <td className="px-3 py-2 text-sm">{item.color}</td>
-                            <td className="px-3 py-2 text-sm">{item.ordered_qty}</td>
-                            <td className="px-3 py-2 text-sm">{item.produced_qty}</td>
-                            <td className="px-3 py-2 text-sm tabular-nums">{item.diff > 0 ? `+${item.diff}` : item.diff}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="sticky bottom-0 bg-muted/40 border-t border-border px-6 py-4 flex justify-end gap-2">
-              <button onClick={() => setShowModal(false)} className="px-4 py-2 bg-card border border-border text-foreground/90 rounded-lg hover:bg-muted/60">
-                Batal
-              </button>
-              <button onClick={submit} className="px-4 py-2 bg-[hsl(var(--primary))] text-white rounded-lg hover:bg-[hsl(var(--primary)/0.9)]">
-                Simpan Laporan
-              </button>
-            </div>
-          </div>
-        </div>
+      )}>
+      {loading ? <p className="py-10 text-center text-sm text-muted-foreground">Memuat laporan…</p> : (
+        <TabelData kolom={kolom} baris={variances} testId="vendor-variance-table"
+          kosong={<EmptyState icon={AlertTriangle} title="Belum ada laporan selisih" description="Buat laporan bila produksi lebih atau kurang dari pesanan." />} />
       )}
-    </div>
+
+      {showModal && (
+        <FormPopup open onClose={() => setShowModal(false)} ukuran="panjang" judul="Buat laporan selisih produksi" testId="vendor-variance-form"
+          keterangan="Selisih per baris dihitung dari catatan produksi, tidak diketik." onSimpan={submit} labelSimpan="Simpan laporan">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Isian label="Job produksi" wajib>
+              <SmartNativeSelect value={form.job_id} onChange={(e) => handleJobChange(e.target.value)} className="w-full" aria-label="Pilih job">
+                <option value="">Pilih job</option>
+                {jobs.map((j) => <option key={j.id} value={j.id}>{j.job_number} · PO {j.po_number}</option>)}
+              </SmartNativeSelect>
+            </Isian>
+            <Isian label="Jenis selisih" wajib>
+              <SmartNativeSelect value={form.variance_type} onChange={(e) => setForm({ ...form, variance_type: e.target.value })}
+                className="w-full" data-testid="vendor-variance-type">
+                <option value="OVERPRODUCTION">Produksi lebih</option>
+                <option value="UNDERPRODUCTION">Produksi kurang</option>
+              </SmartNativeSelect>
+            </Isian>
+          </div>
+          <Isian label="Alasan" wajib>
+            <Textarea value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} rows={2}
+              placeholder="Jelaskan alasan selisih (contoh: bahan lebih/kurang, permintaan mendadak)" />
+          </Isian>
+          <Isian label="Catatan tambahan">
+            <Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} placeholder="Catatan internal (opsional)" />
+          </Isian>
+          {form.items.length > 0 && (
+            <section className="space-y-2">
+              <p className="text-sm font-medium text-foreground">Barang produksi — selisih dari catatan produksi</p>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader><TableRow>
+                    {['Produk', 'SKU', 'Ukuran', 'Warna'].map((h) => <TableHead key={h}>{h}</TableHead>)}
+                    {['Dipesan', 'Diproduksi', 'Selisih'].map((h) => <TableHead key={h} className="text-right">{h}</TableHead>)}
+                  </TableRow></TableHeader>
+                  <TableBody>{form.items.map((item, idx) => (
+                    <TableRow key={idx}>
+                      <TableCell>{item.product_name}</TableCell><TableCell className="tabular-nums">{item.sku}</TableCell>
+                      <TableCell>{item.size}</TableCell><TableCell>{item.color}</TableCell>
+                      <TableCell className="text-right tabular-nums">{item.ordered_qty}</TableCell>
+                      <TableCell className="text-right tabular-nums">{item.produced_qty}</TableCell>
+                      <TableCell className="text-right tabular-nums">{item.diff > 0 ? `+${item.diff}` : item.diff}</TableCell>
+                    </TableRow>
+                  ))}</TableBody>
+                </Table>
+              </div>
+            </section>
+          )}
+        </FormPopup>
+      )}
+    </PageLayout>
   );
 }
 
