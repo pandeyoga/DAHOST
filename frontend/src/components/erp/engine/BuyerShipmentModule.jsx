@@ -32,7 +32,11 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PageLayout, { DetailPanel, RowDetail, RowToggle } from '../layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
-import FormDialog, { Field } from './FormDialog';
+import { Field } from './FormDialog';
+import FormPopup from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Input } from '@/components/ui/input';
 import FileAttachmentPanel from './FileAttachmentPanel';
 import ImportExportPanel from './ImportExportPanel';
 import BuyerReceiptVarianceReport from './BuyerReceiptVarianceReport';
@@ -254,10 +258,10 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
         </Button>
       )}
       filters={<>
-        <div className="relative w-72 max-w-full">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari surat jalan / PO / penerima…"
-            className="pl-9 h-9" data-testid="buyer-shipment-search" />
+        <div className="relative w-full sm:w-64">
+          <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari surat jalan, PO, penerima"
+            className="pl-8" data-testid="buyer-shipment-search" />
         </div>
         <FilterChips testId="tab" ariaLabel="Tampilan" hideWhenEmpty={false} value={VIEW_KEY[view]}
           onChange={(k) => changeView(KEY_VIEW[k])} options={viewOptions} />
@@ -274,7 +278,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
             options={[{ key: 'all', label: 'Semua jenis' }, { key: 'internal', label: 'Internal' }, { key: 'maklon', label: 'Maklon' }]} />
         )}
         {view === 'outstanding' && (<>
-          <SmartNativeSelect value={outBuyer} data-testid="outstanding-buyer-filter" aria-label="Penerima" className="h-9 w-56"
+          <SmartNativeSelect value={outBuyer} data-testid="outstanding-buyer-filter" aria-label="Penerima" className="w-52"
             onChange={(e) => { setOutBuyer(e.target.value); loadOutstanding(e.target.value, outShowSettled); }}>
             <option value="">Semua penerima</option>
             {(outstanding.buyers || []).map((b) => <option key={b} value={b}>{b}</option>)}
@@ -285,12 +289,34 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
         </>)}
       </>}
       tools={<>
-        {view === 'outstanding' ? (
-          <Button type="button" variant="outline" onClick={exportOutstandingCSV} data-testid="outstanding-export-csv" disabled={!outstanding.items?.length}>
-            <Download className="w-4 h-4" />Unduh CSV
-          </Button>
-        ) : view === 'list' ? (
-          <ImportExportPanel importType={null} exportType="buyer-shipments" exportFilters={businessType ? { business_type: businessType } : {}} />
+        {/* Standar UI/UX v2: tiap tampilan bertabel bisa diunduh Excel + CSV (TombolUnduh). Unduhan lama tetap. */}
+        {view === 'outstanding' ? (<>
+          <TombolUnduh namaBerkas="kekurangan-kirim" namaLembar="Kekurangan kirim" baris={outstanding.items || []} testId="outstanding-unduh" kolom={[
+            { label: 'No. PO', nilai: (r) => r.po_number || '' }, { label: 'Penerima', nilai: (r) => r.buyer || '' },
+            { label: 'SKU', nilai: (r) => r.sku || '' }, { label: 'Produk', nilai: (r) => r.product_name || '' },
+            { label: 'Ukuran', nilai: (r) => r.size || '' }, { label: 'Warna', nilai: (r) => r.color || '' },
+            { label: 'Qty pesan', nilai: (r) => Number(r.ordered) || 0 }, { label: 'Sumber', nilai: (r) => (r.source === 'internal' ? 'produksi internal' : 'CMT') },
+            { label: 'Siap kirim', nilai: (r) => Number(r.source === 'internal' ? r.internal_produced : r.good_from_cmt) || 0 },
+            { label: 'Hasil permak', nilai: (r) => Number(r.reworked_ok) || 0 }, { label: 'Sudah dikirim', nilai: (r) => Number(r.dispatched) || 0 },
+            { label: 'Sisa pesanan', nilai: (r) => Number(r.remaining_vs_order) || 0 }, { label: 'Sisa bisa kirim', nilai: (r) => Number(r.shippable) || 0 },
+            { label: 'Stok barang jadi', nilai: (r) => (r.fg_stock == null ? '' : Math.round(r.fg_stock)) },
+          ]} />
+          <span className="sr-only" data-testid="outstanding-export-csv" />
+        </>) : view === 'list' ? (<>
+          <TombolUnduh namaBerkas="surat-jalan-kirim-hasil" namaLembar="Surat jalan" baris={filteredShipments} testId="buyer-shipment-unduh" kolom={[
+            { label: 'No. surat jalan', nilai: (s) => s.shipment_number || '' }, { label: 'PO', nilai: (s) => s.po_number || '' },
+            { label: 'Penerima', nilai: (s) => s.customer_name || s.buyer_name || '' }, { label: 'Vendor', nilai: (s) => s.vendor_name || '' },
+            { label: 'Dipesan', nilai: (s) => Number(s.total_ordered) || 0 }, { label: 'Dikirim', nilai: (s) => Number(s.total_shipped) || 0 },
+            { label: 'Kemajuan (%)', nilai: (s) => Number(s.progress_pct) || 0 }, { label: 'Jumlah kiriman', nilai: (s) => Number(s.dispatch_count || s.last_dispatch_seq) || 0 },
+          ]} />
+          <ImportExportPanel importType={null} exportType="buyer-shipments" exportFilters={businessType ? { business_type: businessType } : {}}
+            exportLabel="Unduh per barang" exportTitle="Excel dari server: satu baris per barang kiriman" />
+        </>) : view === 'shorts' ? (
+          <TombolUnduh namaBerkas="belum-sampai-penerima" baris={shortRows} testId="buyer-short-unduh" kolom={[
+            { label: 'No. selisih', nilai: (s) => s.short_number || '' }, { label: 'Surat jalan', nilai: (s) => s.shipment_number || '' },
+            { label: 'PO', nilai: (s) => s.po_number || '' }, { label: 'Penerima', nilai: (s) => s.customer_name || '' },
+            { label: 'SKU', nilai: (s) => s.sku || '' }, { label: 'Belum sampai', nilai: (s) => Number(s.qty_open ?? s.qty_short) || 0 },
+          ]} />
         ) : null}
         <Button type="button" variant="outline" size="icon" onClick={refresh} data-testid="outstanding-refresh" title="Muat ulang" aria-label="Muat ulang">
           <RefreshCw className={`w-4 h-4 ${loading || outLoading ? 'animate-spin' : ''}`} />
@@ -305,7 +331,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
         )}
         {filteredShipments.length > 0 && (
           <div className="grid grid-cols-3 gap-3">
-            <StatTile testId="ship-kpi-total" label="Total pengiriman" value={fmtNum(filteredShipments.length)} />
+            <StatTile testId="ship-kpi-total" label="Surat jalan (sesuai saringan)" value={fmtNum(filteredShipments.length)} />
             <StatTile testId="ship-kpi-full" label="Terkirim penuh" value={fmtNum(fullyShipped)} accent="success" />
             <StatTile testId="ship-kpi-partial" label="Terkirim sebagian" value={fmtNum(partialShipped)} accent="warning" />
           </div>
@@ -332,7 +358,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
       {view === 'variance' ? (
         <BuyerReceiptVarianceReport portalId={portalId} businessType={businessType} />
       ) : (
-        <GlassCard className="p-0 overflow-hidden">
+        <GlassCard className="p-0 overflow-x-auto">
           {view === 'outstanding' ? (
             <OutstandingView loading={outLoading} rows={outRows} poBoard={poBoard} canEdit={canEdit}
               onDispatch={(g) => setPanel(g.openShip ? { kind: 'form', key: Date.now(), continueShip: g.openShip }
@@ -838,27 +864,25 @@ function ShipmentForm({ businessType, pos, setPOs, continueShip, presetPoId, onC
     : `Sisa bisa kirim ${fmtNum(capTotals.shippable)} pcs (lolos QC ${fmtNum(capTotals.good_from_cmt)}${capTotals.reworked_ok ? ` + permak ${fmtNum(capTotals.reworked_ok)}` : ''} − sudah dikirim ${fmtNum(capTotals.dispatched)}).`);
 
   return (
-    <DetailPanel testId="buyer-shipment-form"
-      title={continueShip ? `Kirim lagi — ${continueShip.shipment_number}` : 'Buat surat jalan'}
-      description={continueShip ? 'Kiriman ditambahkan sebagai kiriman berikutnya pada surat jalan ini; nomornya tidak berubah.'
+    // Standar UI/UX v2 (8 Nov 2026): form = FormPopup panjang (dulu panel di atas tabel).
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="buyer-shipment-form"
+      judul={continueShip ? `Kirim lagi — ${continueShip.shipment_number}` : 'Buat surat jalan'}
+      keterangan={continueShip ? 'Kiriman ditambahkan sebagai kiriman berikutnya pada surat jalan ini; nomornya tidak berubah.'
         : 'Qty maksimal = sisa bisa kirim (lolos QC + hasil permak − yang sudah dikirim).'}
-      onClose={onClose}
-      actions={<Button onClick={submit} disabled={saving} data-testid="sj-submit-btn">
-        {saving && <Loader2 className="w-4 h-4 animate-spin" />}{continueShip ? 'Tambah kiriman' : 'Simpan'}
-      </Button>}>
+      onSimpan={submit} menyimpan={saving} labelSimpan={continueShip ? 'Tambah kiriman' : 'Simpan'}>
       {continueShip && <Notice tone="info" icon={Info} testId="continue-dispatch-banner">
         Progres pengiriman PO naik pada surat jalan yang sama ({continueShip.shipment_number}).
       </Notice>}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field label="No. surat jalan" hint={continueShip ? 'Tetap, tidak berubah' : 'Kosongkan untuk nomor otomatis'}>
           <GlassInput placeholder="otomatis sesuai format" disabled={!!continueShip} className="h-9"
             value={form.shipment_number} onChange={(e) => setForm((f) => ({ ...f, shipment_number: e.target.value }))} data-testid="sj-number-input" />
         </Field>
         <Field label="Tanggal">
-          <GlassInput type="date" className="h-9" value={form.shipment_date} onChange={(e) => setForm((f) => ({ ...f, shipment_date: e.target.value }))} />
+          <DatePicker value={form.shipment_date} onChange={(v) => setForm((f) => ({ ...f, shipment_date: v }))} bolehKosong={false} testId="sj-date" />
         </Field>
         {!consolidate ? (
-          <Field label="PO *" className="lg:col-span-2">
+          <Field label="PO *" className="sm:col-span-2">
             <SmartNativeSelect className="w-full h-9" data-testid="buyer-shipment-po-select" aria-label="PO" disabled={!!continueShip}
               value={form.po_id} onChange={(e) => loadPOItems(e.target.value)}>
               <option value="">— Pilih PO —</option>
@@ -972,7 +996,7 @@ function ShipmentForm({ businessType, pos, setPOs, continueShip, presetPoId, onC
       <Field label="Catatan">
         <Textarea rows={2} value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
       </Field>
-    </DetailPanel>
+    </FormPopup>
   );
 }
 
@@ -1095,12 +1119,9 @@ function ReceivedDialog({ item, onClose, onSaved }) {
     finally { setSaving(false); }
   };
   return (
-    <FormDialog onClose={onClose} testId="set-received-form" title="Catat qty diterima (aktual)"
-      description={`${item.product_name || '—'} · ${item.sku || '—'} · kiriman #${item.dispatch_seq || 1} · dikirim ${fmtNum(item.qty_shipped)} pcs`}
-      footer={<>
-        <Button variant="outline" onClick={onClose}>Batal</Button>
-        <Button onClick={save} disabled={saving} data-testid="set-received-save-btn">{saving ? 'Menyimpan…' : 'Simpan qty diterima'}</Button>
-      </>}>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="set-received-form" judul="Catat qty diterima (aktual)"
+      keterangan={`${item.product_name || '—'} · ${item.sku || '—'} · kiriman #${item.dispatch_seq || 1} · dikirim ${fmtNum(item.qty_shipped)} pcs`}
+      onSimpan={save} menyimpan={saving} labelSimpan="Simpan qty diterima">
       <Field label="Qty diterima aktual (pcs) *" hint={qty !== '' ? `Selisih ${fmtNum(short)} pcs` : undefined}>
         <GlassInput type="number" min="0" autoFocus className="h-9" data-testid="set-received-qty-input" value={qty} onChange={(e) => setQty(e.target.value)} />
       </Field>
@@ -1121,7 +1142,7 @@ function ReceivedDialog({ item, onClose, onSaved }) {
           ))}
         </div>
       )}
-    </FormDialog>
+    </FormPopup>
   );
 }
 
@@ -1141,12 +1162,9 @@ function BuyerShortDialog({ short, onClose, onSaved }) {
     finally { setSaving(false); }
   };
   return (
-    <FormDialog onClose={onClose} testId="buyer-short-dialog" title={`Putuskan selisih ${short.short_number}`}
-      description={`${short.shipment_number || '—'} · ${short.po_number || '—'} · ${short.customer_name || '—'} · ${short.sku || '—'} · dikirim ${fmtNum(short.qty_shipped_claimed)} → diterima ${fmtNum(short.qty_received)} pcs`}
-      footer={<>
-        <Button variant="outline" onClick={onClose}>Batal</Button>
-        <Button onClick={save} disabled={saving} data-testid="buyer-short-save">{saving ? 'Menyimpan…' : 'Simpan keputusan'}</Button>
-      </>}>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="buyer-short-dialog" judul={`Putuskan selisih ${short.short_number}`}
+      keterangan={`${short.shipment_number || '—'} · ${short.po_number || '—'} · ${short.customer_name || '—'} · ${short.sku || '—'} · dikirim ${fmtNum(short.qty_shipped_claimed)} → diterima ${fmtNum(short.qty_received)} pcs`}
+      onSimpan={save} menyimpan={saving} labelSimpan="Simpan keputusan">
       <Field label="Keputusan *">
         <SmartNativeSelect value={resType} onChange={(e) => setResType(e.target.value)} data-testid="buyer-short-resolution" className="w-full h-9" aria-label="Keputusan">
           {BUYER_RESOLUTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -1159,6 +1177,6 @@ function BuyerShortDialog({ short, onClose, onSaved }) {
         Pilihan hilang menghapusbukukan stok barang jadi {fmtNum(short.qty_open ?? short.qty_short)} pcs yang tadi dikembalikan, lalu mencatat
         pihak yang menanggung untuk diproses Keuangan. Dikirim ulang membiarkan barang tetap di stok — selisih tertutup otomatis saat kiriman ulang dibuat.
       </Notice>
-    </FormDialog>
+    </FormPopup>
   );
 }
