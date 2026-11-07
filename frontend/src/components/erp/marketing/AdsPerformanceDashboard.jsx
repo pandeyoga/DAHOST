@@ -27,6 +27,7 @@ const API = process.env.REACT_APP_BACKEND_URL;
 
 function fmt(n) { return new Intl.NumberFormat('id-ID').format(n || 0); }
 function fmtRp(n) { return `Rp ${fmt(n)}`; }
+const desimal = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
 
 const PLATFORM_LABEL = {
   meta: 'Meta', meta_ads: 'Meta', google: 'Google', google_ads: 'Google', tiktok: 'TikTok', tiktok_ads: 'TikTok',
@@ -147,13 +148,17 @@ export default function AdsPerformanceDashboard({ token }) {
         {c._seed_origin && <StatusBadge status="contoh" label="Data contoh" tone="muted" />}
       </div>) },
     { kunci: 'toko', label: 'Toko', hp: 'keterangan', isi: (c) => (
-      <span className="block max-w-[10rem] truncate" title={c.account_name}>{c.account_name || '—'}</span>) },
-    { kunci: 'platform', label: 'Platform', isi: (c) => labelPlatform(c.platform) },
+      <div className="min-w-0 md:max-w-[10rem]">
+        <p className="truncate" title={c.account_name}>{c.account_name || '—'}</p>
+        <p className="text-xs text-muted-foreground">{labelPlatform(c.platform)}</p>
+      </div>) },
     { kunci: 'spend', label: 'Biaya iklan', rata: 'kanan', isi: (c) => <span className="tabular-nums md:whitespace-nowrap">{fmtRp(c.spend)}</span> },
     { kunci: 'rev', label: 'Omzet iklan', rata: 'kanan', isi: (c) => <span className="tabular-nums md:whitespace-nowrap">{fmtRp(c.revenue)}</span> },
-    { kunci: 'roas', label: 'ROAS', rata: 'kanan', isi: (c) => <span className="tabular-nums font-semibold">{c.roas}×</span> },
-    { kunci: 'cpa', label: 'CPA', rata: 'kanan', isi: (c) => <span className="tabular-nums md:whitespace-nowrap">{fmtRp(c.cpa)}</span> },
-    { kunci: 'ctr', label: 'CTR', rata: 'kanan', isi: (c) => <span className="tabular-nums">{c.ctr}%</span> },
+    { kunci: 'roas', label: 'ROAS', rata: 'kanan', isi: (c) => (
+      <div className="md:whitespace-nowrap">
+        <p className="tabular-nums font-semibold">{desimal(c.roas)}×</p>
+        <p className="text-xs text-muted-foreground">CPA {fmtRp(Math.round(c.cpa || 0))} · CTR {desimal(c.ctr)}%</p>
+      </div>) },
     { kunci: 'konv', label: 'Konversi', rata: 'kanan', isi: (c) => <span className="tabular-nums">{fmt(c.conversions)}</span> },
     { kunci: 'status', label: 'Status', isi: (c) => (
       <StatusBadge status={c.status} label={STATUS_IKLAN[c.status] || c.status} tone={c.status === 'active' ? 'success' : 'muted'} />) },

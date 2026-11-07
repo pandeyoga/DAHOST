@@ -41,7 +41,7 @@ import { cn } from '@/lib/utils';
 import { formatDateTimeID } from '@/lib/format';
 import { parseServerTime } from '@/lib/waktu';
 import { Toolbar } from '../layout/PageLayout';
-import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
+import { EmptyState, StatusBadge } from '../moduleAtoms';
 import { toast } from 'sonner';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
@@ -476,7 +476,7 @@ export default function CatalogItemsView({
         <span className="hidden md:block"><Thumb url={r.primary_image} alt={r.name} /></span>
         <div className="min-w-0">
           <p className="truncate font-medium text-foreground" title={r.name}>{r.name}</p>
-          <p className="truncate text-xs text-muted-foreground">{[r.sku, r.variant_info].filter(Boolean).join(' · ')}</p>
+          <p className="text-xs text-muted-foreground">{[r.sku, r.variant_info].filter(Boolean).join(' · ')}</p>
         </div>
       </div>) },
     { kunci: 'status', label: 'Status', isi: (r) => (
@@ -556,7 +556,7 @@ export default function CatalogItemsView({
             <option value="">Semua kategori</option>
             {productCategories.map((c) => <option key={c.id} value={c.id}>{c.sku_prefix} · {c.name}</option>)}
           </SmartNativeSelect>
-          <SmartNativeSelect className="w-40" data-testid="catalog-filter-publish"
+          <SmartNativeSelect className="w-44" data-testid="catalog-filter-publish"
             value={filters.publishState || ''} onChange={(e) => onFilterChange({ publishState: e.target.value })}>
             <option value="">Semua penayangan</option>
             <option value="draft">Belum tayang</option>
@@ -636,9 +636,10 @@ export default function CatalogItemsView({
 
       {/* K-7a — peringatan cache stok basi / item belum tertaut master (bisa diklik → saring) */}
       {(stockSummary?.stale > 0 || stockSummary?.unlinked > 0) && !attention && (
-        <Notice tone="warning" icon={AlertTriangle} testId="catalog-stock-warning">
+        <div className="space-y-0.5 text-sm text-[hsl(var(--warning-text))]" data-testid="catalog-stock-warning">
           {stockSummary.stale > 0 && (
             <p>
+              <AlertTriangle className="mr-1 inline h-4 w-4" />
               <Button variant="link" className="h-auto p-0 font-semibold" onClick={() => onBaseFilter.attention?.('stale')}
                 data-testid="catalog-warning-stale-link">{angka(stockSummary.stale)} item stoknya basi</Button>
               {' '}— angka simpanan berbeda dari stok jual. Kolom stok sudah menampilkan angka langsung; "Sinkron stok FG"
@@ -647,6 +648,7 @@ export default function CatalogItemsView({
           )}
           {stockSummary.unlinked > 0 && (
             <p>
+              <AlertTriangle className="mr-1 inline h-4 w-4" />
               <Button variant="link" className="h-auto p-0 font-semibold" onClick={() => onBaseFilter.attention?.('unlinked')}
                 data-testid="catalog-warning-unlinked-link">{angka(stockSummary.unlinked)} item belum tertaut ke master</Button>
               {' '}— stoknya tidak bisa dihitung otomatis dan tidak bisa dijual lewat alur pesanan. Tautkan varian/FG-nya.
@@ -655,7 +657,7 @@ export default function CatalogItemsView({
           {stockSummary.counts_truncated && (
             <p className="text-xs">Hitungan di atas hanya mencakup {angka(stockSummary.scanned)} item pertama katalog ini.</p>
           )}
-        </Notice>
+        </div>
       )}
       {attention && (
         <p className="text-sm text-muted-foreground" data-testid="catalog-attention-active-note">

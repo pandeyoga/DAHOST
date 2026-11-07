@@ -114,9 +114,9 @@ export function MarketingCycleStrip({ token, period }) {
       )}
       <p className="flex items-start gap-1.5 text-xs text-muted-foreground" data-testid="cycle-strip-note">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-        <span>
-          {data.label} Angka siklus = rekap sebulan penuh (menghormati koreksi SPV); kartu periode di bawah menjumlah
-          input harian pada rentang tanggal yang dipilih — bila rentangnya bukan sebulan penuh, keduanya memang berbeda.
+        <span title={String(data.label || '').replace(/Pencairan\s*\/\s*Settlement/gi, 'Pencairan')}>
+          Angka siklus = rekap sebulan penuh (omzet sebelum potongan platform, menghormati koreksi SPV); kartu periode
+          di bawah = input harian pada rentang yang dipilih, jadi bisa berbeda.
         </span>
       </p>
     </div>

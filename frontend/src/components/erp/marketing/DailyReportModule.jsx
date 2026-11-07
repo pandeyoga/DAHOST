@@ -288,11 +288,6 @@ export default function DailyReportModule({ token }) {
             </p>
           )}
 
-          <p className="text-sm text-muted-foreground">
-            Input harian = omzet total toko hari itu; input live = omzet dari sesi live (dinilai terpisah).{' '}
-            <span data-testid="daily-count">{rows.length} toko ditampilkan{accounts.length !== rows.length ? ` dari ${accounts.length}` : ''}.</span>
-          </p>
-
           {view === 'table' ? (
             <TabelData kolom={kolom} baris={rows} kunci={(a) => a.account_id} testId="daily-table"
               kosong={<EmptyState icon={CalendarCheck} testId="daily-empty"
@@ -322,6 +317,11 @@ export default function DailyReportModule({ token }) {
               })}
             </ul>
           )}
+
+          <p className="text-sm text-muted-foreground">
+            Input harian = omzet total toko hari itu; input live = omzet dari sesi live (dinilai terpisah).{' '}
+            <span data-testid="daily-count">{rows.length} toko ditampilkan{accounts.length !== rows.length ? ` dari ${accounts.length}` : ''}.</span>
+          </p>
 
           {allPendingTasks.length > 0 && (
             <section className="space-y-2">

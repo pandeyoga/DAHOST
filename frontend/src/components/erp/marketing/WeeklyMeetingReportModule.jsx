@@ -24,13 +24,15 @@ import TombolUnduh from '@/components/ui/tombol-unduh';
 import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import DatePicker from '@/components/ui/date-picker';
 import PageLayout from '../layout/PageLayout';
-import { EmptyState, Notice, StatTile } from '../moduleAtoms';
+import { EmptyState, StatTile } from '../moduleAtoms';
 import { toast } from 'sonner';
 import { todayWIB, toWIBDate, addDaysISO } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const rp = (n) => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
 const num = (n) => Number(n || 0).toLocaleString('id-ID');
+// Teks dari server memakai istilah "Settlement" — di layar cukup "Pencairan" (istilah staf).
+const bersihkanIstilah = (t) => String(t || '').replace(/Pencairan\s*\/\s*Settlement/gi, 'Pencairan').replace(/\bsettlement\b/gi, 'pencairan');
 const pct = (v) => (v === null || v === undefined ? '—' : `${v}%`);
 
 const KANAL = [
@@ -75,6 +77,7 @@ export default function WeeklyMeetingReportModule({ token }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [detailToko, setDetailToko] = useState(null);
+  const [catatanBuka, setCatatanBuka] = useState(false);
 
   const headers = useMemo(
     () => ({ Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` }), [token]);
@@ -212,22 +215,33 @@ export default function WeeklyMeetingReportModule({ token }) {
           <StatTile label="Belanja iklan" value={rp(g.iklan_spend)} testId="weekly-tile-iklan"
             sub={`ROAS ${g.roas ?? '—'}`} />
         </div>
-        <p className="text-sm text-muted-foreground">
-          <span data-testid="weekly-tile-setelah-retur">Setelah retur {rp(g.omzet_setelah_retur)}
-            {(g.retur || 0) > 0 ? ` (retur ${num(g.retur)} pesanan · ${rp(g.nilai_retur)})` : ' (tidak ada retur minggu ini)'}</span>
-          {' · '}<span data-testid="weekly-tile-belum-kirim">belum dikirim {num(g.belum_dikirim)} pesanan ({rp(g.nilai_belum_dikirim)})</span>.
-        </p>
+        <div className="space-y-0.5 text-sm text-muted-foreground">
+          <p data-testid="weekly-tile-setelah-retur">Setelah retur {rp(g.omzet_setelah_retur)}
+            {(g.retur || 0) > 0 ? ` (retur ${num(g.retur)} pesanan · ${rp(g.nilai_retur)})` : ' (tidak ada retur minggu ini)'}.</p>
+          <p data-testid="weekly-tile-belum-kirim">Belum dikirim {num(g.belum_dikirim)} pesanan ({rp(g.nilai_belum_dikirim)}).</p>
+        </div>
       </>)}>
       {loading && !data ? (
         <div className="space-y-2">{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-12" />)}</div>
       ) : !data ? null : (
         <>
           {(data.catatan_data || []).length > 0 && (
-            <Notice tone="warning" icon={Info} title="Catatan kejujuran data — baca sebelum menyimpulkan" testId="weekly-data-notes">
-              <ol className="ml-5 list-decimal space-y-1">
-                {data.catatan_data.map((n, i) => <li key={i}>{n}</li>)}
-              </ol>
-            </Notice>
+            // Tetap menonjol (warna peringatan, di atas tabel) tetapi ringkas: isi lengkap dibuka satu klik.
+            <div className="space-y-1" data-testid="weekly-data-notes">
+              <p className="flex flex-wrap items-center gap-1.5 text-sm text-[hsl(var(--warning-text))]">
+                <Info className="h-4 w-4 shrink-0" />
+                <b>{data.catatan_data.length} catatan kejujuran data — baca sebelum menyimpulkan.</b>
+                <Button variant="link" size="sm" className="h-auto p-0 text-sm" onClick={() => setCatatanBuka((v) => !v)}
+                  aria-expanded={catatanBuka} data-testid="weekly-data-notes-toggle">
+                  {catatanBuka ? 'Sembunyikan' : 'Baca catatan'}
+                </Button>
+              </p>
+              {catatanBuka && (
+                <ol className="ml-6 list-decimal space-y-1 text-sm text-muted-foreground">
+                  {data.catatan_data.map((n, i) => <li key={i}>{bersihkanIstilah(n)}</li>)}
+                </ol>
+              )}
+            </div>
           )}
 
           <TabelData kolom={kolom} baris={baris} kunci={(s) => s.account_id} onKlikBaris={(s) => !s._gabungan && setDetail(s)}

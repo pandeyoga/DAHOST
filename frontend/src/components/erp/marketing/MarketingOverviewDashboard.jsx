@@ -162,7 +162,7 @@ export default function MarketingOverviewDashboard({ token, onNavigate }) {
   const kolom = [
     { kunci: 'modul', label: 'Modul', hp: 'judul', isi: (r) => <span className="font-medium">{r.modul}</span> },
     { kunci: 'total', label: 'Total', rata: 'kanan', isi: (r) => <span className="tabular-nums font-semibold">{fmt(r.total ?? '—')}</span> },
-    { kunci: 'rincian', label: 'Rincian', isi: (r) => (
+    { kunci: 'rincian', label: 'Rincian', hp: 'keterangan', isi: (r) => (
       <p className="text-sm text-muted-foreground">
         {r.rincian.map(([l, v, t], i) => (
           <span key={l}>{i > 0 && ' · '}{l} <b className={warna[t] || 'text-foreground'}>{v}</b></span>

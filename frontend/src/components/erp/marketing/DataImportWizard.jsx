@@ -791,7 +791,7 @@ export default function DataImportWizard({ token }) {
       )}
       summary={(
         <ol className="flex flex-wrap items-center gap-x-3 gap-y-2" aria-label="Langkah impor" data-testid="import-steps">
-          {['Jenis data', 'Toko & konteks', 'Template & unggah', 'Pemetaan kolom', 'Pratinjau', 'Selesai'].map((t, i) => (
+          {['Jenis data', 'Toko & konteks', 'Contoh berkas & unggah', 'Pemetaan kolom', 'Pratinjau', 'Selesai'].map((t, i) => (
             <li key={t} className="flex items-center gap-3">
               {i > 0 && <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />}
               <Step n={i + 1} current={step} title={t} done={step > i + 1} />
