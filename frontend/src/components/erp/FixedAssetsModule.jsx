@@ -351,7 +351,7 @@ export default function FixedAssetsModule({ token }) {
               { label: 'Status', nilai: (x) => (x.cancelled ? 'Dibatalkan' : x.posted ? 'Tercatat' : 'Belum dicatat') },
             ]} />
         </div>
-        <Table data-testid="fa-schedule-table">
+        <Table className="md:min-w-0" data-testid="fa-schedule-table">
           <TableHeader>
             <TableRow>
               <TableHead>Periode</TableHead>
@@ -455,7 +455,7 @@ export default function FixedAssetsModule({ token }) {
             description={filterCat || filterStatus !== 'active' ? 'Tidak ada aset yang cocok dengan penyaring.' : 'Daftarkan aset pertama lewat tombol Aset baru.'} />
         ) : (
           <div className="overflow-x-auto">
-            <Table className="w-full" data-testid="fa-table">
+            <Table className="w-full md:min-w-0" data-testid="fa-table">
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-left">Kode</TableHead>

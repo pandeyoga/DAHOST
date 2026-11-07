@@ -75,7 +75,7 @@ export function PayoutBankLinks({ accounts, banks, onChanged }) {
         <EmptyState icon={Store} title="Belum ada toko aktif"
           description="Toko marketplace yang aktif akan muncul di sini untuk ditautkan ke rekening bank." />
       ) : (
-        <Table>
+        <Table className="md:min-w-0">
           <TableHeader>
             <TableRow>
               <TableHead>Toko</TableHead>

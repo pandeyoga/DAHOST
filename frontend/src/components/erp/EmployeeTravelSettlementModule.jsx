@@ -422,7 +422,7 @@ function SettlementDetail({ stl, token, onClose, onRefresh, role }) {
                   { label: 'Struk', nilai: (it) => (it.receipt_url ? 'Ada' : 'Tidak ada') },
                 ]} />
             </div>
-            <Table>
+            <Table className="md:min-w-0">
               <TableHeader><TableRow>
                 <TableHead>Tanggal</TableHead><TableHead>Kategori</TableHead>
                 <TableHead className="text-right">Nominal</TableHead><TableHead>Struk</TableHead>
@@ -509,7 +509,7 @@ function OutstandingAdvancePanel({ token }) {
       </div>
       <GlassCard className="p-0 overflow-hidden">
         <div className="overflow-x-auto">
-          <Table className="w-full text-sm">
+          <Table className="w-full md:min-w-0 text-sm">
             <TableHeader>
               <TableRow>
                 <TableHead className="text-left p-3 font-medium">Perjalanan / karyawan</TableHead>
@@ -813,7 +813,7 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
               <EmptyState icon={MapPin} title="Tidak ada perjalanan dinas yang bisa diselesaikan"
                 description="Perjalanan dinas muncul di sini setelah disetujui atau uang mukanya dibayar." />
             ) : (
-              <Table>
+              <Table className="md:min-w-0">
                 <TableHeader><TableRow>
                   <TableHead>Nomor</TableHead><TableHead>Tujuan</TableHead>
                   <TableHead>Tanggal</TableHead><TableHead className="text-right">Uang muka</TableHead><TableHead />
@@ -889,7 +889,7 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
           ) : (
             <>
               <div className="overflow-x-auto">
-                <Table className="w-full text-sm">
+                <Table className="w-full md:min-w-0 text-sm">
                   <TableHeader>
                     <TableRow>
                       {canSelect && (

@@ -199,7 +199,7 @@ export default function IntercompanyTransactionsModule() {
           <EmptyState icon={ArrowRightLeft} title="Belum ada transaksi antar CV"
             description="Tekan “Transaksi baru” untuk mencatat talangan, pinjaman, uang nyasar, atau pelunasan." testId="ic-txn-empty" />
         ) : (
-          <Table className="min-w-[760px]">
+          <Table className="min-w-[760px] md:min-w-0">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-8" />

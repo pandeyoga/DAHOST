@@ -57,7 +57,7 @@ function ItemList({ title, items, tint }) {
   return (
     <div className={`rounded-[var(--radius-md)] border p-3 ${tint ? 'border-[hsl(var(--primary)/0.4)]' : 'border-[var(--glass-border)]'}`}>
       <p className={`text-xs font-medium mb-1 ${tint ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground'}`}>{title} · {(items || []).length} item</p>
-      <Table>
+      <Table className="md:min-w-0">
         <TableHeader><TableRow>
           <TableHead className="text-xs">Produk</TableHead>
           <TableHead className="text-xs text-right">Qty</TableHead>

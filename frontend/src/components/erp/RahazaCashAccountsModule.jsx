@@ -160,7 +160,7 @@ export default function RahazaCashAccountsModule({ token }) {
       {mutInfo && movements.length === 0 ? (
         <EmptyState icon={Wallet} title="Belum ada mutasi" description="Mutasi muncul setelah ada jurnal yang memakai rekening ini." />
       ) : (
-        <Table data-testid="ca-mutations-table">
+        <Table className="md:min-w-0" data-testid="ca-mutations-table">
           <TableHeader><TableRow>
             <TableHead className="w-10" /><TableHead>Tanggal</TableHead><TableHead>Jurnal</TableHead>
             <TableHead className="hidden md:table-cell">Jenis</TableHead><TableHead>Keterangan</TableHead>
@@ -234,7 +234,7 @@ export default function RahazaCashAccountsModule({ token }) {
           <EmptyState icon={Wallet} title="Belum ada rekening" description="Tambahkan rekening kas atau bank untuk mulai mencatat mutasi." />
         ) : (
           <div className="overflow-x-auto">
-            <Table className="w-full" data-testid="ca-table">
+            <Table className="w-full md:min-w-0" data-testid="ca-table">
               <TableHeader>
                 <TableRow><TableHead className="text-left">Rekening</TableHead><TableHead className="text-left hidden md:table-cell">No. rekening</TableHead><TableHead className="text-left hidden md:table-cell">Milik</TableHead><TableHead className="text-right">Saldo</TableHead><TableHead className="text-right hidden sm:table-cell">Mutasi</TableHead><TableHead className="w-12" /></TableRow>
               </TableHeader>

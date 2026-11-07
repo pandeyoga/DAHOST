@@ -288,7 +288,7 @@ export default function BankTransferModule() {
           <EmptyState icon={ArrowRightLeft} title="Belum ada transfer antar rekening"
             description={canManage ? 'Tekan “Transfer baru” untuk memindah uang antar rekening sendiri.' : 'Transfer antar rekening akan tampil di sini.'} />
         ) : (
-          <Table>
+          <Table className="md:min-w-0">
             <TableHeader>
               <TableRow>
                 <TableHead>No. ref</TableHead>

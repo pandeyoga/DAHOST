@@ -108,7 +108,7 @@ export default function IntercompanyBalanceModule() {
         {loading && !data ? (
           <div className="flex justify-center py-8"><Loader2 className="animate-spin text-muted-foreground" /></div>
         ) : (
-          <Table className="min-w-[640px]">
+          <Table className="min-w-[640px] md:min-w-0">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-8" />
@@ -174,7 +174,7 @@ export default function IntercompanyBalanceModule() {
           <EmptyState icon={FileText} title="Belum ada dokumen antar CV"
             description="Tagihan jasa jahit lahir dari penerimaan CMT tim CV Sukma; nota aksesoris dari pengeluaran aksesoris untuk PO maklon." />
         ) : (
-          <Table>
+          <Table className="md:min-w-0">
             <TableHeader>
               <TableRow>
                 <TableHead>Dokumen</TableHead>

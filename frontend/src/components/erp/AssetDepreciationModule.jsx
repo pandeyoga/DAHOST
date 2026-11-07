@@ -126,7 +126,7 @@ export default function AssetDepreciationModule({ token }) {
       )}
     >
       {result.results && result.results.length > 0 && (
-        <Table data-testid="depr-result-table">
+        <Table className="md:min-w-0" data-testid="depr-result-table">
           <TableHeader>
             <TableRow>
               <TableHead>Status</TableHead>
@@ -206,7 +206,7 @@ export default function AssetDepreciationModule({ token }) {
             description="Aset aktif dengan metode garis lurus atau saldo menurun muncul di sini." />
         ) : (
           <div className="overflow-x-auto">
-            <Table className="w-full" data-testid="depr-asset-table">
+            <Table className="w-full md:min-w-0" data-testid="depr-asset-table">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10">

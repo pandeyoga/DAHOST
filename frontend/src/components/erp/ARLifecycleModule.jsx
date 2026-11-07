@@ -170,7 +170,7 @@ function CustomerStatementPanel({ customerId, headers, onClose }) {
             {txs.length === 0 ? (
               <EmptyState icon={Receipt} title="Belum ada transaksi" description="Faktur dan pembayaran pelanggan ini akan tampil di sini." />
             ) : (
-              <Table>
+              <Table className="md:min-w-0">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Tanggal</TableHead>
@@ -242,7 +242,7 @@ function TopDebtorsTable({ debtors, search, selectedId, onPickCustomer }) {
 
   return (
     <div className="overflow-x-auto">
-      <Table className="w-full">
+      <Table className="w-full md:min-w-0">
         <TableHeader>
           <TableRow>
             <TableHead className="text-right w-10">#</TableHead>
@@ -295,7 +295,7 @@ function AgingMatrixTable({ rows, totals, selectedId, onPickCustomer }) {
   const hasSched = rows.some((r) => Number(r.scheduled || 0) > 0);
   return (
     <div className="overflow-x-auto">
-      <Table className="w-full">
+      <Table className="w-full md:min-w-0">
         <TableHeader>
           <TableRow>
             <TableHead className="text-left">Pelanggan</TableHead>

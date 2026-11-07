@@ -283,7 +283,7 @@ export default function BudgetModule({ token }) {
         ) : items.length === 0 ? (
           <EmptyState icon={FileText} title="Belum ada item anggaran" description="Tambah item satu per satu atau impor dari Excel." />
         ) : (
-          <Table data-testid="budget-items-table">
+          <Table className="md:min-w-0" data-testid="budget-items-table">
             <TableHeader>
               <TableRow><TableHead>Akun</TableHead><TableHead className="text-right">Anggaran</TableHead><TableHead>Catatan</TableHead><TableHead className="w-10" /></TableRow>
             </TableHeader>
@@ -384,7 +384,7 @@ export default function BudgetModule({ token }) {
             description="Buat anggaran pertama lewat tombol Anggaran baru." />
         ) : (
           <div className="overflow-x-auto">
-            <Table className="w-full" data-testid="budget-table">
+            <Table className="w-full md:min-w-0" data-testid="budget-table">
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-left">Nama anggaran</TableHead>
@@ -515,7 +515,7 @@ function VarianceView({ variance }) {
       {vrows.length === 0 ? (
         <EmptyState icon={BarChart2} title="Belum ada realisasi untuk dibandingkan" description="Realisasi muncul setelah ada jurnal pada akun yang dianggarkan." />
       ) : (
-        <Table data-testid="budget-variance-table">
+        <Table className="md:min-w-0" data-testid="budget-variance-table">
           <TableHeader>
             <TableRow>
               <TableHead>Bulan</TableHead><TableHead>Akun</TableHead><TableHead className="text-right">Anggaran</TableHead>

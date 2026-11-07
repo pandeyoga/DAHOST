@@ -198,7 +198,7 @@ export default function EmployeeExpenseGLMappingModule() {
           <EmptyState icon={ListTree} title="Belum ada pemetaan akun klaim"
             description="Tambahkan pemetaan supaya tiap kategori klaim masuk ke akun bebannya sendiri." />
         ) : (
-          <Table>
+          <Table className="md:min-w-0">
             <TableHeader>
               <TableRow>
                 <TableHead>Kategori klaim</TableHead>

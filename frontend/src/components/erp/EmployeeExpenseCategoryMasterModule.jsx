@@ -319,7 +319,7 @@ export default function EmployeeExpenseCategoryMasterModule() {
             description={search ? 'Ubah atau kosongkan pencarian.' : 'Isi kategori bawaan untuk memulai, atau tambahkan kategori sendiri.'}
             action={canEdit && !search ? seedButton('default', 'category-seed-empty-button') : null} />
         ) : (
-          <Table>
+          <Table className="md:min-w-0">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-24">Kode</TableHead>
