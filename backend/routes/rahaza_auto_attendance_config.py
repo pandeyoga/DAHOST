@@ -139,9 +139,8 @@ async def get_my_schedule(request: Request, days: int = 8, employee_id: Optional
     start = today_wib()
     end = start + timedelta(days=n - 1)
     cal = await workdays.get_work_calendar(db)
-    hol = {str(h.get("date"))[:10]: h for h in await db.rahaza_production_calendar.find(
-        {"date": {"$gte": start.isoformat(), "$lte": end.isoformat()}, "type": "holiday"},
-        {"_id": 0, "date": 1, "name": 1, "kind": 1}).to_list(100)}
+    # Tahap 9: kalender libur satu sumber (core.workdays — Portal SDM › Kalender libur).
+    hol = {h["date"]: h for h in await workdays.holidays_between(db, start, end, limit=100)}
     leave = {str(r.get("date"))[:10]: r for r in await db.rahaza_attendance_events.find(
         {"employee_id": emp["id"], "date": {"$gte": start.isoformat(), "$lte": end.isoformat()},
          "leave_request_id": {"$nin": [None, ""]}},

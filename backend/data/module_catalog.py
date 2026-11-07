@@ -78,7 +78,7 @@ MODULES: list[dict] = [
         "delete": ["products.delete"], "approve": ["production.approve"]}, lookup=True),
     _m("production", "prod_master_process", "Master Proses, Line & Mesin", ["prod-master-process-hub"],
        ["/api/rahaza/processes", "/api/rahaza/lines", "/api/rahaza/machines", "/api/rahaza/line-assignments",
-        "/api/rahaza/production-calendar", "/api/rahaza/sop", "/api/rahaza/downtime",
+        "/api/rahaza/sop", "/api/rahaza/downtime",
         "/api/rahaza/shift-handovers", "/api/rahaza/handover-templates"], _CRUD,
        {"view": ["prod.line.view"], "manage": ["prod.master.manage", "prod.line.manage"]},
        extras=[("prod.process.input", "input", "Catat output per proses"),
@@ -118,12 +118,14 @@ MODULES: list[dict] = [
        ["/api/prod/dashboard", "/api/prod/control-tower", "/api/rahaza/wip", "/api/rahaza/line-board",
         "/api/capacity", "/api/rahaza/supervisor", "/api/prod/display-rak", "/api/prod/material-summary-by-location"],
        _VE, {"view": ["prod.dashboard.view", "prod.wip.view", "prod.line.view"]}),
-    _m("production", "prod_jobs", "Production Jobs & Tracking", ["prod-work-orders", "prod-monitoring"],
+    # Tahap 9 (pantau): Pantau Produksi (`pantau-produksi`, /api/pantau) menggantikan Production Jobs & Tracking
+    _m("production", "prod_jobs", "Production Jobs & Tracking", ["prod-work-orders", "prod-monitoring", "pantau-produksi"],
        ["/api/production-jobs", "/api/production-job-items", "/api/production-progress", "/api/production-tracking",
-        "/api/work-orders", "/api/recalculate-jobs", "/api/production-returns"], _ALL,
+        "/api/work-orders", "/api/recalculate-jobs", "/api/production-returns", "/api/pantau"], _ALL,
        {"view": ["wo.view", "orders.view"], "manage": ["wo.manage"], "approve": ["production.approve"]}),
-    _m("production", "prod_variance", "Laporan Variance", ["prod-variance", "prod-variance-report"],
-       ["/api/production-variances"], ("view", "edit", "approve", "export"),
+    # Tahap 9 (pantau): Laporan Selisih (`laporan-selisih`, /api/pantau/selisih) menggantikan dua laporan variance
+    _m("production", "prod_variance", "Laporan Variance", ["prod-variance", "prod-variance-report", "laporan-selisih"],
+       ["/api/production-variances", "/api/pantau/selisih"], ("view", "edit", "approve", "export"),
        {"view": ["orders.view"], "approve": ["production.approve"]}),
     _m("production", "prod_cmt_billing", "Invoice CMT & Belanja CMT", ["prod-cmt-billing"],
        ["/api/production/cmt-billing", "/api/dewi/cmt-belanja"], _ALL,
@@ -131,14 +133,16 @@ MODULES: list[dict] = [
     _m("production", "prod_sewing_cost", "Biaya Jahit", ["prod-sewing-cost"], ["/api/production/sewing-cost"], _CRUD,
        {"view": ["hpp.view"], "manage": ["hpp.manage"]}),
     # 2026-11-02 (K10): + menu "Retur Material" (`prod-material-returns`, dipasang lagi).
+    # 2026-11-07 (Tahap 9): menu baru "Bahan" (`bahan-produksi`, tab Kebutuhan · Retur) menggantikan
+    # dua menu lama; id lama tetap di sini selama masih bisa dibuka dari tautan lama / Portal Gudang.
     _m("production", "prod_material_req", "Kebutuhan & Retur Material",
-       ["prod-material-requirements", "prod-material-returns"],
+       ["bahan-produksi", "prod-material-requirements", "prod-material-returns"],
        ["/api/rahaza/material-requirements", "/api/production/material-returns"], _ALL,
        {"view": ["bom.view"], "approve": ["inventory.approve"]}),
-    _m("production", "prod_analytics", "Analitik & Estimasi AI Produksi", ["prod-analytics-hub", "prod-ai-insights"],
-       ["/api/rahaza/ai", "/api/analytics/ai"], ("view", "create", "export"), {"view": ["prod.dashboard.view"]}),
-    _m("production", "prod_maintenance", "Perawatan Mesin", ["prod-predictive-maintenance"],
-       ["/api/production/predictive-maintenance"], _CRUD, {"manage": ["prod.master.manage"]}),
+    # Tahap 9 (7 Nov 2026): Estimasi AI Produksi (`prod-ai-insights`, /api/analytics/ai) dan Perawatan Mesin
+    # (`prod-predictive-maintenance`, /api/production/predictive-maintenance) DIHAPUS — layar & rute dilepas.
+    _m("production", "prod_analytics", "Analitik Produksi", ["prod-analytics-hub"],
+       ["/api/rahaza/ai"], ("view", "create", "export"), {"view": ["prod.dashboard.view"]}),
 
     # ── CUTTING ─────────────────────────────────────────────────────────────
     _m("cutting", "cut_dashboard", "Dashboard Cutting", ["cutting-dashboard"], ["/api/cutting/dashboard"], _VE,
@@ -374,6 +378,11 @@ MODULES: list[dict] = [
     _m("hr", "hr_lms", "Pembelajaran (LMS)", ["hr-lms"], ["/api/dewi/lms"], _CRUD, {"manage": ["hr.manage"]}),
     _m("hr", "hr_ai", "AI SDM & Skill Gap", ["hr-ai-hub"], ["/api/hr/ai", "/api/hr/skill-gap"],
        ("view", "create", "export")),
+    # Tahap 9 (7 Nov 2026, keputusan owner): kalender libur PINDAH dari Master Proses (Produksi) ke SDM.
+    # Satu sumber hari libur untuk cuti, payroll, dan absensi (core.workdays.holidays_between).
+    _m("hr", "hr_holiday_calendar", "Kalender Libur", ["hr-holiday-calendar"],
+       ["/api/rahaza/production-calendar"], _CRUD,
+       {"view": ["hr.view"], "manage": ["hr.attendance.manage"]}, lookup=True),
 
     # ── MARKETING / TOKO ────────────────────────────────────────────────────
     _m("toko", "mkt_dashboard", "Dashboard & Laporan Marketing", ["toko-dashboard", "marketing-reports"],
@@ -447,9 +456,11 @@ MODULES: list[dict] = [
        {"view": ["assets.view"], "manage": ["assets.manage"], "approve": ["assets.manage"]}),
 
     # ── MAKLON (menu pintasan Produksi di portal ini mengikuti modul Produksi-nya) ──
-    _m("maklon", "mak_clients", "Data Klien Maklon", ["maklon-clients"], ["/api/dewi/maklon/clients"], _CRUD,
+    # Tahap 9: Klien, Katalog Buyer, dan Estimasi harga = tab satu menu `maklon-klien-katalog`.
+    _m("maklon", "mak_clients", "Data Klien Maklon", ["maklon-clients", "maklon-klien-katalog"],
+       ["/api/dewi/maklon/clients"], _CRUD,
        _MAKLON, lookup=True),
-    _m("maklon", "mak_buyer_catalog", "Katalog Buyer & Template BOM", ["maklon-buyer-catalog"],
+    _m("maklon", "mak_buyer_catalog", "Katalog Buyer & Template BOM", ["maklon-buyer-catalog", "maklon-klien-katalog"],
        ["/api/dewi/maklon/buyer-catalog", "/api/dewi/maklon/bom-templates"], _CRUD, _MAKLON, lookup=True),
     _m("maklon", "mak_po", "PO Maklon & Detail PO", ["maklon-pos-engine", "maklon-po-360"],
        ["/api/dewi/maklon/pos", "/api/dewi/maklon/pos-summary", "/api/dewi/maklon/orders", "/api/dewi/maklon/bom",
@@ -464,7 +475,8 @@ MODULES: list[dict] = [
        ["/api/dewi/maklon/invoices", "/api/dewi/maklon/payments", "/api/dewi/maklon/reports",
         "/api/dewi/maklon/finance"], _ALL, _MAKLON),
     _m("maklon", "mak_hpp", "HPP Jahit", ["maklon-hpp"], ["/api/dewi/maklon/hpp"], _CRUD, _MAKLON),
-    _m("maklon", "mak_ai_quote", "Estimasi AI (Quote)", ["maklon-ai-quote"], ["/api/maklon/ai-quote"],
+    _m("maklon", "mak_ai_quote", "Estimasi Harga Maklon", ["maklon-ai-quote", "maklon-klien-katalog"],
+       ["/api/maklon/ai-quote"],
        ("view", "create", "approve", "export"), _MAKLON),
 ]
 

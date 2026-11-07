@@ -136,53 +136,14 @@ async def _resolve_items_from_master(db, req_type: str, items: list) -> list:
 
 
 async def _issue_on_delivery(db, doc: dict, user: dict) -> dict | None:
-    """2026-11-06 (Tahap 2): "Terkirim" = barang KELUAR dari gudang lewat mesin pengeluaran material
-    yang sama (`core.material_issue_engine.issue_material_issue`): stok berkurang + jurnal biaya.
-    PO maklon → biaya bahan klien maklon (5-4100); PO internal → WIP. Idempoten per permintaan."""
-    from core import material_issue_engine as mie
-    from routes.rahaza_inventory_shared import _gen_mi_number, _now as _mi_now, _uid as _mi_uid
-    if doc.get('material_issue_id'):
+    """Tahap 9 (7 Nov 2026, keputusan 12): "Terkirim" = permintaan DISETUJUI menjadi KIRIMAN TAMBAHAN ke CMT yang
+    mengurangi stok lewat hitungan yang sama dengan kiriman biasa (`core.kirim_permintaan`). Dulu: Material Issue
+    tanpa surat jalan. Endpoint lama tetap jalan — hanya mendelegasikan. Idempoten per permintaan."""
+    if doc.get('material_issue_id') or doc.get('fulfilled_shipment_id'):
         return None
-    items = doc.get('items') or []
-    if not items or any(not it.get('material_id') for it in items):
-        raise HTTPException(400, 'Permintaan ini punya baris tanpa barang dari Master Material — ubah permintaan '
-                                 'dan pilih barangnya dulu sebelum ditandai terkirim.')
-    po = await db.production_pos.find_one({'id': doc.get('po_id')}, {'_id': 0}) if doc.get('po_id') else None
-    maklon = (po or {}).get('business_type') == 'maklon'
-    mi_items, locs = [], {}
-    for it in items:
-        loc, _avail = await mie.best_location_for(db, it['material_id'], float(it.get('qty') or 0))
-        if not loc:
-            raise HTTPException(400, f"{it.get('material_code') or it['material_id']} belum punya stok di gudang "
-                                     "mana pun — catat penerimaan/opname dulu.")
-        locs[it['material_id']] = loc
-        mi_items.append({'id': _mi_uid(), 'material_id': it['material_id'], 'qty_required': float(it.get('qty') or 0),
-                         'qty_issued': 0, 'location_id': loc,
-                         'notes': f"Komponen kurang {doc.get('request_code', '')}"})
-    mi = {'id': _mi_uid(), 'mi_number': await _gen_mi_number(db), 'work_order_id': None, 'wo_number_snapshot': '',
-          'job_id': None, 'production_po_id': doc.get('po_id') or None,
-          'po_number_snapshot': doc.get('po_number', ''), 'vendor_id': doc.get('vendor_id', ''),
-          'vendor_name': doc.get('vendor_name', ''),
-          'business_type': (po or {}).get('business_type') or '', 'cost_target': 'maklon' if maklon else None,
-          'component_request_id': doc['id'], 'items': mi_items, 'status': 'pending_approval',
-          'source': 'cmt_component_request',
-          'notes': f"Otomatis dari permintaan komponen kurang {doc.get('request_code', '')}",
-          'created_by': user.get('id'), 'created_by_name': user.get('name', ''),
-          'created_at': _mi_now(), 'updated_at': _mi_now()}
-    await db.rahaza_material_issues.insert_one(dict(mi))
-    try:
-        fresh = await mie.issue_material_issue(db, mi, user, loc_overrides=locs, ref_type='cmt_component_request')
-    except mie.MaterialShortage as e:
-        await db.rahaza_material_issues.update_one({'id': mi['id']}, {'$set': {'status': 'rejected',
-                                                                               'reject_reason': str(e)}})
-        raise HTTPException(400, f"{e} — permintaan belum bisa ditandai terkirim.")
-    except mie.BomMissing as e:
-        await db.rahaza_material_issues.update_one({'id': mi['id']}, {'$set': {'status': 'rejected',
-                                                                               'reject_reason': str(e)}})
-        raise HTTPException(400, str(e))
-    posting = fresh.get('_posting_result') or {}
-    return {'material_issue_id': mi['id'], 'material_issue_number': mi['mi_number'],
-            'gl_je_number': posting.get('je_number'), 'gl_error': None if posting.get('ok') else posting.get('error')}
+    from core import kirim_permintaan
+    res = await kirim_permintaan.approve_component_request(db, doc, user)
+    return res.get('material_issue')
 
 
 # ─── LIST ────────────────────────────────────────────────────────────────────
@@ -393,13 +354,15 @@ async def set_status(request_id: str, body: dict, user: dict = Depends(require_a
 
     issue = None
     if new_status == 'delivered' and cur != 'delivered':
-        # 2026-11-06 (Tahap 2): PO tertutup terkunci; "Terkirim" memotong stok + membukukan biaya
+        # 2026-11-06 (Tahap 2): PO tertutup terkunci. Tahap 9: "Terkirim" = kiriman tambahan yang memotong stok
         from core.po_lock import assert_po_open
         await assert_po_open(db, doc.get('po_id'), 'pengiriman komponen')
         issue = await _issue_on_delivery(db, doc, user)
         if issue:
             upd.update({'material_issue_id': issue['material_issue_id'],
                         'material_issue_number': issue['material_issue_number']})
+            for k in ('delivered_by', 'delivered_at', 'delivery_order_number'):
+                upd.pop(k, None)      # jejak kiriman tambahan sudah ditulis `core.kirim_permintaan`
     await db.dewi_cmt_component_requests.update_one({'id': request_id}, {'$set': upd})
     return {'ok': True, **({'material_issue': issue} if issue else {})}
 

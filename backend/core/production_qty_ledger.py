@@ -299,7 +299,13 @@ async def apply_receipt_result(db, receipt: dict, lines: list, actor: dict | Non
         out["rejected"] += reject_qty
 
         # ── reject fisik masuk KARANTINA (bukan hilang) ──
-        if reject_qty > 0:
+        # Tahap 9C (7 Nov 2026): reject barang KLIEN maklon tidak masuk karantina DA — karantina DA
+        # memakai master produk DA, dan SKU klien yang kebetulan sama akan menempel ke barang DA.
+        # Rejectnya tetap tercatat di buku kuantitas (qty_rework_open) untuk Perbaikan (Permak).
+        if reject_qty > 0 and ln.get("client_goods"):
+            out.setdefault("client_rejects", 0)
+            out["client_rejects"] += reject_qty
+        elif reject_qty > 0:
             material_id = ln.get("fg_material_id") or ""
             if not material_id and ln.get("sku_code"):
                 mat = await db.rahaza_materials.find_one(
@@ -509,6 +515,7 @@ async def apply_rework_outcome(db, permak: dict, *, qty_fixed: int, qty_scrap: i
     # Dulu dipilih job item TERBARU per po_item = job anak REWORK ⇒ job anak
     # `rework_open` −2, job induk tetap 2, `reject_undecided` macet (audit w3 S6).
     job_item = None
+    src_line = None
     if permak.get("source_receipt_line_id"):
         src_line = await db.cmt_receipt_lines.find_one(
             {"id": permak["source_receipt_line_id"]}, {"_id": 0})
@@ -519,8 +526,25 @@ async def apply_rework_outcome(db, permak: dict, *, qty_fixed: int, qty_scrap: i
 
     is_return_to_cmt = (permak.get("permak_type") == "retur_ke_cmt")
 
+    # ── Tahap 9C: barang KLIEN maklon (tanpa karantina DA) — hasil permak yang bagus masuk stok titipan ──
+    if not is_return_to_cmt and (src_line or {}).get("client_stock_key"):
+        if qty_fixed > 0:
+            from core import client_goods as cg
+            try:
+                await cg.record_for_key(
+                    db, key=src_line["client_stock_key"], qty=qty_fixed, jenis="masuk_permak",
+                    source_type="permak", source_key=f"permak:{permak.get('id')}:baik",
+                    ref={"permak_id": permak.get("id"), "permak_number": permak.get("permak_number"),
+                         "receipt_line_id": src_line.get("id"), "po_id": permak.get("po_id"),
+                         "po_number": permak.get("po_number")},
+                    actor=actor, notes=f"Permak {permak.get('permak_number') or ''} berhasil", fallback=src_line)
+                out["stock_released"] = qty_fixed
+                out["client_goods"] = True
+            except Exception as e:  # noqa: BLE001
+                logger.exception("stok titipan klien hasil permak gagal dicatat")
+                out["error_release"] = str(e)
     # ── stok karantina ──
-    if not is_return_to_cmt:
+    elif not is_return_to_cmt:
         q_item = None
         if permak.get("source_receipt_line_id"):
             q_item = await db[qmod.QUARANTINE_COLL].find_one(  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)

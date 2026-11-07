@@ -27,22 +27,26 @@ async def get_kejar(
     bucket: Optional[str] = Query(None, description="telat|jatuh_tempo|mendekati|on_track|aman|tanpa_deadline"),
     include_closed: bool = False,
     scope: Optional[str] = Query(None, description="running (default, PO berjalan) | all"),
+    business_type: str = Query("maklon", pattern="^(maklon|internal|all)$",
+                               description="Tahap 9: maklon (bawaan, = bukan internal) | internal | all"),
 ):
     user = await require_auth(request)
     _require_admin(user)
     db = get_db()
-    return await list_kejar(db, bucket=bucket, only_open=not include_closed, scope=scope)
+    return await list_kejar(db, bucket=bucket, only_open=not include_closed, scope=scope,
+                            business_type=None if business_type == "all" else business_type)
 
 
 @router.get("/dashboard")
 async def get_owner_dashboard(
     request: Request,
     scope: Optional[str] = Query(None, description="running (default, PO berjalan) | all"),
+    business_type: str = Query("maklon", pattern="^(maklon|internal|all)$"),
 ):
     user = await require_auth(request)
     _require_admin(user)
     db = get_db()
-    return await owner_dashboard(db, scope=scope)
+    return await owner_dashboard(db, scope=scope, business_type=None if business_type == "all" else business_type)
 
 
 @router.get("/po/{po_id}")
@@ -50,8 +54,9 @@ async def get_po_kejar(po_id: str, request: Request):
     user = await require_auth(request)
     _require_admin(user)
     db = get_db()
-    po = await db.production_pos.find_one({"id": po_id, "business_type": "maklon"}, {"_id": 0})
+    # Tahap 9: papan Kejar CMT dipakai PO internal juga (dulu hanya maklon)
+    po = await db.production_pos.find_one({"id": po_id}, {"_id": 0})
     if not po:
-        raise HTTPException(404, "PO maklon tidak ditemukan")
+        raise HTTPException(404, "PO tidak ditemukan")
     cfg = await get_buffer_config(db)
     return await compute_po_kejar(db, po, cfg)

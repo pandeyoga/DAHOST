@@ -394,7 +394,10 @@ def test_image_generator_dihapus():
 
 def test_tuple_openai_dihapus_dari_maklon_dan_perawatan():
     for f in ("dewi_maklon_quote.py", "dewi_predictive_maintenance.py", "dewi_hr_ai.py", "dewi_career_coach.py"):
-        src = open(os.path.join(BACKEND, "routes", f), encoding="utf-8").read()
+        path = os.path.join(BACKEND, "routes", f)
+        if f == "dewi_predictive_maintenance.py" and not os.path.exists(path):
+            continue  # Tahap 9 (7 Nov 2026): Perawatan Mesin dihapus bersama rutenya
+        src = open(path, encoding="utf-8").read()
         assert '("openai", "gpt-5.1")' not in src, f
         assert "EMERGENT_LLM_KEY" not in src.replace('"EMERGENT_LLM_KEY ...")', ""), f
 

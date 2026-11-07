@@ -185,8 +185,9 @@ def test_03b_retur_material_layar_dan_teks_hapus_surat_jalan():
     for frag in ("/api/production/material-returns", "/sources", "/source?", "/receive", "location_id",
                  "lokasi penerima (wajib)", "deepLinkParams"):
         assert frag in screen, frag
-    vs = fe("engine/VendorShipmentModule.jsx")
-    assert "tidak bisa dihapus setelah bahan keluar — gunakan Retur Material" in vs
+    # Tahap 9: rincian kiriman (hapus + arahan Retur Material) pindah ke engine/kirim/KirimanDetail.jsx
+    vs = fe("engine/kirim/KirimanDetail.jsx")
+    assert "tidak bisa dihapus — kembalikan dulu lewat Retur Material" in vs
     assert "onNavigate('prod-material-returns'" in vs
 
 

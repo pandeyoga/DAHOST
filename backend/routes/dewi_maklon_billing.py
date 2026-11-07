@@ -583,134 +583,54 @@ async def delete_payment(payment_id: str, user: dict = Depends(require_auth)):
 
 @router.get('/hpp/{order_id}')
 async def get_hpp(order_id: str, user: dict = Depends(require_auth)):
-    """HPP Jahit maklon — 2026-11-02 (K16): dari ANGKA NYATA, bukan ketikan manual.
-
-    Dulu `404 "HPP belum diinput"` untuk setiap PO baru karena komponen harus diketik
-    ulang (tidak membaca tarif CMT PO/SPK maupun tagihan CMT). Sekarang komponen diambil
-    dari `production_maklon_bridge.maklon_actual_costs`: tagihan CMT nyata + aksesoris DA
-    (Material Issue) + permak. Margin = tagihan klien − biaya itu. Dokumen ketikan lama
-    (bila ada) hanya dikembalikan sebagai `manual_snapshot` untuk pembanding.
-    """
+    """HPP maklon satu PO — Tahap 9 (7 Nov 2026, keputusan owner No. 13): SATU hitungan HPP per PO
+    (`core.hpp_aktual`, sama dengan PO internal dan layar HPP per PO). Isian yang diketik sendiri (komponen,
+    overhead %, target margin %) DIHAPUS: komponen = potongan + aksesoris yang diserahkan + upah CMT (tagihan
+    nyata) + permak; margin = harga jasa − HPP. Dokumen ketikan lama tidak dibaca lagi."""
+    from routes.production_rbac import deny_klien
+    deny_klien(user)
     db = get_db()
-    manual = await db.dewi_maklon_hpp.find_one({'order_id': order_id})
-    po = await db.production_pos.find_one({'id': order_id}, {'_id': 0, 'id': 1, 'business_type': 1})
+    po = await db.production_pos.find_one({'id': order_id}, {'_id': 0, 'id': 1})
     if not po:
-        if not manual:
-            raise HTTPException(404, 'Order maklon tidak ditemukan')
-        return {**_clean(manual), 'source': 'manual'}
+        raise HTTPException(404, 'Order maklon tidak ditemukan — HPP dihitung dari PO produksi.')
     from routes.production_maklon_bridge import maklon_actual_costs
+    from core import hpp_aktual
     a = await maklon_actual_costs(db, order_id)
-    items = await db.po_items.find({'po_id': order_id}, {'_id': 0}).to_list(None)
-    qty_ordered = a['qty_ordered'] or 1
-    rate_plan = (a['cmt_cost_plan'] / qty_ordered) if qty_ordered else 0
-    cmt_qty = a['qty_billed_cmt']
+    fig = await hpp_aktual.po_hpp(db, order_id, detail=False)
+    basis = fig['qty_accepted'] or 0
     components = [
-        {'name': 'Upah jahit CMT (tagihan nyata)' if cmt_qty else 'Upah jahit CMT (tarif PO/SPK, belum ditagih)',
-         'category': 'labor', 'qty': cmt_qty or qty_ordered, 'unit': 'pcs',
-         'unit_cost': round(a['cmt_cost'] / cmt_qty, 2) if cmt_qty else round(rate_plan, 2),
-         'total': a['cmt_cost'] if cmt_qty else round(a['cmt_cost_plan'], 2), 'source': 'dewi_cmt_payments'},
-        # 2026-11-06 (Tahap 2): aksesoris dibagi per pcs yang DIKIRIM ke CMT; HPP hanya memuat bagian
-        # pcs lolos QC (dulu Σ aksesoris semua pcs dibagi pcs lolos ⇒ HPP per pcs membengkak).
-        {'name': 'Aksesoris milik DA (bagian pcs lolos QC)', 'category': 'packaging',
-         'qty': a['qty_basis'] or 1, 'unit': 'pcs',
-         'unit_cost': a.get('accessory_cost_per_pcs', a['accessory_cost']),
-         'total': a.get('accessory_cost_absorbed', a['accessory_cost']), 'source': 'rahaza_material_issues'},
-        {'name': 'Permak / perbaikan', 'category': 'other', 'qty': 1, 'unit': 'lot',
-         'unit_cost': a['permak_cost'], 'total': a['permak_cost'], 'source': 'dewi_cmt_permak'},
-    ]
-    direct = round(sum(c['total'] for c in components), 2)
-    profit_pct = float((manual or {}).get('profit_margin_pct')
-                       or await get_config_value(db, 'hpp_profit_margin_pct', 20.0) or 0)
-    basis = a['qty_basis'] or qty_ordered
-    hpp_pcs = round(direct / basis, 2) if basis else 0.0
-    price = (sum(float(i.get('selling_price_snapshot', 0) or 0) * int(i.get('qty', 0) or 0) for i in items)
-             / qty_ordered) if qty_ordered else 0.0
+        {'name': c['label'], 'key': c['key'], 'category': {'upah_cmt': 'labor', 'permak': 'other'}.get(c['key'], 'material'),
+         'qty': basis, 'unit': 'pcs', 'unit_cost': round(c['amount'] / basis, 2) if basis else 0.0,
+         'total': c['amount'], 'source': 'hpp_per_po'}
+        for c in fig['components'] if c['amount'] or c['key'] in ('aksesoris', 'upah_cmt')]
+    price = fig.get('selling_price_per_pcs') or 0.0
+    hpp_pcs = fig.get('hpp_per_pcs') or 0.0
     return {
-        'order_id': order_id, 'source': 'actual', 'po_number': a['po_number'],
-        'qty_ordered': a['qty_ordered'], 'qty_basis': basis,
-        'components': components, 'direct_cost': direct,
+        'order_id': order_id, 'source': 'actual', 'po_number': fig['po_number'],
+        'qty_ordered': fig['qty_ordered'], 'qty_basis': basis,
+        'components': components, 'direct_cost': fig['total_hpp'],
         'accessory_cost_unabsorbed': a.get('accessory_cost_unabsorbed', 0.0),
-        # keputusan owner 6 Nov 2026: TIDAK ada overhead di HPP (tenaga & overhead pabrik = beban bulanan)
+        # keputusan owner 6 Nov 2026: TIDAK ada overhead di HPP (biaya umum = informasi di layar HPP per PO)
         'overhead_pct': 0.0, 'overhead_amount': 0.0,
-        'total_hpp': direct, 'hpp_per_pcs': hpp_pcs,
-        'profit_margin_pct': profit_pct,
-        # margin = (harga − HPP) ÷ harga ⇒ harga saran = HPP ÷ (1 − margin)
-        'suggested_price_per_pcs': (round(hpp_pcs / (1 - profit_pct / 100), 2) if profit_pct < 100 else 0.0),
+        'total_hpp': fig['total_hpp'], 'hpp_per_pcs': hpp_pcs,
+        # keputusan 7 Nov No. 13: target margin ketikan dihapus — margin dihitung dari harga jasa − HPP
+        'profit_margin_pct': None, 'suggested_price_per_pcs': None,
         'current_price_per_pcs': round(price, 2),
-        'actual_margin_pct': round((price - hpp_pcs) / price * 100, 2) if price > 0 else 0,
+        'margin_per_pcs': fig.get('margin_per_pcs'),
+        'actual_margin_pct': fig.get('margin_pct') if fig.get('margin_pct') is not None else 0,
         'revenue': a['revenue'], 'margin': a['margin'], 'margin_pct': a['margin_pct'],
-        'actual': a, 'gaps': a['gaps'],
-        'notes': (manual or {}).get('notes', ''),
-        'manual_snapshot': _clean(manual) if manual else None,
+        'actual': a, 'gaps': fig['gaps'], 'notes': '', 'manual_snapshot': None,
     }
+
 
 @router.post('/hpp')
 async def upsert_hpp(payload: HPPIn, user: dict = Depends(require_auth)):
-    """Create or update HPP for an order."""
-    db = get_db()
-    # P1.B: SSOT is dewi_maklon_pos, fallback to legacy
-    rec = await find_maklon_record(db, payload.order_id)
-    if not rec:
-        raise HTTPException(404, 'Order tidak ditemukan')
-
-    # Normalize record shape (PO or legacy) to legacy-order view
-    is_po = rec.get('_collection') == 'dewi_maklon_pos'
-    order = po_to_legacy_order(rec) if is_po else rec
-
-    # 2026-11-06 (Tahap 2, keputusan owner): TIDAK ada overhead di HPP. Dulu bawaan 15% ditambahkan
-    # ke setiap HPP maklon ketikan; nilai overhead kiriman layar diabaikan.
-    overhead_pct = 0.0
-    profit_default = float(await get_config_value(db, 'hpp_profit_margin_pct', 20.0) or 0)
-    profit_pct = payload.profit_margin_pct if payload.profit_margin_pct is not None else profit_default
-
-    components = []
-    for c in payload.components:
-        cd = c.dict()
-        cd['total'] = round(float(cd.get('qty', 0) or 0) * float(cd.get('unit_cost', 0) or 0), 2)
-        components.append(cd)
-
-    direct_cost = sum(c['total'] for c in components)
-    overhead_amount = round(direct_cost * overhead_pct / 100, 2)
-    qty_ordered = int(order.get('qty_ordered', 0) or 0) or 1
-    total_hpp = round(direct_cost + overhead_amount, 2)
-    hpp_per_pcs = round(total_hpp / qty_ordered, 2)
-    # margin = (harga − HPP) ÷ harga (keputusan owner, berlaku di semua layar)
-    suggested_price = round(hpp_per_pcs / (1 - profit_pct / 100), 2) if profit_pct < 100 else 0.0
-    current_price = float(order.get('price_per_pcs', 0) or 0)
-    actual_margin_pct = round(((current_price - hpp_per_pcs) / current_price) * 100, 2) if current_price > 0 else 0
-
-    now = datetime.now(timezone.utc)
-    doc = {
-        'order_id': payload.order_id,
-        'order_code': order.get('order_code'),
-        'client_id': order.get('client_id'),
-        'client_name': order.get('client_name'),
-        'qty_ordered': qty_ordered,
-        'components': components,
-        'direct_cost': round(direct_cost, 2),
-        'overhead_pct': overhead_pct,
-        'overhead_amount': overhead_amount,
-        'profit_margin_pct': profit_pct,
-        'total_hpp': total_hpp,
-        'hpp_per_pcs': hpp_per_pcs,
-        'suggested_price_per_pcs': suggested_price,
-        'current_price_per_pcs': current_price,
-        'actual_margin_pct': actual_margin_pct,
-        'notes': payload.notes,
-        'updated_at': now,
-        'updated_by': user.get('name', 'System'),
-    }
-    existing = await db.dewi_maklon_hpp.find_one({'order_id': payload.order_id})
-    if existing:
-        await db.dewi_maklon_hpp.update_one({'order_id': payload.order_id}, {'$set': doc})
-        hpp_id = existing.get('id')
-    else:
-        doc['id'] = str(uuid.uuid4())
-        doc['created_at'] = now
-        doc['created_by'] = user.get('name', 'System')
-        await db.dewi_maklon_hpp.insert_one(doc)
-        hpp_id = doc['id']
-    return {'message': 'HPP tersimpan', 'id': hpp_id, 'hpp_per_pcs': hpp_per_pcs, 'actual_margin_pct': actual_margin_pct}
+    """DIHENTIKAN — Tahap 9 (keputusan owner 7 Nov No. 13): HPP maklon tidak diketik lagi."""
+    from routes.production_rbac import deny_klien
+    deny_klien(user)
+    raise HTTPException(410, 'Isian HPP manual sudah dihapus (keputusan owner 7 Nov 2026). HPP maklon dihitung '
+                             'otomatis dari potongan, aksesoris yang diserahkan, tagihan CMT, dan permak — '
+                             'buka menu HPP › HPP per PO.')
 
 # ══════════════════════════════════════════════════════════════════════════════
 # REPORTS

@@ -62,32 +62,32 @@ def _push_event(events: List[Dict[str, Any]], event_type: str, label: str, when,
 
 
 async def _po_or_404(db, po_id: str) -> Dict[str, Any]:
-    """Ambil PO maklon: cermin legacy `dewi_maklon_pos` dulu, lalu SSOT.
+    """Ambil PO maklon dari data PO UTAMA (`production_pos` + `po_items`); cermin hanya untuk PO lama murni.
 
-    DIPERBAIKI 2026-08-01: PO maklon yang dibuat lewat engine SSOT tersimpan di
-    `production_pos` + `po_items` dan BELUM tentu punya cermin di
-    `dewi_maklon_pos` (cermin hanya dibuat pada event tertentu). Akibatnya Detail
-    PO 360° — termasuk tab BOM — selalu 404 "PO Maklon tidak ditemukan" untuk
-    PO-PO tersebut. Sekarang jatuh-balik ke SSOT dan item-nya dinormalkan agar
-    bentuknya sama seperti versi legacy (items ter-embed).
+    Tahap 9 (7 Nov 2026, keputusan 8): dulu cermin `dewi_maklon_pos` dibaca DULUAN sehingga draf (belum
+    bercermin) tidak ada dan angka kirim ikut salinan. Sekarang SSOT dulu; item dinormalkan ke bentuk lama
+    (items ter-embed) supaya pemanggil lama tetap jalan.
     """
+    ssot = await db.production_pos.find_one({'id': po_id}, {'_id': 0})
+    if ssot:
+        items = await db.po_items.find({'po_id': po_id}, {'_id': 0}).to_list(2000)
+        ssot['items'] = [{
+            **it,
+            'item_id': it.get('id'),
+            'seri_no': it.get('serial_number') or '',
+            'artikel': it.get('product_name') or '',
+            'buyer_catalog_id': it.get('catalog_item_id') or it.get('buyer_catalog_id'),
+            'catalog_item_id': it.get('catalog_item_id') or it.get('buyer_catalog_id'),
+            'qty': int(it.get('qty') or it.get('qty_ordered') or 0),
+        } for it in items]
+        ssot.setdefault('client_id', ssot.get('buyer_id'))
+        ssot.setdefault('client_name', ssot.get('customer_name', ''))
+        ssot['_source_collection'] = 'production_pos'
+        return ssot
     po = await db.dewi_maklon_pos.find_one({'id': po_id}, {'_id': 0})
     if po:
         return po
-
-    ssot = await db.production_pos.find_one({'id': po_id, 'business_type': 'maklon'}, {'_id': 0})
-    if not ssot:
-        raise HTTPException(404, 'PO Maklon tidak ditemukan')
-
-    items = await db.po_items.find({'po_id': po_id}, {'_id': 0}).to_list(None)
-    ssot['items'] = [{
-        **it,
-        'buyer_catalog_id': it.get('catalog_item_id') or it.get('buyer_catalog_id'),
-        'catalog_item_id': it.get('catalog_item_id') or it.get('buyer_catalog_id'),
-        'qty': int(it.get('qty') or it.get('qty_ordered') or 0),
-    } for it in items]
-    ssot['_source_collection'] = 'production_pos'
-    return ssot
+    raise HTTPException(404, 'PO Maklon tidak ditemukan')
 
 
 DA_OWNERSHIP = ('cv_da_stock', 'cv_da', 'da_provided')
@@ -177,9 +177,11 @@ async def maklon_po_360(po_id: str, user: dict = Depends(require_auth)):
     po_data = serialize_doc(po)
 
     # ── Dispatches ──────────────────────────────────────────────────────────
-    dispatches_raw = await db.dewi_maklon_dispatches.find(
+    # Tahap 9: koleksi kiriman lama hanya dibaca untuk PO lama murni (tanpa production_pos).
+    is_main = po.get('_source_collection') == 'production_pos'
+    dispatches_raw = [] if is_main else await db.dewi_maklon_dispatches.find(
         {'po_id': po_id}
-    ).sort('created_at', -1).to_list(length=None)
+    ).sort('created_at', -1).to_list(500)
     dispatches = _serialize_list(dispatches_raw)
 
     # Tahap 1 (6 Nov 2026): qty dikirim/diproduksi dibaca dari SSOT (`po_items` + surat
@@ -211,10 +213,9 @@ async def maklon_po_360(po_id: str, user: dict = Depends(require_auth)):
             item['qty_remaining'] = max(0, item.get('qty', 0) - item['qty_dispatched'])
 
     # ── Material Receives ───────────────────────────────────────────────────
-    receives_raw = await db.dewi_maklon_material_receive.find(
-        {'po_id': po_id}
-    ).sort('created_at', -1).to_list(length=None)
-    material_receives = _serialize_list(receives_raw)
+    # Tahap 9: `dewi_maklon_material_receive` tidak punya penulis lagi — tidak dibaca (kunci tetap ada).
+    receives_raw: list = []
+    material_receives: list = []
 
     # ── BOM ─────────────────────────────────────────────────────────────────
     bom = await db.dewi_maklon_bom.find_one({'po_id': po_id})
@@ -225,7 +226,7 @@ async def maklon_po_360(po_id: str, user: dict = Depends(require_auth)):
     # query with $or to catch both old and new docs.
     samples_raw = await db.dewi_maklon_samples.find({
         '$or': [{'order_id': po_id}, {'po_id': po_id}]
-    }).sort('created_at', -1).to_list(length=None)
+    }).sort('created_at', -1).to_list(500)
     samples = _serialize_list(samples_raw)
 
     sample_ids = [s.get('id') for s in samples if s.get('id')]
@@ -233,19 +234,21 @@ async def maklon_po_360(po_id: str, user: dict = Depends(require_auth)):
     if sample_ids:
         revisions_raw = await db.dewi_maklon_sample_revisions.find(
             {'sample_id': {'$in': sample_ids}}
-        ).sort('created_at', -1).to_list(length=None)
+        ).sort('created_at', -1).to_list(2000)
     sample_revisions = _serialize_list(revisions_raw)
 
     # ── QC Checks ───────────────────────────────────────────────────────────
-    qc_raw = await db.dewi_maklon_qc_checks.find({
-        '$or': [{'order_id': po_id}, {'po_id': po_id}]
-    }).sort('created_at', -1).to_list(length=None)
-    qc_checks = _serialize_list(qc_raw)
+    # Tahap 9: QC dibaca dari penerimaan CMT (`cmt_receipts`) — layar QC lama (`dewi_maklon_qc_checks`)
+    # sudah dipensiunkan sehingga koleksinya tidak lagi bertambah.
+    from core import po_detail
+    qc_checks = await po_detail._receipts(db, po_id, [i.get('item_id') or i.get('id')  # noqa: SLF001
+                                                       for i in po_data.get('items', [])])
+    qc_raw = [{'result': 'fail' if r['qty_reject'] else 'pass'} for r in qc_checks if r['status'] == 'completed_qc']
 
     # ── Invoices (AR) — Maklon billing creates dewi_maklon_invoices ─────────
     invoices_raw = await db.dewi_maklon_invoices.find({
         '$or': [{'order_id': po_id}, {'po_id': po_id}]
-    }).sort('issue_date', -1).to_list(length=None)
+    }).sort('issue_date', -1).to_list(500)
     invoices = _serialize_list(invoices_raw)
 
     # Optionally pull rahaza_ar_invoices linked via po.ar_invoice_id
@@ -259,7 +262,7 @@ async def maklon_po_360(po_id: str, user: dict = Depends(require_auth)):
     if invoice_ids:
         payments_raw = await db.dewi_maklon_payments.find(
             {'invoice_id': {'$in': invoice_ids}}
-        ).sort('payment_date', -1).to_list(length=None)
+        ).sort('payment_date', -1).to_list(2000)
     payments = _serialize_list(payments_raw)
 
     # ── HPP Snapshot (computed) ─────────────────────────────────────────────
@@ -384,6 +387,10 @@ async def maklon_po_timeline(po_id: str, user: dict = Depends(require_auth)):
     """
     db = get_db()
     po = await _po_or_404(db, po_id)
+    if po.get('_source_collection') == 'production_pos':
+        # Tahap 9: satu riwayat untuk rincian PO kedua portal (core.po_detail)
+        from core import po_detail
+        return await po_detail.build_timeline(db, po_id)
 
     events: List[Dict[str, Any]] = []
 
@@ -419,7 +426,7 @@ async def maklon_po_timeline(po_id: str, user: dict = Depends(require_auth)):
                     actor=ssot.get('closed_by'), reason=ssot.get('closed_reason'), icon='lock')
 
     # Dispatches
-    dispatches = await db.dewi_maklon_dispatches.find({'po_id': po_id}).to_list(length=None)
+    dispatches = await db.dewi_maklon_dispatches.find({'po_id': po_id}).to_list(500)
     for d in dispatches:
         dnum = d.get('dispatch_number', '')
         _push_event(events, 'dispatch.created', f"Dispatch {dnum} dibuat",
@@ -435,7 +442,7 @@ async def maklon_po_timeline(po_id: str, user: dict = Depends(require_auth)):
                         dispatch_id=d.get('id'))
 
     # Material Receives
-    receives = await db.dewi_maklon_material_receive.find({'po_id': po_id}).to_list(length=None)
+    receives = await db.dewi_maklon_material_receive.find({'po_id': po_id}).to_list(500)
     for r in receives:
         rnum = r.get('receive_number', r.get('id', ''))
         _push_event(events, 'material.received',
@@ -445,7 +452,7 @@ async def maklon_po_timeline(po_id: str, user: dict = Depends(require_auth)):
     # Samples
     samples = await db.dewi_maklon_samples.find(
         {'$or': [{'order_id': po_id}, {'po_id': po_id}]}
-    ).to_list(length=None)
+    ).to_list(500)
     for s in samples:
         scode = s.get('sample_code', '')
         _push_event(events, 'sample.created', f"Sample {scode} dibuat",
@@ -466,7 +473,7 @@ async def maklon_po_timeline(po_id: str, user: dict = Depends(require_auth)):
     # QC Checks
     qcs = await db.dewi_maklon_qc_checks.find(
         {'$or': [{'order_id': po_id}, {'po_id': po_id}]}
-    ).to_list(length=None)
+    ).to_list(500)
     for q in qcs:
         stage = q.get('stage', 'unknown')
         result = q.get('result', 'pending')
@@ -479,7 +486,7 @@ async def maklon_po_timeline(po_id: str, user: dict = Depends(require_auth)):
     # Invoices
     invoices = await db.dewi_maklon_invoices.find(
         {'$or': [{'order_id': po_id}, {'po_id': po_id}]}
-    ).to_list(length=None)
+    ).to_list(500)
     for inv in invoices:
         inum = inv.get('invoice_number', '')
         _push_event(events, 'invoice.created', f"Invoice {inum} dibuat",
@@ -495,7 +502,7 @@ async def maklon_po_timeline(po_id: str, user: dict = Depends(require_auth)):
     if invoice_ids:
         payments = await db.dewi_maklon_payments.find(
             {'invoice_id': {'$in': invoice_ids}}
-        ).to_list(length=None)
+        ).to_list(500)
         for p in payments:
             _push_event(events, 'payment.received',
                         f"Pembayaran Rp {int(p.get('amount', 0) or 0):,} diterima",

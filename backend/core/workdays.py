@@ -37,11 +37,26 @@ async def get_work_calendar(db) -> dict:
     return {"work_days_per_week": n, "off_weekdays": off_weekdays_for(n)}
 
 
-async def holiday_set(db, date_from, date_to) -> set[str]:
+# Tahap 9 (7 Nov 2026, keputusan owner "Master Proses dihapus, kalender libur pindah ke SDM"): SATU kalender
+# libur untuk seluruh sistem. Koleksinya tetap `rahaza_production_calendar` (data & migrasi `libur_nasional`
+# yang sudah jalan di VPS tidak dipindah); layarnya kini Portal SDM › Kalender libur (`hr-holiday-calendar`).
+# Semua pembaca hari libur (cuti, payroll, absensi) WAJIB lewat `holidays_between` / `holiday_set` di sini —
+# jangan query koleksi ini langsung di modul lain.
+HOLIDAY_COLLECTION = "rahaza_production_calendar"
+
+
+async def holidays_between(db, date_from, date_to, limit: int = 400) -> list[dict]:
+    """Baris hari libur (`type: holiday`) dari kalender libur SDM, urut tanggal: {date, name, kind}."""
     f, t = _to_date(date_from).isoformat(), _to_date(date_to).isoformat()
-    rows = await db.rahaza_production_calendar.find(
-        {"date": {"$gte": f, "$lte": t}, "type": "holiday"}, {"_id": 0, "date": 1}).to_list(400)
-    return {str(r.get("date"))[:10] for r in rows}
+    rows = await db[HOLIDAY_COLLECTION].find(
+        {"date": {"$gte": f, "$lte": t}, "type": "holiday"},
+        {"_id": 0, "date": 1, "name": 1, "kind": 1}).to_list(limit)
+    return sorted(({"date": str(r.get("date"))[:10], "name": r.get("name") or "Libur", "kind": r.get("kind")}
+                   for r in rows), key=lambda r: r["date"])
+
+
+async def holiday_set(db, date_from, date_to) -> set[str]:
+    return {r["date"] for r in await holidays_between(db, date_from, date_to)}
 
 
 def is_working_day(d, off_weekdays, holidays: set[str]) -> bool:

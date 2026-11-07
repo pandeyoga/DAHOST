@@ -12,10 +12,10 @@ function fmt(n) {
 }
 
 const SEGMENTS = [
-  { key: 'qty_dispatched', label: 'Terkirim ke Buyer', cls: 'bg-[hsl(var(--primary))]', dot: 'bg-[hsl(var(--primary))]' },
-  { key: 'qty_good_ready', label: 'Barang Jadi (siap)', cls: 'bg-[hsl(var(--success))]', dot: 'bg-[hsl(var(--success))]' },
-  { key: 'qty_rework_open', label: 'Sedang Permak', cls: 'bg-[hsl(var(--warning))]', dot: 'bg-[hsl(var(--warning))]' },
-  { key: 'qty_scrap', label: 'Scrap / Buang', cls: 'bg-zinc-500', dot: 'bg-zinc-500' },
+  { key: 'qty_dispatched', label: 'Terkirim', cls: 'bg-[hsl(var(--primary))]', dot: 'bg-[hsl(var(--primary))]' },
+  { key: 'qty_good_ready', label: 'Barang jadi (siap)', cls: 'bg-[hsl(var(--success))]', dot: 'bg-[hsl(var(--success))]' },
+  { key: 'qty_rework_open', label: 'Sedang permak', cls: 'bg-[hsl(var(--warning))]', dot: 'bg-[hsl(var(--warning))]' },
+  { key: 'qty_scrap', label: 'Dibuang', cls: 'bg-zinc-500', dot: 'bg-zinc-500' },
 ];
 
 export default function ProgressBreakdownBar({ breakdown, compact = false }) {
@@ -58,7 +58,7 @@ export default function ProgressBreakdownBar({ breakdown, compact = false }) {
 
       {!compact && (
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">Ordered: {fmt(ordered)}</span>
+          <span className="font-medium text-foreground">Dipesan: {fmt(ordered)}</span>
           {SEGMENTS.map((s) => (
             <span key={s.key} className="inline-flex items-center gap-1">
               <span className={`inline-block h-2 w-2 rounded-full ${s.dot}`} />

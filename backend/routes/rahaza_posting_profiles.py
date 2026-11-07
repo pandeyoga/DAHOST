@@ -154,6 +154,9 @@ DEFAULT_PROFILES = [
             "debit_accessory_other": "6-2900",       # Lainnya → Beban Umum & Lain-lain
             # sampel R&D: belum ada akun khusus riset/sampel di bagan akun → Beban Umum (ubah di layar)
             "debit_accessory_rnd_sample": "6-2900",
+            # Tahap 9 (keputusan owner 7 Nov No. 5): bahan pembantu (benang dsb., kategori berpenanda
+            # `bahan_pembantu`) langsung beban saat dikeluarkan — pengecualian aturan "divisi Produksi → WIP"
+            "debit_production_supplies": "5-3400",
         },
     },
     {
@@ -561,6 +564,8 @@ ROLE_LABELS = {
     "debit_accessory_marketing": "Aksesoris dipakai Marketing → beban pemasaran (Dr)",
     "debit_accessory_other": "Aksesoris dipakai divisi lain → beban umum (Dr)",
     "debit_accessory_rnd_sample": "Aksesoris untuk sampel R&D → beban sampel (Dr)",
+    # Tahap 9 (keputusan No. 5): benang & bahan pembantu lain — beban produksi, tidak masuk HPP per PO
+    "debit_production_supplies": "Bahan pembantu produksi (benang dsb.) → beban produksi (Dr)",
     # 2026-11-02 (K41 = a): Keluarkan Stok FG
     "debit_sample": "Sampel / promosi barang jadi → beban promosi (Dr)",
     "debit_internal": "Keperluan internal / SJ internal / lainnya → HPP (Dr)",
@@ -705,7 +710,7 @@ _FAMILY_ROLES = {
                 "adjustment_expense", "debit_cogs_material", "debit_cogs_labor", "debit_cogs_overhead", "credit_cogs",
                 "debit_cmt_expense_internal", "debit_cmt_expense_maklon", "debit_maklon_material",
                 "debit_accessory_office", "debit_accessory_marketing", "debit_accessory_other",
-                "debit_accessory_rnd_sample", "debit_sample", "debit_internal", "debit_return_loss",
+                "debit_accessory_rnd_sample", "debit_production_supplies", "debit_sample", "debit_internal", "debit_return_loss",
                 "debit_variance_loss", "debit_variance", "debit_depr_expense", "debit_bad_debt_expense",
                 "debit_bank_charges", "debit_service_fee", "debit_loss_on_disposal", "debit_scrap_expense",
                 "scrap_expense", "debit_ads_default", "debit_ads_shopee", "debit_ads_tiktok", "debit_ads_tokopedia",

@@ -1946,12 +1946,25 @@ async def post_inventory_issue(db, mi: dict, user: dict) -> dict:
     items_mi = mi.get("items") or []
     mat_ids_posting = [it.get("material_id") for it in items_mi if it.get("material_id")]
     mat_cost_map, mat_kind = {}, {}
+    aux_ids: set = set()
+    from core import hpp_aktual  # Tahap 9 (keputusan No. 5): bahan pembantu → beban 5-3400, bukan WIP
+    aux_keys = await hpp_aktual.aux_category_keys(db) if (mat_ids_posting and not maklon) else set()
     if mat_ids_posting:
         async for m in db.rahaza_materials.find(
-            {"id": {"$in": mat_ids_posting}}, {"_id": 0, "id": 1, "unit_cost": 1, "type": 1}
+            {"id": {"$in": mat_ids_posting}},
+            {"_id": 0, "id": 1, "unit_cost": 1, "type": 1, "category": 1, "category_id": 1, "category_name": 1}
         ):
             mat_cost_map[m["id"]] = float(m.get("unit_cost") or 0)
             mat_kind[m["id"]] = inventory_kind(m)
+            if hpp_aktual.material_is_aux(m, aux_keys):
+                aux_ids.add(m["id"])
+    aux_code = mapping.get("debit_production_supplies") if aux_ids else None
+    if aux_ids and not aux_code:
+        result = {"ok": False, "error": "Mapping 'inventory_issue.debit_production_supplies' (bahan pembantu "
+                                        "produksi) belum diisi — lengkapi di Profil Posting."}
+        await _save_source_posting_result(db, "rahaza_material_issues", mi_id, result)
+        return result
+    aux_total = 0.0
     total = 0.0
     applied = []
     credit_by_code: dict = {}
@@ -1964,6 +1977,8 @@ async def post_inventory_issue(db, mi: dict, user: dict) -> dict:
         unit_cost = float(it.get("unit_cost_applied") or 0) or mat_cost_map.get(it.get("material_id"), 0.0)
         applied.append((it.get("material_id"), unit_cost))
         total += qty * unit_cost
+        if it.get("material_id") in aux_ids:
+            aux_total += qty * unit_cost
         inv_code, inv_err = inventory_account(mapping, "inventory_issue",
                                               mat_kind.get(it.get("material_id"), "bahan"))
         if not inv_code:
@@ -2008,7 +2023,13 @@ async def post_inventory_issue(db, mi: dict, user: dict) -> dict:
             cost_debit_code=wip_code)
         await _save_source_posting_result(db, "rahaza_material_issues", mi_id, result)
         return result
-    lines = [{"account_code": wip_code, "debit": total, "credit": 0, "description": memo}]
+    aux_total = round(aux_total, 2)
+    lines = []
+    if total - aux_total > 0:
+        lines.append({"account_code": wip_code, "debit": round(total - aux_total, 2), "credit": 0, "description": memo})
+    if aux_total > 0:
+        lines.append({"account_code": aux_code, "debit": aux_total, "credit": 0,
+                      "description": f"{memo} — bahan pembantu produksi (tidak masuk HPP)"})
     lines += [{"account_code": c, "debit": 0, "credit": v, "description": memo} for c, v in credits.items()]
     result = await _create_posted_je(db, je_date, memo, "inventory_issue", source_ref, lines, user, entity=DA)
     await _save_source_posting_result(db, "rahaza_material_issues", mi_id, result)
@@ -3583,8 +3604,10 @@ async def post_po_wip_variance(db, *, po: dict, residual: float, seq: int, user:
     if not var_code or not wip_code:
         return {"ok": False, "reason": "mapping_incomplete",
                 "error": f"Pemetaan akun '{PROFILE}' belum lengkap (akun selisih produksi / WIP)."}
-    memo = (f"Selisih produksi PO {po.get('po_number') or po.get('id')} — sisa WIP "
-            f"{'aktual > standar' if residual > 0 else 'standar > aktual'}"
+    # Tahap 9: lapisan barang jadi memakai bahan AKTUAL — sisa WIP = biaya PO yang tidak menjadi barang jadi
+    # (bahan pcs hilang/reject/sisa di CMT, permak) atau barang jadi yang dinilai melebihi biayanya.
+    memo = (f"Selisih biaya PO {po.get('po_number') or po.get('id')} — "
+            f"{'biaya PO yang tidak menjadi barang jadi' if residual > 0 else 'nilai barang jadi melebihi biaya PO'}"
             + (f" ({reason})" if reason else ""))[:200]
     lines = variance_lines(residual, var_code, wip_code, memo)
     if not lines:

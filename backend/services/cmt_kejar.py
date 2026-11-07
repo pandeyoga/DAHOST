@@ -165,89 +165,16 @@ async def caps_for_pos(db, pos: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any
 
 
 async def compute_po_kejar(db, po: Dict[str, Any], cfg: Dict[str, int], today: date = None,
-                           caps: Dict[str, Dict[str, Any]] | None = None) -> Dict[str, Any]:
+                           caps: Dict[str, Dict[str, Any]] | None = None,
+                           totals: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """Satu baris papan Kejar CMT. Angka qty = jumlah baris PO (`core.pantau_produksi`); `totals` boleh
+    diberikan pemanggil yang sudah menghitung semua PO sekaligus (`caps` diabaikan — warisan)."""
     today = today or today_wib()
     po_id = po["id"]
-    items = await db.po_items.find({"po_id": po_id}, {"_id": 0}).to_list(None)
-    item_ids = [i["id"] for i in items]
-    price_by_item = {i["id"]: float(i.get("cmt_price_snapshot", 0) or 0) for i in items}
-    qty_ordered = sum(_int(i.get("qty")) for i in items)
-
-    # Potongan dikirim ke CMT — HANYA kiriman NORMAL (sesuai order). Kiriman anak
-    # (pengganti/tambahan) dijumlahkan terpisah supaya tidak ada yang hilang dari
-    # layar tetapi juga tidak menggelembungkan potongan (INV-F28).
-    sent_cmt = 0
-    sent_extra = 0
-    extra_by_type: Dict[str, int] = {}
-    dispatch_dates: List[date] = []
-    if item_ids:
-        vsi = await db.vendor_shipment_items.find(
-            {"po_item_id": {"$in": item_ids}},
-            {"_id": 0, "qty_sent": 1, "shipment_id": 1, "shipment_type": 1,
-             "parent_shipment_id": 1},
-        ).to_list(None)
-        ship_ids = list({v.get("shipment_id") for v in vsi if v.get("shipment_id")})
-        ships: Dict[str, Dict[str, Any]] = {}
-        if ship_ids:
-            for s in await db.vendor_shipments.find(
-                    {"id": {"$in": ship_ids}},
-                    {"_id": 0, "id": 1, "shipment_date": 1, "shipment_type": 1,
-                     "parent_shipment_id": 1}).to_list(None):
-                ships[s["id"]] = s
-        for v in vsi:
-            s = ships.get(v.get("shipment_id")) or {}
-            q = _int(v.get("qty_sent"))
-            kind = shipment_kind(s, v)
-            if kind == "NORMAL":
-                sent_cmt += q
-                d = _to_date(s.get("shipment_date"))
-                if d:
-                    dispatch_dates.append(d)
-            else:
-                sent_extra += q
-                extra_by_type[kind] = extra_by_type.get(kind, 0) + q
-
-    # Returned + accepted from Approved receipts
-    # Semua angka tahap QC diambil dari SATU sumber (`cmt_receipt_lines` penerimaan
-    # approved) supaya 12 kartu di Monitoring CMT bisa dibuktikan SEIMBANG:
-    #   disetor = lolos QC + reject   ·   reject = permak berhasil + scrap + belum jelas
-    returned = accepted = 0
-    reject = repaired = scrapped = short_open = 0
-    accepted_by_item: Dict[str, int] = {}
-    approved_ids = await _approved_receipt_ids(db, po_id)
-    kali_setor = len(approved_ids)
-    if approved_ids and item_ids:
-        lines = await db.cmt_receipt_lines.find(
-            {"receipt_id": {"$in": approved_ids}, "po_item_id": {"$in": item_ids}},
-            {"_id": 0, "po_item_id": 1, "qty_shipped_by_cmt": 1, "qty_actual": 1,
-             "reject_qty": 1, "qty_reworked_ok": 1, "qty_reject_scrapped": 1,
-             "qty_short": 1, "qty_short_resolved": 1},
-        ).to_list(None)
-        for ln in lines:
-            returned += _int(ln.get("qty_shipped_by_cmt"))
-            a = _int(ln.get("qty_actual"))
-            accepted += a
-            accepted_by_item[ln["po_item_id"]] = accepted_by_item.get(ln["po_item_id"], 0) + a
-            reject += _int(ln.get("reject_qty"))
-            repaired += _int(ln.get("qty_reworked_ok"))
-            scrapped += _int(ln.get("qty_reject_scrapped"))
-            short_open += max(0, _int(ln.get("qty_short")) - _int(ln.get("qty_short_resolved")))
-    # reject yang nasibnya BELUM diketahui: masih dipermak / belum diputuskan
-    reject_open = max(0, reject - repaired - scrapped)
-
-    outstanding_cmt = max(0, sent_cmt - returned)
-    ongkos_jahit = round(sum(price_by_item.get(iid, 0) * q for iid, q in accepted_by_item.items()), 2)
-
-    # Sudah dikirim ke buyer + sisa bisa kirim — SSOT core.dispatch_capacity
-    # (rumus yang sama dengan pagar POST /api/buyer-shipments).
-    if caps is None:
-        caps = await caps_for_pos(db, [po])
-    shipped_buyer = shippable_buyer = 0
-    for iid in item_ids:
-        cap = caps.get(f"poi:{iid}") or {}
-        shipped_buyer += _int(cap.get("dispatched"))
-        shippable_buyer += _int(cap.get("shippable"))
-    not_sent_cmt = max(0, qty_ordered - sent_cmt)
+    if totals is None:
+        totals = (await _totals_by_po(db, [po])).get(po_id) or {}
+    t = totals
+    first = _to_date(t.get("first_sent"))
 
     delivery_deadline = _to_date(po.get("delivery_deadline"))   # Deadline Mitra/Buyer
     internal_deadline = _to_date(po.get("deadline"))
@@ -257,54 +184,78 @@ async def compute_po_kejar(db, po: Dict[str, Any], cfg: Dict[str, int], today: d
         from datetime import timedelta
         target_cmt = base_deadline - timedelta(days=cfg["buffer_days"])
 
+    outstanding_cmt = _int(t.get("di_cmt"))
     b = _bucket(outstanding_cmt, target_cmt, today, cfg["late_grace_days"])
-    earliest_dispatch = min(dispatch_dates) if dispatch_dates else None
-    days_at_cmt = (today - earliest_dispatch).days if (earliest_dispatch and outstanding_cmt > 0) else None
+    days_at_cmt = (today - first).days if (first and outstanding_cmt > 0) else None
+    from core import pantau_produksi as pp
 
     return {
         "po_id": po_id,
         "po_number": po.get("po_number", ""),
         "customer_name": po.get("customer_name", ""),
+        "vendor_id": po.get("vendor_id", ""),
+        "vendor_name": po.get("vendor_name", ""),
+        "business_type": pp.bt_of(po),
         "status": po.get("status", ""),
-        "qty_ordered": qty_ordered,
-        "qty_sent_cmt": sent_cmt,                 # HANYA kiriman NORMAL (sesuai order)
-        "qty_sent_extra": sent_extra,             # pengganti/tambahan (terpisah)
-        "qty_sent_extra_by_type": extra_by_type,
-        "qty_not_sent_cmt": not_sent_cmt,         # masih di gudang
-        "qty_shipped_buyer": shipped_buyer,       # sudah dikirim ke buyer
-        "qty_shippable_buyer": shippable_buyer,   # sisa bisa kirim ke buyer
+        "qty_ordered": _int(t.get("ordered")),
+        "qty_sent_cmt": _int(t.get("sent_cmt")),          # HANYA kiriman NORMAL (sesuai order)
+        "qty_sent_extra": _int(t.get("sent_extra")),      # pengganti/tambahan (terpisah)
+        "qty_sent_extra_by_type": dict(t.get("sent_extra_by_type") or {}),
+        "qty_not_sent_cmt": _int(t.get("not_sent")),      # masih di gudang
+        "qty_shipped_buyer": _int(t.get("dispatched")),   # sudah dikirim ke klien / diserahkan ke gudang
+        "qty_shippable_buyer": _int(t.get("shippable")),  # sisa bisa kirim
         "is_draft": is_draft_po(po),
         "is_running": is_running_po(po),
-        "qty_returned": returned,
-        "qty_reject": reject,                     # hasil QC yang ditolak
-        "qty_repaired": repaired,                 # permak berhasil → bisa dikirim lagi
-        "qty_scrap": scrapped,                    # dibuang / hilang (rugi)
-        "qty_reject_open": reject_open,           # nasibnya belum diketahui
-        "qty_short_open": short_open,             # diklaim CMT tapi belum sampai
-        "qty_accepted": accepted,
-        "qty_outstanding_cmt": outstanding_cmt,   # sisa di CMT
-        "kali_setor": kali_setor,
-        "ongkos_jahit_terhitung": ongkos_jahit,
+        "qty_returned": _int(t.get("returned")),          # disetor CMT (penerimaan selesai QC)
+        "qty_in_qc": _int(t.get("in_qc")),                # sudah di DA, sedang QC
+        "qty_reject": _int(t.get("reject")),
+        "qty_repaired": _int(t.get("repaired")),
+        "qty_scrap": _int(t.get("scrap")),
+        "qty_reject_open": _int(t.get("reject_open")),
+        "qty_short_open": _int(t.get("cmt_short_open")),
+        "qty_accepted": _int(t.get("accepted")),
+        "qty_outstanding_cmt": outstanding_cmt,           # sisa di CMT
+        "kali_setor": _int(t.get("receipt_count")),
+        "ongkos_jahit_terhitung": round(float(t.get("cmt_cost") or 0), 2),
         "delivery_deadline": delivery_deadline.isoformat() if delivery_deadline else None,
         "internal_deadline": internal_deadline.isoformat() if internal_deadline else None,
         "target_cmt_date": target_cmt.isoformat() if target_cmt else None,
-        "earliest_dispatch_date": earliest_dispatch.isoformat() if earliest_dispatch else None,
+        "earliest_dispatch_date": first.isoformat() if first else None,
         "days_at_cmt": days_at_cmt,
         **b,
     }
 
 
-async def _maklon_pos(db, scope: str = SCOPE_RUNNING) -> List[Dict[str, Any]]:
-    """PO maklon menurut sudut pandang yang dipilih pemakai.
+async def _totals_by_po(db, pos: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Jumlah baris PO per PO — semua PO sekaligus (satu putaran kueri, `core.pantau_produksi`)."""
+    from core import pantau_produksi as pp
+    lines = await pp.po_lines(db, pos)
+    by: Dict[str, list] = {}
+    for ln in lines:
+        by.setdefault(ln["po_id"], []).append(ln)
+    out = {}
+    for p in pos:
+        ls = by.get(p["id"], [])
+        t = pp.sum_lines(ls)
+        firsts = [ln["first_sent"] for ln in ls if ln.get("first_sent")]
+        t["first_sent"] = min(firsts) if firsts else None
+        out[p["id"]] = t
+    return out
+
+
+async def _maklon_pos(db, scope: str = SCOPE_RUNNING, business_type: Optional[str] = "maklon") -> List[Dict[str, Any]]:
+    """PO menurut sudut pandang yang dipilih pemakai.
 
     `scope='running'` (default) = PO yang MASIH BERJALAN: Draft · Confirmed ·
     Distributed · In Production. PO **Completed**/Closed/Cancelled dibuang —
     dulu hanya `Closed/Cancelled/Selesai` yang dibuang sehingga PO yang sudah
     selesai tetap menggelembungkan seluruh kartu (keluhan pemilik, INV-F28).
-    `scope='all'` = semua PO maklon.
+    `scope='all'` = semua PO. Tahap 9: `business_type` 'maklon' (= bukan internal, bawaan lama),
+    'internal', atau 'all'.
     """
+    from core import pantau_produksi as pp
     pos = await db.production_pos.find(
-        {"business_type": "maklon"}, {"_id": 0}).sort("created_at", -1).to_list(500)
+        pp.bt_filter(business_type), {"_id": 0}).sort("created_at", -1).to_list(500)
     if scope == SCOPE_ALL:
         return pos
     return [p for p in pos if is_running_po(p)]
@@ -316,30 +267,31 @@ def _norm_scope(scope: Optional[str]) -> str:
 
 
 async def list_kejar(db, bucket: Optional[str] = None, only_open: bool = True,
-                     scope: Optional[str] = None) -> Dict[str, Any]:
+                     scope: Optional[str] = None, business_type: Optional[str] = "maklon") -> Dict[str, Any]:
     scope = _norm_scope(scope if scope is not None else (SCOPE_RUNNING if only_open else SCOPE_ALL))
     cfg = await get_buffer_config(db)
     today = today_wib()
-    pos = await _maklon_pos(db, scope)
-    caps = await caps_for_pos(db, pos)
+    pos = await _maklon_pos(db, scope, business_type)
+    totals = await _totals_by_po(db, pos)
     rows = []
     for po in pos:
-        r = await compute_po_kejar(db, po, cfg, today, caps=caps)
+        r = await compute_po_kejar(db, po, cfg, today, totals=totals.get(po["id"]))
         if bucket and r["bucket"] != bucket:
             continue
         rows.append(r)
     order = {"telat": 0, "jatuh_tempo": 1, "mendekati": 2, "on_track": 3, "tanpa_deadline": 4, "aman": 5}
     rows.sort(key=lambda r: (order.get(r["bucket"], 9), -(r["overdue_days"] or -999)))
-    return {"config": cfg, "scope": scope, "count": len(rows), "rows": rows}
+    return {"config": cfg, "scope": scope, "business_type": business_type or "all",
+            "count": len(rows), "rows": rows}
 
 
-async def owner_dashboard(db, scope: Optional[str] = None) -> Dict[str, Any]:
-    """M2 — KPI Dashboard Owner CMT (agregasi PO maklon menurut scope)."""
+async def owner_dashboard(db, scope: Optional[str] = None, business_type: Optional[str] = "maklon") -> Dict[str, Any]:
+    """M2 — KPI Dashboard Owner CMT (agregasi PO menurut scope & jenis PO)."""
     scope = _norm_scope(scope)
     cfg = await get_buffer_config(db)
     today = today_wib()
-    pos = await _maklon_pos(db, scope)
-    caps = await caps_for_pos(db, pos)
+    pos = await _maklon_pos(db, scope, business_type)
+    totals = await _totals_by_po(db, pos)
 
     agg = {
         "scope": scope,
@@ -351,29 +303,16 @@ async def owner_dashboard(db, scope: Optional[str] = None) -> Dict[str, Any]:
         "qty_not_sent_cmt": 0, "qty_not_sent_draft": 0,
         "qty_shipped_buyer": 0, "qty_shippable_buyer": 0,
         "qty_reject": 0, "qty_repaired": 0, "qty_scrap": 0,
-        "qty_reject_open": 0, "qty_short_open": 0,
+        "qty_reject_open": 0, "qty_short_open": 0, "qty_in_qc": 0,
         "buckets": {"telat": 0, "jatuh_tempo": 0, "mendekati": 0, "on_track": 0, "aman": 0, "tanpa_deadline": 0},
         "telat_pos": [],
     }
-    # Pemeriksa keseimbangan: PO mana yang identitasnya pecah (permintaan pemilik
-    # 2026-06 — "jika di total akan seimbang"). Diisi saat menjumlah tiap PO.
-    offenders: Dict[str, List[str]] = {k: [] for k in
-                                       ("order", "cmt", "qc", "reject", "buyer")}
+    po_rows_bal = []
     for po in pos:
-        r = await compute_po_kejar(db, po, cfg, today, caps=caps)
-        no = r["po_number"]
-        if r["qty_ordered"] != r["qty_not_sent_cmt"] + r["qty_sent_cmt"]:
-            offenders["order"].append(no)
-        if r["qty_sent_cmt"] != r["qty_outstanding_cmt"] + r["qty_returned"]:
-            offenders["cmt"].append(no)
-        if r["qty_returned"] != r["qty_accepted"] + r["qty_reject"]:
-            offenders["qc"].append(no)
-        if r["qty_reject"] != r["qty_repaired"] + r["qty_scrap"] + r["qty_reject_open"]:
-            offenders["reject"].append(no)
-        if r["qty_accepted"] + r["qty_repaired"] != r["qty_shipped_buyer"] + r["qty_shippable_buyer"]:
-            offenders["buyer"].append(no)
+        r = await compute_po_kejar(db, po, cfg, today, totals=totals.get(po["id"]))
+        po_rows_bal.append({"po_id": po["id"], "po_number": r["po_number"], **(totals.get(po["id"]) or {})})
         for k in ("qty_reject", "qty_repaired", "qty_scrap", "qty_reject_open",
-                  "qty_short_open"):
+                  "qty_short_open", "qty_in_qc"):
             agg[k] += r[k]
         agg["qty_ordered"] += r["qty_ordered"]
         agg["qty_sent_cmt"] += r["qty_sent_cmt"]
@@ -400,55 +339,32 @@ async def owner_dashboard(db, scope: Optional[str] = None) -> Dict[str, Any]:
             })
     agg["ongkos_jahit_terhitung"] = round(agg["ongkos_jahit_terhitung"], 2)
 
-    # Komponen kurang (aksesoris) belum diterima
+    # Komponen kurang (aksesoris) belum diterima — hanya PO dalam cakupan (Tahap 9)
+    po_ids = [p["id"] for p in pos]
     comp = await db.dewi_cmt_component_requests.find(
-        {"status": {"$in": list(COMPONENT_OPEN_STATUSES)}}, {"_id": 0}
-    ).to_list(None)
+        {"status": {"$in": list(COMPONENT_OPEN_STATUSES)}, "po_id": {"$in": po_ids}}, {"_id": 0}
+    ).to_list(None) if po_ids else []
     comp_qty = 0
     for c in comp:
         for it in (c.get("items") or []):
             comp_qty += _int(it.get("qty"))
     agg["komponen_kurang_open"] = {"requests": len(comp), "qty": comp_qty}
 
-    # Biaya permak + permak aktif
-    permaks = await db.dewi_cmt_permak.find({}, {"_id": 0}).to_list(None)
+    # Biaya permak + permak aktif — hanya PO dalam cakupan (Tahap 9)
+    permaks = await db.dewi_cmt_permak.find({"po_id": {"$in": po_ids}}, {"_id": 0}).to_list(None) if po_ids else []
     biaya_permak = round(sum(float(p.get("total_cost") or 0) for p in permaks), 2)
     permak_open = sum(1 for p in permaks if p.get("status") in ("open", "in_progress"))
     agg["biaya_permak"] = biaya_permak
     agg["permak_open"] = permak_open
 
-    # ── PEMERIKSA KESEIMBANGAN (12 kartu harus bisa dipertanggungjawabkan) ────
-    # Lima identitas ini yang membuat kartu tidak bisa "mengarang": kalau salah
-    # satu pecah, PO penyebabnya disebut namanya supaya bisa langsung diperiksa
-    # (mis. dispatch lama yang dibuat sebelum pagar QC ada).
-    agg["balance"] = {
-        "checks": [
-            {"key": "order", "label": "Order = Belum ke CMT + Potongan ke CMT",
-             "left": agg["qty_ordered"],
-             "right": agg["qty_not_sent_cmt"] + agg["qty_sent_cmt"],
-             "offenders": offenders["order"][:12]},
-            {"key": "cmt", "label": "Potongan ke CMT = Sisa di CMT + Disetor",
-             "left": agg["qty_sent_cmt"],
-             "right": agg["qty_outstanding_cmt"] + agg["qty_returned"],
-             "offenders": offenders["cmt"][:12]},
-            {"key": "qc", "label": "Disetor = Lolos QC + Reject",
-             "left": agg["qty_returned"],
-             "right": agg["qty_accepted"] + agg["qty_reject"],
-             "offenders": offenders["qc"][:12]},
-            {"key": "reject", "label": "Reject = Permak Berhasil + Scrap + Belum Jelas",
-             "left": agg["qty_reject"],
-             "right": agg["qty_repaired"] + agg["qty_scrap"] + agg["qty_reject_open"],
-             "offenders": offenders["reject"][:12]},
-            {"key": "buyer", "label": "Lolos QC + Permak Berhasil = Ke Buyer + Sisa Bisa Kirim",
-             "left": agg["qty_accepted"] + agg["qty_repaired"],
-             "right": agg["qty_shipped_buyer"] + agg["qty_shippable_buyer"],
-             "offenders": offenders["buyer"][:12]},
-        ],
-    }
-    for c in agg["balance"]["checks"]:
-        c["ok"] = c["left"] == c["right"]
-        c["diff"] = c["left"] - c["right"]
-    agg["balance"]["all_ok"] = all(c["ok"] for c in agg["balance"]["checks"])
+    # ── PEMERIKSA KESEIMBANGAN — satu definisi dengan Pantau Produksi (core.pantau_produksi) ──
+    # Kalau satu identitas pecah, PO penyebabnya disebut namanya supaya bisa langsung diperiksa.
+    from core import pantau_produksi as pp
+    bal = pp.balance_checks(po_rows_bal, limit=12)
+    for c in bal["checks"]:
+        c["offenders"] = [o["po_number"] for o in c["offenders"]]
+    agg["balance"] = bal
+    agg["business_type"] = business_type or "all"
 
     agg["config"] = cfg
     return agg

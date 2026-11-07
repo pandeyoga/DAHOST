@@ -183,88 +183,57 @@ export const PORTAL_NAV = {
   },
 
   // ── PORTAL PRODUKSI ────────────────────────────────────────────────────────
-  // IA v3 (FASE IA-1, 2026-07-26) — keputusan owner: Portal Produksi & Maklon punya
-  // ALUR YANG SAMA (dua-duanya dilempar ke CMT). Bedanya hanya: DA tidak mengirim ke
-  // buyer eksternal karena buyer-nya DA sendiri ⇒ langkah itu = SERAH TERIMA FG ke
-  // inventory DA. Maka struktur + nama menu DI-MIRROR dari Portal Maklon, kata
-  // "Maklon" → "Internal", supaya user tidak perlu belajar dua peta menu.
-  //   - datar 2 tingkat (TANPA `groups`) seperti Maklon — dulu Produksi 3 tingkat
-  //     dengan 12 pintu menumpuk di satu section.
-  //   - DEPRECATED dari menu (moduleId TETAP di registry ⇒ deep-link lama aman):
-  //       prod-progress        "Input Progress"  — progres masuk dari CMT/Portal Vendor
-  //       prod-shift-handover  "Operan Shift"    — tidak relevan lagi
-  //       prod-material-returns "Retur Material" — duplikasi (material diurus di Kirim Material CMT)
-  //         ↳ 2026-11-02 (K10): DIPASANG LAGI sebagai layar Retur Material (koreksi SJ yang bahannya sudah keluar).
-  //       hr-ai-hub            "AI Actions"      — isinya hub AI SDM, bukan produksi
-  //   - Data internal & maklon DIPISAH di modul yang dipakai bersama
-  //     (business_type=internal): Production Jobs, Tracking Produksi, Laporan Variance,
-  //     Kirim Material CMT, Serah Terima FG, Tutup PO, Invoice.
-  //   Rincian & bukti: docs/PROPOSAL_IA_PRODUKSI.md
+  // Tahap 9 (2026-11-07, keputusan owner): Portal Produksi & Maklon tetap dua portal, tetapi menu,
+  // sub-menu, tab, dan tampilannya IDENTIK — 4 kelompok yang sama (MASTER DATA · PROSES · PANTAU ·
+  // KEUANGAN), urutan sama, layar sama (disaring sesuai portal). Rincian keputusan: owner menjawab
+  // 13 hal (finishing di CMT, aksesoris satuan serah, sisa di CMT langsung biaya, benang = bahan
+  // pembantu, biaya umum di luar HPP, 5 layar pantau digabung, Detail PO & Sampel masuk rincian PO …).
+  //   Dihapus/digabung dari menu (id lama TETAP di registry & diarahkan ke penggantinya ⇒ tautan aman):
+  //     prod-master-process-hub (kalender → SDM, tarif standar → HPP) · wh-material-issue (otomatis saat
+  //     kirim) · prod-material-requirements + prod-material-returns → bahan-produksi ·
+  //     prod-control-tower + prod-monitoring + prod-work-orders (+ maklon-tracking, cmt-monitor) →
+  //     pantau-produksi · prod-variance (+ prod-variance-report) → laporan-selisih · prod-sewing-cost +
+  //     fin-hpp-produk → fin-hpp · prod-analytics-hub (AQL → Terima & QC, kapasitas → Pantau) ·
+  //     prod-ai-insights · prod-predictive-maintenance.
   production: {
     title: 'Produksi',
     sections: [
       {
         label: 'MASTER DATA',
         items: [
-          { id: 'prod-master-product-hub', label: 'Master Produk', icon: Shirt },
-          { id: 'prod-master-process-hub', label: 'Master Proses', icon: Workflow },
-          { id: 'vendor-admin',            label: 'Vendor CMT',    icon: Building2 },
-          // Ditaruh PERSIS di sebelah master "Vendor CMT" dan di section PERTAMA
-          // (yang tampil apa adanya saat portal dibuka), sama seperti di Portal
-          // Maklon. Alasan: sidebar hanya menampilkan pintu SECTION AKTIF, jadi
-          // saat pintu ini duduk di section kedua ia tidak terlihat sampai orang
-          // menebak harus mengklik pil section dulu — temuan uji 2026-08-08.
-          // Kewenangannya LEBIH SEMPIT daripada portalnya (keputusan owner 2b):
-          // mengisi atas nama vendor CMT berdampak langsung ke TAGIHAN CMT.
-          // Daftar role WAJIB sama dengan backend core/cmt_override.OVERRIDE_ROLES.
-          { id: 'cmt-override-portal',     label: 'Input Vendor CMT', icon: UserCog,
+          { id: 'prod-master-product-hub', label: 'Produk',     icon: Shirt },
+          { id: 'vendor-admin',            label: 'Vendor CMT', icon: Building2 },
+        ],
+      },
+      {
+        label: 'PROSES',
+        items: [
+          { id: 'prod-pos-internal',     label: 'PO Internal',  icon: ClipboardSignature },
+          { id: 'bahan-produksi',        label: 'Bahan',        icon: ClipboardPen },
+          { id: 'prod-shipments-vendor', label: 'Kirim ke CMT', icon: Scissors },
+          // Kewenangan LEBIH SEMPIT daripada portalnya (keputusan owner 2b): mengisi atas nama vendor CMT
+          // berdampak langsung ke TAGIHAN CMT. Daftar role WAJIB sama dengan backend core/cmt_override.OVERRIDE_ROLES.
+          { id: 'cmt-override-portal',   label: 'Input atas nama CMT', icon: UserCog,
             roles: ['admin', 'superadmin', 'admin_produksi', 'supervisor_produksi', 'ppic'] },
+          { id: 'da-cmt-receive',        label: 'Terima & QC',  icon: Truck },
+          { id: 'cmt-permak',            label: 'Perbaikan',    icon: Wrench },
+          { id: 'prod-shipments-buyer',  label: 'Kirim hasil',  icon: PackageOpen },
+          { id: 'po-closure',            label: 'Tutup PO',     icon: Lock },
         ],
       },
       {
-        label: 'PRODUKSI INTERNAL',
+        label: 'PANTAU',
         items: [
-          { id: 'prod-pos-internal',      label: 'PO Internal',         icon: ClipboardSignature },
-          { id: 'prod-shipments-vendor',  label: 'Kirim Material CMT',  icon: Scissors },
-          // FASE H-2 (2026-08-16, keputusan owner): pembuat Pengeluaran Material =
-          // admin gudang DAN supervisor produksi. Supervisor produksi tidak punya
-          // akses Portal Gudang (PORTAL_ACCESS), jadi tanpa pintu di sini
-          // kewenangan barunya tidak bisa dipakai dari layar mana pun. Duplikat
-          // LINTAS-portal memang diizinkan aturan IA (shortcut yang disengaja) —
-          // isinya modul yang SAMA, bukan salinan kedua.
-          { id: 'wh-material-issue',      label: 'Pengeluaran Material', icon: PackageMinus },
-          // 2026-11-02 (K10): Retur Material DIPASANG LAGI — satu-satunya jalur koreksi surat jalan
-          // material yang bahannya sudah keluar (hapus SJ dikunci; bahan kembali + jurnal balik).
-          { id: 'prod-material-returns',  label: 'Retur Material',      icon: RotateCcw },
-          { id: 'da-cmt-receive',         label: 'Terima FG dari CMT',  icon: Truck },
-          { id: 'cmt-permak',             label: 'Permak / Perbaikan',  icon: Wrench },
-          { id: 'prod-shipments-buyer',   label: 'Serah Terima FG',     icon: PackageOpen },
-          { id: 'po-closure',             label: 'Tutup PO',            icon: Lock },
+          { id: 'production-dashboard', label: 'Dashboard',       icon: Gauge },
+          { id: 'pantau-produksi',      label: 'Pantau Produksi', icon: Activity },
+          { id: 'laporan-selisih',      label: 'Laporan Selisih', icon: Target },
         ],
       },
       {
-        label: 'MONITORING PROGRESS',
+        label: 'KEUANGAN',
         items: [
-          { id: 'production-dashboard', label: 'Dashboard Produksi', icon: Gauge },
-          { id: 'prod-control-tower',   label: 'Pusat Kendali',      icon: Factory },
-          { id: 'prod-monitoring',      label: 'Tracking Produksi',  icon: Activity },
-          { id: 'prod-work-orders',     label: 'Production Jobs',    icon: Boxes },
-          { id: 'prod-variance',        label: 'Laporan Variance',   icon: Target },
-        ],
-      },
-      {
-        label: 'KEUANGAN & ANALITIK',
-        items: [
-          { id: 'prod-cmt-billing',            label: 'Invoice',            icon: Banknote },
-          // sesi #34 — pintu input biaya jahit per SKU/pcs di SPK (dulu selalu 0
-          // untuk SPK internal) + viewer HPP batch FIFO.
-          { id: 'prod-sewing-cost',            label: 'Biaya Jahit',        icon: Scissors },
-          { id: 'fin-hpp',                     label: 'HPP Produksi',       icon: Calculator },
-          { id: 'fin-hpp-produk',              label: 'HPP per Potong',     icon: Calculator },
-          { id: 'prod-material-requirements',  label: 'Kebutuhan Material', icon: ClipboardPen },
-          { id: 'prod-analytics-hub',          label: 'Analitik Produksi',  icon: BarChart3 },
-          { id: 'prod-ai-insights',            label: 'Estimasi AI',        icon: Sparkles },
-          { id: 'prod-predictive-maintenance', label: 'Perawatan Mesin',    icon: Wrench },
+          { id: 'prod-cmt-billing', label: 'Tagihan CMT', icon: Banknote },
+          { id: 'fin-hpp',          label: 'HPP',         icon: Calculator },
         ],
       },
     ],
@@ -597,6 +566,9 @@ export const PORTAL_NAV = {
           { id: 'hr-attendance-hub',      label: 'Absensi',          icon: Clock },
           { id: 'hr-attendance-sessions', label: 'Istirahat & Izin', icon: Timer },
           { id: 'hr-leave-hub',           label: 'Cuti & Lembur',    icon: CalendarDays },
+          // Tahap 9 (2026-11-07): kalender libur pindah dari Master Proses (Portal Produksi) ke SDM —
+          // satu-satunya sumber hari libur yang dibaca hitungan cuti (core.workdays.holidays_between).
+          { id: 'hr-holiday-calendar',    label: 'Kalender Libur',   icon: Calendar },
           { id: 'hr-payroll-hub',         label: 'Penggajian',       icon: Banknote },
           { id: 'hr-kasbon',              label: 'Kasbon',           icon: Wallet },
           { id: 'hr-expense-hub',         label: 'Klaim Dinas',      icon: Plane },
@@ -698,64 +670,51 @@ export const PORTAL_NAV = {
     ],
   },
 
+  // Tahap 9 (2026-11-07): IDENTIK dengan Portal Produksi (lihat komentar di sana). Beda yang memang
+  // milik maklon: master Klien & Katalog Buyer (tab Klien · Katalog · Estimasi harga) dan Piutang Klien.
+  //   Dihapus/digabung dari menu: maklon-clients + maklon-buyer-catalog + maklon-ai-quote →
+  //   maklon-klien-katalog · maklon-po-360 + maklon-samples → rincian PO Maklon · maklon-alur-produksi
+  //   (pintu kedua dashboard) · cmt-monitor + maklon-tracking + prod-monitoring + prod-work-orders →
+  //   pantau-produksi · cmt-component-requests → tab "Permintaan tambahan" di Kirim ke CMT ·
+  //   prod-variance-report → laporan-selisih · maklon-hpp → fin-hpp (HPP per PO, disaring maklon).
   maklon: {
     title: 'Maklon',
     sections: [
       {
         label: 'MASTER DATA',
         items: [
-          { id: 'maklon-clients',       label: 'Data Klien',       icon: Users },
-          { id: 'maklon-buyer-catalog', label: 'Katalog Buyer',    icon: BookOpen },
-          { id: 'vendor-admin',         label: 'Vendor CMT',       icon: Building2 },
-          { id: 'cmt-override-portal',  label: 'Input Vendor CMT', icon: UserCog,
+          { id: 'maklon-klien-katalog', label: 'Klien & Katalog Buyer', icon: BookOpen },
+          { id: 'vendor-admin',         label: 'Vendor CMT',            icon: Building2 },
+        ],
+      },
+      {
+        label: 'PROSES',
+        items: [
+          { id: 'maklon-pos-engine',     label: 'PO Maklon',    icon: ClipboardSignature },
+          { id: 'bahan-produksi',        label: 'Bahan',        icon: ClipboardPen },
+          { id: 'prod-shipments-vendor', label: 'Kirim ke CMT', icon: Scissors },
+          { id: 'cmt-override-portal',   label: 'Input atas nama CMT', icon: UserCog,
             roles: ['admin', 'superadmin', 'admin_produksi', 'supervisor_produksi', 'ppic'] },
+          { id: 'da-cmt-receive',        label: 'Terima & QC',  icon: Truck },
+          { id: 'cmt-permak',            label: 'Perbaikan',    icon: Wrench },
+          { id: 'prod-shipments-buyer',  label: 'Kirim hasil',  icon: PackageOpen },
+          { id: 'po-closure',            label: 'Tutup PO',     icon: Lock },
         ],
       },
       {
-        label: 'PRODUKSI MAKLON',
+        label: 'PANTAU',
         items: [
-          { id: 'maklon-pos-engine',      label: 'PO Maklon',            icon: ClipboardSignature },
-          { id: 'maklon-po-360',          label: 'Detail PO',            icon: Layers },
-          { id: 'maklon-samples',         label: 'Kelola Sampel',        icon: ClipboardCheck },
-          { id: 'prod-shipments-vendor',  label: 'Kirim Material CMT',   icon: Scissors },
-          { id: 'da-cmt-receive',         label: 'Terima FG dari CMT',   icon: Truck },
-          { id: 'cmt-permak',             label: 'Permak / Perbaikan',   icon: Wrench },
-          { id: 'prod-shipments-buyer',   label: 'Dispatch ke Buyer',    icon: Link2 },
-          { id: 'po-closure',             label: 'Tutup PO',             icon: Lock },
+          { id: 'maklon-dashboard', label: 'Dashboard',       icon: Gauge },
+          { id: 'pantau-produksi',  label: 'Pantau Produksi', icon: Activity },
+          { id: 'laporan-selisih',  label: 'Laporan Selisih', icon: Target },
         ],
       },
       {
-        label: 'MONITORING PROGRESS',
+        label: 'KEUANGAN',
         items: [
-          { id: 'maklon-dashboard',     label: 'Dashboard Maklon',   icon: Gauge },
-          { id: 'maklon-alur-produksi', label: 'Alur Produksi',      icon: Factory },
-          { id: 'cmt-monitor',          label: 'Monitoring CMT',     icon: Siren },
-          { id: 'maklon-tracking',      label: 'Tracking Order',      icon: Activity },
-          // 2026-08-08 — pintu monitoring yang DIKELOMPOKKAN PER VENDOR CMT
-          // (engine/ProductionMonitoringModule) sebelumnya HANYA punya pintu di
-          // Portal Produksi, dan komponen itu memilih domain dari portalnya:
-          // di Produksi = 'internal'. Akibatnya vendor CMT MAKLON tidak pernah
-          // terlihat di layar itu — termasuk badge "diinput staf DA" yang justru
-          // paling relevan untuk vendor CMT. Pintu ini membukanya untuk domain maklon.
-          { id: 'prod-monitoring',      label: 'Tracking Vendor',    icon: TrendingUp },
-          { id: 'prod-work-orders',     label: 'Production Jobs',    icon: Boxes },
-          // FASE IA-3 (wiring putus): modul & endpoint "Komponen Kurang"
-          // (CMTComponentRequestModule + /api/dewi/cmt-component-requests) SUDAH ADA
-          // dan dipakai di Excel operasional owner (sheet "KOMPONEN KURANG"), tapi
-          // TIDAK punya pintu di menu manapun ⇒ fitur tak terjangkau user.
-          { id: 'cmt-component-requests', label: 'Komponen Kurang',  icon: PackageSearch },
-          { id: 'prod-variance-report', label: 'Laporan Variance',   icon: Target },
-        ],
-      },
-      {
-        label: 'KEUANGAN & ANALITIK',
-        items: [
-          { id: 'maklon-billing',  label: 'Piutang klien', icon: Banknote },
-          // 2026-11-02 (K16): tagihan vendor CMT PO maklon — layar yang SAMA dengan Produksi/
-          // Keuangan (ProductionCMTBillingModule, scope maklon dari portal), bukan duplikat.
-          { id: 'prod-cmt-billing', label: 'Tagihan Vendor CMT', icon: Banknote },
-          { id: 'maklon-hpp',      label: 'HPP Jahit',   icon: Target },
-          { id: 'maklon-ai-quote', label: 'Estimasi AI', icon: Sparkles },
+          { id: 'prod-cmt-billing', label: 'Tagihan CMT',   icon: Banknote },
+          { id: 'fin-hpp',          label: 'HPP',           icon: Calculator },
+          { id: 'maklon-billing',   label: 'Piutang Klien', icon: Banknote },
         ],
       },
     ],

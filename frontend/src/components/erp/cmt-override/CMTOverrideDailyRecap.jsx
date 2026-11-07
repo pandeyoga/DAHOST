@@ -38,7 +38,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, BellRing, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight,
-  ClipboardList, Download, FileSpreadsheet, FileText, Info, Loader2, MinusCircle,
+  Download, FileSpreadsheet, FileText, Info, Loader2, MinusCircle,
   RefreshCw, Search, UserCog, X, XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -267,11 +267,8 @@ export default function CMTOverrideDailyRecap({
       <div className="border-b border-border p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-[hsl(var(--primary))]">
-              <ClipboardList className="h-5 w-5 text-white" />
-            </div>
             <div>
-              <h2 className="text-lg font-bold text-foreground">Rekap Harian</h2>
+              <p className="text-base font-semibold text-foreground">Rekap harian</p>
               <p className="mt-0.5 max-w-2xl text-sm text-muted-foreground">
                 Vendor mana yang <b>belum diisi</b> untuk tanggal ini — per jenis pekerjaan,
                 supaya tidak ada yang terlewat. Klik kotak <b>Belum diisi</b> untuk langsung

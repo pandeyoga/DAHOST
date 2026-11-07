@@ -64,7 +64,9 @@ const COUNT_ENDPOINTS = {
 
 const countOf = (d) => (Array.isArray(d) ? d.length : (d?.total ?? d?.pagination?.total ?? (Array.isArray(d?.items) ? d.items.length : null)));
 
-export default function RahazaModelsAndBOMModule({ token, user, headers, userRole, hasPerm, onNavigate, variant = 'production' }) {
+// Tahap 9 (7 Nov 2026): `renderPage` (dari hubs/ProductionMasterProductHub) — Portal Produksi memakai cetakan
+// PageLayout milik halaman; kepala buatan sendiri di bawah hanya untuk varian RnD.
+export default function RahazaModelsAndBOMModule({ token, user, headers, userRole, hasPerm, onNavigate, variant = 'production', renderPage = null }) {
   const V = VARIANTS[variant] || VARIANTS.production;
   const TABS = ALL_TABS.filter((t) => V.tabs.includes(t.key));
   const storageKey = variant === 'rnd' ? 'hub_tab_rnd-master-product-hub' : 'models_bom_tab';
@@ -100,6 +102,7 @@ export default function RahazaModelsAndBOMModule({ token, user, headers, userRol
 
   const current = TABS.find((t) => t.key === activeTab) || TABS[0];
   const shared = { token, user, headers, userRole, hasPerm, onNavigate };
+  if (renderPage && variant === 'production') return <RahazaModelsModule {...shared} renderPage={renderPage} />;
 
   return (
     <div className="space-y-5" data-testid={`models-bom-module-${variant}`}>

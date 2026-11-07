@@ -299,7 +299,8 @@ def test_catatan_ubah_status_komponen_cmt_disimpan(monkeypatch):
     doc = db.dewi_cmt_component_requests.docs[0]
     assert doc["status"] == "cutting" and doc["status_note"] == "mulai shift pagi"
     assert "notes" in body_keys_read(dcr.set_status)
-    assert "detail.status_note" in jsx("CMTComponentRequestModule.jsx")
+    # Tahap 9 (keputusan 12): Komponen Kurang = tab "Permintaan tambahan" di Kirim ke CMT
+    assert "r.status_note" in jsx("engine/kirim/PermintaanTab.jsx")
     with pytest.raises(HTTPException):
         run(dcr.set_status("r-1", {"status": "pending"}, USER))   # mundur tetap ditolak
 
@@ -364,7 +365,7 @@ def test_sukses_hanya_bila_server_menerima():
         "UserManagementModule.jsx": "if (!(await okOrToast(r, 'Gagal menyimpan pengguna'))) return;",
         "HREmployeeModule.jsx": "if (!up) return;",
         "engine/ProductionPOModule.jsx": "PO tersimpan, tetapi aksesoris gagal disimpan",
-        "MaklonBuyerCatalogModule.jsx": "tetapi varian SKU gagal dibuat",
+        "maklon/KatalogArtikelForm.jsx": "tetapi varian SKU gagal dibuat",   # Tahap 9: form artikel di halaman
     }
     for rel, needle in checks.items():
         assert needle in jsx(rel), rel

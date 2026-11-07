@@ -255,88 +255,98 @@ def test_pengeluaran_ber_po_mengikuti_jenis_po_dan_membawa_po(posting, stock, bt
 
 
 # ═════════════════════════ 3. satu keluar per kebutuhan PO ═════════════════════════
-def test_maklon_kirim_material_mengurangkan_pengeluaran_lewat_permintaan(monkeypatch):
-    d = FakeDB()
-    d.rahaza_materials.docs = [_mat()]
-    d.rahaza_material_stock.docs = [{"material_id": "ACC1", "location_id": "LOC-A", "qty": 500}]
-    d.dewi_maklon_bom.docs = [{"po_id": "PO-M", "materials": [
-        {"material_name": "Kancing", "ownership": "cv_da_stock", "material_id": "ACC1", "qty_per_pcs": 1,
-         "unit": "pcs"}]}]
-    d.vendor_shipments.docs = [{"id": "SJ1", "po_id": "PO-M"}]
-    d.vendor_shipment_items.docs = [{"shipment_id": "SJ1", "qty_sent": 100}]
-    # permintaan aksesoris ber-PO sudah mengeluarkan 60 kancing
-    d.rahaza_material_movements.docs = [{"id": "e1", "material_id": "ACC1", "movement_type": "issue",
-                                         "qty_signed": -60, "qty": -60, "po_id": "PO-M"}]
-
+# Tahap 9 (7 Nov 2026, keputusan 3): jumlah aksesoris FINAL diisi user dalam satuan serah. Yang "sudah keluar" untuk
+# PO (MI kiriman + jalur permintaan) dikurangkan dari jumlah BAWAAN di form — bukan lagi potongan tersembunyi —
+# sehingga satu kebutuhan PO tetap keluar sekali bila user memakai jumlah bawaan.
+def _fake_issue(calls):
     async def fake_issue(db, mi, user, **kw):
         mi = {**mi, "status": "issued", "items": [{**it, "qty_issued": it["qty_required"]} for it in mi["items"]]}
         await db.rahaza_material_issues.update_one({"id": mi["id"]}, {"$set": mi})
-        return mi
-
-    async def mino(db, *a, **k):
-        return "MI-1"
-    monkeypatch.setattr(mie, "issue_material_issue", fake_issue)
-    monkeypatch.setattr(ris, "_gen_mi_number", mino)
-    res = run(mie.issue_for_maklon_shipment(d, {"id": "SJ1", "po_id": "PO-M", "shipment_number": "SJ-1"},
-                                            [{"qty_sent": 100}], ADMIN_ACC))
-    # butuh 1 × 100 = 100, sudah keluar lewat permintaan 60 → MI 40 (dulu 100 → total keluar 160)
-    assert [(it["material_id"], it["qty_required"]) for it in res["mi"]["items"]] == [("ACC1", 40.0)]
-
-
-def _internal_ship_db(monkeypatch, credit_qty):
-    d = FakeDB()
-    d.rahaza_materials.docs = [_mat()]
-    d.rahaza_material_stock.docs = [{"material_id": "ACC1", "location_id": "LOC-A", "qty": 500}]
-    d.rahaza_material_movements.docs = [{"id": "e1", "material_id": "ACC1", "movement_type": "issue",
-                                         "qty_signed": -credit_qty, "po_id": "PO-I"}]
-    calls = []
-
-    async def need(db, lines):
-        q = sum(float(x["qty"]) for x in lines)
-        return {"KCG": {"name": "Kancing", "unit": "pcs", "type": "accessory", "qty": q}}, [], int(q)
-
-    async def neg(db):
-        return False
-
-    async def fake_issue(db, mi, user, **kw):
         calls.append(mi["items"])
-        return {**mi, "status": "issued"}
+        return mi
+    return fake_issue
+
+
+def _kirim_env(monkeypatch):
+    from core import negative_stock
+    calls = []
 
     async def mino(db, *a, **k):
         return f"MI-{len(calls) + 1}"
-    from core import negative_stock
-    monkeypatch.setattr(mie, "bom_need_for_lines", need)
+
+    async def neg(db):
+        return False
     monkeypatch.setattr(negative_stock, "allowed", neg)
-    monkeypatch.setattr(mie, "issue_material_issue", fake_issue)
+    monkeypatch.setattr(mie, "issue_material_issue", _fake_issue(calls))
     monkeypatch.setattr(ris, "_gen_mi_number", mino)
-    return d, calls
+    return calls
 
 
-def _ship(d, sid, qty):
-    d.vendor_shipments.docs.append({"id": sid, "po_id": "PO-I"})
-    return run(mie.issue_for_vendor_shipment(d, {"id": sid, "po_id": "PO-I", "shipment_number": sid},
-                                             [{"po_item_id": "pi1", "qty_sent": qty}], ADMIN_ACC))
+def _ship_t9(d, sid, po_id, item_id, qty):
+    d.vendor_shipments.docs.append({"id": sid, "po_id": po_id, "shipment_type": "NORMAL", "shipment_number": sid})
+    items = [{"po_item_id": item_id, "qty_sent": qty, "po_id": po_id}]
+    d.vendor_shipment_items.docs.append({"shipment_id": sid, **items[0]})
+    return run(mie.issue_for_vendor_shipment(d, {"id": sid, "po_id": po_id, "shipment_number": sid}, items, ADMIN_ACC))
+
+
+def test_maklon_kirim_material_mengurangkan_pengeluaran_lewat_permintaan(monkeypatch):
+    d = FakeDB()
+    calls = _kirim_env(monkeypatch)
+    d.rahaza_materials.docs = [_mat()]
+    d.rahaza_material_stock.docs = [{"material_id": "ACC1", "location_id": "LOC-A", "qty": 500}]
+    d.production_pos.docs = [{"id": "PO-M", "po_number": "PO-M", "business_type": "maklon"}]
+    d.po_items.docs = [{"id": "pm1", "po_id": "PO-M", "qty": 100}]
+    d.po_accessories.docs = [{"id": "x1", "po_id": "PO-M", "accessory_id": "ACC1", "accessory_code": "KCG",
+                              "qty_needed": 100, "unit": "pcs", "ownership": "cv_da_stock", "source": "bom_maklon_auto"}]
+    # permintaan aksesoris ber-PO sudah mengeluarkan 60 kancing
+    d.rahaza_material_movements.docs = [{"id": "e1", "material_id": "ACC1", "movement_type": "issue",
+                                         "qty_signed": -60, "qty": -60, "po_id": "PO-M"}]
+    res = _ship_t9(d, "SJ1", "PO-M", "pm1", 100)
+    # butuh 1 × 100 = 100, sudah keluar lewat permintaan 60 → serah bawaan 40 (dulu 100 → total keluar 160)
+    assert [(it["material_id"], it["qty_required"], it["kind"]) for it in calls[0]] == [("ACC1", 40.0, "aksesoris")]
+    assert res["mi"]["cost_target"] == "maklon"
+
+
+def _internal_t9(d, credit_qty):
+    d.rahaza_materials.docs = [_mat(), {"id": "CUT1", "code": "CUT-M1-HTM-L", "name": "Potongan", "type": "fabric",
+                                        "unit": "pcs", "is_cut_panel": True, "unit_cost": 5000.0, "active": True}]
+    d.rahaza_material_stock.docs = [{"material_id": "ACC1", "location_id": "LOC-A", "qty": 500},
+                                    {"material_id": "CUT1", "location_id": "LOC-C", "qty": 500}]
+    d.production_pos.docs = [{"id": "PO-I", "po_number": "PO-I", "business_type": "internal", "vendor_id": "v1"}]
+    d.po_items.docs = [{"id": "pi1", "po_id": "PO-I", "qty": 200, "model_id": "m1", "size_id": "s1", "sku": "M1-HTM-L",
+                        "color": "Hitam", "color_code": "HTM"}]
+    d.rahaza_boms.docs = [{"id": "b1", "model_id": "m1", "size_id": "s1", "color": "Hitam", "color_code": "HTM",
+                           "is_active": True, "active": True, "materials": [
+                               {"material_id": "CUT1", "code": "CUT-M1-HTM-L", "name": "Potongan", "qty": 1, "unit": "pcs",
+                                "qty_base": 1, "unit_base": "pcs", "is_cut_panel": True},
+                               {"material_id": "ACC1", "code": "KCG", "name": "Kancing", "qty": 1, "unit": "pcs",
+                                "qty_base": 1, "unit_base": "pcs"}]}]
+    d.po_accessories.docs = [{"id": "x1", "po_id": "PO-I", "accessory_id": "ACC1", "accessory_code": "KCG",
+                              "qty_needed": 200, "unit": "pcs", "source": "bom_auto"}]
+    d.rahaza_material_movements.docs = [{"id": "e1", "material_id": "ACC1", "movement_type": "issue",
+                                         "qty_signed": -credit_qty, "po_id": "PO-I"}]
 
 
 def test_internal_kirim_material_memakai_pengeluaran_permintaan_sekali_saja(monkeypatch):
-    d, calls = _internal_ship_db(monkeypatch, 60)
-    _ship(d, "SJ1", 100)                     # butuh 100, sudah keluar 60 → 40
-    assert [(i["material_id"], i["qty_required"], i["offset_request_qty"]) for i in calls[0]] == [("ACC1", 40.0, 60.0)]
-    _ship(d, "SJ2", 100)                     # jatah permintaan sudah terpakai → 100 penuh
-    assert [(i["material_id"], i["qty_required"]) for i in calls[1]] == [("ACC1", 100.0)]
-    sj1 = next(s for s in d.vendor_shipments.docs if s["id"] == "SJ1")
-    assert sj1["accessory_request_offsets"] == [{"material_id": "ACC1", "qty": 60.0}]
+    d = FakeDB()
+    calls = _kirim_env(monkeypatch)
+    _internal_t9(d, 60)
+    _ship_t9(d, "SJ1", "PO-I", "pi1", 100)                     # 100 dari 200 pcs: rencana 100 − sudah keluar 60 = 40
+    acc = lambda c: [(i["material_id"], i["qty_required"]) for i in c if i["kind"] == "aksesoris"]  # noqa: E731
+    assert acc(calls[0]) == [("ACC1", 40.0)]
+    assert [(i["material_id"], i["qty_required"]) for i in calls[0] if i["kind"] == "potongan"] == [("CUT1", 100.0)]
+    _ship_t9(d, "SJ2", "PO-I", "pi1", 100)                     # sisa: 200 − (60 + 40) = 100
+    assert acc(calls[1]) == [("ACC1", 100.0)]
 
 
-def test_internal_kirim_material_tanpa_mi_bila_seluruhnya_sudah_keluar(monkeypatch):
-    d, calls = _internal_ship_db(monkeypatch, 150)
-    res = _ship(d, "SJ1", 100)
-    assert res["skipped"] is True and res["mi"] is None and calls == []
-    again = run(mie.issue_for_vendor_shipment(d, {"id": "SJ1", "po_id": "PO-I"}, [{"po_item_id": "pi1",
-                                                                                  "qty_sent": 100}], ADMIN_ACC))
-    assert again["already"] is True and calls == []                       # idempoten
-    _ship(d, "SJ2", 100)                                                  # sisa jatah 50 → MI 50
-    assert [(i["material_id"], i["qty_required"]) for i in calls[0]] == [("ACC1", 50.0)]
+def test_internal_kirim_aksesoris_nol_bila_seluruhnya_sudah_keluar(monkeypatch):
+    d = FakeDB()
+    calls = _internal_t9(d, 250) or _kirim_env(monkeypatch)
+    _ship_t9(d, "SJ1", "PO-I", "pi1", 100)
+    assert [i["kind"] for i in calls[0]] == ["potongan"]       # aksesoris bawaan 0; potongan tetap keluar pas
+    sj1 = run(mie.issue_for_vendor_shipment(d, {"id": "SJ1", "po_id": "PO-I"}, [{"po_item_id": "pi1", "qty_sent": 100}],
+                                            ADMIN_ACC))
+    assert sj1["already"] is True and len(calls) == 1         # idempoten per kiriman
 
 
 @pytest.fixture
@@ -776,7 +786,8 @@ def test_layar_memakai_daftar_divisi_backend_dan_tanpa_terima_barang():
     assert "/api/acc/divisions" in src and "const DIVISI = [" not in src
     assert "'Received')" not in src and "receive-pr-" not in src
     assert "/api/acc/stock/receive-price/" in src
-    po = (FE / "engine" / "ProductionPOModule.jsx").read_text(encoding="utf-8")
-    assert "Ajukan Pembelian (" in po and "Buat Permintaan (" not in po
+    # Tahap 9: kebutuhan aksesoris pindah dari popup detail PO ke rincian PO di halaman (PODetailPanel)
+    po = (FE / "engine" / "PODetailPanel.jsx").read_text(encoding="utf-8")
+    assert "Ajukan pembelian (" in po and "Buat Permintaan (" not in po
     inbox = (FE / "AccessoryRequestInbox.jsx").read_text(encoding="utf-8")
     assert "dewi_accessory_requests" not in inbox and "r.vendor_id ||" not in inbox

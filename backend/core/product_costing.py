@@ -625,7 +625,7 @@ async def resolve_cmt_rate(db, model: dict, *, override: dict | None = None,
     res["gaps"].append(_gap(
         "cmt_rate_missing",
         "Upah CMT/jahit per pcs belum ada untuk produk ini.",
-        "Isi Biaya Jahit per SKU di layar Biaya Jahit SPK (atau kunci upah CMT di layar HPP)",
+        "Isi upah jahit per baris di form PO (atau kunci upah CMT produk ini di layar HPP)",
         "prod-sewing-cost",
         candidates=len(res["candidates"])))
     return res

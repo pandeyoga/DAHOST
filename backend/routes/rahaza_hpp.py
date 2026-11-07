@@ -1,6 +1,14 @@
 """
 PT Rahaza — HPP / Costing (Fase 9)
 
+2026-11-07 (Tahap 9, keputusan owner No. 6 & 13): SATU "HPP per PO" untuk PO internal & maklon dari data nyata
+(`core.hpp_aktual`: potongan + aksesoris diserahkan + upah CMT + permak; biaya umum per pcs = informasi):
+  - GET /hpp/po                 : daftar HPP per PO (business_type, search, status, date_from/to, client_id, page)
+  - GET /hpp/po/{po_id}         : rincian satu PO (komponen, per baris, penyerahan, biaya umum, WIP)
+  - GET /hpp/overhead-info      : biaya umum produksi per pcs satu bulan (informasi)
+  Endpoint lama /hpp/maklon-order, /hpp/production-po, /hpp/maklon-client & `maklon_order_figures` mendelegasikan
+  ke hitungan yang sama (dulu membaca `dewi_maklon_material_issues` yang tidak ditulis lagi).
+
 2026-11-06 (Tahap 2, keputusan owner): HPP per Work Order = (bahan + upah CMT) / qty_completed.
 Upah internal (payroll) & overhead tetap beban bulanan — hanya ditampilkan sebagai informasi.
 Uraian lama di bawah dipertahankan sebagai riwayat:
@@ -405,448 +413,243 @@ async def list_po_snapshots(request: Request):
     return serialize_doc(rows)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Tahap 9 (keputusan owner 7 Nov 2026 No. 6 & 13) — SATU "HPP per PO" untuk PO internal & maklon.
+# Semua angka dari `core.hpp_aktual` (data nyata: potongan + aksesoris diserahkan + upah CMT + permak).
+# Endpoint lama di bawah (order maklon, PO produksi, per klien, unduhan) MENDELEGASIKAN ke hitungan yang sama.
+# ══════════════════════════════════════════════════════════════════════════════
+from core import hpp_aktual as _ha  # noqa: E402
+
+
+async def _read_hpp(request: Request) -> dict:
+    """Baca HPP: login, bukan klien maklon, bukan vendor CMT (HPP = data internal DA/Sukma)."""
+    user = await require_auth(request)
+    from routes.production_rbac import deny_klien, is_vendor
+    deny_klien(user)
+    if is_vendor(user):
+        raise HTTPException(403, "Vendor CMT tidak punya akses ke HPP.")
+    return user
+
+
+def _bt_query(business_type: str) -> dict:
+    """Saringan jenis PO (aturan bersama layar PO): internal = 'internal', maklon = bukan 'internal'."""
+    bt = (business_type or "").strip().lower()
+    if bt == "internal":
+        return {"business_type": "internal"}
+    if bt == "maklon":
+        return {"business_type": {"$ne": "internal"}}
+    return {}
+
+
+def _day(s: str, *, end: bool = False):
+    try:
+        d = datetime.strptime(str(s)[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+    if end:
+        from datetime import timedelta
+        d = d + timedelta(days=1)
+    return d
+
+
+def _po_query(business_type: str, search: str, date_from: str, date_to: str, client_id: str) -> dict:
+    q: dict = {"status": {"$nin": list(_ha.PO_HIDDEN_STATUSES)}, **_bt_query(business_type)}
+    if search:
+        rx = {"$regex": search.strip(), "$options": "i"}
+        q["$or"] = [{"po_number": rx}, {"customer_name": rx}, {"vendor_name": rx}]
+    rng = {}
+    if _day(date_from):
+        rng["$gte"] = _day(date_from)
+    if _day(date_to, end=True):
+        rng["$lt"] = _day(date_to, end=True)
+    if rng:
+        q["po_date"] = rng
+    if client_id:
+        q["buyer_id"] = client_id
+    return q
+
+
+def _list_row(fig: dict) -> dict:
+    row = {k: v for k, v in fig.items() if k not in ("lines", "issue_lines")}
+    row["line_count"] = len(fig.get("lines") or [])
+    return row
+
+
+def _summary(figs: list, business_type: str) -> dict:
+    tot = sum(f["total_hpp"] for f in figs)
+    pcs = sum(f["qty_accepted"] for f in figs)
+    absorbed = sum(f["absorbed_cost"] for f in figs if f["qty_accepted"])
+    out = {"po_count": len(figs), "total_hpp": round(tot, 2), "qty_accepted": int(pcs),
+           "hpp_per_pcs": round(absorbed / pcs, 2) if pcs else None,
+           "unabsorbed_cost": round(sum(f["unabsorbed_cost"] for f in figs if f.get("business_type") == "internal"), 2),
+           "missing_rate_pos": sum(1 for f in figs if f.get("items_missing_rate"))}
+    mk = [f for f in figs if f.get("business_type") == "maklon"]
+    if mk:
+        rev = sum(f["revenue"] for f in mk)
+        cost = sum(f["total_hpp"] for f in mk)
+        out.update({"revenue": round(rev, 2), "margin": round(rev - cost, 2),
+                    "margin_pct": round((rev - cost) / rev * 100, 2) if rev else None})
+    return out
+
+
+@router.get("/hpp/po")
+async def hpp_po_list(request: Request, business_type: str = "", search: str = "", status: str = "",
+                      date_from: str = "", date_to: str = "", client_id: str = "",
+                      page: int = 1, per_page: int = 25):
+    """Daftar HPP aktual per PO (satu layar untuk Portal Produksi & Maklon, disaring jenis PO)."""
+    await _read_hpp(request)
+    db = get_db()
+    base = _po_query(business_type, search, date_from, date_to, client_id)
+    closed = list(_ha.CLOSED_STATUSES)
+    counts = {"all": await db.production_pos.count_documents(base),
+              "closed": await db.production_pos.count_documents({**base, "status": {"$in": closed}})}
+    counts["open"] = counts["all"] - counts["closed"]
+    q = dict(base)
+    if status == "closed":
+        q["status"] = {"$in": closed}
+    elif status == "open":
+        q["status"] = {"$nin": list(_ha.PO_HIDDEN_STATUSES) + closed}
+    per_page = max(5, min(int(per_page or 25), 100))
+    page = max(1, int(page or 1))
+    pos = await db.production_pos.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    figs = await _ha.po_hpp_many(db, pos, with_overhead=False)
+    paged = figs[(page - 1) * per_page: page * per_page]
+    accs = await _ha.overhead_accounts(db)
+    cache: dict = {}
+    for f in paged:
+        f["overhead_info"] = await _ha._po_overhead(db, f, accs, cache)
+    month = (str(date_to)[:7] if _day(date_to) else datetime.now(timezone.utc).strftime("%Y-%m"))
+    bt = "maklon" if (business_type or "").lower() == "maklon" else "internal"
+    return serialize_doc({
+        "items": [_list_row(f) for f in paged], "total": len(figs), "page": page, "per_page": per_page,
+        "counts": counts, "summary": _summary(figs, business_type),
+        "overhead": await _ha.overhead_month(db, month, bt, accounts=accs),
+        "capped": len(pos) >= 500,
+    })
+
+
+@router.get("/hpp/po/{po_id}")
+async def hpp_po_detail(po_id: str, request: Request):
+    """Rincian HPP aktual satu PO: komponen, per baris (aktual vs standar BOM), penyerahan bahan, upah CMT,
+    biaya umum per pcs (informasi) dan — PO internal — posisi WIP / selisih saat ditutup."""
+    await _read_hpp(request)
+    fig = await _ha.po_hpp(get_db(), po_id, detail=True)
+    if not fig:
+        raise HTTPException(404, "PO tidak ditemukan.")
+    return serialize_doc(fig)
+
+
+@router.get("/hpp/overhead-info")
+async def hpp_overhead_info(request: Request, month: str = "", business_type: str = "internal"):
+    """Biaya umum produksi per pcs satu bulan (informasi, TIDAK masuk HPP)."""
+    await _read_hpp(request)
+    ym = month[:7] if (len(month) >= 7 and month[4] == "-") else datetime.now(timezone.utc).strftime("%Y-%m")
+    return serialize_doc(await _ha.overhead_month(get_db(), ym, business_type))
+
+
+# ── endpoint lama → hitungan yang sama ────────────────────────────────────────
 @router.get("/hpp/maklon-order/{order_id}")
 async def hpp_for_maklon_order(order_id: str, request: Request):
-    """
-    Compute HPP aktual untuk Maklon Order.
-    - Material: dari dewi_maklon_material_issues (qty × unit_cost)
-    - Labor: dari WO maklon (source=maklon) WIP events × payroll rate
-    - Overhead: overhead_rate × qty_completed
-    - Estimasi: belum ada sumbernya → None (dulu harga jasa × qty = pendapatan)
-    """
-    await require_auth(request)
+    """LAMA (HPP aktual order maklon). Tahap 9: dulu membaca `dewi_maklon_material_issues` yang tidak ditulis
+    lagi; kini = HPP per PO (`core.hpp_aktual`). Kunci lama dipertahankan untuk pemanggil lama."""
+    await _read_hpp(request)
     db = get_db()
-    
-    order = await _lmo(db).find_one({"id": order_id}, {"_id": 0})
-    if not order:
+    fig = await _ha.po_hpp(db, order_id, detail=False)
+    if not fig:
         raise HTTPException(404, "Maklon order tidak ditemukan.")
-    
-    settings = await db.rahaza_costing_settings.find_one({"id": SETTINGS_ID}, {"_id": 0}) or {}
-    overhead_rate = float(settings.get("overhead_rate_per_pcs") or 0)
-    
-    qty_ordered = int(order.get("qty_ordered") or 0)
-    
-    # ── 1) Material cost dari maklon material issues ──
-    material_issues = await db.dewi_maklon_material_issues.find(
-        {"order_id": order_id}, {"_id": 0}
-    ).to_list(500)
-    
-    material_cost = 0
-    material_breakdown = []
-    
-    # Batch fetch all materials referenced
-    all_mat_ids = list({mi.get("material_id") for mi in material_issues if mi.get("material_id")})
-    mat_map = {}
-    if all_mat_ids:
-        async for d in db.rahaza_materials.find({"id": {"$in": all_mat_ids}}, {"_id": 0}):
-            mat_map[d["id"]] = d
-    
-    for mi in material_issues:
-        mat_id = mi.get("material_id")
-        mat = mat_map.get(mat_id) or {}
-        unit_cost = float(mat.get("unit_cost") or 0)
-        qty = float(mi.get("qty") or 0)
-        amount = qty * unit_cost
-        material_cost += amount
-        material_breakdown.append({
-            "material_id": mat_id,
-            "material_name": mi.get("material_name") or mat.get("name", ""),
-            "material_code": mat.get("code", ""),
-            "qty": qty,
-            "unit": mi.get("unit", ""),
-            "unit_cost": unit_cost,
-            "amount": round(amount),
-        })
-    
-    # ── 2) Labor cost dari WO maklon (source=maklon) ──
-    linked_wo_ids = order.get("linked_wo_ids") or []
-    labor_cost = 0
-    labor_breakdown = []
-    
-    if linked_wo_ids:
-        # Aggregate WIP events dari semua WO maklon
-        wip = await db.rahaza_wip_events.find(
-            {"work_order_id": {"$in": linked_wo_ids}, "event_type": "output"},
-            {"_id": 0}
-        ).to_list(500)
-        
-        # Group by operator
-        op_qty = {}
-        for ev in wip:
-            op_id = ev.get("operator_id")
-            if not op_id:
-                continue
-            if op_id not in op_qty:
-                op_qty[op_id] = {"qty": 0, "process_code": ev.get("process_code"), "process_id": ev.get("process_id")}
-            op_qty[op_id]["qty"] += int(ev.get("qty") or 0)
-        
-        # Batch fetch employees & payroll profiles
-        op_ids = list(op_qty.keys())
-        emp_map = {}
-        profile_map = {}
-        if op_ids:
-            async for d in db.rahaza_employees.find({"id": {"$in": op_ids}}, {"_id": 0}):
-                emp_map[d["id"]] = d
-            async for d in db.rahaza_payroll_profiles.find(
-                {"employee_id": {"$in": op_ids}, "active": True}, {"_id": 0}
-            ):
-                profile_map[d["employee_id"]] = d
-        
-        labor_fallback = float(settings.get("labor_rate_fallback_per_pcs") or 0)
-        for op_id, info in op_qty.items():
-            emp = emp_map.get(op_id) or {}
-            profile = profile_map.get(op_id)
-            rate = 0
-            if profile and profile.get("pay_scheme") == "pcs":
-                overrides = {r["process_id"]: r["rate"] for r in (profile.get("pcs_process_rates") or [])}
-                rate = float(overrides.get(info["process_id"], profile.get("base_rate") or 0))
-            if rate <= 0:
-                rate = labor_fallback
-            amount = info["qty"] * rate
-            labor_cost += amount
-            labor_breakdown.append({
-                "operator_id": op_id,
-                "operator_name": emp.get("name"),
-                "process_code": info["process_code"],
-                "process_id": info["process_id"],
-                "qty": info["qty"],
-                "rate": rate,
-                "amount": round(amount),
-            })
-        
-        # Group labor by process (Phase 3.1)
-        labor_by_process = {}
-        for lb in labor_breakdown:
-            proc_id = lb.get("process_id")
-            if proc_id not in labor_by_process:
-                labor_by_process[proc_id] = {
-                    "process_id": proc_id,
-                    "process_code": lb.get("process_code"),
-                    "total_qty": 0,
-                    "total_cost": 0,
-                    "operators_count": 0,
-                }
-            labor_by_process[proc_id]["total_qty"] += lb["qty"]
-            labor_by_process[proc_id]["total_cost"] += lb["amount"]
-            labor_by_process[proc_id]["operators_count"] += 1
-        
-        labor_breakdown_by_process = list(labor_by_process.values())
-    else:
-        labor_breakdown_by_process = []
-    
-    # ── 3) Overhead ──
-    # Use stage_qty packing_output as completed qty, fallback to qty_ordered
-    stage_qty = order.get("stage_qty") or {}
-    qty_completed = int(stage_qty.get("packing_output") or qty_ordered)
-    overhead_cost = qty_completed * overhead_rate
-    
-    # ── 4) Total & HPP unit ──
-    # 2026-11-06 (Tahap 2): upah internal & overhead tidak masuk HPP (informasi saja).
-    total_cost_actual = material_cost
-    hpp_unit_actual = total_cost_actual / qty_completed if qty_completed > 0 else 0
-    
-    # ── 5) Estimasi & selisih ──
-    # Tahap 1 (6 Nov 2026): dulu "estimasi" = harga jasa × qty, yaitu PENDAPATAN, bukan
-    # estimasi biaya. Order maklon belum punya sumber estimasi HPP, jadi dikirim None
-    # ("belum ada data") — bukan angka karangan.
-    estimated_hpp_total = None
-    estimated_hpp_unit = None
-    delta_unit = None
-    delta_pct = None
-
+    material = round(fig["cut_cost"] + fig["accessory_cost"], 2)
     return serialize_doc({
-        "order_id": order_id,
-        "order_code": order.get("order_code", ""),
-        "client_name": order.get("client_name", ""),
-        "product_name": order.get("product_name", ""),
-        "qty_ordered": qty_ordered,
-        "qty_completed": qty_completed,
-        
-        # Actual (Tahap 2: upah internal & overhead = informasi, tidak masuk total)
-        "material_cost_actual": round(material_cost),
-        "labor_cost_actual": round(labor_cost), "labor_in_hpp": False,
-        "overhead_cost_actual": round(overhead_cost), "overhead_in_hpp": False,
-        "total_cost_actual": round(total_cost_actual),
-        "hpp_unit_actual": round(hpp_unit_actual),
-        
-        # Estimasi: belum ada sumbernya (None = "belum ada data")
-        "estimated_hpp_total": estimated_hpp_total,
-        "estimated_hpp_unit": estimated_hpp_unit,
-        "delta_unit": delta_unit,
-        "delta_pct": delta_pct,
-        
-        # Breakdown
-        "material_breakdown": material_breakdown,
-        "labor_breakdown": labor_breakdown,
-        "labor_breakdown_by_process": labor_breakdown_by_process,
-        "overhead_rate_per_pcs": overhead_rate,
-        
-        "computed_at": _now().isoformat(),
+        "order_id": order_id, "order_code": fig["po_number"], "client_name": fig["client_name"],
+        "product_name": (fig["lines"][0]["product_name"] if fig["lines"] else ""),
+        "qty_ordered": fig["qty_ordered"], "qty_completed": fig["qty_accepted"],
+        "material_cost_actual": material, "cmt_cost_actual": fig["cmt_cost"], "permak_cost_actual": fig["permak_cost"],
+        "labor_cost_actual": 0, "labor_in_hpp": False, "overhead_cost_actual": 0, "overhead_in_hpp": False,
+        "total_cost_actual": fig["total_hpp"], "hpp_unit_actual": fig["hpp_per_pcs"] or 0,
+        "estimated_hpp_total": None, "estimated_hpp_unit": None, "delta_unit": None, "delta_pct": None,
+        "material_breakdown": fig["issue_lines"], "labor_breakdown": [], "labor_breakdown_by_process": [],
+        "hpp": _list_row(fig), "source": "hpp_per_po", "computed_at": _now().isoformat(),
     })
 
 
 @router.get("/hpp/production-po/{po_id}")
 async def hpp_for_production_po(po_id: str, request: Request):
-    """
-    Compute HPP aktual per Production PO (internal).
-    Agregasi dari semua WO yang terkait (order_id di WO → PO).
-    """
-    await require_auth(request)
-    db = get_db()
-    
-    po = await db.production_pos.find_one({"id": po_id}, {"_id": 0})
-    if not po:
+    """LAMA (HPP per PO produksi = Σ HPP job). Tahap 9: = HPP per PO (`core.hpp_aktual`)."""
+    await _read_hpp(request)
+    fig = await _ha.po_hpp(get_db(), po_id, detail=False)
+    if not fig:
         raise HTTPException(404, "Production PO tidak ditemukan.")
-    
-    # Get all WOs linked to this PO (via order_id)
-    # Production PO biasanya tidak punya direct WO link, tapi via rahaza_orders
-    # Asumsi: PO → po_items → each item punya order_item_id yang match ke rahaza_orders.items.id
-    # Atau simpler: cari WO yang order_number_snapshot = po.po_number
-    
-    # Method 1: via order_id (jika PO punya order_id field)
-    # T-03 (FASE 3): SSOT production_jobs via core.wo_reader (job ter-anchor po_id).
-    from core.wo_reader import load_wos
-    wos = await load_wos(db, po_ids=[po_id], limit=500)
-    
-    if not wos:
-        # No WOs found, return empty but valid structure
-        return serialize_doc({
-            "po_id": po_id,
-            "po_number": po.get("po_number", ""),
-            "customer_name": po.get("customer_name", ""),
-            "total_cost_actual": 0,
-            "total_cost_estimated": None,
-            "delta_total": None,
-            "delta_pct": None,
-            "wo_count": 0,
-            "wo_breakdown": [],
-            "computed_at": _now().isoformat(),
-        })
-    
-    # Compute HPP for each WO
-    wo_breakdown = []
-    total_actual = 0
-
-    for wo in wos:
-        wo_id = wo["id"]
-        # Reuse existing _compute_hpp function
-        hpp_data = await _compute_hpp(db, wo_id)
-        actual = hpp_data.get("total_cost", 0)
-        total_actual += actual
-        # Tahap 1 (6 Nov 2026): dulu "estimasi" = aktual (selisih selalu 0%). Job belum
-        # menyimpan estimasi HPP, jadi estimasi & selisih = None ("belum ada data").
-        wo_breakdown.append({
-            "wo_id": wo_id,
-            "wo_number": wo.get("wo_number", ""),
-            "model_code": hpp_data.get("model_code", ""),
-            "size_code": hpp_data.get("size_code", ""),
-            "qty": hpp_data.get("qty", 0),
-            "qty_completed": hpp_data.get("qty_completed", 0),
-            "total_cost_actual": round(actual),
-            "total_cost_estimated": None,
-            "delta": None,
-            "material_cost": hpp_data.get("material_cost", 0),
-            "labor_cost": hpp_data.get("labor_cost", 0),
-            "overhead_cost": hpp_data.get("overhead_cost", 0),
-        })
-
     return serialize_doc({
-        "po_id": po_id,
-        "po_number": po.get("po_number", ""),
-        "customer_name": po.get("customer_name", ""),
-        "status": po.get("status", ""),
-
-        "total_cost_actual": round(total_actual),
-        "total_cost_estimated": None,
-        "delta_total": None,
-        "delta_pct": None,
-        
-        "wo_count": len(wos),
-        "wo_breakdown": wo_breakdown,
-        
-        "computed_at": _now().isoformat(),
+        "po_id": po_id, "po_number": fig["po_number"], "customer_name": fig["client_name"], "status": fig["status"],
+        "total_cost_actual": fig["total_hpp"], "total_cost_estimated": None, "delta_total": None, "delta_pct": None,
+        "hpp_per_pcs": fig["hpp_per_pcs"], "components": fig["components"], "lines": fig["lines"],
+        "wo_count": 0, "wo_breakdown": [], "source": "hpp_per_po", "computed_at": _now().isoformat(),
     })
 
 
 async def maklon_order_figures(db, order: dict) -> dict:
-    """Angka NYATA satu order maklon (lama) untuk analisa/unduhan per klien.
-
-    Tahap 1 (6 Nov 2026): dulu "HPP aktual" = bahan + 30% (upah) + 15% (overhead) dan
-    "HPP estimasi" = harga jasa × qty (= pendapatan) — semuanya angka karangan. Yang
-    tercatat hanya nilai order (qty × harga jasa) dan biaya bahan keluar; upah, overhead,
-    estimasi HPP, dan margin belum ada sumbernya ⇒ None ("belum ada data")."""
-    qty = int(order.get("qty_ordered") or 0)
-    revenue = qty * float(order.get("price_per_pcs") or 0)
-    rows = await db.dewi_maklon_material_issues.find(
-        {"order_id": order.get("id")}, {"_id": 0, "qty": 1, "unit_cost": 1}).to_list(2000)
-    material_cost = sum(float(r.get("qty") or 0) * float(r.get("unit_cost") or 0) for r in rows)
-    return {"qty": qty, "revenue": revenue, "material_cost": material_cost,
-            "hpp_estimated": None, "hpp_actual": None, "margin": None}
+    """Angka NYATA satu order maklon untuk analisa/unduhan per klien. Tahap 9: dari HPP per PO (dulu
+    `dewi_maklon_material_issues` yang tidak ditulis lagi; HPP & margin "belum ada data")."""
+    fig = await _ha.po_hpp(db, (order or {}).get("id"), detail=False)
+    if not fig:
+        qty = int((order or {}).get("qty_ordered") or 0)
+        return {"qty": qty, "revenue": 0.0, "material_cost": 0.0, "hpp_estimated": None, "hpp_actual": None,
+                "margin": None}
+    return {"qty": fig["qty_ordered"], "revenue": fig["revenue"],
+            "material_cost": round(fig["cut_cost"] + fig["accessory_cost"], 2), "hpp_estimated": None,
+            "hpp_actual": fig["total_hpp"], "margin": fig["margin"], "hpp_per_pcs": fig["hpp_per_pcs"],
+            "margin_per_pcs": fig["margin_per_pcs"]}
 
 
 @router.get("/hpp/maklon-client/{client_id}")
 async def hpp_for_maklon_client(client_id: str, request: Request):
-    """
-    Analisa KPI per Klien Maklon.
-    - Total orders, qty, revenue
-    - HPP estimated vs actual, margin
-    - On-time delivery rate
-    
-    Phase 3.3: Advanced filters + pagination
-    Query params:
-      - date_from, date_to: filter by order_date
-      - status: filter by order status (comma-separated: pending,production,completed)
-      - page: page number (default 1)
-      - limit: items per page (default 50, max 200)
-    """
-    await require_auth(request)
+    """LAMA — ringkasan per klien maklon. Tahap 9: PO maklon klien ini (`production_pos.buyer_id`) dengan HPP
+    per PO yang sama. Saringan: date_from, date_to (tanggal PO), status (koma), page, limit."""
+    await _read_hpp(request)
     db = get_db()
-    
     client = await db.dewi_maklon_clients.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(404, "Klien maklon tidak ditemukan.")
-    
-    # Filters (Phase 3.3)
     sp = request.query_params
-    date_from = sp.get("date_from")
-    date_to = sp.get("date_to")
-    status_filter = sp.get("status")  # comma-separated: "pending,production"
-    
-    # Pagination (Phase 3.3)
-    page = int(sp.get("page", 1))
-    limit = min(int(sp.get("limit", 50)), 200)  # max 200
-    skip = (page - 1) * limit
-    
-    query = {"client_id": client_id}
-    
-    # Date range filter
-    if date_from or date_to:
-        query["order_date"] = {}
-        if date_from:
-            query["order_date"]["$gte"] = date_from
-        if date_to:
-            query["order_date"]["$lte"] = date_to
-    
-    # Status filter
-    if status_filter:
-        statuses = [s.strip() for s in status_filter.split(",") if s.strip()]
-        if statuses:
-            query["status"] = {"$in": statuses}
-    
-    # Count total (for pagination metadata)
-    total_count = await _lmo(db).count_documents(query)
-    
-    # Fetch orders with pagination
-    orders = await _lmo(db).find(query, {"_id": 0}).sort("order_date", -1).skip(skip).limit(limit).to_list(500)
-    
-    if not orders:
-        total_pages = (total_count + limit - 1) // limit if limit > 0 else 1
-        return serialize_doc({
-            "client_id": client_id,
-            "client_code": client.get("code", ""),
-            "client_name": client.get("name", ""),
-            "total_orders": 0,
-            "total_qty": 0,
-            "total_revenue": 0,
-            "total_material_cost": 0,
-            "total_hpp_estimated": None,
-            "total_hpp_actual": None,
-            "margin_amount": None,
-            "margin_pct": None,
-            "on_time_count": 0,
-            "late_count": 0,
-            "on_time_rate": 0,
-            "orders": [],
-            "pagination": {
-                "page": page,
-                "limit": limit,
-                "total_count": total_count,
-                "total_pages": total_pages,
-                "has_next": page < total_pages,
-                "has_prev": page > 1,
-            },
-            "computed_at": _now().isoformat(),
-        })
-    
-    # Aggregate metrics
-    total_qty = 0
-    total_revenue = 0
-    total_material_cost = 0
-    on_time_count = 0
-    late_count = 0
-
-    order_details = []
-
-    for order in orders:
-        fig = await maklon_order_figures(db, order)
-        qty, revenue = fig["qty"], fig["revenue"]
-        total_qty += qty
-        total_revenue += revenue
-        total_material_cost += fig["material_cost"]
-
-        # On-time check
-        deadline = order.get("deadline_date")
-        completion = order.get("completion_date")
-        is_on_time = False
-        if completion and deadline:
-            is_on_time = completion <= deadline
-        
-        if order.get("status") == "completed":
-            if is_on_time:
-                on_time_count += 1
-            else:
-                late_count += 1
-        
-        order_details.append({
-            "order_id": order["id"],
-            "order_code": order.get("order_code", ""),
-            "product_name": order.get("product_name", ""),
-            "qty": qty,
-            "status": order.get("status", ""),
-            "revenue": round(revenue),
-            "material_cost": round(fig["material_cost"]),
-            "hpp_estimated": fig["hpp_estimated"],
-            "hpp_actual": fig["hpp_actual"],
-            "margin": fig["margin"],
-            "is_on_time": is_on_time,
-            "deadline_date": deadline,
-            "completion_date": completion,
-        })
-
-    on_time_rate = (on_time_count / (on_time_count + late_count) * 100) if (on_time_count + late_count) > 0 else 0
-    
-    total_pages = (total_count + limit - 1) // limit if limit > 0 else 1
-    
+    page = max(1, int(sp.get("page", 1) or 1))
+    limit = max(1, min(int(sp.get("limit", 50) or 50), 200))
+    q = _po_query("maklon", "", sp.get("date_from") or "", sp.get("date_to") or "", client_id)
+    statuses = [s.strip() for s in (sp.get("status") or "").split(",") if s.strip()]
+    if statuses:
+        q["status"] = {"$in": statuses}
+    total_count = await db.production_pos.count_documents(q)
+    pos = await db.production_pos.find(q, {"_id": 0}).sort("po_date", -1).to_list(500)
+    pos = pos[(page - 1) * limit: page * limit]
+    figs = await _ha.po_hpp_many(db, pos, with_overhead=False)
+    orders, on_time, late = [], 0, 0
+    for po, f in zip(pos, figs):
+        deadline, done_at = po.get("deadline"), po.get("closed_at")
+        try:
+            ok = bool(deadline and done_at and done_at <= deadline)
+        except TypeError:          # tanggal campuran (dengan/tanpa zona waktu) — tidak dinilai
+            ok, deadline = False, None
+        if f["closed"] and deadline and done_at:
+            on_time += ok
+            late += not ok
+        orders.append({"order_id": po["id"], "order_code": f["po_number"],
+                       "product_name": (f["lines"][0]["product_name"] if f["lines"] else ""),
+                       "qty": f["qty_ordered"], "status": po.get("status", ""), "revenue": f["revenue"],
+                       "material_cost": round(f["cut_cost"] + f["accessory_cost"], 2), "hpp_estimated": None,
+                       "hpp_actual": f["total_hpp"], "hpp_per_pcs": f["hpp_per_pcs"], "margin": f["margin"],
+                       "is_on_time": ok if (deadline and done_at) else None,
+                       "deadline_date": deadline, "completion_date": done_at})
+    rev = sum(o["revenue"] for o in orders)
+    hpp = sum(o["hpp_actual"] for o in orders)
+    total_pages = (total_count + limit - 1) // limit if limit else 1
     return serialize_doc({
-        "client_id": client_id,
-        "client_code": client.get("code", ""),
-        "client_name": client.get("name", ""),
-        
-        "total_orders": len(orders),
-        "total_qty": total_qty,
-        "total_revenue": round(total_revenue),
-        "total_material_cost": round(total_material_cost),
-        # Tahap 1: belum ada sumber estimasi, upah, dan overhead order maklon → None
-        "total_hpp_estimated": None,
-        "total_hpp_actual": None,
-        "margin_amount": None,
-        "margin_pct": None,
-        
-        "on_time_count": on_time_count,
-        "late_count": late_count,
-        "on_time_rate": round(on_time_rate, 2),
-        
-        "orders": order_details,
-        
-        # Pagination metadata (Phase 3.3)
-        "pagination": {
-            "page": page,
-            "limit": limit,
-            "total_count": total_count,
-            "total_pages": total_pages,
-            "has_next": page < total_pages,
-            "has_prev": page > 1,
-        },
-        
-        "computed_at": _now().isoformat(),
+        "client_id": client_id, "client_code": client.get("code", ""), "client_name": client.get("name", ""),
+        "total_orders": len(orders), "total_qty": sum(o["qty"] for o in orders), "total_revenue": round(rev, 2),
+        "total_material_cost": round(sum(o["material_cost"] for o in orders), 2),
+        "total_hpp_estimated": None, "total_hpp_actual": round(hpp, 2), "margin_amount": round(rev - hpp, 2),
+        "margin_pct": round((rev - hpp) / rev * 100, 2) if rev else None,
+        "on_time_count": on_time, "late_count": late,
+        "on_time_rate": round(on_time / (on_time + late) * 100, 2) if (on_time + late) else 0,
+        "orders": orders,
+        "pagination": {"page": page, "limit": limit, "total_count": total_count, "total_pages": total_pages,
+                       "has_next": page < total_pages, "has_prev": page > 1},
+        "source": "hpp_per_po", "computed_at": _now().isoformat(),
     })

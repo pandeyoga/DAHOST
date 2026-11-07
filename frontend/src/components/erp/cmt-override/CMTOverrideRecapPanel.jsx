@@ -22,28 +22,21 @@
  *
  * Tab Harian tetap tab PERTAMA (keputusan owner 4a sesi sebelumnya): yang dibuka
  * staf tiap pagi adalah "siapa yang belum diisi HARI INI".
+ *
+ * Tahap 9 (7 Nov 2026): panel ini kini tab "Rekap pengisian" di menu Input atas nama CMT — cetakan
+ * PageLayout, dan pilihan Harian · Mingguan memakai penyaring standar (FilterChips), bukan tombol buatan.
  */
 import { useCallback, useState } from 'react';
-import { CalendarDays, CalendarRange } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { GlassCard } from '@/components/ui/glass';
+import FilterChips from '@/components/ui/filter-chips';
+import PageLayout from '../layout/PageLayout';
 import CMTOverrideDailyRecap from './CMTOverrideDailyRecap';
 import CMTOverrideWeeklyRecap from './CMTOverrideWeeklyRecap';
 import { dayLabel, isoToday, shiftDay } from './recapDates';
 
-const TABS = [
-  {
-    id: 'harian',
-    label: 'Harian',
-    Icon: CalendarDays,
-    hint: 'Siapa yang belum diisi pada satu tanggal',
-  },
-  {
-    id: 'mingguan',
-    label: 'Mingguan',
-    Icon: CalendarRange,
-    hint: 'Siapa yang sering bolong dalam 7 hari terakhir',
-  },
+const VIEWS = [
+  { key: 'harian', label: 'Harian' },
+  { key: 'mingguan', label: 'Mingguan' },
 ];
 
 export default function CMTOverrideRecapPanel({ onOpenVendor, canFill = true }) {
@@ -60,62 +53,21 @@ export default function CMTOverrideRecapPanel({ onOpenVendor, canFill = true }) 
   const isToday = day === isoToday();
 
   return (
-    <div className="space-y-3" data-testid="cmt-recap-panel-wrap">
-      {/* ── Pemilih tab ─────────────────────────────────────────────────── */}
-      <GlassCard className="p-2"
-        data-testid="cmt-recap-tabs">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex flex-1 flex-wrap gap-1.5" role="tablist"
-            aria-label="Pilih tampilan rekap">
-            {TABS.map(({ id, label, Icon, hint }) => {
-              const active = tab === id;
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  title={hint}
-                  onClick={() => setTab(id)}
-                  className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] ${
-                    active
-                      ? 'border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary))] text-white shadow-sm'
-                      : 'border-border bg-background text-foreground hover:bg-muted'
-                  }`}
-                  data-testid={`cmt-recap-tab-${id}`}
-                  data-active={active ? 'true' : 'false'}
-                >
-                  <Icon className="h-4 w-4 flex-shrink-0" />
-                  <span className="flex flex-col leading-tight">
-                    <span className="text-sm font-semibold">{label}</span>
-                    <span className={`text-[10px] ${active ? 'text-white/80' : 'text-muted-foreground'}`}>
-                      {hint}
-                    </span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Tanggal yang sedang dipakai KEDUA tab — supaya jelas bahwa keduanya
-              berbagi satu tanggal, bukan dua tanggal yang kebetulan mirip. */}
-          <div className="flex items-center gap-2 px-1 text-right">
-            <div className="text-[11px] leading-tight text-muted-foreground">
-              <p className="font-semibold text-foreground" data-testid="cmt-recap-shared-day">
-                {tab === 'mingguan' ? '7 hari s/d ' : ''}{dayLabel(day)}
-              </p>
-              <p>{isToday ? 'hari ini (WIB)' : 'tanggal lain — klik "Hari ini" untuk kembali'}</p>
-            </div>
-            {!isToday && (
-              <Button type="button" variant="outline" size="sm" onClick={() => setDay(isoToday())}
-                data-testid="cmt-recap-panel-today">
-                Hari ini
-              </Button>
-            )}
-          </div>
-        </div>
-      </GlassCard>
-
+    <PageLayout testId="cmt-recap-panel-wrap" title="Rekap pengisian"
+      subtitle="Vendor mana yang belum diisi — per hari, atau yang sering bolong dalam 7 hari."
+      filters={<FilterChips value={tab} onChange={setTab} options={VIEWS} hideWhenEmpty={false}
+        testId="cmt-recap-tab" ariaLabel="Pilih tampilan rekap" />}
+      tools={<>
+        {/* Tanggal yang dipakai KEDUA tampilan — supaya jelas keduanya berbagi satu tanggal. */}
+        <span className="text-xs text-muted-foreground" data-testid="cmt-recap-shared-day">
+          {tab === 'mingguan' ? '7 hari s/d ' : ''}{dayLabel(day)}{isToday ? ' (hari ini)' : ''}
+        </span>
+        {!isToday && (
+          <Button type="button" variant="outline" onClick={() => setDay(isoToday())} data-testid="cmt-recap-panel-today">
+            Hari ini
+          </Button>
+        )}
+      </>}>
       {tab === 'harian' ? (
         <CMTOverrideDailyRecap
           day={day}
@@ -133,6 +85,6 @@ export default function CMTOverrideRecapPanel({ onOpenVendor, canFill = true }) 
           shiftDay={shiftDay}
         />
       )}
-    </div>
+    </PageLayout>
   );
 }

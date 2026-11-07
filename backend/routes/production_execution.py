@@ -1123,6 +1123,24 @@ async def create_progress(request: Request):
     return JSONResponse(serialize_doc(progress), status_code=201)
 
 # ─── DISTRIBUSI KERJA ────────────────────────────────────────────────────────
+def _dk_blank() -> dict:
+    """Total satu simpul pohon distribusi kerja. `total_shipped` = alias yang dibaca layar lama."""
+    return {'total_ordered': 0, 'total_received': 0, 'total_produced': 0, 'total_shipped_to_buyer': 0,
+            'total_shipped': 0, 'total_missing': 0, 'total_defect': 0, 'total_accepted': 0, 'total_remaining': 0}
+
+
+def _dk_add(node: dict, row: dict) -> None:
+    node['total_ordered'] += row.get('ordered_qty', 0) or 0
+    node['total_received'] += row.get('received_qty', 0) or 0
+    node['total_produced'] += row.get('produced_qty', 0) or 0
+    node['total_shipped_to_buyer'] += row.get('shipped_to_buyer_qty', 0) or 0
+    node['total_shipped'] += row.get('shipped_to_buyer_qty', 0) or 0
+    node['total_missing'] += row.get('missing_qty', 0) or 0
+    node['total_defect'] += row.get('defect_qty', 0) or 0
+    node['total_accepted'] += row.get('accepted_qty', 0) or 0
+    node['total_remaining'] += row.get('remaining_production', 0) or 0
+
+
 @router.get("/distribusi-kerja")
 async def distribusi_kerja(request: Request):
     user = await require_auth(request)
@@ -1168,12 +1186,12 @@ async def distribusi_kerja(request: Request):
     ]).to_list(None) if po_item_ids else []
     prod_by_poitem = {a['_id']: a['qty'] for a in prod_agg}
 
-    # shipped_to_buyer per po_item
-    buyer_agg = await db.buyer_shipment_items.aggregate([
-        {'$match': {'po_item_id': {'$in': po_item_ids}}},
-        {'$group': {'_id': '$po_item_id', 'qty': {'$sum': '$qty_shipped'}}},
-    ]).to_list(None) if po_item_ids else []
-    buyer_by_poitem = {a['_id']: a['qty'] for a in buyer_agg}
+    # shipped_to_buyer per po_item — Tahap 9 (7 Nov 2026): HANYA surat jalan ke penerima akhir lewat SSOT
+    # `core.dispatch_capacity` (dulu Σ SEMUA buyer_shipment_items termasuk deklarasi CMT→DA, sehingga
+    # "Dikirim ke Buyer" = surat jalan CMT ke DA). Reject (cacat) & lolos QC dari sumber yang sama.
+    from core import dispatch_capacity as _dcap
+    _qmap = await _dcap.po_item_quantities(db, po_item_ids) if po_item_ids else {}
+    buyer_by_poitem = {k: v['dispatched'] for k, v in _qmap.items()}
 
     # received_qty: join shipment_items -> inspections -> inspection_items
     # Step 1 — pull all shipment items for these po_items
@@ -1189,15 +1207,18 @@ async def distribusi_kerja(request: Request):
     insp_ids = list(insp_id_by_ship.values())
     # Step 3 — fetch all inspection items keyed by shipment_item_id
     insp_items = await db.vendor_material_inspection_items.find(
-        {'inspection_id': {'$in': insp_ids}}, {'_id': 0, 'shipment_item_id': 1, 'received_qty': 1}
+        {'inspection_id': {'$in': insp_ids}}, {'_id': 0, 'shipment_item_id': 1, 'received_qty': 1, 'missing_qty': 1}
     ).to_list(None) if insp_ids else []
     received_by_shipitem = {ii['shipment_item_id']: ii.get('received_qty', 0) for ii in insp_items if ii.get('shipment_item_id')}
+    missing_by_shipitem = {ii['shipment_item_id']: ii.get('missing_qty', 0) or 0 for ii in insp_items if ii.get('shipment_item_id')}
     # Step 4 — sum received_qty per po_item via shipment_item linkage
     received_by_poitem = {}
+    missing_by_poitem = {}
     for si in all_ship_items:
         poi = si.get('po_item_id')
         if not poi: continue
         received_by_poitem[poi] = received_by_poitem.get(poi, 0) + received_by_shipitem.get(si.get('id'), 0)
+        missing_by_poitem[poi] = missing_by_poitem.get(poi, 0) + missing_by_shipitem.get(si.get('id'), 0)
 
     flat_rows = []
     for po in pos:
@@ -1206,11 +1227,14 @@ async def distribusi_kerja(request: Request):
             ordered_qty = pi.get('qty', 0)
             produced_qty = prod_by_poitem.get(poi, 0)
             progress_pct = round((produced_qty / ordered_qty * 100) if ordered_qty > 0 else 0)
+            _q = _qmap.get(poi) or {}
+            shipped_buyer = buyer_by_poitem.get(poi, 0)
             flat_rows.append({
                 'id': poi, 'po_item_id': poi,
                 'vendor_id': po.get('vendor_id'), 'vendor_name': po.get('vendor_name', ''),
                 'po_id': po['id'], 'po_number': po.get('po_number', ''),
                 'po_date': serialize_doc(po.get('created_at')),
+                'deadline': serialize_doc(po.get('delivery_deadline') or po.get('deadline')),
                 'customer_name': po.get('customer_name', ''),
                 'serial_number': pi.get('serial_number', ''),
                 'product_name': pi.get('product_name', ''), 'sku': pi.get('sku', ''),
@@ -1219,7 +1243,13 @@ async def distribusi_kerja(request: Request):
                 'shipment_qty': sent_by_poitem.get(poi, 0),
                 'received_qty': received_by_poitem.get(poi, 0),
                 'produced_qty': produced_qty,
-                'shipped_to_buyer_qty': buyer_by_poitem.get(poi, 0),
+                'shipped_to_buyer_qty': shipped_buyer,
+                # Tahap 9: nama yang dibaca layar lama (dulu tidak pernah dikirim ⇒ selalu 0)
+                'shipped_to_buyer': shipped_buyer,
+                'missing_qty': missing_by_poitem.get(poi, 0),
+                'defect_qty': int(_q.get('reject') or 0),
+                'accepted_qty': int(_q.get('accepted_total') or 0),
+                'remaining_production': max(0, int(ordered_qty or 0) - int(produced_qty or 0)),
                 'progress_pct': progress_pct,
             })
     # Build hierarchy
@@ -1227,32 +1257,21 @@ async def distribusi_kerja(request: Request):
     for row in flat_rows:
         vid = row.get('vendor_id')
         if vid not in vendor_map:
-            vendor_map[vid] = {'vendor_id': vid, 'vendor_name': row.get('vendor_name'),
-                               'total_ordered': 0, 'total_received': 0, 'total_produced': 0, 'total_shipped_to_buyer': 0, 'pos': {}}
+            vendor_map[vid] = {'vendor_id': vid, 'vendor_name': row.get('vendor_name'), **_dk_blank(), 'pos': {}}
         vm = vendor_map[vid]
-        vm['total_ordered'] += row.get('ordered_qty', 0)
-        vm['total_received'] += row.get('received_qty', 0)
-        vm['total_produced'] += row.get('produced_qty', 0)
-        vm['total_shipped_to_buyer'] += row.get('shipped_to_buyer_qty', 0)
+        _dk_add(vm, row)
         po_key = row.get('po_id', 'unknown')
         if po_key not in vm['pos']:
             vm['pos'][po_key] = {'po_id': row.get('po_id'), 'po_number': row.get('po_number'),
-                                  'customer_name': row.get('customer_name'),
-                                  'total_ordered': 0, 'total_received': 0, 'total_produced': 0, 'total_shipped_to_buyer': 0, 'serials': {}}
+                                  'customer_name': row.get('customer_name'), 'deadline': row.get('deadline'),
+                                  **_dk_blank(), 'serials': {}}
         pm = vm['pos'][po_key]
-        pm['total_ordered'] += row.get('ordered_qty', 0)
-        pm['total_received'] += row.get('received_qty', 0)
-        pm['total_produced'] += row.get('produced_qty', 0)
-        pm['total_shipped_to_buyer'] += row.get('shipped_to_buyer_qty', 0)
+        _dk_add(pm, row)
         sn = row.get('serial_number', '__no_serial__')
         if sn not in pm['serials']:
-            pm['serials'][sn] = {'serial_number': row.get('serial_number', ''),
-                                  'total_ordered': 0, 'total_received': 0, 'total_produced': 0, 'total_shipped_to_buyer': 0, 'skus': []}
+            pm['serials'][sn] = {'serial_number': row.get('serial_number', ''), **_dk_blank(), 'skus': []}
         sm = pm['serials'][sn]
-        sm['total_ordered'] += row.get('ordered_qty', 0)
-        sm['total_received'] += row.get('received_qty', 0)
-        sm['total_produced'] += row.get('produced_qty', 0)
-        sm['total_shipped_to_buyer'] += row.get('shipped_to_buyer_qty', 0)
+        _dk_add(sm, row)
         sm['skus'].append(row)
     hierarchy = []
     for vm in vendor_map.values():

@@ -513,6 +513,7 @@ from routes.auth_routes import router as auth_router
 from routes.master_data import router as master_data_router
 # ── Fase 2 Adopsi SOMMERVILLE: engine produksi/maklon (port dari sommerville-adopt) ──
 from routes.production_pos import router as production_pos_router
+from routes.production_po_detail import router as production_po_detail_router  # Tahap 9 (po)
 from routes.vendor_shipment import router as vendor_shipment_router
 from routes.cmt_override_routes import router as cmt_override_router
 from routes.production_execution import router as production_execution_router
@@ -706,6 +707,7 @@ _KASBON_GUARD = _DENY_EXTERNAL + [
 app.include_router(auth_router)
 app.include_router(master_data_router, dependencies=_DENY_MKT)
 app.include_router(production_pos_router, dependencies=_DENY_MKT)
+app.include_router(production_po_detail_router, dependencies=_DENY_MKT)  # Tahap 9 (po)
 app.include_router(vendor_shipment_router, dependencies=_DENY_MKT)
 app.include_router(cmt_override_router, dependencies=_DENY_MKT)
 app.include_router(production_execution_router, dependencies=_DENY_MKT)
@@ -880,6 +882,10 @@ app.include_router(dewi_cmt_permak_router, dependencies=_DENY_MKT)
 # CMT KEJAR + Dashboard Owner (Maklon CMT Operasional — Fase 2, read-only aggregation)
 from routes.cmt_kejar import router as cmt_kejar_router
 app.include_router(cmt_kejar_router, dependencies=_DENY_EXTERNAL_AND_MKT)
+
+# Tahap 9 (pantau): Pantau Produksi + Laporan Selisih — satu layar dua portal, satu sumber angka (read-only)
+from routes.pantau_produksi import router as pantau_produksi_router
+app.include_router(pantau_produksi_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 
 # CMT INTAKE — Potongan Masuk (batch) + Cek Seri dobel (Maklon CMT Operasional — Fase 3, read-only)
 from routes.cmt_intake import router as cmt_intake_router
@@ -1139,7 +1145,8 @@ from routes.wms_fg_labels import router as wms_fg_labels_router
 from routes.wms_barcode import router as wms_barcode_router  # FASE H-3: menu Buat Barcode
 # WMS AI Insights — Powered by GPT-4o
 from routes.wms_ai_insights import router as wms_ai_router
-from routes.analytics_ai import router as analytics_ai_router
+# Tahap 9 (7 Nov 2026): routes.analytics_ai ("Estimasi AI Produksi" = analisis akar masalah yang membaca
+# rahaza_wip_events yang tidak pernah ditulis) DIHAPUS bersama layarnya (prod-ai-insights).
 app.include_router(wms_units_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 app.include_router(wms_structure_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 app.include_router(wms_receiving_router, dependencies=_DENY_EXTERNAL_AND_MKT)
@@ -1161,7 +1168,6 @@ app.include_router(wms_material_labels_router, dependencies=_DENY_EXTERNAL_AND_M
 app.include_router(wms_fg_labels_router, dependencies=_DENY_EXTERNAL_AND_MKT)  # Session #11.21
 app.include_router(wms_barcode_router, dependencies=_DENY_EXTERNAL_AND_MKT)  # FASE H-3 (2026-08-16): Buat Barcode
 app.include_router(wms_ai_router, dependencies=_DENY_EXTERNAL_AND_MKT)
-app.include_router(analytics_ai_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 from routes.dewi_returns import router as dewi_returns_router
 from routes.dewi_demo_seed import router as dewi_demo_seed_router
 from routes.dewi_hris_performance import router as dewi_hris_performance_router
@@ -1372,12 +1378,12 @@ app.include_router(job_board_router, dependencies=_DENY_EXTERNAL)
 app.include_router(career_coach_router, dependencies=_DENY_EXTERNAL)
 app.include_router(skill_gap_router, dependencies=_DENY_EXTERNAL)
 
-# Session 18 — P2-3 OKR Tracker, P2-7 Predictive Maintenance, P2-19 Maklon AI Quote
+# Session 18 — P2-3 OKR Tracker, P2-19 Maklon AI Quote
+# Tahap 9 (7 Nov 2026): P2-7 Perawatan Mesin (routes.dewi_predictive_maintenance — hanya data mesin
+# contoh, membaca rahaza_downtime_events yang tidak pernah ditulis) DIHAPUS bersama layarnya.
 from routes.dewi_okr import router as okr_router
-from routes.dewi_predictive_maintenance import router as predictive_maintenance_router
 from routes.dewi_maklon_quote import router as maklon_quote_router
 app.include_router(okr_router, dependencies=_DENY_EXTERNAL)
-app.include_router(predictive_maintenance_router, dependencies=_DENY_EXTERNAL)
 app.include_router(maklon_quote_router, dependencies=_DENY_MKT)
 
 # Session 19 — E-3 AI Cost Monitoring

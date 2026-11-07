@@ -37,6 +37,7 @@ from datetime import datetime, timezone
 
 from database import get_db
 from core import production_qty_ledger as qty_ledger
+from core import client_goods  # Tahap 9C: stok titipan klien maklon
 from utils.counters import gen_prefixed_number
 from utils.variant_ssot import resolve_variant, ensure_fg_material
 from auth import require_auth, serialize_doc, check_role, log_activity
@@ -59,9 +60,12 @@ from core.cmt_receipt_status import (  # noqa: E402
 )
 
 
-async def _ensure_fg_for_cmt_line(db, ln: dict, doc: dict, user: dict,
-                                  client_owner: dict | None = None) -> dict:
+async def _ensure_fg_for_cmt_line(db, ln: dict, doc: dict, user: dict) -> dict:
     """SSOT resolver for a CMT receipt line → returns the REAL FG material doc.
+
+    Hanya untuk PO INTERNAL. Tahap 9C (7 Nov 2026): baris PO maklon TIDAK lewat sini — barang klien
+    dicatat di stok titipan klien (`core.client_goods`, identitas dari Katalog Buyer) dan tidak pernah
+    melahirkan barang di master produk DA.
 
     Priority:
       1. Resolve master variant by SKU → ensure_fg_material (code == SKU, id = UUID).
@@ -104,13 +108,6 @@ async def _ensure_fg_for_cmt_line(db, ln: dict, doc: dict, user: dict,
         "notes": f"Auto-created dari CMT receipt {doc.get('receipt_code')}",
         "created_at": _now(), "updated_at": _now(),
     }
-    if client_owner:
-        # 2026-11-02 — K14: barang jadi MAKLON = milik klien, di luar neraca DA (nilai 0).
-        fg.update({"owner_type": "client", "owner_client_id": client_owner.get("id"),
-                   "owner_client_name": client_owner.get("name", ""), "hpp": 0.0,
-                   "hpp_source": "maklon_client_goods",
-                   "notes": f"Barang klien maklon {client_owner.get('name', '')} — dibuat dari "
-                            f"penerimaan {doc.get('receipt_code')} (bukan stok jual DA)"})
     await db.rahaza_materials.insert_one(dict(fg))
     return fg
 
@@ -207,22 +204,32 @@ async def backfill_wip_fg(request: Request, dry_run: bool = True):
             "posted": posted, "total_value": round(total_value, 2), "rows": rows}
 
 
+def _with_scope(scope: dict, q: dict) -> dict:
+    """Kueri + saringan portal (Tahap 9). `scope` = {} bila tidak disaring."""
+    return {"$and": [scope, q]} if scope else q
+
+
 @router.get("/cmt-receipts/summary")
 async def receipt_summary(request: Request):
     await require_auth(request)
     db = get_db()
-    total = await db.cmt_receipts.count_documents({})
-    on_qc = await db.cmt_receipts.count_documents({"status": _canon_status_filter(ST_QC)})
-    done = await db.cmt_receipts.count_documents({"status": _canon_status_filter(ST_DONE)})
-    cancelled = await db.cmt_receipts.count_documents({"status": _canon_status_filter(ST_CANCELLED)})
+    # Tahap 9 (keputusan 2): kartu angka mengikuti portal yang membuka layar (?business_type=).
+    from core.po_portal_scope import portal_po_ids, portal_query
+    _bt = request.query_params.get("business_type")
+    scope = portal_query(await portal_po_ids(db, _bt), _bt)
+    total = await db.cmt_receipts.count_documents(_with_scope(scope, {}))
+    on_qc = await db.cmt_receipts.count_documents(_with_scope(scope, {"status": _canon_status_filter(ST_QC)}))
+    done = await db.cmt_receipts.count_documents(_with_scope(scope, {"status": _canon_status_filter(ST_DONE)}))
+    cancelled = await db.cmt_receipts.count_documents(
+        _with_scope(scope, {"status": _canon_status_filter(ST_CANCELLED)}))
 
     # Total pcs diterima hari ini (selesai QC)
     # qc_completed_at/approved_at = ISO UTC → awal hari WIB dalam UTC (No.54a); dulu 'YYYY-MM-DD' UTC
     today = wib_day_bounds_utc()[0].isoformat()
     pipeline = [
-        {"$match": {"status": _canon_status_filter(ST_DONE),
-                    "$or": [{"qc_completed_at": {"$gte": today}},
-                            {"approved_at": {"$gte": today}}]}},
+        {"$match": _with_scope(scope, {"status": _canon_status_filter(ST_DONE),
+                                       "$or": [{"qc_completed_at": {"$gte": today}},
+                                               {"approved_at": {"$gte": today}}]})},
         {"$lookup": {"from": "cmt_receipt_lines", "localField": "id",
                      "foreignField": "receipt_id", "as": "lines"}},
         {"$unwind": {"path": "$lines", "preserveNullAndEmptyArrays": True}},
@@ -240,7 +247,7 @@ async def receipt_summary(request: Request):
     # sementara panel Antrean Reject di layar yang sama berkata 30 pcs reject —
     # dua angka yang saling membantah. Sekarang angkanya datang dari sini.
     pipeline_all = [
-        {"$match": {"status": _canon_status_filter(ST_DONE)}},
+        {"$match": _with_scope(scope, {"status": _canon_status_filter(ST_DONE)})},
         {"$lookup": {"from": "cmt_receipt_lines", "localField": "id",
                      "foreignField": "receipt_id", "as": "lines"}},
         {"$unwind": {"path": "$lines", "preserveNullAndEmptyArrays": True}},
@@ -254,19 +261,19 @@ async def receipt_summary(request: Request):
 
     # baris yang belum dihitung pada penerimaan yang masih QC (angka kerja nyata)
     qc_ids = [d["id"] for d in await db.cmt_receipts.find(
-        {"status": _canon_status_filter(ST_QC)}, {"_id": 0, "id": 1}).to_list(1000)]
+        _with_scope(scope, {"status": _canon_status_filter(ST_QC)}), {"_id": 0, "id": 1}).to_list(1000)]
     uncounted_lines = await db.cmt_receipt_lines.count_documents(
         {"receipt_id": {"$in": qc_ids}, "qty_actual": None}) if qc_ids else 0
 
     # Reject yang belum diputuskan (antrean kerja nyata, bukan angka mati)
     try:
-        pending_reject = await qty_ledger.reject_queue(db, only_open=True, limit=500)
+        pending_reject = await _reject_queue_in_portal(db, _bt, only_open=True, limit=500)
     except Exception:
         logger.exception("reject_queue gagal")
         pending_reject = []
 
     cmt_names = await db.cmt_receipts.distinct(
-        "cmt_name", {"status": {"$nin": ["Rejected", "cancelled", "Cancelled"]}})
+        "cmt_name", _with_scope(scope, {"status": {"$nin": ["Rejected", "cancelled", "Cancelled"]}}))
 
     return {
         "total": total,
@@ -304,6 +311,12 @@ async def list_receipts(request: Request):
         query["wo_number"] = re.compile(re.escape(sp["wo_number"]), re.IGNORECASE)
     if sp.get("po_id"):
         query["po_id"] = sp["po_id"]
+    # Tahap 9 (keputusan 2): Portal Produksi = PO internal, Portal Maklon = PO maklon.
+    if sp.get("business_type"):
+        from core.po_portal_scope import portal_po_ids, portal_query
+        scope = portal_query(await portal_po_ids(db, sp["business_type"]), sp["business_type"])
+        if scope:
+            query = {"$and": [scope, query]} if query else scope
     docs = await db.cmt_receipts.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
     ids = [d["id"] for d in docs]
     all_lines = await db.cmt_receipt_lines.find(
@@ -504,11 +517,24 @@ async def cmt_reject_queue(request: Request):
     await require_auth(request)
     db = get_db()
     sp = request.query_params
-    rows = await qty_ledger.reject_queue(
-        db, po_id=sp.get("po_id"), vendor_id=sp.get("vendor_id"),
+    rows = await _reject_queue_in_portal(
+        db, sp.get("business_type"), po_id=sp.get("po_id"), vendor_id=sp.get("vendor_id"),
         only_open=(sp.get("only_open", "1") not in ("0", "false", "False")))
     return {"items": serialize_doc(rows), "total": len(rows),
             "total_qty_undecided": sum(r["qty_undecided"] for r in rows)}
+
+
+async def _reject_queue_in_portal(db, business_type, *, limit: int = 300, **kw) -> list:
+    """Antrean ditolak (SSOT `production_qty_ledger.reject_queue`) disaring per portal (Tahap 9).
+
+    Saringan dikerjakan sesudah antrean dibentuk, jadi batasnya dinaikkan supaya baris portal lain
+    tidak menghabiskan jatah baris portal ini."""
+    from core.po_portal_scope import keep_in_portal, portal_po_ids
+    po_ids = await portal_po_ids(db, business_type)
+    if po_ids is None:
+        return await qty_ledger.reject_queue(db, limit=limit, **kw)
+    rows = await qty_ledger.reject_queue(db, limit=max(limit, 1000), **kw)
+    return keep_in_portal(rows, po_ids, business_type)[:limit]
 
 
 @router.put("/cmt-receipts/{receipt_id}")
@@ -798,7 +824,20 @@ async def koreksi_hasil_qc(receipt_id: str, line_id: str, request: Request):
     stock_note = None
     wip_fg_koreksi = None
     fg_material_id = line.get("fg_material_id") or ""
-    if delta != 0:
+    if delta != 0 and line.get("client_stock_key"):
+        # Tahap 9C: barang KLIEN maklon — koreksi hanya menggeser stok titipan klien (pcs, tanpa jurnal)
+        try:
+            await client_goods.record_for_key(
+                db, key=line["client_stock_key"], qty=delta, jenis="koreksi_qc", source_type="cmt_receipt",
+                ref={"source": "cmt_receipt_koreksi", "receipt_id": receipt_id,
+                     "receipt_code": receipt.get("receipt_code"), "receipt_line_id": line_id,
+                     "po_id": receipt.get("po_id"), "po_number": receipt.get("po_number"), "reason": reason},
+                actor=user, notes=f"Koreksi hasil QC {old_actual} → {new_actual} pcs. Alasan: {reason}",
+                fallback=line)
+        except client_goods.ClientGoodsError as e:
+            raise HTTPException(400, str(e))
+        stock_note = {"delta": delta, "movement": "IN" if delta > 0 else "OUT", "client_goods": True}
+    elif delta != 0:
         mat = await qty_ledger.resolve_fg_material(
             db, material_id=fg_material_id, sku=line.get("sku_code", ""))
         if not mat:
@@ -864,7 +903,7 @@ async def koreksi_hasil_qc(receipt_id: str, line_id: str, request: Request):
             stock_note["wip_fg_posting"] = serialize_doc(wip_fg_koreksi)
 
     # reject BARU (sebelumnya tanpa dokumen karantina) → barangnya masuk karantina QC
-    if reject_quarantine and reject_quarantine > 0:
+    if reject_quarantine and reject_quarantine > 0 and not line.get("client_goods"):
         mat_r = await qty_ledger.resolve_fg_material(
             db, material_id=fg_material_id, sku=line.get("sku_code", ""))
         if mat_r:
@@ -1013,6 +1052,15 @@ async def list_short_shipments(request: Request):
     out = await shortmod.list_cmt_shorts(
         db, status=(sp.get("status") or "open"), po_id=sp.get("po_id") or "",
         vendor_id=vendor_id)
+    # Tahap 9 (keputusan 2): disaring per portal; total dihitung ulang dari baris yang tersisa.
+    if sp.get("business_type"):
+        from core.po_portal_scope import keep_in_portal, portal_po_ids
+        po_ids = await portal_po_ids(db, sp["business_type"])
+        if po_ids is not None:
+            rows = keep_in_portal(out.get("items") or [], po_ids, sp["business_type"])
+            out = {**out, "items": rows, "total": len(rows),
+                   "total_qty_short": sum(int(r.get("qty_short") or 0) for r in rows),
+                   "total_qty_open": sum(int(r.get("qty_open") or 0) for r in rows)}
     return serialize_doc(out)
 
 
@@ -1186,32 +1234,49 @@ async def _finish_receipt_locked(receipt_id: str, request: Request):
     over_reason = _oq.require_reason(over_rows, (_body or {}).get("over_qty_reason"), "terima_qc")
 
     # 2026-11-02 (F1): jenis PO dibaca SEBELUM stok masuk — PO INTERNAL membawa
-    # `po_item_id` ke lapisan HPP (bahan BOM + jahit SPK). Maklon tidak diubah
-    # (barang klien; keputusan "FG maklon" masih menunggu owner).
+    # `po_item_id` ke lapisan HPP (bahan BOM + jahit SPK).
     po_doc = await db.production_pos.find_one(
         {"id": doc.get("po_id")}, {"_id": 0, "business_type": 1, "buyer_id": 1, "customer_name": 1}
     ) if doc.get("po_id") else None
     is_internal = (po_doc or {}).get("business_type", doc.get("business_type", "internal")) == "internal"
-    # 2026-11-02 — K14: FG maklon dicatat milik KLIEN (ownership = id klien, nilai 0).
+    # Tahap 9C (7 Nov 2026, keputusan owner): barang jadi MAKLON milik KLIEN → stok TITIPAN klien
+    # (`core.client_goods`): identitas dari artikel Katalog Buyer, per klien × artikel/varian, hanya pcs —
+    # tanpa nilai, tanpa jurnal, dan TIDAK PERNAH membuat barang di master produk DA (dulu K14 membuat
+    # barang "milik klien" di master DA; SKU klien yang sama dengan SKU DA tertempel ke barang DA).
     client_owner = None if is_internal else {
-        "id": (po_doc or {}).get("buyer_id") or f"maklon_client:{(po_doc or {}).get('customer_name') or '-'}",
-        "name": (po_doc or {}).get("customer_name") or ""}
+        "id": (po_doc or {}).get("buyer_id") or "", "name": (po_doc or {}).get("customer_name") or ""}
     ownership_warnings = []
+    if client_owner is not None:
+        for ln in lines:                      # dibaca buku kuantitas: reject klien tidak ke karantina DA
+            ln["client_goods"] = True
 
     # ── 0. Tahap 1 (6 Nov 2026): periksa SEMUA baris sebelum menulis apa pun ──
     # Dulu baris 1 sudah masuk stok lalu baris 2 gagal (SKU tanpa master) → status
     # tetap "Sedang QC" → saat diulang, stok baris 1 tercatat dua kali.
-    if not await qty_ledger.resolve_fg_location_id(db):
+    fg_loc = await qty_ledger.resolve_fg_location_id(db)
+    if not fg_loc:
         raise HTTPException(
             400, "Lokasi gudang barang jadi belum ditandai di Master Lokasi — "
                  "penerimaan belum bisa diselesaikan.")
     fg_by_line = {}
+    client_by_line = {}
     for ln in lines:
         if int(ln.get("qty_actual") or 0) <= 0 or ln.get("fg_stock_posted_at"):
             continue
-        fg = await _ensure_fg_for_cmt_line(db, ln, doc, user, client_owner=client_owner)
+        sku = (ln.get("sku_code") or "").strip()
+        if client_owner is not None:
+            ident = await client_goods.resolve_identity(
+                db, client_id=client_owner["id"], po_item_id=ln.get("po_item_id") or "", sku=sku,
+                color=ln.get("color") or "", size=ln.get("size") or "",
+                product_name=ln.get("product_name") or "")
+            if not ident.get("ok"):
+                raise HTTPException(400, f"Baris {sku or ln['id']}: {ident['reason']}")
+            if ident.get("warning"):
+                ownership_warnings.append(ident["warning"])
+            client_by_line[ln["id"]] = ident
+            continue
+        fg = await _ensure_fg_for_cmt_line(db, ln, doc, user)
         if not fg:
-            sku = (ln.get("sku_code") or "").strip()
             raise HTTPException(
                 400,
                 f"Baris {sku or ln['id']} tidak punya SKU/master FG — tidak bisa masuk stok. "
@@ -1233,35 +1298,49 @@ async def _finish_receipt_locked(receipt_id: str, request: Request):
                                  "qty": int(ln.get("fg_stock_posted_qty") or qty),
                                  "location_id": ln.get("fg_stock_location_id"),
                                  "cost_layer_id": ln.get("fg_cost_layer_id"),
-                                 "already_posted": True})
-            if not ln.get("fg_movement_id"):
+                                 "already_posted": True,
+                                 **({"client_goods": True} if ln.get("client_stock_key") else {})})
+            if not ln.get("fg_movement_id") and not ln.get("client_stock_key"):
                 await _log_fg_movement_in(db, ln, doc, user, sku=sku,
                                           qty=int(ln.get("fg_stock_posted_qty") or qty),
                                           material_id=ln.get("fg_material_id"),
                                           location_id=ln.get("fg_stock_location_id"))
             continue
+        ref = {"source": "cmt_receipt", "receipt_id": receipt_id,
+               "receipt_code": doc.get("receipt_code"),
+               "po_id": doc.get("po_id"), "po_number": doc.get("po_number"),
+               "vendor_id": doc.get("cmt_vendor_id"), "vendor_name": doc.get("cmt_name"),
+               "receipt_line_id": ln["id"]}
+        ident = client_by_line.get(ln["id"])
+        if ident:
+            # ── barang KLIEN: stok titipan (pcs saja), bukan stok/master DA ──
+            ref["po_item_id"] = ln.get("po_item_id") or ""
+            try:
+                mv = await client_goods.record(
+                    db, identity=ident, qty=qty, jenis="masuk_terima_qc", source_type="cmt_receipt",
+                    source_key=f"cmt_receipt_line:{ln['id']}:terima", ref=ref, actor=user,
+                    notes=f"Terima dari CMT {doc.get('cmt_name') or ''} — lolos QC", location_id=fg_loc)
+            except client_goods.ClientGoodsError as e:
+                raise HTTPException(400, str(e))
+            await db.cmt_receipt_lines.update_one({"id": ln["id"]}, {"$set": {
+                "client_goods": True, "client_stock_key": ident["stock_key"],
+                "client_movement_id": mv.get("id"), "buyer_catalog_id": ident["buyer_catalog_id"],
+                "maklon_variant_id": ident["maklon_variant_id"], "fg_material_code": ident["sku"] or sku,
+                "fg_stock_posted_at": _now(), "fg_stock_posted_qty": qty,
+                "fg_stock_location_id": fg_loc, "fg_cost_layer_id": None}})
+            ln["client_stock_key"] = ident["stock_key"]
+            stock_result.append({"sku": ident["sku"] or sku, "qty": qty, "location_id": fg_loc,
+                                 "cost_layer_id": None, "client_goods": True,
+                                 "client_name": ident.get("client_name") or "",
+                                 "artikel_code": ident.get("artikel_code") or ""})
+            continue
         fg = fg_by_line.get(ln["id"])
-        owner_for_stock = ""
-        if client_owner and fg:
-            if fg.get("owner_type") == "client":
-                owner_for_stock = fg.get("owner_client_id") or client_owner["id"]
-            else:
-                # SKU klien sama dengan barang jadi DA: baris stok (material × lokasi) tidak
-                # bisa dipisah pemiliknya — dilaporkan, bukan ditebak.
-                ownership_warnings.append(
-                    f"K14: SKU {sku} PO maklon memakai master barang jadi DA — stok ini tercatat "
-                    f"milik DA. Pakai SKU artikel klien (Katalog Buyer) supaya barang klien terpisah.")
         material_id = fg["id"]
         # simpan tautan material di baris supaya karantina & audit bisa memakainya
         await db.cmt_receipt_lines.update_one(
             {"id": ln["id"]}, {"$set": {"fg_material_id": material_id,
                                         "fg_material_code": fg.get("code", sku)}})
         ln["fg_material_id"] = material_id
-        ref = {"source": "cmt_receipt", "receipt_id": receipt_id,
-               "receipt_code": doc.get("receipt_code"),
-               "po_id": doc.get("po_id"), "po_number": doc.get("po_number"),
-               "vendor_id": doc.get("cmt_vendor_id"), "vendor_name": doc.get("cmt_name"),
-               "receipt_line_id": ln["id"]}
         if is_internal:
             ref.update({"po_item_id": ln.get("po_item_id") or "",
                         "job_item_id": ln.get("job_item_id") or ""})
@@ -1272,8 +1351,7 @@ async def _finish_receipt_locked(receipt_id: str, request: Request):
                 actor=user,
                 meta={"material_code": fg.get("code", sku),
                       "material_name": fg.get("name", ""),
-                      "unit": "pcs", "type": "finished_goods"},
-                owner_client=owner_for_stock, skip_cost_layer=bool(client_owner))
+                      "unit": "pcs", "type": "finished_goods"})
         except Exception as e:  # noqa: BLE001
             logger.exception("post stok FG gagal (receipt %s line %s)", receipt_id, ln["id"])
             raise HTTPException(500, f"Gagal menambah stok FG: {e}")

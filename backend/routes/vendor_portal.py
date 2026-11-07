@@ -24,7 +24,6 @@ from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity, hash_password, check_role, bump_rbac_cache
-from utils.counters import gen_prefixed_number
 import uuid
 from utils.waktu import wib_date_str
 
@@ -91,6 +90,47 @@ class PartnerIn(BaseModel):
     # Tahap 8 fase 2: pemilik penjahit — None/'' = vendor luar, 'SMU' = "Tim jahit CV Sukma" (core.intercompany).
     # Tidak dikirim (None) = tidak diubah; '' = kembalikan ke vendor luar.
     owner_entity: str | None = None
+
+class PartnerUpdate(BaseModel):
+    """Tahap 9 (7 Nov 2026): UBAH vendor = pembaruan SEBAGIAN.
+
+    Dulu PUT memakai `PartnerIn` yang semua isiannya berbawaan '' — form ubah tidak mengirim `notes`,
+    sehingga setiap kali vendor diubah CATATANNYA TERHAPUS (vendor_portal.py:85/225). Kini isian yang
+    TIDAK DIKIRIM tidak disentuh (`exclude_unset`); isian yang dikirim kosong ('') tetap mengosongkan.
+    """
+    name:          str | None = None
+    code:          str | None = None
+    contact_name:  str | None = None
+    contact_phone: str | None = None
+    address:       str | None = None
+    notes:         str | None = None
+    is_active:     bool | None = None
+    capacity_pcs:  int | None = Field(default=None, ge=0)
+    capacity_note: str | None = None
+    owner_entity:  str | None = None
+
+
+# Kolom master vendor yang boleh diubah lewat PUT (urutan = urutan di layar).
+PARTNER_TEXT_FIELDS = ('contact_name', 'contact_phone', 'address', 'notes', 'capacity_note')
+
+
+def partner_update_fields(payload: PartnerUpdate) -> dict:
+    """Isian yang BENAR-BENAR dikirim (tanpa kode/nama/pemilik yang divalidasi terpisah). Murni, diuji unit."""
+    sent = payload.model_dump(exclude_unset=True) if hasattr(payload, 'model_dump') else payload.dict(exclude_unset=True)
+    out: dict = {}
+    for k in PARTNER_TEXT_FIELDS:
+        if k in sent and sent[k] is not None:
+            out[k] = str(sent[k])
+    if sent.get('capacity_pcs') is not None:
+        out['capacity_pcs'] = int(sent['capacity_pcs'])
+    if sent.get('is_active') is not None:
+        out['is_active'] = bool(sent['is_active'])
+    return out
+
+
+# Status job produksi (SSOT `production_jobs`) yang dianggap sudah selesai.
+_JOB_DONE = ['Completed', 'Closed', 'Cancelled', 'Canceled', 'done', 'cancelled', 'completed']
+
 
 class VendorAccountIn(BaseModel):
     email:      str
@@ -167,10 +207,14 @@ async def list_partners(request: Request):
     _require_admin(user)
     db = get_db()
     docs = await db.vendor_partners.find({}, {'_id': 0}).sort('name', 1).to_list(500)
-    # Tambahkan stats per partner
+    # Tambahkan stats per partner.
+    # Tahap 9: jumlah job dari SSOT `production_jobs` (dulu `vendor_jobs` — model lama yang selalu 0).
     for p in docs:
-        p['job_count']    = await db.vendor_jobs.count_documents({'partner_id': p['id']})
-        p['account_count']= await db.users.count_documents({'cmt_vendor_id': p['id']})
+        p['job_count']        = await db.production_jobs.count_documents({'vendor_id': p['id']})
+        p['active_job_count'] = await db.production_jobs.count_documents(
+            {'vendor_id': p['id'], 'status': {'$nin': _JOB_DONE}})
+        p['po_count']         = await db.production_pos.count_documents({'vendor_id': p['id']})
+        p['account_count']    = await db.users.count_documents({'cmt_vendor_id': p['id']})
     return serialize_doc(docs)
 
 
@@ -203,39 +247,33 @@ async def create_partner(payload: PartnerIn, request: Request):
 
 
 @router.put('/partners/{partner_id}')
-async def update_partner(partner_id: str, payload: PartnerIn, request: Request):
+async def update_partner(partner_id: str, payload: PartnerUpdate, request: Request):
+    """Ubah vendor — HANYA isian yang dikirim (Tahap 9: catatan tidak lagi terhapus saat diubah)."""
     user = await require_auth(request)
     _require_admin(user)
     db = get_db()
     partner = await db.vendor_partners.find_one({'id': partner_id})
     if not partner:
         raise HTTPException(404, "Partner tidak ditemukan.")
+    update = partner_update_fields(payload)
+    if payload.name is not None:
+        if not payload.name.strip():
+            raise HTTPException(400, "Nama vendor wajib diisi.")
+        update['name'] = payload.name.strip()
     # Kode boleh diubah, tapi harus tetap unik (abaikan diri sendiri)
-    new_code = payload.code.upper().strip() if payload.code else ''
-    if new_code and new_code != (partner.get('code') or ''):
-        dup = await db.vendor_partners.find_one({'code': new_code, 'id': {'$ne': partner_id}})
-        if dup:
-            raise HTTPException(400, f"Kode vendor '{new_code}' sudah digunakan.")
-    update = {
-        'name':          payload.name.strip(),
-        'code':          new_code,
-        'contact_name':  payload.contact_name,
-        'contact_phone': payload.contact_phone,
-        'address':       payload.address,
-        'notes':         payload.notes,
-        'updated_at':    _now(),
-    }
-    if payload.is_active is not None:
-        update['is_active'] = bool(payload.is_active)  # I-VP-5 (reactivate/deactivate)
-    # M3 KAPASITAS — hanya update bila dikirim (non-destruktif untuk PUT lama yang tak kirim field ini)
-    if payload.capacity_pcs is not None:
-        update['capacity_pcs'] = int(payload.capacity_pcs)
-    if payload.capacity_note is not None:
-        update['capacity_note'] = payload.capacity_note
+    if payload.code is not None:
+        new_code = payload.code.upper().strip()
+        if new_code and new_code != (partner.get('code') or ''):
+            dup = await db.vendor_partners.find_one({'code': new_code, 'id': {'$ne': partner_id}})
+            if dup:
+                raise HTTPException(400, f"Kode vendor '{new_code}' sudah digunakan.")
+        update['code'] = new_code
     if payload.owner_entity is not None:
         update['owner_entity'] = _owner_entity_or_400(payload.owner_entity)   # Tahap 8 fase 2
+    update['updated_at'] = _now()
     await db.vendor_partners.update_one({'id': partner_id}, {'$set': update})
-    await log_activity(user['id'], user.get('name',''), f"update_vendor_partner:{update['name']}", 'vendor_portal', partner_id)
+    await log_activity(user['id'], user.get('name',''),
+                       f"update_vendor_partner:{update.get('name') or partner.get('name', '')}", 'vendor_portal', partner_id)
     return {'ok': True}
 
 
@@ -254,9 +292,19 @@ async def delete_partner(partner_id: str, request: Request, hard: bool = Query(d
     if not partner:
         raise HTTPException(404, "Partner tidak ditemukan.")
     if hard:
-        job_count = await db.vendor_jobs.count_documents({'partner_id': partner_id})
-        if job_count > 0:
-            raise HTTPException(400, f"Tidak bisa hapus permanen: vendor masih punya {job_count} job. Hapus/batalkan job dulu.")
+        # Tahap 9: dulu hanya `vendor_jobs` (model lama, selalu 0) yang diperiksa — vendor yang punya PO,
+        # job, atau kiriman NYATA bisa terhapus permanen dan meninggalkan data yatim.
+        used = {
+            'PO': await db.production_pos.count_documents({'vendor_id': partner_id}),
+            'job produksi': await db.production_jobs.count_documents({'vendor_id': partner_id}),
+            'kiriman material': await db.vendor_shipments.count_documents({'vendor_id': partner_id}),
+            'job lama': await db.vendor_jobs.count_documents({'partner_id': partner_id}),
+        }
+        used = {k: v for k, v in used.items() if v}
+        if used:
+            rincian = ', '.join(f"{v} {k}" for k, v in used.items())
+            raise HTTPException(400, f"Tidak bisa hapus permanen: vendor sudah dipakai ({rincian}). "
+                                     "Nonaktifkan saja supaya riwayatnya tetap ada.")
         acc_count = await db.users.count_documents({'cmt_vendor_id': partner_id})
         if acc_count > 0:
             raise HTTPException(400, f"Tidak bisa hapus permanen: vendor masih punya {acc_count} akun login. Hapus akun vendor dulu.")
@@ -266,12 +314,13 @@ async def delete_partner(partner_id: str, request: Request, hard: bool = Query(d
     # Soft deactivate — guard I-VP-1 (akun aktif) & I-VP-2 (job berjalan)
     active_acc = await db.users.count_documents(
         {'cmt_vendor_id': partner_id, 'role': 'cmt_vendor', 'is_active': True})
-    active_job = await db.vendor_jobs.count_documents(
-        {'partner_id': partner_id, 'status': {'$nin': ['done', 'cancelled', 'completed']}})
+    # Tahap 9: job berjalan dibaca dari SSOT `production_jobs` (dulu `vendor_jobs` lama yang selalu 0).
+    active_job = await db.production_jobs.count_documents(
+        {'vendor_id': partner_id, 'status': {'$nin': _JOB_DONE}})
     if active_acc or active_job:
         raise HTTPException(400,
             f"Tidak bisa nonaktifkan: {active_acc} akun aktif & {active_job} job berjalan. "
-            f"Nonaktifkan akun & selesaikan/batalkan job dulu.")
+            f"Nonaktifkan akun & selesaikan job dulu.")
     await db.vendor_partners.update_one({'id': partner_id},
         {'$set': {'is_active': False, 'updated_at': _now()}})
     await log_activity(user['id'], user.get('name',''), f"deactivate_vendor_partner:{partner.get('name','')}", 'vendor_portal', partner_id)
@@ -395,106 +444,38 @@ async def list_all_jobs(
     return serialize_doc(jobs)
 
 
+JOBS_RETIRED_MSG = (
+    "Job vendor model lama sudah dipensiunkan (Tahap 9, 7 Nov 2026) dan tidak lagi bisa dibuat, diubah, "
+    "atau dihapus. Pekerjaan CMT dicatat dari PO (Kirim ke CMT) dan dipantau di Pantau Produksi."
+)
+
+
+def _jobs_retired():
+    """Tahap 9: tab "Semua job" di Vendor CMT dihapus. Tulis ke `vendor_jobs` (model lama, tidak tersambung
+    ke PO/kiriman/tagihan) DITOLAK 410 supaya tidak ada lagi data yang tidak berpengaruh apa pun.
+    Baca (`GET /jobs`) tetap ada untuk data lama."""
+    raise HTTPException(410, JOBS_RETIRED_MSG)
+
+
 @router.post('/jobs')
 async def create_job(payload: VendorJobIn, request: Request):
     user = await require_auth(request)
     _require_admin(user)
-    db = get_db()
-    partner = await db.vendor_partners.find_one({'id': payload.partner_id})
-    if not partner:
-        raise HTTPException(400, "Partner ID tidak ditemukan.")
-    # Resolve model (opsional) untuk Panduan Produksi/SOP
-    model_code, model_name = '', ''
-    if payload.model_id:
-        mdl = await db.rahaza_models.find_one({'id': payload.model_id}, {'_id': 0, 'code': 1, 'name': 1})
-        if mdl:
-            model_code = mdl.get('code', '')
-            model_name = mdl.get('name', '')
-    job_number = await gen_prefixed_number(db, 'vendor_jobs', 'job_number', 'VJ-', 5)
-    doc = {
-        'id':          _uid(),
-        'job_number':  job_number,
-        'title':       payload.title.strip(),
-        'partner_id':  payload.partner_id,
-        'partner_name': partner.get('name', ''),
-        'wo_id':       payload.wo_id,
-        'wo_number':   payload.wo_number,
-        'model_id':    payload.model_id,
-        'model_code':  model_code,
-        'model_name':  model_name,
-        'qty_target':  payload.qty_target,
-        'qty_done':    0,
-        'due_date':    payload.due_date,
-        'process':     payload.process.upper(),
-        'notes':       payload.notes,
-        'status':      'open',      # open | in_progress | done | cancelled
-        'created_at':  _now(),
-        'created_by':  user['id'],
-    }
-    await db.vendor_jobs.insert_one(doc)
-    await log_activity(user['id'], user.get('name',''), f"create_vendor_job:{doc['job_number']}", 'vendor_portal', doc['id'])
-    return serialize_doc(doc)
+    _jobs_retired()
 
 
 @router.put('/jobs/{job_id}')
 async def update_job(job_id: str, payload: VendorJobUpdate, request: Request):
-    """Edit job vendor. Bila partner/model diubah, nama turunan disinkronkan ulang."""
     user = await require_auth(request)
     _require_admin(user)
-    db = get_db()
-    job = await db.vendor_jobs.find_one({'id': job_id})
-    if not job:
-        raise HTTPException(404, "Job tidak ditemukan.")
-    update: dict = {'updated_at': _now()}
-    if payload.title is not None and payload.title.strip():
-        update['title'] = payload.title.strip()
-    if payload.partner_id is not None and payload.partner_id and payload.partner_id != job.get('partner_id'):
-        partner = await db.vendor_partners.find_one({'id': payload.partner_id})
-        if not partner:
-            raise HTTPException(400, "Partner ID tidak ditemukan.")
-        update['partner_id']   = payload.partner_id
-        update['partner_name'] = partner.get('name', '')
-    if payload.model_id is not None:
-        update['model_id'] = payload.model_id
-        if payload.model_id:
-            mdl = await db.rahaza_models.find_one({'id': payload.model_id}, {'_id': 0, 'code': 1, 'name': 1})
-            update['model_code'] = mdl.get('code', '') if mdl else ''
-            update['model_name'] = mdl.get('name', '') if mdl else ''
-        else:
-            update['model_code'] = ''
-            update['model_name'] = ''
-    if payload.qty_target is not None:
-        update['qty_target'] = int(payload.qty_target)
-    if payload.due_date is not None:
-        update['due_date'] = payload.due_date
-    if payload.process is not None and payload.process.strip():
-        update['process'] = payload.process.upper()
-    if payload.notes is not None:
-        update['notes'] = payload.notes
-    if payload.status is not None and payload.status:
-        if payload.status not in ('open', 'in_progress', 'done', 'cancelled'):
-            raise HTTPException(400, "Status tidak valid.")
-        update['status'] = payload.status
-    await db.vendor_jobs.update_one({'id': job_id}, {'$set': update})
-    await log_activity(user['id'], user.get('name',''), f"update_vendor_job:{job.get('job_number','')}", 'vendor_portal', job_id)
-    return {'ok': True}
+    _jobs_retired()
 
 
 @router.delete('/jobs/{job_id}')
 async def delete_job(job_id: str, request: Request):
-    """Hapus job vendor. Diblokir bila sudah ada laporan progress (pakai status 'cancelled')."""
     user = await require_auth(request)
     _require_admin(user)
-    db = get_db()
-    job = await db.vendor_jobs.find_one({'id': job_id})
-    if not job:
-        raise HTTPException(404, "Job tidak ditemukan.")
-    prog_count = await db.vendor_progress_reports.count_documents({'job_id': job_id})
-    if prog_count > 0:
-        raise HTTPException(400, f"Tidak bisa hapus: job punya {prog_count} laporan progress. Batalkan job (ubah status ke 'cancelled') sebagai gantinya.")
-    await db.vendor_jobs.delete_one({'id': job_id})
-    await log_activity(user['id'], user.get('name',''), f"delete_vendor_job:{job.get('job_number','')}", 'vendor_portal', job_id)
-    return {'ok': True}
+    _jobs_retired()
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

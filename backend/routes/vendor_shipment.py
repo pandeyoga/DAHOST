@@ -29,122 +29,79 @@ router = APIRouter(prefix="/api", tags=["vendor-shipments"])
 
 @router.post("/vendor-shipments/accessory-plan")
 async def vendor_shipment_accessory_plan(request: Request):
-    """Aksesoris yang IKUT kiriman ini — dimuat otomatis di form Kirim Material CMT (2026-11-05).
+    """[LAMA — dipertahankan untuk pemanggil lama] Aksesoris yang ikut kiriman.
 
-    PO maklon: BOM PO disegarkan dulu dari BOM template AKTIF di Katalog Buyer (BOM yang diatur
-    manual tidak ditimpa), lalu jatah kiriman = kebutuhan PO × qty dikirim ÷ qty PO
-    (`core.shipment_accessories`). Body: {po_id, items: [{po_item_id, qty_sent}]}
-    """
+    Tahap 9 (7 Nov 2026): MENDELEGASIKAN ke satu hitungan `core.kirim_cmt.compute` (sama dengan pratinjau
+    `POST /kirim-cmt/preview`, pembuatan kiriman, surat jalan, dan SPP). Bentuk jawaban lama dipertahankan;
+    `qty_suggested` = jumlah serah bawaan dalam SATUAN DASAR. Body: {po_id, items: [{po_item_id, qty_sent}]}"""
     user = await require_auth(request)
     deny_klien(user)
     db = get_db()
     body = await request.json()
     if not body.get('po_id'):
         raise HTTPException(400, 'po_id wajib diisi')
-    from core import shipment_accessories as sa
-    return serialize_doc(await sa.accessory_plan(db, body['po_id'], body.get('items') or [], user=user))
+    from core import kirim_cmt
+    po = await db.production_pos.find_one({'id': body['po_id']}, {'_id': 0, 'business_type': 1, 'po_number': 1})
+    if not po:
+        return {'po_id': body['po_id'], 'rows': [], 'warnings': ['PO tidak ditemukan.']}
+    if po.get('business_type') == 'maklon':
+        try:
+            from routes.dewi_maklon_bom_templates import explode_maklon_bom_for_po
+            await explode_maklon_bom_for_po(db, body['po_id'], user=user)
+        except Exception:  # noqa: BLE001
+            pass
+    lines = [{'po_item_id': i.get('po_item_id'), 'qty': i.get('qty_sent')} for i in body.get('items') or []]
+    calc = await kirim_cmt.compute(db, po_id=body['po_id'], lines=lines, with_stock=False)
+    rows = [{'accessory_id': a['material_id'], 'accessory_code': a['code'], 'accessory_name': a['name'],
+             'unit': a['usage_unit'], 'qty_needed': round((a.get('plan_qty_handover') or 0) * a['handover_factor'], 4),
+             'qty_sent_before': a['handed_before_base'], 'qty_remaining': a.get('remaining_base'),
+             'qty_suggested': a['qty_base'], 'handover_uom': a['handover_uom'], 'handover_label': a['handover_label'],
+             'qty_handover': a['qty_handover'], 'source': a['source']} for a in calc.get('aksesoris') or []]
+    return serialize_doc({'po_id': body['po_id'], 'po_number': po.get('po_number'), 'rows': rows,
+                          'shipment_qty': calc.get('total_pcs'), 'warnings': calc.get('warnings') or []})
 
 
 @router.post("/vendor-shipments/material-preview")
 async def vendor_shipment_material_preview(request: Request):
-    """FASE H-1 — PRATINJAU material yang akan KELUAR dari gudang.
+    """[LAMA — dipertahankan untuk pemanggil lama] Pratinjau material yang KELUAR dari gudang.
 
-    Dipanggil form "Kirim Material CMT" SEBELUM Simpan supaya pemakai melihat
-    kain & aksesoris apa yang akan berkurang beserta kecukupan stoknya. Tanpa ini,
-    satu-satunya cara mengetahui stok kurang adalah menekan Simpan dan ditolak —
-    UX yang persis dikeluhkan pemilik pada layar dispatch ke buyer.
-
-    Body: {po_id?, items: [{po_item_id, qty_sent}]}
-    """
+    Tahap 9 (7 Nov 2026): MENDELEGASIKAN ke `core.kirim_cmt.compute` — potongan (pas dari BOM, wajib cukup) dan
+    aksesoris (jumlah serah) dalam satu daftar `materials` berbentuk lama.
+    Body: {po_id?, items: [{po_item_id, qty_sent}], accessory_items?}"""
     user = await require_auth(request)
     deny_klien(user)
     db = get_db()
     body = await request.json()
     items = body.get('items') or []
-    lines = [{'po_item_id': it.get('po_item_id'), 'qty': it.get('qty_sent')}
-             for it in items if it.get('po_item_id')]
+    lines = [{'po_item_id': it.get('po_item_id'), 'qty': it.get('qty_sent')} for it in items if it.get('po_item_id')]
     if not lines:
         return {'applicable': False, 'reason': 'items[] kosong', 'materials': []}
-
-    # Maklon: material milik KLIEN — gudang DA tidak dipotong, jadi tidak ada
-    # yang perlu dipratinjau. Jawaban ini disampaikan JELAS, bukan daftar kosong.
-    bt = 'internal'
-    poi_ids = [ln['po_item_id'] for ln in lines]
-    poi = await db.po_items.find_one({'id': {'$in': poi_ids}}, {'_id': 0, 'po_id': 1})
-    if poi and poi.get('po_id'):
-        po_doc = await db.production_pos.find_one(
-            {'id': poi['po_id']}, {'_id': 0, 'business_type': 1})
-        bt = (po_doc or {}).get('business_type', 'internal')
-    if bt == 'maklon':
-        return {
-            'applicable': False,
-            'business_type': 'maklon',
-            'reason': ('Produksi MAKLON: material milik klien dan dikirim oleh klien, '
-                       'jadi stok gudang DA tidak dipotong.'),
-            'materials': [], 'has_shortage': False,
-        }
-
-    from core import material_issue_engine as mie
-    from core import negative_stock
-    neg_ok = await negative_stock.allowed(db)
-    try:
-        need, notes, total_pcs = await mie.bom_need_for_lines(db, lines)
-    except Exception as e:  # noqa: BLE001
-        logger.exception('pratinjau material gagal')
-        return {'applicable': False, 'reason': f'gagal membaca BOM: {e}', 'materials': []}
-
-    rows, has_short = [], False
-    for code, e in need.items():
-        mat = await db.rahaza_materials.find_one(
-            {'code': code, 'active': True},
-            {'_id': 0, 'id': 1, 'code': 1, 'name': 1, 'unit': 1, 'unit_cost': 1})
-        if not mat:
-            rows.append({'code': code, 'name': e['name'], 'unit': e['unit'],
-                         'qty_required': round(e['qty'], 4), 'available': 0,
-                         'shortage': True, 'blocking': True,
-                         'problem': 'belum terdaftar di Master Item gudang'})
-            has_short = True
+    po_id = body.get('po_id')
+    if not po_id:
+        poi = await db.po_items.find_one({'id': {'$in': [ln['po_item_id'] for ln in lines]}}, {'_id': 0, 'po_id': 1})
+        po_id = (poi or {}).get('po_id')
+    from core import kirim_cmt
+    calc = await kirim_cmt.compute(db, po_id=po_id, lines=lines, accessory_input=body.get('accessory_items'))
+    rows = []
+    for p in calc.get('potongan') or []:
+        rows.append({'material_id': p['material_id'], 'code': p['code'], 'name': p['name'], 'unit': 'pcs',
+                     'kind': 'potongan', 'qty_required': p['qty'], 'available': p['available'],
+                     'unit_cost': p['unit_cost'], 'value': p['value'], 'shortage': p['blocking'],
+                     'blocking': p['blocking'], 'problem': p.get('problem') or ''})
+    for a in calc.get('aksesoris') or []:
+        if a['qty_base'] <= 0:
             continue
-        loc, avail = await mie.best_location_for(db, mat['id'], e['qty'])
-        problem = ('belum punya baris stok di gudang' if not loc
-                   else ('stok kurang' if avail + 1e-9 < e['qty'] else ''))
-        if not loc and neg_ok:
-            fb = await negative_stock.fallback_location(db, mat)
-            if fb:
-                loc, avail = fb['id'], 0.0
-                problem = f"belum ada baris stok → akan dibuat minus di {fb.get('code')}"
-        short = (not loc) or (avail + 1e-9 < e['qty'])
-        if short:
-            has_short = True
-        if short and neg_ok and loc:
-            problem = problem or 'stok kurang'
-            problem += f" (akan minus {round(e['qty'] - avail, 4):g} {mat.get('unit') or e['unit']})"
-        rows.append({
-            'material_id': mat['id'], 'code': mat['code'],
-            'name': mat.get('name') or code,
-            'unit': mat.get('unit') or e['unit'],
-            'qty_required': round(e['qty'], 4),
-            'available': round(avail, 4),
-            'location_id': loc,
-            'unit_cost': float(mat.get('unit_cost') or 0),
-            'value': round(e['qty'] * float(mat.get('unit_cost') or 0), 2),
-            'shortage': short,
-            'blocking': short and not (neg_ok and loc),
-            'problem': problem,
-        })
-    rows.sort(key=lambda r: (not r['shortage'], r['code']))
-    return {
-        'applicable': True,
-        'business_type': bt,
-        'total_pcs': total_pcs,
-        'materials': rows,
-        'has_shortage': has_short,
-        # mode sementara stok boleh minus: kekurangan = peringatan, bukan pemblokir
-        'allow_negative': neg_ok,
-        'blocking': any(r.get('blocking') for r in rows),
-        'bom_notes': notes,
-        'total_value': round(sum(r.get('value') or 0 for r in rows), 2),
-    }
+        rows.append({'material_id': a['material_id'], 'code': a['code'], 'name': a['name'], 'unit': a['usage_unit'],
+                     'kind': 'aksesoris', 'qty_required': a['qty_base'], 'available': a['available'],
+                     'unit_cost': a['unit_cost'], 'value': a['value'], 'shortage': a['blocking'] or a['negative'],
+                     'blocking': a['blocking'], 'problem': a.get('problem') or ''})
+    return serialize_doc({
+        'applicable': calc.get('applicable', False), 'business_type': calc.get('business_type'),
+        'total_pcs': calc.get('total_pcs'), 'materials': rows,
+        'has_shortage': any(r['shortage'] for r in rows), 'allow_negative': calc.get('allow_negative'),
+        'blocking': calc.get('blocking'), 'blocking_reasons': calc.get('blocking_reasons') or [],
+        'bom_notes': calc.get('warnings') or [], 'total_value': (calc.get('value') or {}).get('total', 0),
+    })
 
 
 # ─── VENDOR SHIPMENTS ────────────────────────────────────────────────────────
@@ -161,11 +118,16 @@ async def get_vendor_shipments(request: Request):
     elif _bt == 'internal': query['business_type'] = {'$ne': 'maklon'}  # internal + legacy/null
     elif _bt: query['business_type'] = _bt
     if sp.get('status'): query['status'] = sp['status']
+    if sp.get('parent_only') in ('1', 'true'):     # Tahap 9: tabel Kirim ke CMT (kiriman anak di rincian)
+        query['parent_shipment_id'] = {'$in': [None, '']}
+    if sp.get('po_id'): query['po_id'] = sp['po_id']
+    if sp.get('shipment_type'): query['shipment_type'] = sp['shipment_type']
     search = sp.get('search')
     if search:
         query['$or'] = [
             {'shipment_number': {'$regex': search, '$options': 'i'}},
             {'vendor_name': {'$regex': search, '$options': 'i'}},
+            {'po_number': {'$regex': search, '$options': 'i'}},
         ]
 
     # Pagination (Phase 10A)
@@ -536,13 +498,24 @@ async def create_vendor_shipment_internal(db, body: dict, user: dict, *, opening
             from core.doc_number_policy import release_number
             await release_number(db, 'vendor_shipments.shipment_number', shipment['shipment_number'])
 
+        from core import kirim_cmt
+        # Tahap 9 (7 Nov 2026): satu hitungan (`core.kirim_cmt`) — potongan pas dari BOM (wajib cukup), aksesoris =
+        # jumlah FINAL user dalam satuan serah (`accessory_items[].qty_handover`). Stok berkurang persis angka itu.
+        _acc_in = body.get('accessory_items')
+        _kw = {'accessory_input': _acc_in}
+        if shipment_type != 'NORMAL':       # kiriman tambahan/pengganti: hanya yang diminta, bukan rencana PO
+            _kw.update(mode='tambahan', materials=body.get('materials') or [
+                {'material_id': a.get('material_id') or a.get('accessory_id'), 'qty': a.get('qty_handover')
+                 or a.get('qty_sent'), 'uom': a.get('handover_uom') or a.get('unit')} for a in _acc_in or []])
+            _kw['accessory_input'] = None
         try:
             if _is_maklon_ship:
-                material_issue = await mie.issue_for_maklon_shipment(
-                    db, shipment, inserted_items, user)
+                material_issue = await mie.issue_for_maklon_shipment(db, shipment, inserted_items, user, **_kw)
             else:
-                material_issue = await mie.issue_for_vendor_shipment(
-                    db, shipment, inserted_items, user)
+                material_issue = await mie.issue_for_vendor_shipment(db, shipment, inserted_items, user, **_kw)
+        except kirim_cmt.KirimBlocked as e:
+            await _rollback_shipment()
+            raise HTTPException(400, 'Surat jalan TIDAK dibuat: ' + '; '.join(e.reasons))
         except mie.MaterialShortage as e:
             await _rollback_shipment()
             lines = '; '.join(
@@ -569,7 +542,15 @@ async def create_vendor_shipment_internal(db, body: dict, user: dict, *, opening
     # sehingga Surat Jalan kiriman sebagian mencetak seluruh kebutuhan PO). Form mengirim
     # `accessory_items` hasil pratinjau (boleh diubah); klien lama tanpa field itu → dihitung otomatis.
     acc_recorded = 0
-    if (body.get('shipment_type', 'NORMAL') == 'NORMAL' and shipment_po_id and not is_vendor(user)
+    if isinstance(material_issue, dict) and 'accessory_lines' in material_issue:
+        # Tahap 9: aksesoris kiriman sudah dicatat dari hitungan yang SAMA dengan dokumen pengeluaran
+        acc_recorded = material_issue.get('accessory_lines') or 0
+        try:
+            from core import kirim_cmt as _kc
+            await _kc.cancel_double_drafts(db, shipment_po_id, actor=user.get('name', ''))
+        except Exception:  # noqa: BLE001 — pembatalan draf dobel tidak boleh menggagalkan kiriman
+            logger.exception('pembatalan draf MI dobel gagal (PO %s)', shipment_po_id)
+    elif (body.get('shipment_type', 'NORMAL') == 'NORMAL' and shipment_po_id and not is_vendor(user)
             and not opening):
         try:
             from core import shipment_accessories as sa
@@ -595,6 +576,12 @@ async def create_vendor_shipment_internal(db, body: dict, user: dict, *, opening
             'already_existed': material_issue.get('already', False),
             'negative_stock_lines': material_issue.get('negative_stock_lines') or [],
         }
+        kc = material_issue.get('kirim') or {}
+        if kc:
+            result['kirim'] = {'potongan_lines': len(kc.get('potongan') or []),
+                               'aksesoris_lines': sum(1 for a in kc.get('aksesoris') or [] if a.get('qty_base')),
+                               'value': kc.get('value'), 'warnings': kc.get('warnings') or [],
+                               'sample_warning': kc.get('sample_warning')}
     return result
 
 
@@ -1143,3 +1130,7 @@ async def create_inspection(request: Request):
     if auto_request:
         result['component_request'] = serialize_doc(auto_request)
     return JSONResponse(result, status_code=201)
+
+
+# Tahap 9 (7 Nov 2026): API Kirim ke CMT didaftarkan pada router ini (satu prefix /api, gerbang server sama).
+from routes import kirim_cmt_routes  # noqa: E402,F401

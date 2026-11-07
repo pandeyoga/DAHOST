@@ -408,5 +408,5 @@ def test_layar_po_satu_bentuk_dan_hak_dari_server():
 
 
 def test_layar_kirim_material_menautkan_ke_po():
-    src = (FE / "engine" / "VendorShipmentModule.jsx").read_text(encoding="utf-8")
-    assert "edit_po_id: selectedPO.id" in src and 'testId="vship-po-no-rate"' in src
+    src = (FE / "engine" / "kirim" / "KirimanForm.jsx").read_text(encoding="utf-8")   # Tahap 9: form kiriman
+    assert "edit_po_id: po.id" in src and 'testId="kirim-no-rate"' in src

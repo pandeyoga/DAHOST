@@ -45,7 +45,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, BellRing, CalendarDays, CalendarRange, CheckCircle2, ChevronLeft,
+  AlertTriangle, BellRing, CalendarDays, CheckCircle2, ChevronLeft,
   ChevronRight, Download, FileSpreadsheet, FileText, Flame, GitCompareArrows, Info,
   Loader2, MinusCircle, RefreshCw, Search, TrendingDown, TrendingUp, UserCog, X, XCircle,
 } from 'lucide-react';
@@ -251,6 +251,15 @@ function MoverRow({ v, tone, onOpen }) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// Angka pembanding pekan ini vs pekan lalu (kartu delta).
+const DELTA_METRICS = [
+  { key: 'qty_progress_total', label: 'Pcs disetor' },
+  { key: 'qty_shipped_total', label: 'Pcs dikirim' },
+  { key: 'days_late_total', label: 'Hari terlambat' },
+  { key: 'days_unfinished_total', label: 'Hari belum beres' },
+  { key: 'vendors_late', label: 'Vendor terlambat' },
+];
+
 export default function CMTOverrideWeeklyRecap({
   endDay, onEndDayChange, onOpenDay, onOpenVendor, canFill = true,
 }) {
@@ -418,11 +427,8 @@ export default function CMTOverrideWeeklyRecap({
       <div className="border-b border-border p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-[hsl(var(--primary))]">
-              <CalendarRange className="h-5 w-5 text-white" />
-            </div>
             <div>
-              <h2 className="text-lg font-bold text-foreground">Rekap Mingguan</h2>
+              <p className="text-base font-semibold text-foreground">Rekap mingguan</p>
               <p className="mt-0.5 max-w-2xl text-sm text-muted-foreground">
                 Vendor mana yang <b>sering bolong</b> dalam 7 hari terakhir — satu kotak
                 per hari. Klik kotak hari untuk membuka <b>Rekap Harian</b> tanggal itu.
@@ -546,13 +552,7 @@ export default function CMTOverrideWeeklyRecap({
             <p className="mt-1 text-[10px] leading-snug text-[hsl(var(--primary)/0.8)]"
               data-testid="cmt-week-comparison-note">{comparison.note}</p>
             <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-              {[
-                ['qty_progress_total', 'Pcs disetor'],
-                ['qty_shipped_total', 'Pcs dikirim'],
-                ['days_late_total', 'Hari terlambat'],
-                ['days_unfinished_total', 'Hari belum beres'],
-                ['vendors_late', 'Vendor terlambat'],
-              ].map(([key, label]) => {
+              {DELTA_METRICS.map(({ key, label }) => {
                 const d = comparison.delta?.[key];
                 if (!d) return null;
                 const flat = Math.abs(d.diff) < 0.005;

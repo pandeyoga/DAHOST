@@ -14,8 +14,8 @@ from typing import Optional, List
 from datetime import datetime, timezone
 from database import get_db
 from auth import require_auth
-from routes._maklon_adapter import find_maklon_record, po_to_legacy_order
 import uuid
+from core import sample_status as smp
 from core.authz import only  # T-01 2.3
 from core.roles import MAKLON_ROLES  # T-01 2.3
 
@@ -24,14 +24,17 @@ router = APIRouter(prefix='/api/dewi/maklon/samples', tags=['Dewi-Maklon-Samples
 # MODELS
 # ══════════════════════════════════════════════════════════════════════════════
 
-SAMPLE_STATUSES = ['draft', 'in_progress', 'submitted', 'approved', 'rejected', 'revision_requested']
+SAMPLE_STATUSES = list(smp.SAMPLE_STATUSES)
 
 class SampleIn(BaseModel):
-    order_id: str = Field(..., description="Referensi ke dewi_maklon_orders.id")
+    # Tahap 9 (keputusan 9): sampel dibuat dari rincian PO maklon → `po_id` = id `production_pos`.
+    # `order_id` lama (id cermin / nomor PO) tetap diterima; keduanya di-resolve ke PO utama.
+    order_id: Optional[str] = Field(None, description="Id/nomor PO lama (cermin) — boleh kosong bila po_id diisi")
+    po_id: Optional[str] = Field(None, description="Id PO utama (production_pos)")
     sample_code: Optional[str] = None
-    product_name: str
-    description: Optional[str] = None
+    product_name: Optional[str] = ''
     target_size: Optional[str] = Field(default='M', description="Size sampel produksi")
+    description: Optional[str] = None
     fabric_used: Optional[str] = None
     color_used: Optional[str] = None
     sample_qty: int = Field(default=1, ge=1)
@@ -83,21 +86,26 @@ def _clean(doc: dict) -> dict:
 @router.get('')
 async def list_samples(
     order_id: Optional[str] = None,
+    po_id: Optional[str] = None,
     status: Optional[str] = None,
     buyer_catalog_id: Optional[str] = None,
     user: dict = Depends(require_auth)
 ):
-    """List all samples, optionally filtered by order_id, status, or buyer_catalog_id."""
+    """List all samples, optionally filtered by PO (po_id/order_id), status, or buyer_catalog_id."""
     db = get_db()
     query = {}
-    if order_id:
-        query['order_id'] = order_id
+    ref = po_id or order_id
+    if ref:
+        query.update(smp.sample_query_for_po(ref))
     if status:
         query['status'] = status
     if buyer_catalog_id:
         query['buyer_catalog_id'] = buyer_catalog_id
     samples = await db.dewi_maklon_samples.find(query).sort('created_at', -1).to_list(length=500)
-    return [_clean(s) for s in samples]
+    out = [_clean(s) for s in samples]
+    for s in out:
+        s['status_label'] = smp.status_label(s.get('status'))
+    return out
 
 @router.get('/{sample_id}')
 async def get_sample(sample_id: str, user: dict = Depends(require_auth)):
@@ -111,53 +119,60 @@ async def get_sample(sample_id: str, user: dict = Depends(require_auth)):
     ).sort('created_at', -1).to_list(length=100)
     sample = _clean(sample)
     sample['revisions'] = [_clean(r) for r in revisions]
+    sample['status_label'] = smp.status_label(sample.get('status'))
     return sample
+
+
+async def _catalog_snapshot(db, catalog_id: Optional[str], client_id: str) -> Optional[dict]:
+    """Artikel Katalog Buyer (opsional) — wajib milik klien PO yang sama."""
+    if not catalog_id:
+        return None
+    cat = await db.dewi_maklon_buyer_catalog.find_one({'id': catalog_id}, {'_id': 0})
+    if not cat:
+        raise HTTPException(400, 'Artikel Katalog Buyer tidak ditemukan.')
+    if client_id and cat.get('client_id') and cat['client_id'] != client_id:
+        raise HTTPException(400, 'Artikel Katalog Buyer tidak cocok dengan klien PO ini. '
+                                 'Pilih artikel dari klien yang sama.')
+    return cat
+
 
 @router.post('')
 async def create_sample(payload: SampleIn, user: dict = Depends(require_auth)):
-    """Create a new sample for a maklon order/PO."""
-    db = get_db()
+    """Buat sampel untuk satu PO maklon (Tahap 9: dari tab Sampel di rincian PO).
 
-    # P1.B: lookup in BOTH dewi_maklon_pos (SSOT) and dewi_maklon_orders (legacy)
-    rec = await find_maklon_record(db, payload.order_id)
-    if not rec:
-        raise HTTPException(400, 'Order maklon tidak ditemukan')
-    is_po = rec.get('_collection') == 'dewi_maklon_pos'
-    order = po_to_legacy_order(rec) if is_po else rec
+    PO dicari di data PO utama (`production_pos`) lewat `po_id` ATAU `order_id` (id/nomor lama di cermin).
+    """
+    db = get_db()
+    po = await smp.resolve_po_for_sample(db, payload.po_id or payload.order_id)
+    if not po:
+        raise HTTPException(400, 'PO maklon tidak ditemukan')
+    if po.get('business_type') == 'internal':
+        raise HTTPException(400, 'Sampel hanya untuk PO maklon.')
 
     # Phase M2.1: Auto-fill dari Buyer Catalog jika ada
     catalog_snapshot = None
-    if payload.buyer_catalog_id:
-        cat = await db.dewi_maklon_buyer_catalog.find_one(
-            {'id': payload.buyer_catalog_id}, {'_id': 0}
-        )
-        if cat:
-            # Validate catalog client matches order client (consistency)
-            if order.get('client_id') and cat.get('client_id') and order['client_id'] != cat['client_id']:
-                raise HTTPException(
-                    400,
-                    'Buyer Catalog tidak cocok dengan klien order ini. '
-                    'Pilih artikel dari klien yang sama.',
-                )
-            # Override jika field kosong
-            if not payload.product_name or payload.product_name.strip() == '':
-                payload.product_name = cat.get('product_name') or cat.get('artikel_code') or 'Sample'
-            if not payload.description:
-                payload.description = cat.get('description') or ''
-            if not payload.color_used and cat.get('color_options'):
-                payload.color_used = cat['color_options'][0]
-            catalog_snapshot = {
-                'artikel_code': cat.get('artikel_code', ''),
-                'buyer_ref_code': cat.get('buyer_ref_code', ''),
-                'product_name': cat.get('product_name', ''),
-            }
+    cat = await _catalog_snapshot(db, payload.buyer_catalog_id, po.get('client_id'))
+    if cat:
+        if not (payload.product_name or '').strip():
+            payload.product_name = cat.get('product_name') or cat.get('artikel_code') or ''
+        if not payload.description:
+            payload.description = cat.get('description') or ''
+        if not payload.color_used and cat.get('color_options'):
+            payload.color_used = cat['color_options'][0]
+        catalog_snapshot = {
+            'artikel_code': cat.get('artikel_code', ''),
+            'buyer_ref_code': cat.get('buyer_ref_code', ''),
+            'product_name': cat.get('product_name', ''),
+        }
+    if not (payload.product_name or '').strip():
+        raise HTTPException(400, 'Nama produk sampel wajib diisi (atau pilih artikel katalog).')
 
     now = datetime.now(timezone.utc)
     # SESI #27 — nomor lewat SATU PINTU kebijakan. Dulu `payload.sample_code or …`
     # menerima kode ketikan apa pun bentuknya (hanya dicek kembar), jadi mode
     # OTOMATIS milik owner bisa dilangkahi hanya dengan mengisi kolom.
     sample_code = await _generate_sample_code(
-        db, order.get('order_code', 'UNK'), (payload.sample_code or '').strip())
+        db, po.get('po_number') or 'UNK', (payload.sample_code or '').strip())
 
     # Check duplicate code
     if await db.dewi_maklon_samples.find_one({'sample_code': sample_code}):
@@ -166,12 +181,14 @@ async def create_sample(payload: SampleIn, user: dict = Depends(require_auth)):
     doc = payload.dict()
     doc['id'] = str(uuid.uuid4())
     doc['sample_code'] = sample_code
-    doc['order_code'] = order.get('order_code')
-    # P1.B: store BOTH order_id and po_id (for unified lookups)
-    if is_po:
-        doc['po_id'] = order.get('id')  # SSOT PO reference
-    doc['client_id'] = order.get('client_id')
-    doc['client_name'] = order.get('client_name')
+    doc['product_name'] = payload.product_name.strip()
+    # Satu PO, dua kunci: `po_id` (PO utama) + `order_id` (pembaca lama: Portal Klien, Lacak Order).
+    doc['po_id'] = po['po_id']
+    doc['order_id'] = po['po_id']
+    doc['order_code'] = po.get('po_number')
+    doc['po_number'] = po.get('po_number')
+    doc['client_id'] = po.get('client_id')
+    doc['client_name'] = po.get('client_name')
     doc['status'] = 'draft'
     doc['revision_number'] = 0
     doc['approved_by_name'] = None
@@ -187,7 +204,8 @@ async def create_sample(payload: SampleIn, user: dict = Depends(require_auth)):
         doc['buyer_catalog_snapshot'] = catalog_snapshot
 
     await db.dewi_maklon_samples.insert_one(doc)
-    return {'message': 'Sample berhasil dibuat', 'id': doc['id'], 'sample_code': sample_code}
+    return {'message': 'Sample berhasil dibuat', 'id': doc['id'], 'sample_code': sample_code,
+            'po_id': doc['po_id']}
 
 @router.put('/{sample_id}')
 async def update_sample(sample_id: str, payload: SampleIn, user: dict = Depends(require_auth)):
@@ -197,12 +215,21 @@ async def update_sample(sample_id: str, payload: SampleIn, user: dict = Depends(
         raise HTTPException(404, 'Sample tidak ditemukan')
     if existing.get('status') == 'approved':
         raise HTTPException(400, 'Sample sudah disetujui, tidak dapat diubah')
+    smp.assert_transition('edit', existing.get('status'))
 
     update_data = payload.dict(exclude_unset=True)
-    # Don't allow changing order_id or sample_code here
-    update_data.pop('order_id', None)
-    update_data.pop('sample_code', None)
+    # PO, kode, dan status tidak diubah lewat form ini
+    for k in ('order_id', 'po_id', 'sample_code', 'status'):
+        update_data.pop(k, None)
+    if 'product_name' in update_data and not (update_data.get('product_name') or '').strip():
+        raise HTTPException(400, 'Nama produk sampel wajib diisi.')
+    if update_data.get('buyer_catalog_id') and update_data['buyer_catalog_id'] != existing.get('buyer_catalog_id'):
+        cat = await _catalog_snapshot(db, update_data['buyer_catalog_id'], existing.get('client_id'))
+        update_data['buyer_catalog_snapshot'] = {
+            'artikel_code': cat.get('artikel_code', ''), 'buyer_ref_code': cat.get('buyer_ref_code', ''),
+            'product_name': cat.get('product_name', '')}
     update_data['updated_at'] = datetime.now(timezone.utc)
+    update_data['updated_by'] = user.get('name', '')
 
     await db.dewi_maklon_samples.update_one({'id': sample_id}, {'$set': update_data})
     return {'message': 'Sample diperbarui'}
@@ -220,28 +247,34 @@ async def delete_sample(sample_id: str, user: dict = Depends(require_auth)):
     return {'message': 'Sample dihapus'}
 
 # ══════════════════════════════════════════════════════════════════════════════
-# WORKFLOW
+# WORKFLOW — aturan status satu tempat: core.sample_status.TRANSITIONS
 # ══════════════════════════════════════════════════════════════════════════════
+
+async def _sample_or_404(db, sample_id: str) -> dict:
+    sample = await db.dewi_maklon_samples.find_one({'id': sample_id})
+    if not sample:
+        raise HTTPException(404, 'Sample tidak ditemukan')
+    return sample
+
+
+async def _set_status(db, sample: dict, status: str, extra: dict) -> None:
+    """Ubah status dengan syarat status lama masih sama (klik ganda / dua staf tidak saling menimpa)."""
+    res = await db.dewi_maklon_samples.update_one(
+        {'id': sample['id'], 'status': sample.get('status')}, {'$set': {'status': status, **extra}})
+    if not getattr(res, 'matched_count', 1):
+        raise HTTPException(409, 'Sampel baru saja diubah pengguna lain — muat ulang.')
+
 
 @router.post('/{sample_id}/submit')
 async def submit_sample(sample_id: str, user: dict = Depends(require_auth)):
     """Submit sample for client approval (status → submitted)."""
     db = get_db()
-    sample = await db.dewi_maklon_samples.find_one({'id': sample_id})
-    if not sample:
-        raise HTTPException(404, 'Sample tidak ditemukan')
-    if sample.get('status') not in ['draft', 'in_progress', 'revision_requested']:
-        raise HTTPException(400, f'Sample dengan status {sample.get("status")} tidak bisa disubmit')
+    sample = await _sample_or_404(db, sample_id)
+    smp.assert_transition('submit', sample.get('status'))
 
     now = datetime.now(timezone.utc)
-    await db.dewi_maklon_samples.update_one(
-        {'id': sample_id},
-        {'$set': {
-            'status': 'submitted',
-            'submitted_at': now,
-            'updated_at': now,
-        }}
-    )
+    await _set_status(db, sample, 'submitted', {'submitted_at': now, 'submitted_by': user.get('name', ''),
+                                                'updated_at': now})
     # Phase 4 P1: notify klien
     try:
         from routes.dewi_notifications import queue_for_client
@@ -272,23 +305,16 @@ async def approve_sample(sample_id: str, payload: ApprovalIn, user: dict = Depen
                                  'owner', 'admin', 'superadmin'),
                    what='menyetujui sample maklon')
     db = get_db()
-    sample = await db.dewi_maklon_samples.find_one({'id': sample_id})
-    if not sample:
-        raise HTTPException(404, 'Sample tidak ditemukan')
-    if sample.get('status') not in ['submitted', 'revision_requested']:
-        raise HTTPException(400, 'Hanya sample submitted yang bisa disetujui')
+    sample = await _sample_or_404(db, sample_id)
+    smp.assert_transition('approve', sample.get('status'))
 
     now = datetime.now(timezone.utc)
-    await db.dewi_maklon_samples.update_one(
-        {'id': sample_id},
-        {'$set': {
-            'status': 'approved',
-            'approved_by_name': payload.approved_by_name or user.get('name'),
-            'approved_at': now,
-            'approval_feedback': payload.feedback,
-            'updated_at': now,
-        }}
-    )
+    await _set_status(db, sample, 'approved', {
+        'approved_by_name': payload.approved_by_name or user.get('name'),
+        'approved_at': now,
+        'approval_feedback': payload.feedback,
+        'updated_at': now,
+    })
     return {'message': 'Sample disetujui'}
 
 @router.post('/{sample_id}/reject')
@@ -300,35 +326,34 @@ async def reject_sample(sample_id: str, payload: RejectionIn, user: dict = Depen
                                  'owner', 'admin', 'superadmin'),
                    what='menolak sample maklon')
     db = get_db()
-    sample = await db.dewi_maklon_samples.find_one({'id': sample_id})
-    if not sample:
-        raise HTTPException(404, 'Sample tidak ditemukan')
-    if sample.get('status') not in ['submitted', 'revision_requested']:
-        raise HTTPException(400, 'Hanya sample submitted yang bisa ditolak')
+    sample = await _sample_or_404(db, sample_id)
+    smp.assert_transition('reject', sample.get('status'))
+    if not (payload.reason or '').strip():
+        raise HTTPException(400, 'Alasan penolakan wajib diisi.')
 
     now = datetime.now(timezone.utc)
-    await db.dewi_maklon_samples.update_one(
-        {'id': sample_id},
-        {'$set': {
-            'status': 'rejected',
-            'rejected_by_name': payload.rejected_by_name or user.get('name'),
-            'rejected_at': now,
-            'rejection_reason': payload.reason,
-            'updated_at': now,
-        }}
-    )
+    await _set_status(db, sample, 'rejected', {
+        'rejected_by_name': payload.rejected_by_name or user.get('name'),
+        'rejected_at': now,
+        'rejection_reason': payload.reason,
+        'rejection_changes_required': payload.changes_required,
+        'updated_at': now,
+    })
     return {'message': 'Sample ditolak'}
 
 @router.post('/{sample_id}/revision')
 async def request_revision(sample_id: str, payload: RevisionIn, user: dict = Depends(require_auth)):
-    """Request a revision of the sample (new iteration)."""
+    """Minta revisi sampel (iterasi baru) — HANYA dari sampel yang menunggu persetujuan (Tahap 9)."""
     db = get_db()
-    sample = await db.dewi_maklon_samples.find_one({'id': sample_id})
-    if not sample:
-        raise HTTPException(404, 'Sample tidak ditemukan')
+    sample = await _sample_or_404(db, sample_id)
+    smp.assert_transition('revision', sample.get('status'))
+    if not (payload.reason or '').strip():
+        raise HTTPException(400, 'Alasan revisi wajib diisi.')
 
     now = datetime.now(timezone.utc)
-    new_rev = int(sample.get('revision_number', 0)) + 1
+    new_rev = int(sample.get('revision_number', 0) or 0) + 1
+    await _set_status(db, sample, 'revision_requested', {
+        'revision_number': new_rev, 'revision_requested_at': now, 'updated_at': now})
 
     # Insert revision history record
     rev_doc = {
@@ -342,16 +367,6 @@ async def request_revision(sample_id: str, payload: RevisionIn, user: dict = Dep
         'created_at': now,
     }
     await db.dewi_maklon_sample_revisions.insert_one(rev_doc)
-
-    # Update sample status
-    await db.dewi_maklon_samples.update_one(
-        {'id': sample_id},
-        {'$set': {
-            'status': 'revision_requested',
-            'revision_number': new_rev,
-            'updated_at': now,
-        }}
-    )
     return {'message': f'Revisi #{new_rev} dicatat', 'revision_number': new_rev}
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -380,5 +395,5 @@ async def samples_summary(user: dict = Depends(require_auth)):
 async def samples_by_order(order_id: str, user: dict = Depends(require_auth)):
     """All samples for a given order."""
     db = get_db()
-    samples = await db.dewi_maklon_samples.find({'order_id': order_id}).sort('created_at', -1).to_list(length=200)
+    samples = await db.dewi_maklon_samples.find(smp.sample_query_for_po(order_id)).sort('created_at', -1).to_list(length=200)
     return [_clean(s) for s in samples]

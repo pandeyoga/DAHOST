@@ -601,23 +601,24 @@ def test_15_maklon_portal_may_write_cmt_billing(monkeypatch):
 
 
 def test_16_maklon_shipment_issues_only_da_accessories_cumulatively(monkeypatch, posting):
+    """Tahap 9: satu hitungan Kirim ke CMT — PO maklon hanya mengeluarkan aksesoris MILIK DA (bahan klien tidak),
+    jumlah bawaan = rencana PO × porsi kumulatif kiriman − yang sudah keluar (jalur mana pun)."""
     from core import material_issue_engine as mie
+    from core import negative_stock
     import routes.rahaza_inventory_shared as ris
-    need, notes = mie.maklon_da_need(
-        [{"material_name": "Kain klien", "ownership": "client_provided", "material_id": "FAB1", "qty_per_pcs": 1.2},
-         {"material_name": "Kancing", "ownership": "cv_da_stock", "material_id": "ACC1", "qty_per_pcs": 0.5, "unit": "pcs"},
-         {"material_name": "Label", "ownership": "cv_da_stock", "qty_per_pcs": 1}], 40, {"ACC1": 12})
-    assert need == [{"material_id": "ACC1", "qty": 8.0, "bom_unit": "pcs", "name": "Kancing"}]
-    assert notes and "Label" in notes[0]
     d = fm.FakeDB()
     d.rahaza_materials.docs += [{"id": "ACC1", "code": "KCG", "type": "accessory", "unit": "pcs", "unit_cost": 2000.0,
                                  "active": True}]
     d.rahaza_material_stock.docs.append({"material_id": "ACC1", "location_id": "LOC-A", "qty": 100})
-    d.dewi_maklon_bom.docs.append({"po_id": "PO-M", "materials": [
-        {"material_name": "Kain klien", "ownership": "client_provided", "material_id": "FAB1", "qty_per_pcs": 1.2},
-        {"material_name": "Kancing", "ownership": "cv_da_stock", "material_id": "ACC1", "qty_per_pcs": 0.5,
-         "unit": "pcs"}]})
-    d.vendor_shipments.docs += [{"id": "SJ1", "po_id": "PO-M"}, {"id": "SJ2", "po_id": "PO-M"}]
+    d.production_pos.docs.append({"id": "PO-M", "po_number": "PO-M", "business_type": "maklon"})
+    d.po_items.docs.append({"id": "pm1", "po_id": "PO-M", "qty": 40})
+    d.po_accessories.docs += [
+        {"id": "c1", "po_id": "PO-M", "accessory_name": "Kain klien", "qty_needed": 48, "unit": "m",
+         "ownership": "client_provided", "source": "bom_maklon_auto"},
+        {"id": "a1", "po_id": "PO-M", "accessory_id": "ACC1", "accessory_code": "KCG", "qty_needed": 20, "unit": "pcs",
+         "ownership": "cv_da_stock", "source": "bom_maklon_auto"}]
+    d.vendor_shipments.docs += [{"id": "SJ1", "po_id": "PO-M", "shipment_type": "NORMAL"},
+                                {"id": "SJ2", "po_id": "PO-M", "shipment_type": "NORMAL"}]
     d.vendor_shipment_items.docs += [{"shipment_id": "SJ1", "qty_sent": 20}, {"shipment_id": "SJ2", "qty_sent": 20}]
     calls = []
 
@@ -629,23 +630,29 @@ def test_16_maklon_shipment_issues_only_da_accessories_cumulatively(monkeypatch,
 
     async def mino(db, *a, **k):
         return f"MI-{len(d.rahaza_material_issues.docs) + 1}"
+
+    async def neg(db):
+        return False
     monkeypatch.setattr(mie, "issue_material_issue", fake_issue)
     monkeypatch.setattr(ris, "_gen_mi_number", mino)
+    monkeypatch.setattr(negative_stock, "allowed", neg)
     # SJ1 (20 pcs) sudah punya MI lewat jalur lain sebesar 10 kancing
     d.rahaza_material_issues.docs.append({"id": "OLD", "production_po_id": "PO-M", "status": "issued",
                                           "items": [{"material_id": "ACC1", "qty_issued": 10}]})
     res = run(mie.issue_for_maklon_shipment(d, {"id": "SJ2", "po_id": "PO-M", "shipment_number": "SJ-2"},
-                                            [{"qty_sent": 20}], USER))
+                                            [{"po_item_id": "pm1", "qty_sent": 20}], USER))
     mi = res["mi"]
     assert calls == ["maklon_material_issue"] and mi["cost_target"] == "maklon"
     assert [(it["material_id"], it["qty_required"]) for it in mi["items"]] == [("ACC1", 10.0)]   # 0,5×40 − 10
-    again = run(mie.issue_for_maklon_shipment(d, {"id": "SJ2", "po_id": "PO-M"}, [{"qty_sent": 20}], USER))
+    assert [c["accessory_name"] for c in res["kirim"]["client_accessories"]] == ["Kain klien"]   # bukan stok DA
+    again = run(mie.issue_for_maklon_shipment(d, {"id": "SJ2", "po_id": "PO-M"}, [{"po_item_id": "pm1",
+                                                                                   "qty_sent": 20}], USER))
     assert again["already"] is True and len(calls) == 1                 # idempoten per surat jalan
-    d.vendor_shipments.docs.append({"id": "SJ3", "po_id": "PO-M"})
-    assert run(mie.issue_for_maklon_shipment(d, {"id": "SJ3", "po_id": "PO-M"}, [{"qty_sent": 0}], USER)) is None
-    d.dewi_maklon_bom.docs[0]["materials"] = d.dewi_maklon_bom.docs[0]["materials"][:1]   # hanya kain klien
+    d.po_accessories.docs = d.po_accessories.docs[:1]                    # hanya bahan klien
     d.vendor_shipments.docs.append({"id": "SJ4", "po_id": "PO-M"})
-    assert run(mie.issue_for_maklon_shipment(d, {"id": "SJ4", "po_id": "PO-M"}, [{"qty_sent": 5}], USER)) is None
+    res4 = run(mie.issue_for_maklon_shipment(d, {"id": "SJ4", "po_id": "PO-M"}, [{"po_item_id": "pm1", "qty_sent": 5}],
+                                             USER))
+    assert res4["mi"] is None and res4["skipped"] is True and len(calls) == 1
     # jurnal MI maklon — Tahap 8 fase 2 (keputusan owner K5): aksesoris DA untuk PO maklon DIJUAL ke CV Sukma.
     # Buku DA: Dr piutang CV Sukma / Cr persediaan aksesoris (1-1402); buku CV Sukma: Dr biaya proyek maklon
     # (5-4100) / Cr hutang ke CV Dewi Aditya.

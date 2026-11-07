@@ -92,9 +92,14 @@ def permak_to_absorb(rows: list | None) -> list:
     return out
 
 
-async def compute_batch_unit_cost(db, *, po_item: dict, qty: int) -> dict:
-    """Biaya per pcs satu batch = bahan (BOM) + upah jahit (SPK) + permak (Tahap 2: tanpa upah internal).
+async def compute_batch_unit_cost(db, *, po_item: dict, qty: int, basis: str = "auto") -> dict:
+    """Biaya per pcs satu batch = bahan + upah jahit (SPK) + permak (Tahap 2: tanpa upah internal).
 
+    Tahap 9 (7 Nov 2026, keputusan owner): BOM hanya simulasi/standar. `basis`:
+      * ``auto`` (bawaan) — bahan AKTUAL yang diserahkan untuk PO ini (`core.hpp_aktual`: potongan baris ini
+        ÷ pcs baris yang dikirim + aksesoris PO ÷ pcs PO yang dikirim, dibatasi sisa yang belum terserap);
+        PO yang belum punya penyerahan bahan memakai BOM standar dan menyebutnya di `gaps`;
+      * ``standard`` — selalu BOM × harga master (pembanding "HPP standar").
     Semua komponen menyebut ASALNYA. Komponen yang belum ada tidak ditebak.
     """
     from core import product_costing as pc
@@ -110,13 +115,39 @@ async def compute_batch_unit_cost(db, *, po_item: dict, qty: int) -> dict:
     model_id = (po_item or {}).get("model_id") or ""
     size_id = (po_item or {}).get("size_id") or ""
 
-    # ── bahan: BOM × harga master (SSOT core/product_costing) ────────────────
-    if model_id and size_id:
+    # ── bahan AKTUAL (Tahap 9): yang benar-benar diserahkan ke CMT untuk PO ini ─
+    actual = None
+    if basis != "standard" and qty and qty > 0:
+        try:
+            from core import hpp_aktual
+            actual = await hpp_aktual.layer_material_for(db, po_item=po_item or {}, qty=qty)
+        except Exception:  # noqa: BLE001 — jatuh ke BOM standar, tetapi terlihat di log
+            logger.exception("bahan aktual gagal dihitung (po_item=%s)", (po_item or {}).get("id"))
+            actual = None
+    if actual is not None:
+        out["material_cost"] = _r(actual["material_value"] / qty)
+        out["material_source"] = "aktual"
+        out["material_basis"] = "aktual"
+        out["cut_value"] = actual["cut_value"]
+        out["accessory_value"] = actual["accessory_value"]
+        out["cut_cost"] = _r(actual["cut_value"] / qty)
+        out["accessory_cost"] = _r(actual["accessory_value"] / qty)
+        out["material_allocation"] = {k: actual[k] for k in ("cut_per_pcs", "accessory_per_pcs", "sent_item",
+                                                             "sent_total", "sent_basis", "capped")}
+        out["gaps"].extend(actual.get("gaps") or [])
+    elif model_id and size_id and basis == "auto" and (po_item or {}).get("po_id"):
+        out["gaps"].append("Belum ada bahan yang tercatat diserahkan untuk PO ini — biaya bahan memakai BOM standar.")
+
+    # ── bahan: BOM × harga master (SSOT core/product_costing) — standar / cadangan ─
+    if actual is not None:
+        pass
+    elif model_id and size_id:
         try:
             mc = await pc.compute_material_cost(db, model_id, size_id)
             if mc.get("bom_id"):
                 out["material_cost"] = _r(mc.get("material_cost"))
                 out["material_source"] = "bom"
+                out["material_basis"] = "bom"
                 if mc.get("unvalued_count"):
                     out["gaps"].append(
                         f"{mc['unvalued_count']} bahan belum punya harga — biaya bahan batch ini "
@@ -135,7 +166,7 @@ async def compute_batch_unit_cost(db, *, po_item: dict, qty: int) -> dict:
         out["sewing_cost"] = _r(rate)
         out["sewing_source"] = "spk"
     else:
-        out["gaps"].append("biaya jahit/pcs SPK ini belum diisi — isi di layar Biaya Jahit SPK")
+        out["gaps"].append("biaya jahit/pcs SPK ini belum diisi — isi kolom upah jahit di form PO")
 
     # ── permak: ongkos perbaikan item ini yang BELUM masuk batch mana pun ────
     # Tahap 1 (6 Nov 2026): dulu SEMUA permak item SPK dibagi qty batch INI pada setiap

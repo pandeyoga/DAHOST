@@ -94,7 +94,8 @@ async def issue_material_issue(db, mi: dict, user: dict, *, loc_overrides: dict 
     # ── (a) kumpulkan pasangan (material, lokasi) lalu baca stoknya sekali ──
     pairs = set()
     for it in raw_items:
-        loc = loc_overrides.get(it["material_id"]) or it.get("location_id")
+        # baris kiriman Tahap 9 (ber-`kind`) membawa lokasinya sendiri — satu material boleh dari BANYAK lokasi
+        loc = (it.get("location_id") if it.get("kind") else None) or loc_overrides.get(it["material_id"])             or it.get("location_id")
         if loc and _f(it.get("qty_required")) > 0:
             pairs.add((it["material_id"], loc))
     stock_map = {}
@@ -116,12 +117,15 @@ async def issue_material_issue(db, mi: dict, user: dict, *, loc_overrides: dict 
         mat_meta[m["id"]] = m
     loc_meta = {}
     for it in raw_items:
-        loc = loc_overrides.get(it["material_id"]) or it.get("location_id")
+        loc = (it.get("location_id") if it.get("kind") else None) or loc_overrides.get(it["material_id"])             or it.get("location_id")
         qty = _f(it.get("qty_required"))
         if qty <= 0:
             continue
+        # Tahap 9 (7 Nov 2026): baris ber-`allow_negative: False` (POTONGAN) tidak pernah boleh minus, juga saat
+        # setelan "stok boleh minus" ON — kiriman ke CMT wajib didahului catatan cutting.
+        item_neg = neg_ok and it.get("allow_negative") is not False
         meta = mat_meta.get(it["material_id"], {})
-        if not loc and neg_ok:
+        if not loc and item_neg:
             fb = await negative_stock.fallback_location(db, meta)
             if fb:
                 loc = fb["id"]
@@ -130,10 +134,10 @@ async def issue_material_issue(db, mi: dict, user: dict, *, loc_overrides: dict 
         if not loc:
             no_loc.append(meta.get("code") or it["material_id"])
             continue
-        if neg_ok and loc not in loc_meta:
+        if item_neg and loc not in loc_meta:
             loc_meta[loc] = await db.rahaza_locations.find_one({"id": loc}, {"_id": 0})
         srow = stock_map.get((it["material_id"], loc))
-        if srow is None and neg_ok:
+        if srow is None and item_neg:
             srow = await db.rahaza_material_stock.find_one(
                 {"material_id": it["material_id"], "location_id": loc}, {"_id": 0, "qty": 1})
         avail = _f((srow or {}).get("qty"))
@@ -144,18 +148,19 @@ async def issue_material_issue(db, mi: dict, user: dict, *, loc_overrides: dict 
                 "material_name": meta.get("name") or "",
                 "unit": meta.get("unit") or "",
                 "required": round(qty, 4), "available": round(avail, 4),
-                "location_id": loc,
+                "location_id": loc, "_strict": not item_neg,
             })
         plan.append({"material_id": it["material_id"], "location_id": loc,
-                     "qty": qty, "item_id": it["id"]})
+                     "qty": qty, "item_id": it["id"], "neg": item_neg})
     if no_loc:
         raise BomMissing(
             "Material berikut tidak punya lokasi stok sama sekali di gudang: "
             + ", ".join(no_loc)
             + ". Catat penerimaan/opname dulu sebelum mengirim ke CMT.")
-    if shortages and not neg_ok:
-        raise MaterialShortage(shortages)
-    negative_lines = shortages if neg_ok else []
+    strict = [{k: v for k, v in s.items() if k != "_strict"} for s in shortages if s.get("_strict")]
+    if strict:
+        raise MaterialShortage(strict)
+    negative_lines = [{k: v for k, v in s.items() if k != "_strict"} for s in shortages if not s.get("_strict")]
 
     # ── (c0) 2026-11-06 (Tahap 1): KLAIM ATOMIK sebelum stok disentuh ──────
     prev_status = mi.get("status")
@@ -198,9 +203,9 @@ async def issue_material_issue(db, mi: dict, user: dict, *, loc_overrides: dict 
                          "item_id": p.get("item_id"), "ref_type": default_ref,
                          "ref_id": mi["id"]},
                     actor=actor,
-                    db=db, allow_negative=neg_ok,
+                    db=db, allow_negative=p["neg"],
                     meta=negative_stock.stock_meta(mat_meta.get(p["material_id"]),
-                                                   loc_meta.get(p["location_id"])) if neg_ok else None,
+                                                   loc_meta.get(p["location_id"])) if p["neg"] else None,
                 )
             except stock_service.InsufficientStock:
                 race_failures.append({"material_id": p["material_id"],
@@ -230,7 +235,8 @@ async def issue_material_issue(db, mi: dict, user: dict, *, loc_overrides: dict 
 
     # ── (d) tutup dokumen + posting GL ────────────────────────────────────
     new_items = [{**it, "qty_issued": _f(it.get("qty_required")),
-                  "location_id": loc_overrides.get(it["material_id"]) or it.get("location_id")}
+                  "location_id": (it.get("location_id") if it.get("kind") else None)
+                  or loc_overrides.get(it["material_id"]) or it.get("location_id")}
                  for it in raw_items]
     await db.rahaza_material_issues.update_one(
         {"id": mi["id"]},
@@ -255,13 +261,12 @@ async def issue_material_issue(db, mi: dict, user: dict, *, loc_overrides: dict 
 # ═════════════════════════════════════════════════════════════════════════════
 # 2. KEBUTUHAN MATERIAL DARI BOM (per PO item × qty dikirim)
 # ═════════════════════════════════════════════════════════════════════════════
-async def _active_bom(db, model_id: str, size_id: str, color: str = ""):
+async def _active_bom(db, model_id: str, size_id: str, color: str = "", color_code: str = ""):
     """Resolusi BOM aktif — memakai SSOT yang sama dengan MI dari job internal
-    (`production_internal_adapter._active_bom`): BOM spesifik-warna → BOM umum →
-    BOM apa pun untuk model+size. Sengaja TIDAK menulis resolusi sendiri supaya
-    "BOM mana yang dipakai" punya satu jawaban di seluruh sistem."""
+    (`production_internal_adapter._active_bom`): BOM spesifik-warna → BOM umum (tanpa warna).
+    Tahap 9: TIDAK PERNAH jatuh ke BOM warna lain."""
     from routes.production_internal_adapter import _active_bom as _resolve
-    return await _resolve(db, model_id, size_id, color)
+    return await _resolve(db, model_id, size_id, color, color_code=color_code)
 
 
 async def bom_need_for_lines(db, lines: list) -> tuple[dict, list, int]:
@@ -272,6 +277,7 @@ async def bom_need_for_lines(db, lines: list) -> tuple[dict, list, int]:
     type, qty}.
     """
     from core import bom_uom
+    from core.kirim_cmt import kind_of as kirim_kind
     from routes.rahaza_bom import _is_kglike
 
     poi_ids = [ln["po_item_id"] for ln in lines if ln.get("po_item_id")]
@@ -293,9 +299,9 @@ async def bom_need_for_lines(db, lines: list) -> tuple[dict, list, int]:
             notes.append(f"{label}: PO item belum tertaut model/ukuran master "
                          f"(model_id/size_id kosong) — BOM tidak bisa dibaca")
             continue
-        bom = await _active_bom(db, model_id, size_id, pi.get("color") or "")
+        bom = await _active_bom(db, model_id, size_id, pi.get("color") or "", pi.get("color_code") or "")
         if not bom:
-            notes.append(f"{label}: tidak ada BOM aktif untuk model/ukuran ini")
+            notes.append(f"{label}: tidak ada BOM aktif untuk warna/model/ukuran ini")
             continue
         bom_mats, uom_warn = await bom_uom.ensure_uom(db, bom)
         for w in uom_warn:
@@ -307,10 +313,13 @@ async def bom_need_for_lines(db, lines: list) -> tuple[dict, list, int]:
                 continue
             base_unit = bom_uom.base_unit_of(m)
             is_kg = _is_kglike({**m, "unit": base_unit})
+            # Tahap 9: potongan (hasil Cutting) BUKAN aksesoris — dulu semua yang bukan kg disebut "accessory"
+            kind = kirim_kind(line=m)
             e = need.setdefault(code, {
                 "name": m.get("name") or code,
                 "unit": base_unit or ("kg" if is_kg else "pcs"),
-                "type": "yarn" if is_kg else "accessory",
+                "type": "yarn" if is_kg else ("cut_panel" if kind == "potongan" else "accessory"),
+                "kind": kind,
                 "qty": 0.0,
             })
             e["qty"] += bom_uom.qty_base_of(m) * qty
@@ -367,270 +376,30 @@ async def autofill_locations(db, items: list, default_loc: str | None = None) ->
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 3. KIRIM MATERIAL KE CMT ⇒ MI OTOMATIS + STOK BERKURANG
+# 3. KIRIM KE CMT ⇒ SATU MI + STOK BERKURANG (Tahap 9: satu hitungan `core.kirim_cmt`)
 # ═════════════════════════════════════════════════════════════════════════════
-async def issue_for_vendor_shipment(db, shipment: dict, ship_items: list,
-                                    user: dict) -> dict:
-    """Terbitkan Material Issue OTOMATIS untuk satu surat jalan material ke CMT.
-
-    Idempoten: bila surat jalan ini sudah punya MI, dokumen itu yang dikembalikan.
-    """
-    from routes.rahaza_inventory_shared import _uid, _gen_mi_number, _now
-
-    existing = await db.rahaza_material_issues.find_one(
-        {"vendor_shipment_id": shipment["id"], "status": {"$ne": "rejected"}}, {"_id": 0})
-    if existing:
-        return {"ok": True, "already": True, "mi": existing}
-    # 2026-11-06 (Tahap 2): surat jalan yang seluruh kebutuhannya sudah tertutup permintaan aksesoris
-    sdoc = await db.vendor_shipments.find_one({"id": shipment["id"]}, {"_id": 0, "material_issue_skipped": 1})
-    if (sdoc or {}).get("material_issue_skipped"):
-        return {"ok": True, "already": True, "skipped": True, "mi": None}
-
-    lines = [{"po_item_id": it.get("po_item_id"), "qty": it.get("qty_sent")}
-             for it in ship_items if it.get("po_item_id")]
-    need, notes, total_pcs = await bom_need_for_lines(db, lines)
-    if not need:
-        raise BomMissing(
-            "Kebutuhan material tidak bisa dihitung dari BOM, jadi tidak ada yang "
-            "dikeluarkan dari gudang. Penyebab: "
-            + ("; ".join(notes) if notes else "BOM kosong")
-            + ". Lengkapi BOM model/ukuran di Master Produk lalu kirim ulang.")
-
-    # ── resolve master material by code (JANGAN membuat master baru di sini:
-    #    material yang tidak ada di master berarti BOM menunjuk barang yang tidak
-    #    pernah masuk gudang — itu harus terlihat, bukan ditambal diam-diam) ──
-    codes = list(need.keys())
-    mats = {}
-    async for m in db.rahaza_materials.find(
-            {"code": {"$in": codes}, "active": True}, {"_id": 0}):
-        mats[m["code"]] = m
-    unknown = [c for c in codes if c not in mats]
-    if unknown:
-        raise BomMissing(
-            "Material pada BOM belum ada di Master Item gudang: "
-            + ", ".join(unknown)
-            + ". Daftarkan materialnya (atau perbaiki kode di BOM) sebelum "
-              "mengirim material ke CMT.")
-
-    from core import negative_stock
-    neg_ok = await negative_stock.allowed(db)
-    items, auto_loc, no_stock, neg_notes = [], {}, [], []
-    for code, e in need.items():
-        mat = mats[code]
-        loc, avail = await best_location_for(db, mat["id"], e["qty"])
-        if not loc and neg_ok:
-            fb = await negative_stock.fallback_location(db, mat)
-            if fb:
-                loc, avail = fb["id"], 0.0
-                neg_notes.append(f"{code} belum ada baris stok → dibuat minus di {fb.get('code')}")
-        if not loc:
-            no_stock.append(f"{code} ({e['qty']:g} {e['unit']})")
-            continue
-        auto_loc[mat["id"]] = loc
-        items.append({
-            "id": _uid(), "material_id": mat["id"],
-            "qty_required": round(e["qty"], 4),
-            "qty_issued": 0, "location_id": loc, "notes": "",
-        })
-    if no_stock:
-        raise BomMissing(
-            "Material berikut belum punya baris stok di gudang mana pun: "
-            + ", ".join(no_stock)
-            + ". Catat penerimaan barang atau opname dulu.")
-    if neg_notes:
-        notes = list(notes) + neg_notes
-
-    # 2026-11-06 (Tahap 2) — SATU KELUAR PER KEBUTUHAN PO: aksesoris yang sudah dikeluarkan untuk PO
-    # ini lewat permintaan aksesoris / Keluar manual ber-PO dikurangkan dari kiriman ini (dulu
-    # dikeluarkan lagi: butuh 100 → keluar 140). Bagian yang dipakai dicatat di surat jalan supaya
-    # tidak dikurangkan dua kali oleh surat jalan berikutnya.
-    offsets: list = []
-    po_id = shipment.get("po_id")
-    if po_id:
-        from core.accessory_issue import request_credit_for_po
-        credit = await request_credit_for_po(db, po_id)
-        for it in items:
-            c = _f(credit.get(it["material_id"]))
-            if c <= 1e-9:
-                continue
-            off = round(min(c, _f(it["qty_required"])), 4)
-            it["qty_required"] = round(_f(it["qty_required"]) - off, 4)
-            it["offset_request_qty"] = off
-            credit[it["material_id"]] = c - off
-            offsets.append({"material_id": it["material_id"], "qty": off})
-        if offsets:
-            notes = list(notes) + [f"{len(offsets)} aksesoris dikurangi karena sudah keluar lewat permintaan aksesoris PO ini"]
-        items = [it for it in items if _f(it["qty_required"]) > 1e-9]
-        if not items:
-            await db.vendor_shipments.update_one({"id": shipment["id"]}, {"$set": {
-                "accessory_request_offsets": offsets, "material_issue_skipped": True}})
-            return {"ok": True, "already": False, "skipped": True, "mi": None, "bom_notes": notes,
-                    "total_pcs": total_pcs, "material_lines": 0, "request_offsets": offsets}
-
-    mi = {
-        "id": _uid(),
-        "mi_number": await _gen_mi_number(db),
-        "work_order_id": None,
-        "wo_number_snapshot": "",
-        "job_id": None,
-        "vendor_shipment_id": shipment["id"],
-        "vendor_shipment_number": shipment.get("shipment_number", ""),
-        "vendor_id": shipment.get("vendor_id", ""),
-        "vendor_name": shipment.get("vendor_name", ""),
-        "production_po_id": shipment.get("po_id"),
-        "po_number_snapshot": shipment.get("po_number", ""),
-        "qty_wo_pcs": total_pcs,
-        "items": items,
-        "status": "pending_approval",
-        "source": "vendor_shipment",
-        "notes": ("Otomatis dari Kirim Material CMT "
-                  f"{shipment.get('shipment_number', '')} (FASE H-1)"
-                  + (f" · catatan BOM: {'; '.join(notes)}" if notes else "")),
-        "bom_notes": notes,
-        "created_by": user.get("id"), "created_by_name": user.get("name", ""),
-        "created_at": _now(), "updated_at": _now(),
-    }
-    await db.rahaza_material_issues.insert_one(dict(mi))
-    fresh = await issue_material_issue(db, mi, user, loc_overrides=auto_loc,
-                                       ref_type="cmt_material_issue")
-    await db.vendor_shipments.update_one(
-        {"id": shipment["id"]},
-        {"$set": {"material_issue_id": mi["id"],
-                  "material_issue_number": mi["mi_number"],
-                  **({"accessory_request_offsets": offsets} if offsets else {})}})
-    return {"ok": True, "already": False, "mi": fresh,
-            "mi_number": mi["mi_number"], "bom_notes": notes,
-            "negative_stock_lines": fresh.get("negative_stock_lines") or [],
-            "total_pcs": total_pcs, "material_lines": len(items)}
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-# 4. KIRIM MATERIAL MAKLON ⇒ MI HANYA UNTUK AKSESORIS MILIK DA (2026-11-02, K14 / P-7)
-# ═════════════════════════════════════════════════════════════════════════════
-# Keputusan owner K14 (P-7): kain/bahan milik KLIEN maklon di luar neraca DA (tidak di-MI), tetapi
-# aksesoris MILIK DA yang dipakai pesanan maklon tetap dibukukan sebagai BIAYA DA lewat MI. Dulu
-# `routes/vendor_shipment.py` mengecualikan SEMUA surat jalan maklon dari MI, sehingga stok aksesoris
-# DA tidak pernah turun dan biayanya tidak terbukukan (dilaporkan sebagai celah oleh
-# `production_maklon_bridge.compute_maklon_hpp`). Sumber kebutuhan = BOM maklon per PO
-# (`dewi_maklon_bom.materials`, baris `ownership` milik DA + `material_id`), mesin potong stok &
-# posting = SAMA (`issue_material_issue`); jurnalnya Dr biaya proyek maklon / Cr 1-1402.
+# Tahap 9 (7 Nov 2026): dua jalur lama (`issue_for_vendor_shipment` = BOM × qty dengan pecahan 4 desimal,
+# `issue_for_maklon_shipment` = BOM maklon kumulatif) DIGANTI satu hitungan `core.kirim_cmt.compute`:
+# potongan pas per SKU dari BOM (wajib cukup), aksesoris = jumlah FINAL user dalam satuan serah. Nama fungsi
+# dipertahankan karena dipanggil route kiriman & uji; keduanya memakai mesin yang sama.
 MAKLON_DA_OWNERSHIP = ("cv_da_stock", "cv_da", "da_provided")   # sama dgn production_maklon_bridge
 _MI_NOT_COUNTED = ("rejected", "draft", "cancelled")
 
 
-def maklon_da_need(bom_lines: list, pcs_total: float, issued_by_mat: dict) -> tuple[list, list]:
-    """Fungsi murni: kebutuhan MI per baris BOM maklon milik DA.
+async def issue_for_vendor_shipment(db, shipment: dict, ship_items: list, user: dict, *,
+                                    accessory_input=None, materials=None, mode: str = "normal") -> dict:
+    """Kiriman ke CMT (PO internal maupun maklon) → hitungan `core.kirim_cmt` → satu MI → stok berkurang.
 
-    need = qty_per_pcs × pcs KUMULATIF semua surat jalan PO ini − qty yang SUDAH di-MI untuk PO
-    ini (jalur mana pun). Kumulatif = tidak dobel bila MI sudah diterbitkan lewat jalur lain.
-    Return (baris [{material_id, qty, bom_unit, name}], catatan)."""
-    out, notes = [], []
-    agg: dict = {}
-    for ln in bom_lines or []:
-        if (ln.get("ownership") or "") not in MAKLON_DA_OWNERSHIP:
-            continue                                   # kain/bahan milik klien — bukan stok DA
-        name = ln.get("material_name") or ln.get("material_id") or "?"
-        if not ln.get("material_id"):
-            notes.append(f"{name}: baris BOM maklon milik DA tanpa material_id — tidak bisa di-MI")
-            continue
-        per = _f(ln.get("qty_per_pcs"))
-        if per <= 0:
-            notes.append(f"{name}: qty per pcs 0 di BOM maklon — dilewati")
-            continue
-        a = agg.setdefault(ln["material_id"], {"material_id": ln["material_id"], "per_pcs": 0.0,
-                                               "bom_unit": ln.get("unit") or "", "name": name})
-        a["per_pcs"] += per
-    for mid, a in agg.items():
-        need = round(a["per_pcs"] * _f(pcs_total) - _f(issued_by_mat.get(mid)), 4)
-        if need > 1e-9:
-            out.append({"material_id": mid, "qty": need, "bom_unit": a["bom_unit"], "name": a["name"]})
-    return out, notes
+    Melempar `core.kirim_cmt.KirimBlocked` (turunan `BomMissing`) bila potongan kurang / BOM warna tidak ada,
+    dan `MaterialShortage` bila stok berubah di tengah jalan. Idempoten per kiriman."""
+    from core import kirim_cmt
+    return await kirim_cmt.issue_for_shipment(db, shipment, ship_items, user, accessory_input=accessory_input,
+                                              materials=materials, mode=mode)
 
 
-async def issue_for_maklon_shipment(db, shipment: dict, ship_items: list, user: dict) -> dict | None:
-    """MI OTOMATIS aksesoris DA untuk satu surat jalan material MAKLON. None = tidak ada yang di-MI
-    (BOM maklon tanpa aksesoris DA, atau kebutuhan sudah tertutup MI lain). Idempoten per surat jalan."""
-    # Tahap 8 fase 2 (TODO): jurnal pengeluaran ini masih di buku DA (stok milik DA). Fase 2 menambah pasangan
-    # antar CV (DA menjual aksesoris ke CV Sukma dengan margin yang bisa diatur, bawaan 0%).
-    from core import bom_uom
-    from core import uom as uom_core
-    from routes.rahaza_inventory_shared import _gen_mi_number, _now, _uid
-
-    existing = await db.rahaza_material_issues.find_one(
-        {"vendor_shipment_id": shipment["id"], "status": {"$ne": "rejected"}}, {"_id": 0})
-    if existing:
-        return {"ok": True, "already": True, "mi": existing}
-    po_id = shipment.get("po_id")
-    bom = await db.dewi_maklon_bom.find_one({"po_id": po_id}, {"_id": 0}) if po_id else None
-    if not bom or not any((m.get("ownership") or "") in MAKLON_DA_OWNERSHIP for m in bom.get("materials") or []):
-        return None
-
-    # pcs kumulatif semua surat jalan PO ini (termasuk yang baru dibuat) & qty yang sudah di-MI
-    sids = [s["id"] async for s in db.vendor_shipments.find({"po_id": po_id}, {"_id": 0, "id": 1})]
-    pcs_total = 0.0
-    async for si in db.vendor_shipment_items.find({"shipment_id": {"$in": sids}}, {"_id": 0, "qty_sent": 1}):
-        pcs_total += _f(si.get("qty_sent"))
-    # 2026-11-06 (Tahap 2): "sudah keluar" = MI PO ini + pengeluaran lewat permintaan aksesoris /
-    # Keluar manual ber-PO yang sama (dulu hanya MI → permintaan untuk PO yang sama dikeluarkan lagi).
-    from core.accessory_issue import po_issued_by_material
-    issued = await po_issued_by_material(db, po_id)
-
-    need, notes = maklon_da_need(bom.get("materials") or [], pcs_total, issued)
-    mats = {}
-    if need:
-        async for m in db.rahaza_materials.find({"id": {"$in": [n["material_id"] for n in need]}}, {"_id": 0}):
-            mats[m["id"]] = m
-    items, auto_loc = [], {}
-    from core import negative_stock
-    neg_ok = await negative_stock.allowed(db)
-    for n in need:
-        mat = mats.get(n["material_id"])
-        if not mat:
-            notes.append(f"{n['name']}: material_id {n['material_id']} tidak ada di Master Item — tidak di-MI")
-            continue
-        qty = n["qty"]
-        if n["bom_unit"] and (n["bom_unit"] or "").strip().lower() != (mat.get("unit") or "").strip().lower():
-            try:
-                f, _src = bom_uom.factor_to_base(mat, n["bom_unit"])
-                qty = round(qty * f, 4)
-            except uom_core.UomError as e:
-                raise BomMissing(f"{mat.get('code') or n['name']}: satuan BOM maklon '{n['bom_unit']}' "
-                                 f"tidak bisa dikonversi ke satuan master ({e}).")
-        loc, _avail = await best_location_for(db, mat["id"], qty)
-        if not loc and neg_ok:
-            fb = await negative_stock.fallback_location(db, mat)
-            loc = fb["id"] if fb else None
-        if not loc:
-            raise BomMissing(f"Aksesoris DA {mat.get('code') or n['name']} belum punya baris stok di gudang "
-                             "mana pun. Catat penerimaan/opname dulu.")
-        auto_loc[mat["id"]] = loc
-        items.append({"id": _uid(), "material_id": mat["id"], "qty_required": qty,
-                      "qty_issued": 0, "location_id": loc, "notes": "aksesoris DA — pesanan maklon"})
-    if not items:
-        return {"ok": True, "already": False, "skipped": True, "mi": None, "bom_notes": notes,
-                "total_pcs": pcs_total, "material_lines": 0} if notes else None
-
-    mi = {
-        "id": _uid(), "mi_number": await _gen_mi_number(db),
-        "work_order_id": None, "wo_number_snapshot": "", "job_id": None,
-        "vendor_shipment_id": shipment["id"],
-        "vendor_shipment_number": shipment.get("shipment_number", ""),
-        "vendor_id": shipment.get("vendor_id", ""), "vendor_name": shipment.get("vendor_name", ""),
-        "production_po_id": po_id, "po_number_snapshot": shipment.get("po_number", ""),
-        "business_type": "maklon", "cost_target": "maklon",
-        "qty_wo_pcs": int(sum(_f(i.get("qty_sent")) for i in ship_items)),
-        "items": items, "status": "pending_approval", "source": "vendor_shipment_maklon",
-        "notes": ("Otomatis dari Kirim Material CMT MAKLON "
-                  f"{shipment.get('shipment_number', '')} — aksesoris milik DA (K14)"
-                  + (f" · catatan: {'; '.join(notes)}" if notes else "")),
-        "bom_notes": notes,
-        "created_by": user.get("id"), "created_by_name": user.get("name", ""),
-        "created_at": _now(), "updated_at": _now(),
-    }
-    await db.rahaza_material_issues.insert_one(dict(mi))
-    fresh = await issue_material_issue(db, mi, user, loc_overrides=auto_loc, ref_type="maklon_material_issue")
-    await db.vendor_shipments.update_one({"id": shipment["id"]}, {"$set": {
-        "material_issue_id": mi["id"], "material_issue_number": mi["mi_number"]}})
-    return {"ok": True, "already": False, "mi": fresh, "mi_number": mi["mi_number"], "bom_notes": notes,
-            "negative_stock_lines": fresh.get("negative_stock_lines") or [],
-            "total_pcs": pcs_total, "material_lines": len(items)}
+async def issue_for_maklon_shipment(db, shipment: dict, ship_items: list, user: dict, *,
+                                    accessory_input=None, materials=None, mode: str = "normal") -> dict:
+    """PO maklon: SAMA dengan `issue_for_vendor_shipment` — hitungan membaca jenis PO sendiri (kain & potongan
+    milik klien tidak dikeluarkan; aksesoris milik DA keluar sesuai jumlah serah, `cost_target='maklon'`)."""
+    return await issue_for_vendor_shipment(db, shipment, ship_items, user, accessory_input=accessory_input,
+                                           materials=materials, mode=mode)

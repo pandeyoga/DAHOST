@@ -256,120 +256,11 @@ async def _update_material_request_locked(db, req_id: str, body: dict, user: dic
             raise HTTPException(400,
                 f"Permintaan sudah '{req.get('status')}' — keputusan hanya bisa diambil saat 'Pending'")
     if new_status == 'Approved' and req.get('status') == 'Pending':
-        orig = await db.vendor_shipments.find_one({'id': req.get('original_shipment_id')})
-        if not orig: raise HTTPException(404, 'Shipment asal tidak ditemukan')
-        existing_children = await db.vendor_shipments.count_documents({
-            'parent_shipment_id': req['original_shipment_id'], 'shipment_type': req['request_type']})
-        suffix = f"A{existing_children + 1}" if req['request_type'] == 'ADDITIONAL' else f"R{existing_children + 1}"
-        child_number = f"{orig.get('shipment_number')}-{suffix}"
-        child_id = new_id()
-        admin_notes = body.get('admin_notes', '')
-        child_ship = {
-            'id': child_id, 'shipment_number': child_number,
-            'delivery_note_number': f"DN-{child_number}",
-            'vendor_id': orig['vendor_id'], 'vendor_name': orig.get('vendor_name', ''),
-            'shipment_date': now(), 'shipment_type': req['request_type'],
-            'parent_shipment_id': req['original_shipment_id'],
-            'business_type': orig.get('business_type', 'internal'),
-            'material_request_id': req_id, 'status': 'Sent',
-            'notes': admin_notes or f"Child shipment dari {orig.get('shipment_number')}",
-            'notes_for_vendor': admin_notes,
-            'created_by': user['name'], 'created_at': now(), 'updated_at': now()
-        }
-        await db.vendor_shipments.insert_one(child_ship)
-        # Check if this is an accessories-only request
-        is_accessories_request = req.get('category') == 'accessories'
-        
-        if is_accessories_request:
-            # For accessories request, create accessory shipment items only
-            for ri in req.get('items', []):
-                await db.accessory_shipment_items.insert_one({
-                    'id': new_id(), 'shipment_id': child_id, 'shipment_number': child_number,
-                    'po_id': req.get('po_id'), 'po_number': req.get('po_number', ''),
-                    'accessory_id': ri.get('accessory_id', ''),
-                    'accessory_name': ri.get('accessory_name', ''),
-                    'accessory_code': ri.get('accessory_code', ''),
-                    'qty_sent': int(ri.get('requested_qty', 0) or 0),
-                    'unit': ri.get('unit', 'pcs'),
-                    'shipment_type': req['request_type'],
-                    'parent_shipment_id': req['original_shipment_id'],
-                    'created_at': now()
-                })
-        else:
-            # For material request, create vendor shipment items
-            # Get original shipment items to inherit serial numbers
-            orig_items_map = {}
-            orig_si_list = await db.vendor_shipment_items.find({'shipment_id': orig['id']}).to_list(None)
-            for osi in orig_si_list:
-                if osi.get('po_item_id'):
-                    orig_items_map[osi['po_item_id']] = osi
-            for ri in req.get('items', []):
-                # Inherit serial_number from original shipment item or PO item
-                serial = ri.get('serial_number', '')
-                po_item_id = ri.get('po_item_id', '')
-                if not serial and po_item_id:
-                    # Try original shipment item
-                    orig_si = orig_items_map.get(po_item_id, {})
-                    serial = orig_si.get('serial_number', '')
-                if not serial and po_item_id:
-                    # Try PO item
-                    poi = await db.po_items.find_one({'id': po_item_id})
-                    if poi: serial = poi.get('serial_number', '')
-                await db.vendor_shipment_items.insert_one({
-                    'id': new_id(), 'shipment_id': child_id, 'shipment_number': child_number,
-                    'po_id': req.get('po_id'), 'po_number': req.get('po_number', ''),
-                    'po_item_id': po_item_id,
-                    'product_name': ri.get('product_name', ''), 'sku': ri.get('sku', ''),
-                    'size': ri.get('size', ''), 'color': ri.get('color', ''),
-                    'serial_number': serial,
-                    'qty_sent': int(ri.get('requested_qty', 0) or 0),
-                    'shipment_type': req['request_type'],
-                    'parent_shipment_id': req['original_shipment_id'],
-                    'created_at': now()
-                })
-            # 2026-09-24 — aksesoris KURANG ikut dikirim di child shipment yang sama.
-            # Sumber: `accessory_items` dari form persetujuan admin (qty boleh diubah/0 = tidak
-            # dikirim); bila form tidak mengirimnya, dipakai kekurangan hasil inspeksi asal.
-            acc_rows = body.get('accessory_items')
-            if acc_rows is None:
-                acc_rows = await _accessory_shortages_for_request(db, req)
-            acc_sent = []
-            for a in acc_rows or []:
-                q = int(a.get('qty_sent', a.get('missing_qty', 0)) or 0)
-                if q <= 0:
-                    continue
-                doc_a = {
-                    'id': new_id(), 'shipment_id': child_id, 'shipment_number': child_number,
-                    'po_id': req.get('po_id'), 'po_number': req.get('po_number', ''),
-                    'accessory_id': a.get('accessory_id', ''),
-                    'accessory_name': a.get('accessory_name', ''),
-                    'accessory_code': a.get('accessory_code', ''),
-                    'qty_sent': q, 'unit': a.get('unit', 'pcs'),
-                    'shipment_type': req['request_type'],
-                    'parent_shipment_id': req['original_shipment_id'],
-                    'source': 'inspection_shortage', 'created_at': now()
-                }
-                await db.accessory_shipment_items.insert_one(doc_a)
-                acc_sent.append({k: v for k, v in doc_a.items() if k != 'created_at'})
-            if acc_sent:
-                await db.vendor_shipments.update_one({'id': child_id}, {'$set': {'accessory_count': len(acc_sent)}})
-                # permintaan komponen otomatis (aksesoris) dari inspeksi yang sama → terpenuhi
-                if req.get('inspection_id'):
-                    await db.dewi_cmt_component_requests.update_many(
-                        {'inspection_id': req['inspection_id'], 'status': {'$in': ['pending', 'approved']}},
-                        {'$set': {'status': 'fulfilled', 'fulfilled_shipment_id': child_id,
-                                  'fulfilled_shipment_number': child_number, 'updated_at': now()}})
-            child_ship['accessory_items'] = acc_sent
-        await db.material_requests.update_one({'id': req_id}, {'$set': {
-            'status': 'Approved', 'admin_notes': body.get('admin_notes', ''),
-            'approved_by': user['name'], 'approved_at': now(),
-            'child_shipment_id': child_id, 'child_shipment_number': child_number,
-            'accessory_items_sent': child_ship.get('accessory_items') or [],
-            'updated_at': now()
-        }})
-        result = serialize_doc(await db.material_requests.find_one({'id': req_id}, {'_id': 0}))
-        result['child_shipment'] = serialize_doc(child_ship)
-        return result
+        # Tahap 9 (7 Nov 2026, keputusan 12): persetujuan = KIRIMAN TAMBAHAN/PENGGANTI yang MENGURANGI STOK lewat
+        # hitungan yang sama dengan kiriman biasa (`core.kirim_cmt`). Dulu surat jalan anak dibuat tanpa memotong
+        # stok (contoh SHP-202609-0002-A1, 16 pcs). Gagal (potongan kurang, BOM warna tidak ada) → tidak ada yang dibuat.
+        from core import kirim_permintaan
+        return await kirim_permintaan.approve_material_request(db, req, body, user)
     elif new_status == 'Rejected':
         # Phase 16: admin_notes WAJIB diisi saat reject (agar vendor tahu alasan penolakan)
         admin_notes = (body.get('admin_notes', '') or '').strip()
@@ -891,98 +782,42 @@ async def update_variance_status(vid: str, request: Request):
     return {'success': True}
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PHASE 7C (DA): PRODUCTION VARIANCE → GL AUTO-POSTING — dipertahankan saat
-# adopsi SOMMERVILLE (jembatan finance DA, lihat PRODUKSI_E3_BRIDGE_FINANCE.md)
+# PHASE 7C (DA): PRODUCTION VARIANCE → GL AUTO-POSTING — DIPENSIUNKAN Tahap 9 (7 Nov 2026)
 # ══════════════════════════════════════════════════════════════════════════════
+# Dulu: OVERPRODUCTION = Dr Persediaan FG (1-1404) / Cr Pendapatan selisih; UNDERPRODUCTION = Dr Rugi selisih /
+# Cr WIP (1-1403), bernilai qty × HPP rata-rata FG. Keduanya membuat NILAI BUKU BERBEDA DARI STOK:
+#   · OVER mendebit persediaan TANPA gerakan stok — barang lebihnya sendiri sudah masuk stok DAN buku lewat
+#     Terima & QC (lapisan biaya FG), jadi jurnal ini menghitungnya dua kali.
+#   · UNDER mengkredit WIP sebesar biaya FG (sudah termasuk upah jahit yang tidak pernah terjadi), dan sisa
+#     WIP PO yang sama DITUTUP LAGI otomatis saat Tutup PO (`core.po_wip` → Selisih produksi 5-1960).
+# Sekarang selisih jumlah hanya DILAPORKAN (Laporan Selisih otomatis per baris PO); satu-satunya jurnal selisih
+# produksi adalah penutupan sisa WIP saat Tutup PO. Endpoint tetap ada (tautan lama) dan menjawab 410.
+# Jurnal lama yang terlanjur diposting dibalik oleh migrasi `2026_11_07_jurnal_selisih_produksi.py`.
+VARIANCE_GL_RETIRED = (
+    "Laporan selisih tidak lagi dijurnal (Tahap 9). Kelebihan barang sudah masuk stok dan buku lewat Terima & QC "
+    "dengan nilainya sendiri, dan sisa barang dalam proses PO ditutup otomatis ke Selisih produksi saat Tutup PO. "
+    "Jurnal dari laporan ini membuat nilai buku berbeda dari stok.")
+
 
 @router.post("/production-variances/{vid}/post-gl")
 async def post_variance_to_gl(vid: str, request: Request):
-    """
-    Post production variance ke GL.
-    OVERPRODUCTION: Dr Inventory FG (1-1404) / Cr Variance Income (4-920)
-    UNDERPRODUCTION: Dr Variance Loss (6-4100) / Cr WIP (1-330)
-    """
+    """DIPENSIUNKAN (Tahap 9) — selalu HTTP 410 dengan penjelasan; tidak ada jurnal yang dibuat."""
     user = await require_auth(request)
     deny_klien(user)
     if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
     db = get_db()
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-
-    variance = await db.production_variances.find_one({'id': vid})
-    if not variance:
+    if not await db.production_variances.find_one({'id': vid}, {'_id': 0, 'id': 1}):
         raise HTTPException(404, 'Variance not found')
-
-    # 2026-11-06 (Tahap 2): nilai dihitung SISTEM (qty buku produksi × WAC FG), tidak bisa diketik
-    # (`unit_cost` di badan permintaan diabaikan). Variance PO maklon tidak dibukukan: barang jadi
-    # maklon milik klien, di luar neraca DA (K14).
-    if (variance.get('business_type') or 'internal') != 'internal':
-        raise HTTPException(400, 'Variance PO maklon tidak dibukukan ke buku besar — barang jadi maklon milik '
-                                 'klien, bukan persediaan DA.')
-    variance_value = float(variance.get('variance_value', 0) or 0)
-    if not variance.get('gl_je_id'):
-        if variance.get('qty_source') != 'system' and variance.get('job_id'):
-            # laporan lama (qty ketikan) → qty dihitung ulang dari buku produksi job
-            sys_items = await system_variance_items(db, variance['job_id'], variance.get('variance_type'),
-                                                    [i.get('job_item_id') for i in variance.get('items') or []])
-            variance['items'] = sys_items
-            variance['total_variance_qty'] = sum(int(i.get('variance_qty') or 0) for i in sys_items)
-        val = await variance_gl_value(db, variance)
-        if val['missing']:
-            raise HTTPException(400, 'HPP rata-rata barang jadi belum ada untuk: ' + ', '.join(val['missing'][:5])
-                                     + '. Nilai variance tidak bisa dihitung — terima barang jadinya dulu supaya '
-                                       'HPP-nya terbentuk.')
-        variance_value = val['value']
-        await db.production_variances.update_one(
-            {'id': vid},
-            {'$set': {'variance_value': variance_value, 'items': val['items'], 'qty_source': 'system',
-                      'total_variance_qty': variance.get('total_variance_qty', 0),
-                      'value_basis': 'wac', 'updated_at': now()}}
-        )
-        variance['variance_value'] = variance_value
-
-    if variance_value <= 0:
-        raise HTTPException(400, 'Nilai variance 0 — tidak ada yang dibukukan.')
-
-    posting_result = None
-    try:
-        from routes.rahaza_posting import post_production_variance
-        variance_refresh = await db.production_variances.find_one({'id': vid}, {'_id': 0})
-        posting_result = await post_production_variance(db, variance_refresh, user)
-    except Exception as e:
-        logger.exception("Production variance auto-post failed")
-        posting_result = {"ok": False, "error": str(e)}
-
-    final_variance = await db.production_variances.find_one({'id': vid}, {'_id': 0})
-    final_variance['_posting_result'] = posting_result
-
-    await log_activity(user['id'], user['name'], 'Post GL', 'Production Variance',
-                      f"Posted variance {variance['variance_type']} to GL: {variance_value}")
-
-    return serialize_doc(final_variance)
+    raise HTTPException(410, VARIANCE_GL_RETIRED)
 
 
 @router.post("/production-variances/{vid}/retry-posting")
 async def retry_variance_posting(vid: str, request: Request):
-    """Retry posting production variance to GL (idempotent)"""
+    """DIPENSIUNKAN (Tahap 9) — sama dengan post-gl: HTTP 410, tidak ada jurnal yang dibuat."""
     user = await require_auth(request)
     deny_klien(user)
     if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
     db = get_db()
-
-    variance = await db.production_variances.find_one({'id': vid}, {'_id': 0})
-    if not variance:
+    if not await db.production_variances.find_one({'id': vid}, {'_id': 0, 'id': 1}):
         raise HTTPException(404, 'Variance not found')
-
-    try:
-        from routes.rahaza_posting import post_production_variance
-        result = await post_production_variance(db, variance, user)
-    except Exception as e:
-        logger.exception("Production variance retry post failed")
-        result = {"ok": False, "error": str(e)}
-
-    final_variance = await db.production_variances.find_one({'id': vid}, {'_id': 0})
-    final_variance['_posting_result'] = result
-    return serialize_doc(final_variance)
+    raise HTTPException(410, VARIANCE_GL_RETIRED)

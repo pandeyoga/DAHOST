@@ -1,40 +1,18 @@
 /**
- * ProductionDashboardModule — Dashboard Produksi (layar tunggal)
+ * ProductionDashboardModule — Dashboard Produksi (menu `production-dashboard`).
  *
- * FASE IA-1 (2026-07-26) — dua tab DIHAPUS karena melanggar "1 pintu = 1 tujuan"
- * (docs/PROPOSAL_IA_PRODUKSI.md §3):
- *   - tab "Monitoring" merender komponen yang SAMA dengan pintu menu
- *     "Tracking Produksi" (`prod-monitoring`).
- *   - tab "AI Insight" merender komponen yang sama dengan pintu "Estimasi AI"
- *     (`prod-ai-insights`).
- *
- * 2026-07-27 — isi dashboard DIGANTI: WIP per proses internal
- * (Cutting→Sewing→Finishing→QC→Packing) sudah tidak mencerminkan kenyataan
- * (jahit di vendor CMT, cutting punya portal sendiri) dan selalu bernilai nol.
- * Sekarang menampilkan perjalanan barang: Rencana PO → Cutting → Di Vendor CMT
- * → Terima & QC → Permak → Serah Terima FG (sumber: GET /api/prod/dashboard).
+ * Tahap 9 (7 Nov 2026, keputusan owner no. 2 & 7): bentuknya SAMA dengan Dashboard Maklon — cetakan
+ * PageLayout dengan isi dari `useDashboardAlur` (satu definisi untuk dua portal), alur barang ditampilkan
+ * langsung, angka dari /api/pantau/ringkasan (satu sumber dengan Pantau Produksi). Jenis PO mengikuti portal
+ * yang dibuka (dulu modul ini tidak pernah mengirim `business_type`).
+ * Riwayat: FASE IA-1 menghapus tab Monitoring/AI; 2026-07-27 isi diganti alur nyata (Rencana → Cutting →
+ * Vendor CMT → QC → Permak → Serah Terima).
  */
-import { Suspense } from 'react';
-import ProductionDashboardOverview from './ProductionDashboardOverview';
+import PageLayout from './layout/PageLayout';
+import { useDashboardAlur } from './pantau/DashboardAlurModule';
+import { portalBusinessType } from './pantau/pantauShared';
 
-const Spinner = () => (
-  <div className="flex items-center justify-center h-48">
-    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--primary))]" />
-  </div>
-);
-
-export default function ProductionDashboardModule({ token, user, headers, userRole, hasPerm, onNavigate, moduleId }) {
-  return (
-    <div className="space-y-4" data-testid="production-dashboard">
-      <Suspense fallback={<Spinner />}>
-        <ProductionDashboardOverview
-          token={token}
-          user={user}
-          headers={headers}
-          userRole={userRole}
-          onNavigate={onNavigate}
-        />
-      </Suspense>
-    </div>
-  );
+export default function ProductionDashboardModule(props) {
+  const page = useDashboardAlur({ ...props, businessType: portalBusinessType(props) });
+  return <PageLayout {...page} />;
 }

@@ -110,6 +110,31 @@ async def _build_ref(db) -> str:
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
+async def portal_scope(db, business_type: Optional[str]) -> dict:
+    """Saringan retur per portal (Tahap 9, keputusan 2) — aturan tunggal `core.po_portal_scope`.
+
+    Retur menunjuk MI asal; MI menunjuk PO (`production_po_id`). Retur tanpa MI (retur lantai
+    produksi lama per WO) memakai jenisnya sendiri — tanpa jenis = internal. Tanpa `business_type`
+    (Portal Gudang) tidak disaring."""
+    from core.po_portal_scope import portal_po_ids, portal_query
+    po_ids = await portal_po_ids(db, business_type)
+    if po_ids is None:
+        return {}
+    mi_q = portal_query(po_ids, business_type, po_key="production_po_id")
+    mi_ids = [m["id"] async for m in db.rahaza_material_issues.find(mi_q, {"_id": 0, "id": 1}) if m.get("id")]
+    return portal_query(set(mi_ids), business_type, po_key="material_issue_id")
+
+
+async def _po_business_type_of_mi(db, mi: Optional[dict]) -> str:
+    """Jenis PO asal MI (disimpan di dokumen retur supaya saringan portal tidak bergantung MI)."""
+    from core.entities import po_business_type
+    pid = (mi or {}).get("production_po_id") or (mi or {}).get("po_id")
+    if not pid:
+        return po_business_type(mi or {})
+    po = await db.production_pos.find_one({"id": pid}, {"_id": 0, "business_type": 1})
+    return po_business_type(po or mi or {})
+
+
 @router.get("")
 async def list_returns(
     request: Request,
@@ -117,6 +142,7 @@ async def list_returns(
     work_order_id: Optional[str] = None,
     limit: int = Query(50, ge=1, le=200),
     skip: int = Query(0, ge=0),
+    business_type: Optional[str] = None,
 ):
     await require_auth(request)
     db = get_db()
@@ -125,6 +151,7 @@ async def list_returns(
         q["status"] = status
     if work_order_id:
         q["work_order_id"] = work_order_id
+    q.update(await portal_scope(db, business_type))
     total = await db.production_material_returns.count_documents(q)
     items = await db.production_material_returns.find(q, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
     return _ok(items, total=total, skip=skip, limit=limit)
@@ -236,7 +263,8 @@ def qty_errors(items: list, can: dict) -> list:
 # ─── 2026-11-02 (K10): sumber retur untuk layar Retur Material ──────────────────
 # Path literal WAJIB dideklarasikan sebelum `/{return_id}`.
 @router.get("/sources")
-async def list_return_sources(request: Request, q: str = "", limit: int = Query(30, ge=1, le=100)):
+async def list_return_sources(request: Request, q: str = "", limit: int = Query(30, ge=1, le=100),
+                              business_type: Optional[str] = None):
     """MI yang bahannya sudah keluar & belum diretur penuh (pilihan MI / Surat Jalan di form retur)."""
     await require_auth(request)
     db = get_db()
@@ -246,6 +274,10 @@ async def list_return_sources(request: Request, q: str = "", limit: int = Query(
         rx = {"$regex": _re.escape(q.strip()), "$options": "i"}
         flt["$or"] = [{"mi_number": rx}, {"vendor_shipment_number": rx}, {"wo_number_snapshot": rx},
                       {"po_number_snapshot": rx}, {"vendor_name": rx}]
+    # Tahap 9 (keputusan 2): pilihan MI asal hanya dari PO portal ini.
+    from core.po_portal_scope import merge_query, portal_po_ids, portal_query
+    merge_query(flt, portal_query(await portal_po_ids(db, business_type), business_type,
+                                  po_key="production_po_id"))
     rows = await db.rahaza_material_issues.find(flt, {"_id": 0}).sort("issued_at", -1).limit(limit).to_list(limit)
     out = []
     for mi in rows:
@@ -325,6 +357,8 @@ async def create_return(request: Request, body: ReturnCreateModel):
         "mi_number": (mi or {}).get("mi_number") or "",
         "vendor_shipment_id": (mi or {}).get("vendor_shipment_id") or body.vendor_shipment_id or "",
         "vendor_shipment_number": (mi or {}).get("vendor_shipment_number") or "",
+        # Tahap 9: jenis PO asal ikut disimpan (saringan portal Produksi/Maklon)
+        "business_type": await _po_business_type_of_mi(db, mi) if mi else "internal",
         "items": items,
         "status": "draft",
         "submitted_by": user.get("full_name") or user.get("email") or "",
@@ -348,13 +382,14 @@ async def create_return(request: Request, body: ReturnCreateModel):
 
 
 @router.get("/summary")
-async def returns_summary(request: Request):
+async def returns_summary(request: Request, business_type: Optional[str] = None):
     await require_auth(request)
     db = get_db()
     statuses = ["draft", "submitted", "approved", "received", "rejected"]
+    scope = await portal_scope(db, business_type)
     summary = {}
     for s in statuses:
-        summary[s] = await db.production_material_returns.count_documents({"status": s})
+        summary[s] = await db.production_material_returns.count_documents({"status": s, **scope})
     return _ok(summary)
 
 

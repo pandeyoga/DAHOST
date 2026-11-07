@@ -216,7 +216,10 @@ def test_tanpa_cadangan_upah_cmt(env):
 
 
 def test_label_katalog_harga_jasa():
-    src = (REPO / "frontend" / "src" / "components" / "erp" / "MaklonBuyerCatalogModule.jsx").read_text(encoding="utf-8")
+    erp = REPO / "frontend" / "src" / "components" / "erp"
+    # Tahap 9: form & rincian artikel pindah ke erp/maklon/ (di halaman, bukan dialog)
+    src = "".join((erp / f).read_text(encoding="utf-8") for f in (
+        "MaklonBuyerCatalogModule.jsx", "maklon/KatalogArtikelForm.jsx", "maklon/KatalogArtikelDetail.jsx"))
     assert "Harga jasa ke klien (bawaan)" in src and "Harga Jual Default" not in src
 
 
@@ -518,36 +521,54 @@ def test_komponen_kurang_wajib_dari_master(env):
 
 
 def test_komponen_terkirim_memotong_stok_lewat_mesin_mi(env, monkeypatch):
+    """Tahap 9 (keputusan 12): "Terkirim" = KIRIMAN TAMBAHAN yang memotong stok lewat hitungan Kirim ke CMT
+    (dulu MI tanpa surat jalan). PO maklon → cost_target maklon (5-4100); PO internal → WIP."""
     db = env["db"]
     db.production_pos.docs[0]["status"] = "In Production"
+    from core import doc_number_policy as dnp
     from core import material_issue_engine as mie
+    from core import negative_stock
     import routes.rahaza_inventory_shared as ris
     calls = {}
-
-    async def best(_db, mid, qty):
-        return "loc1", 99
+    db.rahaza_materials.docs = [{"id": "a1", "code": "KANCING", "name": "Kancing", "type": "accessory", "unit": "pcs",
+                                 "unit_cost": 100.0, "active": True}]
+    db.rahaza_material_stock.docs = [{"material_id": "a1", "location_id": "loc1", "qty": 99}]
 
     async def issue(_db, mi, user, loc_overrides=None, ref_type=None):
         calls["mi"], calls["ref"] = mi, ref_type
-        return {"_posting_result": {"ok": True, "je_number": "JE-MI"}}
+        return {**mi, "status": "issued", "_posting_result": {"ok": True, "je_number": "JE-MI"}}
 
-    async def mi_no(_db):
+    async def mi_no(_db, *_a, **_k):
         return "MI-1"
-    monkeypatch.setattr(mie, "best_location_for", best)
+
+    async def number(_db, key, **_k):
+        return "SHP-UJI-1"
+
+    async def no_neg(_db):
+        return False
     monkeypatch.setattr(mie, "issue_material_issue", issue)
     monkeypatch.setattr(ris, "_gen_mi_number", mi_no)
+    monkeypatch.setattr(dnp, "issue_number", number)
+    monkeypatch.setattr(negative_stock, "allowed", no_neg)
     doc = {"id": "rq1", "request_code": "REQ-1", "po_id": "po1", "status": "ready",
-           "items": [{"material_id": "a1", "material_code": "KANCING", "qty": 10}]}
+           "items": [{"material_id": "a1", "material_code": "KANCING", "qty": 10, "unit": "pcs"}]}
     db.dewi_cmt_component_requests.docs = [doc]
     out = run(ccr.set_status("rq1", {"status": "delivered"}, user=USER))
     assert out["material_issue"]["material_issue_number"] == "MI-1"
-    assert calls["mi"]["cost_target"] == "maklon" and calls["ref"] == "cmt_component_request"   # 5-4100
-    assert db.dewi_cmt_component_requests.docs[0]["material_issue_id"]
+    assert calls["mi"]["cost_target"] == "maklon" and calls["ref"] == "maklon_material_issue"   # 5-4100
+    assert [(i["material_id"], i["qty_required"], i["kind"]) for i in calls["mi"]["items"]] == [("a1", 10.0, "aksesoris")]
+    saved = db.dewi_cmt_component_requests.docs[0]
+    assert saved["status"] == "delivered" and saved["fulfilled_shipment_number"] == "SHP-UJI-1"
+    ship = next(s for s in db.vendor_shipments.docs if s["id"] == saved["fulfilled_shipment_id"])
+    assert ship["shipment_type"] == "ADDITIONAL" and ship["component_request_id"] == "rq1"
     db.production_pos.docs[0]["business_type"] = "internal"
-    db.dewi_cmt_component_requests.docs[0].update({"status": "ready", "material_issue_id": None})
+    db.dewi_cmt_component_requests.docs[0].update({"status": "ready", "material_issue_id": None,
+                                                   "fulfilled_shipment_id": None})
+    db.rahaza_material_issues.docs = []
     run(ccr.set_status("rq1", {"status": "delivered"}, user=USER))
-    assert calls["mi"]["cost_target"] is None                                                  # WIP
-    bad = {"id": "rq2", "request_code": "REQ-2", "status": "ready", "items": [{"component_type": "lengan", "qty": 1}]}
+    assert "cost_target" not in calls["mi"] and calls["ref"] == "cmt_material_issue"             # WIP
+    bad = {"id": "rq2", "request_code": "REQ-2", "po_id": "po1", "status": "ready",
+           "items": [{"component_type": "lengan", "qty": 1}]}
     db.dewi_cmt_component_requests.docs.append(bad)
     with pytest.raises(HTTPException):
         run(ccr.set_status("rq2", {"status": "delivered"}, user=USER))
@@ -575,11 +596,12 @@ def test_overhead_legacy_dihapus(env, monkeypatch):
                                 "status": "confirmed", "total_qty": 10,
                                 "items": [{"qty": 10, "selling_price_per_pcs": 20000}]}]
     monkeypatch.setattr(billing, "get_db", lambda: db)
-    run(billing.upsert_hpp(billing.HPPIn(order_id="po1", overhead_pct=15,
-                                         components=[billing.HPPComponent(name="jahit", qty=10, unit_cost=1000)]),
-                           user=USER))
-    doc = db.dewi_maklon_hpp.docs[0]
-    assert doc["overhead_pct"] == 0 and doc["overhead_amount"] == 0 and doc["total_hpp"] == 10000
+    # Tahap 9 (keputusan owner 7 Nov No. 13): isian HPP manual dihapus — endpoint lama menolak dengan 410
+    with pytest.raises(HTTPException) as e:
+        run(billing.upsert_hpp(billing.HPPIn(order_id="po1", overhead_pct=15,
+                                             components=[billing.HPPComponent(name="jahit", qty=10, unit_cost=1000)]),
+                               user=USER))
+    assert e.value.status_code == 410 and not db.dewi_maklon_hpp.docs
 
 
 def test_quick_complete_tidak_melompati_draf(env):

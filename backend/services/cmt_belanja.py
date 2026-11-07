@@ -9,7 +9,6 @@ Semua = agregasi read-only di atas: production_pos/po_items · po_accessories ·
 dewi_maklon_bom_templates · vendor_partners · (beban) rantai vendor_shipments/cmt_receipts via services.cmt_kejar.
 """
 from typing import Dict, List, Any, Optional
-from utils.waktu import today_wib
 
 # Kategori/nama material yang dianggap AKSESORIS bila muncul di BOM (case-insensitive contains).
 ACC_HINTS = ("aksesoris", "accessor", "acc", "zipper", "resleting", "kancing",
@@ -43,8 +42,11 @@ def _is_accessory(category: str, name: str) -> bool:
     return any(h in blob for h in ACC_HINTS)
 
 
-async def _maklon_pos(db, po_id: Optional[str], only_open: bool) -> List[Dict[str, Any]]:
-    q: Dict[str, Any] = {"business_type": "maklon"}
+async def _maklon_pos(db, po_id: Optional[str], only_open: bool,
+                      business_type: Optional[str] = "maklon") -> List[Dict[str, Any]]:
+    # Tahap 9: maklon = bukan internal (aturan portal yang dipakai di mana-mana); 'internal' juga bisa
+    from core.pantau_produksi import bt_filter
+    q: Dict[str, Any] = dict(bt_filter(business_type))
     if po_id:
         q["id"] = po_id
     elif only_open:
@@ -53,8 +55,9 @@ async def _maklon_pos(db, po_id: Optional[str], only_open: bool) -> List[Dict[st
 
 
 # ─── S5 REKAP AKSESORIS ───────────────────────────────────────────────────────
-async def rekap_aksesoris(db, po_id: Optional[str] = None, only_open: bool = True) -> Dict[str, Any]:
-    pos = await _maklon_pos(db, po_id, only_open)
+async def rekap_aksesoris(db, po_id: Optional[str] = None, only_open: bool = True,
+                          business_type: Optional[str] = "maklon") -> Dict[str, Any]:
+    pos = await _maklon_pos(db, po_id, only_open, business_type)
     po_ids = [p["id"] for p in pos]
     po_by_id = {p["id"]: p for p in pos}
 
@@ -214,70 +217,13 @@ async def rekap_aksesoris(db, po_id: Optional[str] = None, only_open: bool = Tru
 
 
 # ─── M3 KAPASITAS CMT ─────────────────────────────────────────────────────────
-async def capacity_overview(db) -> Dict[str, Any]:
-    """Beban (outstanding di CMT) vs kapasitas (vendor_partners.capacity_pcs). READ-ONLY."""
-    from services.cmt_kejar import compute_po_kejar, get_buffer_config
-    cfg = await get_buffer_config(db)
-    today = today_wib()
+async def capacity_overview(db, business_type: Optional[str] = None) -> Dict[str, Any]:
+    """Beban di CMT vs kapasitas (vendor_partners.capacity_pcs). READ-ONLY.
 
-    pos = await db.production_pos.find(
-        {"business_type": "maklon", "status": {"$nin": ["Closed", "Cancelled", "Selesai", "closed", "cancelled"]}},
-        {"_id": 0},
-    ).to_list(500)
-
-    load_by_vendor: Dict[str, Dict[str, Any]] = {}
-    for po in pos:
-        vid = po.get("vendor_id")
-        if not vid:
-            continue
-        r = await compute_po_kejar(db, po, cfg, today)
-        v = load_by_vendor.setdefault(vid, {"outstanding": 0, "po_count": 0, "sent": 0, "telat_po": 0})
-        v["outstanding"] += _int(r.get("qty_outstanding_cmt"))
-        v["sent"] += _int(r.get("qty_sent_cmt"))
-        v["po_count"] += 1
-        if r.get("bucket") == "telat":
-            v["telat_po"] += 1
-
-    partners = await db.vendor_partners.find({}, {"_id": 0}).sort("name", 1).to_list(500)
-    vendors = []
-    tot_cap = tot_load = 0
-    for p in partners:
-        vid = p.get("id")
-        cap = _int(p.get("capacity_pcs"))
-        ld = load_by_vendor.get(vid, {})
-        load = _int(ld.get("outstanding"))
-        util = round(load / cap * 100, 1) if cap > 0 else None
-        if cap <= 0:
-            status = "no_capacity"
-        elif load > cap:
-            status = "over"
-        elif util is not None and util >= 85:
-            status = "near"
-        else:
-            status = "ok"
-        tot_cap += cap
-        tot_load += load
-        vendors.append({
-            "vendor_id": vid, "name": p.get("name", ""), "code": p.get("code", ""),
-            "is_active": p.get("is_active", True),
-            "capacity_pcs": cap, "capacity_note": p.get("capacity_note", ""),
-            "current_load_pcs": load, "sent_pcs": _int(ld.get("sent")),
-            "active_po_count": _int(ld.get("po_count")), "telat_po_count": _int(ld.get("telat_po")),
-            "available_pcs": (cap - load) if cap > 0 else None,
-            "utilization_pct": util, "status": status,
-        })
-    # urutkan: over → near → ok → no_capacity
-    order = {"over": 0, "near": 1, "ok": 2, "no_capacity": 3}
-    vendors.sort(key=lambda v: (order.get(v["status"], 9), -(v["current_load_pcs"] or 0)))
-
-    return {
-        "vendor_count": len(vendors),
-        "totals": {
-            "capacity_pcs": tot_cap, "load_pcs": tot_load,
-            "available_pcs": tot_cap - tot_load,
-            "utilization_pct": round(tot_load / tot_cap * 100, 1) if tot_cap > 0 else None,
-            "over_count": sum(1 for v in vendors if v["status"] == "over"),
-            "no_capacity_count": sum(1 for v in vendors if v["status"] == "no_capacity"),
-        },
-        "vendors": vendors,
-    }
+    Tahap 9 (keputusan 7 & 11): beban dihitung dari SEMUA PO berjalan — internal DAN maklon, karena satu
+    CMT mengerjakan keduanya (dulu hanya maklon, sehingga CMT yang penuh order internal tampak kosong).
+    Angka diambil dari `core.pantau_produksi.capacity` (sumber yang sama dengan layar Pantau Produksi),
+    ditambah pemisahan beban internal/maklon dan laju setor nyata per hari.
+    """
+    from core.pantau_produksi import capacity
+    return await capacity(db, business_type)

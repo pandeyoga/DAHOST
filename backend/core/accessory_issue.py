@@ -59,6 +59,10 @@ COST_OFFICE = "kantor"
 COST_MARKETING = "pemasaran"
 COST_OTHER = "lainnya"
 COST_RND = "sampel_rnd"
+# Tahap 9 (keputusan owner 7 Nov No. 5): bahan pembantu (benang dsb.) — beban produksi langsung (5-3400) saat
+# dikeluarkan, BUKAN WIP. Pengecualian aturan 6 Nov "divisi Produksi → 1-1403". Penanda bahan pembantu = master
+# kategori material (`core.hpp_aktual.category_is_aux`), bukan daftar baru di sini.
+COST_AUX = "bahan_pembantu"
 
 # SATU daftar divisi pemohon (dulu tersalin di AccessoryModule.jsx & dewi_accessories_stock.py).
 DIVISIONS = (
@@ -85,6 +89,7 @@ PROFILE_ROLES = {
         COST_MARKETING: "debit_accessory_marketing",
         COST_OTHER: "debit_accessory_other",
         COST_RND: "debit_accessory_rnd_sample",
+        COST_AUX: "debit_production_supplies",
     },
 }
 COST_TARGET_LABELS = {
@@ -94,7 +99,19 @@ COST_TARGET_LABELS = {
     COST_MARKETING: "Beban pemasaran",
     COST_OTHER: "Beban umum",
     COST_RND: "Beban sampel R&D",
+    COST_AUX: "Bahan pembantu produksi (beban, tidak masuk HPP)",
 }
+# Tujuan biaya yang berubah menjadi bahan pembantu bila barangnya bahan pembantu (PO maklon tetap nota antar CV;
+# divisi kantor/pemasaran tetap beban divisinya).
+AUX_REPLACES = (COST_WIP,)
+
+
+async def aux_cost_target(db, material: dict | None, cost_target: str) -> str:
+    """Tujuan biaya akhir satu barang: bahan pembantu menggantikan WIP (keputusan No. 5)."""
+    if (cost_target or COST_WIP) not in AUX_REPLACES:
+        return cost_target or COST_WIP
+    from core.hpp_aktual import is_bahan_pembantu
+    return COST_AUX if await is_bahan_pembantu(db, material) else (cost_target or COST_WIP)
 VENDOR_REQUEST_TYPES = ("vendor_additional", "vendor_replacement")
 # Pemilik barang "stok DA" & status MI yang tidak dihitung — definisi milik mesin Material Issue
 from core.material_issue_engine import MAKLON_DA_OWNERSHIP as DA_OWNERSHIP  # noqa: E402
@@ -253,6 +270,12 @@ async def guard_po_over_issue(db, target: dict, rows: list, reason: str = "") ->
     po_id = (target or {}).get("po_id")
     if not po_id:
         return []
+    # Tahap 9: bahan pembantu (benang) bukan kebutuhan per PO — tidak dibandingkan dengan kebutuhan PO
+    from core.hpp_aktual import aux_category_keys, material_is_aux
+    aux_keys = await aux_category_keys(db)
+    rows = [r for r in rows if not material_is_aux(r.get("material"), aux_keys)]
+    if not rows:
+        return []
     po = await db.production_pos.find_one({"id": po_id}, {"_id": 0, "id": 1, "business_type": 1})
     lines = over_issue_lines(rows, await po_need_by_material(db, po or {"id": po_id}),
                              await po_issued_by_material(db, po_id))
@@ -364,7 +387,9 @@ async def issue_accessory(db, user: dict, *, acc_id: str, qty: float,
     if current < qty_base:
         raise IssueError(f"Stok tidak cukup. Stok yang bisa dipakai: {current:g} "
                          f"(stok di lokasi karantina tidak ikut).")
-    if guard_po and (target or {}).get("po_id"):
+    tgt = dict(target or {})
+    cost_target = await aux_cost_target(db, item, tgt.get("cost_target") or COST_WIP)
+    if guard_po and tgt.get("po_id") and cost_target != COST_AUX:
         # satu kebutuhan per PO: kelebihan dari kebutuhan PO wajib beralasan (sebelum stok dipotong)
         await guard_po_over_issue(db, target, [{"material": item, "qty": qty_base}], over_issue_reason)
 
@@ -372,8 +397,6 @@ async def issue_accessory(db, user: dict, *, acc_id: str, qty: float,
     await _add_stock(db, acc_id, loc_id, -qty_base)
 
     unit_cost = accessory_valuation.resolve_unit_cost(item)
-    tgt = dict(target or {})
-    cost_target = tgt.get("cost_target") or COST_WIP
     extra = {"cost_target": cost_target}
     for k in ("divisi", "po_id", "po_number"):
         if tgt.get(k):

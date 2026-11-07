@@ -1,20 +1,21 @@
 
 import { useState, useEffect, useRef } from 'react';
-import { Plus, Eye, Pencil, Trash2, X, Zap, AlertTriangle, Loader2, Layers, Lock } from 'lucide-react';
+import { Plus, Eye, Pencil, Trash2, X, Zap, AlertTriangle, Loader2, Lock, ChevronDown, ChevronRight } from 'lucide-react';
 import DataTable from './DataTable';
 import Modal from './Modal';
 import StatusBadge from './StatusBadge';
 import ConfirmDialog from './ConfirmDialog';
 import POWorkflowIndicator from './POWorkflowIndicator';
-import FileAttachmentPanel from './FileAttachmentPanel';
-import { PdfColumnPicker } from '../pdf/PdfColumnPicker';
+// Tahap 9 (keputusan 8): rincian PO dibuka DI HALAMAN, sama untuk PO internal & maklon (pengganti popup Detail
+// dan menu Detail PO maklon).
+import PODetailPanel, { POStatusBadge, PO_STATUS_LABEL } from './PODetailPanel';
 import SearchableSelect from './SearchableSelect';
 import ImportExportPanel from './ImportExportPanel';
 import ImportExportToolbar from '../ImportExportToolbar';
 import QuickCompleteModal from './QuickCompleteModal';
 import { BizBadge } from './BusinessTypeBadge';
-import { apiGet, apiPost, apiPut, apiDelete, apiFetch } from '../../../lib/api';
-import { formatRupiah } from '@/lib/format';
+import { apiGet, apiPost, apiPut, apiDelete } from '../../../lib/api';
+import { formatRupiah, formatDateID } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB, toWIBDate } from '@/lib/waktu';
 import { toast } from 'sonner';
@@ -23,8 +24,10 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { Notice, StatTile } from '../moduleAtoms';
+import { Notice, StatTile, StatusBadge as LabelBadge } from '../moduleAtoms';
 import PageLayout from '../layout/PageLayout';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import RencanaAksesorisPO, { planRowsFromPo } from './kirim/RencanaAksesorisPO';   // Tahap 9 (kirim)
 
 const STATUS_OPTIONS = ['Draft', 'Confirmed', 'Distributed', 'In Production', 'Completed', 'Closed'];
 // PO yang sudah ditutup terkunci untuk semua peran (Tahap 2) — tombol Ubah/Tutup tidak ditawarkan.
@@ -91,32 +94,15 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
   const [vendors, setVendors] = useState([]);
   const [buyers, setBuyers] = useState([]);
   const [accessories, setAccessories] = useState([]);
-  // ── AKSESORIS BOM MUAT OTOMATIS DI FORM (keluhan pemilik 2026-06) ─────────
-  // Katalog maklon sudah punya BOM aksesoris dan angkanya sudah benar di Surat
-  // Jalan/SPP, TAPI form buat PO tidak menampilkannya sama sekali — pemakai
-  // menyangka BOM belum kena lalu mengetik ulang barisnya (kerja dobel & baris
-  // kembar). Panel di bawah membaca `POST /api/dewi/maklon/bom-templates/
-  // preview-accessories`, yaitu MESIN YANG SAMA dengan yang menulis
-  // `po_accessories` saat PO disimpan — jadi angka di layar tidak mungkin
-  // berbeda dari yang tersimpan. Baris ini TIDAK dikirim di payload (backend
-  // yang menuliskannya) supaya tidak ada baris kembar.
-  const [bomAcc, setBomAcc] = useState({ rows: [], warnings: [], total_pcs: 0, loading: false });
+  // Tahap 9 (kirim, 7 Nov 2026): pratinjau aksesoris BOM pindah ke `kirim/RencanaAksesorisPO` — satu pratinjau
+  // untuk PO internal & maklon, dengan satuan serah + rencana serah (keputusan owner no. 3).
   const [rahazaVariants, setRahazaVariants] = useState({}); // Fase 2: cache varian internal per model_id
   const [showModal, setShowModal] = useState(false);
-  const [showDetail, setShowDetail] = useState(false);
-  // W2 (sesi #29) — dialog pemilih kolom untuk cetak SPP (termasuk Serial No).
-  const [sppPickerOpen, setSppPickerOpen] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [editData, setEditData] = useState(null);
-  const [detailData, setDetailData] = useState(null);
-  const [costCheck, setCostCheck] = useState(null); // peringatan harga bahan/upah PO internal
-  // ACC-1 — kebutuhan aksesoris PO (dari BOM) + posisi stok
-  const [accReq, setAccReq] = useState(null);
-  const [accReqLoading, setAccReqLoading] = useState(false);
-  const [accReqCreating, setAccReqCreating] = useState(false);
-  // ACC-1 — hasil aksi "Buat Permintaan" ditampilkan INLINE (bukan `alert()` native)
-  // supaya pesan anti-dobel tetap terbaca di konteks tabelnya & tidak memblokir UI.
-  const [accReqMsg, setAccReqMsg] = useState(null); // { type:'success'|'error', text }
+  // Tahap 9: rincian PO di halaman — { id, tab }. Kebutuhan aksesoris, cek HPP, SPP, lampiran pindah ke PODetailPanel.
+  const [detailPo, setDetailPo] = useState(null);
+  const [detailReload, setDetailReload] = useState(0);
   const [closeTargetPO, setCloseTargetPO] = useState(null);
   const [filterStatus, setFilterStatus] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -186,41 +172,6 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
     if (isInternal) { fetchModels(); }
     else { fetchBuyers(); }
   }, [isInternal]);
-
-  // Pratinjau aksesoris BOM ikut berubah setiap artikel/qty item berubah.
-  // Kuncinya diringkas jadi string supaya efek tidak jalan saat field lain
-  // (mis. nomor seri) disunting; debounce 400ms supaya ketikan qty tidak
-  // memanggil server per angka.
-  const bomAccKey = isInternal ? '' : (form.items || [])
-    .map(it => `${it.catalog_item_id || ''}:${Number(it.qty) || 0}`).join('|');
-  useEffect(() => {
-    if (isInternal || !showModal) {
-      setBomAcc({ rows: [], warnings: [], total_pcs: 0, loading: false });
-      return;
-    }
-    const payloadItems = (form.items || [])
-      .filter(it => it.catalog_item_id && Number(it.qty) > 0)
-      .map(it => ({ catalog_item_id: it.catalog_item_id, qty: Number(it.qty),
-        label: it.product_name || it.sku || '' }));
-    if (payloadItems.length === 0) {
-      setBomAcc({ rows: [], warnings: [], total_pcs: 0, loading: false });
-      return;
-    }
-    setBomAcc(s => ({ ...s, loading: true }));
-    const t = setTimeout(async () => {
-      try {
-        const res = await apiPost('/dewi/maklon/bom-templates/preview-accessories',
-          { items: payloadItems });
-        setBomAcc({ rows: res?.accessories || [], warnings: res?.warnings || [],
-          total_pcs: res?.total_pcs || 0, loading: false });
-      } catch (e) {
-        setBomAcc({ rows: [], total_pcs: 0, loading: false,
-          warnings: [`Gagal memuat aksesoris BOM: ${e.message || 'kesalahan jaringan'}`] });
-      }
-    }, 400);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bomAccKey, isInternal, showModal]);
 
   const refetchPOs = () => setRefetchKey((k) => k + 1);
 
@@ -393,29 +344,6 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
       ? { ...l, cmt_price_snapshot: sug[l.__key].rate, __typed: false } : l)) }));
   };
 
-  const addAccessoryItem = () => {
-    setForm(f => ({ ...f, po_accessories: [...(f.po_accessories || []), { accessory_id: '', accessory_name: '', accessory_code: '', qty_needed: '', unit: 'pcs', notes: '' }] }));
-  };
-
-  const removeAccessoryItem = (idx) => {
-    setForm(f => ({ ...f, po_accessories: (f.po_accessories || []).filter((_, i) => i !== idx) }));
-  };
-
-  const updateAccessoryItem = (idx, field, value) => {
-    const items = [...(form.po_accessories || [])];
-    items[idx] = { ...items[idx], [field]: value };
-    if (field === 'accessory_id') {
-      const acc = accessories.find(a => a.id === value);
-      if (acc) {
-        // Support both canonical (accessory_name/accessory_code) and legacy (name/code) shapes.
-        items[idx].accessory_name = acc.accessory_name || acc.name || '';
-        items[idx].accessory_code = acc.accessory_code || acc.code || '';
-        items[idx].unit = acc.unit || 'pcs';
-      }
-    }
-    setForm(f => ({ ...f, po_accessories: items }));
-  };
-
   const removeItem = (idx) => {
     setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
   };
@@ -544,53 +472,13 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
       }
       setShowModal(false);
       refetchPOs();
+      reloadDetail();
     } catch (err) { setFormError({ text: err.message || 'Gagal menyimpan PO', itemIdx: null }); }
   };
 
-  const openDetail = async (row) => {
-    try {
-      const data = await apiGet(`/production-pos/${row.id}`);
-      setDetailData(data);
-      setShowDetail(true);
-      loadAccReq(row.id);
-      setCostCheck(null);
-      if (isInternal) apiGet(`/production-pos/${row.id}/cost-check`).then(setCostCheck).catch(() => setCostCheck(null));
-    } catch (e) { toast.error(e.message || 'Gagal memuat detail'); }
-  };
-
-  // ── ACC-1 — kebutuhan aksesoris PO (BOM explode + posisi stok + kekurangan) ──
-  const loadAccReq = async (poId, { keepMessage = false } = {}) => {
-    setAccReqLoading(true);
-    setAccReq(null);
-    // Pesan hasil aksi TIDAK dihapus saat refresh yang dipicu oleh aksi itu
-    // sendiri — kalau tidak, notifikasi sukses langsung hilang sebelum terbaca.
-    if (!keepMessage) setAccReqMsg(null);
-    try {
-      const d = await apiGet(`/production-pos/${poId}/accessory-requirements`);
-      setAccReq(d);
-    } catch (e) {
-      setAccReq({ error: e.message || 'Gagal memuat kebutuhan aksesoris' });
-    } finally { setAccReqLoading(false); }
-  };
-
-  const createAccRequest = async (poId, onlyShortage = true) => {
-    setAccReqCreating(true);
-    setAccReqMsg(null);
-    try {
-      const res = await apiFetch(`/production-pos/${poId}/accessory-requirements/create-request`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ only_shortage: onlyShortage }),
-      });
-      const d = await res.json();
-      if (!res.ok) throw new Error(d?.detail || 'Gagal mengajukan pembelian aksesoris');
-      // 2026-11-06 (Tahap 2): kekurangan = PEMBELIAN (Permintaan Pengadaan), bukan pengeluaran stok
-      setAccReqMsg({ type: 'success', text: d.message || 'Permintaan Pengadaan untuk aksesoris yang kurang dibuat & diajukan.' });
-      loadAccReq(poId, { keepMessage: true });
-    } catch (e) {
-      setAccReqMsg({ type: 'error', text: e.message || 'Gagal membuat permintaan aksesoris' });
-    } finally { setAccReqCreating(false); }
-  };
+  // Tahap 9 (keputusan 8): rincian dibuka di halaman (PODetailPanel di slot `detail`), bukan popup.
+  const openDetail = (row, tab) => setDetailPo({ id: row.id, tab: tab || 'ringkasan' });
+  const reloadDetail = () => setDetailReload((k) => k + 1);
 
   // `opts.vendorId` (dari Kirim Material CMT): penjahit dipilih saat kirim tetapi upahnya belum ada — form
   // dibuka dengan penjahit itu terisi dan usulan upahnya langsung ditawarkan (satu tempat mengetik upah).
@@ -664,15 +552,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
         delivery_deadline: toWIBDate(poData.delivery_deadline),
         notes: poData.notes || '',
         items: mappedItems,
-        po_accessories: (poData.po_accessories || []).map(a => ({
-          id: a.id,
-          accessory_id: a.accessory_id || '',
-          accessory_name: a.accessory_name || '',
-          accessory_code: a.accessory_code || '',
-          qty_needed: a.qty_needed || '',
-          unit: a.unit || 'pcs',
-          notes: a.notes || '',
-        })),
+        po_accessories: planRowsFromPo(poData.po_accessories),   // Tahap 9 (kirim): rencana serah + sumber
       });
       setShowModal(true);
       if (opts.vendorId && !poData.vendor_id && !poData.rate_lock) {
@@ -692,21 +572,24 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
   // Objek parameter yang sudah dipakai dicatat (USED_DEEP_LINKS) supaya kembali ke menu ini lewat sidebar —
   // parameter tautan lama masih tersimpan di App — tidak membuka form itu lagi.
   useEffect(() => {
-    const pid = deepLinkParams?.edit_po_id;
-    if (!pid || USED_DEEP_LINKS.has(deepLinkParams)) return;
+    if (!deepLinkParams || USED_DEEP_LINKS.has(deepLinkParams)) return;
+    // Tahap 9: tautan lama Detail PO / Kelola Sampel → { open_po_id, detail_tab } membuka rincian PO itu.
+    if (deepLinkParams.open_po_id) {
+      USED_DEEP_LINKS.add(deepLinkParams);
+      openDetail({ id: deepLinkParams.open_po_id }, deepLinkParams.detail_tab);
+      return;
+    }
+    const pid = deepLinkParams.edit_po_id;
+    if (!pid) return;
     USED_DEEP_LINKS.add(deepLinkParams);
     openEdit({ id: pid }, { vendorId: deepLinkParams?.vendor_id || '' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deepLinkParams]);
 
-  const transitionStatus = async (poId, nextStatus) => {
-    // FASE 5 DA: transisi status HANYA dari allowed_next backend (state machine)
-    try {
-      await apiPost(`/production-pos/${poId}/status`, { status: nextStatus });
-      const data = await apiGet(`/production-pos/${poId}`);
-      setDetailData(data);
-      refetchPOs();
-    } catch (err) { toast.error(err.message || 'Perubahan status ditolak server'); }
+  const openCloseModal = (po) => {
+    setCloseTargetPO(po);
+    setCloseForm({ close_reason: CLOSE_REASONS[0], close_notes: '' });
+    setShowCloseModal(true);
   };
 
   const handleClosePO = async (e) => {
@@ -715,6 +598,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
       await apiPost(`/production-pos/${closeTargetPO.id}/close`, closeForm);
       setShowCloseModal(false);
       refetchPOs();
+      reloadDetail();
     } catch (e) { toast.error(e.message || 'Gagal menutup PO'); }
   };
 
@@ -722,6 +606,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
     if (!confirmDelete) return;
     try {
       await apiDelete(`/production-pos/${confirmDelete.id}`);
+      if (detailPo?.id === confirmDelete.id) setDetailPo(null);
       setConfirmDelete(null);
       refetchPOs();
     } catch (e) { toast.error(e.message || 'Gagal menghapus PO'); }
@@ -731,129 +616,99 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
   const [quickCompletePO, setQuickCompletePO] = useState(null);
   const togglePO = (id) => setExpandedPOs(prev => ({ ...prev, [id]: !prev[id] }));
 
-  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('id-ID') : '-';
-  const fmt = (v) => v ? formatRupiah(v) : 'Rp 0';
+  const fmtDate = (d) => formatDateID(d, { fallback: '-' });
 
   const columns = [
-    { key: 'po_number', label: 'No. PO / Identifikasi', render: (v, row) => (
+    { key: 'po_number', label: 'No. PO', render: (v, row) => (
       <div>
         <div className="flex items-center gap-2">
-          <span className="font-bold text-[hsl(var(--primary))]">{v}</span>
+          <Button variant="link" size="sm" className="h-auto p-0 font-bold" onClick={(e) => { e.stopPropagation(); openDetail(row); }}
+            data-testid={`po-open-${row.id}`}>{v}</Button>
           <BizBadge type={row.business_type} size="xs" />
         </div>
-        <div className="text-xs text-muted-foreground/70 mt-0.5">
-          {row.vendor_name ? <span className="text-[hsl(var(--primary))]">{row.vendor_name}</span> : <span>-</span>}
-          {' · '}{fmtDate(row.po_date || row.created_at)}
+        <div className="text-xs text-muted-foreground mt-0.5">
+          {row.vendor_name || 'CMT belum dipilih'}{' · '}{fmtDate(row.po_date || row.created_at)}
         </div>
         {(row.serial_numbers || []).length > 0 && (
-          <div className="text-xs text-[hsl(var(--success))] mt-0.5 flex flex-wrap gap-1">
-            {row.serial_numbers.slice(0, 3).map((sn, i) => (
-              <span key={i} className="bg-[hsl(var(--success)/0.1)] px-1.5 py-0.5 rounded tabular-nums">{sn}</span>
-            ))}
-            {row.serial_numbers.length > 3 && <span className="text-muted-foreground/70">+{row.serial_numbers.length - 3} lagi</span>}
+          <div className="text-xs text-muted-foreground mt-0.5 tabular-nums">
+            {row.serial_numbers.slice(0, 3).join(', ')}{row.serial_numbers.length > 3 ? ` +${row.serial_numbers.length - 3} lagi` : ''}
           </div>
         )}
       </div>
     )},
-    { key: 'customer_name', label: 'Customer' },
-    // FASE 9 (keluhan #4 owner: "bentuk cards yang memotong content dalamnya"):
-    // `whitespace-nowrap` + `shrink-0` mencegah teks "2 item" terbelah dua baris
-    // di dalam kotak rounded ketika kolom menyempit.
-    { key: 'item_count', label: 'Items', render: (v, row) => (
-      <button onClick={(e) => { e.stopPropagation(); togglePO(row.id); }}
-        data-testid={`po-toggle-items-${row.id}`}
-        className="inline-flex shrink-0 items-center gap-1 px-2 py-0.5 bg-muted text-foreground/90 text-xs rounded-full font-medium whitespace-nowrap leading-none hover:bg-[hsl(var(--primary)/0.15)] hover:text-[hsl(var(--primary))] transition-colors">
-        <span className="text-[10px]">{expandedPOs[row.id] ? '▼' : '▶'}</span>
-        <span>{v || 0} item</span>
-      </button>
+    { key: 'customer_name', label: isInternal ? 'Tujuan' : 'Klien' },
+    // FASE 9 (keluhan #4 owner): teks "2 baris" tidak boleh terbelah — tombol satu baris.
+    { key: 'item_count', label: 'Baris', render: (v, row) => (
+      <Button variant="link" size="sm" className="h-auto p-0 whitespace-nowrap" onClick={(e) => { e.stopPropagation(); togglePO(row.id); }}
+        data-testid={`po-toggle-items-${row.id}`} aria-expanded={!!expandedPOs[row.id]}>
+        {expandedPOs[row.id] ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+        {v || 0} baris
+      </Button>
     )},
-    { key: 'total_qty', label: 'Total Qty', render: (v) => v?.toLocaleString('id-ID') },
-    { key: 'deadline', label: 'Deadline Prod.', render: (v) => {
-      if (!v) return '-';
-      const isOverdue = toWIBDate(v) < todayWIB();
-      return <span className={isOverdue ? 'text-[hsl(var(--destructive))] font-medium' : ''}>{fmtDate(v)}</span>;
+    { key: 'total_qty', label: 'Total qty', render: (v) => <span className="tabular-nums">{(v || 0).toLocaleString('id-ID')}</span> },
+    // Tahap 9: tenggat produksi & kirim satu kolom supaya kolom Aksi tidak terpotong di layar 1440
+    { key: 'deadline', label: 'Tenggat', render: (v, row) => {
+      const late = (d) => d && toWIBDate(d) < todayWIB();
+      return (
+        <div className="text-xs whitespace-nowrap space-y-0.5">
+          <div className={late(v) ? 'text-[hsl(var(--destructive))] font-medium' : ''}>Produksi {v ? fmtDate(v) : '-'}</div>
+          <div className={late(row.delivery_deadline) ? 'text-[hsl(var(--warning))] font-medium' : 'text-muted-foreground'}>Kirim {row.delivery_deadline ? fmtDate(row.delivery_deadline) : '-'}</div>
+        </div>
+      );
     }},
-    { key: 'delivery_deadline', label: 'Deadline Kirim', render: (v) => {
-      if (!v) return '-';
-      const isOverdue = toWIBDate(v) < todayWIB();
-      return <span className={isOverdue ? 'text-[hsl(var(--warning))] font-medium' : 'text-muted-foreground'}>{fmtDate(v)}</span>;
-    }},
-    { key: 'status', label: 'Status / Workflow', render: (v, row) => (
+    { key: 'status', label: 'Status', render: (v, row) => (
       <div className="space-y-1.5">
-        <StatusBadge status={v} />
+        <POStatusBadge status={v} testId={`po-status-${row.id}`} />
         <POWorkflowIndicator status={v} compact={true} />
+        {/* Tahap 9 (keputusan 10): peringatan saja — tidak memblokir kiriman */}
+        {row.sample_flag?.warning && (
+          <LabelBadge status="warning" tone="warning" label="Sampel belum disetujui" testId={`po-sample-flag-${row.id}`} />
+        )}
       </div>
     )},
-    { key: 'created_by', label: 'Dibuat' },
     { key: 'actions', label: 'Aksi', render: (_, row) => (
       <div className="flex items-center gap-1">
-        <button onClick={() => openDetail(row)} data-testid={`po-detail-btn-${row.id}`} className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]" title="Detail"><Eye className="w-4 h-4" /></button>
-        {/* 2026-08-01: pintu masuk ke BOM PO Maklon (Detail 360° → tab BOM).
-            Sebelumnya BOM Template maklon tidak punya jalur dari daftar PO. */}
-        {!isInternal && onNavigate && (
-          <button
-            onClick={() => onNavigate('maklon-po-360', { po_id: row.id, tab: 'bom' })}
-            data-testid={`po-bom-btn-${row.id}`}
-            className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]"
-            title="BOM & kebutuhan material (Detail 360°)"><Layers className="w-4 h-4" /></button>
-        )}
+        <Button variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); openDetail(row); }} data-testid={`po-detail-btn-${row.id}`}
+          title="Lihat rincian" aria-label="Lihat rincian"><Eye className="w-4 h-4" /></Button>
         {canEdit && !CLOSED_PO.includes(row.status) && (
           <>
-            <button onClick={() => openEdit(row)} data-testid={`po-edit-btn-${row.id}`} className="p-1.5 rounded hover:bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))]" title="Ubah PO" aria-label="Ubah PO"><Pencil className="w-4 h-4" /></button>
-            <button
-              onClick={() => setQuickCompletePO(row)}
-              data-testid={`quick-complete-btn-${row.id}`}
-              className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]"
-              title="Selesaikan cepat — semua alur produksi sekaligus"
-            >
-              <Zap className="w-4 h-4" />
-            </button>
-            <button onClick={() => { setCloseTargetPO(row); setCloseForm({ close_reason: CLOSE_REASONS[0], close_notes: '' }); setShowCloseModal(true); }}
-              className="p-1.5 rounded hover:bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] text-xs" title="Tutup PO">Tutup</button>
+            <Button variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); openEdit(row); }} data-testid={`po-edit-btn-${row.id}`}
+              title="Ubah PO" aria-label="Ubah PO"><Pencil className="w-4 h-4" /></Button>
+            <Button variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); setQuickCompletePO(row); }} data-testid={`quick-complete-btn-${row.id}`}
+              title="Selesaikan cepat — semua alur produksi sekaligus" aria-label="Selesaikan cepat"><Zap className="w-4 h-4" /></Button>
+            <Button variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); openCloseModal(row); }} data-testid={`po-close-btn-${row.id}`}
+              title="Tutup PO" aria-label="Tutup PO"><Lock className="w-4 h-4" /></Button>
           </>
         )}
         {canDelete && (
-          <button onClick={() => setConfirmDelete(row)} data-testid={`po-delete-btn-${row.id}`} className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))]" title="Hapus PO" aria-label="Hapus PO"><Trash2 className="w-4 h-4" /></button>
+          <Button variant="ghost" size="icon-sm" className="text-[hsl(var(--destructive))]" onClick={(e) => { e.stopPropagation(); setConfirmDelete(row); }}
+            data-testid={`po-delete-btn-${row.id}`} title="Hapus PO" aria-label="Hapus PO"><Trash2 className="w-4 h-4" /></Button>
         )}
       </div>
     )}
   ];
 
-  // Custom expandable row render for DataTable
+  // Isi baris PO yang dibuka/tutup (tombol "n baris") — tabel standar, tanpa kartu berwarna.
   const expandedRowRender = (row) => {
     if (!expandedPOs[row.id] || !row.items || row.items.length === 0) return null;
-    // FASE 9: konten expand DIBUNGKUS kartu dengan scroll horizontal SENDIRI
-    // (`max-w-full overflow-x-auto`) supaya kolom paling kanan (Qty) tidak
-    // terpotong oleh lebar tabel induk.
     return (
-      <div className="bg-[hsl(var(--warning)/0.3)] border-t border-[hsl(var(--warning)/0.35)] px-4 py-3 max-w-full">
-        <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Detail Item PO</p>
-        <div className="max-w-full overflow-x-auto rounded-lg bg-[var(--card-surface,#fff)] border border-[var(--glass-border,rgba(0,0,0,0.08))]">
-          <table className="w-full text-xs min-w-[760px]">
-            <thead>
-              <tr className="border-b border-[hsl(var(--warning)/0.35)]">
-                <th className="text-left py-1.5 pl-3 pr-3 text-[hsl(var(--warning))] font-semibold whitespace-nowrap">Serial/Batch</th>
-                <th className="text-left py-1.5 pr-3 text-muted-foreground font-semibold">SKU</th>
-                <th className="text-left py-1.5 pr-3 text-muted-foreground font-semibold">Produk</th>
-                <th className="text-left py-1.5 pr-3 text-muted-foreground font-semibold">Size</th>
-                <th className="text-left py-1.5 pr-3 text-muted-foreground font-semibold">Warna</th>
-                <th className="text-right py-1.5 pr-3 text-muted-foreground font-semibold whitespace-nowrap">Qty</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[hsl(var(--warning)/0.35)]">
-              {row.items.map(item => (
-                <tr key={item.id} className="hover:bg-[hsl(var(--warning)/0.1)]">
-                  <td className="py-1.5 pl-3 pr-3 tabular-nums text-[hsl(var(--warning))] font-semibold whitespace-nowrap">{item.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
-                  <td className="py-1.5 pr-3 tabular-nums text-[hsl(var(--primary))]">{item.sku || '-'}</td>
-                  <td className="py-1.5 pr-3 text-foreground/90">{item.product_name}</td>
-                  <td className="py-1.5 pr-3 text-muted-foreground">{item.size || '-'}</td>
-                  <td className="py-1.5 pr-3 text-muted-foreground">{item.color || '-'}</td>
-                  <td className="py-1.5 pr-3 text-right font-bold text-foreground/90 whitespace-nowrap">{(item.qty || 0).toLocaleString('id-ID')} pcs</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="px-4 py-3 max-w-full overflow-x-auto bg-foreground/[0.03]" data-testid={`po-items-${row.id}`}>
+        <Table>
+          <TableHeader><TableRow>
+            <TableHead>No. seri</TableHead><TableHead>SKU</TableHead><TableHead>Produk</TableHead>
+            <TableHead>Ukuran</TableHead><TableHead>Warna</TableHead><TableHead className="text-right">Qty</TableHead>
+          </TableRow></TableHeader>
+          <TableBody>{row.items.map(item => (
+            <TableRow key={item.id}>
+              <TableCell className="tabular-nums">{item.serial_number || '—'}</TableCell>
+              <TableCell className="tabular-nums">{item.sku || '-'}</TableCell>
+              <TableCell>{item.product_name}</TableCell>
+              <TableCell>{item.size || '-'}</TableCell>
+              <TableCell>{item.color || '-'}</TableCell>
+              <TableCell className="text-right tabular-nums font-semibold whitespace-nowrap">{(item.qty || 0).toLocaleString('id-ID')} pcs</TableCell>
+            </TableRow>
+          ))}</TableBody>
+        </Table>
       </div>
     );
   };
@@ -875,13 +730,30 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
         ? 'Pesanan produksi untuk stok sendiri: model, varian, qty, dan upah jahit per baris.'
         : 'Pesanan jasa maklon per klien: artikel katalog, varian, qty, harga jasa, dan upah jahit.'}
       actions={canCreate ? <Button onClick={openCreate} data-testid="create-po-btn"><Plus className="w-4 h-4" /> Buat PO</Button> : null}
+      detail={detailPo && (
+        <PODetailPanel
+          key={detailPo.id}
+          poId={detailPo.id}
+          initialTab={detailPo.tab}
+          reloadKey={detailReload}
+          businessType={bizKey}
+          canEdit={canEdit}
+          userRole={userRole}
+          onNavigate={onNavigate}
+          onClose={() => setDetailPo(null)}
+          onChanged={refetchPOs}
+          onEdit={(po) => openEdit(po)}
+          onClosePO={(po) => openCloseModal(po)}
+          onQuickComplete={(po) => setQuickCompletePO(po)}
+        />
+      )}
       filters={(
         <FilterChips
           value={filterStatus}
           onChange={setFilterStatus}
           testId="po-filter"
           ariaLabel="Penyaring status PO"
-          options={['', ...STATUS_OPTIONS].map(s => ({ key: s, label: s || 'Semua' }))}
+          options={['', ...STATUS_OPTIONS].map(s => ({ key: s, label: s ? (PO_STATUS_LABEL[s] || s) : 'Semua' }))}
         />
       )}
     >
@@ -1188,81 +1060,12 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
               })}
             </section>
 
-            {/* 3 · Aksesoris — bagian yang sama untuk kedua jenis: dari BOM (otomatis) + tambahan di luar BOM */}
+            {/* 3 · Aksesoris — bagian yang sama untuk kedua jenis (Tahap 9, keputusan 3): dari BOM (perkiraan → rencana
+                serah) + tambahan di luar BOM, semuanya dalam SATUAN SERAH material (bukan selalu "pcs"). */}
             <section className="space-y-2" data-testid="po-form-accessories">
-              <SectionTitle aside={(
-                <Button type="button" variant="outline" size="sm" onClick={addAccessoryItem} data-testid="po-add-accessory">
-                  <Plus className="w-3.5 h-3.5" /> Tambah aksesoris
-                </Button>
-              )}>Aksesoris</SectionTitle>
-              <div data-testid="po-bom-accessories-panel" className="space-y-2">
-                <p className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-                  Dari BOM (otomatis, tidak perlu diketik)
-                  {bomAcc.loading && <span className="inline-flex items-center gap-1"><Loader2 className="w-3.5 h-3.5 animate-spin" /> menghitung…</span>}
-                </p>
-                {isInternal ? (
-                  <p className="text-xs text-muted-foreground border border-dashed border-border rounded-lg px-3 py-2" data-testid="po-bom-acc-internal">
-                    Dihitung dari BOM aktif tiap model × qty saat PO disimpan, lalu tampil di detail PO beserta posisi stoknya.
-                  </p>
-                ) : bomAcc.rows.length === 0 ? (
-                  <p className="text-xs text-muted-foreground border border-dashed border-border rounded-lg px-3 py-2" data-testid="po-bom-acc-empty">
-                    {bomAcc.loading
-                      ? 'Menghitung kebutuhan aksesoris dari BOM…'
-                      : 'Pilih artikel katalog dan isi qty — aksesoris muncul otomatis bila artikel itu punya template BOM aktif.'}
-                  </p>
-                ) : (
-                  <div className="rounded-lg border border-border overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead className="bg-muted/40">
-                        <tr>
-                          <th className="text-left px-3 py-1.5 text-muted-foreground">Aksesoris</th>
-                          <th className="text-left px-3 py-1.5 text-muted-foreground">Kode</th>
-                          <th className="text-right px-3 py-1.5 text-muted-foreground">Kebutuhan</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {bomAcc.rows.map((r, i) => (
-                          <tr key={`${r.accessory_name}-${i}`} data-testid={`po-bom-acc-row-${i}`}>
-                            <td className="px-3 py-1.5 text-foreground/90">
-                              {r.accessory_name}
-                              {r.unlinked && <span className="ml-1.5 text-[hsl(var(--destructive))] text-[10px] font-semibold">belum tertaut master</span>}
-                            </td>
-                            <td className="px-3 py-1.5 tabular-nums text-muted-foreground">{r.accessory_code || '-'}</td>
-                            <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{Number(r.qty_needed || 0).toLocaleString('id-ID')} {r.unit || 'pcs'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    <p className="px-3 py-1.5 text-[11px] text-muted-foreground">
-                      Untuk {Number(bomAcc.total_pcs || 0).toLocaleString('id-ID')} pcs. Ditulis sistem saat PO disimpan — jangan ditambahkan lagi di bawah.
-                    </p>
-                  </div>
-                )}
-                {(bomAcc.warnings || []).length > 0 && (
-                  <Notice tone="warning" icon={AlertTriangle} testId="po-bom-acc-warning">
-                    <div className="space-y-0.5">{bomAcc.warnings.map((w, i) => <p key={i} className="text-[11px]">{w}</p>)}</div>
-                  </Notice>
-                )}
-              </div>
-              <p className="text-xs font-medium text-muted-foreground">Tambahan di luar BOM (opsional)</p>
-              {(form.po_accessories || []).length === 0 && (
-                <p className="text-xs text-muted-foreground border border-dashed border-border rounded-lg px-3 py-2">Klik "Tambah aksesoris" bila perlu aksesoris di luar BOM.</p>
-              )}
-              {(form.po_accessories || []).map((acc, idx) => (
-                <div key={acc.id || idx} className="grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_7rem_3rem_9rem_auto] items-center gap-2" data-testid={`po-acc-row-${idx}`}>
-                  <SearchableSelect
-                    options={accessories.map(a => ({ value: a.id, label: a.accessory_name || a.name, sub: a.accessory_code || a.code || a.category || '' }))}
-                    value={acc.accessory_id}
-                    onChange={val => updateAccessoryItem(idx, 'accessory_id', val)}
-                    placeholder="Pilih aksesoris"
-                  />
-                  <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeAccessoryItem(idx)} className="text-[hsl(var(--destructive))] sm:order-last"
-                    title="Hapus aksesoris" aria-label="Hapus aksesoris"><X className="w-4 h-4" /></Button>
-                  <GlassInput type="number" min="0" step="any" value={acc.qty_needed} onChange={e => updateAccessoryItem(idx, 'qty_needed', e.target.value)} placeholder="Qty" />
-                  <span className="text-xs text-muted-foreground">{acc.unit || 'pcs'}</span>
-                  <GlassInput className="col-span-2 sm:col-span-1" value={acc.notes || ''} onChange={e => updateAccessoryItem(idx, 'notes', e.target.value)} placeholder="Catatan" />
-                </div>
-              ))}
+              <SectionTitle>Aksesoris</SectionTitle>
+              <RencanaAksesorisPO businessType={bizKey} items={form.items} rows={form.po_accessories || []} accessories={accessories}
+                active={showModal} onChange={(rows) => setForm((f) => ({ ...f, po_accessories: rows }))} />
             </section>
 
             {/* 4 · Total — blok yang sama untuk kedua jenis; nilai jasa ke klien hanya maklon */}
@@ -1314,299 +1117,6 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
         </Modal>
       )}
 
-      {/* Detail Modal */}
-      {showDetail && detailData && (
-        <Modal title={`Detail PO: ${detailData.po_number}`} onClose={() => setShowDetail(false)} size="xl">
-          <div className="space-y-4">
-            {isInternal && costCheck && costCheck.items_with_issues > 0 && (
-              <div className="bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)]  rounded-lg p-3" data-testid="po-cost-warning">
-                <p className="text-sm font-semibold text-[hsl(var(--warning))] flex items-center gap-2"><AlertTriangle className="w-4 h-4" />Harga bahan / upah belum lengkap pada {costCheck.items_with_issues} item — lapisan HPP barang jadi akan bernilai terlalu rendah (bahkan nol).</p>
-                <ul className="mt-1.5 text-xs text-[hsl(var(--warning))] space-y-0.5">
-                  {costCheck.items.filter(i => i.issues.length).map(i => (
-                    <li key={i.po_item_id} data-testid={`po-cost-issue-${i.sku}`}><span className="tabular-nums">{i.sku || i.product_name}</span>: {i.issues.join('; ')} — bahan {fmt(i.material_cost)}/pcs · jahit {fmt(i.sewing_cost)}/pcs</li>
-                  ))}
-                </ul>
-                <p className="text-[11px] text-[hsl(var(--warning))] mt-1.5">Isi upah jahit per pcs di form PO (tombol Ubah) — angkanya sama dengan menu <b>Biaya Jahit</b> — dan harga bahan di master material/BOM sebelum barang jadi diterima dari CMT.</p>
-              </div>
-            )}
-            {isInternal && costCheck && costCheck.ok && (
-              <p className="text-xs text-[hsl(var(--success))] " data-testid="po-cost-ok">Harga bahan & upah semua item terisi — estimasi nilai batch {fmt(costCheck.estimated_batch_value)}.</p>
-            )}
-            {/* PDF Export + Quick Complete */}
-            <div className="flex justify-between items-center flex-wrap gap-2">
-              {/* Quick Complete button (only for non-completed/closed POs) */}
-              {canEdit && !['Completed', 'Closed'].includes(detailData.status) && (
-                <button
-                  onClick={() => { setShowDetail(false); setQuickCompletePO(detailData); }}
-                  data-testid="detail-quick-complete-btn"
-                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] text-white rounded-lg text-sm font-bold hover:from-[hsl(var(--primary)/0.1)] hover:to-[hsl(var(--primary)/0.1)] shadow-md hover:shadow-lg transition-all"
-                >
-                  <Zap className="w-4 h-4" />
-                  Selesaikan cepat
-                </button>
-              )}
-              <button
-                onClick={() => setSppPickerOpen(true)}
-                data-testid="spp-export-pdf-btn"
-                className="flex items-center gap-2 px-4 py-2 bg-[hsl(var(--destructive))] text-white rounded-lg text-sm hover:bg-[hsl(var(--destructive)/0.9)] font-medium">
-                Unduh PDF (SPP) — pilih kolom
-              </button>
-            </div>
-            {/* FASE 5 DA: Aksi status dinamis dari allowed_next backend */}
-            {canEdit && (Array.isArray(detailData.allowed_next) && detailData.allowed_next.length > 0 || detailData.can_close) && (
-              <div data-testid="po-detail-actions" className="flex items-center flex-wrap gap-2 bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)]  rounded-xl p-3">
-                <span className="text-xs font-semibold text-[hsl(var(--primary))] uppercase tracking-wide mr-1">Aksi:</span>
-                {(detailData.allowed_next || []).map(ns => (
-                  <button key={ns} data-testid={`po-action-${ns.toLowerCase().replace(/\s+/g, '-')}`}
-                    onClick={() => transitionStatus(detailData.id, ns)}
-                    className="px-3 py-1.5 rounded-lg text-sm font-semibold bg-[hsl(var(--primary))] text-white hover:bg-[hsl(var(--primary)/0.9)] transition-colors">
-                    → {ns}
-                  </button>
-                ))}
-                {detailData.can_close && (
-                  <button data-testid="po-action-close"
-                    onClick={() => { setShowDetail(false); setCloseTargetPO(detailData); setCloseForm({ close_reason: CLOSE_REASONS[0], close_notes: '' }); setShowCloseModal(true); }}
-                    className="px-3 py-1.5 rounded-lg text-sm font-semibold border border-[hsl(var(--warning)/0.35)] text-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.1)] transition-colors">
-                    Tutup PO
-                  </button>
-                )}
-              </div>
-            )}
-            {/* Workflow Indicator */}
-            <div className="bg-muted/40 rounded-xl p-4">
-              <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wide">Status Workflow</p>
-              <POWorkflowIndicator status={detailData.status} />
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {[{l:'No. PO',v:<span className="font-bold text-[hsl(var(--primary))]">{detailData.po_number}</span>},
-                {l:isInternal ? 'Tujuan barang jadi' : 'Buyer',v:detailData.customer_name},
-                {l:'Penjahit (CMT)',v:detailData.vendor_name||'Belum dipilih'},
-                {l:'Status',v:<StatusBadge status={detailData.status} />},
-                {l:'Tgl. PO',v:fmtDate(detailData.po_date)},
-                {l:'Tenggat produksi',v:fmtDate(detailData.deadline)},
-                {l:'Tenggat kirim',v:fmtDate(detailData.delivery_deadline)},
-                {l:'Dibuat',v:detailData.created_by}
-              ].map(it => <div key={it.l} className="bg-muted/40 rounded-lg p-3"><p className="text-xs text-muted-foreground">{it.l}</p><div className="font-medium text-sm mt-0.5">{it.v}</div></div>)}
-            </div>
-            {detailData.close_reason && (
-              <div className="bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-lg p-3">
-                <p className="text-sm font-semibold text-[hsl(var(--warning))]">Alasan Penutupan: {CLOSE_REASON_LABELS[detailData.close_reason] || detailData.close_reason}</p>
-                {detailData.close_notes && <p className="text-xs text-[hsl(var(--warning))] mt-1">{detailData.close_notes}</p>}
-                <p className="text-xs text-[hsl(var(--warning))] mt-1">Ditutup oleh: {detailData.closed_by} pada {fmtDate(detailData.closed_at)}</p>
-              </div>
-            )}
-            {detailData.items?.length > 0 && (
-              <div className="space-y-3">
-                <p className="text-sm font-semibold text-foreground">Baris produk ({detailData.items.length})</p>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    {/* K12: kolom sama untuk kedua jenis PO; harga jasa & margin hanya maklon */}
-                    <thead><tr className="bg-muted">
-                      <th className="text-left px-3 py-2 text-xs text-muted-foreground">Produk</th>
-                      <th className="text-left px-3 py-2 text-xs text-muted-foreground">SKU</th>
-                      <th className="text-left px-3 py-2 text-xs text-muted-foreground">No. seri</th>
-                      <th className="text-left px-3 py-2 text-xs text-muted-foreground">Ukuran / warna</th>
-                      <th className="text-right px-3 py-2 text-xs text-muted-foreground">Qty</th>
-                      <th className="text-right px-3 py-2 text-xs text-muted-foreground">Upah jahit / pcs</th>
-                      <th className="text-right px-3 py-2 text-xs text-muted-foreground">Total upah</th>
-                      {!isInternal && <th className="text-right px-3 py-2 text-xs text-muted-foreground">Harga jasa / pcs</th>}
-                      {!isInternal && <th className="text-right px-3 py-2 text-xs text-muted-foreground">Margin / pcs</th>}
-                    </tr></thead>
-                    <tbody>{detailData.items.map(it => {
-                      const marginPcs = (it.selling_price_snapshot || 0) - (it.cmt_price_snapshot || 0);
-                      return (
-                        <tr key={it.id} className="border-t border-border/60" data-testid={`po-detail-line-${it.sku || it.id}`}>
-                          <td className="px-3 py-2">{it.product_name}</td>
-                          <td className="px-3 py-2 tabular-nums text-xs">{it.sku || '-'}</td>
-                          <td className="px-3 py-2 tabular-nums text-xs">{it.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
-                          <td className="px-3 py-2 text-xs">{it.size || '-'} / {it.color || '-'}</td>
-                          <td className="px-3 py-2 text-right tabular-nums font-semibold">{(it.qty || 0).toLocaleString('id-ID')}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{fmt(it.cmt_price_snapshot)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{fmt((it.qty || 0) * (it.cmt_price_snapshot || 0))}</td>
-                          {!isInternal && <td className="px-3 py-2 text-right tabular-nums">{fmt(it.selling_price_snapshot)}</td>}
-                          {!isInternal && <td className={`px-3 py-2 text-right tabular-nums ${marginPcs < 0 ? 'text-[hsl(var(--destructive))]' : ''}`}>{fmt(marginPcs)}</td>}
-                        </tr>
-                      );
-                    })}</tbody>
-                    <tfoot><tr className="bg-muted/40 font-semibold border-t-2 border-border">
-                      <td className="px-3 py-2" colSpan={4}>Total</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{detailData.items.reduce((s,i)=>s+(i.qty||0),0).toLocaleString('id-ID')} pcs</td>
-                      <td className="px-3 py-2" />
-                      <td className="px-3 py-2 text-right tabular-nums" data-testid="po-detail-total-rate">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.cmt_price_snapshot||0),0))}</td>
-                      {!isInternal && <td className="px-3 py-2 text-right tabular-nums">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.selling_price_snapshot||0),0))}</td>}
-                      {!isInternal && <td className="px-3 py-2 text-right tabular-nums">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*((i.selling_price_snapshot||0)-(i.cmt_price_snapshot||0)),0))}</td>}
-                    </tr></tfoot>
-                  </table>
-                </div>
-
-                {/* 2026-11-02 (K16): PO INTERNAL tidak punya harga jual — "Est. Gross Margin"
-                    = 0 − CMT selalu negatif (−150.000) dan menyesatkan. Tampilkan HPP batch
-                    nyata (bahan BOM warna varian + jahit SPK) dari /cost-check. */}
-                {isInternal && (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3" data-testid="po-internal-hpp">
-                    <StatTile label="Bahan (BOM warna varian)" accent="warning" sub="Harga bahan × qty"
-                      value={fmt((costCheck?.items || []).reduce((s, i) => s + (i.material_cost || 0) * (Number(i.qty) || 0), 0))} />
-                    <StatTile label="Upah jahit" accent="warning" sub="Upah jahit per pcs × qty"
-                      value={fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.cmt_price_snapshot||0),0))} />
-                    <StatTile label="Estimasi HPP batch" accent="primary" sub="PO internal = stok sendiri; margin lahir saat barang terjual"
-                      value={<span data-testid="po-internal-hpp-batch">{costCheck ? fmt(costCheck.estimated_batch_value) : '…'}</span>} />
-                  </div>
-                )}
-                {/* Financial Summary */}
-                {!isInternal && (() => {
-                  const totalSales = detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.selling_price_snapshot||0),0);
-                  const totalCMT = detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.cmt_price_snapshot||0),0);
-                  const grossMargin = totalSales - totalCMT;
-                  const marginPct = totalSales > 0 ? Math.round((grossMargin / totalSales) * 100) : 0;
-                  return (
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <StatTile label="Total harga jasa" accent="success" sub="Harga jasa ke klien × qty" value={fmt(totalSales)} />
-                      <StatTile label="Total upah jahit" accent="warning" sub="Upah jahit per pcs × qty" value={fmt(totalCMT)} />
-                      <StatTile label="Perkiraan laba kotor" accent={grossMargin >= 0 ? 'primary' : 'danger'}
-                        sub={`${marginPct}% dari nilai penjualan`} value={fmt(grossMargin)} />
-                    </div>
-                  );
-                })()}
-              </div>
-            )}
-            {/* ── ACC-1: Kebutuhan Aksesoris (BOM explode + posisi stok + kekurangan) ── */}
-            <div className="space-y-3" data-testid="po-accessory-requirements">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h4 className="font-semibold text-foreground/90 flex items-center gap-2">
-                  <span className="w-5 h-5 bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] rounded-full flex items-center justify-center text-xs font-bold">
-                    {accReq?.requirements?.length ?? (detailData.po_accessories?.length || 0)}
-                  </span>
-                  Kebutuhan Aksesoris
-                </h4>
-                {accReq?.requirements?.length > 0 && (
-                  <div className="flex items-center gap-2">
-                    {accReq.summary?.shortage_lines > 0 ? (
-                      <Button
-                        size="sm"
-                        onClick={() => createAccRequest(detailData.id, true)}
-                        disabled={accReqCreating}
-                        data-testid="po-acc-create-request-btn"
-                      >
-                        {accReqCreating ? 'Mengajukan...' : `Ajukan Pembelian (${accReq.summary.shortage_lines} kurang)`}
-                      </Button>
-                    ) : (
-                      <span className="text-xs text-[hsl(var(--success))] font-medium">
-                        Stok mencukupi — tidak perlu pembelian
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
-              {/* 2026-11-06 (Tahap 2): kekurangan diajukan sebagai pembelian, stok yang ada keluar saat kirim */}
-              {accReq?.requirements?.length > 0 && (
-                <p className="text-xs text-muted-foreground" data-testid="po-acc-req-help">
-                  Kekurangan aksesoris milik DA diajukan sebagai Permintaan Pengadaan yang tertaut ke PO ini, lalu
-                  dibeli lewat PO dan diterima di Penerimaan Barang. Stok yang sudah ada dikeluarkan saat Kirim
-                  Material CMT, jadi tidak diminta lagi. Aksesoris yang disediakan klien tidak ikut dibeli.
-                </p>
-              )}
-
-              {accReqLoading && <p className="text-xs text-muted-foreground">Memuat kebutuhan aksesoris...</p>}
-              {accReq?.error && (
-                <p className="text-xs text-[hsl(var(--destructive))] ">{accReq.error}</p>
-              )}
-
-              {accReqMsg && (
-                <Notice
-                  testId="po-acc-req-message"
-                  tone={accReqMsg.type === 'success' ? 'success' : 'danger'}
-                  className="text-xs"
-                >
-                  {accReqMsg.text}
-                </Notice>
-              )}
-
-              {!accReqLoading && accReq && !accReq.error && accReq.requirements.length === 0 && (
-                <p className="text-xs text-muted-foreground/80 italic border border-dashed border-border rounded-lg py-3 px-3">
-                  Belum ada kebutuhan aksesoris. Untuk PO internal, kebutuhan dihitung otomatis dari
-                  <strong> BOM aktif</strong> tiap item (qty per pcs × qty order). Pastikan BOM berisi
-                  baris aksesoris, lalu simpan ulang PO.
-                </p>
-              )}
-
-              {accReq?.summary?.unlinked_lines > 0 && (
-                <div className="text-xs bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.35)]  text-[hsl(var(--warning))]  rounded-lg px-3 py-2">
-                  <strong>{accReq.summary.unlinked_lines} baris belum tertaut ke master material</strong> —
-                  stoknya tidak bisa dicek dan tidak akan ikut dalam permintaan. Perbaiki di modul BOM
-                  (pilih material dari master, atau tombol "Perbaiki Otomatis").
-                </div>
-              )}
-
-              {accReq?.requirements?.length > 0 && (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm" data-testid="po-acc-req-table">
-                    <thead><tr className="bg-[hsl(var(--success)/0.1)] ">
-                      <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">#</th>
-                      <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Aksesoris</th>
-                      <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Sumber</th>
-                      <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Dibutuhkan</th>
-                      <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Sudah keluar</th>
-                      <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Tersedia</th>
-                      <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Kurang</th>
-                      <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Status</th>
-                    </tr></thead>
-                    <tbody>{accReq.requirements.map((a, idx) => (
-                      <tr key={a.id || idx} className="border-t border-[hsl(var(--success)/0.35)] hover:bg-[hsl(var(--success)/0.3)] "
-                        data-testid={`po-acc-req-row-${idx}`}>
-                        <td className="px-3 py-2 text-xs text-muted-foreground/70">{idx + 1}</td>
-                        <td className="px-3 py-2">
-                          <div className="font-medium text-foreground/90">{a.material_name || a.accessory_name}</div>
-                          <div className="tabular-nums text-xs text-[hsl(var(--success))] ">{a.material_code || a.accessory_code || '-'}</div>
-                        </td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">
-                          {a.source === 'bom_auto' ? 'BOM (otomatis)' : 'Manual'}
-                        </td>
-                        <td className="px-3 py-2 text-right font-bold text-foreground">
-                          {(a.qty_needed || 0).toLocaleString('id-ID')} <span className="text-xs font-normal text-muted-foreground">{a.unit}</span>
-                        </td>
-                        <td className="px-3 py-2 text-right text-foreground/80">
-                          {a.linked ? (a.issued || 0).toLocaleString('id-ID') : <span className="text-muted-foreground">-</span>}
-                        </td>
-                        <td className="px-3 py-2 text-right text-foreground/80">
-                          {a.linked ? (a.available || 0).toLocaleString('id-ID') : <span className="text-muted-foreground">-</span>}
-                        </td>
-                        <td className={`px-3 py-2 text-right font-semibold ${a.shortage > 0 ? 'text-[hsl(var(--destructive))] ' : 'text-[hsl(var(--success))] '}`}>
-                          {a.linked ? (a.shortage || 0).toLocaleString('id-ID') : '-'}
-                        </td>
-                        <td className="px-3 py-2 text-xs">
-                          {a.status === 'ok' && <span className="px-2 py-0.5 rounded-full bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]  border border-[hsl(var(--success)/0.4)]">Cukup</span>}
-                          {a.status === 'shortage' && <span className="px-2 py-0.5 rounded-full bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]  border border-[hsl(var(--destructive)/0.4)]">Kurang</span>}
-                          {a.status === 'unlinked' && <span className="px-2 py-0.5 rounded-full bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]  border border-[hsl(var(--warning)/0.4)]">Belum tertaut</span>}
-                          {a.status === 'client' && <span className="px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border">Disediakan klien</span>}
-                        </td>
-                      </tr>
-                    ))}</tbody>
-                  </table>
-                </div>
-              )}
-
-              {accReq?.existing_requests?.length > 0 && (
-                <div className="text-xs text-muted-foreground" data-testid="po-acc-existing-requests">
-                  Permintaan Pengadaan aksesoris untuk PO ini:{' '}
-                  {accReq.existing_requests.map(r => (
-                    <span key={r.id} className="inline-block mr-2 px-2 py-0.5 rounded-full border border-border bg-muted/40 tabular-nums">
-                      {r.request_code} · {r.status}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* File Attachments */}
-            <FileAttachmentPanel
-              entityType="production_po"
-              entityId={detailData.id}
-              userRole={userRole}
-            />
-          </div>
-        </Modal>
-      )}
-
       {confirmDelete && <ConfirmDialog title="Hapus Production PO?" message={`PO "${confirmDelete.po_number}" beserta semua work order dan progres akan dihapus permanen.`} onConfirm={handleDelete} onCancel={() => setConfirmDelete(null)} />}
 
       {/* Quick Complete Modal */}
@@ -1614,29 +1124,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
         <QuickCompleteModal
           po={quickCompletePO}
           onClose={() => setQuickCompletePO(null)}
-          onSuccess={() => { setQuickCompletePO(null); refetchPOs(); }}
-        />
-      )}
-      {/* W2 — cetak SPP dengan kolom pilihan pemakai (Serial No dst.) */}
-      {detailData && (
-        <PdfColumnPicker
-          docType="production-po"
-          open={sppPickerOpen}
-          onOpenChange={setSppPickerOpen}
-          title={`Kolom PDF — SPP ${detailData.po_number || ''}`}
-          hint="Centang kolom yang ingin tercetak pada tabel item SPP (mis. Serial No)."
-          onConfirm={async (cols) => {
-            try {
-              const q = cols?.length ? `&cols=${encodeURIComponent(cols.join(','))}` : '';
-              const res = await apiFetch(`/export-pdf?type=production-po&id=${detailData.id}${q}`);
-              if (!res.ok) { toast.error('Gagal mengunduh PDF'); return; }
-              const blob = await res.blob();
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url; a.download = `SPP-${detailData.po_number}.pdf`; a.click();
-              URL.revokeObjectURL(url);
-            } catch (e) { toast.error('Gagal mengunduh PDF: ' + e.message); }
-          }}
+          onSuccess={() => { setQuickCompletePO(null); refetchPOs(); reloadDetail(); }}
         />
       )}
     </PageLayout>

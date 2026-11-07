@@ -13,6 +13,8 @@
  * SSOT: /api/production-pos, /api/production-pos/{id}/fulfillment (baris per ukuran),
  *       /api/production-pos/{id}/close, /api/production-pos/{id}/close-short.
  * PANDUAN_UI: PageLayout · rincian ukuran di bawah barisnya (RowDetail) · popup hanya formulir alasan.
+ * Tahap 9 (7 Nov 2026): popup alasan memakai `FormDialog` (ui/dialog) — bukan lagi `engine/Modal` —
+ * dan status PO tampil dengan label Indonesia (`lib/poStatus`). Daftar sudah disaring per portal.
  */
 import { Fragment, useEffect, useMemo, useState, useCallback } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
@@ -24,10 +26,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import FilterChips from '@/components/ui/filter-chips';
 import PageLayout, { RowDetail, RowToggle } from '../layout/PageLayout';
-import { EmptyState, Notice } from '../moduleAtoms';
-import Modal from './Modal';
-import StatusBadge from './StatusBadge';
+import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
+import FormDialog, { Field } from './FormDialog';
 import { apiGet, apiPost } from '../../../lib/api';
+import { portalBusinessType, portalQuery } from '@/lib/portalScope';
+import { poStatusLabel, poStatusTone } from '@/lib/poStatus';
 
 const REASON_LABELS = {
   deadline_expired: 'Batas waktu terlewati',
@@ -41,7 +44,7 @@ const shortText = (lines) => (lines || []).filter((l) => l.short > 0)
   .map((l) => `${l.size || l.sku || 'item'} kurang ${fmtNum(l.short)}`).join(', ');
 
 export default function POClosureModule({ portalId }) {
-  const businessType = portalId === 'maklon' ? 'maklon' : portalId === 'production' ? 'internal' : null;
+  const businessType = portalBusinessType(portalId);
   const [rows, setRows] = useState([]);        // [{po, fulfillment}]
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('open');       // open | closed | all
@@ -55,8 +58,7 @@ export default function POClosureModule({ portalId }) {
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const q = businessType ? `?business_type=${businessType}` : '';
-      const data = await apiGet(`/production-pos${q}`);
+      const data = await apiGet(`/production-pos${portalQuery(businessType)}`);
       const pos = Array.isArray(data) ? data : (data?.data || []);
       const settled = await Promise.allSettled(pos.map((p) => apiGet(`/production-pos/${p.id}/fulfillment`)));
       setRows(pos.map((p, i) => ({ po: p, fulfillment: settled[i].status === 'fulfilled' ? settled[i].value : null })));
@@ -171,7 +173,7 @@ export default function POClosureModule({ portalId }) {
                         {s > 0 && <div className="text-[11px] text-muted-foreground">{shortText(f.lines)}</div>}
                       </TableCell>
                       <TableCell>
-                        <StatusBadge status={po.status} />
+                        <StatusBadge status={po.status} label={poStatusLabel(po.status)} tone={poStatusTone(po.status)} />
                         {po.closed_reason && REASON_LABELS[po.closed_reason] && (
                           <div className="text-[11px] text-muted-foreground">{REASON_LABELS[po.closed_reason]}</div>
                         )}
@@ -223,44 +225,37 @@ export default function POClosureModule({ portalId }) {
       </GlassCard>
 
       {closing && (
-        <Modal title={short > 0 ? 'Tutup kurang' : 'Tutup PO'} onClose={() => setClosing(null)} size="md"
-          description={`${closing.po.po_number} · ${closing.po.customer_name || ''}`}>
-          <div className="space-y-3" data-testid="po-close-short-modal">
-            <p className="text-sm text-muted-foreground">
-              {closing.po.po_number} · dipesan {fmtNum(closing.fulfillment.total_ordered)} · terpenuhi {fmtNum(closing.fulfillment.total_fulfilled)}
-            </p>
-            {short > 0 ? (
-              <Notice tone="warning" icon={AlertTriangle}>
-                Kurang {fmtNum(short)} pcs: {shortText(closing.fulfillment.lines)}. PO menjadi <b>Ditutup kurang</b> dan terkunci;
-                jadwal piutang klien menyusut ke qty yang sudah dikirim.
-              </Notice>
-            ) : (
-              <Notice tone="info" icon={Info}>Setiap ukuran sudah terpenuhi. PO menjadi <b>Ditutup</b> dan terkunci.</Notice>
-            )}
-            {short > 0 && (
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-1">Alasan tutup kurang *</label>
-                <SmartNativeSelect value={reason} onChange={(e) => setReason(e.target.value)} data-testid="po-close-short-reason" className="w-full h-9">
-                  <option value="">— pilih alasan —</option>
-                  {(closing.fulfillment.close_short_reasons || Object.keys(REASON_LABELS)).map((r) => (
-                    <option key={r} value={r}>{REASON_LABELS[r] || r}</option>
-                  ))}
-                </SmartNativeSelect>
-              </div>
-            )}
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">Catatan</label>
-              <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} data-testid="po-close-short-notes"
-                placeholder="mis. klien membatalkan sisa pesanan karena musim berakhir" />
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => setClosing(null)}>Batal</Button>
-              <Button onClick={submitClose} disabled={submitting || (short > 0 && !reason)} data-testid="po-close-short-submit">
-                {submitting && <Loader2 className="w-4 h-4 animate-spin" />}{short > 0 ? 'Tutup kurang' : 'Tutup PO'}
-              </Button>
-            </div>
-          </div>
-        </Modal>
+        <FormDialog onClose={() => setClosing(null)} testId="po-close-short-modal" title={short > 0 ? 'Tutup kurang' : 'Tutup PO'}
+          description={`${closing.po.po_number} · ${closing.po.customer_name || ''} · dipesan ${fmtNum(closing.fulfillment.total_ordered)} · terpenuhi ${fmtNum(closing.fulfillment.total_fulfilled)}`}
+          footer={<>
+            <Button variant="outline" onClick={() => setClosing(null)}>Batal</Button>
+            <Button onClick={submitClose} disabled={submitting || (short > 0 && !reason)} data-testid="po-close-short-submit">
+              {submitting && <Loader2 className="w-4 h-4 animate-spin" />}{short > 0 ? 'Tutup kurang' : 'Tutup PO'}
+            </Button>
+          </>}>
+          {short > 0 ? (
+            <Notice tone="warning" icon={AlertTriangle}>
+              Kurang {fmtNum(short)} pcs: {shortText(closing.fulfillment.lines)}. PO menjadi <b>Ditutup kurang</b> dan terkunci;
+              jadwal piutang klien menyusut ke qty yang sudah dikirim.
+            </Notice>
+          ) : (
+            <Notice tone="info" icon={Info}>Setiap ukuran sudah terpenuhi. PO menjadi <b>Ditutup</b> dan terkunci.</Notice>
+          )}
+          {short > 0 && (
+            <Field label="Alasan tutup kurang *">
+              <SmartNativeSelect value={reason} onChange={(e) => setReason(e.target.value)} data-testid="po-close-short-reason" className="w-full h-9" aria-label="Alasan tutup kurang">
+                <option value="">— pilih alasan —</option>
+                {(closing.fulfillment.close_short_reasons || Object.keys(REASON_LABELS)).map((r) => (
+                  <option key={r} value={r}>{REASON_LABELS[r] || r}</option>
+                ))}
+              </SmartNativeSelect>
+            </Field>
+          )}
+          <Field label="Catatan">
+            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} data-testid="po-close-short-notes"
+              placeholder="mis. klien membatalkan sisa pesanan karena musim berakhir" />
+          </Field>
+        </FormDialog>
       )}
     </PageLayout>
   );

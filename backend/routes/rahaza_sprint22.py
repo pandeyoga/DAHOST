@@ -158,6 +158,13 @@ async def preview_bulk_mi(request: Request):
             results.append({"wo_id": wo_id, "wo_number": wo.get("wo_number"), "error": f"WO status '{wo.get('status')}' tidak bisa generate MI (harus released/in_progress)"})
             continue
 
+        # Tahap 9 (7 Nov 2026): PO yang dijahit CMT tidak dibuatkan draf massal — materialnya keluar otomatis saat
+        # Kirim ke CMT; draf di sini akan mengeluarkan stok kedua kali bila disetujui.
+        if await _sewn_by_cmt(db, wo):
+            results.append({"wo_id": wo_id, "wo_number": wo.get("wo_number"), "skip": True,
+                            "warning": "PO dijahit CMT — material keluar otomatis saat Kirim ke CMT."})
+            continue
+
         # Check for existing draft/pending MI (from prefetched map)
         existing_mi = existing_mi_map.get(wo_id)
         if existing_mi:
@@ -220,6 +227,12 @@ async def preview_bulk_mi(request: Request):
     return {"preview": results, "total_wo": len(wo_ids), "ready_count": sum(1 for r in results if not r.get("skip") and not r.get("error") and r.get("all_available"))}
 
 
+async def _sewn_by_cmt(db, wo: dict) -> bool:
+    """Job/WO untuk PO yang dijahit CMT (ber-vendor atau sudah ada kiriman ke CMT) — Tahap 9."""
+    from core.kirim_cmt import po_sewn_by_cmt
+    return bool(wo.get("vendor_id") or wo.get("vendor_shipment_id")) or await po_sewn_by_cmt(db, wo.get("po_id"))
+
+
 @router.post("/bulk-mi/generate")
 async def generate_bulk_mi(request: Request):
     """
@@ -280,6 +293,11 @@ async def generate_bulk_mi(request: Request):
             continue
         if wo.get("status") not in ("released", "in_progress"):
             skipped.append({"wo_id": wo_id, "wo_number": wo.get("wo_number"), "reason": f"Status '{wo.get('status')}'"})
+            continue
+
+        if await _sewn_by_cmt(db, wo):           # Tahap 9: lihat pratinjau di atas
+            skipped.append({"wo_id": wo_id, "wo_number": wo.get("wo_number"),
+                            "reason": "PO dijahit CMT — material keluar otomatis saat Kirim ke CMT"})
             continue
 
         existing = existing_mi_map2.get(wo_id)
