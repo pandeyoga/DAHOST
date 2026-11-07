@@ -10,21 +10,27 @@
 import { useState, useEffect } from 'react';
 import {
   Plus, Eye, RotateCcw, ClipboardList, CheckCircle, XCircle, Clock,
-  AlertTriangle, Truck, FileText, AlertCircle
+  AlertTriangle, Truck, FileText, AlertCircle, Search
 } from 'lucide-react';
 import { toast } from 'sonner';
-import Modal from './Modal';
+import { Input } from '@/components/ui/input';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { formatDateID } from '@/lib/format';
+import PageLayout from '../layout/PageLayout';
 import AdditionalRequestModal from './AdditionalRequestModal';
 import MaterialRequestTracker from './MaterialRequestTracker';
 import { apiGet, apiFetch } from '../../../lib/api';
 import { Button } from '@/components/ui/button';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
-import { EmptyState, Notice, StatTile } from '../moduleAtoms';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 
 const TABS = [
-  { id: 'ADDITIONAL', label: 'Permintaan Tambahan', icon: Plus, color: 'amber' },
-  { id: 'REPLACEMENT', label: 'Permintaan Pengganti', icon: AlertTriangle, color: 'red' },
+  { id: 'ADDITIONAL', label: 'Permintaan tambahan', icon: Plus, color: 'amber' },
+  { id: 'REPLACEMENT', label: 'Permintaan pengganti', icon: AlertTriangle, color: 'red' },
 ];
 
 const STATUS_COLORS = {
@@ -32,6 +38,11 @@ const STATUS_COLORS = {
   Approved: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)]',
   Rejected: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--danger-text))] border-[hsl(var(--destructive)/0.35)]',
 };
+
+// Standar UI/UX v2: status & jenis tampil dalam bahasa Indonesia (dulu "Pending/Approved/Rejected" mentah).
+const STATUS_LABEL = { Pending: ['Menunggu', 'warning'], Approved: ['Disetujui', 'success'], Rejected: ['Ditolak', 'danger'] };
+const TYPE_LABEL = { ADDITIONAL: 'Tambahan', REPLACEMENT: 'Pengganti', NORMAL: 'Awal', REWORK: 'Retur perbaikan' };
+const statusLabel = (s) => (STATUS_LABEL[s] || [s || '—', 'default']);
 
 const STATUS_ICONS = {
   Pending: Clock,
@@ -225,7 +236,7 @@ export default function VendorMaterialRequests({ user }) {
     }
   };
 
-  const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('id-ID') : '-');
+  const fmtDate = (d) => formatDateID(d, { fallback: '—' });
 
   // Filter local
   const filtered = requests.filter((r) => {
@@ -249,394 +260,190 @@ export default function VendorMaterialRequests({ user }) {
     rejected: requests.filter((r) => r.status === 'Rejected').length,
   };
 
-  return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <ClipboardList className="w-6 h-6 text-[hsl(var(--success-text))]" />
-            Permintaan Material
-          </h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Kelola permintaan material tambahan (missing) dan pengganti (cacat) ke ERP.
-          </p>
+  const kolom = [
+    { kunci: 'no', label: 'No. permintaan', hp: 'judul', isi: (row) => (
+      <div className="min-w-0">
+        <span className="font-medium tabular-nums">{row.request_number}</span>
+        {row.previous_request_number && <span className="block text-xs text-muted-foreground tabular-nums">ajukan ulang dari {row.previous_request_number}</span>}
+        {row.resubmitted_as_number && <span className="block text-xs text-muted-foreground tabular-nums">→ {row.resubmitted_as_number}</span>}
+      </div>) },
+    { kunci: 'asal', label: 'Kiriman asal', isi: (row) => <span className="tabular-nums">{row.original_shipment_number || '—'}</span> },
+    { kunci: 'po', label: 'PO', isi: (row) => <span className="tabular-nums">{row.po_number || '—'}</span> },
+    { kunci: 'qty', label: 'Total qty', rata: 'kanan', isi: (row) => <span className="tabular-nums">{Number(row.total_requested_qty || 0).toLocaleString('id-ID')} pcs</span> },
+    { kunci: 'tgl', label: 'Tanggal', isi: (row) => fmtDate(row.created_at) },
+    { kunci: 'status', label: 'Status', isi: (row) => { const [l, t] = statusLabel(row.status); return <StatusBadge status={row.status} label={l} tone={t} />; } },
+    // Rantai pengganti terlacak sampai diinspeksi (INV-F28)
+    { kunci: 'turunan', label: 'Kiriman turunan', isi: (row) => <MaterialRequestTracker req={row} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (row) => {
+      const canResubmit = isAdditional && row.status === 'Rejected' && !row.resubmitted_as_id;
+      return (
+        <div className="flex justify-end gap-1">
+          <Button size="icon-sm" variant="ghost" onClick={() => openDetail(row)} title="Lihat rincian" aria-label="Lihat rincian"
+            data-testid={`vendor-mr-detail-btn-${row.id}`}><Eye className="w-4 h-4" /></Button>
+          {canResubmit && (
+            <Button size="icon-sm" variant="ghost" onClick={() => openResubmit(row)} title="Ajukan ulang" aria-label="Ajukan ulang"
+              data-testid={`vendor-mr-resubmit-btn-${row.id}`}><RotateCcw className="w-4 h-4" /></Button>
+          )}
         </div>
-        {isAdditional ? (
-          <Button
-            onClick={() => openShipmentPicker('ADDITIONAL')}
-            data-testid="vendor-create-manual-request-btn"
-          >
-            <Plus className="w-4 h-4" /> Buat Permintaan Manual
-          </Button>
-        ) : (
-          <Button
-            onClick={() => openShipmentPicker('REPLACEMENT')}
-            data-testid="vendor-create-replacement-request-btn"
-          >
-            <Plus className="w-4 h-4" /> Buat Permintaan Pengganti
-          </Button>
-        )}
-      </div>
+      );
+    } },
+  ];
 
-      {/* Tabs */}
-      {/* PANDUAN_UI G4: pil standar; kunci huruf kecil supaya data-testid tetap vendor-mr-tab-<jenis> */}
-      <FilterChips value={activeTab.toLowerCase()} onChange={(k) => setActiveTab(String(k).toUpperCase())}
-        testId="vendor-mr-tab" ariaLabel="Jenis permintaan"
-        options={TABS.map((t) => ({ key: t.id.toLowerCase(), label: t.label, icon: t.icon }))} />
-
-      {/* Stats Bar */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {/* `key` menjaga data-testid lama (vendor-mr-stat-pending, …) walau labelnya diterjemahkan */}
-        {[
-          { key: 'total', label: 'Total', value: stats.total, accent: 'default' },
-          { key: 'pending', label: 'Menunggu', value: stats.pending, accent: 'warning' },
-          { key: 'disetujui', label: 'Disetujui', value: stats.approved, accent: 'success' },
-          { key: 'ditolak', label: 'Ditolak', value: stats.rejected, accent: 'danger' },
-        ].map((s) => (
-          <StatTile key={s.key} label={s.label} value={s.value} accent={s.accent}
-            testId={`vendor-mr-stat-${s.key}`} />
-        ))}
-      </div>
-
-      {/* Info banner */}
-      <Notice tone={isAdditional ? 'warning' : 'danger'}>
-        {isAdditional
-          ? '➕ Permintaan tambahan dibuat saat ada material missing/kurang dari inspeksi. Anda dapat mengajukan ulang jika ditolak admin, atau membuat permintaan manual untuk shipment yang sudah ter-inspeksi.'
-          : '🔄 Permintaan pengganti untuk material CACAT/RUSAK (bukan kurang kirim). Klik "Buat Permintaan Pengganti", pilih surat jalan yang sudah ter-inspeksi, lalu isi qty + cacatnya per item. Setelah disetujui ERP, terbit surat jalan pengganti (kode "-R1") yang muncul di Penerimaan Material Anda.'}
-      </Notice>
-
-      {/* Filter row */}
-      <div className="flex gap-2 flex-wrap">
-        <input
-          type="text"
-          placeholder="Cari nomor permintaan, shipment, atau PO..."
-          className="flex-1 min-w-64 border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--success)/0.35)]"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          data-testid="vendor-mr-search"
-        />
-        <SmartNativeSelect
-          className="w-48 text-sm"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          data-testid="vendor-mr-status-filter"
-        >
-          <option value="all">Semua Status</option>
+  return (
+    <PageLayout testId="vendor-material-requests" title="Permintaan material"
+      subtitle="Permintaan bahan tambahan (kurang kirim) dan pengganti (cacat) ke DA."
+      actions={isAdditional ? (
+        <Button onClick={() => openShipmentPicker('ADDITIONAL')} data-testid="vendor-create-manual-request-btn">
+          <Plus className="w-4 h-4" /> Buat permintaan manual
+        </Button>
+      ) : (
+        <Button onClick={() => openShipmentPicker('REPLACEMENT')} data-testid="vendor-create-replacement-request-btn">
+          <Plus className="w-4 h-4" /> Buat permintaan pengganti
+        </Button>
+      )}
+      filters={<>
+        {/* PANDUAN_UI G4: pil standar; kunci huruf kecil supaya data-testid tetap vendor-mr-tab-<jenis> */}
+        <FilterChips value={activeTab.toLowerCase()} onChange={(k) => setActiveTab(String(k).toUpperCase())}
+          testId="vendor-mr-tab" ariaLabel="Jenis permintaan" hideWhenEmpty={false}
+          options={TABS.map((t) => ({ key: t.id.toLowerCase(), label: t.label, icon: t.icon }))} />
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Cari no. permintaan, kiriman, PO" className="pl-8" value={search}
+            onChange={(e) => setSearch(e.target.value)} data-testid="vendor-mr-search" />
+        </div>
+        <SmartNativeSelect className="w-44" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+          data-testid="vendor-mr-status-filter" aria-label="Saring status">
+          <option value="all">Semua status</option>
           <option value="Pending">Menunggu</option>
           <option value="Approved">Disetujui</option>
           <option value="Rejected">Ditolak</option>
         </SmartNativeSelect>
-      </div>
-
-      {/* List */}
-      <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-        {loading ? (
-          <div className="p-8 text-center text-muted-foreground/70 text-sm">Memuat data...</div>
-        ) : filtered.length === 0 ? (
-          <EmptyState icon={ClipboardList}
+      </>}
+      tools={<TombolUnduh namaBerkas={`permintaan-material-${activeTab.toLowerCase()}`} baris={filtered} kolom={[
+        { label: 'No. permintaan', nilai: (r) => r.request_number }, { label: 'Kiriman asal', nilai: (r) => r.original_shipment_number || '' },
+        { label: 'PO', nilai: (r) => r.po_number || '' }, { label: 'Total qty', nilai: (r) => Number(r.total_requested_qty) || 0 },
+        { label: 'Tanggal', nilai: (r) => fmtDate(r.created_at) }, { label: 'Status', nilai: (r) => statusLabel(r.status)[0] },
+        { label: 'Alasan', nilai: (r) => r.reason || '' },
+      ]} />}
+      summary={<>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {/* `key` menjaga data-testid lama (vendor-mr-stat-pending, …) walau labelnya diterjemahkan */}
+          {[
+            { key: 'total', label: `Total ${currentTab.label.toLowerCase()}`, value: stats.total, accent: 'default' },
+            { key: 'pending', label: 'Menunggu', value: stats.pending, accent: 'warning' },
+            { key: 'disetujui', label: 'Disetujui', value: stats.approved, accent: 'success' },
+            { key: 'ditolak', label: 'Ditolak', value: stats.rejected, accent: 'danger' },
+          ].map((s) => (
+            <StatTile key={s.key} label={s.label} value={s.value} accent={s.accent} testId={`vendor-mr-stat-${s.key}`} />
+          ))}
+        </div>
+        <p className="text-sm text-muted-foreground">
+          {isAdditional
+            ? 'Permintaan tambahan dibuat saat ada bahan kurang dari inspeksi. Boleh diajukan ulang bila ditolak, atau dibuat manual untuk kiriman yang sudah diinspeksi.'
+            : 'Permintaan pengganti untuk bahan CACAT/RUSAK (bukan kurang kirim): pilih surat jalan yang sudah diinspeksi, lalu isi qty dan cacatnya. Setelah disetujui terbit surat jalan pengganti (kode "-R1") di Penerimaan material.'}
+        </p>
+      </>}>
+      {loading ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat data…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={filtered} onKlikBaris={openDetail} testId="vendor-mr-table"
+          kosong={<EmptyState icon={ClipboardList}
             title={`Belum ada ${currentTab.label.toLowerCase()}`}
             description={isAdditional
-              ? 'Permintaan otomatis terbuat saat ada material kurang di inspeksi, atau klik "Buat Permintaan Manual".'
-              : 'Klik "Buat Permintaan Pengganti" untuk material yang cacat atau rusak.'} />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/40 border-b border-border">
-                <tr>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">No. Permintaan</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">Shipment Asal</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">PO</th>
-                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-muted-foreground">Total Qty</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">Tanggal</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">Status</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">Shipment turunan</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">Aksi</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/40">
-                {filtered.map((row) => {
-                  const StatusIcon = STATUS_ICONS[row.status] || Clock;
-                  const canResubmit = isAdditional && row.status === 'Rejected' && !row.resubmitted_as_id;
-                  return (
-                    <tr key={row.id} className="hover:bg-muted/60 transition-colors">
-                      <td className="px-4 py-3">
-                        <div className="font-bold tabular-nums text-sm text-[hsl(var(--success-text))]">
-                          {row.request_number}
-                        </div>
-                        {row.previous_request_number && (
-                          <div className="text-xs text-[hsl(var(--primary))] flex items-center gap-1 mt-0.5">
-                            <RotateCcw className="w-3 h-3" />
-                            <span className="tabular-nums">resubmit dari {row.previous_request_number}</span>
-                          </div>
-                        )}
-                        {row.resubmitted_as_number && (
-                          <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                            <RotateCcw className="w-3 h-3" />
-                            <span className="tabular-nums">→ {row.resubmitted_as_number}</span>
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 tabular-nums text-xs text-[hsl(var(--primary))]">
-                        {row.original_shipment_number || '-'}
-                      </td>
-                      <td className="px-4 py-3 tabular-nums text-xs text-muted-foreground">{row.po_number || '-'}</td>
-                      <td className="px-4 py-3 text-right font-semibold">
-                        {Number(row.total_requested_qty || 0).toLocaleString('id-ID')} pcs
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground text-xs">{fmtDate(row.created_at)}</td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${
-                            STATUS_COLORS[row.status] || 'bg-muted text-muted-foreground'
-                          }`}
-                        >
-                          <StatusIcon className="w-3 h-3" />
-                          {row.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        {/* Rantai pengganti terlacak sampai diinspeksi (INV-F28) */}
-                        <MaterialRequestTracker req={row} />
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => openDetail(row)}
-                            className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]"
-                            title="Detail"
-                            data-testid={`vendor-mr-detail-btn-${row.id}`}
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
-                          {canResubmit && (
-                            <button
-                              onClick={() => openResubmit(row)}
-                              className="p-1.5 rounded hover:bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning-text))]"
-                              title="Ajukan Ulang"
-                              data-testid={`vendor-mr-resubmit-btn-${row.id}`}
-                            >
-                              <RotateCcw className="w-4 h-4" />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* Detail Modal */}
-      {showDetail && selectedReq && (
-        <Modal
-          title={`Detail Permintaan: ${selectedReq.request_number}`}
-          onClose={() => setShowDetail(false)}
-          size="xl"
-        >
-          <div className="space-y-4">
-            {/* PDF Export */}
-            <div className="flex justify-end">
-              <button
-                onClick={() => downloadPDF(selectedReq)}
-                className="flex items-center gap-2 px-4 py-2 bg-[hsl(var(--destructive))] text-white rounded-lg text-sm hover:bg-[hsl(var(--destructive)/0.9)] font-medium"
-                data-testid="vendor-mr-pdf-btn"
-              >
-                <FileText className="w-4 h-4" /> Export PDF
-              </button>
-            </div>
-
-            {/* Header info */}
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {[
-                { l: 'No. Permintaan', v: <span className="font-bold tabular-nums">{selectedReq.request_number}</span> },
-                {
-                  l: 'Tipe',
-                  v: (
-                    <span
-                      className={`px-2 py-0.5 rounded text-xs font-bold ${
-                        isAdditional ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]' : 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--danger-text))]'
-                      }`}
-                    >
-                      {selectedReq.request_type}
-                    </span>
-                  ),
-                },
-                {
-                  l: 'Status',
-                  v: (
-                    <span
-                      className={`px-2 py-0.5 rounded text-xs font-bold ${STATUS_COLORS[selectedReq.status]}`}
-                    >
-                      {selectedReq.status}
-                    </span>
-                  ),
-                },
-                { l: 'Shipment Asal', v: <span className="tabular-nums text-[hsl(var(--primary))]">{selectedReq.original_shipment_number}</span> },
-                { l: 'PO Number', v: selectedReq.po_number || '-' },
-                { l: 'Total Qty', v: <span className="font-bold">{Number(selectedReq.total_requested_qty || 0).toLocaleString('id-ID')} pcs</span> },
-                { l: 'Tanggal', v: fmtDate(selectedReq.created_at) },
-                { l: 'Alasan', v: <span className="text-xs">{selectedReq.reason || '-'}</span> },
-                { l: 'Dibuat Oleh', v: selectedReq.created_by },
-              ].map((it) => (
-                <div key={it.l} className="bg-muted/40 rounded-lg p-3">
-                  <p className="text-xs text-muted-foreground">{it.l}</p>
-                  <div className="font-medium text-sm mt-0.5">{it.v}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* Items table */}
-            {selectedReq.items?.length > 0 && (
-              <div>
-                <h4 className="font-semibold text-foreground/90 mb-2">Item yang Diminta</h4>
-                <div className="overflow-x-auto border border-border rounded-lg">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/40">
-                      <tr>
-                        <th className="text-left px-3 py-2 text-xs">Produk</th>
-                        <th className="text-left px-3 py-2 text-xs">SKU</th>
-                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--warning-text))]">No. Seri</th>
-                        <th className="text-left px-3 py-2 text-xs">Size/Warna</th>
-                        <th className="text-right px-3 py-2 text-xs">Qty</th>
-                        <th className="text-left px-3 py-2 text-xs">Alasan</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedReq.items.map((item, idx) => (
-                        <tr key={idx} className="border-t border-border/60">
-                          <td className="px-3 py-2 font-medium">{item.product_name}</td>
-                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--primary))]">{item.sku || '-'}</td>
-                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--warning-text))] font-semibold">
-                            {item.serial_number || <span className="text-muted-foreground/50">—</span>}
-                          </td>
-                          <td className="px-3 py-2 text-xs">{item.size}/{item.color}</td>
-                          <td className="px-3 py-2 text-right font-bold">
-                            {Number(item.requested_qty)?.toLocaleString('id-ID')} pcs
-                          </td>
-                          <td className="px-3 py-2 text-xs text-muted-foreground">{item.reason || '-'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* Status banners */}
-            {selectedReq.child_shipment_number && (
-              <div className="bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--success-text))]">
-                ✅ Disetujui! Child shipment <strong className="tabular-nums">{selectedReq.child_shipment_number}</strong> sudah dibuat oleh {selectedReq.approved_by} pada {fmtDate(selectedReq.approved_at)}.
-              </div>
-            )}
-
-            {selectedReq.status === 'Rejected' && (
-              <div className="bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.35)] rounded-lg p-3 text-sm">
-                <p className="font-semibold text-[hsl(var(--danger-text))] flex items-center gap-2">
-                  <XCircle className="w-4 h-4" /> Permintaan Ditolak
-                </p>
-                {selectedReq.admin_notes && (
-                  <p className="text-[hsl(var(--danger-text))] mt-1.5">
-                    <span className="font-medium">Alasan admin:</span> {selectedReq.admin_notes}
-                  </p>
-                )}
-                {selectedReq.rejected_by && (
-                  <p className="text-[hsl(var(--danger-text))] text-xs mt-1">
-                    Ditolak oleh {selectedReq.rejected_by} pada {fmtDate(selectedReq.rejected_at)}
-                  </p>
-                )}
-                {isAdditional && !selectedReq.resubmitted_as_id && (
-                  <button
-                    onClick={() => openResubmit(selectedReq)}
-                    className="mt-3 flex items-center gap-2 bg-[hsl(var(--warning))] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[hsl(var(--warning)/0.9)]"
-                    data-testid="vendor-mr-resubmit-detail-btn"
-                  >
-                    <RotateCcw className="w-4 h-4" /> Ajukan Ulang dengan Revisi
-                  </button>
-                )}
-              </div>
-            )}
-
-            {selectedReq.resubmitted_as_number && (
-              <div className="bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--primary))]">
-                ↻ Permintaan ini sudah diajukan ulang sebagai{' '}
-                <strong className="tabular-nums">{selectedReq.resubmitted_as_number}</strong>
-              </div>
-            )}
-
-            {selectedReq.previous_request_number && (
-              <div className="bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--primary))]">
-                ↻ Permintaan ini merupakan resubmit dari{' '}
-                <strong className="tabular-nums">{selectedReq.previous_request_number}</strong>
-              </div>
-            )}
-          </div>
-        </Modal>
+              ? 'Permintaan otomatis terbuat saat ada bahan kurang di inspeksi, atau klik "Buat permintaan manual".'
+              : 'Klik "Buat permintaan pengganti" untuk bahan yang cacat atau rusak.'} />} />
       )}
 
-      {/* Shipment Picker Modal */}
-      {showShipmentPicker && (
-        <Modal
-          title={createType === 'REPLACEMENT'
-            ? 'Pilih Surat Jalan untuk Permintaan Pengganti'
-            : 'Pilih Shipment untuk Permintaan Manual'}
-          onClose={() => setShowShipmentPicker(false)}
-          size="lg"
-        >
-          <div className="space-y-3">
-            <Notice tone={createType === 'REPLACEMENT' ? 'danger' : 'warning'} icon={AlertCircle}
-              testId="ship-picker-hint">
-              {createType === 'REPLACEMENT'
-                ? 'Pilih surat jalan yang sudah ter-inspeksi, lalu tandai item yang CACAT/RUSAK beserta qty penggantinya.'
-                : 'Pilih shipment yang sudah ter-inspeksi untuk membuat permintaan material tambahan secara manual.'}
-            </Notice>
-            {loadingShipPicker ? (
-              <div className="p-8 text-center text-muted-foreground/70 text-sm">Memuat shipment...</div>
-            ) : inspectedShipments.length === 0 ? (
-              <EmptyState icon={Truck} className="py-8" title="Belum ada shipment yang ter-inspeksi"
-                description='Lakukan inspeksi material terlebih dahulu di menu "Inspeksi Material".' />
-            ) : (
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {inspectedShipments.map((s) => (
-                  <button
-                    key={s.id}
-                    onClick={() => pickShipmentForManual(s)}
-                    className="w-full text-left p-3 border border-border rounded-lg hover:bg-[hsl(var(--success)/0.1)] hover:border-[hsl(var(--success)/0.35)] transition-colors"
-                    data-testid={`vendor-pick-shipment-${s.id}`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-bold tabular-nums text-sm text-[hsl(var(--primary))]">{s.shipment_number}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {(s.items || []).length} item • Tanggal: {fmtDate(s.shipment_date)}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))]">
-                          Terinspeksi
-                        </span>
-                        {s.shipment_type && s.shipment_type !== 'NORMAL' && (
-                          <span
-                            className={`px-1.5 py-0.5 rounded text-xs font-bold ${
-                              s.shipment_type === 'ADDITIONAL'
-                                ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]'
-                                : 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--danger-text))]'
-                            }`}
-                          >
-                            {s.shipment_type}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
+      {/* Rincian permintaan — DetailPopup */}
+      {showDetail && selectedReq && (
+        <DetailPopup open onClose={() => setShowDetail(false)} judul={`Permintaan ${selectedReq.request_number}`} testId="vendor-mr-detail"
+          status={(() => { const [l, t] = statusLabel(selectedReq.status); return <StatusBadge status={selectedReq.status} label={l} tone={t} />; })()}
+          aksi={<>
+            {selectedReq.status === 'Rejected' && isAdditional && !selectedReq.resubmitted_as_id && (
+              <Button size="sm" onClick={() => openResubmit(selectedReq)} data-testid="vendor-mr-resubmit-detail-btn">
+                <RotateCcw className="w-4 h-4" /> Ajukan ulang dengan revisi
+              </Button>
             )}
-          </div>
-        </Modal>
+            <Button size="sm" variant="outline" onClick={() => downloadPDF(selectedReq)} data-testid="vendor-mr-pdf-btn">
+              <FileText className="w-4 h-4" /> Unduh PDF
+            </Button>
+          </>}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Jenis">{TYPE_LABEL[selectedReq.request_type] || selectedReq.request_type}</BarisDetail>
+            <BarisDetail label="Kiriman asal"><span className="tabular-nums">{selectedReq.original_shipment_number || '—'}</span></BarisDetail>
+            <BarisDetail label="PO">{selectedReq.po_number || '—'}</BarisDetail>
+            <BarisDetail label="Total qty">{Number(selectedReq.total_requested_qty || 0).toLocaleString('id-ID')} pcs</BarisDetail>
+            <BarisDetail label="Tanggal">{fmtDate(selectedReq.created_at)}</BarisDetail>
+            <BarisDetail label="Alasan">{selectedReq.reason || '—'}</BarisDetail>
+            <BarisDetail label="Dibuat oleh">{selectedReq.created_by || '—'}</BarisDetail>
+          </dl>
+          {selectedReq.items?.length > 0 && (
+            <section className="space-y-2">
+              <p className="text-sm font-semibold text-foreground">Barang yang diminta</p>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader><TableRow><TableHead>Produk</TableHead><TableHead>SKU</TableHead><TableHead>No. seri</TableHead>
+                    <TableHead>Ukuran / warna</TableHead><TableHead className="text-right">Qty</TableHead><TableHead>Alasan</TableHead></TableRow></TableHeader>
+                  <TableBody>{selectedReq.items.map((item, idx) => (
+                    <TableRow key={idx}>
+                      <TableCell className="font-medium">{item.product_name}</TableCell>
+                      <TableCell className="tabular-nums">{item.sku || '—'}</TableCell>
+                      <TableCell className="tabular-nums">{item.serial_number || '—'}</TableCell>
+                      <TableCell>{item.size}/{item.color}</TableCell>
+                      <TableCell className="text-right tabular-nums">{Number(item.requested_qty || 0).toLocaleString('id-ID')} pcs</TableCell>
+                      <TableCell className="text-muted-foreground">{item.reason || '—'}</TableCell>
+                    </TableRow>
+                  ))}</TableBody>
+                </Table>
+              </div>
+            </section>
+          )}
+          {selectedReq.child_shipment_number && (
+            <Notice tone="success" icon={CheckCircle}>
+              Disetujui. Kiriman turunan <strong className="tabular-nums">{selectedReq.child_shipment_number}</strong> dibuat oleh {selectedReq.approved_by} pada {fmtDate(selectedReq.approved_at)}.
+            </Notice>
+          )}
+          {selectedReq.status === 'Rejected' && (
+            <Notice tone="danger" icon={XCircle} title="Permintaan ditolak">
+              {selectedReq.admin_notes && <span className="block">Alasan admin: {selectedReq.admin_notes}</span>}
+              {selectedReq.rejected_by && <span className="block text-xs">Ditolak oleh {selectedReq.rejected_by} pada {fmtDate(selectedReq.rejected_at)}</span>}
+            </Notice>
+          )}
+          {selectedReq.resubmitted_as_number && (
+            <p className="text-sm text-muted-foreground">Sudah diajukan ulang sebagai <strong className="tabular-nums">{selectedReq.resubmitted_as_number}</strong>.</p>
+          )}
+          {selectedReq.previous_request_number && (
+            <p className="text-sm text-muted-foreground">Ajukan ulang dari <strong className="tabular-nums">{selectedReq.previous_request_number}</strong>.</p>
+          )}
+        </DetailPopup>
+      )}
+
+      {/* Pilih kiriman (permintaan manual/pengganti) */}
+      {showShipmentPicker && (
+        <DetailPopup open onClose={() => setShowShipmentPicker(false)} testId="vendor-mr-ship-picker"
+          judul={createType === 'REPLACEMENT' ? 'Pilih surat jalan untuk permintaan pengganti' : 'Pilih kiriman untuk permintaan manual'}
+          keterangan={createType === 'REPLACEMENT'
+            ? 'Pilih surat jalan yang sudah diinspeksi, lalu tandai barang yang CACAT/RUSAK beserta qty penggantinya.'
+            : 'Pilih kiriman yang sudah diinspeksi untuk membuat permintaan bahan tambahan secara manual.'}>
+          <span className="sr-only" data-testid="ship-picker-hint"><AlertCircle /></span>
+          {loadingShipPicker ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">Memuat kiriman…</p>
+          ) : (
+            <TabelData baris={inspectedShipments} testId="vendor-mr-ship-table"
+              kolom={[
+                { kunci: 'no', label: 'Kiriman', hp: 'judul', isi: (s) => <span className="font-medium tabular-nums">{s.shipment_number}</span> },
+                { kunci: 'jenis', label: 'Jenis', isi: (s) => TYPE_LABEL[s.shipment_type || 'NORMAL'] || s.shipment_type },
+                { kunci: 'baris', label: 'Baris', rata: 'kanan', isi: (s) => (s.items || []).length },
+                { kunci: 'tgl', label: 'Tanggal', isi: (s) => fmtDate(s.shipment_date) },
+                { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
+                  <Button size="sm" variant="outline" onClick={() => pickShipmentForManual(s)} data-testid={`vendor-pick-shipment-${s.id}`}>
+                    <Truck className="w-4 h-4" />Pilih
+                  </Button>) },
+              ]}
+              kosong={<EmptyState icon={Truck} title="Belum ada kiriman yang diinspeksi"
+                description='Lakukan inspeksi bahan terlebih dahulu di "Inspeksi material".' />} />
+          )}
+        </DetailPopup>
       )}
 
       {/* Resubmit modal */}
@@ -678,6 +485,6 @@ export default function VendorMaterialRequests({ user }) {
           }}
         />
       )}
-    </div>
+    </PageLayout>
   );
 }

@@ -1,218 +1,209 @@
-import { useState, useEffect } from 'react';
-import { Package, CheckCircle, ChevronRight } from 'lucide-react';
+/**
+ * VendorReceiving — Penerimaan material (Portal Vendor CMT; juga di Input atas nama CMT).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): daftar kiriman = tabel (dulu kartu tinggi berwarna per kiriman, berulang tanpa
+ * batas), rincian kiriman (barang, aksesoris PO, kiriman turunan) dibuka sebagai popup, bisa diunduh Excel/CSV.
+ * Aksi & API tidak berubah: konfirmasi terima (PUT /vendor-shipments/{id} status Received).
+ */
+import { useEffect, useState } from 'react';
+import { CheckCircle, Eye, Package, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
-import StatusBadge from './StatusBadge';
-import { GlassCard } from '@/components/ui/glass';
+import { Button } from '@/components/ui/button';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { EmptyState, Notice } from '../moduleAtoms';
+import { formatDateID } from '@/lib/format';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
 import { apiGet, apiPut } from '../../../lib/api';
 
-function VendorAccessoriesPanel({ shipmentId, token, count }) {
-  const [accessories, setAccessories] = useState([]);
-  const [expanded, setExpanded] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+const n = (v) => Number(v || 0).toLocaleString('id-ID');
+const tgl = (d) => formatDateID(d, { fallback: '—' });
 
-  const loadAccessories = async () => {
-    if (loaded) { setExpanded(!expanded); return; }
-    try {
-      const data = await apiGet(`/vendor-shipments/${shipmentId}`);
-      setAccessories(data.po_accessories || []);
-      setLoaded(true);
-      setExpanded(true);
-    } catch (e) { console.error(e); }
-  };
+// FASE 22 — surat jalan REWORK (barang reject dikembalikan untuk diperbaiki) diberi label sendiri supaya
+// vendor tahu ini pekerjaan ULANG dari reject QC.
+const JENIS = {
+  ADDITIONAL: ['Kiriman tambahan', 'warning'],
+  REPLACEMENT: ['Kiriman pengganti', 'danger'],
+  REWORK: ['Retur perbaikan', 'warning'],
+};
+const jenisDari = (t) => JENIS[t] || ['Kiriman awal', 'primary'];
 
+function keadaan(s) {
+  if (s.status === 'Sent') return ['Belum diterima', 'warning'];
+  if (s.status === 'Received' && s.inspection_status !== 'Inspected') return ['Diterima · menunggu inspeksi', 'info'];
+  if (s.status === 'Received' && s.inspection_status === 'Inspected') return ['Diterima & diinspeksi', 'success'];
+  return [s.status || '—', 'default'];
+}
+const totalKirim = (s) => (s.items || []).reduce((t, i) => t + (Number(i.qty_sent) || 0), 0);
+
+function RincianKiriman({ s, induk, anak, onClose, onTerima }) {
+  const [aks, setAks] = useState(null);
+  useEffect(() => {
+    if (!(s.po_accessories_count > 0)) return;
+    apiGet(`/vendor-shipments/${s.id}`).then((d) => setAks(d.po_accessories || [])).catch(() => setAks([]));
+  }, [s.id, s.po_accessories_count]);
+  const [jl, jt] = jenisDari(s.shipment_type);
+  const [kl, kt] = keadaan(s);
   return (
-    <div className="mt-3 border-t border-[hsl(var(--success)/0.35)] pt-3">
-      <button onClick={loadAccessories}
-        className="flex items-center gap-2 text-xs font-semibold text-[hsl(var(--success-text))] hover:text-[hsl(var(--success-text))] transition-colors"
-        data-testid="vendor-accessories-toggle">
-        <span className="w-4 h-4 bg-[hsl(var(--success)/0.15)] rounded-full flex items-center justify-center text-xs">{expanded ? '▼' : '▶'}</span>
-        🧷 Aksesoris PO ({count} item)
-      </button>
-      {expanded && accessories.length > 0 && (
-        <div className="mt-2 grid grid-cols-2 md:grid-cols-3 gap-2">
-          {accessories.map((acc, idx) => (
-            <div key={acc.id || idx} className="bg-[hsl(var(--success)/0.1)] rounded-lg p-2.5 border border-[hsl(var(--success)/0.35)]">
-              <p className="text-sm font-medium text-foreground/90">{acc.accessory_name}</p>
-              <p className="text-xs text-[hsl(var(--success-text))] tabular-nums">{acc.accessory_code || '-'}</p>
-              <p className="text-sm font-bold text-[hsl(var(--success-text))] mt-1">{(acc.qty_needed || 0).toLocaleString('id-ID')} {acc.unit || 'pcs'}</p>
-              {acc.notes && <p className="text-xs text-muted-foreground/70 mt-0.5">{acc.notes}</p>}
-            </div>
-          ))}
-        </div>
+    <DetailPopup open onClose={onClose} judul={`Kiriman ${s.shipment_number}`} testId="vendor-receiving-detail"
+      keterangan={`${tgl(s.shipment_date)} · ${s.vendor_name || ''}`}
+      status={<><StatusBadge status={s.shipment_type || 'NORMAL'} label={jl} tone={jt} /><StatusBadge status={s.status} label={kl} tone={kt} /></>}
+      aksi={s.status === 'Sent' && <Button size="sm" variant="success" onClick={() => onTerima(s)}><CheckCircle className="w-4 h-4" />Konfirmasi terima</Button>}>
+      <dl className="divide-y divide-[var(--glass-border)]">
+        {s.delivery_note_number && <BarisDetail label="No. surat jalan">{s.delivery_note_number}</BarisDetail>}
+        {induk && <BarisDetail label="Turunan dari">{induk.shipment_number}</BarisDetail>}
+        <BarisDetail label="Diterima">{s.total_received != null ? `${n(s.total_received)} pcs` : '—'}</BarisDetail>
+        {(s.total_missing || 0) > 0 && <BarisDetail label="Kurang"><span className="text-[hsl(var(--danger-text))]">{n(s.total_missing)} pcs</span></BarisDetail>}
+        {(s.notes_for_vendor || s.notes) && <BarisDetail label="Catatan admin">{s.notes_for_vendor || s.notes}</BarisDetail>}
+      </dl>
+      {s.status === 'Received' && s.inspection_status !== 'Inspected' && (
+        <Notice tone="warning">Wajib inspeksi dalam 3 hari. Produksi tidak bisa dimulai sebelum inspeksi selesai.</Notice>
       )}
-    </div>
+      <section className="space-y-2">
+        <p className="text-sm font-semibold text-foreground">Barang ({(s.items || []).length} baris)</p>
+        {(s.items || []).length === 0 ? <p className="text-sm text-muted-foreground">Tidak ada baris barang.</p> : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader><TableRow><TableHead>Produk</TableHead><TableHead>SKU</TableHead><TableHead>Ukuran / warna</TableHead>
+                <TableHead>No. seri</TableHead><TableHead className="text-right">Qty kirim</TableHead></TableRow></TableHeader>
+              <TableBody>{s.items.map((it) => (
+                <TableRow key={it.id}><TableCell className="font-medium">{it.product_name}</TableCell>
+                  <TableCell className="tabular-nums">{it.sku || '—'}</TableCell><TableCell>{it.size || '—'} / {it.color || '—'}</TableCell>
+                  <TableCell className="tabular-nums">{it.serial_number || '—'}</TableCell>
+                  <TableCell className="text-right tabular-nums">{n(it.qty_sent)} pcs</TableCell></TableRow>
+              ))}</TableBody>
+            </Table>
+          </div>
+        )}
+      </section>
+      {s.po_accessories_count > 0 && (
+        <section className="space-y-2" data-testid="vendor-accessories-toggle">
+          <p className="text-sm font-semibold text-foreground">Aksesoris PO ({s.po_accessories_count} baris)</p>
+          {!aks ? <p className="text-sm text-muted-foreground">Memuat aksesoris…</p> : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader><TableRow><TableHead>Aksesoris</TableHead><TableHead>Kode</TableHead>
+                  <TableHead className="text-right">Kebutuhan</TableHead><TableHead>Catatan</TableHead></TableRow></TableHeader>
+                <TableBody>{aks.map((a, i) => (
+                  <TableRow key={a.id || i}><TableCell className="font-medium">{a.accessory_name}</TableCell>
+                    <TableCell className="tabular-nums">{a.accessory_code || '—'}</TableCell>
+                    <TableCell className="text-right tabular-nums">{n(a.qty_needed)} {a.unit || 'pcs'}</TableCell>
+                    <TableCell className="text-muted-foreground">{a.notes || '—'}</TableCell></TableRow>
+                ))}</TableBody>
+              </Table>
+            </div>
+          )}
+        </section>
+      )}
+      {anak.length > 0 && (
+        <section className="space-y-2">
+          <p className="text-sm font-semibold text-foreground">Kiriman turunan ({anak.length})</p>
+          <ul className="space-y-1 text-sm">
+            {anak.map((c) => <li key={c.id}>{c.shipment_number} · {jenisDari(c.shipment_type)[0]} · {keadaan(c)[0]}</li>)}
+          </ul>
+        </section>
+      )}
+    </DetailPopup>
   );
 }
 
-// ─── VENDOR RECEIVING ─────────────────────────────────────────────────────────
-
-
-
-export default function VendorReceiving({ token, user }) {
+export default function VendorReceiving() {
   const [shipments, setShipments] = useState([]);
-
-  useEffect(() => { fetchShipments(); }, []);
+  const [loading, setLoading] = useState(true);
+  const [detail, setDetail] = useState(null);
 
   const fetchShipments = async () => {
+    setLoading(true);
     try {
       const data = await apiGet('/vendor-shipments');
       setShipments(Array.isArray(data) ? data : []);
     } catch (e) { setShipments([]); }
+    finally { setLoading(false); }
   };
+  useEffect(() => { fetchShipments(); }, []);
 
   const confirmReceive = async (shipment) => {
     if (!(await confirmDialog({
-      title: `Konfirmasi penerimaan shipment ${shipment.shipment_number}?`,
+      title: `Konfirmasi penerimaan kiriman ${shipment.shipment_number}?`,
       body: 'Setelah dikonfirmasi, selesaikan inspeksi material sebelum memulai produksi.',
       confirmLabel: 'Konfirmasi',
     }))) return;
     try {
       await apiPut(`/vendor-shipments/${shipment.id}`, { status: 'Received', received_at: new Date() });
+      setDetail(null);
       fetchShipments();
     } catch (e) { toast.error(e.message || 'Gagal mengkonfirmasi'); }
   };
 
-  const fmtDate = d => d ? new Date(d).toLocaleDateString('id-ID') : '-';
-
-  // Build parent-child tree
-  const parentShipments = shipments.filter(s => !s.parent_shipment_id);
-  const childMap = {};
-  shipments.filter(s => s.parent_shipment_id).forEach(s => {
-    if (!childMap[s.parent_shipment_id]) childMap[s.parent_shipment_id] = [];
-    childMap[s.parent_shipment_id].push(s);
+  // Kiriman induk lalu turunannya tepat di bawahnya (tambahan/pengganti/rework).
+  const byId = Object.fromEntries(shipments.map((s) => [s.id, s]));
+  const anakDari = (id) => shipments.filter((s) => s.parent_shipment_id === id);
+  const baris = [];
+  shipments.filter((s) => !s.parent_shipment_id || !byId[s.parent_shipment_id]).forEach((s) => {
+    baris.push(s);
+    anakDari(s.id).forEach((c) => baris.push(c));
   });
 
-  const getTypeLabel = (type) => {
-    if (type === 'ADDITIONAL') return { label: 'Pengiriman Tambahan', color: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]' };
-    if (type === 'REPLACEMENT') return { label: 'Pengiriman Pengganti', color: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--danger-text))]' };
-    // FASE 22 — surat jalan REWORK (barang reject dikembalikan untuk diperbaiki)
-    // dulu ikut berlabel "Pengiriman Awal", jadi vendor tidak tahu ini pekerjaan
-    // ULANG dari reject QC — padahal justru ini yang harus diprioritaskan.
-    if (type === 'REWORK') return { label: '🔄 Retur Perbaikan (Rework)', color: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]' };
-    return { label: 'Pengiriman Awal', color: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' };
-  };
+  const pendingCount = shipments.filter((s) => s.status === 'Sent').length;
+  const needsInspection = shipments.filter((s) => s.status === 'Received' && s.inspection_status !== 'Inspected').length;
 
-  const getStatusConfig = (s) => {
-    if (s.status === 'Sent') return { label: 'Belum Diterima', color: 'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.3)]' };
-    if (s.status === 'Received' && s.inspection_status !== 'Inspected') return { label: 'Diterima – Menunggu Inspeksi', color: 'border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary)/0.2)]' };
-    if (s.status === 'Received' && s.inspection_status === 'Inspected') return { label: 'Diterima & Diinspeksi', color: 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.2)]' };
-    return { label: s.status, color: 'border-border' };
-  };
-
-  const renderShipment = (s, isChild = false) => {
-    const typeConf = getTypeLabel(s.shipment_type);
-    const statusConf = getStatusConfig(s);
-    const children = childMap[s.id] || [];
-    return (
-      <div key={s.id} className={`rounded-xl border p-4 shadow-sm ${statusConf.color} ${isChild ? 'ml-6 border-dashed' : ''}`}>
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              {isChild && <ChevronRight className="w-4 h-4 text-muted-foreground/70 flex-shrink-0" />}
-              <span className="font-bold text-foreground tabular-nums">{s.shipment_number}</span>
-              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${typeConf.color}`}>{typeConf.label}</span>
-              <StatusBadge status={s.status} />
-              {s.inspection_status === 'Inspected' && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))]">✓ Diinspeksi</span>}
-            </div>
-            {s.delivery_note_number && <p className="text-xs text-muted-foreground tabular-nums mt-0.5">SJ: {s.delivery_note_number}</p>}
-            <p className="text-sm text-muted-foreground mt-1">{fmtDate(s.shipment_date)} • {s.vendor_name}</p>
-            <div className="flex items-center gap-2 mt-1 flex-wrap text-xs text-muted-foreground">
-              <span>{(s.items || []).length} item</span>
-              {s.total_received != null && <span>• Diterima: <strong className="text-[hsl(var(--success-text))]">{s.total_received} pcs</strong></span>}
-              {(s.total_missing || 0) > 0 && <span>• Missing: <strong className="text-[hsl(var(--danger-text))]">{s.total_missing} pcs</strong></span>}
-            </div>
-            {(s.notes_for_vendor || s.notes) && (
-              <div className="mt-2 px-3 py-2 bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] rounded-lg text-xs text-[hsl(var(--primary))]">
-                <span className="font-semibold">Catatan Admin:</span> {s.notes_for_vendor || s.notes}
-              </div>
-            )}
-          </div>
-          <div className="flex flex-col gap-2 items-end flex-shrink-0">
-            {s.status === 'Sent' && (
-              <button onClick={() => confirmReceive(s)} className="flex items-center gap-1.5 px-3 py-1.5 bg-[hsl(var(--success))] text-white rounded-lg text-sm hover:bg-[hsl(var(--success)/0.9)]">
-                <CheckCircle className="w-4 h-4" /> Konfirmasi Terima
-              </button>
-            )}
-            {s.status === 'Received' && s.inspection_status !== 'Inspected' && (
-              <div className="text-xs text-[hsl(var(--warning-text))] bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-lg px-3 py-1.5 text-center">
-                ⏰ Wajib inspeksi dalam 3 hari
-              </div>
-            )}
-            {s.status === 'Received' && s.inspection_status === 'Inspected' && (
-              <span className="flex items-center gap-1.5 px-3 py-1.5 bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))] rounded-lg text-sm border border-[hsl(var(--success)/0.35)]">
-                <CheckCircle className="w-4 h-4" /> Selesai
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Items */}
-        {(s.items || []).length > 0 && (
-          <div className="mt-3 border-t border-border/60 pt-3">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-              {s.items.map(item => (
-                <div key={item.id} className="bg-card rounded-lg p-2.5 border border-border/60">
-                  <p className="text-sm font-medium">{item.product_name}</p>
-                  <p className="text-xs text-muted-foreground tabular-nums">{item.sku || '-'} • {item.size}/{item.color}</p>
-                  {item.serial_number && <p className="text-xs text-[hsl(var(--warning-text))] tabular-nums mt-0.5">SN: {item.serial_number}</p>}
-                  <p className="text-sm font-bold text-[hsl(var(--primary))] mt-1">{(item.qty_sent || 0).toLocaleString('id-ID')} pcs</p>
-                </div>
-              ))}
-            </div>
-          </div>
+  const kolom = [
+    { kunci: 'no', label: 'No. kiriman', hp: 'judul', isi: (s) => (
+      <div className="min-w-0">
+        <span className="font-medium tabular-nums">{s.parent_shipment_id ? '↳ ' : ''}{s.shipment_number}</span>
+        {s.delivery_note_number && <span className="block text-xs text-muted-foreground tabular-nums">SJ {s.delivery_note_number}</span>}
+      </div>) },
+    { kunci: 'jenis', label: 'Jenis', isi: (s) => { const [l, t] = jenisDari(s.shipment_type); return <StatusBadge status={s.shipment_type || 'NORMAL'} label={l} tone={t} />; } },
+    { kunci: 'tgl', label: 'Tanggal', isi: (s) => tgl(s.shipment_date) },
+    { kunci: 'barang', label: 'Dikirim', rata: 'kanan', isi: (s) => <span className="tabular-nums">{n(totalKirim(s))} pcs · {(s.items || []).length} baris</span> },
+    { kunci: 'terima', label: 'Diterima / kurang', rata: 'kanan', isi: (s) => (
+      <span className="tabular-nums">{s.total_received != null ? n(s.total_received) : '—'}
+        {(s.total_missing || 0) > 0 && <span className="text-[hsl(var(--danger-text))]"> / −{n(s.total_missing)}</span>}</span>) },
+    { kunci: 'status', label: 'Status', isi: (s) => { const [l, t] = keadaan(s); return <StatusBadge status={s.status} label={l} tone={t} />; } },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
+      <div className="flex justify-end gap-1">
+        {s.status === 'Sent' && (
+          <Button size="sm" variant="success" onClick={() => confirmReceive(s)} data-testid={`vendor-receive-${s.id}`}>
+            <CheckCircle className="w-4 h-4" />Terima
+          </Button>
         )}
-
-        {/* PO Accessories */}
-        {(s.po_accessories_count > 0) && (
-          <VendorAccessoriesPanel shipmentId={s.id} token={token} count={s.po_accessories_count} />
-        )}
-
-        {/* Child Shipments */}
-        {children.length > 0 && (
-          <div className="mt-3 space-y-2">
-            <p className="text-xs font-semibold text-muted-foreground">Child Shipments ({children.length})</p>
-            {children.map(child => renderShipment(child, true))}
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  const pendingCount = shipments.filter(s => s.status === 'Sent').length;
-  const needsInspection = shipments.filter(s => s.status === 'Received' && s.inspection_status !== 'Inspected').length;
+        <Button size="icon-sm" variant="ghost" onClick={() => setDetail(s)} title="Lihat rincian" aria-label="Lihat rincian"><Eye className="w-4 h-4" /></Button>
+      </div>) },
+  ];
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Penerimaan Material</h1>
-        <p className="text-muted-foreground text-sm mt-1">Konfirmasi penerimaan material dan lihat hierarki shipment (awal, tambahan, pengganti).</p>
-      </div>
-
-      {pendingCount > 0 && (
-        <Notice tone="warning" title={`⚠️ ${pendingCount} Shipment Menunggu Konfirmasi`}>
-          Konfirmasi penerimaan sebelum melakukan inspeksi material
-        </Notice>
+    <PageLayout testId="vendor-receiving" title="Penerimaan material"
+      subtitle="Konfirmasi kiriman bahan yang sudah sampai; kiriman tambahan/pengganti tampil di bawah kiriman awalnya."
+      tools={<>
+        <TombolUnduh namaBerkas="penerimaan-material" namaLembar="Kiriman" baris={baris} kolom={[
+          { label: 'No. kiriman', nilai: (s) => s.shipment_number }, { label: 'Turunan dari', nilai: (s) => byId[s.parent_shipment_id]?.shipment_number || '' },
+          { label: 'No. surat jalan', nilai: (s) => s.delivery_note_number || '' }, { label: 'Jenis', nilai: (s) => jenisDari(s.shipment_type)[0] },
+          { label: 'Tanggal', nilai: (s) => tgl(s.shipment_date) }, { label: 'Baris', nilai: (s) => (s.items || []).length },
+          { label: 'Dikirim (pcs)', nilai: totalKirim }, { label: 'Diterima (pcs)', nilai: (s) => (s.total_received != null ? Number(s.total_received) : '') },
+          { label: 'Kurang (pcs)', nilai: (s) => Number(s.total_missing) || 0 }, { label: 'Status', nilai: (s) => keadaan(s)[0] },
+        ]} />
+        <Button variant="outline" size="icon" onClick={fetchShipments} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </>}
+      summary={(pendingCount > 0 || needsInspection > 0) && (
+        <p className="text-sm text-[hsl(var(--warning-text))]" data-testid="vendor-receiving-summary">
+          {pendingCount > 0 && `${n(pendingCount)} kiriman menunggu konfirmasi terima. `}
+          {needsInspection > 0 && `${n(needsInspection)} kiriman menunggu inspeksi material (wajib dalam 3 hari; produksi belum bisa dimulai).`}
+        </p>
+      )}>
+      {loading && !shipments.length ? <p className="py-10 text-center text-sm text-muted-foreground">Memuat kiriman…</p> : (
+        <TabelData kolom={kolom} baris={baris} onKlikBaris={setDetail} testId="vendor-receiving-table"
+          kosong={<EmptyState icon={Package} title="Tidak ada kiriman masuk"
+            description="Kiriman bahan dari DA muncul di sini untuk dikonfirmasi." />} />
       )}
-      {needsInspection > 0 && (
-        <Notice tone="danger" title={`🔍 ${needsInspection} Shipment Menunggu Inspeksi Material`}>
-          Inspeksi wajib diselesaikan dalam 3 hari. Produksi tidak dapat dimulai sebelum inspeksi selesai.
-        </Notice>
+      {detail && (
+        <RincianKiriman s={detail} induk={byId[detail.parent_shipment_id]} anak={anakDari(detail.id)}
+          onClose={() => setDetail(null)} onTerima={confirmReceive} />
       )}
-
-      <div className="space-y-4">
-        {parentShipments.length === 0 ? (
-          <GlassCard>
-            <EmptyState icon={Package} title="Tidak ada shipment masuk"
-              description="Shipment material dari ERP akan muncul di sini untuk dikonfirmasi." />
-          </GlassCard>
-        ) : parentShipments.map(s => renderShipment(s, false))}
-      </div>
-    </div>
+    </PageLayout>
   );
 }
-
-// ─── VENDOR PRODUCTION JOBS ───────────────────────────────────────────────────
-
-

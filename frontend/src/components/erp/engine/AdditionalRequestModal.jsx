@@ -5,7 +5,7 @@
  * Digunakan di 3 entry point:
  *   1) Auto-prompt setelah Inspeksi Material (jika ada missing qty)
  *   2) "Ajukan Ulang" dari permintaan yang Rejected
- *   3) "Buat Permintaan Manual" pada shipment yang sudah ter-inspeksi
+ *   3) "Buat Permintaan Manual" pada kiriman yang sudah diinspeksi
  *
  * Props:
  *   - shipment: { id, shipment_number, vendor_name, po_id, po_number, ... }
@@ -21,31 +21,36 @@
  *   - onSuccess: (newRequest) => void
  */
 import { useState } from 'react';
-import { Send, X, AlertCircle, Plus, Trash2 } from 'lucide-react';
+import { AlertCircle, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import Modal from './Modal';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { StatusBadge } from '../moduleAtoms';
 import { apiPost } from '../../../lib/api';
 
 const MODE_LABELS = {
   inspection: {
-    title: 'Ajukan Permintaan Material Tambahan',
+    title: 'Ajukan permintaan bahan tambahan',
     subtitle: 'Material yang hilang/kurang saat inspeksi akan diajukan ke ERP untuk dikirim ulang.',
-    submitLabel: 'Ajukan ke ERP',
-    badge: 'DARI INSPEKSI',
+    submitLabel: 'Ajukan ke DA',
+    badge: 'Dari inspeksi',
     badgeColor: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]',
   },
   resubmit: {
-    title: 'Ajukan Ulang Permintaan',
+    title: 'Ajukan ulang permintaan',
     subtitle: 'Permintaan sebelumnya ditolak. Anda dapat merevisi qty/alasan dan mengajukan ulang.',
-    submitLabel: 'Kirim Permintaan Baru',
-    badge: 'AJUKAN ULANG',
+    submitLabel: 'Kirim permintaan baru',
+    badge: 'Ajukan ulang',
     badgeColor: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]',
   },
   manual: {
-    title: 'Buat Permintaan Material Tambahan',
-    subtitle: 'Buat permintaan tambahan secara manual untuk shipment yang sudah ter-inspeksi.',
-    submitLabel: 'Kirim Permintaan',
-    badge: 'MANUAL',
+    title: 'Buat permintaan bahan tambahan',
+    subtitle: 'Buat permintaan tambahan secara manual untuk kiriman yang sudah diinspeksi.',
+    submitLabel: 'Kirim permintaan',
+    badge: 'Manual',
     badgeColor: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))]',
   },
 };
@@ -59,24 +64,24 @@ const MODE_LABELS = {
 // (bukan kurang kirim) — dua hal yang penanganannya berbeda.
 const REPLACEMENT_LABELS = {
   inspection: {
-    title: 'Ajukan Permintaan Material Pengganti',
+    title: 'Ajukan permintaan bahan pengganti',
     subtitle: 'Material cacat/rusak diajukan ke ERP untuk DIGANTI dengan kiriman baru.',
-    submitLabel: 'Ajukan ke ERP',
-    badge: 'PENGGANTI',
+    submitLabel: 'Ajukan ke DA',
+    badge: 'Pengganti',
     badgeColor: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--danger-text))]',
   },
   resubmit: {
     title: 'Ajukan Ulang Permintaan Pengganti',
     subtitle: 'Permintaan sebelumnya ditolak. Anda dapat merevisi qty/alasan dan mengajukan ulang.',
-    submitLabel: 'Kirim Permintaan Baru',
+    submitLabel: 'Kirim permintaan baru',
     badge: 'PENGGANTI · AJUKAN ULANG',
     badgeColor: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--danger-text))]',
   },
   manual: {
     title: 'Buat Permintaan Material Pengganti',
     subtitle: 'Untuk material yang CACAT/RUSAK (bukan kurang kirim). Sebutkan cacatnya pada alasan per-item.',
-    submitLabel: 'Kirim Permintaan',
-    badge: 'PENGGANTI',
+    submitLabel: 'Kirim permintaan',
+    badge: 'Pengganti',
     badgeColor: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--danger-text))]',
   },
 };
@@ -197,61 +202,31 @@ export default function AdditionalRequestModal({
     }
   };
 
+  // Standar UI/UX v2 (8 Nov 2026): FormPopup panjang — kaki galat · Batal · kirim (hijau); isi & validasi sama.
+  const nKesalahan = Object.keys(errors).length;
   return (
-    <Modal title={cfg.title} onClose={onClose} size="xl">
-      <div className="space-y-4" data-testid="additional-request-modal">
-        {/* Header info */}
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="additional-request-modal" judul={cfg.title}
+      keterangan={cfg.subtitle} onSimpan={handleSubmit} menyimpan={loading} labelSimpan={cfg.submitLabel}
+      galat={nKesalahan ? 'Periksa isian yang ditandai merah.' : null}>
         <div className="flex items-center gap-3 flex-wrap">
-          <span
-            className={`px-2.5 py-1 rounded-full text-xs font-semibold ${cfg.badgeColor}`}
-            data-testid="additional-request-mode-badge"
-          >
-            {cfg.badge}
-          </span>
+          <span data-testid="additional-request-mode-badge"><StatusBadge status={mode} label={cfg.badge} tone="warning" /></span>
           {previousRequestNumber && (
             <span className="text-xs text-muted-foreground">
-              Asal dari permintaan: <span className="tabular-nums font-semibold text-foreground/90">{previousRequestNumber}</span>
+              Asal dari permintaan: <span className="tabular-nums font-semibold text-foreground">{previousRequestNumber}</span>
             </span>
           )}
         </div>
 
-        <p className="text-sm text-muted-foreground">{cfg.subtitle}</p>
+        <dl className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+          <div><dt className="text-xs text-muted-foreground">Kiriman asal</dt><dd className="tabular-nums font-medium">{shipment?.shipment_number || '—'}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Vendor</dt><dd className="font-medium">{shipment?.vendor_name || '—'}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">PO</dt><dd className="tabular-nums">{shipment?.po_number || '—'}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Total qty diminta</dt>
+            <dd className="font-semibold tabular-nums">{items.reduce((s, it) => s + Number(it.requested_qty || 0), 0).toLocaleString('id-ID')} pcs</dd></div>
+        </dl>
 
-        {/* Shipment summary */}
-        <div className="bg-muted/40 border border-border rounded-lg p-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-          <div>
-            <p className="text-xs text-muted-foreground">Shipment Asal</p>
-            <p className="tabular-nums font-semibold text-[hsl(var(--primary))]">{shipment?.shipment_number || '-'}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Vendor</p>
-            <p className="font-medium text-foreground">{shipment?.vendor_name || '-'}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">PO Number</p>
-            <p className="tabular-nums text-foreground/90">{shipment?.po_number || '-'}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Total Qty Diminta</p>
-            <p className="font-bold text-foreground">
-              {items.reduce((s, it) => s + Number(it.requested_qty || 0), 0).toLocaleString('id-ID')} pcs
-            </p>
-          </div>
-        </div>
-
-        {/* Overall reason */}
-        <div>
-          <label className="block text-sm font-medium text-foreground/90 mb-1">
-            Alasan Keseluruhan <span className="text-[hsl(var(--danger-text))]">*</span>
-          </label>
-          <textarea
-            rows={2}
-            className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${
-              errors.overallReason
-                ? 'border-[hsl(var(--destructive)/0.35)] focus:ring-[hsl(var(--destructive)/0.35)]'
-                : 'border-border focus:ring-[hsl(var(--primary)/0.35)]'
-            }`}
-            value={overallReason}
+        <Isian label="Alasan keseluruhan" wajib galat={errors.overallReason}>
+          <Textarea rows={2} value={overallReason}
             onChange={(e) => {
               setOverallReason(e.target.value);
               if (errors.overallReason) {
@@ -260,145 +235,62 @@ export default function AdditionalRequestModal({
                 setErrors(ne);
               }
             }}
-            placeholder="Jelaskan alasan utama permintaan material tambahan..."
-            data-testid="additional-request-overall-reason"
-          />
-          {errors.overallReason && (
-            <p className="text-xs text-[hsl(var(--danger-text))] mt-1 flex items-center gap-1">
-              <AlertCircle className="w-3 h-3" /> {errors.overallReason}
-            </p>
-          )}
-        </div>
+            placeholder="Jelaskan alasan utama permintaan bahan tambahan…"
+            data-testid="additional-request-overall-reason" />
+        </Isian>
 
-        {/* Items table */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="font-semibold text-foreground/90 text-sm">
-              Item yang Diminta ({items.filter((i) => Number(i.requested_qty) > 0).length})
-            </h4>
+        <section className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-medium text-foreground">Barang yang diminta ({items.filter((i) => Number(i.requested_qty) > 0).length})</p>
             {errors.items && (
-              <p className="text-xs text-[hsl(var(--danger-text))] flex items-center gap-1">
-                <AlertCircle className="w-3 h-3" /> {errors.items}
-              </p>
+              <p className="text-xs text-[hsl(var(--danger-text))] flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {errors.items}</p>
             )}
           </div>
-
-          <div className="overflow-x-auto border border-border rounded-lg">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/40 border-b border-border">
-                <tr>
-                  <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground">Produk</th>
-                  <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground">SKU</th>
-                  <th className="text-left px-3 py-2 text-xs font-semibold text-[hsl(var(--warning-text))]">No. Seri</th>
-                  <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground">Size/Warna</th>
-                  <th className="text-right px-3 py-2 text-xs font-semibold text-muted-foreground">Qty Diminta</th>
-                  <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground">
-                    Alasan <span className="text-[hsl(var(--danger-text))]">*</span>
-                  </th>
-                  <th className="px-2 py-2 w-10"></th>
-                </tr>
-              </thead>
-              <tbody>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader><TableRow>
+                <TableHead>Produk</TableHead><TableHead>SKU</TableHead><TableHead>No. seri</TableHead><TableHead>Ukuran / warna</TableHead>
+                <TableHead className="text-right">Qty diminta</TableHead><TableHead>Alasan *</TableHead><TableHead className="w-10" />
+              </TableRow></TableHeader>
+              <TableBody>
                 {items.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="px-3 py-6 text-center text-muted-foreground/70 text-sm">
-                      Tidak ada item. Tambahkan item dari shipment asal.
-                    </td>
-                  </tr>
+                  <TableRow><TableCell colSpan={7} className="py-6 text-center text-muted-foreground">Tidak ada baris. Tambahkan dari kiriman asal.</TableCell></TableRow>
                 )}
                 {items.map((it, idx) => {
                   const qtyErr = errors[`item-${idx}-requested_qty`];
                   const reasonErr = errors[`item-${idx}-reason`];
                   return (
-                    <tr key={idx} className="border-t border-border/60 hover:bg-muted/60/50">
-                      <td className="px-3 py-2">
-                        <div className="font-medium text-foreground text-sm">{it.product_name || '-'}</div>
-                      </td>
-                      <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--primary))]">{it.sku || '-'}</td>
-                      <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--warning-text))] font-semibold">
-                        {it.serial_number || <span className="text-muted-foreground/50">—</span>}
-                      </td>
-                      <td className="px-3 py-2 text-xs text-foreground/90">
-                        {it.size || '-'}/{it.color || '-'}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <input
-                          type="number"
-                          min={0}
-                          max={it.max_qty != null ? it.max_qty : undefined}
-                          className={`w-20 text-right border rounded px-2 py-1 text-sm font-semibold focus:outline-none focus:ring-2 ${
-                            qtyErr
-                              ? 'border-[hsl(var(--destructive)/0.35)] focus:ring-[hsl(var(--destructive)/0.35)]'
-                              : 'border-border focus:ring-[hsl(var(--primary)/0.35)]'
-                          }`}
-                          value={it.requested_qty}
-                          onChange={(e) => updateItem(idx, 'requested_qty', e.target.value)}
-                          data-testid={`additional-request-item-qty-${idx}`}
-                        />
-                        {it.max_qty != null && (
-                          <p className="text-xs text-muted-foreground/70 mt-0.5">maks {it.max_qty}</p>
-                        )}
+                    <TableRow key={idx}>
+                      <TableCell className="font-medium">{it.product_name || '—'}</TableCell>
+                      <TableCell className="tabular-nums">{it.sku || '—'}</TableCell>
+                      <TableCell className="tabular-nums">{it.serial_number || '—'}</TableCell>
+                      <TableCell>{it.size || '—'}/{it.color || '—'}</TableCell>
+                      <TableCell className="text-right">
+                        <Input type="number" min={0} max={it.max_qty != null ? it.max_qty : undefined}
+                          className={`h-8 w-24 ml-auto text-right ${qtyErr ? 'border-[hsl(var(--destructive))]' : ''}`}
+                          value={it.requested_qty} onChange={(e) => updateItem(idx, 'requested_qty', e.target.value)}
+                          aria-label={`Qty diminta ${it.product_name || ''}`} data-testid={`additional-request-item-qty-${idx}`} />
+                        {it.max_qty != null && <p className="text-xs text-muted-foreground mt-0.5">maks {it.max_qty}</p>}
                         {qtyErr && <p className="text-xs text-[hsl(var(--danger-text))] mt-0.5">{qtyErr}</p>}
-                      </td>
-                      <td className="px-3 py-2">
-                        <input
-                          type="text"
-                          className={`w-full border rounded px-2 py-1 text-xs focus:outline-none focus:ring-2 ${
-                            reasonErr
-                              ? 'border-[hsl(var(--destructive)/0.35)] focus:ring-[hsl(var(--destructive)/0.35)]'
-                              : 'border-border focus:ring-[hsl(var(--primary)/0.35)]'
-                          }`}
-                          value={it.reason}
-                          onChange={(e) => updateItem(idx, 'reason', e.target.value)}
-                          placeholder="Alasan spesifik untuk item ini..."
-                          data-testid={`additional-request-item-reason-${idx}`}
-                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input className={`h-8 min-w-[12rem] ${reasonErr ? 'border-[hsl(var(--destructive))]' : ''}`} value={it.reason}
+                          onChange={(e) => updateItem(idx, 'reason', e.target.value)} placeholder="Alasan untuk baris ini…"
+                          aria-label={`Alasan ${it.product_name || ''}`} data-testid={`additional-request-item-reason-${idx}`} />
                         {reasonErr && <p className="text-xs text-[hsl(var(--danger-text))] mt-0.5">{reasonErr}</p>}
-                      </td>
-                      <td className="px-2 py-2 text-center">
-                        <button
-                          type="button"
-                          onClick={() => removeItem(idx)}
-                          className="p-1 rounded text-muted-foreground/70 hover:text-[hsl(var(--danger-text))] hover:bg-[hsl(var(--destructive)/0.1)]"
-                          title="Hapus baris"
-                          data-testid={`additional-request-item-remove-${idx}`}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
-                    </tr>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeItem(idx)} title="Hapus baris" aria-label="Hapus baris"
+                          data-testid={`additional-request-item-remove-${idx}`}><Trash2 className="w-3.5 h-3.5" /></Button>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
-          <p className="text-xs text-muted-foreground/70 mt-2">
-            💡 Setel qty ke 0 atau hapus baris untuk mengeluarkan item dari permintaan ini.
-          </p>
-        </div>
-
-        {/* Footer actions */}
-        <div className="flex gap-3 pt-3 border-t border-border">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={loading}
-            className="flex-1 flex items-center justify-center gap-2 bg-muted text-foreground/90 py-2.5 rounded-lg text-sm font-medium hover:bg-muted disabled:opacity-50"
-            data-testid="additional-request-cancel-btn"
-          >
-            <X className="w-4 h-4" /> Batal
-          </button>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={loading}
-            className="flex-1 flex items-center justify-center gap-2 bg-[hsl(var(--warning))] text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-[hsl(var(--warning)/0.9)] disabled:opacity-50"
-            data-testid="additional-request-submit-btn"
-          >
-            <Send className="w-4 h-4" /> {loading ? 'Mengirim...' : cfg.submitLabel}
-          </button>
-        </div>
-      </div>
-    </Modal>
+          <p className="text-xs text-muted-foreground">Setel qty ke 0 atau hapus baris untuk mengeluarkan barang dari permintaan ini.</p>
+        </section>
+    </FormPopup>
   );
 }

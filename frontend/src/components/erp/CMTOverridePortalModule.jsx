@@ -23,8 +23,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowLeft, RefreshCw, Search, ShieldCheck, UserCog, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
+import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatDateTimeID } from '@/lib/format';
 import { apiGet, setCmtOverrideVendor, clearCmtOverrideVendor } from '../../lib/api';
@@ -68,6 +72,43 @@ const MODULES = [
   { id: 'reminders', label: 'Pengingat', Comp: VendorReminderInbox },
 ];
 
+// Standar UI/UX v2 (8 Nov 2026): 11 modul + jejak audit dikelompokkan menjadi 6 tab (dulu 12 tab bertumpuk dua
+// baris). Modul dalam satu kelompok dipilih dengan pil di bawah tab — urutan & label modul tetap sama.
+const GROUPS = [
+  { key: 'g-ringkasan', label: 'Ringkasan', modules: ['dashboard'] },
+  { key: 'g-bahan', label: 'Bahan', modules: ['receiving', 'inspeksi', 'material-requests'] },
+  { key: 'g-produksi', label: 'Produksi', modules: ['production-jobs', 'production-guide', 'progress'] },
+  { key: 'g-kirim', label: 'Kirim & lacak', modules: ['buyer-shipments', 'serial-tracking', 'variance-report'] },
+  { key: 'g-pengingat', label: 'Pengingat', modules: ['reminders'] },
+  { key: 'g-audit', label: 'Jejak audit', modules: ['__audit'] },
+];
+const groupOf = (moduleId) => GROUPS.find((g) => g.modules.includes(moduleId)) || GROUPS[0];
+
+/** Isi satu tab kelompok: pil modul (bila > 1) lalu modul aktif. Modul bisa pindah ke modul lain (onNavigate). */
+function ModuleGroup({ group, activeModule, onPick, token, user, vendorName }) {
+  const current = group.modules.includes(activeModule) ? activeModule : group.modules[0];
+  const render = (id) => {
+    if (id === '__audit') return <AuditPanel vendorName={vendorName} />;
+    const m = MODULES.find((x) => x.id === id);
+    return m ? <m.Comp token={token} user={user} onNavigate={onPick} /> : null;
+  };
+  if (group.modules.length === 1) return render(current);
+  return (
+    <div className="space-y-4" data-testid={`cmt-override-group-${group.key}`}>
+      <Tabs value={current} onValueChange={onPick}>
+        <TabsList aria-label={`Modul ${group.label}`}>
+          {group.modules.map((id) => (
+            <TabsTrigger key={id} value={id} data-testid={`cmt-override-module-${id}`}>
+              {MODULES.find((x) => x.id === id)?.label || id}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+      {render(current)}
+    </div>
+  );
+}
+
 const fmtDT = (v) => (v ? formatDateTimeID(v) : '—');
 const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
 
@@ -97,75 +138,72 @@ function VendorPicker({ vendors, loading, err, onPick, onReload }) {
   const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 25);
   const withAccount = vendors.filter((v) => v.has_active_portal_account).length;
 
+  const akun = (v) => (v.has_active_portal_account
+    ? `Aktif · ${v.last_login_at ? `login ${fmtDT(v.last_login_at)}` : 'belum pernah login'}`
+    : 'Tanpa akun');
+  const kolom = [
+    { kunci: 'vendor', label: 'Vendor', hp: 'judul', isi: (v) => (
+      <div className="min-w-0">
+        <span className="block font-medium text-foreground">{v.name}</span>
+        <span className="block text-xs text-muted-foreground">{[v.code, v.contact_name, v.contact_phone].filter(Boolean).join(' · ') || '—'}</span>
+      </div>) },
+    { kunci: 'masuk', label: 'Kiriman masuk', rata: 'kanan', isi: (v) => <span className="tabular-nums">{fmtNum(v.incoming_shipments)}</span> },
+    { kunci: 'inspeksi', label: 'Belum inspeksi', rata: 'kanan', isi: (v) => <span className="tabular-nums">{fmtNum(v.uninspected_shipments)}</span> },
+    { kunci: 'job', label: 'Job jalan', rata: 'kanan', isi: (v) => <span className="tabular-nums">{fmtNum(v.active_jobs)}</span> },
+    { kunci: 'ingat', label: 'Pengingat', rata: 'kanan', isi: (v) => <span className="tabular-nums">{fmtNum(v.open_reminders)}</span> },
+    { kunci: 'perlu', label: 'Perlu diisi', rata: 'kanan', isi: (v) => (Number(v.pending_actions || 0) > 0
+      ? <span className="font-semibold tabular-nums text-[hsl(var(--warning-text))]">{fmtNum(v.pending_actions)}</span>
+      : <span className="tabular-nums text-muted-foreground">0</span>) },
+    { kunci: 'akun', label: 'Akun Portal Vendor', isi: (v) => (
+      <span className={`text-xs ${v.has_active_portal_account ? 'text-[hsl(var(--warning-text))]' : 'text-muted-foreground'}`}
+        data-testid={`cmt-override-account-${v.id}`}>{akun(v)}</span>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (v) => (
+      <Button size="sm" variant="outline" onClick={() => onPick(v)} data-testid={`cmt-override-pick-${v.id}`}>
+        <UserCog className="w-3.5 h-3.5" />Isi atas nama
+      </Button>) },
+  ];
+
   return (
     <PageLayout testId="cmt-override-picker" title="Pilih vendor" subtitle="Vendor CMT aktif yang bisa diisi atas namanya."
-      filters={<div className="relative w-72 max-w-full">
+      filters={<div className="relative w-full sm:w-64">
         <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-        <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nama / kode / kontak vendor…"
-          className="pl-8 h-9" data-testid="cmt-override-search" />
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nama, kode, kontak"
+          className="pl-8" data-testid="cmt-override-search" />
       </div>}
-      tools={<Button variant="outline" size="icon" onClick={onReload} title="Muat ulang" aria-label="Muat ulang" data-testid="cmt-override-refresh">
-        <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-      </Button>}
+      tools={<>
+        <TombolUnduh namaBerkas="vendor-cmt-input-atas-nama" namaLembar="Vendor" baris={rows} testId="cmt-override-unduh"
+          kolom={[
+            { label: 'Vendor', nilai: (v) => v.name }, { label: 'Kode', nilai: (v) => v.code || '' },
+            { label: 'Kontak', nilai: (v) => v.contact_name || '' }, { label: 'Telepon', nilai: (v) => v.contact_phone || '' },
+            { label: 'Kiriman masuk', nilai: (v) => Number(v.incoming_shipments) || 0 },
+            { label: 'Belum inspeksi', nilai: (v) => Number(v.uninspected_shipments) || 0 },
+            { label: 'Job jalan', nilai: (v) => Number(v.active_jobs) || 0 },
+            { label: 'Pengingat', nilai: (v) => Number(v.open_reminders) || 0 },
+            { label: 'Perlu diisi', nilai: (v) => Number(v.pending_actions) || 0 },
+            { label: 'Akun Portal Vendor', nilai: akun },
+          ]} />
+        <Button variant="outline" size="icon" onClick={onReload} title="Muat ulang" aria-label="Muat ulang" data-testid="cmt-override-refresh">
+          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </>}
       summary={<>
         {err && <Notice tone="danger" icon={AlertTriangle} testId="cmt-override-error">{err}</Notice>}
         <p className="text-sm text-muted-foreground" data-testid="cmt-override-summary">
           {fmtNum(vendors.length)} vendor aktif{withAccount > 0 ? ` · ${fmtNum(withAccount)} punya akun Portal Vendor (hati-hati dobel input)` : ''}.
-          Setiap dokumen yang Anda simpan tercatat atas nama vendor, dengan nama Anda dan tanda “diinput staf DA”.
+          Dokumen yang Anda simpan tercatat atas nama vendor, dengan nama Anda dan tanda “diinput staf DA”.
         </p>
       </>}
       footer={rows.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
-      <GlassCard className="p-0 overflow-hidden">
-        {loading && !vendors.length ? (
-          <div className="p-4 text-sm text-muted-foreground">Memuat vendor…</div>
-        ) : !paged.length ? (
-          <div data-testid="cmt-override-empty">
+      {loading && !vendors.length ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat vendor…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={paged} testId="cmt-override-vendor-table"
+          kosong={<div data-testid="cmt-override-empty">
             <EmptyState icon={Users} title={vendors.length ? 'Tidak ada vendor yang cocok' : 'Belum ada vendor CMT aktif'}
               description={vendors.length ? 'Ubah kata pencarian.' : 'Tambahkan vendor lewat menu Vendor CMT.'}
               action={search ? <Button variant="outline" size="sm" onClick={() => setSearch('')}><X className="w-3.5 h-3.5" />Hapus pencarian</Button> : null} />
-          </div>
-        ) : (
-          <Table data-testid="cmt-override-vendor-table">
-            <TableHeader><TableRow>
-              <TableHead>Vendor</TableHead><TableHead>Kontak</TableHead>
-              <TableHead className="text-right">Kiriman masuk</TableHead><TableHead className="text-right">Belum inspeksi</TableHead>
-              <TableHead className="text-right">Job jalan</TableHead><TableHead className="text-right">Pengingat</TableHead>
-              <TableHead className="text-right">Perlu diisi</TableHead><TableHead>Akun Portal Vendor</TableHead>
-              <TableHead className="text-right">Aksi</TableHead>
-            </TableRow></TableHeader>
-            <TableBody>
-              {paged.map((v) => (
-                <TableRow key={v.id} data-testid={`cmt-override-vendor-${v.id}`}>
-                  <TableCell>
-                    <span className="block font-semibold text-foreground">{v.name}</span>
-                    <span className="block text-xs text-muted-foreground">{v.code || '—'}</span>
-                  </TableCell>
-                  <TableCell className="text-sm">{v.contact_name || '—'}{v.contact_phone ? <span className="block text-xs text-muted-foreground">{v.contact_phone}</span> : null}</TableCell>
-                  <TableCell className="text-right tabular-nums">{fmtNum(v.incoming_shipments)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{fmtNum(v.uninspected_shipments)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{fmtNum(v.active_jobs)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{fmtNum(v.open_reminders)}</TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {Number(v.pending_actions || 0) > 0
-                      ? <span className="font-semibold text-[hsl(var(--warning-text))]">{fmtNum(v.pending_actions)}</span>
-                      : <span className="text-muted-foreground">0</span>}
-                  </TableCell>
-                  <TableCell className="text-xs" data-testid={`cmt-override-account-${v.id}`}>
-                    {v.has_active_portal_account ? (
-                      <span className="text-[hsl(var(--warning-text))]">Aktif · {v.last_login_at ? `login terakhir ${fmtDT(v.last_login_at)}` : 'belum pernah login'}</span>
-                    ) : <span className="text-muted-foreground">Tanpa akun — memang diisi staf</span>}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button size="sm" variant="outline" onClick={() => onPick(v)} data-testid={`cmt-override-pick-${v.id}`}>
-                      <UserCog className="w-3.5 h-3.5" />Isi atas nama
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </GlassCard>
+          </div>} />
+      )}
     </PageLayout>
   );
 }
@@ -194,16 +232,25 @@ function AuditPanel({ vendorName }) {
           Tagihan CMT dihitung dari dokumen-dokumen ini. Daftar ini memisahkan yang diketik staf DA dari yang diisi
           {` ${vendorName} `}sendiri, supaya selisih tagihan bisa ditelusuri.
         </p>
-        <Button size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="cmt-override-audit-refresh">
-          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-        </Button>
+        <div className="flex items-center gap-2">
+          <TombolUnduh namaBerkas={`jejak-input-${vendorName}`} namaLembar="Jejak" baris={entries} testId="cmt-override-audit-unduh"
+            kolom={[
+              { label: 'Modul', nilai: (e) => e.module || '' }, { label: 'Dokumen', nilai: (e) => e.reference || '' },
+              { label: 'Diinput oleh', nilai: (e) => e.entered_by || '' },
+              { label: 'Peran', nilai: (e) => ROLE_LABEL[e.entered_by_role] || e.entered_by_role || '' },
+              { label: 'Waktu', nilai: (e) => fmtDT(e.entered_at) },
+            ]} />
+          <Button size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="cmt-override-audit-refresh">
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          </Button>
+        </div>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <StatTile label="Diinput staf DA" accent={Number(totals.staff) ? 'warning' : 'muted'}
+        <StatTile label="Diinput staf DA" accent={Number(totals.staff) ? 'warning' : 'muted'} sub="Diketik staf DA atas nama vendor" 
           value={<span data-testid="cmt-override-audit-staff">{totals.staff}</span>} />
-        <StatTile label="Diisi vendor sendiri" accent={Number(totals.vendor) ? 'success' : 'muted'}
+        <StatTile label="Diisi vendor sendiri" accent={Number(totals.vendor) ? 'success' : 'muted'} sub="Lewat Portal Vendor" 
           value={<span data-testid="cmt-override-audit-vendor">{totals.vendor}</span>} />
-        <StatTile label="Total dokumen" value={(totals.staff || 0) + (totals.vendor || 0)} />
+        <StatTile label="Total dokumen" value={(totals.staff || 0) + (totals.vendor || 0)} sub="Staf DA + vendor sendiri" />
       </div>
       <GlassCard className="p-0 overflow-hidden">
         {loading ? (
@@ -304,13 +351,10 @@ export default function CMTOverridePortalModule({ user, token }) {
     id: user?.id, name: selected.name, role: 'cmt_vendor', vendor_id: selected.id, cmt_vendor_id: selected.id,
   } : null), [selected, user?.id]);
 
-  const moduleTabs = useMemo(() => (selected ? [
-    ...MODULES.map((m) => ({
-      key: m.id, label: m.label, Component: m.Comp,
-      props: { token, user: vendorUser, onNavigate: setActiveModule },
-    })),
-    { key: '__audit', label: 'Jejak audit', Component: AuditPanel, props: { vendorName: selected.name } },
-  ] : []), [selected, token, vendorUser]);
+  const groupTabs = useMemo(() => (selected ? GROUPS.map((g) => ({
+    key: g.key, label: g.label, Component: ModuleGroup,
+    props: { group: g, activeModule, onPick: setActiveModule, token, user: vendorUser, vendorName: selected.name },
+  })) : []), [selected, activeModule, token, vendorUser]);
 
   const pickerTabs = useMemo(() => [
     { key: 'vendor', label: 'Pilih vendor', Component: VendorPicker,
@@ -331,13 +375,13 @@ export default function CMTOverridePortalModule({ user, token }) {
       subtitle={`Layar ini sama persis dengan Portal Vendor milik ${selected.name}. Yang Anda simpan tercatat dengan nama Anda.`}
       actions={<Button variant="outline" onClick={backToPicker} data-testid="cmt-override-change-vendor"><ArrowLeft className="h-4 w-4" />Ganti vendor</Button>}
       summary={<>
-        {/* Spanduk mode override — SELALU terlihat (sticky) supaya tidak ada yang mengisi tanpa sadar. */}
-        <Notice tone="warning" icon={UserCog} title="Mode isi atas nama vendor" className="sticky top-0 z-30 shadow-sm">
-          <span data-testid="cmt-override-vendor-name" className="font-semibold">{selected.name}</span>
-          {selected.code ? ` · ${selected.code}` : ''} — diinput oleh{' '}
-          <span data-testid="cmt-override-staff-name" className="font-semibold">{user?.name || '—'}</span>
-          {` (${ROLE_LABEL[role] || role})`}
-        </Notice>
+        {/* Penanda mode isi — satu baris tipis (dulu spanduk lengket yang memakan layar). Nama vendor juga di judul. */}
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[hsl(var(--warning-text))]" data-testid="cmt-override-mode-line">
+          <UserCog className="h-4 w-4 shrink-0" />
+          <span>Mode isi atas nama <span data-testid="cmt-override-vendor-name" className="font-semibold">{selected.name}</span>
+            {selected.code ? ` · ${selected.code}` : ''} — diinput oleh{' '}
+            <span data-testid="cmt-override-staff-name" className="font-semibold">{user?.name || '—'}</span>{` (${ROLE_LABEL[role] || role})`}</span>
+        </p>
         {/* Peringatan dobel input (keputusan 5a) — memberi tahu, TIDAK memblokir. */}
         {selected.has_active_portal_account && warnOpen && (
           <Notice tone="warning" icon={AlertTriangle} title="Hati-hati dobel input" testId="cmt-override-double-warning"
@@ -352,7 +396,8 @@ export default function CMTOverridePortalModule({ user, token }) {
           </Notice>
         )}
       </>}>
-      <HubTabs hubId="cmt-override-modules" tabs={moduleTabs} value={activeModule} onValueChange={setActiveModule} />
+      <HubTabs hubId="cmt-override-modules" tabs={groupTabs} value={groupOf(activeModule).key}
+        onValueChange={(k) => { const grp = GROUPS.find((x) => x.key === k); if (grp) setActiveModule(grp.modules[0]); }} />
     </PageLayout>
   );
 }
