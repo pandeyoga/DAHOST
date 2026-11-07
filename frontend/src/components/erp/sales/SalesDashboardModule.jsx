@@ -1,56 +1,106 @@
+/**
+ * Dashboard Penjualan (Portal Penjualan).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, 4 kartu StatTile dengan keterangan, SKU terlaris = tabel standar yang
+ * bisa diunduh, tombol "langkah berikutnya" di kepala halaman.
+ *
+ * Perbaikan angka (keputusan 9): penjualan & laba kotor kini dihitung dari sumber yang SAMA dengan Laporan
+ * Penjualan (/api/sales/report: bersih = bruto − diskon − retur, tanpa PPN). Dulu kartu memakai total nota
+ * (termasuk PPN, retur tidak dikurangi) sehingga "Laba kotor bulan ini" lebih besar dari laporan.
+ * Piutang, SKU terlaris, dan jumlah draf tetap dari /api/sales/dashboard.
+ */
 import { useEffect, useState } from 'react';
-import { LineChart, RefreshCw, ReceiptText, Wallet, AlertTriangle, TrendingUp } from 'lucide-react';
-import { GlassCard } from '@/components/ui/glass';
+import { Contact, ReceiptText, RefreshCw, TrendingUp, Wallet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { PageHeader, StatTile } from '../moduleAtoms';
-import OnwardCTA from '../OnwardCTA';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { todayWIB, monthStartWIB } from '@/lib/waktu';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice, StatTile } from '../moduleAtoms';
 import { apiGet } from '../../../lib/api';
 
 const fmt = (n) => `Rp ${Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 })}`;
+const angka = (n) => Number(n || 0).toLocaleString('id-ID');
 
 export default function SalesDashboardModule({ onNavigate }) {
   const [d, setD] = useState(null);
+  const [bulan, setBulan] = useState(null);   // totals laporan bulan berjalan
+  const [hari, setHari] = useState(null);     // totals laporan hari ini
   const [err, setErr] = useState('');
+  const [memuat, setMemuat] = useState(false);
   const load = async () => {
-    try { setErr(''); setD(await apiGet('/sales/dashboard')); } catch (e) { setErr(e.message); }
+    setMemuat(true);
+    setErr('');
+    const hariIni = todayWIB();
+    try {
+      const [dash, rb, rh] = await Promise.all([
+        apiGet('/sales/dashboard'),
+        apiGet(`/sales/report?group_by=day&date_from=${monthStartWIB()}&date_to=${hariIni}`).catch(() => null),
+        apiGet(`/sales/report?group_by=day&date_from=${hariIni}&date_to=${hariIni}`).catch(() => null),
+      ]);
+      setD(dash);
+      setBulan(rb?.totals || null);
+      setHari(rh?.totals || null);
+    } catch (e) { setErr(e.message); }
+    finally { setMemuat(false); }
   };
   useEffect(() => { load(); }, []);
 
+  const top = d?.top_skus || [];
+  const kolom = [
+    { kunci: 'sku', label: 'SKU', hp: 'judul', isi: (s) => <span className="font-medium tabular-nums">{s.sku}</span> },
+    { kunci: 'nama', label: 'Nama', hp: 'keterangan', isi: (s) => s.name },
+    { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (s) => <span className="tabular-nums">{angka(s.qty)}</span> },
+    { kunci: 'nilai', label: 'Nilai', rata: 'kanan', isi: (s) => <span className="font-semibold tabular-nums whitespace-nowrap">{fmt(s.amount)}</span> },
+  ];
+  const ke = (module) => onNavigate && onNavigate(module, {});
+
   return (
-    <div className="space-y-5" data-testid="sales-dashboard">
-      <PageHeader icon={LineChart} eyebrow="Portal Penjualan" title="Dashboard Penjualan Langsung"
-        subtitle="Penjualan dari stok barang jadi sendiri. Setiap nota terkonfirmasi mengurangi stok FG (FIFO), membukukan HPP, dan menerbitkan invoice ke Keuangan."
-        actions={<Button variant="ghost" onClick={load} className="h-9 border border-[var(--glass-border)]" data-testid="sales-dash-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>} />
-      {err && <div className="text-sm text-red-400" data-testid="sales-dash-error">{err}</div>}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatTile label="Penjualan Hari Ini" value={fmt(d?.today_sales)} hint={`${d?.today_count || 0} nota`} accent="primary" testId="sales-kpi-today" />
-        <StatTile label="Penjualan Bulan Ini" value={fmt(d?.month_sales)} hint={`${d?.month_count || 0} nota · HPP ${fmt(d?.month_cogs)}`} testId="sales-kpi-month" />
-        <StatTile label="Laba Kotor Bulan Ini" value={fmt(d?.month_gross_margin)} accent={(d?.month_gross_margin || 0) >= 0 ? 'success' : 'danger'} testId="sales-kpi-margin" />
-        <StatTile label="Piutang Belum Lunas" value={fmt(d?.open_ar)} hint={`${d?.open_ar_count || 0} invoice · overdue ${fmt(d?.overdue_ar)}`} accent={d?.overdue_count ? 'danger' : 'default'} testId="sales-kpi-ar" />
-      </div>
-      <div className="grid md:grid-cols-2 gap-4">
-        <GlassCard className="p-4">
-          <div className="flex items-center gap-2 mb-3 text-sm font-semibold"><TrendingUp className="w-4 h-4" />SKU Terlaris Bulan Ini</div>
-          {!d?.top_skus?.length ? <div className="text-xs text-muted-foreground" data-testid="sales-top-empty">Belum ada penjualan bulan ini.</div> : (
-            <table className="w-full text-xs" data-testid="sales-top-table">
-              <thead className="text-muted-foreground"><tr><th className="text-left py-1">SKU</th><th className="text-right">Qty</th><th className="text-right">Nilai</th></tr></thead>
-              <tbody>{d.top_skus.map(s => (
-                <tr key={s.sku} className="border-t border-foreground/5"><td className="py-1.5"><div className="font-mono">{s.sku}</div><div className="text-muted-foreground">{s.name}</div></td><td className="text-right">{s.qty}</td><td className="text-right font-semibold">{fmt(s.amount)}</td></tr>
-              ))}</tbody>
-            </table>
-          )}
-        </GlassCard>
-        <GlassCard className="p-4 space-y-3">
-          <div className="flex items-center gap-2 text-sm font-semibold"><ReceiptText className="w-4 h-4" />Status Nota</div>
-          <div className="text-xs text-muted-foreground flex items-center gap-2"><AlertTriangle className="w-3.5 h-3.5 text-amber-400" />{d?.draft_count || 0} nota masih draft (belum mengurangi stok).</div>
-          <div className="text-xs text-muted-foreground flex items-center gap-2"><Wallet className="w-3.5 h-3.5 text-emerald-400" />Alur akuntansi: Dr Piutang/Kas · Cr Penjualan (+PPN) dan Dr HPP · Cr Persediaan FG 1-1404 (FIFO).</div>
-          <OnwardCTA onNavigate={onNavigate} title="Langkah Berikutnya" actions={[
-            { module: 'sales-direct', label: 'Buat Nota Penjualan', icon: ReceiptText, primary: true },
-            { module: 'sales-customers', label: 'Master Pelanggan' },
-            { module: 'fin-ar-360', label: 'Aging Piutang (Keuangan)' },
+    <PageLayout testId="sales-dashboard" title="Dashboard Penjualan"
+      subtitle="Penjualan langsung dari stok barang jadi: hasil hari ini dan bulan ini, piutang, dan SKU terlaris."
+      actions={onNavigate && <>
+        <Button variant="outline" onClick={() => ke('sales-customers')} data-testid="onward-sales-customers"><Contact />Master pelanggan</Button>
+        <Button variant="outline" onClick={() => ke('fin-ar-360')} data-testid="onward-fin-ar-360"><Wallet />Umur piutang</Button>
+        <Button onClick={() => ke('sales-direct')} data-testid="onward-sales-direct"><ReceiptText />Buat nota penjualan</Button>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="sku-terlaris-bulan-ini" namaLembar="SKU terlaris" baris={top} testId="sales-top-unduh"
+          kolom={[
+            { label: 'SKU', nilai: (s) => s.sku }, { label: 'Nama', nilai: (s) => s.name || '' },
+            { label: 'Qty', nilai: (s) => Number(s.qty || 0) }, { label: 'Nilai', nilai: (s) => Number(s.amount || 0) },
           ]} />
-        </GlassCard>
+        <Button variant="outline" size="icon" onClick={load} disabled={memuat} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="sales-dash-refresh">
+          <RefreshCw className={memuat ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={<>
+        {err && <Notice tone="danger" testId="sales-dash-error">{err}</Notice>}
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile label="Penjualan hari ini" value={hari ? fmt(hari.net_sales) : '—'} accent="primary" testId="sales-kpi-today"
+            sub={hari ? `${angka(hari.notes)} nota · bersih, tanpa PPN` : 'Laporan hari ini gagal dimuat'} />
+          <StatTile label="Penjualan bulan ini" value={bulan ? fmt(bulan.net_sales) : '—'} testId="sales-kpi-month"
+            sub={bulan ? `${angka(bulan.notes)} nota · HPP ${fmt(bulan.cogs)}` : 'Laporan bulan ini gagal dimuat'} />
+          <StatTile label="Laba kotor bulan ini" value={bulan ? fmt(bulan.margin) : '—'} testId="sales-kpi-margin"
+            accent={(bulan?.margin || 0) >= 0 ? 'success' : 'danger'}
+            sub={bulan ? `${bulan.margin_pct || 0}% dari penjualan bersih` : '—'} />
+          <StatTile label="Piutang belum lunas" value={fmt(d?.open_ar)} testId="sales-kpi-ar"
+            accent={d?.overdue_count ? 'danger' : 'default'}
+            sub={`${angka(d?.open_ar_count)} invoice · lewat jatuh tempo ${fmt(d?.overdue_ar)}`} />
+        </div>
+        <p className="text-sm text-muted-foreground" data-testid="sales-draft-info">
+          {angka(d?.draft_count)} nota masih draf (belum mengurangi stok). Saat nota dikonfirmasi: piutang atau kas dan
+          penjualan (+PPN) dicatat, HPP dibukukan, dan persediaan barang jadi berkurang (FIFO).
+        </p>
+      </>}>
+      <div className="space-y-2">
+        <p className="inline-flex items-center gap-2 text-base font-semibold text-foreground">
+          <TrendingUp className="h-4 w-4 text-muted-foreground" />SKU terlaris bulan ini
+        </p>
+        <TabelData kolom={kolom} baris={top} kunci={(s) => s.sku} testId="sales-top-table"
+          kosong={<EmptyState icon={TrendingUp} testId="sales-top-empty" className="py-10" title="Belum ada penjualan bulan ini"
+            description="SKU terlaris tampil setelah ada nota yang dikonfirmasi bulan ini." />} />
       </div>
-    </div>
+    </PageLayout>
   );
 }
