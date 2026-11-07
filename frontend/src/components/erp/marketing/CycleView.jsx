@@ -3,63 +3,59 @@
  *
  * KENAPA LAYAR INI ADA
  * --------------------
- * Sebelum F5, satu bulan kerja dibaca dari tiga layar berbeda (Target, Anggaran,
- * Laporan) yang masing-masing menghitung sendiri. Di rapat, tiga layar itu bisa
- * menyebut tiga kesimpulan berbeda untuk toko yang sama — dan tidak ada cara
- * membuktikan mana yang dipakai mengambil keputusan.
- *
- * Layar ini membaca SATU endpoint (`/api/marketing/cycle/overview`) yang angkanya
- * dihitung `core/marketing_cycle.py`. Total & peringkat dihitung di backend, bukan
- * di browser: kalau layar menjumlah sendiri, lampiran export bisa berbeda dari yang
- * dilihat di rapat.
+ * Sebelum F5, satu bulan kerja dibaca dari tiga layar berbeda (Target, Anggaran, Laporan) yang masing-masing
+ * menghitung sendiri. Layar ini membaca SATU endpoint (`/api/marketing/cycle/overview`) yang angkanya dihitung
+ * `core/marketing_cycle.py`. Total & peringkat dihitung di backend, bukan di browser.
  *
  * Yang WAJIB tetap terlihat (jangan dihapus saat merapikan tampilan):
  *  · DUA angka omzet (produk & order amount) + label "sebelum potongan platform";
- *  · `pace` (bagian bulan yang sudah berjalan) di samping capaian — tanpa pace,
- *    "capaian 60%" pada tanggal 3 dibaca sebagai gagal;
+ *  · `pace` (bagian bulan yang sudah berjalan) di samping capaian;
  *  · cakupan HPP di samping marjin — marjin tanpa cakupan adalah angka yang menipu;
- *  · **omzet BRUTO dan omzet SETELAH RETUR berdampingan** (keputusan pemilik sesi
- *    #9). Bruto adalah angka lama yang dipakai target/capaian/ROAS — jangan
- *    diganti dengan net "supaya lebih benar": lampiran rapat yang sudah beredar
- *    memakai bruto, dan menggeser artinya diam-diam adalah cara tercepat membuat
- *    dua kesimpulan untuk satu bulan. Nilai retur juga membawa CAKUPAN: hari yang
- *    rekapnya diimpor/diketik tidak tahu soal retur — itu belum diketahui, bukan nol;
+ *  · **omzet BRUTO dan omzet SETELAH RETUR berdampingan** (keputusan pemilik sesi #9); nilai retur membawa
+ *    CAKUPAN: hari yang rekapnya diimpor/diketik tidak tahu soal retur — itu belum diketahui, bukan nol;
  *  · status kunci periode + siapa yang menutup;
  *  · catatan kejujuran data (apa yang TIDAK diketahui angka ini).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): 4 kartu StatTile + satu kalimat (dulu 7 kartu sebaris), pil "Semua / Perlu
+ * perhatian", unduh Excel/CSV (dulu CSV saja), ViewToggle Tabel/Kartu, tabel berisi kolom inti (omzet produk + order
+ * amount, setelah retur + nilai retur, capaian + pace, anggaran, marjin + cakupan HPP) — kolom lain (target s.d. hari
+ * ini, proyeksi, pesanan, unit, AOV, sisa, ROAS) ada di popup detail dan di unduhan. Aksi baris: Target & Anggaran
+ * tampil, Tutup/Buka periode & Detail di menu "Lainnya". Form = FormPopup, detail = DetailPopup, warna lewat token.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Target, Wallet, TrendingUp, TrendingDown, RefreshCw, Loader2, Lock, Unlock,
-  AlertTriangle, Info, Save, Table2, LayoutGrid, Download, Eye, CheckCircle2,
+  Target, Wallet, Loader2, Lock, Unlock, Info, Eye, CheckCircle2, MoreHorizontal, RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { GlassCard } from '@/components/ui/glass';
-import { Badge } from '@/components/ui/badge';
+import FilterChips from '@/components/ui/filter-chips';
+import ViewToggle from '@/components/ui/view-toggle';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmtRp = formatRupiah;
 const fmtNum = (n) => new Intl.NumberFormat('id-ID').format(Math.round(n || 0));
-const pct = (n) => `${Number(n || 0).toFixed(1)}%`;
+const pct = (n) => `${Number(n || 0).toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 const VIEW_KEY = 'marketing_cycle_view';
+const VIEWS = { table: 'table', grid: 'grid' };
 
 const CAT_LABEL = {
-  ads: 'Ads / Iklan', kol: 'KOL (fee tetap)', komisi: 'Komisi kreator',
-  livehost: 'Live Host', sample: 'Sample', diskon: 'Diskon / Promo',
+  ads: 'Iklan', kol: 'KOL (fee tetap)', komisi: 'Komisi kreator',
+  livehost: 'Host live', sample: 'Sampel', diskon: 'Diskon / promo',
 };
 
-// Label PENDEK khusus sel tabel. Judul penuh ("Omzet jauh di bawah pace target")
-// membungkus jadi 3 baris dan membuat SATU baris tabel dua kali lebih tinggi dari
-// baris lain — tabel yang tinggi baris­nya tidak seragam tidak bisa dipindai mata.
-// Teks penuh tetap ada di papan "Perlu perhatian", di tooltip, dan di dialog Detail.
+// Label PENDEK khusus sel tabel (judul penuh membuat baris tabel tidak seragam tingginya).
 const FLAG_SHORT = {
   target_behind: 'tertinggal target',
   target_missing: 'target kosong',
@@ -70,20 +66,16 @@ const FLAG_SHORT = {
   budget_missing: 'rencana kosong',
   hpp_coverage_low: 'HPP belum lengkap',
 };
+const NADA_SEV = { red: 'danger', yellow: 'warning' };
 
 function SevBadge({ severity, children }) {
-  const cls = severity === 'red'
-    ? 'bg-red-100 dark:bg-red-500/10 text-red-700 dark:text-red-300 border-red-400 dark:border-red-500/40'
-    : severity === 'yellow'
-      ? 'bg-amber-100 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-400 dark:border-amber-500/40'
-      : 'bg-sky-100 dark:bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-400 dark:border-sky-500/40';
-  return <Badge variant="outline" className={`text-[10px] ${cls}`}>{children}</Badge>;
+  return <StatusBadge status={severity} label={children} tone={NADA_SEV[severity] || 'info'} />;
 }
 
 function Bar({ value, reference, over }) {
   return (
-    <div className="relative h-1.5 bg-muted rounded-full overflow-hidden mt-1">
-      <div className={`h-full ${over ? 'bg-red-500' : 'bg-primary'}`}
+    <div className="relative mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--glass-bg)]">
+      <div className={`h-full ${over ? 'bg-[hsl(var(--destructive))]' : 'bg-primary'}`}
         style={{ width: `${Math.min(Math.max(value || 0, 0), 100)}%` }} />
       {reference != null && (
         <span className="absolute top-0 h-full w-[2px] bg-foreground/60"
@@ -93,9 +85,11 @@ function Bar({ value, reference, over }) {
   );
 }
 
-/* ─── Dialog: SET TARGET ─────────────────────────────────────────────────────
-   Penolakan backend (423 periode tertutup) DITAHAN DI DALAM dialog. Toast 5
-   detik membuat tombol Simpan tampak rusak tanpa keterangan. */
+const Kunci = ({ locked }) => (locked
+  ? <StatusBadge status="locked" label="Terkunci" tone="warning" />
+  : <StatusBadge status="open" label="Terbuka" tone="muted" />);
+
+/* ─── Form: TARGET (penolakan backend 423 periode tertutup ditahan DI DALAM popup) ─── */
 function TargetDialog({ open, onOpenChange, row, period, token, onSaved }) {
   const [form, setForm] = useState({ revenue_target: '', orders_target: '', notes: '', reason: '' });
   const [saving, setSaving] = useState(false);
@@ -130,74 +124,38 @@ function TargetDialog({ open, onOpenChange, row, period, token, onSaved }) {
         }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) { setErr(body.detail || `Gagal simpan (HTTP ${res.status})`); return; }
+      if (!res.ok) { setErr(body.detail || `Gagal menyimpan (kode ${res.status}).`); return; }
       toast.success(`Target ${row.account.account_name} ${period} disimpan`);
       onOpenChange(false); onSaved();
-    } catch (e) { setErr(e.message || 'Gagal simpan'); }
+    } catch (e) { setErr(e.message || 'Gagal menyimpan'); }
     finally { setSaving(false); }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="cycle-target-dialog">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Target size={16} className="text-primary" /> Target — {row?.account?.account_name}
-          </DialogTitle>
-          <p className="text-xs text-muted-foreground">Periode {period}</p>
-        </DialogHeader>
-        {err && (
-          <div className="rounded-md border border-red-400 dark:border-red-500/40 bg-red-100 dark:bg-red-500/10 p-3 text-xs text-red-700 dark:text-red-300"
-            data-testid="cycle-target-error">{err}</div>
-        )}
-        <div className="space-y-3">
-          <div>
-            <Label className="text-xs">Target Omzet (Rp)</Label>
-            <MoneyInput value={form.revenue_target} className="mt-1 h-9"
-              data-testid="cycle-target-revenue"
-              onChange={(e) => setForm((f) => ({ ...f, revenue_target: e.target.value }))} />
-          </div>
-          <div>
-            <Label className="text-xs">Target Jumlah Pesanan</Label>
-            <Input type="number" min={0} value={form.orders_target} className="mt-1 h-9"
-              data-testid="cycle-target-orders"
-              onChange={(e) => setForm((f) => ({ ...f, orders_target: e.target.value }))} />
-          </div>
-          <div>
-            <Label className="text-xs">Catatan (opsional)</Label>
-            <Input value={form.notes} className="mt-1 h-9"
-              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
-          </div>
-          <div>
-            <Label className="text-xs">Alasan perubahan (opsional, masuk jejak)</Label>
-            <Input value={form.reason} className="mt-1 h-9"
-              placeholder="mis. target diturunkan karena stok warna utama habis"
-              data-testid="cycle-target-reason"
-              onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} />
-            <p className="text-[10px] text-muted-foreground mt-1">
-              Alasan tampil di layar <b>Jejak Perubahan</b> bersama nilai lama → baru.
-              Tanpa alasan, enam bulan kemudian jejaknya hanya bisa menjawab
-              "berapa", bukan "kenapa".
-            </p>
-          </div>
-          <p className="text-[11px] text-muted-foreground">
-            Capaian dibandingkan dengan <b>pace</b> (bagian bulan yang sudah berjalan),
-            bukan dengan target penuh — supaya awal bulan tidak selalu tampak gagal.
-          </p>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="cycle-target-cancel">Batal</Button>
-          <Button onClick={save} disabled={saving} data-testid="cycle-target-save">
-            {saving ? <Loader2 size={14} className="mr-1 animate-spin" /> : <Save size={14} className="mr-1" />}
-            Simpan Target
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open={open} onClose={() => onOpenChange(false)} judul={`Target ${row?.account?.account_name || ''}`}
+      keterangan={`Periode ${period}. Capaian dibandingkan dengan pace (bagian bulan yang sudah berjalan), bukan target penuh.`}
+      onSimpan={save} menyimpan={saving} galat={err} labelSimpan="Simpan target" testId="cycle-target-dialog">
+      <Isian label="Target omzet (Rp)">
+        <MoneyInput value={form.revenue_target} data-testid="cycle-target-revenue"
+          onChange={(e) => setForm((f) => ({ ...f, revenue_target: e.target.value }))} />
+      </Isian>
+      <Isian label="Target jumlah pesanan">
+        <Input type="number" min={0} value={form.orders_target} data-testid="cycle-target-orders"
+          onChange={(e) => setForm((f) => ({ ...f, orders_target: e.target.value }))} />
+      </Isian>
+      <Isian label="Catatan" petunjuk="Opsional.">
+        <Input value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
+      </Isian>
+      <Isian label="Alasan perubahan"
+        petunjuk="Opsional, tampil di Jejak Marketing bersama nilai lama → baru. Tanpa alasan, jejak hanya menjawab 'berapa', bukan 'kenapa'.">
+        <Input value={form.reason} placeholder="Mis. target diturunkan karena stok warna utama habis" data-testid="cycle-target-reason"
+          onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} />
+      </Isian>
+    </FormPopup>
   );
 }
 
-/* ─── Dialog: RENCANA ANGGARAN per kategori ───────────────────────────────── */
+/* ─── Form: RENCANA ANGGARAN per kategori ───────────────────────────────── */
 function BudgetDialog({ open, onOpenChange, row, period, token, onSaved, categories }) {
   const [form, setForm] = useState({});
   const [reason, setReason] = useState('');
@@ -225,75 +183,41 @@ function BudgetDialog({ open, onOpenChange, row, period, token, onSaved, categor
       const res = await fetch(`${API}/api/marketing/budget`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ account_id: row.account.id, period, budget_by_category,
-          reason: reason || '' }),
+        body: JSON.stringify({ account_id: row.account.id, period, budget_by_category, reason: reason || '' }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) { setErr(body.detail || `Gagal simpan (HTTP ${res.status})`); return; }
+      if (!res.ok) { setErr(body.detail || `Gagal menyimpan (kode ${res.status}).`); return; }
       toast.success(`Rencana anggaran ${row.account.account_name} disimpan`);
       onOpenChange(false); onSaved();
-    } catch (e) { setErr(e.message || 'Gagal simpan'); }
+    } catch (e) { setErr(e.message || 'Gagal menyimpan'); }
     finally { setSaving(false); }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="cycle-budget-dialog">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Wallet size={16} className="text-primary" /> Rencana Anggaran — {row?.account?.account_name}
-          </DialogTitle>
-          <p className="text-xs text-muted-foreground">Periode {period}</p>
-        </DialogHeader>
-        {err && (
-          <div className="rounded-md border border-red-400 dark:border-red-500/40 bg-red-100 dark:bg-red-500/10 p-3 text-xs text-red-700 dark:text-red-300"
-            data-testid="cycle-budget-error">{err}</div>
-        )}
-        <div className="space-y-2">
-          {(categories || []).map((c) => {
-            const cat = (row?.budget?.categories || []).find((x) => x.category === c) || {};
-            return (
-              <div key={c} className="flex items-center gap-2">
-                <Label className="text-xs w-36">{CAT_LABEL[c] || c}</Label>
-                <MoneyInput value={form[c] ?? ''} className="h-8 text-right"
-                  data-testid={`cycle-budget-input-${c}`}
-                  onChange={(e) => setForm((f) => ({ ...f, [c]: e.target.value }))} />
-                <span className="text-[10px] text-muted-foreground w-40 text-right">
-                  terpakai {fmtRp(cat.spend)}{cat.mode === 'auto' ? ' (auto)' : ''}
-                </span>
-              </div>
-            );
-          })}
-          <div className="flex justify-between border-t pt-2 text-sm font-semibold">
-            <span>Total rencana</span><span data-testid="cycle-budget-total">{fmtRp(total)}</span>
-          </div>
-          <div className="pt-1">
-            <Label className="text-xs">Alasan perubahan (opsional, masuk jejak)</Label>
-            <Input value={reason} className="mt-1 h-9"
-              placeholder="mis. anggaran iklan ditambah untuk kejar target akhir bulan"
-              data-testid="cycle-budget-reason"
-              onChange={(e) => setReason(e.target.value)} />
-          </div>
-          <p className="text-[11px] text-muted-foreground">
-            Kategori bertanda <b>auto</b> realisasinya dihitung sistem dari data sumber
-            (pesanan, data iklan, shift live host) — tidak perlu dicatat manual.
-          </p>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Batal</Button>
-          <Button onClick={save} disabled={saving} data-testid="cycle-budget-save">
-            {saving ? <Loader2 size={14} className="mr-1 animate-spin" /> : <Save size={14} className="mr-1" />}
-            Simpan Rencana
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open={open} onClose={() => onOpenChange(false)} judul={`Rencana anggaran ${row?.account?.account_name || ''}`}
+      keterangan={`Periode ${period}. Kategori bertanda otomatis dihitung sistem dari data sumber (pesanan, iklan, shift host live).`}
+      onSimpan={save} menyimpan={saving} galat={err} labelSimpan="Simpan rencana" testId="cycle-budget-dialog">
+      {(categories || []).map((c) => {
+        const cat = (row?.budget?.categories || []).find((x) => x.category === c) || {};
+        return (
+          <Isian key={c} label={CAT_LABEL[c] || c} petunjuk={`Terpakai ${fmtRp(cat.spend)}${cat.mode === 'auto' ? ' (otomatis)' : ''}`}>
+            <MoneyInput value={form[c] ?? ''} data-testid={`cycle-budget-input-${c}`}
+              onChange={(e) => setForm((f) => ({ ...f, [c]: e.target.value }))} />
+          </Isian>
+        );
+      })}
+      <div className="flex justify-between border-t border-[var(--glass-border)] pt-3 text-sm font-semibold">
+        <span>Total rencana</span><span className="tabular-nums" data-testid="cycle-budget-total">{fmtRp(total)}</span>
+      </div>
+      <Isian label="Alasan perubahan" petunjuk="Opsional, masuk jejak perubahan.">
+        <Input value={reason} placeholder="Mis. anggaran iklan ditambah untuk kejar target akhir bulan" data-testid="cycle-budget-reason"
+          onChange={(e) => setReason(e.target.value)} />
+      </Isian>
+    </FormPopup>
   );
 }
 
-/* ─── Dialog: TUTUP / BUKA PERIODE ───────────────────────────────────────────
-   Alasan WAJIB: angka yang dibekukan (atau dibuka kembali) harus bisa
-   dipertanggungjawabkan — jejaknya masuk marketing_change_log. */
+/* ─── Form: TUTUP / BUKA PERIODE — alasan WAJIB (jejak masuk marketing_change_log) ─── */
 function LockDialog({ open, onOpenChange, row, period, token, onSaved }) {
   const [reason, setReason] = useState('');
   const [saving, setSaving] = useState(false);
@@ -313,7 +237,7 @@ function LockDialog({ open, onOpenChange, row, period, token, onSaved }) {
         body: JSON.stringify({ account_id: row.account.id, period, action, reason }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) { setErr(body.detail || `Gagal (HTTP ${res.status})`); return; }
+      if (!res.ok) { setErr(body.detail || `Gagal (kode ${res.status}).`); return; }
       toast.success(body.message || 'Berhasil');
       onOpenChange(false); onSaved();
     } catch (e) { setErr(e.message || 'Gagal'); }
@@ -321,53 +245,28 @@ function LockDialog({ open, onOpenChange, row, period, token, onSaved }) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="cycle-lock-dialog">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {locked ? <Unlock size={16} className="text-amber-500" /> : <Lock size={16} className="text-primary" />}
-            {locked ? 'Buka Periode' : 'Tutup Periode'} — {row?.account?.account_name}
-          </DialogTitle>
-          <p className="text-xs text-muted-foreground">Periode {period}</p>
-        </DialogHeader>
-        {err && (
-          <div className="rounded-md border border-red-400 dark:border-red-500/40 bg-red-100 dark:bg-red-500/10 p-3 text-xs text-red-700 dark:text-red-300"
-            data-testid="cycle-lock-error">{err}</div>
-        )}
-        <div className="space-y-3">
-          <div className="rounded-md border border-border bg-muted/40 p-3 text-xs text-foreground">
-            {locked
-              ? 'Membuka periode berarti angka yang sudah dirapatkan bisa berubah lagi. Semua perubahan sesudah ini tercatat beserta nama Anda.'
-              : 'Menutup periode membekukan target, anggaran, rekap harian, dan commit impor bulan ini (ditolak dengan HTTP 423). Ini yang membuat notulen rapat dan sistem tetap sama.'}
-          </div>
-          <div>
-            <Label className="text-xs">Alasan (wajib)</Label>
-            <Input value={reason} className="mt-1 h-9" data-testid="cycle-lock-reason"
-              placeholder={locked ? 'mis. koreksi pesanan yang terlambat masuk' : 'mis. sudah dirapatkan 5 Agustus'}
-              onChange={(e) => setReason(e.target.value)} />
-          </div>
-          {(row?.lock?.history || []).length > 0 && (
-            <div className="text-[11px] text-muted-foreground space-y-1" data-testid="cycle-lock-history">
-              <p className="font-semibold text-foreground">Riwayat kunci</p>
-              {(row.lock.history || []).slice(-5).reverse().map((h, i) => (
-                <p key={i}>
-                  {h.action === 'close' ? 'Ditutup' : 'Dibuka'} oleh {h.by_name} — {h.reason || 'tanpa alasan'}
-                </p>
-              ))}
-            </div>
-          )}
+    <FormPopup open={open} onClose={() => onOpenChange(false)}
+      judul={`${locked ? 'Buka periode' : 'Tutup periode'} ${row?.account?.account_name || ''}`} keterangan={`Periode ${period}`}
+      onSimpan={save} menyimpan={saving} galat={err} labelSimpan={locked ? 'Buka periode' : 'Tutup periode'} testId="cycle-lock-dialog">
+      <Notice tone={locked ? 'warning' : 'info'} icon={locked ? Unlock : Lock}>
+        {locked
+          ? 'Membuka periode berarti angka yang sudah dirapatkan bisa berubah lagi. Semua perubahan sesudah ini tercatat beserta nama Anda.'
+          : 'Menutup periode membekukan target, anggaran, rekap harian, dan impor bulan ini. Ini yang membuat notulen rapat dan sistem tetap sama.'}
+      </Notice>
+      <Isian label="Alasan" wajib>
+        <Input value={reason} data-testid="cycle-lock-reason"
+          placeholder={locked ? 'Mis. koreksi pesanan yang terlambat masuk' : 'Mis. sudah dirapatkan 5 Agustus'}
+          onChange={(e) => setReason(e.target.value)} />
+      </Isian>
+      {(row?.lock?.history || []).length > 0 && (
+        <div className="space-y-1 text-sm text-muted-foreground" data-testid="cycle-lock-history">
+          <p className="font-medium text-foreground">Riwayat kunci</p>
+          {(row.lock.history || []).slice(-5).reverse().map((h, i) => (
+            <p key={i}>{h.action === 'close' ? 'Ditutup' : 'Dibuka'} oleh {h.by_name} — {h.reason || 'tanpa alasan'}</p>
+          ))}
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="cycle-lock-cancel">Batal</Button>
-          <Button onClick={save} disabled={saving} data-testid="cycle-lock-submit"
-            variant={locked ? 'outline' : 'default'}>
-            {saving ? <Loader2 size={14} className="mr-1 animate-spin" />
-              : locked ? <Unlock size={14} className="mr-1" /> : <Lock size={14} className="mr-1" />}
-            {locked ? 'Buka Periode' : 'Tutup Periode'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      )}
+    </FormPopup>
   );
 }
 
@@ -380,7 +279,7 @@ function ChangeLogPanel({ accountId, period, token }) {
       try {
         const res = await fetch(`${API}/api/marketing/periods/change-log`
           + `?account_id=${accountId}&period=${period}&limit=20`,
-          { headers: { Authorization: `Bearer ${token}` } });
+        { headers: { Authorization: `Bearer ${token}` } });
         const j = res.ok ? await res.json() : {};
         if (alive) setRows(j.entries || []);
       } catch { if (alive) setRows([]); }
@@ -391,205 +290,176 @@ function ChangeLogPanel({ accountId, period, token }) {
     target_create: 'Target dibuat', target_update: 'Target diubah',
     budget_upsert: 'Rencana anggaran diubah', period_close: 'Periode ditutup',
     period_reopen: 'Periode dibuka',
-  }[a] || a);
+  }[a] || String(a || '').replace(/_/g, ' '));
   const money = (v) => (typeof v === 'number' ? fmtRp(v) : String(v ?? '—'));
   return (
-    <div className="rounded-md border border-border p-3" data-testid="cycle-changelog">
-      <p className="text-xs font-semibold mb-1">Jejak perubahan — siapa mengubah apa</p>
-      {rows === null ? <p className="text-[11px] text-muted-foreground">memuat…</p>
-        : rows.length === 0 ? (
-          <p className="text-[11px] text-muted-foreground">
-            Belum ada perubahan tercatat untuk bulan ini.
-          </p>
-        ) : (
-          <ul className="space-y-1 text-[11px]">
-            {rows.map((r) => (
-              <li key={r.id} className="text-foreground">
-                <span className="font-semibold">{label(r.action)}</span>
-                {' oleh '}{r.actor_name || '—'}
-                {r.actor_role ? <span className="text-muted-foreground"> ({r.actor_role})</span> : null}
-                {(r.before?.revenue_target != null || r.after?.revenue_target != null) && (
-                  <span className="text-muted-foreground">
-                    {' — omzet '}{money(r.before?.revenue_target)}{' → '}{money(r.after?.revenue_target)}
-                  </span>
-                )}
-                {r.reason ? <span className="text-muted-foreground">{` · alasan: ${r.reason}`}</span> : null}
-              </li>
-            ))}
-          </ul>
-        )}
+    <div className="space-y-2" data-testid="cycle-changelog">
+      <p className="text-sm font-medium text-foreground">Jejak perubahan bulan ini</p>
+      {rows === null ? <p className="text-sm text-muted-foreground">Memuat…</p>
+        : rows.length === 0 ? <EmptyState className="py-4" title="Belum ada perubahan tercatat untuk bulan ini" />
+          : (
+            <Table>
+              <TableHeader>
+                <TableRow><TableHead>Perubahan</TableHead><TableHead>Oleh</TableHead><TableHead className="hidden sm:table-cell">Omzet target</TableHead><TableHead className="hidden md:table-cell">Alasan</TableHead></TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell>{label(r.action)}</TableCell>
+                    <TableCell>{r.actor_name || '—'}</TableCell>
+                    <TableCell className="hidden whitespace-nowrap tabular-nums sm:table-cell">
+                      {(r.before?.revenue_target != null || r.after?.revenue_target != null)
+                        ? `${money(r.before?.revenue_target)} → ${money(r.after?.revenue_target)}` : '—'}
+                    </TableCell>
+                    <TableCell className="hidden text-muted-foreground md:table-cell">{r.reason || '—'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
     </div>
   );
 }
 
-/* ─── Dialog: DETAIL satu toko (rincian anggaran + bukti + catatan) ───────── */
+/* ─── Detail satu toko (rincian anggaran + bukti + catatan) — popup ───────── */
 function DetailDialog({ open, onOpenChange, row, period, token }) {
-  if (!row) return null;
+  if (!row || !open) return null;
   const b = row.budget || {};
   const m = row.margin || {};
+  const ach = row.achievement || {};
   const src = {};
   (row.spend_sources || []).forEach((s) => { src[s.category] = s; });
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" data-testid="cycle-detail-dialog">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Eye size={16} className="text-primary" /> {row.account.account_name} — {period}
-          </DialogTitle>
-          <p className="text-xs text-muted-foreground">
-            {row.account.account_code} · {row.account.platform} · basis omzet: {row.revenue_basis}
-          </p>
-        </DialogHeader>
+    <DetailPopup open onClose={() => onOpenChange(false)} testId="cycle-detail-dialog"
+      judul={`${row.account.account_name} · ${period}`}
+      keterangan={`${row.account.account_code} · ${row.account.platform} · basis omzet: ${row.revenue_basis}`}
+      status={<Kunci locked={row.locked} />}>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <StatTile label="Omzet produk" value={fmtRp(row.actual?.revenue_product)} />
+        <StatTile label="Order amount" value={fmtRp(row.actual?.revenue_order_amount)} />
+        <StatTile label="Diskon penjual" value={fmtRp(row.actual?.seller_discount)} />
+        <StatTile label="Harga coret (bruto)" value={fmtRp(row.actual?.gross_before_discount)} />
+      </div>
 
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <GlassCard className="p-3"><p className="text-[10px] text-muted-foreground">Omzet produk</p>
-              <p className="text-sm font-bold">{fmtRp(row.actual?.revenue_product)}</p></GlassCard>
-            <GlassCard className="p-3"><p className="text-[10px] text-muted-foreground">Order amount</p>
-              <p className="text-sm font-bold">{fmtRp(row.actual?.revenue_order_amount)}</p></GlassCard>
-            <GlassCard className="p-3"><p className="text-[10px] text-muted-foreground">Diskon penjual</p>
-              <p className="text-sm font-bold">{fmtRp(row.actual?.seller_discount)}</p></GlassCard>
-            <GlassCard className="p-3"><p className="text-[10px] text-muted-foreground">Harga coret (bruto)</p>
-              <p className="text-sm font-bold">{fmtRp(row.actual?.gross_before_discount)}</p></GlassCard>
-          </div>
+      <dl className="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
+        <BarisDetail label="Capaian / pace">{pct(ach.revenue_pct)} / {pct(ach.pace_pct)}</BarisDetail>
+        <BarisDetail label="Target s.d. hari ini"><span className="tabular-nums">{fmtRp(ach.prorata_target)}</span></BarisDetail>
+        <BarisDetail label="Proyeksi akhir bulan"><span className="tabular-nums">{fmtRp(ach.run_rate)}</span></BarisDetail>
+        <BarisDetail label="Pesanan">{fmtNum(row.actual?.orders)}{row.target?.orders ? ` dari target ${fmtNum(row.target.orders)}` : ''} · {fmtNum(row.actual?.units)} unit</BarisDetail>
+        <BarisDetail label="Rata-rata per pesanan"><span className="tabular-nums">{fmtRp(row.actual?.aov)}</span></BarisDetail>
+        <BarisDetail label="Sisa anggaran"><span className="tabular-nums">{fmtRp(b.total_remaining)} ({pct(b.total_used_pct)} terpakai)</span></BarisDetail>
+      </dl>
 
-          {/* ── SESI #9 — RETUR: dua angka omzet berdampingan ──────────────── */}
-          <div className="rounded-md border border-border p-3" data-testid="cycle-detail-returns">
-            <p className="text-xs font-semibold mb-1">Omzet bruto vs omzet setelah retur</p>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              <div>
-                <p className="text-[10px] text-muted-foreground">Omzet bruto (dipakai target)</p>
-                <p className="text-sm font-bold">{fmtRp(row.actual?.revenue_gross ?? row.actual?.revenue)}</p>
-              </div>
-              <div>
-                <p className="text-[10px] text-muted-foreground">Pesanan retur</p>
-                <p className="text-sm font-bold">{fmtNum(row.actual?.returned_orders)}
-                  <span className="text-[10px] text-muted-foreground"> · {fmtNum(row.actual?.returned_units)} pcs</span>
-                </p>
-              </div>
-              <div>
-                <p className="text-[10px] text-muted-foreground">Nilai retur</p>
-                <p className="text-sm font-bold text-amber-700 dark:text-amber-300">
-                  {fmtRp(row.actual?.returned_amount)}
-                  <span className="text-[10px] text-muted-foreground"> ({pct(row.actual?.returns_pct)})</span>
-                </p>
-              </div>
-              <div>
-                <p className="text-[10px] text-muted-foreground">Omzet setelah retur</p>
-                <p className="text-sm font-bold">{fmtRp(row.actual?.revenue_net_returns)}</p>
-              </div>
-            </div>
-            <p className="text-[11px] text-muted-foreground mt-1.5">
-              {row.returns?.label_gross}
-            </p>
-            <p className="text-[11px] text-muted-foreground">
-              {row.returns?.label_net}
-            </p>
-            {row.returns?.coverage?.complete === false && (
-              <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-1">
-                Cakupan data retur {pct(row.returns?.coverage?.coverage_pct)} hari
-                ({fmtNum(row.returns?.coverage?.days_known)}/{fmtNum(row.returns?.coverage?.days_total)}) —
-                hari yang rekapnya diimpor/diketik tidak membawa informasi retur, jadi
-                nilai retur di atas adalah <b>batas bawah</b>, bukan angka final.
-              </p>
-            )}
-            {row.returns?.over_returned && (
-              <p className="text-[11px] text-red-600 mt-1">
-                Nilai retur MELEBIHI omzet bulan ini — biasanya pesanannya dibuat bulan
-                sebelumnya lalu diretur bulan ini.
-              </p>
-            )}
-          </div>
-
-          <div>
-            <p className="text-xs font-semibold mb-1">Anggaran per kategori — rencana vs realisasi</p>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs" data-testid="cycle-detail-budget-table">
-                <thead className="bg-muted/50">
-                  <tr>
-                    {['Kategori', 'Sumber', 'Rencana', 'Terpakai', 'Manual', 'Auto', 'Sisa', 'Pakai %', 'Bukti']
-                      .map((h) => <th key={h} className="px-2 py-1.5 text-left font-semibold whitespace-nowrap">{h}</th>)}
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {(b.categories || []).map((c) => (
-                    <tr key={c.category} data-testid={`cycle-detail-cat-${c.category}`}>
-                      <td className="px-2 py-1.5">{CAT_LABEL[c.category] || c.category}</td>
-                      <td className="px-2 py-1.5">
-                        <Badge variant="outline" className="text-[9px]">{c.mode}</Badge>
-                      </td>
-                      <td className="px-2 py-1.5">{fmtRp(c.plan)}</td>
-                      <td className="px-2 py-1.5 font-semibold">{fmtRp(c.spend)}</td>
-                      <td className="px-2 py-1.5">{fmtRp(c.manual)}</td>
-                      <td className="px-2 py-1.5">{fmtRp(c.auto)}</td>
-                      <td className={`px-2 py-1.5 ${c.variance < 0 ? 'text-red-600' : ''}`}>{fmtRp(c.variance)}</td>
-                      <td className="px-2 py-1.5">{pct(c.used_pct)}</td>
-                      <td className="px-2 py-1.5 text-muted-foreground">{src[c.category]?.evidence || '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-3">
-            <div className="rounded-md border border-border p-3">
-              <p className="text-xs font-semibold mb-1">Marjin kotor</p>
-              <p className="text-sm">{fmtRp(m.gross_profit)} · {pct(m.gross_margin_pct)}</p>
-              <p className="text-[11px] text-muted-foreground mt-1">
-                HPP {fmtRp(m.hpp)} · cakupan HPP <b>{pct(m.hpp_coverage_pct)}</b>
-                {' '}({fmtNum(m.units_covered)}/{fmtNum(m.units_total)} unit)
-              </p>
-              {!m.trustworthy && (
-                <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-1">
-                  Cakupan HPP di bawah 80% — marjin ini belum bisa dipercaya untuk mengambil keputusan harga.
-                </p>
-              )}
-            </div>
-            <div className="rounded-md border border-border p-3">
-              <p className="text-xs font-semibold mb-1">ROI</p>
-              <p className="text-sm">
-                ROAS {Number(row.roi?.roas || 0).toFixed(2)}
-                {' · '}
-                {row.roi?.reliable
-                  ? `ROI ${pct(row.roi?.roi_pct)}`
-                  : <span className="text-muted-foreground">ROI belum bisa dihitung</span>}
-              </p>
-              <p className="text-[11px] text-muted-foreground mt-1">
-                Belanja {fmtRp(row.roi?.spend)} = {pct(row.roi?.spend_of_revenue_pct)} dari omzet
-              </p>
-              {!row.roi?.reliable && row.roi?.reliability_note && (
-                <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-1"
-                  data-testid="cycle-roi-note">{row.roi.reliability_note}</p>
-              )}
-            </div>
-          </div>
-
-          {(row.flags || []).length > 0 && (
-            <div className="space-y-1" data-testid="cycle-detail-flags">
-              <p className="text-xs font-semibold">Peringatan</p>
-              {(row.flags || []).map((f, i) => (
-                <div key={i} className="flex items-start gap-2 text-[11px]">
-                  <SevBadge severity={f.severity}>{f.code}</SevBadge>
-                  <span className="text-foreground">{f.title} — {f.message}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <ChangeLogPanel accountId={row.account.id} period={period} token={token} />
-
-          <div className="rounded-md border border-border bg-muted/40 p-3" data-testid="cycle-detail-notes">
-            <p className="text-xs font-semibold mb-1 flex items-center gap-1">
-              <Info size={12} /> Catatan kejujuran data
-            </p>
-            <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-muted-foreground">
-              {(row.data_notes || []).map((n, i) => <li key={i}>{n}</li>)}
-            </ul>
-          </div>
+      {/* ── SESI #9 — RETUR: dua angka omzet berdampingan ──────────────── */}
+      <div className="space-y-2" data-testid="cycle-detail-returns">
+        <p className="text-sm font-medium text-foreground">Omzet bruto vs omzet setelah retur</p>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <StatTile label="Omzet bruto (dipakai target)" value={fmtRp(row.actual?.revenue_gross ?? row.actual?.revenue)} />
+          <StatTile label="Pesanan retur" value={fmtNum(row.actual?.returned_orders)} sub={`${fmtNum(row.actual?.returned_units)} pcs`} />
+          <StatTile label="Nilai retur" value={fmtRp(row.actual?.returned_amount)} sub={pct(row.actual?.returns_pct)}
+            accent={(row.actual?.returned_amount || 0) > 0 ? 'warning' : 'default'} />
+          <StatTile label="Omzet setelah retur" value={fmtRp(row.actual?.revenue_net_returns)} />
         </div>
-      </DialogContent>
-    </Dialog>
+        {row.returns?.label_gross && <p className="text-sm text-muted-foreground">{row.returns.label_gross}</p>}
+        {row.returns?.label_net && <p className="text-sm text-muted-foreground">{row.returns.label_net}</p>}
+        {row.returns?.coverage?.complete === false && (
+          <Notice tone="warning">
+            Cakupan data retur {pct(row.returns?.coverage?.coverage_pct)} hari ({fmtNum(row.returns?.coverage?.days_known)}/{fmtNum(row.returns?.coverage?.days_total)}) —
+            hari yang rekapnya diimpor/diketik tidak membawa informasi retur, jadi nilai retur di atas adalah batas bawah, bukan angka final.
+          </Notice>
+        )}
+        {row.returns?.over_returned && (
+          <Notice tone="danger">Nilai retur MELEBIHI omzet bulan ini — biasanya pesanannya dibuat bulan sebelumnya lalu diretur bulan ini.</Notice>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-medium text-foreground">Anggaran per kategori — rencana vs realisasi</p>
+          <TombolUnduh namaBerkas={`anggaran-${row.account.account_code}-${period}`} namaLembar="Anggaran per kategori" baris={b.categories || []}
+            testId="cycle-detail-budget-unduh"
+            kolom={[
+              { label: 'Kategori', nilai: (c) => CAT_LABEL[c.category] || c.category },
+              { label: 'Sumber', nilai: (c) => (c.mode === 'auto' ? 'Otomatis' : 'Manual') },
+              { label: 'Rencana (Rp)', nilai: (c) => c.plan ?? 0 },
+              { label: 'Terpakai (Rp)', nilai: (c) => c.spend ?? 0 },
+              { label: 'Manual (Rp)', nilai: (c) => c.manual ?? 0 },
+              { label: 'Otomatis (Rp)', nilai: (c) => c.auto ?? 0 },
+              { label: 'Sisa (Rp)', nilai: (c) => c.variance ?? 0 },
+              { label: 'Pakai (%)', nilai: (c) => c.used_pct ?? 0 },
+              { label: 'Bukti', nilai: (c) => src[c.category]?.evidence || '' },
+            ]} />
+        </div>
+        <div className="overflow-x-auto">
+          <Table data-testid="cycle-detail-budget-table">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Kategori</TableHead>
+                <TableHead>Sumber</TableHead>
+                <TableHead className="text-right">Rencana</TableHead>
+                <TableHead className="text-right">Terpakai</TableHead>
+                <TableHead className="hidden text-right md:table-cell">Manual</TableHead>
+                <TableHead className="hidden text-right md:table-cell">Otomatis</TableHead>
+                <TableHead className="text-right">Sisa</TableHead>
+                <TableHead className="text-right">Pakai</TableHead>
+                <TableHead className="hidden lg:table-cell">Bukti</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(b.categories || []).map((c) => (
+                <TableRow key={c.category} data-testid={`cycle-detail-cat-${c.category}`}>
+                  <TableCell>{CAT_LABEL[c.category] || c.category}</TableCell>
+                  <TableCell><StatusBadge status={c.mode} label={c.mode === 'auto' ? 'Otomatis' : 'Manual'} tone="muted" /></TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtRp(c.plan)}</TableCell>
+                  <TableCell className="text-right font-medium tabular-nums">{fmtRp(c.spend)}</TableCell>
+                  <TableCell className="hidden text-right tabular-nums md:table-cell">{fmtRp(c.manual)}</TableCell>
+                  <TableCell className="hidden text-right tabular-nums md:table-cell">{fmtRp(c.auto)}</TableCell>
+                  <TableCell className={`text-right tabular-nums ${c.variance < 0 ? 'text-[hsl(var(--danger-text))]' : ''}`}>{fmtRp(c.variance)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{pct(c.used_pct)}</TableCell>
+                  <TableCell className="hidden text-muted-foreground lg:table-cell">{src[c.category]?.evidence || '—'}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+
+      <dl className="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
+        <BarisDetail label="Marjin kotor">
+          {fmtRp(m.gross_profit)} · {pct(m.gross_margin_pct)}
+          <span className="block text-muted-foreground">HPP {fmtRp(m.hpp)} · cakupan HPP {pct(m.hpp_coverage_pct)} ({fmtNum(m.units_covered)}/{fmtNum(m.units_total)} unit)</span>
+          {!m.trustworthy && <span className="block text-[hsl(var(--warning-text))]">Cakupan HPP di bawah 80% — marjin ini belum bisa dipercaya untuk keputusan harga.</span>}
+        </BarisDetail>
+        <BarisDetail label="ROAS / ROI">
+          ROAS {Number(row.roi?.roas || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })}
+          {' · '}{row.roi?.reliable ? `ROI ${pct(row.roi?.roi_pct)}` : <span className="text-muted-foreground">ROI belum bisa dihitung</span>}
+          <span className="block text-muted-foreground">Belanja {fmtRp(row.roi?.spend)} = {pct(row.roi?.spend_of_revenue_pct)} dari omzet</span>
+          {!row.roi?.reliable && row.roi?.reliability_note && (
+            <span className="block text-[hsl(var(--warning-text))]" data-testid="cycle-roi-note">{row.roi.reliability_note}</span>
+          )}
+        </BarisDetail>
+      </dl>
+
+      {(row.flags || []).length > 0 && (
+        <div className="space-y-1" data-testid="cycle-detail-flags">
+          <p className="text-sm font-medium text-foreground">Peringatan</p>
+          {(row.flags || []).map((f, i) => (
+            <div key={i} className="flex items-start gap-2 text-sm">
+              <SevBadge severity={f.severity}>{FLAG_SHORT[f.code] || f.title}</SevBadge>
+              <span className="text-foreground">{f.title} — {f.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <ChangeLogPanel accountId={row.account.id} period={period} token={token} />
+
+      <Notice tone="info" icon={Info} title="Catatan kejujuran data" testId="cycle-detail-notes">
+        <ul className="list-disc space-y-0.5 pl-4">
+          {(row.data_notes || []).map((n, i) => <li key={i}>{n}</li>)}
+        </ul>
+      </Notice>
+    </DetailPopup>
   );
 }
 
@@ -598,7 +468,7 @@ export default function CycleView({ token, period, monthLabel, scope = 'marketin
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState(() => {
-    try { return localStorage.getItem(VIEW_KEY) || 'table'; } catch { return 'table'; }
+    try { return VIEWS[localStorage.getItem(VIEW_KEY)] || 'table'; } catch { return 'table'; }
   });
   const [onlyAttention, setOnlyAttention] = useState(false);
   const [target, setTarget] = useState(null);
@@ -614,7 +484,7 @@ export default function CycleView({ token, period, monthLabel, scope = 'marketin
     try {
       const res = await fetch(`${API}/api/marketing/cycle/overview?period=${period}`,
         { headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(`kode ${res.status}`);
       setData(await res.json());
     } catch (e) {
       toast.error(`Gagal memuat siklus: ${e.message}`);
@@ -632,180 +502,154 @@ export default function CycleView({ token, period, monthLabel, scope = 'marketin
 
   const t = data?.totals || {};
   const prog = data?.progress || {};
+  const diAtasPace = (t.revenue_pct || 0) >= (t.pace_pct || 0);
 
-  const exportCsv = () => {
-    const head = ['Toko', 'Kode', 'Platform', 'Kunci', 'Target omzet', 'Omzet produk',
-      'Omzet order amount', 'Nilai retur', 'Pesanan retur', 'Omzet setelah retur',
-      'Capaian %', 'Pace %', 'Target prorata', 'Proyeksi akhir bulan',
-      'Pesanan', 'Target pesanan', 'Unit', 'AOV', 'Rencana anggaran', 'Terpakai', 'Sisa',
-      'Pakai %', 'Marjin %', 'Cakupan HPP %', 'ROAS', 'Peringatan'];
-    const lines = [head.join(';')];
-    (data?.rows || []).forEach((r) => {
-      lines.push([
-        r.account.account_name, r.account.account_code, r.account.platform,
-        r.locked ? 'terkunci' : 'terbuka',
-        r.target?.revenue, r.actual?.revenue_product, r.actual?.revenue_order_amount,
-        r.actual?.returned_amount, r.actual?.returned_orders, r.actual?.revenue_net_returns,
-        r.achievement?.revenue_pct, r.achievement?.pace_pct, r.achievement?.prorata_target,
-        r.achievement?.run_rate, r.actual?.orders, r.target?.orders, r.actual?.units,
-        r.actual?.aov, r.budget?.total_plan, r.budget?.total_spend, r.budget?.total_remaining,
-        r.budget?.total_used_pct, r.margin?.gross_margin_pct, r.margin?.hpp_coverage_pct,
-        r.roi?.roas, (r.flags || []).map((f) => f.code).join('|'),
-      ].join(';'));
-    });
-    const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/csv;charset=utf-8;' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `siklus-marketing-${period}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
+  // Kolom unduhan = semua kolom tabel lama (CSV lama) — kini Excel & CSV.
+  const kolomUnduh = [
+    ['Toko', (r) => r.account.account_name], ['Kode', (r) => r.account.account_code], ['Platform', (r) => r.account.platform],
+    ['Kunci', (r) => (r.locked ? 'Terkunci' : 'Terbuka')], ['Target omzet', (r) => r.target?.revenue ?? ''],
+    ['Omzet produk', (r) => r.actual?.revenue_product ?? 0], ['Omzet order amount', (r) => r.actual?.revenue_order_amount ?? 0],
+    ['Nilai retur', (r) => r.actual?.returned_amount ?? 0], ['Pesanan retur', (r) => r.actual?.returned_orders ?? 0],
+    ['Omzet setelah retur', (r) => r.actual?.revenue_net_returns ?? 0], ['Capaian %', (r) => r.achievement?.revenue_pct ?? 0],
+    ['Pace %', (r) => r.achievement?.pace_pct ?? 0], ['Target prorata', (r) => r.achievement?.prorata_target ?? 0],
+    ['Proyeksi akhir bulan', (r) => r.achievement?.run_rate ?? 0], ['Pesanan', (r) => r.actual?.orders ?? 0],
+    ['Target pesanan', (r) => r.target?.orders ?? ''], ['Unit', (r) => r.actual?.units ?? 0], ['AOV', (r) => r.actual?.aov ?? 0],
+    ['Rencana anggaran', (r) => r.budget?.total_plan ?? 0], ['Terpakai', (r) => r.budget?.total_spend ?? 0],
+    ['Sisa', (r) => r.budget?.total_remaining ?? 0], ['Pakai %', (r) => r.budget?.total_used_pct ?? 0],
+    ['Marjin %', (r) => r.margin?.gross_margin_pct ?? 0], ['Cakupan HPP %', (r) => r.margin?.hpp_coverage_pct ?? 0],
+    ['ROAS', (r) => r.roi?.roas ?? 0], ['Peringatan', (r) => (r.flags || []).map((f) => FLAG_SHORT[f.code] || f.title).join(' | ')],
+  ].map(([label, nilai]) => ({ label, nilai }));
 
-  const HEADS = ['Toko', 'Kunci', 'Target omzet', 'Omzet produk', 'Omzet order amount',
-    'Nilai retur', 'Setelah retur',
-    'Capaian', 'Pace', 'Target s/d hari ini', 'Proyeksi akhir bulan', 'Pesanan', 'Unit',
-    'AOV', 'Rencana anggaran', 'Terpakai', 'Sisa', 'Pakai %', 'Marjin %', 'Cakupan HPP',
-    'ROAS', 'Peringatan', 'Aksi'];
+  const aksiBaris = (r) => (
+    <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+      <Button size="sm" variant="outline" onClick={() => setTarget(r)} data-testid={`cycle-set-target-${r.account.account_code}`}>
+        <Target />Target
+      </Button>
+      <Button size="sm" variant="outline" onClick={() => setBudget(r)} data-testid={`cycle-set-budget-${r.account.account_code}`}>
+        <Wallet />Anggaran
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="icon-sm" variant="ghost" title="Lainnya" aria-label="Lainnya" data-testid={`cycle-more-${r.account.account_code}`}>
+            <MoreHorizontal />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => setLockRow(r)} data-testid={`cycle-lock-${r.account.account_code}`}>
+            {r.locked ? <Unlock className="mr-2 h-4 w-4" /> : <Lock className="mr-2 h-4 w-4" />}{r.locked ? 'Buka periode' : 'Tutup periode'}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setDetail(r)} data-testid={`cycle-detail-${r.account.account_code}`}>
+            <Eye className="mr-2 h-4 w-4" />Lihat detail
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+
+  const bendera = (r, maks = 2) => ((r.flags || []).length === 0
+    ? <span className="inline-flex items-center gap-1 whitespace-nowrap text-sm text-[hsl(var(--success-text))]"><CheckCircle2 className="h-3.5 w-3.5" />aman</span>
+    : (
+      <span className="flex flex-wrap gap-1">
+        {(r.flags || []).slice(0, maks).map((f, i) => (
+          <span key={i} title={`${f.title} — ${f.message}`} className="whitespace-nowrap">
+            <SevBadge severity={f.severity}>{FLAG_SHORT[f.code] || f.title}</SevBadge>
+          </span>
+        ))}
+        {(r.flags || []).length > maks && (
+          <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={(e) => { e.stopPropagation(); setDetail(r); }}
+            title={(r.flags || []).slice(maks).map((f) => f.title).join(' · ')} data-testid={`cycle-flags-more-${r.account.account_code}`}>
+            +{(r.flags || []).length - maks} lagi
+          </Button>
+        )}
+      </span>
+    ));
 
   return (
     <div className="space-y-4" data-testid="cycle-view">
-      {/* ── KPI gabungan ─────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3" data-testid="cycle-kpi">
-        <GlassCard className="p-4">
-          <p className="text-xs text-muted-foreground">Target omzet</p>
-          <p className="text-base font-bold">{fmtRp(t.target_revenue)}</p>
-          <p className="text-[10px] text-muted-foreground">
-            {t.accounts_with_target || 0}/{t.accounts || 0} toko punya target
-          </p>
-        </GlassCard>
-        <GlassCard className="p-4">
-          <p className="text-xs text-muted-foreground">Omzet produk</p>
-          <p className="text-base font-bold">{fmtRp(t.revenue_product)}</p>
-          <p className="text-[10px] text-muted-foreground">order amount {fmtRp(t.revenue_order_amount)}</p>
-        </GlassCard>
-        {/* SESI #9 — kartu BARU. Bruto di kartu sebelah TIDAK berubah; ini angka
-            kedua yang diminta pemilik (omzet sesudah barang diretur). */}
-        <GlassCard className="p-4" data-testid="cycle-kpi-returns">
-          <p className="text-xs text-muted-foreground">Setelah retur</p>
-          <p className="text-base font-bold">{fmtRp(t.revenue_net_returns)}</p>
-          <p className="text-[10px] text-muted-foreground">
-            {(t.returned_orders || 0) > 0
-              ? <>retur {fmtNum(t.returned_orders)} pesanan · {fmtRp(t.returned_amount)} ({pct(t.returns_pct)})</>
-              : 'tidak ada retur bulan ini'}
-          </p>
-          {t.returns_coverage_complete === false && (
-            <p className="text-[10px] text-amber-700 dark:text-amber-300 mt-0.5">
-              ada hari yang rekapnya diimpor/diketik ⇒ retur BELUM DIKETAHUI (bukan nol)
-            </p>
-          )}
-        </GlassCard>
-        <GlassCard className={`p-4 ${(t.revenue_pct || 0) >= (t.pace_pct || 0)
-          ? 'border-emerald-400 dark:border-emerald-500/30' : 'border-amber-400 dark:border-amber-500/30'}`}>
-          <p className="text-xs text-muted-foreground">Capaian vs pace</p>
-          <p className="text-base font-bold">{pct(t.revenue_pct)} <span className="text-xs text-muted-foreground">/ {pct(t.pace_pct)}</span></p>
-          <Bar value={t.revenue_pct} reference={t.pace_pct} />
-        </GlassCard>
-        <GlassCard className="p-4">
-          <p className="text-xs text-muted-foreground">Anggaran terpakai</p>
-          <p className="text-base font-bold">{fmtRp(t.total_spend)}</p>
-          <p className="text-[10px] text-muted-foreground">dari rencana {fmtRp(t.total_plan)} · {pct(t.total_used_pct)}</p>
-        </GlassCard>
-        <GlassCard className="p-4">
-          <p className="text-xs text-muted-foreground">Marjin kotor</p>
-          <p className="text-base font-bold">{fmtRp(t.gross_profit)}</p>
-          <p className="text-[10px] text-muted-foreground">cakupan HPP {pct(t.hpp_coverage_pct)}</p>
-        </GlassCard>
-        <GlassCard className="p-4">
-          <p className="text-xs text-muted-foreground">Sisa hari bulan ini</p>
-          <p className="text-base font-bold">
-            {Math.max((prog.days_total || 0) - (prog.days_elapsed || 0), 0)} hari
-          </p>
-          <p className="text-[10px] text-muted-foreground">
-            {prog.days_elapsed}/{prog.days_total} hari berjalan · {monthLabel}
-          </p>
-        </GlassCard>
+      {/* ── KPI gabungan: 4 kartu + 1 kalimat ─────────────────────────────── */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="cycle-kpi" data-konten-utama="">
+        <StatTile label="Omzet produk" value={fmtRp(t.revenue_product)}
+          sub={`Order amount ${fmtRp(t.revenue_order_amount)} · target ${fmtRp(t.target_revenue)} (${t.accounts_with_target || 0}/${t.accounts || 0} toko punya target)`} />
+        {/* SESI #9 — omzet sesudah retur berdampingan dengan bruto */}
+        <StatTile testId="cycle-kpi-returns" label="Setelah retur" value={fmtRp(t.revenue_net_returns)}
+          sub={t.returns_coverage_complete === false
+            ? 'Ada hari yang rekapnya diimpor/diketik ⇒ retur BELUM DIKETAHUI (bukan nol)'
+            : (t.returned_orders || 0) > 0
+              ? `Retur ${fmtNum(t.returned_orders)} pesanan · ${fmtRp(t.returned_amount)} (${pct(t.returns_pct)})`
+              : 'Tidak ada retur bulan ini'}
+          subTone={t.returns_coverage_complete === false ? 'warning' : undefined} />
+        <StatTile label="Capaian vs pace" value={`${pct(t.revenue_pct)} / ${pct(t.pace_pct)}`}
+          accent={t.target_revenue ? (diAtasPace ? 'success' : 'warning') : 'default'}
+          sub={t.target_revenue ? (diAtasPace ? 'Di atas pace target' : 'Di bawah pace target') : 'Belum ada target omzet'} />
+        <StatTile label="Anggaran terpakai" value={fmtRp(t.total_spend)} sub={`dari rencana ${fmtRp(t.total_plan)} · ${pct(t.total_used_pct)}`} />
       </div>
+      <p className="text-sm text-muted-foreground" data-testid="cycle-label">
+        Marjin kotor {fmtRp(t.gross_profit)} (cakupan HPP {pct(t.hpp_coverage_pct)}) · sisa {Math.max((prog.days_total || 0) - (prog.days_elapsed || 0), 0)} hari
+        ({prog.days_elapsed || 0}/{prog.days_total || 0} hari berjalan, {monthLabel}).{data?.label ? ` ${data.label}` : ''}
+      </p>
 
-      {/* label kejujuran + toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[11px] text-muted-foreground max-w-2xl" data-testid="cycle-label">
-          {data?.label}
-        </p>
-        <div className="flex items-center gap-1.5">
-          <Button size="sm" variant={onlyAttention ? 'default' : 'outline'} className="h-8 text-xs"
-            onClick={() => setOnlyAttention((v) => !v)} data-testid="cycle-filter-attention">
-            <AlertTriangle size={12} className="mr-1" />
-            Hanya perlu perhatian ({(data?.attention || []).length})
-          </Button>
-          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={exportCsv}
-            data-testid="cycle-export-csv">
-            <Download size={12} className="mr-1" /> CSV
-          </Button>
-          <div className="flex rounded-md border border-border overflow-hidden">
-            <button type="button" onClick={() => setView('table')} data-testid="cycle-view-table"
-              className={`px-2 py-1.5 text-xs flex items-center gap-1 ${view === 'table'
-                ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-              <Table2 size={12} /> Tabel
-            </button>
-            <button type="button" onClick={() => setView('grid')} data-testid="cycle-view-grid"
-              className={`px-2 py-1.5 text-xs flex items-center gap-1 ${view === 'grid'
-                ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-              <LayoutGrid size={12} /> Kartu
-            </button>
-          </div>
-          <Button size="sm" variant="outline" className="h-8" onClick={load} disabled={loading}
-            data-testid="cycle-refresh">
-            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+      {/* ── baris alat ──────────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <FilterChips testId="cycle-filter" hideWhenEmpty={false} value={onlyAttention ? 'perhatian' : ''}
+          onChange={(k) => setOnlyAttention(k === 'perhatian')} ariaLabel="Saring toko"
+          options={[{ key: '', label: 'Semua toko', count: (data?.rows || []).length },
+            { key: 'perhatian', label: 'Perlu perhatian', count: (data?.attention || []).length }]} />
+        <div className="ml-auto flex items-center gap-2">
+          <TombolUnduh namaBerkas={`siklus-marketing-${period}`} namaLembar="Siklus marketing" baris={data?.rows || []} kolom={kolomUnduh}
+            testId="cycle-export-csv" />
+          <ViewToggle value={view} onChange={setView} testId="cycle-view" />
+          <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid="cycle-refresh">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
           </Button>
         </div>
       </div>
 
       {/* papan perlu perhatian — diurutkan backend (merah dulu) */}
       {(data?.attention || []).length > 0 && (
-        <Card data-testid="cycle-attention-board">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-1.5">
-              <AlertTriangle size={14} className="text-amber-500" />
-              Perlu perhatian — {t.flags_red || 0} merah · {t.flags_yellow || 0} kuning
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0 space-y-1.5">
-            {(data.attention || []).slice(0, 8).map((a) => (
-              <button key={a.account_id} type="button"
-                onClick={() => setDetail((data.rows || []).find((r) => r.account.id === a.account_id))}
-                className="w-full text-left rounded-md border border-border bg-background hover:bg-muted/40 px-3 py-2"
-                data-testid={`cycle-attention-${a.account_code}`}>
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <span className="text-xs font-semibold text-foreground">{a.account_name}</span>
-                  <span className="flex flex-wrap gap-1">
-                    {a.flags.map((f, i) => <SevBadge key={i} severity={f.severity}>{f.title}</SevBadge>)}
-                  </span>
-                </div>
-              </button>
-            ))}
-          </CardContent>
-        </Card>
+        <GlassCard className="space-y-2 p-4" data-testid="cycle-attention-board">
+          <p className="text-base font-semibold text-foreground">
+            Perlu perhatian — {t.flags_red || 0} merah · {t.flags_yellow || 0} kuning
+          </p>
+          <Table>
+            <TableBody>
+              {(data.attention || []).slice(0, 8).map((a) => (
+                <TableRow key={a.account_id} className="cursor-pointer" data-testid={`cycle-attention-${a.account_code}`}
+                  onClick={() => setDetail((data.rows || []).find((r) => r.account.id === a.account_id))}>
+                  <TableCell className="font-medium">{a.account_name}</TableCell>
+                  <TableCell>
+                    <span className="flex flex-wrap gap-1">{a.flags.map((f, i) => <SevBadge key={i} severity={f.severity}>{f.title}</SevBadge>)}</span>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </GlassCard>
       )}
 
       {/* ── TABEL / KARTU ────────────────────────────────────────────────── */}
       {loading ? (
-        <div className="py-12 text-center text-muted-foreground text-sm">
-          <Loader2 className="mx-auto animate-spin mb-2" size={20} /> Menghitung siklus semua toko…
-        </div>
+        <p className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />Menghitung siklus semua toko…
+        </p>
       ) : !rows.length ? (
-        <div className="py-12 text-center text-muted-foreground text-sm" data-testid="cycle-empty">
-          {onlyAttention ? 'Tidak ada toko yang perlu perhatian bulan ini.'
-            : 'Belum ada toko aktif untuk periode ini.'}
-        </div>
+        <EmptyState testId="cycle-empty" title={onlyAttention ? 'Tidak ada toko yang perlu perhatian bulan ini' : 'Belum ada toko aktif untuk periode ini'} />
       ) : view === 'table' ? (
-        <div className="rounded-lg border border-border overflow-x-auto bg-background">
-          <table className="w-full text-xs" data-testid="cycle-table">
-            <thead className="bg-muted/60">
-              <tr>{HEADS.map((h) => (
-                <th key={h} className="px-2.5 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
-              ))}</tr>
-            </thead>
-            <tbody className="divide-y [&_td]:align-top">
+        <GlassCard className="overflow-x-auto p-0">
+          <Table data-testid="cycle-table">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Toko</TableHead>
+                <TableHead className="text-right">Target omzet</TableHead>
+                <TableHead className="text-right">Omzet produk</TableHead>
+                <TableHead className="text-right">Setelah retur</TableHead>
+                <TableHead className="min-w-[110px]">Capaian / pace</TableHead>
+                <TableHead className="hidden text-right lg:table-cell">Anggaran</TableHead>
+                <TableHead className="hidden text-right xl:table-cell">Marjin (cakupan HPP)</TableHead>
+                <TableHead className="hidden md:table-cell">Peringatan</TableHead>
+                <TableHead className="text-right"><span className="sr-only">Aksi</span></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {rows.map((r) => {
                 const ach = r.achievement || {};
                 const b = r.budget || {};
@@ -813,121 +657,50 @@ export default function CycleView({ token, period, monthLabel, scope = 'marketin
                 const behind = (r.flags || []).some((f) => f.code === 'target_behind');
                 const over = (b.total_spend || 0) > (b.total_plan || 0) && (b.total_plan || 0) > 0;
                 return (
-                  <tr key={r.account.id} className="hover:bg-muted/30"
+                  <TableRow key={r.account.id} className="cursor-pointer" onClick={() => setDetail(r)}
                     data-testid={`cycle-row-${r.account.account_code}`}>
-                    <td className="px-2.5 py-2">
-                      <div className="font-semibold text-foreground">{r.account.account_name}</div>
-                      <div className="text-[10px] text-muted-foreground">
-                        {r.account.account_code} · {r.account.platform}
+                    <TableCell>
+                      <div className="font-medium text-foreground">{r.account.account_name}</div>
+                      <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                        {r.account.account_code} · {r.account.platform} <Kunci locked={r.locked} />
                       </div>
-                    </td>
-                    <td className="px-2.5 py-2">
-                      {r.locked
-                        ? <Badge variant="outline" className="text-[9px] border-amber-400 text-amber-700 dark:text-amber-300">
-                          <Lock size={9} className="mr-1" />Terkunci</Badge>
-                        : <Badge variant="outline" className="text-[9px] text-muted-foreground">Terbuka</Badge>}
-                    </td>
-                    <td className="px-2.5 py-2 whitespace-nowrap">
-                      {r.target?.exists ? fmtRp(r.target.revenue)
-                        : <span className="text-muted-foreground">belum diisi</span>}
-                    </td>
-                    <td className="px-2.5 py-2 font-semibold whitespace-nowrap">{fmtRp(r.actual?.revenue_product)}</td>
-                    <td className="px-2.5 py-2 whitespace-nowrap text-muted-foreground">{fmtRp(r.actual?.revenue_order_amount)}</td>
-                    {/* SESI #9 — nilai retur & omzet setelah retur (kolom BARU) */}
-                    <td className="px-2.5 py-2 whitespace-nowrap"
-                      data-testid={`cycle-returned-${r.account.account_code}`}>
-                      {(r.actual?.returned_orders || 0) > 0
-                        ? <span className="text-amber-700 dark:text-amber-300">
-                          {fmtRp(r.actual?.returned_amount)}
-                          <span className="text-[10px] text-muted-foreground"> · {fmtNum(r.actual?.returned_orders)} pesanan</span>
-                        </span>
-                        : <span className="text-muted-foreground">—</span>}
-                    </td>
-                    <td className="px-2.5 py-2 whitespace-nowrap font-semibold"
-                      data-testid={`cycle-net-${r.account.account_code}`}>
-                      {fmtRp(r.actual?.revenue_net_returns)}
-                      {(r.actual?.returns_pct || 0) > 0 && (
-                        <span className="text-[10px] text-muted-foreground"> (−{pct(r.actual?.returns_pct)})</span>
-                      )}
-                    </td>
-                    <td className="px-2.5 py-2 min-w-[92px]">
-                      <span className={behind ? 'text-red-600 font-semibold' : 'font-semibold'}>{pct(ach.revenue_pct)}</span>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-right tabular-nums">
+                      {r.target?.exists ? fmtRp(r.target.revenue) : <span className="text-muted-foreground">belum diisi</span>}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-right tabular-nums">
+                      <div className="font-medium">{fmtRp(r.actual?.revenue_product)}</div>
+                      <div className="text-xs text-muted-foreground">order {fmtRp(r.actual?.revenue_order_amount)}</div>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-right tabular-nums" data-testid={`cycle-net-${r.account.account_code}`}>
+                      <div className="font-medium">{fmtRp(r.actual?.revenue_net_returns)}</div>
+                      <div className="text-xs text-muted-foreground" data-testid={`cycle-returned-${r.account.account_code}`}>
+                        {(r.actual?.returned_orders || 0) > 0
+                          ? `retur ${fmtRp(r.actual?.returned_amount)} · ${fmtNum(r.actual?.returned_orders)} pesanan`
+                          : 'tanpa retur'}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <span className={behind ? 'font-medium text-[hsl(var(--danger-text))]' : 'font-medium'}>{pct(ach.revenue_pct)}</span>
+                      <span className="text-xs text-muted-foreground"> / {pct(ach.pace_pct)}</span>
                       <Bar value={ach.revenue_pct} reference={ach.pace_pct} over={behind} />
-                    </td>
-                    <td className="px-2.5 py-2 text-muted-foreground">{pct(ach.pace_pct)}</td>
-                    <td className="px-2.5 py-2 whitespace-nowrap">{fmtRp(ach.prorata_target)}</td>
-                    <td className="px-2.5 py-2 whitespace-nowrap">{fmtRp(ach.run_rate)}</td>
-                    <td className="px-2.5 py-2 whitespace-nowrap">
-                      {fmtNum(r.actual?.orders)}
-                      {r.target?.orders ? <span className="text-muted-foreground"> / {fmtNum(r.target.orders)}</span> : null}
-                    </td>
-                    <td className="px-2.5 py-2">{fmtNum(r.actual?.units)}</td>
-                    <td className="px-2.5 py-2 whitespace-nowrap">{fmtRp(r.actual?.aov)}</td>
-                    <td className="px-2.5 py-2 whitespace-nowrap">{fmtRp(b.total_plan)}</td>
-                    <td className={`px-2.5 py-2 whitespace-nowrap ${over ? 'text-red-600 font-semibold' : ''}`}>{fmtRp(b.total_spend)}</td>
-                    <td className={`px-2.5 py-2 whitespace-nowrap ${(b.total_remaining || 0) < 0 ? 'text-red-600' : ''}`}>{fmtRp(b.total_remaining)}</td>
-                    <td className="px-2.5 py-2">{pct(b.total_used_pct)}</td>
-                    <td className="px-2.5 py-2">{pct(m.gross_margin_pct)}</td>
-                    <td className="px-2.5 py-2">
-                      <span className={m.trustworthy ? 'text-emerald-600' : 'text-amber-600'}>
-                        {pct(m.hpp_coverage_pct)}
-                      </span>
-                    </td>
-                    <td className="px-2.5 py-2">{Number(r.roi?.roas || 0).toFixed(2)}</td>
-                    <td className="px-2.5 py-2">
-                      <div className="flex flex-wrap gap-1 w-[168px]">
-                        {(r.flags || []).length === 0
-                          ? <span className="text-emerald-600 flex items-center gap-1 whitespace-nowrap"><CheckCircle2 size={11} /> aman</span>
-                          : <>
-                            {/* Maksimal 2 badge supaya baris tabel tidak menjadi
-                                dua kali lebih tinggi dari baris lain (4 badge yang
-                                membungkus membuat seluruh baris melebar & sulit
-                                dipindai). Sisanya diringkas "+N" dan lengkapnya
-                                ada di dialog Detail. */}
-                            {(r.flags || []).slice(0, 2).map((f, i) => (
-                              <span key={i} title={`${f.title} — ${f.message}`} className="whitespace-nowrap">
-                                <SevBadge severity={f.severity}>
-                                  {FLAG_SHORT[f.code] || f.code}
-                                </SevBadge>
-                              </span>
-                            ))}
-                            {(r.flags || []).length > 2 && (
-                              <button type="button" onClick={() => setDetail(r)}
-                                title={(r.flags || []).slice(2).map((f) => f.title).join(' · ')}
-                                className="text-[10px] underline text-muted-foreground hover:text-foreground"
-                                data-testid={`cycle-flags-more-${r.account.account_code}`}>
-                                +{(r.flags || []).length - 2} lagi
-                              </button>
-                            )}
-                          </>}
-                      </div>
-                    </td>
-                    <td className="px-2.5 py-2">
-                      <div className="flex items-center gap-1">
-                        <Button size="sm" variant="outline" className="h-6 px-1.5 text-[10px]"
-                          onClick={() => setTarget(r)} data-testid={`cycle-set-target-${r.account.account_code}`}>
-                          <Target size={10} className="mr-0.5" />Target
-                        </Button>
-                        <Button size="sm" variant="outline" className="h-6 px-1.5 text-[10px]"
-                          onClick={() => setBudget(r)} data-testid={`cycle-set-budget-${r.account.account_code}`}>
-                          <Wallet size={10} className="mr-0.5" />Anggaran
-                        </Button>
-                        <Button size="sm" variant="outline" className="h-6 px-1.5 text-[10px]"
-                          onClick={() => setLockRow(r)} data-testid={`cycle-lock-${r.account.account_code}`}>
-                          {r.locked ? <Unlock size={10} /> : <Lock size={10} />}
-                        </Button>
-                        <Button size="sm" variant="outline" className="h-6 px-1.5 text-[10px]"
-                          onClick={() => setDetail(r)} data-testid={`cycle-detail-${r.account.account_code}`}>
-                          <Eye size={10} />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                    <TableCell className="hidden whitespace-nowrap text-right tabular-nums lg:table-cell">
+                      <div className={over ? 'font-medium text-[hsl(var(--danger-text))]' : ''}>{fmtRp(b.total_spend)}</div>
+                      <div className="text-xs text-muted-foreground">dari {fmtRp(b.total_plan)}</div>
+                    </TableCell>
+                    <TableCell className="hidden whitespace-nowrap text-right tabular-nums xl:table-cell">
+                      {pct(m.gross_margin_pct)}
+                      <span className={`ml-1 text-xs ${m.trustworthy ? 'text-muted-foreground' : 'text-[hsl(var(--warning-text))]'}`}>({pct(m.hpp_coverage_pct)})</span>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">{bendera(r)}</TableCell>
+                    <TableCell className="text-right">{aksiBaris(r)}</TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </GlassCard>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" data-testid="cycle-grid">
           {rows.map((r) => {
@@ -935,70 +708,36 @@ export default function CycleView({ token, period, monthLabel, scope = 'marketin
             const b = r.budget || {};
             const behind = (r.flags || []).some((f) => f.code === 'target_behind');
             return (
-              <Card key={r.account.id} data-testid={`cycle-card-${r.account.account_code}`}>
-                <CardHeader className="pb-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <CardTitle className="text-sm">{r.account.account_name}</CardTitle>
-                      <p className="text-[10px] text-muted-foreground">
-                        {r.account.account_code} · {r.account.platform}
-                      </p>
-                    </div>
-                    {r.locked
-                      ? <Badge variant="outline" className="text-[9px] border-amber-400 text-amber-700 dark:text-amber-300">Terkunci</Badge>
-                      : <Badge variant="outline" className="text-[9px] text-muted-foreground">Terbuka</Badge>}
+              <GlassCard key={r.account.id} className="space-y-2 p-4" data-testid={`cycle-card-${r.account.account_code}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="font-medium text-foreground">{r.account.account_name}</p>
+                    <p className="text-xs text-muted-foreground">{r.account.account_code} · {r.account.platform}</p>
                   </div>
-                </CardHeader>
-                <CardContent className="space-y-1.5 text-[11px]">
-                  <div className="flex justify-between"><span className="text-muted-foreground">Target</span>
-                    <span>{r.target?.exists ? fmtRp(r.target.revenue) : 'belum diisi'}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Omzet produk</span>
-                    <span className="font-semibold">{fmtRp(r.actual?.revenue_product)}</span></div>
-                  {/* SESI #9 — retur juga terlihat pada tampilan kartu */}
-                  <div className="flex justify-between"><span className="text-muted-foreground">Setelah retur</span>
-                    <span className="font-semibold">
-                      {fmtRp(r.actual?.revenue_net_returns)}
-                      {(r.actual?.returned_orders || 0) > 0 && (
-                        <span className="text-[10px] text-amber-700 dark:text-amber-300">
-                          {' '}(retur {fmtNum(r.actual?.returned_orders)} · {fmtRp(r.actual?.returned_amount)})
-                        </span>
-                      )}
-                    </span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Capaian / pace</span>
-                    <span className={behind ? 'text-red-600 font-semibold' : ''}>
-                      {pct(ach.revenue_pct)} / {pct(ach.pace_pct)}</span></div>
+                  <Kunci locked={r.locked} />
+                </div>
+                <dl className="space-y-1 text-sm">
+                  <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Target</dt>
+                    <dd className="tabular-nums">{r.target?.exists ? fmtRp(r.target.revenue) : 'belum diisi'}</dd></div>
+                  <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Omzet produk</dt>
+                    <dd className="font-medium tabular-nums">{fmtRp(r.actual?.revenue_product)}</dd></div>
+                  <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Order amount</dt>
+                    <dd className="tabular-nums">{fmtRp(r.actual?.revenue_order_amount)}</dd></div>
+                  <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Setelah retur</dt>
+                    <dd className="font-medium tabular-nums">{fmtRp(r.actual?.revenue_net_returns)}</dd></div>
+                  <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Capaian / pace</dt>
+                    <dd className={behind ? 'font-medium text-[hsl(var(--danger-text))]' : ''}>{pct(ach.revenue_pct)} / {pct(ach.pace_pct)}</dd></div>
                   <Bar value={ach.revenue_pct} reference={ach.pace_pct} over={behind} />
-                  <div className="flex justify-between"><span className="text-muted-foreground">Anggaran</span>
-                    <span>{fmtRp(b.total_spend)} / {fmtRp(b.total_plan)}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Marjin (cakupan HPP)</span>
-                    <span>{pct(r.margin?.gross_margin_pct)} ({pct(r.margin?.hpp_coverage_pct)})</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">ROAS</span>
-                    <span>{Number(r.roi?.roas || 0).toFixed(2)}</span></div>
-                  <div className="flex flex-wrap gap-1 pt-1">
-                    {(r.flags || []).length === 0
-                      ? <span className="text-emerald-600 text-[10px] flex items-center gap-1"><CheckCircle2 size={10} /> aman</span>
-                      : (r.flags || []).map((f, i) => (
-                        <span key={i} title={f.message}>
-                          <SevBadge severity={f.severity}>{f.title}</SevBadge>
-                        </span>
-                      ))}
-                  </div>
-                  <div className="flex flex-wrap gap-1 pt-1.5">
-                    <Button size="sm" variant="outline" className="h-6 px-1.5 text-[10px]" onClick={() => setTarget(r)}>
-                      <Target size={10} className="mr-0.5" />Target
-                    </Button>
-                    <Button size="sm" variant="outline" className="h-6 px-1.5 text-[10px]" onClick={() => setBudget(r)}>
-                      <Wallet size={10} className="mr-0.5" />Anggaran
-                    </Button>
-                    <Button size="sm" variant="outline" className="h-6 px-1.5 text-[10px]" onClick={() => setLockRow(r)}>
-                      {r.locked ? <Unlock size={10} /> : <Lock size={10} />}
-                    </Button>
-                    <Button size="sm" variant="outline" className="h-6 px-1.5 text-[10px]" onClick={() => setDetail(r)}>
-                      <Eye size={10} />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
+                  <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Anggaran</dt>
+                    <dd className="tabular-nums">{fmtRp(b.total_spend)} / {fmtRp(b.total_plan)}</dd></div>
+                  <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Marjin (cakupan HPP)</dt>
+                    <dd>{pct(r.margin?.gross_margin_pct)} ({pct(r.margin?.hpp_coverage_pct)})</dd></div>
+                  <div className="flex justify-between gap-2"><dt className="text-muted-foreground">ROAS</dt>
+                    <dd>{Number(r.roi?.roas || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })}</dd></div>
+                </dl>
+                <div>{bendera(r, 3)}</div>
+                {aksiBaris(r)}
+              </GlassCard>
             );
           })}
         </div>
@@ -1006,30 +745,19 @@ export default function CycleView({ token, period, monthLabel, scope = 'marketin
 
       {/* ringkasan bawah — arah yang harus dibaca sebelum keluar layar */}
       {!loading && rows.length > 0 && (
-        <div className="rounded-lg border border-border bg-muted/40 p-3 text-[11px] text-muted-foreground"
-          data-testid="cycle-footer-note">
-          <p className="flex items-center gap-1 text-foreground font-semibold mb-1">
-            {(t.revenue_pct || 0) >= (t.pace_pct || 0)
-              ? <TrendingUp size={12} className="text-emerald-600" />
-              : <TrendingDown size={12} className="text-red-600" />}
-            {(t.revenue_pct || 0) >= (t.pace_pct || 0)
-              ? 'Gabungan semua toko sedang di atas pace target.'
-              : 'Gabungan semua toko sedang di bawah pace target.'}
-          </p>
-          <p>
-            Angka di layar ini dihitung backend dari satu sumber (rekap harian turunan +
-            pesanan + data iklan + shift live host). Realisasi anggaran bertanda
-            <b> auto</b> tidak ditulis sebagai entri belanja, jadi tidak akan dobel dengan
-            catatan manual. {scope === 'management' ? 'Tampilan Manajemen: semua toko.' : ''}
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground" data-testid="cycle-footer-note">
+          <span className={diAtasPace ? 'font-medium text-[hsl(var(--success-text))]' : 'font-medium text-[hsl(var(--warning-text))]'}>
+            {diAtasPace ? 'Gabungan semua toko sedang di atas pace target. ' : 'Gabungan semua toko sedang di bawah pace target. '}
+          </span>
+          Angka dihitung backend dari satu sumber (rekap harian + pesanan + data iklan + shift host live). Realisasi anggaran otomatis
+          tidak ditulis sebagai entri belanja, jadi tidak dobel dengan catatan manual.{scope === 'management' ? ' Tampilan Manajemen: semua toko.' : ''}
+        </p>
       )}
 
       <TargetDialog open={!!target} onOpenChange={(v) => !v && setTarget(null)}
         row={target} period={period} token={token} onSaved={load} />
       <BudgetDialog open={!!budget} onOpenChange={(v) => !v && setBudget(null)}
-        row={budget} period={period} token={token} onSaved={load}
-        categories={data?.categories || []} />
+        row={budget} period={period} token={token} onSaved={load} categories={data?.categories || []} />
       <LockDialog open={!!lockRow} onOpenChange={(v) => !v && setLockRow(null)}
         row={lockRow} period={period} token={token} onSaved={load} />
       <DetailDialog open={!!detail} onOpenChange={(v) => !v && setDetail(null)}

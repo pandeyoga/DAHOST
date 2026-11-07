@@ -1,54 +1,55 @@
 /**
  * BudgetAllocationTab — KEPUTUSAN #5 + F5.2
- * Budget marketing per TOKO × BULAN × KATEGORI + realisasi (spend) + compare + ROI.
+ * Anggaran marketing per TOKO × PERIODE × KATEGORI + realisasi (belanja) + perbandingan + ROI.
  *
- * F5.2 (2026-08-13): realisasi kategori `diskon`, `ads`, `komisi`, `kol`, `livehost`
- * kini DIHITUNG SISTEM dari data sumbernya, bukan diketik. Setiap angka otomatis
- * membawa **bukti** (jumlah dokumen sumber) yang ditampilkan di kolom terakhir.
- * Kategori BARU `komisi` (komisi kreator) ditambahkan: sebelumnya biaya penjualan
- * ini tidak punya tempat di rencana anggaran sama sekali.
+ * F5.2 (2026-08-13): realisasi kategori `diskon`, `ads`, `komisi`, `kol`, `livehost` DIHITUNG SISTEM dari data
+ * sumbernya; setiap angka otomatis membawa **bukti** (jumlah dokumen sumber).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): kartu angka StatTile, tabel standar + unduh Excel/CSV, pilihan SmartNativeSelect,
+ * isian (rencana anggaran, belanja manual, biaya KOL) dibuka lewat FormPopup — dulu isian langsung di halaman —
+ * dengan simpan yang sama; hapus belanja lewat konfirmasi; warna lewat token.
  */
 import { useState, useEffect, useCallback } from 'react';
-import {
-  Wallet, Save, Loader2, Plus, Trash2, TrendingUp, PieChart, Users, RefreshCw, Lock,
-} from 'lucide-react';
+import { Plus, Trash2, RefreshCw, Lock, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { GlassCard } from '@/components/ui/glass';
-import { Badge } from '@/components/ui/badge';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
 import { todayWIB, addDaysISO } from '@/lib/waktu';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmtRp = formatRupiah;
+const BLN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+const tglPendek = (ymd) => { const [y, m, d] = String(ymd || '').split('-').map(Number); return y && m && d ? `${d} ${BLN[m - 1]} ${y}` : String(ymd || ''); };
 
 const CATS = [
-  { key: 'ads',      label: 'Ads / Iklan',   hint: 'otomatis: data iklan',   color: 'bg-blue-500' },
-  { key: 'kol',      label: 'KOL / Kreator',  hint: 'otomatis: fee tetap',    color: 'bg-violet-500' },
-  { key: 'komisi',   label: 'Komisi kreator', hint: 'otomatis: % dari omzet', color: 'bg-fuchsia-500' },
+  { key: 'ads',      label: 'Iklan',          hint: 'Otomatis: data iklan' },
+  { key: 'kol',      label: 'KOL / kreator',  hint: 'Otomatis: fee tetap' },
+  { key: 'komisi',   label: 'Komisi kreator', hint: 'Otomatis: % dari omzet' },
   // sesi #34 — host live digaji BULANAN lewat payroll HR (upah per-sesi dihapus)
-  { key: 'livehost', label: 'Live Host',      hint: 'otomatis: gaji bulanan HR', color: 'bg-pink-500' },
-  { key: 'sample',   label: 'Sample',         hint: 'input manual',           color: 'bg-amber-500' },
-  { key: 'diskon',   label: 'Diskon / Promo', hint: 'otomatis: dari pesanan', color: 'bg-emerald-500' },
+  { key: 'livehost', label: 'Host live',      hint: 'Otomatis: gaji bulanan SDM' },
+  { key: 'sample',   label: 'Sampel',         hint: 'Isi manual' },
+  { key: 'diskon',   label: 'Diskon / promo', hint: 'Otomatis: dari pesanan' },
 ];
 const FEE_TYPES = [
   { v: 'none', l: 'Tidak ada' },
-  { v: 'fixed', l: 'Fee tetap (fixed rate)' },
-  { v: 'commission', l: 'Komisi (% sales)' },
-  { v: 'both', l: 'Fee + Komisi' },
+  { v: 'fixed', l: 'Fee tetap' },
+  { v: 'commission', l: 'Komisi (% penjualan)' },
+  { v: 'both', l: 'Fee tetap + komisi' },
 ];
 
 function Bar({ pct, over }) {
   return (
-    <div className="h-2 bg-muted rounded-full overflow-hidden mt-1">
-      <div className={`h-full transition-all ${over ? 'bg-red-500' : 'bg-primary'}`}
+    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--glass-bg)]">
+      <div className={`h-full transition-all ${over ? 'bg-[hsl(var(--destructive))]' : 'bg-primary'}`}
         style={{ width: `${Math.min(pct || 0, 100)}%` }} />
     </div>
   );
@@ -85,7 +86,7 @@ export default function BudgetAllocationTab({ token, accounts, period: periodPro
     const out = [];
     for (let i = 0; i < 8; i += 1) {
       const start = addDaysISO(base, -i * days);
-      out.push({ start, label: `${start} → ${addDaysISO(start, days - 1)}` });
+      out.push({ start, label: `${tglPendek(start)} – ${tglPendek(addDaysISO(start, days - 1))}` });
     }
     return out;
   })();
@@ -103,6 +104,10 @@ export default function BudgetAllocationTab({ token, accounts, period: periodPro
   const [savingBudget, setSavingBudget] = useState(false);
   const [newSpend, setNewSpend] = useState({ category: 'ads', amount: '', description: '' });
   const [addingSpend, setAddingSpend] = useState(false);
+  // Standar UI/UX v2: isian dibuka lewat popup form (dulu isian langsung di halaman).
+  const [bukaRencana, setBukaRencana] = useState(false);
+  const [bukaBelanja, setBukaBelanja] = useState(false);
+  const [kolEdit, setKolEdit] = useState(null);
 
   // default account
   useEffect(() => {
@@ -146,15 +151,16 @@ export default function BudgetAllocationTab({ token, accounts, period: periodPro
           reason: budgetReason || '' }),
       });
       if (!res.ok) throw new Error((await res.json()).detail || 'Gagal simpan budget');
-      toast.success('Budget disimpan');
+      toast.success('Rencana anggaran disimpan');
       setBudgetReason('');
       load();
-    } catch (e) { toast.error(e.message); }
+      return true;
+    } catch (e) { toast.error(e.message); return false; }
     finally { setSavingBudget(false); }
   };
 
   const addSpend = async () => {
-    if (!(parseFloat(newSpend.amount) > 0)) { toast.error('Jumlah spend harus > 0'); return; }
+    if (!(parseFloat(newSpend.amount) > 0)) { toast.error('Jumlah belanja harus lebih dari 0'); return false; }
     setAddingSpend(true);
     try {
       const res = await fetch(`${API}/api/marketing/budget/spend`, {
@@ -165,10 +171,11 @@ export default function BudgetAllocationTab({ token, accounts, period: periodPro
         }),
       });
       if (!res.ok) throw new Error((await res.json()).detail || 'Gagal catat spend');
-      toast.success('Spend dicatat');
+      toast.success('Belanja dicatat');
       setNewSpend({ category: 'ads', amount: '', description: '' });
       load();
-    } catch (e) { toast.error(e.message); }
+      return true;
+    } catch (e) { toast.error(e.message); return false; }
     finally { setAddingSpend(false); }
   };
 
@@ -176,7 +183,7 @@ export default function BudgetAllocationTab({ token, accounts, period: periodPro
     try {
       const res = await fetch(`${API}/api/marketing/budget/spend/${id}`, { method: 'DELETE', headers: authH });
       if (!res.ok) throw new Error('Gagal hapus');
-      toast.success('Spend dihapus');
+      toast.success('Catatan belanja dihapus');
       load();
     } catch (e) { toast.error(e.message); }
   };
@@ -198,277 +205,308 @@ export default function BudgetAllocationTab({ token, accounts, period: periodPro
     } catch (e) { toast.error(e.message); }
   };
 
-  const updKol = (idx, patch) => setKolList(list => list.map((k, i) =>
-    i === idx ? { ...k, cost_config: { ...(k.cost_config || {}), ...patch } } : k));
-
   const catMap = {};
   (summary?.categories || []).forEach(c => { catMap[c.category] = c; });
   const srcMap = {};
   (summary?.spend_sources || []).forEach(s => { srcMap[s.category] = s; });
+  const labelCat = (k) => CATS.find((c) => c.key === k)?.label || k;
+  const kunciTerkunci = !!summary?.locked;
+
+  const simpanRencana = async () => { await saveBudget(); setBukaRencana(false); };
+  const simpanBelanja = async () => { const ok = await addSpend(); if (ok) setBukaBelanja(false); };
+  const simpanKol = async () => {
+    if (!kolEdit) return;
+    await saveKolCost(kolEdit);
+    setKolEdit(null);
+  };
+  const hapusBelanja = async (e) => {
+    const ok = await confirmDialog({
+      title: 'Hapus catatan belanja ini?', body: `${labelCat(e.category)} ${fmtRp(e.amount)}${e.description ? ` — ${e.description}` : ''}`,
+      confirmLabel: 'Hapus', danger: true,
+    });
+    if (ok) delSpend(e.id);
+  };
 
   return (
     <div className="space-y-4" data-testid="budget-allocation-tab">
       {/* Periode terkunci: tombol Simpan akan ditolak 423 — katakan SEBELUM diklik */}
-      {summary?.locked && (
-        <div className="rounded-md border border-amber-400 dark:border-amber-500/40 bg-amber-100 dark:bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2"
-          data-testid="budget-locked-banner">
-          <Lock size={14} className="mt-0.5 shrink-0" />
-          <span>
-            Periode <b>{period}</b> untuk toko ini sudah <b>DITUTUP</b>
-            {summary.lock?.closed_by_name ? ` oleh ${summary.lock.closed_by_name}` : ''}
-            {summary.lock?.reason ? ` — alasan: ${summary.lock.reason}` : ''}.
-            Rencana anggaran & catatan belanja bulan ini tidak bisa diubah sampai periode
-            dibuka kembali (Siklus Bulan Ini → tombol kunci).
-          </span>
-        </div>
+      {kunciTerkunci && (
+        <Notice tone="warning" icon={Lock} testId="budget-locked-banner">
+          Periode <b>{period}</b> untuk toko ini sudah <b>ditutup</b>
+          {summary.lock?.closed_by_name ? ` oleh ${summary.lock.closed_by_name}` : ''}
+          {summary.lock?.reason ? ` — alasan: ${summary.lock.reason}` : ''}.
+          Rencana anggaran & catatan belanja tidak bisa diubah sampai periode dibuka kembali (Siklus bulan ini → Lainnya → Buka periode).
+        </Notice>
       )}
-      {/* Account selector */}
-      <div className="flex items-center gap-3 flex-wrap">
-        {/* SESI #34 — pemilih PERIODE 7 HARI (default). Mode bulanan tetap ada,
-            dipilih di Setelan; kalau mode bulanan, pemilih ini tidak muncul dan
-            periode diambil dari halaman induk seperti sebelumnya. */}
-        {weekly && (
-          <div className="min-w-[240px]" data-testid="budget-week-picker-wrap">
-            <Label className="text-xs text-muted-foreground">
-              Periode {pSettings?.period_days || 7} hari
-            </Label>
-            <Select value={weekStart} onValueChange={setWeekStart}>
-              <SelectTrigger className="h-9 mt-1" data-testid="budget-week-select">
-                <SelectValue placeholder="Pilih periode" />
-              </SelectTrigger>
-              <SelectContent>
-                {weekOptions.map((w) => (
-                  <SelectItem key={w.start} value={w.start}>{w.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
 
-        <div className="min-w-[240px]">
-          <Label className="text-xs text-muted-foreground">Akun Toko</Label>
-          <Select value={accountId} onValueChange={setAccountId}>
-            <SelectTrigger className="h-9 mt-1" data-testid="budget-account-select">
-              <SelectValue placeholder="Pilih akun" />
-            </SelectTrigger>
-            <SelectContent>
-              {(accounts || []).map(a => (
-                <SelectItem key={a.id} value={a.id}>{a.account_name} · {a.platform}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <Badge variant="outline" className="mt-5">{monthLabel}</Badge>
-        <Button variant="outline" size="sm" className="mt-5" onClick={load} disabled={loading}>
-          <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+      {/* Pilihan periode & toko — satu baris */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* SESI #34 — pemilih PERIODE 7 HARI (default). Mode bulanan tetap ada (Setelan); kalau bulanan, pemilih
+            ini tidak muncul dan periode diambil dari halaman induk. */}
+        {weekly && (
+          <SmartNativeSelect value={weekStart} onChange={(e) => setWeekStart(e.target.value)} searchable={false}
+            className="h-9 w-64" aria-label={`Periode ${pSettings?.period_days || 7} hari`} data-testid="budget-week-select">
+            {weekOptions.map((w) => <option key={w.start} value={w.start}>{w.label}</option>)}
+          </SmartNativeSelect>
+        )}
+        <SmartNativeSelect value={accountId} onChange={(e) => setAccountId(e.target.value)} className="h-9 w-56"
+          aria-label="Akun toko" data-testid="budget-account-select">
+          {(accounts || []).map((a) => <option key={a.id} value={a.id}>{a.account_name} · {a.platform}</option>)}
+        </SmartNativeSelect>
+        {!weekly && <span className="text-sm text-muted-foreground">{monthLabel}</span>}
+        <Button variant="outline" size="icon" className="ml-auto" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
       </div>
 
-      {/* Summary cards */}
       {summary && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="budget-summary-cards">
-          <GlassCard className="p-4"><p className="text-xs text-muted-foreground">Total Budget</p><p className="text-lg font-bold">{fmtRp(summary.total_budget)}</p></GlassCard>
-          <GlassCard className="p-4"><p className="text-xs text-muted-foreground">Total Spend</p><p className="text-lg font-bold">{fmtRp(summary.total_spend)}</p></GlassCard>
-          <GlassCard className={`p-4 ${summary.total_remaining < 0 ? 'border-red-400 dark:border-red-500/30 bg-red-100 dark:bg-red-500/5' : ''}`}>
-            <p className="text-xs text-muted-foreground">Sisa Budget</p>
-            <p className={`text-lg font-bold ${summary.total_remaining < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtRp(summary.total_remaining)}</p>
-          </GlassCard>
-          <GlassCard className="p-4">
-            <p className="text-xs text-muted-foreground flex items-center gap-1"><TrendingUp size={11} /> ROI</p>
-            <p className="text-lg font-bold">{summary.roi_pct}%</p>
-            <p className="text-[10px] text-muted-foreground">Sales {fmtRp(summary.sales)}</p>
-          </GlassCard>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="budget-summary-cards" data-konten-utama="">
+          <StatTile label="Total anggaran" value={fmtRp(summary.total_budget)} />
+          <StatTile label="Total terpakai" value={fmtRp(summary.total_spend)} />
+          <StatTile label="Sisa anggaran" value={fmtRp(summary.total_remaining)} accent={summary.total_remaining < 0 ? 'danger' : 'default'}
+            sub={summary.total_remaining < 0 ? 'Melebihi rencana' : undefined} />
+          <StatTile label="ROI" value={`${summary.roi_pct}%`} sub={`Penjualan ${fmtRp(summary.sales)}`} />
         </div>
       )}
 
-      {/* Budget plan + compare per category */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-1.5"><PieChart size={14} className="text-primary" /> Rencana Budget vs Realisasi per Kategori</CardTitle>
-        </CardHeader>
-        <CardContent>
+      {/* Rencana vs realisasi per kategori */}
+      <GlassCard className="space-y-3 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <p className="text-base font-semibold text-foreground">Rencana vs realisasi per kategori</p>
+            <p className="text-sm text-muted-foreground">Kategori otomatis dihitung sistem dari data sumbernya; buktinya di kolom terakhir.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <TombolUnduh namaBerkas={`anggaran-${period}`} namaLembar="Anggaran per kategori" baris={CATS} testId="budget-category-unduh"
+              kolom={[
+                { label: 'Kategori', nilai: (c) => c.label },
+                { label: 'Sumber', nilai: (c) => (catMap[c.key]?.mode === 'auto' ? 'Otomatis' : catMap[c.key]?.mode ? 'Manual' : '') },
+                { label: 'Rencana (Rp)', nilai: (c) => parseFloat(budgetForm[c.key]) || 0 },
+                { label: 'Realisasi (Rp)', nilai: (c) => catMap[c.key]?.spend ?? 0 },
+                { label: 'Manual (Rp)', nilai: (c) => catMap[c.key]?.manual ?? 0 },
+                { label: 'Otomatis (Rp)', nilai: (c) => catMap[c.key]?.auto ?? 0 },
+                { label: 'Sisa (Rp)', nilai: (c) => catMap[c.key]?.remaining ?? 0 },
+                { label: 'Pemakaian (%)', nilai: (c) => catMap[c.key]?.used_pct ?? 0 },
+                { label: 'Bukti', nilai: (c) => srcMap[c.key]?.evidence || '' },
+              ]} />
+            <Button onClick={() => setBukaRencana(true)} disabled={!accountId} data-testid="budget-edit-btn"><Pencil />Ubah rencana</Button>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <Table data-testid="budget-category-table">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Kategori</TableHead>
+                <TableHead className="text-right">Rencana</TableHead>
+                <TableHead className="text-right">Realisasi</TableHead>
+                <TableHead className="hidden text-right md:table-cell">Manual</TableHead>
+                <TableHead className="hidden text-right md:table-cell">Otomatis</TableHead>
+                <TableHead className="text-right">Sisa</TableHead>
+                <TableHead className="w-[150px]">Pemakaian</TableHead>
+                <TableHead className="hidden lg:table-cell">Bukti angka otomatis</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {CATS.map((c) => {
+                const row = catMap[c.key] || {};
+                const src = srcMap[c.key] || {};
+                const over = row.status === 'over';
+                return (
+                  <TableRow key={c.key} data-testid={`budget-cat-${c.key}`}>
+                    <TableCell>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">{c.label}</span>
+                        {row.mode && <span data-testid={`budget-mode-${c.key}`}><StatusBadge status={row.mode} label={row.mode === 'auto' ? 'Otomatis' : 'Manual'} tone="muted" /></span>}
+                      </div>
+                      <span className="text-xs text-muted-foreground">{c.hint}</span>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-right tabular-nums">{fmtRp(parseFloat(budgetForm[c.key]) || 0)}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right font-medium tabular-nums" data-testid={`spend-${c.key}`}>{fmtRp(row.spend)}</TableCell>
+                    <TableCell className="hidden whitespace-nowrap text-right tabular-nums text-muted-foreground md:table-cell">{fmtRp(row.manual)}</TableCell>
+                    <TableCell className="hidden whitespace-nowrap text-right tabular-nums text-muted-foreground md:table-cell" data-testid={`spend-auto-${c.key}`}>{fmtRp(row.auto)}</TableCell>
+                    <TableCell className={`whitespace-nowrap text-right tabular-nums ${row.remaining < 0 ? 'text-[hsl(var(--danger-text))]' : ''}`}>{fmtRp(row.remaining)}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className={over ? 'font-medium text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}>{row.used_pct || 0}%</span>
+                        {over && <StatusBadge status="over" label="Lewat" tone="danger" />}
+                      </div>
+                      <Bar pct={row.used_pct} over={over} />
+                    </TableCell>
+                    <TableCell className="hidden max-w-[240px] whitespace-normal text-xs text-muted-foreground lg:table-cell" data-testid={`budget-evidence-${c.key}`}>
+                      {src.evidence || (row.mode === 'manual' ? 'hanya dari entri manual' : '—')}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      </GlassCard>
+
+      {/* Realisasi manual */}
+      <GlassCard className="space-y-3 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-base font-semibold text-foreground">Realisasi manual</p>
+            <p className="text-sm text-muted-foreground" data-testid="spend-manual-note">
+              Hanya untuk biaya yang tidak terbaca sistem (mis. sampel). Kategori otomatis (diskon, iklan, komisi, KOL, host live) sudah dihitung
+              dari data sumbernya — mencatatnya lagi di sini membuat biaya yang sama dihitung dua kali.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <TombolUnduh namaBerkas={`belanja-manual-${period}`} namaLembar="Belanja manual" baris={spendEntries} testId="spend-unduh"
+              kolom={[
+                { label: 'Kategori', nilai: (e) => labelCat(e.category) },
+                { label: 'Jumlah (Rp)', nilai: (e) => e.amount ?? 0 },
+                { label: 'Keterangan', nilai: (e) => e.description || '' },
+              ]} />
+            <Button variant="outline" onClick={() => setBukaBelanja(true)} disabled={!accountId} data-testid="spend-open-btn"><Plus />Catat belanja</Button>
+          </div>
+        </div>
+        {spendEntries.length > 0 ? (
+          <Table data-testid="spend-list">
+            <TableHeader>
+              <TableRow><TableHead>Kategori</TableHead><TableHead className="text-right">Jumlah</TableHead><TableHead>Keterangan</TableHead><TableHead><span className="sr-only">Aksi</span></TableHead></TableRow>
+            </TableHeader>
+            <TableBody>
+              {spendEntries.map((e) => (
+                <TableRow key={e.id}>
+                  <TableCell>{labelCat(e.category)}</TableCell>
+                  <TableCell className="whitespace-nowrap text-right font-medium tabular-nums">{fmtRp(e.amount)}</TableCell>
+                  <TableCell className="text-muted-foreground">{e.description || '—'}</TableCell>
+                  <TableCell className="text-right">
+                    <Button size="icon-sm" variant="ghost" onClick={() => hapusBelanja(e)} title="Hapus catatan" aria-label="Hapus catatan" data-testid={`spend-del-${e.id}`}>
+                      <Trash2 />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : <EmptyState className="py-6" title="Belum ada catatan realisasi manual" />}
+      </GlassCard>
+
+      {/* Konfigurasi biaya KOL */}
+      <GlassCard className="space-y-3 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <p className="text-base font-semibold text-foreground">Biaya KOL / kreator</p>
+            <p className="text-sm text-muted-foreground">Skema bayar tiap kreator yang ditugaskan ke toko ini (fee tetap dan/atau komisi).</p>
+          </div>
+          <TombolUnduh namaBerkas="biaya-kol" namaLembar="Biaya KOL" baris={kolList} testId="kol-cost-unduh"
+            kolom={[
+              { label: 'Kreator', nilai: (k) => k.name },
+              { label: 'Kode', nilai: (k) => k.creator_code || '' },
+              { label: 'Skema bayar', nilai: (k) => FEE_TYPES.find((f) => f.v === (k.cost_config?.fee_type || 'none'))?.l || '' },
+              { label: 'Fee tetap (Rp)', nilai: (k) => parseFloat(k.cost_config?.fixed_fee) || 0 },
+              { label: 'Komisi (%)', nilai: (k) => parseFloat(k.cost_config?.commission_pct) || 0 },
+            ]} />
+        </div>
+        {kolList.length === 0 ? (
+          <EmptyState className="py-6" title="Belum ada kreator yang ditugaskan ke akun ini" />
+        ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm" data-testid="budget-category-table">
-              <thead><tr className="border-b bg-muted/30 text-xs text-muted-foreground">
-                <th className="px-3 py-2 text-left">Kategori</th>
-                <th className="px-3 py-2 text-right">Budget (Rp)</th>
-                <th className="px-3 py-2 text-right">Realisasi</th>
-                <th className="px-3 py-2 text-right">Manual</th>
-                <th className="px-3 py-2 text-right">Otomatis</th>
-                <th className="px-3 py-2 text-right">Sisa</th>
-                <th className="px-3 py-2 text-left w-[160px]">Pemakaian</th>
-                <th className="px-3 py-2 text-left">Bukti angka otomatis</th>
-              </tr></thead>
-              <tbody className="divide-y">
-                {CATS.map(c => {
-                  const row = catMap[c.key] || {};
-                  const src = srcMap[c.key] || {};
-                  const over = row.status === 'over';
+            <Table data-testid="kol-cost-table">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Kreator</TableHead>
+                  <TableHead>Skema bayar</TableHead>
+                  <TableHead className="text-right">Fee tetap</TableHead>
+                  <TableHead className="text-right">Komisi</TableHead>
+                  <TableHead><span className="sr-only">Aksi</span></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {kolList.map((k, idx) => {
+                  const cfg = k.cost_config || {};
+                  const ft = cfg.fee_type || 'none';
                   return (
-                    <tr key={c.key} data-testid={`budget-cat-${c.key}`}>
-                      <td className="px-3 py-2.5">
-                        <div className="flex items-center gap-2">
-                          <span className={`w-2 h-2 rounded-full ${c.color}`} />
-                          <span className="font-medium">{c.label}</span>
-                          {row.mode && (
-                            <Badge variant="outline" className="text-[9px]"
-                              data-testid={`budget-mode-${c.key}`}>{row.mode}</Badge>
-                          )}
-                        </div>
-                        <span className="text-[10px] text-muted-foreground ml-4">{c.hint}</span>
-                      </td>
-                      <td className="px-3 py-2.5 text-right">
-                        <MoneyInput value={budgetForm[c.key]}
-                          data-testid={`budget-input-${c.key}`}
-                          onChange={e => setBudgetForm(f => ({ ...f, [c.key]: e.target.value }))}
-                          className="h-8 text-right w-32 ml-auto" placeholder="0" />
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-semibold" data-testid={`spend-${c.key}`}>{fmtRp(row.spend)}</td>
-                      <td className="px-3 py-2.5 text-right text-muted-foreground">{fmtRp(row.manual)}</td>
-                      <td className="px-3 py-2.5 text-right text-muted-foreground" data-testid={`spend-auto-${c.key}`}>{fmtRp(row.auto)}</td>
-                      <td className={`px-3 py-2.5 text-right font-medium ${row.remaining < 0 ? 'text-red-600' : ''}`}>{fmtRp(row.remaining)}</td>
-                      <td className="px-3 py-2.5">
-                        <div className="flex items-center justify-between text-[10px]">
-                          <span className={over ? 'text-red-600 font-semibold' : 'text-muted-foreground'}>{row.used_pct || 0}%</span>
-                          {over && <Badge variant="outline" className="text-[9px] text-red-600 border-red-400">Over</Badge>}
-                        </div>
-                        <Bar pct={row.used_pct} over={over} />
-                      </td>
-                      <td className="px-3 py-2.5 text-[10px] text-muted-foreground max-w-[240px]"
-                        data-testid={`budget-evidence-${c.key}`}>
-                        {src.evidence || (row.mode === 'manual' ? 'hanya dari entri manual' : '—')}
-                      </td>
-                    </tr>
+                    <TableRow key={k.creator_id} data-testid={`kol-cost-row-${idx}`}>
+                      <TableCell><div className="font-medium">{k.name}</div><div className="text-xs text-muted-foreground">{k.creator_code}</div></TableCell>
+                      <TableCell>{FEE_TYPES.find((f) => f.v === ft)?.l || ft}</TableCell>
+                      <TableCell className="whitespace-nowrap text-right tabular-nums">{ft === 'fixed' || ft === 'both' ? fmtRp(parseFloat(cfg.fixed_fee) || 0) : '—'}</TableCell>
+                      <TableCell className="whitespace-nowrap text-right tabular-nums">{ft === 'commission' || ft === 'both' ? `${parseFloat(cfg.commission_pct) || 0}%` : '—'}</TableCell>
+                      <TableCell className="text-right">
+                        <Button size="sm" variant="outline" onClick={() => setKolEdit({ ...k, idx, cost_config: { ...cfg } })} data-testid={`kol-save-${idx}`}>
+                          <Pencil />Ubah
+                        </Button>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
-          <div className="flex flex-wrap items-end justify-end gap-2 mt-3">
-            <div className="flex-1 min-w-[220px]">
-              <Label className="text-[11px]">Alasan perubahan (opsional, masuk jejak)</Label>
-              <Input value={budgetReason} onChange={(e) => setBudgetReason(e.target.value)}
-                placeholder="mis. anggaran iklan ditambah untuk kejar target"
-                className="mt-1 h-9" data-testid="budget-reason-input" />
-            </div>
-            <Button size="sm" onClick={saveBudget} disabled={savingBudget || !accountId} data-testid="budget-save-btn">
-              {savingBudget ? <Loader2 size={13} className="mr-1 animate-spin" /> : <Save size={13} className="mr-1" />} Simpan Budget
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Manual spend entries */}
-      <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-1.5"><Wallet size={14} className="text-blue-500" /> Catat Realisasi Manual (biaya yang TIDAK terbaca sistem)</CardTitle></CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-[11px] text-muted-foreground" data-testid="spend-manual-note">
-            Kategori bertanda <b>auto</b> (diskon, ads, komisi, KOL, live host) realisasinya
-            sudah dihitung sistem dari data sumbernya. Mencatatnya lagi di sini membuat
-            biaya yang sama <b>dihitung dua kali</b> — pakai jalur manual hanya untuk biaya
-            yang memang tidak punya sumber data (mis. Sample, atau biaya di luar kebiasaan).
+        )}
+        {summary?.kol_detail?.length > 0 && (
+          <p className="text-sm text-muted-foreground">
+            Biaya KOL terhitung periode ini: {summary.kol_detail.map((d) => `${d.creator_name} ${fmtRp(d.cost)}`).join(' · ')}
           </p>
-          <div className="flex items-end gap-2 flex-wrap">
-            <div className="min-w-[150px]">
-              <Label className="text-xs">Kategori</Label>
-              <Select value={newSpend.category} onValueChange={v => setNewSpend(s => ({ ...s, category: v }))}>
-                <SelectTrigger className="h-9 mt-1" data-testid="spend-category-select"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {CATS.map(c => <SelectItem key={c.key} value={c.key}>{c.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="w-40">
-              <Label className="text-xs">Jumlah (Rp)</Label>
-              <MoneyInput value={newSpend.amount} data-testid="spend-amount-input"
-                onChange={e => setNewSpend(s => ({ ...s, amount: e.target.value }))} className="h-9 mt-1" placeholder="0" />
-            </div>
-            <div className="flex-1 min-w-[180px]">
-              <Label className="text-xs">Keterangan</Label>
-              <Input value={newSpend.description} data-testid="spend-desc-input"
-                onChange={e => setNewSpend(s => ({ ...s, description: e.target.value }))} className="h-9 mt-1" placeholder="mis. Iklan Shopee CPAS" />
-            </div>
-            <Button size="sm" className="h-9" onClick={addSpend} disabled={addingSpend || !accountId} data-testid="spend-add-btn">
-              {addingSpend ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Tambah
-            </Button>
-          </div>
-          {spendEntries.length > 0 ? (
-            <div className="rounded-lg border divide-y max-h-64 overflow-y-auto" data-testid="spend-list">
-              {spendEntries.map(e => (
-                <div key={e.id} className="flex items-center justify-between px-3 py-2 text-sm">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="text-[10px]">{CATS.find(c => c.key === e.category)?.label || e.category}</Badge>
-                    <span className="font-semibold">{fmtRp(e.amount)}</span>
-                    <span className="text-xs text-muted-foreground">{e.description}</span>
-                  </div>
-                  <Button size="icon" variant="ghost" className="h-7 w-7 text-red-500" onClick={() => delSpend(e.id)} data-testid={`spend-del-${e.id}`}>
-                    <Trash2 size={13} />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          ) : <p className="text-xs text-muted-foreground text-center py-3">Belum ada entri realisasi manual</p>}
-        </CardContent>
-      </Card>
+        )}
+      </GlassCard>
 
-      {/* KOL cost config */}
-      <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-1.5"><Users size={14} className="text-violet-500" /> Konfigurasi Biaya KOL / Kreator (fee tetap &amp; / atau komisi)</CardTitle></CardHeader>
-        <CardContent className="p-0">
-          {kolList.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-6">Belum ada kreator yang ditugaskan ke akun ini</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm" data-testid="kol-cost-table">
-                <thead><tr className="border-b bg-muted/30 text-xs text-muted-foreground">
-                  <th className="px-3 py-2 text-left">Kreator</th>
-                  <th className="px-3 py-2 text-left">Skema Bayar</th>
-                  <th className="px-3 py-2 text-right">Fee Tetap (Rp)</th>
-                  <th className="px-3 py-2 text-right">Komisi (%)</th>
-                  <th className="px-3 py-2 text-center">Aksi</th>
-                </tr></thead>
-                <tbody className="divide-y">
-                  {kolList.map((k, idx) => {
-                    const cfg = k.cost_config || {};
-                    const ft = cfg.fee_type || 'none';
-                    return (
-                      <tr key={k.creator_id} data-testid={`kol-cost-row-${idx}`}>
-                        <td className="px-3 py-2.5"><div className="font-medium">{k.name}</div><div className="text-[10px] text-muted-foreground font-mono">{k.creator_code}</div></td>
-                        <td className="px-3 py-2.5">
-                          <Select value={ft} onValueChange={v => updKol(idx, { fee_type: v })}>
-                            <SelectTrigger className="h-8 w-[170px]" data-testid={`kol-feetype-${idx}`}><SelectValue /></SelectTrigger>
-                            <SelectContent>{FEE_TYPES.map(f => <SelectItem key={f.v} value={f.v}>{f.l}</SelectItem>)}</SelectContent>
-                          </Select>
-                        </td>
-                        <td className="px-3 py-2.5 text-right">
-                          <MoneyInput value={cfg.fixed_fee ?? ''} disabled={ft === 'none' || ft === 'commission'}
-                            data-testid={`kol-fixedfee-${idx}`}
-                            onChange={e => updKol(idx, { fixed_fee: e.target.value })} className="h-8 w-28 text-right ml-auto" placeholder="0" />
-                        </td>
-                        <td className="px-3 py-2.5 text-right">
-                          <Input type="number" min={0} max={100} value={cfg.commission_pct ?? ''} disabled={ft === 'none' || ft === 'fixed'}
-                            data-testid={`kol-commission-${idx}`}
-                            onChange={e => updKol(idx, { commission_pct: e.target.value })} className="h-8 w-20 text-right ml-auto" placeholder="0" />
-                        </td>
-                        <td className="px-3 py-2.5 text-center">
-                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => saveKolCost(k)} data-testid={`kol-save-${idx}`}>
-                            <Save size={11} className="mr-1" /> Simpan
-                          </Button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {summary?.kol_detail?.length > 0 && (
-            <div className="px-3 py-2 border-t bg-muted/20 text-xs text-muted-foreground">
-              Biaya KOL terhitung bulan ini: {summary.kol_detail.map(d => `${d.creator_name} ${fmtRp(d.cost)}`).join(' · ')}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* ── Popup: ubah rencana anggaran ── */}
+      <FormPopup open={bukaRencana} onClose={() => setBukaRencana(false)} judul="Ubah rencana anggaran"
+        keterangan={`Periode ${period}${kunciTerkunci ? ' — periode ini ditutup, penyimpanan akan ditolak' : ''}.`}
+        onSimpan={simpanRencana} menyimpan={savingBudget} bisaSimpan={!!accountId} labelSimpan="Simpan rencana" testId="budget-form">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {CATS.map((c) => (
+            <Isian key={c.key} label={c.label} petunjuk={c.hint}>
+              <MoneyInput value={budgetForm[c.key]} data-testid={`budget-input-${c.key}`} placeholder="0"
+                onChange={(e) => setBudgetForm((f) => ({ ...f, [c.key]: e.target.value }))} />
+            </Isian>
+          ))}
+        </div>
+        <Isian label="Alasan perubahan" petunjuk="Opsional, masuk jejak perubahan.">
+          <Input value={budgetReason} onChange={(e) => setBudgetReason(e.target.value)}
+            placeholder="Mis. anggaran iklan ditambah untuk kejar target" data-testid="budget-reason-input" />
+        </Isian>
+      </FormPopup>
+
+      {/* ── Popup: catat belanja manual ── */}
+      <FormPopup open={bukaBelanja} onClose={() => setBukaBelanja(false)} judul="Catat belanja manual"
+        keterangan="Hanya untuk biaya yang tidak terbaca sistem." onSimpan={simpanBelanja} menyimpan={addingSpend}
+        bisaSimpan={!!accountId} labelSimpan="Simpan" testId="spend-form">
+        <Isian label="Kategori">
+          <SmartNativeSelect value={newSpend.category} onChange={(e) => setNewSpend((s) => ({ ...s, category: e.target.value }))}
+            searchable={false} className="h-9 w-full sm:w-56" data-testid="spend-category-select">
+            {CATS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Jumlah (Rp)" wajib>
+          <MoneyInput value={newSpend.amount} data-testid="spend-amount-input" placeholder="0"
+            onChange={(e) => setNewSpend((s) => ({ ...s, amount: e.target.value }))} />
+        </Isian>
+        <Isian label="Keterangan">
+          <Input value={newSpend.description} data-testid="spend-desc-input" placeholder="Mis. sampel untuk kreator baru"
+            onChange={(e) => setNewSpend((s) => ({ ...s, description: e.target.value }))} />
+        </Isian>
+      </FormPopup>
+
+      {/* ── Popup: biaya KOL ── */}
+      <FormPopup open={!!kolEdit} onClose={() => setKolEdit(null)} judul={`Biaya ${kolEdit?.name || 'kreator'}`}
+        keterangan={kolEdit?.creator_code} onSimpan={simpanKol} labelSimpan="Simpan" testId="kol-form">
+        <Isian label="Skema bayar">
+          <SmartNativeSelect value={kolEdit?.cost_config?.fee_type || 'none'} searchable={false} className="h-9 w-full sm:w-64"
+            data-testid={`kol-feetype-${kolEdit?.idx}`}
+            onChange={(e) => setKolEdit((k) => ({ ...k, cost_config: { ...(k.cost_config || {}), fee_type: e.target.value } }))}>
+            {FEE_TYPES.map((f) => <option key={f.v} value={f.v}>{f.l}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Isian label="Fee tetap (Rp)">
+            <MoneyInput value={kolEdit?.cost_config?.fixed_fee ?? ''} placeholder="0" data-testid={`kol-fixedfee-${kolEdit?.idx}`}
+              disabled={['none', 'commission'].includes(kolEdit?.cost_config?.fee_type || 'none')}
+              onChange={(e) => setKolEdit((k) => ({ ...k, cost_config: { ...(k.cost_config || {}), fixed_fee: e.target.value } }))} />
+          </Isian>
+          <Isian label="Komisi (%)">
+            <Input type="number" min={0} max={100} value={kolEdit?.cost_config?.commission_pct ?? ''} placeholder="0"
+              data-testid={`kol-commission-${kolEdit?.idx}`}
+              disabled={['none', 'fixed'].includes(kolEdit?.cost_config?.fee_type || 'none')}
+              onChange={(e) => setKolEdit((k) => ({ ...k, cost_config: { ...(k.cost_config || {}), commission_pct: e.target.value } }))} />
+          </Isian>
+        </div>
+      </FormPopup>
     </div>
   );
 }
