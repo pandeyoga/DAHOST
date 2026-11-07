@@ -19,6 +19,7 @@ from core import marketing_account_scope as _scope
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
 from routes.marketing_shared import _uid, _now, _get_user, _sanitize, TaskCreate, TaskUpdate, TaskCompleteAction, _generate_task_code, _is_pic_role, _recalculate_health_score
+from routes.marketing_shared import TASK_CREATE_DENIED, can_create_task  # 2026-11-08 celah izin
 from core import marketing_sales_shape as _shape
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_CS_ROLES  # T-01 2.3
@@ -37,7 +38,19 @@ async def create_task(data: TaskCreate, request: Request):
     await require_auth(request)
     db = get_db()
     user = _get_user(request)
-    
+
+    # 2026-11-08 (Asisten AI Tahap B, celah izin) — "Only PIC Marketing" kini benar-benar dicek
+    # (aturan di `marketing_shared.can_create_task`), dan tugas untuk satu toko hanya boleh dibuat
+    # oleh yang memegang toko itu (staf berlingkup toko tidak membuat tugas toko lain).
+    acc = None
+    if data.account_id:
+        acc = await db.marketing_platform_accounts.find_one(
+            {"id": data.account_id}, {"_id": 0, "id": 1, "pic_user_id": 1})
+    if not can_create_task(user, acc):
+        raise HTTPException(403, TASK_CREATE_DENIED)
+    if acc:
+        await _scope.assert_account_visible(db, user, data.account_id)
+
     # Validate task_type
     valid_types = ["data_entry", "review", "analysis", "reporting", "operational"]
     if data.task_type not in valid_types:

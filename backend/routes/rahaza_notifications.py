@@ -92,12 +92,16 @@ async def publish_notification(
     target_user_ids: list = None,
     dedup_key: str = None,   # jika diisi, cek duplikat dalam `dedup_minutes` terakhir
     dedup_minutes: int = 10,
+    link_params: dict = None,  # Asisten AI (proaktif): parameter navigasi bel (mis. {"sesi": id}) → meta.link_params
 ):
     """
     Insert notifikasi ke SSOT `notifications` (type='rahaza').
 
     Dedup: bila dedup_key ada dan notif dengan key sama + belum dismissed
     dibuat < 10 menit yang lalu, skip.
+
+    `link_params` (opsional, 2026-11-08 Asisten AI proaktif) disimpan di `meta.link_params`; bel (inbox) sudah
+    meneruskannya ke navigasi modul (`notification_categories._present` → `link_params`).
     """
     if severity not in ("info", "warning", "error", "success"):
         severity = "info"
@@ -111,6 +115,17 @@ async def publish_notification(
         if dup:
             return None
 
+    meta = {
+        'link_module':     link_module,
+        'target_roles':    target_roles or [],
+        'target_user_ids': target_user_ids or [],
+        'dedup_key':       dedup_key,
+        'read_by':         [],
+        'dismissed':       False,
+    }
+    # Asisten AI (proaktif) — parameter navigasi (tautan dalam ke sesi chat).
+    if link_params:
+        meta['link_params'] = {str(k): v for k, v in dict(link_params).items()}
     nid = await notif_insert(
         db,
         type='rahaza',
@@ -119,14 +134,7 @@ async def publish_notification(
         severity=severity,
         title=title,
         source_id=link_id,
-        meta={
-            'link_module':     link_module,
-            'target_roles':    target_roles or [],
-            'target_user_ids': target_user_ids or [],
-            'dedup_key':       dedup_key,
-            'read_by':         [],
-            'dismissed':       False,
-        },
+        meta=meta,
     )
 
     # Build broadcast doc in legacy shape for live SSE subscribers
@@ -145,6 +153,8 @@ async def publish_notification(
         'dismissed':       False,
         'created_at':      _now(),
     }
+    if link_params:  # Asisten AI (proaktif)
+        notif_doc['link_params'] = meta['link_params']
 
     # Push ke live SSE subscribers
     await _push_to_subscribers(notif_doc)

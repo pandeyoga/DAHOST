@@ -4,6 +4,11 @@
  * `__tests__/asisten.test.js`.
  */
 import { parseServerTime, todayWIB, toWIBDate, addDaysISO } from '@/lib/waktu';
+import { blokTindakan, terapkanStatusKeBlok } from './tindakanAsisten';
+import { blokIngatan } from './adapterTahapCD';
+
+/** Jenis blok yang dihitung sebagai ISI jawaban (bukan langkah/sumber). Kartu tindakan termasuk (Tahap B). */
+export const JENIS_ISI = new Set(['teks', 'grafik', 'tabel', 'laporan', 'tindakan']);
 
 /** Kelompok riwayat: Hari ini / Kemarin / Lebih lama (tanggal WIB dari `updated_at`, cadangan `created_at`). */
 export function kelompokkanSesi(sessions, now = new Date()) {
@@ -80,6 +85,28 @@ export function terapkanPeristiwa(pesan, event, data) {
     case 'laporan':
       blok.push({ jenis: 'laporan', ...d });
       return { ...pesan, blok };
+    // Tahap B (Kontrak E): kartu konfirmasi. `tindakan` = rencana baru (keadaan menunggu); `tindakan_status` =
+    // keadaan kartu berubah. Kartu bisa ada di jawaban SEBELUMNYA → layar memakai `terapkanStatusTindakan`
+    // untuk seluruh utas; di sini hanya blok milik pesan ini.
+    case 'tindakan': {
+      if (!d.id) return pesan;
+      const i = blok.findIndex((b) => b.jenis === 'tindakan' && b.id === d.id);
+      if (i >= 0) blok[i] = { ...blok[i], ...blokTindakan(d) };
+      else blok.push(blokTindakan(d));
+      return { ...pesan, blok };
+    }
+    case 'tindakan_status': {
+      const baru = terapkanStatusKeBlok(pesan.blok, d);
+      return baru === pesan.blok ? pesan : { ...pesan, blok: baru };
+    }
+    // Tahap D (D1): AI menyimpan/melupakan ingatan → chip "Diingat: …" / "Dilupakan: …" (bukan isi jawaban; bentuk
+    // sama dengan blok tersimpan {jenis: "ingatan"}, lihat adapterTahapCD A3).
+    case 'ingatan': {
+      const b = blokIngatan(d);
+      if (!b) return pesan;
+      blok.push(b);
+      return { ...pesan, blok };
+    }
     case 'selesai':
       return { ...pesan, id: d.pesan_id || pesan.id, keadaan: 'selesai', statusTeks: '', pemakaian: d.pemakaian || null };
     case 'galat':
@@ -97,7 +124,8 @@ export function terapkanPeristiwa(pesan, event, data) {
 /** Pesan dari riwayat server → bentuk layar (keadaan selesai/terhenti). */
 export function dariRiwayat(p) {
   const blok = Array.isArray(p?.blok) ? p.blok : [];
-  // Backend menyimpan `status`: selesai | berjalan | terhenti | gagal (Kontrak B, simpan.py).
+  // Backend menyimpan `status`: selesai | berjalan | terhenti | gagal (Kontrak B, simpan.py), Tahap B juga
+  // `menunggu_konfirmasi` (jawaban berhenti di kartu tindakan) → pesannya selesai; kartunya membawa keadaan sendiri.
   const st = p?.keadaan || p?.status;
   const keadaan = st === 'terhenti' || p?.terhenti ? 'terhenti' : (st === 'galat' || st === 'gagal' ? 'galat' : 'selesai');
   return {
@@ -110,5 +138,7 @@ export function dariRiwayat(p) {
     galat: p?.galat || null,
     pemakaian: p?.pemakaian || null,
     teks: p?.peran === 'user' ? (p?.teks ?? blok.filter((b) => b.jenis === 'teks').map((b) => b.isi).join('\n')) : undefined,
+    // Tahap D: permintaan yang ditulis sistem (briefing pagi / laporan mingguan otomatis), bukan oleh pengguna
+    otomatis: p?.peran === 'user' && p?.otomatis === true ? true : undefined,
   };
 }

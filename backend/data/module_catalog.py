@@ -72,8 +72,15 @@ MODULES: list[dict] = [
     # Asisten AI (inti) — 2026-11-07 Tahap A: chat analis menggantikan "AI Business Intelligence"
     # (menu lama `ai-business-dashboard` ikut di modul ini). Lihat/Ekspor saja: percakapan milik
     # pribadi, jadi kirim pesan/ubah judul/hapus percakapan = aksi Lihat (bukan Tambah/Ubah/Hapus data).
-    _m("management", "mgmt_asisten_ai", "Asisten AI", ["asisten-ai", "ai-business-dashboard"],
-       ["/api/asisten-ai"], _VE),
+    # Tahap B (8 Nov): layar "Tindakan AI" (`asisten-ai-tindakan`) + `/api/asisten-ai/tindakan*` di modul
+    # yang sama. Memutuskan/membalikkan kartu = aksi Lihat di modul ini; tulisan datanya sendiri lewat
+    # endpoint layar asal dengan token pengguna, jadi izin modul tujuan tetap berlaku.
+    # Asisten AI (proaktif) — Tahap D: layar "Ingatan AI" (`asisten-ai-ingatan`) + `/api/asisten-ai/ingatan*`
+    # (ingatan MILIK SENDIRI, jadi tambah/ubah/hapus = aksi Lihat di modul ini) dan `/api/asisten-ai/proaktif*`
+    # (jalankan sekarang: owner/superadmin diperiksa di route).
+    _m("management", "mgmt_asisten_ai", "Asisten AI",
+       ["asisten-ai", "ai-business-dashboard", "asisten-ai-tindakan", "asisten-ai-ingatan"],
+       ["/api/asisten-ai", "/api/asisten-ai/tindakan", "/api/asisten-ai/ingatan", "/api/asisten-ai/proaktif"], _VE),
     # ── akhir Asisten AI (inti) ──
 
     # ── PRODUKSI ────────────────────────────────────────────────────────────

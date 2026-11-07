@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional
 from database import get_db
 from auth import require_auth
+from core.roles import SYSTEM_CONFIG_ROLES
 from utils.scheduler import get_scheduler, JOB_REGISTRY
 
 router = APIRouter(prefix='/api/dewi/scheduler', tags=['Dewi-Scheduler'])
@@ -58,6 +59,12 @@ async def list_runs(
 
 @router.post('/jobs/{job_id}/run-now')
 async def run_now(job_id: str, user: dict = Depends(require_auth)):
+    # 2026-11-08 (Asisten AI Tahap B — celah izin): dulu cukup login, sehingga staf mana pun bisa memicu
+    # pekerjaan sistem (cadangan basis data, hapus unggahan lama, carry-forward cuti, kirim rapor). Kini
+    # hanya peran pengatur sistem (superadmin/admin/owner, `core.roles.SYSTEM_CONFIG_ROLES`). Melihat
+    # daftar & riwayat pekerjaan tetap untuk semua yang punya akses layar.
+    if (user.get('role') or '').lower() not in SYSTEM_CONFIG_ROLES:
+        raise HTTPException(403, 'Hanya admin atau owner yang boleh menjalankan pekerjaan terjadwal secara manual.')
     cfg = JOB_REGISTRY.get(job_id)
     if not cfg:
         raise HTTPException(404, 'Job tidak terdaftar')

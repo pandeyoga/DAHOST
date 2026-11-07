@@ -21,6 +21,28 @@ Aturan inti yang dipegang di sini:
     sebagai event `sumber` / event UI;
   * hasil > 15.000 karakter dipotong dengan catatan jelas;
   * alat baca dalam satu giliran dijalankan bersamaan.
+
+Tahap B (8 Nov 2026) — alat TINDAKAN (Kontrak D), didaftarkan dengan dekorator kelas `tindakan`:
+
+    from core.asisten_ai.alat_base import tindakan, AlatError
+
+    @tindakan(name="pasang_target_toko", label="Memasang target toko", description="…",
+              input_schema={...}, domain="penjualan", risiko="rendah", menu="mkt-targets")
+    class PasangTargetToko:
+        @staticmethod
+        async def siapkan(ctx, args) -> dict: ...          # BACA SAJA → Rencana (kartu)
+        @staticmethod
+        async def jalankan(ctx, args, rencana) -> dict: ... # TULIS lewat ctx.api → {ringkas, hasil, pembatalan}
+        @staticmethod
+        async def batalkan(ctx, pembatalan) -> dict: ...    # OPSIONAL → {ringkas}
+
+  * panggilan model ke alat tindakan hanya MENJALANKAN `siapkan` lalu memunculkan kartu konfirmasi
+    (lihat core/asisten_ai/tindakan.py); `jalankan` baru dipanggil setelah pemilik sesi menekan Setujui;
+  * `ctx.api` di loop agen dan di `siapkan` = baca saja (POST/PUT/PATCH/DELETE ditolak); hanya konteks
+    `jalankan`/`batalkan` yang boleh menulis, dan setiap tulisannya membawa header `X-Via: asisten-ai`
+    + `X-Asisten-Tindakan: <id>`;
+  * alat tindakan hanya dikirim ke model bila saklar "Tindakan AI aktif" menyala (`tools_untuk_api(tindakan=True)`);
+    deskripsinya diberi awalan baku `[Tindakan]` supaya model tahu alat itu hanya menyiapkan kartu.
 """
 from __future__ import annotations
 
@@ -55,7 +77,18 @@ _NAMA_RX = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
 NAMA_ALAT_SERVER = ("web_search", "web_fetch")
 
 # Event yang boleh dipancarkan alat lewat ctx.emit / `_ui_events` (event lain milik inti).
-EVENT_ALAT = ("status", "grafik", "tabel", "sumber", "laporan")
+# Tahap D (proaktif): `ingatan` = chip "Diingat: …" / "Dilupakan: …" dari alat simpan/lupakan ingatan.
+EVENT_ALAT = ("status", "grafik", "tabel", "sumber", "laporan", "ingatan")
+
+# Tahap B — alat tindakan (Kontrak D).
+RISIKO = ("rendah", "menengah")          # menengah = alasan wajib + konfirmasi dua langkah (Tahap C)
+METODE_BACA = ("GET", "HEAD", "OPTIONS")
+_MENU_RX = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
+AWALAN_TINDAKAN = ("[Tindakan] Alat ini hanya MENYIAPKAN kartu konfirmasi berisi rencana perubahan; data baru "
+                   "berubah setelah pengguna menekan Setujui di kartu itu. ")
+AWALAN_MENENGAH = "Risiko menengah: pengguna wajib menulis alasan sebelum menyetujui. "
+PESAN_BACA_SAJA = ("Alat ini hanya boleh membaca data. Perubahan data hanya lewat kartu tindakan yang "
+                   "disetujui pengguna.")
 
 # Peran yang boleh melihat gaji per orang (keputusan owner no. 1).
 PERAN_GAJI = frozenset({"owner", "superadmin", "hr", "hr_manager", "manager_hr", "staff_hr"})
@@ -97,9 +130,37 @@ class Alat:
     domain: str
     handler: Callable[..., Awaitable[Any]]
     asal: str  # modul.fungsi (untuk mendeteksi nama ganda)
+    # Tahap B — hanya untuk alat tindakan yang didaftarkan lewat `@tindakan` (kelas siapkan/jalankan/batalkan).
+    risiko: Optional[str] = None
+    menu: Optional[str] = None
+    kelas: Optional[type] = None
+
+    @property
+    def adalah_tindakan(self) -> bool:
+        """Alat tindakan SAH (punya kelas siapkan/jalankan). `@alat(kind="action")` biasa tidak dihitung."""
+        return self.kind == KIND_TINDAKAN and self.kelas is not None
+
+    @property
+    def siapkan(self):
+        return getattr(self.kelas, "siapkan", None) if self.kelas is not None else None
+
+    @property
+    def jalankan(self):
+        return getattr(self.kelas, "jalankan", None) if self.kelas is not None else None
+
+    @property
+    def batalkan(self):
+        return getattr(self.kelas, "batalkan", None) if self.kelas is not None else None
+
+    @property
+    def bisa_dibalikkan(self) -> bool:
+        return self.batalkan is not None
 
     def untuk_api(self) -> dict:
-        return {"name": self.name, "description": self.description,
+        desc = self.description
+        if self.adalah_tindakan:
+            desc = AWALAN_TINDAKAN + (AWALAN_MENENGAH if self.risiko == "menengah" else "") + desc
+        return {"name": self.name, "description": desc,
                 "input_schema": kanonik(self.input_schema)}
 
 
@@ -113,15 +174,9 @@ def kanonik(obj: Any) -> Any:
     return json.loads(json.dumps(obj, sort_keys=True, ensure_ascii=False))
 
 
-def alat(*, name: str, kind: str, label: str, description: str, input_schema: dict,
-         domain: str = "umum"):
-    """Dekorator pendaftaran alat (Kontrak A). Lihat docstring modul."""
+def _periksa_dasar(name: str, label: str, description: str, input_schema: dict) -> None:
     if not isinstance(name, str) or not _NAMA_RX.match(name) or name in NAMA_ALAT_SERVER:
         raise ValueError(f"Nama alat tidak sah: {name!r} (snake_case, 3–64 huruf, bukan nama alat server)")
-    if kind not in KINDS:
-        raise ValueError(f"Jenis alat {name}: {kind!r} bukan salah satu dari {KINDS}")
-    if domain not in DOMAINS:
-        raise ValueError(f"Domain alat {name}: {domain!r} bukan salah satu dari {DOMAINS}")
     if not (isinstance(label, str) and label.strip()) or not (isinstance(description, str) and description.strip()):
         raise ValueError(f"Alat {name}: label dan description wajib diisi")
     if not isinstance(input_schema, dict) or input_schema.get("type") != "object":
@@ -130,6 +185,16 @@ def alat(*, name: str, kind: str, label: str, description: str, input_schema: di
         json.dumps(input_schema)
     except (TypeError, ValueError) as e:
         raise ValueError(f"Alat {name}: input_schema tidak bisa diubah ke JSON") from e
+
+
+def alat(*, name: str, kind: str, label: str, description: str, input_schema: dict,
+         domain: str = "umum"):
+    """Dekorator pendaftaran alat (Kontrak A). Lihat docstring modul."""
+    _periksa_dasar(name, label, description, input_schema)
+    if kind not in KINDS:
+        raise ValueError(f"Jenis alat {name}: {kind!r} bukan salah satu dari {KINDS}")
+    if domain not in DOMAINS:
+        raise ValueError(f"Domain alat {name}: {domain!r} bukan salah satu dari {DOMAINS}")
 
     def _daftar(fn):
         if not inspect.iscoroutinefunction(fn):
@@ -141,6 +206,45 @@ def alat(*, name: str, kind: str, label: str, description: str, input_schema: di
         _DAFTAR[name] = Alat(name=name, kind=kind, label=label.strip(), description=description.strip(),
                              input_schema=input_schema, domain=domain, handler=fn, asal=asal)
         return fn
+
+    return _daftar
+
+
+def tindakan(*, name: str, label: str, description: str, input_schema: dict, domain: str = "umum",
+             risiko: str = "rendah", menu: Optional[str] = None):
+    """Dekorator KELAS alat tindakan (Kontrak D, Tahap B). Kelas wajib punya `async siapkan(ctx, args)` dan
+    `async jalankan(ctx, args, rencana)`; `async batalkan(ctx, pembatalan)` opsional (tanpa itu = tidak bisa
+    dibalikkan). Terdaftar di `_DAFTAR` sebagai `Alat(kind="action", kelas=<kelas>)`; kelas mendapat atribut
+    `_alat` (objek Alat-nya)."""
+    _periksa_dasar(name, label, description, input_schema)
+    if risiko not in RISIKO:
+        raise ValueError(f"Alat tindakan {name}: risiko {risiko!r} bukan salah satu dari {RISIKO}")
+    if menu is not None and (not isinstance(menu, str) or not _MENU_RX.match(menu)):
+        raise ValueError(f"Alat tindakan {name}: menu {menu!r} harus id modul layar (huruf kecil dan '-')")
+    if domain not in DOMAINS:
+        # Domain hanya label pengelompokan; jangan sampai satu label baru membuat modul alat gagal dimuat.
+        log.warning("Alat tindakan %s: domain %r tidak dikenal, dipakai 'umum'", name, domain)
+        domain = "umum"
+
+    def _daftar(cls):
+        if not isinstance(cls, type):
+            raise TypeError(f"Alat tindakan {name}: dekorator `tindakan` dipasang pada KELAS")
+        for wajib in ("siapkan", "jalankan"):
+            if not inspect.iscoroutinefunction(getattr(cls, wajib, None)):
+                raise TypeError(f"Alat tindakan {name}: kelas wajib punya `async def {wajib}(...)` (staticmethod)")
+        btl = getattr(cls, "batalkan", None)
+        if btl is not None and not inspect.iscoroutinefunction(btl):
+            raise TypeError(f"Alat tindakan {name}: `batalkan` wajib `async def batalkan(ctx, pembatalan)`")
+        asal = f"{cls.__module__}.{cls.__qualname__}"
+        lama = _DAFTAR.get(name)
+        if lama is not None and lama.asal != asal:
+            raise ValueError(f"Nama alat '{name}' sudah dipakai oleh {lama.asal}")
+        a = Alat(name=name, kind=KIND_TINDAKAN, label=label.strip(), description=description.strip(),
+                 input_schema=input_schema, domain=domain, handler=getattr(cls, "siapkan"), asal=asal,
+                 risiko=risiko, menu=menu, kelas=cls)
+        _DAFTAR[name] = a
+        cls._alat = a
+        return cls
 
     return _daftar
 
@@ -168,9 +272,15 @@ def muat_semua_alat(paksa: bool = False) -> dict[str, str]:
     return dict(_GALAT_MUAT)
 
 
-def daftar_alat(kinds=KINDS_TAHAP_A) -> list[Alat]:
+def daftar_alat(kinds=KINDS_TAHAP_A, *, tindakan: bool = False, kecuali=()) -> list[Alat]:
+    """Alat jenis `kinds`, urut nama. `tindakan=True` menambah alat tindakan SAH (`@tindakan`).
+    `kecuali` = nama alat yang tidak ditawarkan (Tahap D: alat ingatan saat ingatan dimatikan / briefing)."""
     muat_semua_alat()
-    return sorted((a for a in _DAFTAR.values() if a.kind in kinds), key=lambda a: a.name)
+    buang = set(kecuali or ())
+    return sorted((a for a in _DAFTAR.values()
+                   if a.name not in buang
+                   and ((a.kind in kinds and a.kind != KIND_TINDAKAN) or (tindakan and a.adalah_tindakan))),
+                  key=lambda a: a.name)
 
 
 def cari_alat(name: str, kinds=KINDS_TAHAP_A) -> Optional[Alat]:
@@ -179,14 +289,24 @@ def cari_alat(name: str, kinds=KINDS_TAHAP_A) -> Optional[Alat]:
     return a if a is not None and a.kind in kinds else None
 
 
-def tools_untuk_api(kinds=KINDS_TAHAP_A, *, eager: bool = True, server: bool = True) -> list[dict]:
+def cari_tindakan(name: str) -> Optional[Alat]:
+    """Alat tindakan SAH bernama `name` (None bila tidak ada / bukan `@tindakan`)."""
+    muat_semua_alat()
+    a = _DAFTAR.get(name)
+    return a if a is not None and a.adalah_tindakan else None
+
+
+def tools_untuk_api(kinds=KINDS_TAHAP_A, *, eager: bool = True, server: bool = True,
+                    tindakan: bool = False, kecuali=()) -> list[dict]:
     """Daftar `tools` untuk Messages API: alat klien urut nama, lalu web_search & web_fetch.
 
     `eager_input_streaming` dipasang untuk alat klien (skill: aturan bawaan permintaan streaming);
     karena server tidak lagi memvalidasi isian, inti memvalidasi sendiri (`periksa_skema`).
+    `tindakan=True` (saklar "Tindakan AI aktif" menyala) ikut mengirim alat tindakan.
+    `kecuali` = nama alat yang tidak dikirim (Tahap D: alat ingatan).
     """
     out = []
-    for a in daftar_alat(kinds):
+    for a in daftar_alat(kinds, tindakan=tindakan, kecuali=kecuali):
         d = a.untuk_api()
         if eager:
             d["eager_input_streaming"] = True
@@ -345,20 +465,31 @@ class AlatContext:
     """Konteks yang diterima setiap handler alat (`ctx`).
 
     Atribut: `user` (dict dari require_auth), `cv` ("DA" | "SMU" | "ALL"), `today` (tanggal WIB),
-    `alat_id` (id panggilan alat saat ini, bila ada), `sesi_id`, `db`, `samaran` (Pseudonymizer bersama satu giliran).
+    `alat_id` (id panggilan alat saat ini, bila ada), `sesi_id`, `db`, `samaran` (Pseudonymizer bersama satu giliran),
+    `tindakan_id` (id kartu tindakan, hanya di `siapkan`/`jalankan`/`batalkan`), `baca_saja`,
+    `pesan_id` (Tahap D: id pesan asisten yang sedang dijawab; sumber ingatan).
     Metode: `api`, `emit`, `mask`.
+
+    `baca_saja=True` (loop agen + `siapkan`): `ctx.api` menolak POST/PUT/PATCH/DELETE. Konteks `jalankan`/
+    `batalkan` dibuat inti dengan `baca_saja=False` + `tindakan_id`, dan tulisannya membawa header
+    `X-Via: asisten-ai` + `X-Asisten-Tindakan: <id>`.
     """
 
     def __init__(self, *, user: dict, cv: str, today: date, token: Optional[str] = None, app=None,
                  emit: Optional[Callable[[str, dict], None]] = None,
                  klien_api: Optional[Callable[[], Any]] = None, alat_id: Optional[str] = None,
-                 sesi_id: Optional[str] = None, db=None):
+                 sesi_id: Optional[str] = None, db=None, baca_saja: bool = False,
+                 tindakan_id: Optional[str] = None, pesan_id: Optional[str] = None):
         self.user = dict(user or {})
         self.sesi_id = sesi_id
+        # Tahap D: id pesan asisten yang sedang dijawab (sumber ingatan {sesi_id, pesan_id}).
+        self.pesan_id = pesan_id
         self.db = db
         self.cv = cv
         self.today = today
         self.alat_id = alat_id
+        self.baca_saja = bool(baca_saja)
+        self.tindakan_id = tindakan_id
         self._token = token
         self._app = app
         self._emit_fn = emit
@@ -384,11 +515,19 @@ class AlatContext:
         return self.peran in PERAN_GAJI
 
     def untuk_alat(self, alat_id: Optional[str]) -> "AlatContext":
-        """Salinan untuk satu panggilan alat (klien HTTP dipakai bersama)."""
+        """Salinan untuk satu panggilan alat (klien HTTP dipakai bersama; sifat baca-saja ikut)."""
         c = AlatContext(user=self.user, cv=self.cv, today=self.today, token=self._token, app=self._app,
                         emit=self._emit_fn, klien_api=self._klien_api, alat_id=alat_id,
-                        sesi_id=self.sesi_id, db=self.db)
+                        sesi_id=self.sesi_id, db=self.db, baca_saja=self.baca_saja,
+                        tindakan_id=self.tindakan_id, pesan_id=self.pesan_id)
         c._bersama = self._bersama
+        return c
+
+    def untuk_tindakan(self, tindakan_id: str, *, tulis: bool, alat_id: Optional[str] = None) -> "AlatContext":
+        """Salinan untuk `siapkan` (tulis=False) atau `jalankan`/`batalkan` (tulis=True) satu kartu tindakan."""
+        c = self.untuk_alat(alat_id or self.alat_id)
+        c.baca_saja = not tulis
+        c.tindakan_id = tindakan_id
         return c
 
     # — panggilan endpoint aplikasi —
@@ -411,10 +550,15 @@ class AlatContext:
 
         Return JSON hasil parse. Respons non-2xx → `AlatError(status, pesan ramah)`.
         `X-CV: ALL` hanya dikirim untuk GET (penjaga CV menolak tulis dengan Gabungan).
+        Konteks baca-saja menolak metode tulis (403). Tulisan dari konteks tindakan membawa
+        `X-Via: asisten-ai` + `X-Asisten-Tindakan: <id>` (jejak "via Asisten AI" di endpoint tujuan).
         """
         method = (method or "GET").upper()
         if not isinstance(path, str) or not path.startswith("/api/"):
             raise AlatError(400, "Alat hanya boleh membaca endpoint aplikasi (/api/...).")
+        tulis = method not in METODE_BACA
+        if tulis and self.baca_saja:
+            raise AlatError(403, PESAN_BACA_SAJA)
         if not self._token:
             raise AlatError(401, _pesan_status(401, None))
         hdr = {"Authorization": f"Bearer {self._token}", "Accept": "application/json",
@@ -422,8 +566,11 @@ class AlatContext:
         if self.cv in ("DA", "SMU") or (self.cv == "ALL" and method == "GET"):
             hdr["X-CV"] = self.cv
         for k, v in (headers or {}).items():
-            if str(k).lower() not in ("authorization", "x-cv", "cookie"):
+            if str(k).lower() not in ("authorization", "x-cv", "cookie", "x-via", "x-asisten-tindakan"):
                 hdr[k] = v
+        if tulis and self.tindakan_id:
+            hdr["X-Via"] = "asisten-ai"
+            hdr["X-Asisten-Tindakan"] = str(self.tindakan_id)
         kw: dict = {"params": _bersih_params(params), "headers": hdr,
                     "timeout": timeout or BATAS_DETIK_API}
         if json is not None:
@@ -507,6 +654,9 @@ class HasilAlat:
     is_error: bool = False
     pesan: Optional[str] = None  # pesan ramah untuk event `alat` (gagal)
     sumber: list = field(default_factory=list)
+    # Tahap B: kartu tindakan yang MENUNGGU keputusan (tool_result-nya baru dibuat setelah diputuskan).
+    tindakan_id: Optional[str] = None
+    kartu: Optional[dict] = None   # data event `tindakan`
 
     def untuk_api(self) -> dict:
         d = {"type": "tool_result", "tool_use_id": self.tool_use_id, "content": self.isi}
@@ -616,15 +766,24 @@ async def jalankan_satu(tool_use_id: str, nama: str, args: Any, ctx: AlatContext
 
 async def jalankan_banyak(panggilan: list[tuple[str, str, Any]], ctx: AlatContext, *,
                           saat_mulai: Optional[Callable[[str, str], None]] = None,
-                          saat_selesai: Optional[Callable[[HasilAlat], None]] = None) -> list[HasilAlat]:
-    """Jalankan panggilan alat satu giliran: alat `read` BERSAMAAN, alat `ui` berurutan sesudahnya
-    (urutan grafik/tabel di layar = urutan panggilan model). Hasil dikembalikan sesuai urutan input."""
+                          saat_selesai: Optional[Callable[[HasilAlat], None]] = None,
+                          penangan_tindakan: Optional[Callable[[str, str, Any], Awaitable[HasilAlat]]] = None
+                          ) -> list[HasilAlat]:
+    """Jalankan panggilan alat satu giliran: alat `read` BERSAMAAN, alat `ui` dan tindakan berurutan
+    sesudahnya (urutan grafik/tabel/kartu di layar = urutan panggilan model). Hasil sesuai urutan input.
+
+    Alat tindakan tidak pernah dijalankan di sini: panggilannya diserahkan ke `penangan_tindakan`
+    (inti: `siapkan` → kartu konfirmasi). Tanpa penangan → galat "belum tersedia"."""
     hasil: dict[int, HasilAlat] = {}
 
     async def _satu(i, tid, nama, args):
         if saat_mulai:
             saat_mulai(tid, nama)
-        h = await jalankan_satu(tid, nama, args, ctx)
+        a = _DAFTAR.get(nama)
+        if penangan_tindakan is not None and a is not None and a.adalah_tindakan:
+            h = await penangan_tindakan(tid, nama, args)
+        else:
+            h = await jalankan_satu(tid, nama, args, ctx)
         hasil[i] = h
         if saat_selesai:
             saat_selesai(h)

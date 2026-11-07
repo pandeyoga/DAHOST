@@ -1,21 +1,38 @@
 /**
  * UtasPesan — utas percakapan Asisten AI: gelembung pengguna di kanan, jawaban asisten di kiri.
  * Menggulir sendiri ke bawah saat jawaban mengalir, KECUALI pengguna sedang menggulir ke atas membaca.
+ * Tahap B: kartu tindakan di jawaban mana pun bisa diputuskan (`onPutuskan`); selama ada jawaban yang mengalir
+ * (`mengalir`) tombol kartu ditahan supaya tidak ada dua aliran sekaligus.
+ * Tahap D: permintaan yang ditulis sistem (`otomatis`, mis. briefing pagi) tampil sebagai gelembung redup
+ * "Permintaan otomatis", bukan seolah-olah diketik pengguna.
  */
 import { memo, useEffect, useLayoutEffect, useRef } from 'react';
+import { Bot } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import PesanAsisten from './PesanAsisten';
 
-const GelembungPengguna = memo(({ teks }) => (
-  <div className="flex justify-end" data-testid="asisten-pesan-pengguna">
-    <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-[hsl(var(--primary)/0.12)] px-4 py-2.5 text-sm text-foreground">
-      {teks}
-    </div>
+const GelembungPengguna = memo(({ teks, otomatis }) => (
+  <div className="flex justify-end" data-testid="asisten-pesan-pengguna" data-otomatis={otomatis ? '1' : undefined}>
+    {otomatis ? (
+      <div className="max-w-[85%] rounded-2xl rounded-br-md border border-dashed border-[var(--glass-border)] px-4 py-2 text-xs text-muted-foreground"
+        title={teks} data-testid="asisten-pesan-otomatis">
+        <p className="flex items-center gap-1.5 font-medium text-foreground/70">
+          <Bot className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> Permintaan otomatis
+        </p>
+        <p className="mt-0.5 line-clamp-2 whitespace-pre-wrap break-words">{teks}</p>
+      </div>
+    ) : (
+      <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-[hsl(var(--primary)/0.12)] px-4 py-2.5 text-sm text-foreground">
+        {teks}
+      </div>
+    )}
   </div>
 ));
 GelembungPengguna.displayName = 'GelembungPengguna';
 
-export default function UtasPesan({ pesan, memuat, kosong, onCobaLagi }) {
+export default function UtasPesan({
+  pesan, memuat, kosong, onCobaLagi, onPutuskan, onNavigate, mengalir = false, tindakanAktif = true,
+}) {
   const ref = useRef(null);
   const nempel = useRef(true);
 
@@ -49,8 +66,9 @@ export default function UtasPesan({ pesan, memuat, kosong, onCobaLagi }) {
       ) : (
         <div className="space-y-5 px-3 py-4 sm:px-5">
           {pesan.map((p) => (p.peran === 'user'
-            ? <GelembungPengguna key={p.kunci} teks={p.teks} />
-            : <PesanAsisten key={p.kunci} pesan={p} onCobaLagi={p.keadaan === 'galat' ? onCobaLagi : undefined} />))}
+            ? <GelembungPengguna key={p.kunci} teks={p.teks} otomatis={p.otomatis} />
+            : <PesanAsisten key={p.kunci} pesan={p} onCobaLagi={p.keadaan === 'galat' ? onCobaLagi : undefined}
+              onPutuskan={onPutuskan} onNavigate={onNavigate} sibukUtas={mengalir} tindakanAktif={tindakanAktif} />))}
         </div>
       )}
     </div>

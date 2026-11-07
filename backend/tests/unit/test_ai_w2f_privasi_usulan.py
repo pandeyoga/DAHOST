@@ -470,19 +470,19 @@ def test_apply_menulis_harga_katalog_lewat_endpoint_yang_ada(monkeypatch):
     calls = []
 
     async def _upd(catalog_id, item_id, data, request):
-        calls.append((catalog_id, item_id, data.harga_jual))
+        calls.append((catalog_id, item_id, data.harga_jual, data.reason))
         return {"ok": True}
 
     monkeypatch.setattr(auth, "require_auth", _auth(MKT))
     monkeypatch.setattr(adv, "get_db", lambda: db)
     monkeypatch.setattr(mci, "update_catalog_item", _upd)
     out = run(adv.apply_suggestion("s1", FakeRequest()))["data"]
-    assert calls == [("cat1", "it1", 104000.0)]
+    # 2026-11-08 — riwayat harga (lama → baru, aktor) kini ditulis SEKALI oleh endpoint harga katalog itu
+    # sendiri (lihat test_asisten_ai_b_pemasaran.py); "Terapkan" hanya mengirim alasannya.
+    assert calls == [("cat1", "it1", 104000.0, "Usulan harga AI s1 (disetujui Manajer Marketing)")]
     assert out == {"status": "applied", "catalog_item_id": "it1", "sku": "DA-1",
                    "old_price_rp": 100000.0, "new_price_rp": 104000.0}
-    log = [c[1] for c in db["marketing_change_log"].calls if c[0] == "insert_one"][0]
-    assert log["action"] == "price_change" and log["before"] == {"harga_jual": 100000.0}
-    assert log["after"] == {"harga_jual": 104000.0} and log["actor_name"] == "Manajer Marketing"
+    assert not [c for c in db["marketing_change_log"].calls if c[0] == "insert_one"]
     st = _sets(db.marketing_dynamic_pricing_suggestions)[-1]
     assert st["status"] == "applied" and st["applied_by"] == "Manajer Marketing"
     ev = [c[1] for c in db.marketing_dynamic_pricing_events.calls if c[0] == "insert_one"][0]

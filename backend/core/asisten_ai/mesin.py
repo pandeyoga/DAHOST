@@ -21,6 +21,24 @@ Satu `Jalan` = satu jawaban asisten untuk satu pesan pengguna:
 
 Event ke layar mengikuti Kontrak B (`mulai`, `status`, `pikir`, `teks`, `alat`, `grafik`, `tabel`,
 `sumber`, `laporan`, `selesai`, `galat`).
+
+Tahap B (8 Nov 2026, Kontrak D/E) — alat tindakan:
+  * panggilan alat tindakan → `siapkan` (baca saja) → kartu `ai_actions` + event `tindakan`; alat baca/ui
+    giliran yang sama tetap dijalankan dan hasilnya disimpan di `tunda` pesan; loop BERHENTI, pesan berstatus
+    `menunggu_konfirmasi` (event `selesai` membawa `status: "menunggu_konfirmasi"`);
+  * `POST /tindakan/{id}/putuskan` = `Jalan` mode putusan: klaim + `jalankan` sekali (event `tindakan_status`),
+    lalu bila SEMUA kartu giliran itu sudah diputuskan → giliran pengguna berisi semua tool_result → loop
+    dilanjutkan sebagai pesan asisten baru (`mulai` … `selesai`);
+  * pesan baru saat kartu masih menunggu → kartu `kedaluwarsa`, tool_result-nya di DEPAN giliran pengguna baru.
+  Riwayat tetap append-only; prefix `tools` + `system` tidak berubah selama saklar tindakan tidak diubah.
+
+Tahap D (8 Nov 2026, agen proaktif):
+  * ingatan: daftar ingatan aktif pengguna masuk blok <konteks_sistem> di GILIRAN PENGGUNA (sesudah blok
+    konteks), hanya bila berbeda dari blok ingatan terakhir di riwayat; `system` tidak pernah berubah. Alat
+    `simpan_ingatan`/`lupakan_ingatan` hanya ditawarkan bila saklar ingatan menyala dan bukan jalan otomatis;
+    panggilan ke alat yang tidak ditawarkan dijawab galat tanpa dijalankan;
+  * `fitur` per jalan (bawaan `asisten-ai`; briefing/laporan otomatis = `asisten-ai-proaktif`) untuk gerbang
+    anggaran dan log pemakaian; `otomatis=True` menandai pesan pengguna buatan sistem (briefing).
 """
 from __future__ import annotations
 
@@ -35,8 +53,10 @@ from typing import Any, Optional
 import ai_cost_tracker as tracker
 from core.asisten_ai import alat_base as ab
 from core.asisten_ai import fake as fake_mod
+from core.asisten_ai import ingatan as ing
 from core.asisten_ai import prompt as pr
 from core.asisten_ai import simpan
+from core.asisten_ai import tindakan as tdk
 
 log = logging.getLogger(__name__)
 
@@ -240,9 +260,10 @@ def model_log() -> tuple[str, str]:
     return ("fake", MODEL) if fake_mod.aktif() else tracker.OPUS_MODEL
 
 
-async def gerbang(user_id: Optional[str], *, log_blocked: bool = True) -> tracker.GateResult:
-    """Gerbang tracker (kunci, saklar utama, toggle fitur `asisten-ai`, anggaran). Mode uji tanpa kunci."""
-    return await tracker.check_gate(FITUR, user_id, model=model_log(), require_key=not fake_mod.aktif(),
+async def gerbang(user_id: Optional[str], *, log_blocked: bool = True, fitur: str = FITUR) -> tracker.GateResult:
+    """Gerbang tracker (kunci, saklar utama, toggle fitur `asisten-ai`, anggaran). Mode uji tanpa kunci.
+    `fitur` = label log/anggaran per fitur (Tahap D: `asisten-ai-proaktif`; toggle grupnya tetap `asisten-ai`)."""
+    return await tracker.check_gate(fitur, user_id, model=model_log(), require_key=not fake_mod.aktif(),
                                     log_blocked=log_blocked)
 
 
@@ -287,6 +308,12 @@ async def status_siap() -> dict:
     if alasan:
         out["alasan"] = alasan
         out["pesan"] = PESAN_GALAT[alasan]
+    # Tahap B: saklar "Tindakan AI aktif" + batas harian (Kontrak E).
+    aturan = await tdk.pengaturan()
+    out["tindakan_aktif"] = aturan["aktif"]
+    out["batas_tindakan_harian"] = aturan["batas"]
+    # Tahap D: saklar "Ingatan AI aktif" (layar menyembunyikan chip/ajakan ingatan bila mati).
+    out["ingatan_aktif"] = await ing.aktif()
     return out
 
 
@@ -295,7 +322,10 @@ class Jalan:
     def __init__(self, *, db, user: dict, sesi: dict, teks: str, cv: str, periode: str, today,
                  token: Optional[str] = None, app=None, klien=None, klien_api=None, api_key: str = "",
                  peringatan: Optional[str] = None, maks_putaran: int = MAKS_PUTARAN_ALAT,
-                 batas_detik: float = BATAS_DETIK):
+                 batas_detik: float = BATAS_DETIK, tindakan_aktif: bool = False,
+                 batas_tindakan: int = tdk.BATAS_BAWAAN, putusan: Optional[tdk.Putusan] = None,
+                 boleh_lanjut: bool = True, ingatan_aktif: bool = False, fitur: str = FITUR,
+                 otomatis: bool = False):
         self.db = db
         self.user = user or {}
         self.user_id = self.user.get("id")
@@ -307,13 +337,35 @@ class Jalan:
         self.today = today
         self.token = token
         self.app = app
-        self.klien = klien if klien is not None else buat_klien(api_key)
+        if klien is not None:
+            self.klien = klien
+        elif api_key or fake_mod.aktif():
+            self.klien = buat_klien(api_key)
+        else:
+            self.klien = None    # mode putusan tanpa lanjutan (gerbang AI menolak): tidak ada panggilan API
         self.klien_api = klien_api
         self.peringatan = peringatan
         self.maks_putaran = maks_putaran
         self.batas_detik = batas_detik
         self.model_log = model_log()
-        self.tools = ab.tools_untuk_api()
+        # Tahap B — alat tindakan hanya dikirim ke model bila saklar "Tindakan AI aktif" menyala.
+        self.tindakan_aktif = bool(tindakan_aktif)
+        self.batas_tindakan = int(batas_tindakan)
+        self.putusan = putusan
+        self.boleh_lanjut = bool(boleh_lanjut)
+        self.tunda: Optional[dict] = None
+        self.api_awal: list[dict] = []
+        self.kartu_dibuat = 0
+        # Tahap D — ingatan disuntikkan bila saklarnya menyala; alatnya hanya untuk percakapan biasa (bukan
+        # jalan otomatis: briefing/laporan mingguan tidak menyimpan ingatan). Jalan otomatis TIDAK pernah
+        # menawarkan alat tindakan (pemanggil wajib `tindakan_aktif=False`; dipaksa di sini juga).
+        self.fitur = fitur or FITUR
+        self.otomatis = bool(otomatis)
+        if self.otomatis:
+            self.tindakan_aktif = False
+        self.ingatan_aktif = bool(ingatan_aktif)
+        self.alat_ditahan = frozenset() if (self.ingatan_aktif and not self.otomatis) else frozenset(ing.ALAT_INGATAN)
+        self.tools = ab.tools_untuk_api(tindakan=self.tindakan_aktif, kecuali=self.alat_ditahan)
         self.antrian: asyncio.Queue = asyncio.Queue()
         self.berhenti = False
         self.alasan_henti: Optional[str] = None
@@ -368,6 +420,13 @@ class Jalan:
             b.append({"jenis": "tabel", **{k: v for k, v in data.items() if k != "jenis"}})
         elif event == "laporan":
             b.append({"jenis": "laporan", **{k: v for k, v in data.items() if k != "jenis"}})
+        elif event == "tindakan":
+            # Keadaan kartu di riwayat selalu dibaca ulang dari `ai_actions` saat GET sesi (Kontrak E).
+            b.append({"jenis": "tindakan", **{k: v for k, v in data.items() if k != "jenis"}})
+        elif event == "ingatan":
+            # Tahap D: chip "Diingat: …" / "Dilupakan: …" (keadaan saat itu; ingatan bisa diubah sesudahnya).
+            b.append({"jenis": "ingatan", "id": data.get("id"), "isi": data.get("isi"),
+                      "kategori": data.get("kategori"), "aksi": data.get("aksi")})
         elif event == "alat":
             aid = data.get("id")
             if data.get("keadaan") == "mulai" or aid not in self._alat_blok:
@@ -428,25 +487,61 @@ class Jalan:
                 _AKTIF.pop(self.sesi_id, None)
 
     async def _inti(self) -> None:
-        riwayat = await simpan.muat_riwayat_api(self.db, self.user_id, self.sesi_id)
-        if len(json.dumps(riwayat, ensure_ascii=False, default=str)) > MAKS_RIWAYAT_KARAKTER:
-            self._set_galat("terlalu_panjang")
-            return
-        konteks = pr.konteks_giliran(today=self.today, cv=self.cv, periode=self.periode,
-                                     peran=str(self.user.get("role") or ""))
-        api_user = {"role": "user", "content": [{"type": "text", "text": konteks},
-                                                {"type": "text", "text": self.teks}]}
-        _pu, pa = await simpan.mulai_giliran(self.db, self.sesi, self.user_id, teks=self.teks, api_user=api_user,
-                                             cv=self.cv, periode=self.periode)
+        kabar: list[dict] = []
+        if self.putusan is not None:
+            # Mode putusan: jalankan keputusan kartu, lalu lanjutkan jawaban bila giliran sudah lengkap.
+            lanjut = await self._putuskan()
+            if lanjut is None:
+                return
+            api_user, putaran = lanjut
+            self.putaran_alat = min(int(putaran or 0), self.maks_putaran)
+            riwayat = await simpan.muat_riwayat_api(self.db, self.user_id, self.sesi_id)
+            pa = await simpan.mulai_lanjutan(self.db, self.sesi, self.user_id, api_user=api_user, cv=self.cv,
+                                             periode=self.periode, lanjutan_dari=self.putusan.doc.get("pesan_id"))
+            self.api_awal = [api_user]
+            status_awal = "Melanjutkan jawaban…"
+        else:
+            riwayat = await simpan.muat_riwayat_api(self.db, self.user_id, self.sesi_id)
+            if len(json.dumps(riwayat, ensure_ascii=False, default=str)) > MAKS_RIWAYAT_KARAKTER:
+                self._set_galat("terlalu_panjang")
+                return
+            # Kartu yang belum diputuskan → kedaluwarsa; SEMUA tool_use terbuka dibalas di depan giliran baru.
+            awal, kabar = await tdk.tutup_terbuka(self.db, self.user_id, self.sesi_id, riwayat)
+            catatan = await tdk.kabar_dibalikkan(self.db, self.user_id, self.sesi_id)
+            konteks = pr.konteks_giliran(today=self.today, cv=self.cv, periode=self.periode,
+                                         peran=str(self.user.get("role") or ""))
+            isi = list(awal) + [{"type": "text", "text": konteks}]
+            # Tahap D: ingatan pengguna = konteks yang berubah → giliran pengguna, BUKAN `system`.
+            if self.ingatan_aktif:
+                try:
+                    blok_ing = await ing.blok_untuk_giliran(self.db, self.user_id, riwayat)
+                except Exception:  # noqa: BLE001 — ingatan gagal dibaca tidak boleh menggagalkan jawaban
+                    log.warning("Asisten AI: ingatan gagal dimuat (sesi %s)", self.sesi_id, exc_info=True)
+                    blok_ing = None
+                if blok_ing:
+                    isi.append({"type": "text", "text": blok_ing})
+            if catatan:
+                isi.append({"type": "text", "text": catatan})
+            isi.append({"type": "text", "text": self.teks})
+            api_user = {"role": "user", "content": isi}
+            _pu, pa = await simpan.mulai_giliran(self.db, self.sesi, self.user_id, teks=self.teks, api_user=api_user,
+                                                 cv=self.cv, periode=self.periode, otomatis=self.otomatis)
+            status_awal = "Menganalisis pertanyaan…"
         self.pesan_id = pa["id"]
         self.kirim("mulai", {"pesan_id": self.pesan_id})
+        for ev in kabar:
+            self.kirim("tindakan_status", ev)
         if self.peringatan:
             self.kirim("status", {"teks": self.peringatan.replace("⚠️", "").strip()})
-        self.kirim("status", {"teks": "Menganalisis pertanyaan…"})
+        self.kirim("status", {"teks": status_awal})
+        if self.putusan is not None and \
+                len(json.dumps(riwayat, ensure_ascii=False, default=str)) > MAKS_RIWAYAT_KARAKTER:
+            self._set_galat("terlalu_panjang")
+            return
         messages = list(riwayat) + [api_user]
         self.ctx = ab.AlatContext(user=self.user, cv=self.cv, today=self.today, token=self.token, app=self.app,
                                   emit=self._emit_alat, klien_api=self.klien_api,
-                                  sesi_id=self.sesi_id, db=self.db)
+                                  sesi_id=self.sesi_id, db=self.db, baca_saja=True, pesan_id=self.pesan_id)
         lanjut_max = 0
         jeda = 0
         try:
@@ -455,7 +550,7 @@ class Jalan:
                     self._set_galat("waktu_habis", status="terhenti")
                     break
                 if self.panggilan_api > 0:
-                    g = await gerbang(self.user_id)
+                    g = await gerbang(self.user_id, fitur=self.fitur)
                     if not g.ok:
                         gg = galat_dari_gerbang(g)
                         self._set_galat(gg["kode"], gg["pesan"])
@@ -510,6 +605,15 @@ class Jalan:
                         break
                     self.putaran_alat += 1
                     hasil_alat = await self._jalankan_alat(tool_uses)
+                    kartu = [x for x in hasil_alat if x.tindakan_id]
+                    if kartu:
+                        # Tahap B: berhenti menunggu keputusan. tool_result giliran ini baru dikirim setelah
+                        # semua kartu diputuskan (atau di depan pesan pengguna berikutnya).
+                        self.tunda = {"keadaan": "menunggu", "urutan": [b["id"] for b in tool_uses],
+                                      "hasil": [x.untuk_api() for x in hasil_alat if not x.tindakan_id],
+                                      "tindakan": [x.tindakan_id for x in kartu], "putaran_alat": self.putaran_alat}
+                        self.status = "menunggu_konfirmasi"
+                        break
                     isi = [x.untuk_api() for x in hasil_alat]
                     if self.putaran_alat >= self.maks_putaran:
                         isi.append({"type": "text", "text": pr.TEKS_BATAS_PUTARAN})
@@ -662,8 +766,22 @@ class Jalan:
                                                     "url": str(url)}]})
 
     async def _jalankan_alat(self, tool_uses: list[dict]) -> list[ab.HasilAlat]:
-        calls = [(b["id"], b.get("name") or "", b.get("input")) for b in tool_uses]
+        semua = [(b["id"], b.get("name") or "", b.get("input")) for b in tool_uses]
+        # Tahap D: alat yang TIDAK ditawarkan di jalan ini (alat ingatan saat saklar mati / jalan otomatis) tidak
+        # pernah dijalankan walau model memanggilnya (mis. dari riwayat lama).
+        ditahan = {i: ab._gagal(tid, nama, "Alat ini tidak tersedia di percakapan ini; jawab tanpa alat ini.",
+                                "Alat ini tidak tersedia di sini")
+                   for i, (tid, nama, _a) in enumerate(semua) if nama in self.alat_ditahan}
+        for h in ditahan.values():
+            self.kirim("alat", {"id": h.tool_use_id, "nama": h.nama, "label": ab.label_alat(h.nama),
+                                "keadaan": "gagal", "pesan": h.pesan})
+        if ditahan:
+            sisa = [c for i, c in enumerate(semua) if i not in ditahan]
+            hasil_sisa = iter(await self._jalankan_alat_inti(sisa) if sisa else [])
+            return [ditahan[i] if i in ditahan else next(hasil_sisa) for i in range(len(semua))]
+        return await self._jalankan_alat_inti(semua)
 
+    async def _jalankan_alat_inti(self, calls: list[tuple]) -> list[ab.HasilAlat]:
         def _mulai(tid, nama):
             label = ab.label_alat(nama)
             self.kirim("status", {"teks": f"{label}…"})
@@ -675,8 +793,11 @@ class Jalan:
             if h.is_error and h.pesan:
                 data["pesan"] = h.pesan
             self.kirim("alat", data)
+            if h.kartu:
+                self.kirim("tindakan", h.kartu)
 
-        task = asyncio.ensure_future(ab.jalankan_banyak(calls, self.ctx, saat_mulai=_mulai, saat_selesai=_selesai))
+        task = asyncio.ensure_future(ab.jalankan_banyak(calls, self.ctx, saat_mulai=_mulai, saat_selesai=_selesai,
+                                                        penangan_tindakan=self._siapkan_tindakan))
         while not task.done():
             await asyncio.wait({task}, timeout=0.25)
             if not task.done() and (self.berhenti or self._lewat_batas()):
@@ -687,6 +808,62 @@ class Jalan:
             return task.result()
         return [ab.HasilAlat(tool_use_id=tid, nama=nama, is_error=True, pesan="Dihentikan",
                              isi="Dihentikan sebelum alat selesai.") for tid, nama, _a in calls]
+
+    # — Tahap B: alat tindakan —
+    async def _siapkan_tindakan(self, tid: str, nama: str, args: Any) -> ab.HasilAlat:
+        """Panggilan model ke alat tindakan: `siapkan` (BACA SAJA) → kartu `menunggu`. TIDAK ada tulisan data."""
+        a = ab.cari_tindakan(nama)
+        if a is None:
+            return ab._gagal(tid, nama, f"Alat '{nama}' belum tersedia di sistem ini.", "Alat ini belum tersedia")
+        if not self.tindakan_aktif:
+            return ab._gagal(tid, nama, tdk.MODEL_MATI, "Tindakan AI sedang dimatikan admin")
+        if self.kartu_dibuat >= tdk.MAKS_KARTU_GILIRAN:
+            return ab._gagal(tid, nama, tdk.MODEL_KARTU_BANYAK.format(n=tdk.MAKS_KARTU_GILIRAN),
+                             "Terlalu banyak tindakan sekaligus")
+        if await tdk.jumlah_hari_ini(self.db, self.user_id) >= self.batas_tindakan:
+            return ab._gagal(tid, nama, tdk.MODEL_BATAS.format(batas=self.batas_tindakan),
+                             "Batas tindakan hari ini tercapai")
+        if not isinstance(args, dict):
+            return ab._gagal(tid, nama, json.dumps({"INVALID_JSON": ab.serialisasi(args)}, ensure_ascii=False),
+                             "Isian alat tidak sah")
+        errs = ab.periksa_skema(a.input_schema, args)
+        if errs:
+            return ab._gagal(tid, nama, "Isian alat tidak sah: " + "; ".join(errs) + ". Perbaiki lalu coba lagi.",
+                             "Isian alat tidak sah")
+        kartu_id = tdk.id_baru()
+        ctx = self.ctx.untuk_tindakan(kartu_id, tulis=False, alat_id=tid)
+        try:
+            rencana = await asyncio.wait_for(a.siapkan(ctx, copy.deepcopy(args)), timeout=ab.BATAS_DETIK_ALAT)
+            rencana = tdk.rapikan_rencana(rencana, args, a)
+        except ab.AlatError as e:
+            return ab._gagal(tid, nama, e.pesan)
+        except asyncio.TimeoutError:
+            return ab._gagal(tid, nama, "Penyiapan tindakan terlalu lama dan dihentikan. Persempit perubahannya.",
+                             "Penyiapan terlalu lama")
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            log.exception("Asisten AI: siapkan tindakan %s gagal", nama)
+            return ab._gagal(tid, nama, "Terjadi kesalahan saat menyiapkan tindakan ini.")
+        doc = await tdk.buat(self.db, user=self.user, sesi_id=self.sesi_id, pesan_id=self.pesan_id, tool_use_id=tid,
+                             alat=a, args=args, rencana=rencana, cv=self.cv, periode=self.periode,
+                             tindakan_id=kartu_id)
+        self.kartu_dibuat += 1
+        return ab.HasilAlat(tool_use_id=tid, nama=nama, isi="", tindakan_id=doc["id"], kartu=tdk.event_kartu(doc))
+
+    async def _putuskan(self) -> Optional[tuple[dict, int]]:
+        """Mode putusan: jalankan keputusan (sudah diklaim), lalu siapkan giliran lanjutan bila lengkap."""
+        p = self.putusan
+        ctx = tdk.buat_ctx(user=self.user, doc=p.doc, token=self.token, app=self.app, klien_api=self.klien_api,
+                           tulis=p.keputusan == "setujui", emit=self._emit_alat, today=self.today)
+        try:
+            await tdk.laksanakan(self.db, p, ctx, user=self.user,
+                                 kirim=lambda d: self.kirim("tindakan_status", d))
+        finally:
+            await ctx.tutup()
+        if not self.boleh_lanjut or self.berhenti:
+            return None
+        return await tdk.siap_lanjut(self.db, self.user_id, p.doc.get("pesan_id"))
 
     async def _log(self, usage: Any, t0: float, *, sukses: bool, kode: Optional[str] = None,
                    stop: Optional[str] = None, detail: Optional[str] = None) -> None:
@@ -703,14 +880,16 @@ class Jalan:
         err = None if sukses else (tracker.friendly_error(kode) if kode in tracker.AI_ERROR_MESSAGES else
                                    "Jawaban dihentikan." if kode == "terhenti" else None)
         await tracker.log_usage(
-            FITUR, self.user_id, self.model_log, u["in"], u["out"], biaya, (time.monotonic() - t0) * 1000,
+            self.fitur, self.user_id, self.model_log, u["in"], u["out"], biaya, (time.monotonic() - t0) * 1000,
             sukses, err, error_code=kode, error_detail=detail, stop_reason=stop,
             cache_read_tokens=u["cache_read"], cache_write_tokens=u["cache_write"],
             web_search_requests=u["web_search"], web_fetch_requests=u["web_fetch"], session_id=self.sesi_id)
 
-    def _rapikan_riwayat_baru(self) -> None:
+    def _rapikan_riwayat_baru(self, *, jawab_terbuka: bool = True) -> None:
         """Riwayat yang disimpan harus sah untuk diputar ulang: tool_use terbuka dibalas galat,
-        server_tool_use tanpa hasil (jeda yang terputus) dibuang dari ekor."""
+        server_tool_use tanpa hasil (jeda yang terputus) dibuang dari ekor.
+        `jawab_terbuka=False` (giliran menunggu kartu): tool_use terakhir SENGAJA dibiarkan terbuka —
+        dibalas saat kartu diputuskan / pesan berikutnya."""
         a = self.api_baru
         srv, hasil = {}, set()
         for i, t in enumerate(a):
@@ -722,7 +901,7 @@ class Jalan:
         yatim = [i for sid, i in srv.items() if sid not in hasil]
         if yatim:
             del a[min(yatim):]
-        if a and a[-1].get("role") == "assistant":
+        if jawab_terbuka and a and a[-1].get("role") == "assistant":
             ids = [b["id"] for b in a[-1]["content"] if b.get("type") == "tool_use"]
             if ids:
                 a.append({"role": "user", "content": [
@@ -732,6 +911,7 @@ class Jalan:
     async def _akhiri(self) -> None:
         if self.pesan_id is None:
             return
+        menunggu = self.status == "menunggu_konfirmasi"
         if self.status == "berjalan":
             self.status = "terhenti" if self.berhenti else "selesai"
         for b in self.blok:
@@ -740,12 +920,30 @@ class Jalan:
                 b["pesan"] = "Dihentikan"
         if self.sumber:
             self.blok.append({"jenis": "sumber", "item": list(self.sumber)})
-        self._rapikan_riwayat_baru()
+        self._rapikan_riwayat_baru(jawab_terbuka=not menunggu)
+        if menunggu:
+            ekor = self.api_baru[-1] if self.api_baru else {}
+            ids = {b.get("id") for b in (ekor.get("content") or []) if b.get("type") == "tool_use"}
+            if ekor.get("role") != "assistant" or not set(self.tunda.get("urutan") or []) <= ids:
+                # Ekor giliran terpotong (sangat jarang): giliran tidak bisa ditunda dengan sah.
+                log.warning("Asisten AI: giliran menunggu kartu tidak utuh (sesi %s) — kartu dikedaluwarsakan",
+                            self.sesi_id)
+                menunggu = False
+                self.status = "selesai"
+                self.tunda = None
+                self._rapikan_riwayat_baru(jawab_terbuka=True)
+        if not menunggu:
+            # Kartu yang sempat dibuat tetapi gilirannya tidak berhenti (Hentikan/galat) → kedaluwarsa.
+            await tdk.kedaluwarsakan_pesan(self.db, self.pesan_id)
         pemakaian = dict(self.pemakaian)
-        await simpan.akhiri_giliran(self.db, self.user_id, self.pesan_id, blok=self.blok, api=self.api_baru,
-                                    status=self.status, pemakaian=pemakaian, galat=self.galat)
-        if self.status == "selesai":
-            self.antrian.put_nowait(("selesai", {"pesan_id": self.pesan_id, "pemakaian": pemakaian}))
+        await simpan.akhiri_giliran(self.db, self.user_id, self.pesan_id, blok=self.blok,
+                                    api=self.api_awal + self.api_baru, status=self.status, pemakaian=pemakaian,
+                                    galat=self.galat, tunda=self.tunda if menunggu else None)
+        if self.status in ("selesai", "menunggu_konfirmasi"):
+            data = {"pesan_id": self.pesan_id, "pemakaian": pemakaian}
+            if menunggu:
+                data.update({"status": "menunggu_konfirmasi", "tindakan_menunggu": list(self.tunda["tindakan"])})
+            self.antrian.put_nowait(("selesai", data))
 
 
 # ── Registri jalan aktif & aliran SSE ────────────────────────────────────────
@@ -767,10 +965,66 @@ async def siapkan_jalan(*, db, user: dict, sesi: dict, teks: str, cv: str, perio
     g = await gerbang(user.get("id"))
     if not g.ok:
         return None, galat_dari_gerbang(g)
+    aturan = await tdk.pengaturan()
     j = Jalan(db=db, user=user, sesi=sesi, teks=teks, cv=cv, periode=periode, today=today, token=token, app=app,
               klien=klien, klien_api=klien_api, api_key=g.api_key, peringatan=g.warning,
-              maks_putaran=maks_putaran, batas_detik=batas_detik)
+              maks_putaran=maks_putaran, batas_detik=batas_detik, tindakan_aktif=aturan["aktif"],
+              batas_tindakan=aturan["batas"], ingatan_aktif=await ing.aktif())
     return j, None
+
+
+class _Reservasi:
+    """Penanda sesi sibuk selama pemeriksaan keputusan (sebelum `Jalan` putusan dimulai)."""
+
+    selesai = False
+
+    def hentikan(self, alasan: str = "") -> None:  # pragma: no cover — tidak ada yang dihentikan
+        return None
+
+
+async def siapkan_putusan(*, db, user: dict, tindakan_id: str, keputusan: str, ubahan=None, alasan: str = "",
+                          cv: Optional[str] = None, today, token: Optional[str] = None, app=None, klien=None,
+                          klien_api=None, batas_detik: float = BATAS_DETIK) -> Jalan:
+    """Pemeriksaan + klaim keputusan kartu SEBELUM aliran dimulai. Galat → `tdk.GalatTindakan` (HTTP 4xx).
+
+    Hanya pemilik sesi yang boleh memutuskan (orang lain, superadmin pun, mendapat 404). Return `Jalan` mode
+    putusan yang tinggal di-`mulai()`: event `tindakan_status`, lalu jawaban lanjutan bila giliran lengkap."""
+    doc = await tdk.ambil(db, tindakan_id)
+    if not doc or doc.get("user_id") != user.get("id"):
+        raise tdk.GalatTindakan(404, tdk.LAYAR_TIDAK_ADA)
+    sesi = await simpan.ambil_sesi(db, user["id"], doc.get("sesi_id"))
+    if not sesi:
+        raise tdk.GalatTindakan(404, tdk.LAYAR_TIDAK_ADA)
+    if sedang_berjalan(sesi["id"]):
+        raise tdk.GalatTindakan(409, PESAN_GALAT["sedang_berjalan"])
+    res = _Reservasi()
+    _AKTIF[sesi["id"]] = res
+    p = None
+    try:
+        g = await gerbang(user.get("id"), log_blocked=False)
+        if keputusan == "setujui" and not g.ok:
+            raise tdk.GalatTindakan(409, galat_dari_gerbang(g)["pesan"])
+        aturan = await tdk.pengaturan()
+
+        def _ctx_baca(d):
+            return tdk.buat_ctx(user=user, doc=d, token=token, app=app, klien_api=klien_api, tulis=False,
+                                today=today)
+        p = await tdk.periksa_dan_kunci(db, user, doc, keputusan=keputusan, ubahan=ubahan, alasan=alasan,
+                                        buat_ctx_baca=_ctx_baca)
+        j = Jalan(db=db, user=user, sesi=sesi, teks="", cv=cv or doc.get("cv") or "DA",
+                  periode=doc.get("periode") or today.strftime("%Y-%m"), today=today, token=token, app=app,
+                  klien=klien, klien_api=klien_api, api_key=g.api_key if g.ok else "",
+                  peringatan=g.warning if g.ok else None, batas_detik=batas_detik,
+                  tindakan_aktif=aturan["aktif"], batas_tindakan=aturan["batas"], putusan=p, boleh_lanjut=g.ok,
+                  ingatan_aktif=await ing.aktif())
+    except BaseException:
+        if p is not None:
+            await tdk.lepas(db, p)
+        if _AKTIF.get(sesi["id"]) is res:
+            _AKTIF.pop(sesi["id"], None)
+        raise
+    _AKTIF[sesi["id"]] = j
+    return j
 
 
 def mulai(jalan: Jalan) -> asyncio.Task:

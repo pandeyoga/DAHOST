@@ -2,7 +2,8 @@
  * RiwayatPercakapan — kolom kiri Asisten AI (di HP: isi laci/Sheet).
  *   "Percakapan baru" · cari · kelompok Hari ini / Kemarin / Lebih lama · sorot percakapan aktif ·
  *   tanda kuning bila ada tindakan menunggu persetujuan (`ada_tindakan_menunggu`, Tahap B) ·
- *   tautan "Tindakan AI" dan "Ingatan AI" di bawah.
+ *   tautan "Tindakan AI" (Tahap B: membuka halaman `asisten-ai-tindakan`) dan "Ingatan AI" di bawah (Tahap D: halaman
+ *   `asisten-ai-ingatan`) · lencana "Briefing" / "Laporan mingguan" untuk percakapan yang dibuat otomatis (Tahap D, `jenis`).
  */
 import { useMemo } from 'react';
 import { Brain, ListChecks, MessageSquare, Plus, Search } from 'lucide-react';
@@ -11,9 +12,11 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { EmptyState } from '../moduleAtoms';
+import { jenisSesi, labelJenisSesi } from './adapterTahapCD';
 import { kelompokkanSesi } from './peristiwaSse';
 
 function ItemSesi({ sesi, aktif, onPilih }) {
+  const jenis = labelJenisSesi(sesi);
   return (
     <li>
       <button type="button" onClick={() => onPilih(sesi.id)} aria-current={aktif ? 'true' : undefined}
@@ -22,9 +25,15 @@ function ItemSesi({ sesi, aktif, onPilih }) {
           'flex h-9 w-full items-center gap-2 rounded-md pl-2.5 pr-2 text-left text-sm transition-colors',
           aktif ? 'bg-[hsl(var(--primary)/0.12)] font-medium text-foreground' : 'text-foreground/75 hover:bg-foreground/5 hover:text-foreground',
         )}
-        data-testid="asisten-sesi-item" data-aktif={aktif ? '1' : '0'}>
+        data-testid="asisten-sesi-item" data-aktif={aktif ? '1' : '0'} data-jenis={jenisSesi(sesi) || undefined}>
         <MessageSquare className={cn('h-3.5 w-3.5 shrink-0', aktif ? 'text-primary' : 'text-muted-foreground')} aria-hidden="true" />
         <span className="min-w-0 flex-1 truncate">{sesi.judul || 'Percakapan tanpa judul'}</span>
+        {jenis && (
+          <span className="shrink-0 rounded-full bg-[hsl(var(--primary)/0.12)] px-1.5 py-px text-[10px] font-medium text-primary"
+            title="Dibuat otomatis oleh Asisten AI" data-testid="asisten-sesi-jenis">
+            {jenis}
+          </span>
+        )}
         {sesi.ada_tindakan_menunggu && (
           <span className="h-2 w-2 shrink-0 rounded-full bg-[hsl(var(--warning))]" title="Ada tindakan menunggu persetujuan"
             aria-label="Ada tindakan menunggu persetujuan" data-testid="asisten-sesi-menunggu" />

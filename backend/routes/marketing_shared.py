@@ -203,6 +203,32 @@ def _is_pic_role(user) -> bool:
     return False
 
 
+# 2026-11-08 (Asisten AI Tahap B, celah izin — keputusan owner no. 11). Docstring POST /tasks sejak
+# awal berkata "Only PIC Marketing can create tasks", tetapi tidak pernah dicek: siapa pun yang login
+# (termasuk staf gudang/produksi) bisa membuat tugas marketing dan menugaskannya ke siapa saja.
+TASK_CREATE_DENIED = ("Hanya PIC Marketing, PIC toko itu, SPV/Manager Marketing, atau owner yang boleh "
+                      "membuat tugas marketing. Minta SPV Marketing membuatkan tugasnya.")
+
+
+def can_create_task(user, account: Optional[dict] = None) -> bool:
+    """Boleh MEMBUAT tugas marketing? Aturan yang dipakai layar Tugas DAN Asisten AI.
+
+    * peran PIC Marketing (`_is_pic_role`: admin/owner/superadmin/manager_*/pic_marketing/pic_toko);
+    * SPV/Manager Marketing (`marketing_account_scope.can_write_target`, termasuk izin
+      `marketing.target.set`);
+    * izin `toko.manage` yang diberikan owner di Peran & Hak Akses (termasuk lewat izin modul);
+    * PIC toko yang dipilih di Manajemen Akun (`pic_user_id`, keputusan owner 5 Nov) — hanya untuk
+      tugas toko itu.
+    """
+    from core import marketing_account_scope as _scope
+    from routes.shared import has_perm
+    user = user or {}
+    if _is_pic_role(user) or _scope.can_write_target(user) or has_perm(user, "toko.manage"):
+        return True
+    uid = user.get("id")
+    return bool(uid and account and account.get("pic_user_id") == uid)
+
+
 def _generate_task_code():
     """Generate unique task code: TSK-YYYYMMDD-XXXX"""
     date_str = fmt_wib("%Y%m%d")   # nomor dokumen = tanggal WIB (No.54a)

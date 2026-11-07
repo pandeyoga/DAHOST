@@ -9,9 +9,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { StatTile } from './moduleAtoms';
+// Asisten AI (layar2) — Tahap D: bagian "Asisten AI proaktif" (ingatan, briefing, peringatan, laporan mingguan).
+import PengaturanProaktif from './asisten/PengaturanProaktif';
+import { bacaPengaturanProaktif, susunPengaturanProaktif } from './asisten/adapterTahapCD';
 import {
   DollarSign, Activity, AlertTriangle, CheckCircle2, RefreshCw, Loader2,
-  TrendingUp, Zap, Clock, Brain, BarChart3, List, Sparkles, Settings, Save, Power
+  TrendingUp, Zap, Clock, Brain, BarChart3, List, Sparkles, Settings, Save, Power, ClipboardCheck
 } from 'lucide-react';
 
 const HEALTH_COLOR = {
@@ -50,6 +53,17 @@ function fmtNum(v) {
 const CACHE_FIELDS = ['cache_read_tokens', 'cache_write_tokens', 'web_search_requests'];
 const adaCache = (d) => !!d && CACHE_FIELDS.some((k) => d[k] !== undefined && d[k] !== null);
 
+// 2026-11-08 (Asisten AI Tahap B, Kontrak E): saklar "Tindakan AI aktif" + batas tindakan per pengguna per hari,
+// disimpan lewat PUT /api/ai/usage/settings yang sama. Server lama tanpa kunci ini → bawaan (aktif, 30).
+const BATAS_TINDAKAN_BAWAAN = 30;
+const BATAS_TINDAKAN_MAKS = 1000;
+function bacaBatasTindakan(v) {
+  const s = String(v ?? '').trim();
+  if (!/^\d+$/.test(s)) return null;
+  const n = Number(s);
+  return n <= BATAS_TINDAKAN_MAKS ? n : null;
+}
+
 function CacheWebTiles({ data, testId }) {
   if (!adaCache(data)) return null;
   return (
@@ -61,7 +75,7 @@ function CacheWebTiles({ data, testId }) {
   );
 }
 
-export default function AIUsageMonitorModule({ token }) {
+export default function AIUsageMonitorModule({ token, user, onNavigate }) {
   const [activeTab, setActiveTab] = useState('today');
   const [today, setToday] = useState(null);
   const [summary, setSummary] = useState(null);
@@ -70,6 +84,7 @@ export default function AIUsageMonitorModule({ token }) {
   const [settings, setSettings] = useState(null);
   const [form, setForm] = useState(null);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [galatProaktif, setGalatProaktif] = useState({}); // Asisten AI (layar2): {kunci jam: kalimat}
   const [period, setPeriod] = useState(7);
   const [loading, setLoading] = useState(false);
   const [logFilter, setLogFilter] = useState('');
@@ -125,7 +140,12 @@ export default function AIUsageMonitorModule({ token }) {
           per_feature_daily_usd: d.per_feature_daily_usd,
           default_tier: d.default_tier,
           disabled_features: Array.isArray(d.disabled_features) ? [...d.disabled_features] : [],
+          asisten_tindakan_aktif: d.asisten_tindakan_aktif !== false,
+          asisten_batas_tindakan_harian: d.asisten_batas_tindakan_harian ?? BATAS_TINDAKAN_BAWAAN,
+          // Asisten AI (layar2) — Tahap D: 8 kunci asisten_* (server lama → bawaan, lihat adapterTahapCD A6)
+          ...bacaPengaturanProaktif(d),
         });
+        setGalatProaktif({});
       }
     } catch (e) { console.error(e); }
   }, [BASE, headers]);
@@ -140,6 +160,18 @@ export default function AIUsageMonitorModule({ token }) {
 
   const saveSettings = useCallback(async () => {
     if (!form) return;
+    const batasTindakan = bacaBatasTindakan(form.asisten_batas_tindakan_harian);
+    if (batasTindakan === null) {
+      toast.error(`Batas tindakan per hari harus angka bulat 0–${BATAS_TINDAKAN_MAKS}.`);
+      return;
+    }
+    // Asisten AI (layar2) — Tahap D: jam JJ:MM wajib sah sebelum PUT
+    const proaktif = susunPengaturanProaktif(form);
+    setGalatProaktif(proaktif.galat);
+    if (!proaktif.ok) {
+      toast.error(proaktif.pesan);
+      return;
+    }
     setSavingSettings(true);
     try {
       const r = await fetch(`${BASE}/api/ai/usage/settings`, {
@@ -152,6 +184,9 @@ export default function AIUsageMonitorModule({ token }) {
           per_feature_daily_usd: Number(form.per_feature_daily_usd),
           default_tier: form.default_tier,
           disabled_features: form.disabled_features,
+          asisten_tindakan_aktif: !!form.asisten_tindakan_aktif,
+          asisten_batas_tindakan_harian: batasTindakan,
+          ...proaktif.nilai, // Asisten AI (layar2) — Tahap D
         }),
       });
       const data = await r.json();
@@ -467,6 +502,31 @@ export default function AIUsageMonitorModule({ token }) {
                   <Switch checked={form.ai_enabled} onCheckedChange={(v) => setField('ai_enabled', v)} data-testid="ai-set-master" />
                 </div>
               </GlassCard>
+
+              {/* Asisten AI Tahap B — tindakan lewat kartu konfirmasi */}
+              <GlassCard className="p-5 space-y-4" data-testid="ai-set-tindakan">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <ClipboardCheck className={`w-5 h-5 ${form.asisten_tindakan_aktif ? 'text-primary' : 'text-muted-foreground'}`} />
+                    <div>
+                      <p className="font-semibold text-sm text-foreground">Tindakan Asisten AI aktif</p>
+                      <p className="text-xs text-muted-foreground">Bila dimatikan, Asisten AI hanya menjawab; usulan perubahan yang menunggu tidak bisa disetujui.</p>
+                    </div>
+                  </div>
+                  <Switch checked={!!form.asisten_tindakan_aktif} onCheckedChange={(v) => setField('asisten_tindakan_aktif', v)}
+                    aria-label="Tindakan Asisten AI aktif" data-testid="ai-set-tindakan-aktif" />
+                </div>
+                <div className="max-w-xs">
+                  <label htmlFor="ai-set-batas-tindakan" className="text-xs text-muted-foreground mb-1 block">Batas tindakan per pengguna per hari</label>
+                  <MoneyInput id="ai-set-batas-tindakan" decimals={0} value={form.asisten_batas_tindakan_harian}
+                    onChange={(e) => setField('asisten_batas_tindakan_harian', e.target.value)} data-testid="ai-set-batas-tindakan" />
+                  <p className="text-xs text-muted-foreground mt-1">Perubahan yang dijalankan Asisten AI untuk satu pengguna dalam sehari. Bawaan {BATAS_TINDAKAN_BAWAAN}.</p>
+                </div>
+              </GlassCard>
+
+              {/* Asisten AI (layar2) — Tahap D: ingatan + briefing/peringatan/laporan mingguan */}
+              <PengaturanProaktif form={form} setField={setField} galat={galatProaktif} tersimpan={settings}
+                user={user} onNavigate={onNavigate} />
 
               {/* Budgets */}
               <GlassCard className="p-5 space-y-4">

@@ -1,5 +1,6 @@
 /**
  * asistenApi — panggilan Kontrak B Asisten AI (`/api/asisten-ai`, Tahap A, 8 Nov 2026).
+ * Tahap B: kartu tindakan. Tahap D: Ingatan AI + "Jalankan sekarang" proaktif (bentuk data: `adapterTahapCD.js`).
  *
  * Satu tempat untuk alamat endpoint dan pengunduhan laporan (logika murni pesan/SSE: `peristiwaSse.js`), supaya komponen layar
  * (`AsistenAIModule`, `RiwayatPercakapan`, `UtasPesan`, `PesanAsisten`, `KomposerAsisten`) tidak menulis URL sendiri.
@@ -9,6 +10,8 @@ import { sseFetch } from '@/lib/sseFetch';
 import { CV_HEADER, normalizeCv } from '@/lib/entitas';
 
 const BASE = '/asisten-ai';
+/** sessionStorage: percakapan yang dibuka Asisten AI (dipakai juga halaman Tindakan AI untuk "Buka percakapan"). */
+export const KUNCI_SESI_AKTIF = 'asisten_ai_sesi_aktif';
 
 const asList = (d, ...keys) => {
   if (Array.isArray(d)) return d;
@@ -38,6 +41,47 @@ export const asistenApi = {
       onEvent,
     });
   },
+
+  // ── Tahap B (Kontrak E): kartu tindakan ──
+  /**
+   * Putuskan kartu tindakan (hanya pemilik percakapan, hanya selagi `menunggu`). Jawabannya aliran SSE:
+   * `tindakan_status` (disetujui → dijalankan/gagal, atau dibatalkan), lalu — bila semua tindakan giliran itu
+   * sudah diputuskan — lanjutan jawaban `mulai` … `selesai` seperti Kontrak B.
+   */
+  putuskan: (id, { keputusan, ubahan, alasan, cv }, { signal, onEvent } = {}) => {
+    const c = normalizeCv(cv);
+    const body = { keputusan, cv: c };
+    if (ubahan && Object.keys(ubahan).length) body.ubahan = ubahan;
+    if (alasan) body.alasan = alasan;
+    return sseFetch(`${BASE}/tindakan/${encodeURIComponent(id)}/putuskan`, {
+      body,
+      headers: { [CV_HEADER]: c },
+      signal,
+      onEvent,
+    });
+  },
+  daftarTindakan: (query) => apiFetch(`${BASE}/tindakan${query ? `?${query}` : ''}`),
+  detailTindakan: (id) => apiFetch(`${BASE}/tindakan/${encodeURIComponent(id)}`),
+  balikkanTindakan: (id, alasan) => apiFetch(`${BASE}/tindakan/${encodeURIComponent(id)}/balikkan`, {
+    method: 'POST', body: alasan ? { alasan } : {},
+  }),
+
+  // ── Tahap D (D1): Ingatan AI — hanya milik sendiri. Bentuk jawaban dibaca `adapterTahapCD.js` (A1, A2). ──
+  daftarIngatan: () => apiFetch(`${BASE}/ingatan`),
+  tambahIngatan: ({ isi, kategori }) => apiFetch(`${BASE}/ingatan`, { method: 'POST', body: { isi, kategori } }),
+  ubahIngatan: (id, { isi, kategori }) => apiFetch(`${BASE}/ingatan/${encodeURIComponent(id)}`, {
+    method: 'PATCH', body: { isi, kategori },
+  }),
+  hapusIngatan: (id) => apiFetch(`${BASE}/ingatan/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  // ── Tahap D (D2): jalankan jadwal proaktif sekarang (owner/superadmin), A7 ──
+  jalankanProaktif: (jenis) => apiFetch(`${BASE}/proaktif/${encodeURIComponent(jenis)}/jalankan-sekarang`, {
+    method: 'POST', body: {},
+  }),
+  /** Jadwal berikutnya + riwayat jalan proaktif (A10; owner/superadmin, lainnya 403). */
+  ringkasanProaktif: () => apiFetch(`${BASE}/proaktif`),
+  /** Calon penerima briefing: pengguna aktif yang bisa membuka Portal Management (A9, endpoint yang sudah ada). */
+  daftarPenggunaManajemen: () => apiFetch('/auth/users?portal=management&status=active&limit=500'),
 };
 
 /** Alamat milik backend aplikasi ini (hanya ke sini token login boleh dikirim). */

@@ -57,10 +57,14 @@ ENTITY_LABEL = {
     "marketing_platform_accounts": "Kewenangan toko (assign staf)",
     "marketing_creator_targets": "Target kreator",
     "marketing_data_import_sessions": "Sesi impor",
+    # 2026-11-08 — riwayat harga katalog (PUT item katalog & "Terapkan usulan harga").
+    "catalog_item": "Harga jual katalog",
 }
 ACTION_LABEL = {
     "target_create": "Target dibuat",
     "target_update": "Target diubah",
+    "target_delete": "Target dihapus",
+    "price_change": "Harga jual diubah",
     "budget_upsert": "Rencana anggaran diubah",
     "period_close": "Periode ditutup",
     "period_reopen": "Periode dibuka",
@@ -73,6 +77,8 @@ FIELD_LABEL = {
     "units_target": "Target pcs",
     "health_score_target": "Target skor kesehatan",
     "notes": "Catatan",
+    "harga_jual": "Harga jual",
+    "harga_coret": "Harga coret",
     "budget_by_category": "Anggaran per kategori",
     "assigned_staff": "Daftar staf pemegang",
     "added": "Staf ditambahkan",
@@ -117,7 +123,7 @@ def _diff(before: Any, after: Any) -> List[dict]:
                 continue
             out.append({"field": k, "field_label": FIELD_LABEL.get(k, k),
                         "before": bv, "after": av,
-                        "is_money": k in ("revenue_target",),
+                        "is_money": k in ("revenue_target", "harga_jual", "harga_coret"),
                         "is_list": isinstance(bv, list) or isinstance(av, list)})
     elif before != after and not (_empty(before) and _empty(after)):
         out.append({"field": "", "field_label": "Nilai", "before": _ser(before),

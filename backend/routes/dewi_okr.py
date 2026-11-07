@@ -36,6 +36,9 @@ router = APIRouter(prefix="/api/management/okr", tags=["okr"])
 
 OBJ_COL = "rahaza_okr_objectives"
 KR_COL = "rahaza_okr_key_results"
+# Peran yang boleh membuat / mengarsipkan objektif (dipakai juga alat Asisten AI `buat_objektif_okr`
+# supaya aturannya satu). Nilai tidak berubah (2026-11-08).
+OKR_OBJECTIVE_WRITER_ROLES = ("superadmin", "admin", "manager", "owner")
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -189,7 +192,7 @@ async def create_objective(request: Request, payload: ObjectiveIn):
     await require_auth(request)
     db = get_db()
     user = request.state.user
-    if user.get("role") not in ["superadmin", "admin", "manager", "owner"]:
+    if user.get("role") not in OKR_OBJECTIVE_WRITER_ROLES:
         raise HTTPException(403, "Unauthorized")
 
     obj = payload.dict(exclude={"key_results"})
@@ -255,7 +258,7 @@ async def delete_objective(request: Request, obj_id: str):
     await require_auth(request)
     db = get_db()
     user = request.state.user
-    if user.get("role") not in ["superadmin", "admin", "manager", "owner"]:
+    if user.get("role") not in OKR_OBJECTIVE_WRITER_ROLES:
         raise HTTPException(403, "Unauthorized")
     res = await db[OBJ_COL].update_one(
         {"id": obj_id}, {"$set": {"status": "archived", "updated_at": _now()}}

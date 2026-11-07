@@ -202,6 +202,47 @@ def _health_label(*, ai_available: bool, ai_enabled: bool, pct_daily: float,
     )
 
 
+# ── Asisten AI (proaktif) — Tahap D: validasi kunci pengaturan ingatan & jadwal ─────────────────────────
+_PROAKTIF_BOOL = ("asisten_ingatan_aktif", "asisten_briefing_aktif", "asisten_peringatan_aktif",
+                  "asisten_laporan_mingguan_aktif")
+_PROAKTIF_JAM = {"asisten_briefing_jam": "Jam briefing pagi", "asisten_peringatan_jam": "Jam peringatan harian",
+                 "asisten_laporan_mingguan_jam": "Jam laporan mingguan"}
+_MAKS_PENERIMA = 20
+
+
+async def _nilai_proaktif(db, k: str, v):
+    """Nilai bersih untuk satu kunci pengaturan Asisten AI proaktif, atau HTTPException 400 (pesan ramah)."""
+    from core.asisten_ai import proaktif as _pro
+    if k in _PROAKTIF_BOOL:
+        if isinstance(v, str):
+            return v.strip().lower() in ("1", "true", "ya", "on")
+        if not isinstance(v, (bool, int)):
+            raise HTTPException(400, "Saklar Asisten AI harus ya/tidak")
+        return bool(v)
+    if k in _PROAKTIF_JAM:
+        jam = _pro.jam_sah(v)
+        if jam is None:
+            raise HTTPException(400, f"{_PROAKTIF_JAM[k]} harus berformat JJ:MM (00:00–23:59), mis. 07:00")
+        return jam
+    # asisten_briefing_penerima — daftar id pengguna aktif; kosong = semua owner aktif.
+    if v is None:
+        return []
+    if not isinstance(v, list) or not all(isinstance(x, str) and x.strip() for x in v):
+        raise HTTPException(400, "Penerima briefing harus berupa daftar pengguna")
+    ids = sorted({x.strip() for x in v})
+    if len(ids) > _MAKS_PENERIMA:
+        raise HTTPException(400, f"Penerima briefing paling banyak {_MAKS_PENERIMA} orang")
+    if ids:
+        ada = await db.users.find({"id": {"$in": ids}}, {"_id": 0, "id": 1, "status": 1, "active": 1,
+                                                        "is_active": 1}).to_list(_MAKS_PENERIMA + 5)
+        sah = {u.get("id") for u in ada if _pro.pengguna_aktif(u)}
+        hilang = [x for x in ids if x not in sah]
+        if hilang:
+            raise HTTPException(400, f"{len(hilang)} penerima briefing tidak ditemukan atau tidak aktif")
+    return ids
+# ── akhir Asisten AI (proaktif) ──
+
+
 # ── WS-B(d): AI Settings (Admin gear) ────────────────────────────────────────
 @router.get("/settings")
 async def get_settings(request: Request):
@@ -237,14 +278,33 @@ async def update_settings(request: Request, payload: dict = Body(...)):
     allowed = {
         "ai_enabled", "daily_budget_usd", "monthly_budget_usd",
         "per_feature_daily_usd", "default_tier", "disabled_features",
+        # Asisten AI (inti) — Tahap B: saklar tindakan + batas harian per pengguna.
+        "asisten_tindakan_aktif", "asisten_batas_tindakan_harian",
+        # Asisten AI (proaktif) — Tahap D: ingatan + briefing/peringatan/laporan mingguan.
+        *_PROAKTIF_BOOL, *_PROAKTIF_JAM, "asisten_briefing_penerima",
     }
     update = {}
     for k in allowed:
         if k not in payload:
             continue
         v = payload[k]
+        # Asisten AI (proaktif) — saklar, jam "HH:MM" (WIB), daftar penerima (id pengguna aktif).
+        if k in _PROAKTIF_BOOL or k in _PROAKTIF_JAM or k == "asisten_briefing_penerima":
+            update[k] = await _nilai_proaktif(db, k, v)
+            continue
+        # ── akhir Asisten AI (proaktif) ──
         if k == "ai_enabled":
             update[k] = bool(v)
+        elif k == "asisten_tindakan_aktif":
+            update[k] = (v.strip().lower() in ("1", "true", "ya", "on")) if isinstance(v, str) else bool(v)
+        elif k == "asisten_batas_tindakan_harian":
+            try:
+                iv = int(v)
+            except (TypeError, ValueError):
+                raise HTTPException(400, "Batas tindakan per pengguna per hari harus bilangan bulat")
+            if isinstance(v, bool) or iv < 0 or iv > 1000 or (isinstance(v, float) and not v.is_integer()):
+                raise HTTPException(400, "Batas tindakan per pengguna per hari harus 0–1000")
+            update[k] = iv
         elif k in ("daily_budget_usd", "monthly_budget_usd", "per_feature_daily_usd"):
             try:
                 fv = float(v)

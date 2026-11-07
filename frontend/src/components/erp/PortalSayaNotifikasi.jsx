@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Loader2, Bell, BellOff, CheckCheck, AlertCircle, History } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
-  INBOX_TABS, GroupRow, InboxRow, TabButton, navigateToGroup, navigateToNotification,
+  INBOX_TABS, GroupRow, InboxRow, TabButton, navigateToGroup, navigateToNotification, punyaTujuan,
 } from './NotificationBell';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -94,7 +94,7 @@ export default function PortalSayaNotifikasi({ headers, onNavigate }) {
 
   const activate = (n) => {
     if (!n.read) markRead(n.id);
-    if (n.link_module || n.action?.target_menu) { go(n); return; }
+    if (punyaTujuan(n)) { go(n); return; }  // Asisten AI (layar2): juga tautan alamat aplikasi
     setExpandedId((cur) => (cur === n.id ? null : n.id));
   };
 

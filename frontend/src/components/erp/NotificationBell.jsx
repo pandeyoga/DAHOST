@@ -88,13 +88,43 @@ export function notifNavParams(n) {
   return params;
 }
 
+// ── Asisten AI (layar2) — Tahap D, 8 Nov 2026 ──────────────────────────────────
+// Notifikasi yang membawa TAUTAN berbentuk alamat aplikasi (`source_url`/`link`, mis.
+// "/?portal=management&module=asisten-ai&sesi=<id>" dari briefing pagi) dibuka lewat mesin navigasi
+// yang SAMA dengan `link_module`: `module` → layar tujuan, parameter lain (mis. `sesi`) → deepLinkParams.
+// Tautan hash lama ("#wh-accessory") dan alamat situs lain tidak diubah (tetap dibuka sebagai rincian).
+export function tujuanDariTautan(url) {
+  const u = String(url || '').trim();
+  if (!u || u.startsWith('#')) return null;
+  let parsed;
+  try { parsed = new URL(u, window.location.origin); } catch (e) { return null; }
+  if (parsed.origin !== window.location.origin) return null;
+  const moduleId = parsed.searchParams.get('module') || '';
+  if (!/^[a-z0-9][a-z0-9-]{0,80}$/.test(moduleId)) return null;
+  const params = {};
+  parsed.searchParams.forEach((v, k) => { if (k !== 'module' && k !== 'portal') params[k] = v; });
+  return { moduleId, params };
+}
+const tautanNotif = (n) => tujuanDariTautan(n?.source_url || n?.link || n?.url);
+/** Notifikasi ini punya layar tujuan (action, link_module, atau tautan alamat aplikasi). */
+export const punyaTujuan = (n) => !!(n?.action?.target_menu || n?.link_module || tautanNotif(n));
+// ── akhir Asisten AI (layar2) ──
+
 // Navigasi bersama bel & Portal Saya. Mengembalikan false bila tujuan tidak dikenal.
 // Item action: backend sudah mengisi `link_module` = action.target_menu (disesuaikan
 // portal penerima, K37) dan `link_params` = action.filter.
 export function navigateToNotification(n, fallback) {
-  const moduleId = n?.action?.target_menu || n?.link_module;
+  const dariTautan = !n?.action?.target_menu && !n?.link_module ? tautanNotif(n) : null;  // Asisten AI (layar2)
+  const moduleId = n?.action?.target_menu || n?.link_module || dariTautan?.moduleId;
   if (!moduleId) return false;
-  const detail = { moduleId, params: notifNavParams(n), handled: undefined };
+  // Asisten AI (layar2): `tujuan_modul` menandai untuk layar mana parameter ini dibuat. App menyimpan deepLinkParams
+  // terakhir sampai navigasi berikutnya, jadi layar yang dibuka kemudian lewat menu samping bisa menerima parameter
+  // notifikasi layar LAIN; Asisten AI hanya membaca `link_id` sebagai id percakapan bila tujuannya memang asisten-ai.
+  const detail = {
+    moduleId,
+    params: { ...(dariTautan?.params || {}), ...notifNavParams(n), tujuan_modul: moduleId },
+    handled: undefined,
+  };
   try { window.dispatchEvent(new CustomEvent('erp:navigate-module', { detail })); } catch (e) { /* noop */ }
   if (detail.handled === undefined && typeof fallback === 'function') {
     fallback(moduleId, detail.params);          // tidak ada pendengar (mis. uji terisolasi)
@@ -180,7 +210,7 @@ export function InboxRow({ n, compact = false, expanded = false, onActivate, onA
          data-testid={isAction ? 'inbox-action-row' : isHistory ? 'inbox-history-row' : 'notif-row'}>
       <button type="button" onClick={() => onActivate?.(n)}
               className="min-w-0 flex-1 text-left focus:outline-none focus-visible:underline"
-              aria-expanded={n.link_module ? undefined : expanded}>
+              aria-expanded={punyaTujuan(n) ? undefined : expanded}>
         <span className="flex items-center gap-1.5">
           {n.category_label && (
             <span className={`shrink-0 px-1.5 py-0.5 rounded border text-[9px] font-semibold ${CAT_TONE[n.category] || CAT_TONE.sysadmin}`}>
@@ -202,7 +232,7 @@ export function InboxRow({ n, compact = false, expanded = false, onActivate, onA
               {n.resolved_at ? ` (${formatWIB(n.resolved_at)})` : ''}
             </span>
           )}
-          {!isAction && !isHistory && n.link_module && <span className="ml-1 text-[hsl(var(--primary))]">· Buka</span>}
+          {!isAction && !isHistory && punyaTujuan(n) && <span className="ml-1 text-[hsl(var(--primary))]">· Buka</span>}
         </span>
       </button>
       {isAction && n.action && (
@@ -219,7 +249,7 @@ export function InboxRow({ n, compact = false, expanded = false, onActivate, onA
           Tandai dibaca
         </button>
       )}
-      {!isAction && !isHistory && !n.link_module && !compact && (
+      {!isAction && !isHistory && !punyaTujuan(n) && !compact && (
         <ChevronDown className={`shrink-0 self-center w-3.5 h-3.5 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`} />
       )}
     </div>
@@ -373,7 +403,7 @@ export function NotificationBell({ token, onNavigateModule }) {
   // Satu perilaku klik untuk dropdown & kotak masuk lengkap.
   const activate = (n, from) => {
     if (!n.read) markRead(n.id);
-    if (n.link_module || n.action?.target_menu) { go(n); return; }
+    if (punyaTujuan(n)) { go(n); return; }
     if (from === 'dropdown') openCenter(n.kind === 'action' ? (n.resolved_at ? 'history' : 'action') : 'info', n.id);
     else setExpandedId((cur) => (cur === n.id ? null : n.id));
   };

@@ -5,8 +5,15 @@ Koleksi (jenis `log` di core/collection_registry.py — boleh dihapus saat cutof
   ai_chat_sessions  {id, user_id, judul, created_at, updated_at, jumlah_pesan, dihapus, dihapus_at,
                      ada_tindakan_menunggu}
   ai_chat_messages  {id, sesi_id, user_id, urutan, peran: "user"|"asisten", dibuat, diperbarui,
-                     status: "selesai"|"berjalan"|"terhenti"|"gagal", blok: [...], api: [...],
-                     cv, periode, pemakaian, galat}
+                     status: "selesai"|"berjalan"|"terhenti"|"gagal"|"menunggu_konfirmasi", blok: [...], api: [...],
+                     cv, periode, pemakaian, galat, tunda?, lanjutan_dari?}
+
+Tahap B (8 Nov 2026): pesan asisten yang berhenti menunggu kartu tindakan berstatus `menunggu_konfirmasi`
+dan menyimpan `tunda` = {keadaan: "menunggu"|"selesai", urutan: [id tool_use giliran terakhir], hasil:
+[tool_result alat baca/ui/tindakan-gagal giliran itu], tindakan: [id ai_actions], putaran_alat}. `api`-nya
+berakhir dengan giliran asisten ber-tool_use; tool_result-nya ditulis di pesan BERIKUTNYA (jawaban lanjutan
+`lanjutan_dari` = id pesan ini, `api` diawali giliran pengguna berisi tool_result; atau pesan pengguna baru
+yang diawali tool_result kartu kedaluwarsa). Yang berubah pada pesan lama hanya `status` + `tunda.keadaan`.
 
 * `blok` = tampilan yang dirender ulang layar (Kontrak B). `api` = isi MENTAH Messages API
   (giliran {role, content} persis seperti dikirim/diterima, termasuk blok thinking bertanda
@@ -15,6 +22,10 @@ Koleksi (jenis `log` di core/collection_registry.py — boleh dihapus saat cutof
   tidak pernah diubah isinya; pesan asisten hanya ditulis sekali saat jawabannya berakhir.
 * Hanya pemilik: setiap kueri memakai `user_id` pengguna yang login. Superadmin pun tidak bisa
   membuka percakapan orang lain (sesi orang lain = "tidak ditemukan").
+
+Tahap D (8 Nov 2026, agen proaktif): sesi punya `jenis` = "chat" (bawaan) | "briefing" | "laporan_mingguan"
+(dibuat otomatis oleh `core/asisten_ai/proaktif.py`); pesan pengguna buatan sistem (permintaan briefing
+otomatis) bertanda `otomatis: true`.
 """
 from __future__ import annotations
 
@@ -26,6 +37,7 @@ SESI = "ai_chat_sessions"
 PESAN = "ai_chat_messages"
 JUDUL_BAWAAN = "Percakapan baru"
 MAKS_JUDUL = 120
+JENIS_SESI = ("chat", "briefing", "laporan_mingguan")
 MAKS_SESI_DAFTAR = 200
 MAKS_PESAN_SESI = 2000
 # Pesan "berjalan" yang lebih tua dari ini dianggap terhenti (proses mati di tengah jawaban).
@@ -49,15 +61,16 @@ def _sesi_publik(d: dict) -> dict:
     return {"id": d.get("id"), "judul": d.get("judul") or JUDUL_BAWAAN, "created_at": d.get("created_at"),
             "updated_at": d.get("updated_at") or d.get("created_at"),
             "jumlah_pesan": int(d.get("jumlah_pesan") or 0),
-            "ada_tindakan_menunggu": bool(d.get("ada_tindakan_menunggu", False))}
+            "ada_tindakan_menunggu": bool(d.get("ada_tindakan_menunggu", False)),
+            "jenis": d.get("jenis") if d.get("jenis") in JENIS_SESI else "chat"}
 
 
-async def buat_sesi(db, user_id: str, judul: Optional[str] = None) -> dict:
+async def buat_sesi(db, user_id: str, judul: Optional[str] = None, *, jenis: str = "chat") -> dict:
     now = _sekarang()
     judul = (str(judul).strip()[:MAKS_JUDUL] if judul and str(judul).strip() else JUDUL_BAWAAN)
     doc = {"id": _id(), "user_id": user_id, "judul": judul, "judul_otomatis": judul == JUDUL_BAWAAN,
            "created_at": now, "updated_at": now, "jumlah_pesan": 0, "dihapus": False,
-           "ada_tindakan_menunggu": False}
+           "ada_tindakan_menunggu": False, "jenis": jenis if jenis in JENIS_SESI else "chat"}
     await db.ai_chat_sessions.insert_one(dict(doc))
     return _sesi_publik(doc)
 
@@ -136,6 +149,8 @@ async def ambil_pesan(db, user_id: str, sesi_id: str) -> list[dict]:
             item["cv"] = r["cv"]
         if r.get("periode"):
             item["periode"] = r["periode"]
+        if r.get("otomatis"):
+            item["otomatis"] = True
         out.append(item)
     return out
 
@@ -158,13 +173,16 @@ async def _urutan_berikut(db, sesi: dict, n: int) -> int:
 
 
 async def mulai_giliran(db, sesi: dict, user_id: str, *, teks: str, api_user: dict, cv: str,
-                        periode: str) -> tuple[dict, dict]:
-    """Simpan pesan pengguna + pesan asisten berstatus `berjalan`. Return (pesan_user, pesan_asisten)."""
+                        periode: str, otomatis: bool = False) -> tuple[dict, dict]:
+    """Simpan pesan pengguna + pesan asisten berstatus `berjalan`. Return (pesan_user, pesan_asisten).
+    `otomatis=True` (Tahap D): pesan pengguna ditulis sistem (permintaan briefing/laporan otomatis)."""
     now = _sekarang()
     nomor = await _urutan_berikut(db, sesi, 2)
     p_user = {"id": _id(), "sesi_id": sesi["id"], "user_id": user_id, "urutan": nomor, "peran": "user",
               "dibuat": now, "diperbarui": now, "status": "selesai", "blok": [{"jenis": "teks", "isi": teks}],
               "api": [api_user], "cv": cv, "periode": periode}
+    if otomatis:
+        p_user["otomatis"] = True
     p_asisten = {"id": _id(), "sesi_id": sesi["id"], "user_id": user_id, "urutan": nomor + 1,
                  "peran": "asisten", "dibuat": now, "diperbarui": now, "status": "berjalan", "blok": [],
                  "api": [], "cv": cv, "periode": periode}
@@ -179,13 +197,49 @@ async def mulai_giliran(db, sesi: dict, user_id: str, *, teks: str, api_user: di
 
 
 async def akhiri_giliran(db, user_id: str, pesan_id: str, *, blok: list, api: list, status: str,
-                         pemakaian: Optional[dict] = None, galat: Optional[dict] = None) -> None:
-    """Tulis hasil akhir pesan asisten SEKALI (status selesai/terhenti/gagal)."""
+                         pemakaian: Optional[dict] = None, galat: Optional[dict] = None,
+                         tunda: Optional[dict] = None) -> None:
+    """Tulis hasil akhir pesan asisten SEKALI (status selesai/terhenti/gagal/menunggu_konfirmasi)."""
     now = _sekarang()
     upd = {"blok": blok, "api": api, "status": status, "diperbarui": now}
     if pemakaian is not None:
         upd["pemakaian"] = pemakaian
     if galat is not None:
         upd["galat"] = galat
+    if tunda is not None:
+        upd["tunda"] = tunda
     await db.ai_chat_messages.update_one({"id": pesan_id, "user_id": user_id, "status": "berjalan"},
                                          {"$set": upd})
+
+
+# ── Tahap B: giliran yang berhenti menunggu kartu tindakan ──────────────────
+async def mulai_lanjutan(db, sesi: dict, user_id: str, *, api_user: dict, cv: str, periode: str,
+                         lanjutan_dari: str) -> dict:
+    """Pesan asisten LANJUTAN sesudah semua kartu satu giliran diputuskan. Giliran pengguna berisi
+    tool_result langsung disimpan di `api` (riwayat tetap sah walau proses mati di tengah jawaban)."""
+    now = _sekarang()
+    nomor = await _urutan_berikut(db, sesi, 1)
+    p = {"id": _id(), "sesi_id": sesi["id"], "user_id": user_id, "urutan": nomor, "peran": "asisten",
+         "dibuat": now, "diperbarui": now, "status": "berjalan", "blok": [], "api": [api_user], "cv": cv,
+         "periode": periode, "lanjutan_dari": lanjutan_dari}
+    await db.ai_chat_messages.insert_one(dict(p))
+    await db.ai_chat_sessions.update_one({"id": sesi["id"], "user_id": user_id},
+                                         {"$set": {"updated_at": now}, "$inc": {"jumlah_pesan": 1}})
+    return p
+
+
+async def pesan_tunda(db, user_id: str, sesi_id: str) -> Optional[dict]:
+    """Pesan asisten TERAKHIR sesi ini yang pernah berhenti menunggu kartu (keadaan tunda apa pun)."""
+    rows = await db.ai_chat_messages.find({"sesi_id": sesi_id, "user_id": user_id, "tunda": {"$exists": True}},
+                                          {"_id": 0, "api": 0, "blok": 0}).sort("urutan", -1).limit(1).to_list(1)
+    return rows[0] if rows else None
+
+
+async def tutup_tunda(db, user_id: str, pesan_id: str, cara: str) -> bool:
+    """Tutup giliran tertunda SEKALI (atomik). False = sudah ditutup proses lain."""
+    now = _sekarang()
+    res = await db.ai_chat_messages.update_one(
+        {"id": pesan_id, "user_id": user_id, "tunda.keadaan": "menunggu"},
+        {"$set": {"tunda.keadaan": "selesai", "tunda.ditutup": cara, "tunda.ditutup_pada": now,
+                  "status": "selesai", "diperbarui": now}})
+    return bool(getattr(res, "matched_count", 0))

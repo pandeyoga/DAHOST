@@ -495,15 +495,15 @@ async def apply_suggestion(suggestion_id: str, request: Request,
                                  f"{min_margin:.1f}%. Tidak diterapkan.")
 
     # Tulis lewat endpoint harga katalog yang sudah ada (normalisasi harga_jual/price, stats).
+    # 2026-11-08 — endpoint itu kini sendiri yang mencatat riwayat harga (entity `catalog_item`, aksi
+    # `price_change`, lama → baru, aktor dari token); alasannya dikirim lewat `reason` supaya jejaknya
+    # tetap SATU baris, bukan dua.
     from routes.marketing_catalog_items import CatalogItemUpdate, update_catalog_item
-    await update_catalog_item(item["catalog_id"], item["id"], CatalogItemUpdate(harga_jual=new_price), request)
+    await update_catalog_item(item["catalog_id"], item["id"], CatalogItemUpdate(
+        harga_jual=new_price,
+        reason=f"Usulan harga AI {suggestion_id} (disetujui {doc.get('decided_by') or '-'})"), request)
 
     actor = _actor_label(user)
-    from core.marketing_cycle import log_change
-    await log_change(db, account_id=item.get("account_id"), entity="catalog_item", entity_id=item["id"],
-                     action="price_change", before={"harga_jual": old_price}, after={"harga_jual": new_price},
-                     reason=f"Usulan harga AI {suggestion_id} (disetujui {doc.get('decided_by') or '-'})",
-                     user=user)
     await db.marketing_dynamic_pricing_suggestions.update_one(
         {"id": suggestion_id},
         {"$set": {"status": "applied", "applied_at": _now(), "updated_at": _now(),
