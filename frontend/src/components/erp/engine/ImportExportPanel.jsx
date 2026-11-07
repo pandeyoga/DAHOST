@@ -4,6 +4,7 @@ import { Upload, Download, FileSpreadsheet, Loader2, CheckCircle, AlertCircle } 
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Notice } from '../moduleAtoms';
 import { apiFetch, apiPost } from '../../../lib/api';
 import { todayWIB } from '../../../lib/waktu';
@@ -162,24 +163,24 @@ export default function ImportExportPanel({ token, importType, exportType, expor
                           <div className="mt-2 pt-2 border-t border-[hsl(var(--success)/0.35)]">
                             <p className="font-medium text-[hsl(var(--success-text))] mb-1">Akun Vendor yang Dibuat:</p>
                             <div className="max-h-40 overflow-auto">
-                              <table className="w-full text-xs">
-                                <thead>
-                                  <tr className="text-left">
-                                    <th className="pb-1">Vendor</th>
-                                    <th className="pb-1">Email</th>
-                                    <th className="pb-1">Password</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
+                              <Table>
+                                <TableHeader>
+                                  <TableRow className="text-left">
+                                    <TableHead className="pb-1">Vendor</TableHead>
+                                    <TableHead className="pb-1">Email</TableHead>
+                                    <TableHead className="pb-1">Password</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
                                   {importResult.vendor_accounts.map((acc, i) => (
-                                    <tr key={i} className="border-t border-[hsl(var(--success)/0.35)]">
-                                      <td className="py-1">{acc.garment_name}</td>
-                                      <td className="py-1 tabular-nums">{acc.email}</td>
-                                      <td className="py-1 tabular-nums">{acc.password}</td>
-                                    </tr>
+                                    <TableRow key={i} className="border-t border-[hsl(var(--success)/0.35)]">
+                                      <TableCell className="py-1">{acc.garment_name}</TableCell>
+                                      <TableCell className="py-1 tabular-nums">{acc.email}</TableCell>
+                                      <TableCell className="py-1 tabular-nums">{acc.password}</TableCell>
+                                    </TableRow>
                                   ))}
-                                </tbody>
-                              </table>
+                                </TableBody>
+                              </Table>
                             </div>
                           </div>
                         )}
