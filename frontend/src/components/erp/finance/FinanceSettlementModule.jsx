@@ -23,13 +23,22 @@
  *   catat di slot `actions` (di hub pindah ke baris tab). Hasil "Cocokkan" dibuka di DetailPanel di atas
  *   tabel. Tab Penarikan memakai cetakan yang sama lewat PlatformWithdrawalsPanel (periode tidak tampil di
  *   sana karena daftar penarikan tidak disaring per periode).
+ * 2026-11-08 (Standar UI/UX v2): form dana dilepas = FormPopup panjang (hasil baca impor ikut di dalamnya) dengan
+ *   DatePicker; hasil Cocokkan = popup tanpa kotak abu/kapital; aksi baris paling banyak 2 terlihat (Jurnal/Posting +
+ *   "Lainnya"); daftar bisa diunduh Excel/CSV semua halaman; platform ditulis Shopee/TikTok; kartu angka berketerangan.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
-  Banknote, RefreshCw, AlertTriangle, CheckCircle2, Loader2,
-  Plus, Scale, BookCheck, Send, X, Trash2, Pencil, Upload,
+  Banknote, RefreshCw, AlertTriangle, Loader2,
+  Plus, Scale, BookCheck, Send, Trash2, Pencil, Upload, MoreHorizontal,
 } from 'lucide-react';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
@@ -42,7 +51,7 @@ import { MoneyInput } from '@/components/ui/money-input';
 
 import { SettlementImportPanel, computeValues } from './SettlementImportPanel';
 import { SettlementByStoreCards } from './SettlementByStoreCards';
-import { PlatformBalanceCards, usePlatformBalances } from './PlatformBalanceCards';
+import { PlatformBalanceCards, usePlatformBalances, namaPlatform } from './PlatformBalanceCards';
 import { PlatformWithdrawalsPanel } from './PlatformWithdrawalsPanel';
 import { useBankOptions } from './PayoutBankLinks';
 import PaginationBar from '@/components/ui/PaginationBar';
@@ -339,13 +348,42 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
     } finally { setBusy(''); }
   };
 
+  // Unduh: SEMUA laporan dana dilepas sesuai saringan (bukan hanya 25 di halaman ini).
+  const ambilSemua = async () => {
+    const out = [];
+    for (let page = 1; page <= 100; page += 1) {
+      const qs = new URLSearchParams({ page_size: '200', page: String(page) });
+      if (accountId) qs.set('account_id', accountId);
+      if (range.from) qs.set('date_from', range.from);
+      if (range.to) qs.set('date_to', range.to);
+      const d = await call(`?${qs}`);
+      out.push(...(d.data || []));
+      if (!(d.data || []).length || out.length >= (d.pagination?.total ?? out.length)) break;
+    }
+    return out;
+  };
+  const KOLOM_UNDUH = [
+    { label: 'Tanggal dana dilepas', nilai: (r) => formatDateID(r.settlement_date) },
+    { label: 'No. laporan', nilai: (r) => r.settlement_id },
+    { label: 'Toko', nilai: (r) => accName(r.account_id) },
+    { label: 'Platform', nilai: (r) => namaPlatform(r.platform) },
+    { label: 'Periode pesanan dari', nilai: (r) => (r.period_from ? formatDateID(r.period_from) : '') },
+    { label: 'Periode pesanan sampai', nilai: (r) => (r.period_to ? formatDateID(r.period_to) : '') },
+    { label: 'Omzet bruto', nilai: (r) => Number(r.gross_sales) || 0 },
+    { label: 'Potongan', nilai: (r) => Number(r.total_deductions) || 0 },
+    { label: 'Potongan %', nilai: (r) => Number(r.deduction_pct) || 0 },
+    { label: 'Masuk saldo', nilai: (r) => Number(r.net_payout) || 0 },
+    { label: 'Status', nilai: (r) => (r.math_verified ? 'Seimbang' : `Selisih ${Number(r.net_payout_diff) || 0}`) },
+    { label: 'Jurnal', nilai: (r) => (r.je_number ? `${r.je_number} (${finStatus(r.je_status).label.toLowerCase()})` : 'belum') },
+  ];
+
   // ── Slot cetakan (PANDUAN_UI G1/G6): penyaring di kiri, muat ulang di kanan ──
   const storeFilter = (
     <SmartNativeSelect data-testid="fin-settlement-account-filter" value={accountId}
       onChange={(e) => setAccountId(e.target.value)} className="h-9 w-56" aria-label="Toko">
       <option value="">Semua toko</option>
       {accounts.map((a) => (
-        <option key={a.id} value={a.id}>{a.account_name} · {a.platform}</option>
+        <option key={a.id} value={a.id}>{a.account_name} · {namaPlatform(a.platform)}</option>
       ))}
     </SmartNativeSelect>
   );
@@ -364,11 +402,11 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
     {hasKpi ? (
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <StatTile testId="fin-settlement-kpi-net" label={`Masuk saldo platform · ${periodLabel}`}
-          value={rp(summary.net_payout || 0)} suffix={`· ${total} laporan`} />
+          value={rp(summary.net_payout || 0)} sub={`${total} laporan dana dilepas${accountId ? ' · toko terpilih' : ' · semua toko'}`} />
         <StatTile testId="fin-settlement-kpi-gross" label={`Omzet bruto · ${periodLabel}`}
-          value={rp(summary.gross_sales || 0)} />
+          value={rp(summary.gross_sales || 0)} sub="Menurut laporan platform" />
         <StatTile testId="fin-settlement-kpi-ded" label={`Potongan platform · ${periodLabel}`}
-          value={rp(summary.total_deductions || 0)} suffix={`· ${pct(summary.deduction_pct)} dari bruto`} />
+          value={rp(summary.total_deductions || 0)} sub={`${pct(summary.deduction_pct)} dari omzet bruto`} />
       </div>
     ) : null}
     {/* pemeriksaan teknis hanya muncul bila ada masalah (dulu kartu "Belum seimbang 0 dokumen" selalu tampil) */}
@@ -387,34 +425,34 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
     <DetailPanel testId="fin-settlement-recon" onClose={() => setRecon(null)}
       title={<span className="flex items-center gap-2"><Scale className="w-4 h-4" /> Pencocokan {reconFor}</span>}
       description={`Periode pesanan ${formatDateID(recon.period?.from)} – ${formatDateID(recon.period?.to)}`}>
-      <div className="grid md:grid-cols-3 gap-3 text-xs">
-        <div className="rounded-lg bg-foreground/5 p-3 tabular-nums">
-          <div className="text-muted-foreground uppercase tracking-wide">Dana dilepas</div>
+      <div className="grid md:grid-cols-3 gap-3 text-sm">
+        <div className="rounded-[var(--radius-md)] border border-[var(--glass-border)] p-3 tabular-nums">
+          <div className="text-xs font-medium text-muted-foreground">Dana dilepas</div>
           <div className="mt-1">bruto <b>{rp(recon.settlement?.gross_sales || 0)}</b></div>
           <div>masuk saldo <b>{rp(recon.settlement?.net_payout || 0)}</b></div>
           <div>potongan <b>{rp(recon.settlement?.total_deductions || 0)}</b>{' '}
             ({pct(recon.settlement?.deduction_pct || 0)})</div>
         </div>
-        <div className="rounded-lg bg-foreground/5 p-3 tabular-nums">
-          <div className="text-muted-foreground uppercase tracking-wide">
+        <div className="rounded-[var(--radius-md)] border border-[var(--glass-border)] p-3 tabular-nums">
+          <div className="text-xs font-medium text-muted-foreground">
             Omzet pesanan periode ({recon.marketing?.order_count || 0} pesanan)
           </div>
           <div className="mt-1">bruto <b>{rp(recon.marketing?.revenue_gross || 0)}</b></div>
           <div>setelah diskon <b>{rp(recon.marketing?.revenue_product || 0)}</b></div>
           <div>dibayar pembeli <b>{rp(recon.marketing?.order_amount || 0)}</b></div>
         </div>
-        <div className="rounded-lg bg-foreground/5 p-3 tabular-nums" data-testid="fin-settlement-recon-primary">
+        <div className="rounded-[var(--radius-md)] border border-[var(--glass-border)] p-3 tabular-nums" data-testid="fin-settlement-recon-primary">
           {/* 2026-11-02 (K5) — pembanding utama keputusan owner */}
-          <div className="text-muted-foreground uppercase tracking-wide">Selisih (setelah diskon penjual)</div>
+          <div className="text-xs font-medium text-muted-foreground">Selisih (setelah diskon penjual)</div>
           <div className="mt-1 text-lg font-semibold">
             {rp(recon.primary?.gap ?? recon.gap?.gross_vs_revenue_gross ?? 0)}
           </div>
-          <div className="text-muted-foreground">
+          <div className="text-xs text-muted-foreground">
             (bruto {rp(recon.primary?.settlement_gross || 0)} − diskon penjual{' '}
             {rp(recon.primary?.settlement_seller_discount || 0)}) vs omzet setelah diskon{' '}
             {rp(recon.primary?.omzet_after_discount || 0)}
           </div>
-          <div className="text-muted-foreground">
+          <div className="text-xs text-muted-foreground">
             {recon.gap?.cancelled_orders_excluded || 0} pesanan batal dikecualikan · selisih bruto vs bruto{' '}
             {rp(recon.gap?.gross_vs_revenue_gross || 0)}
           </div>
@@ -422,13 +460,13 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
       </div>
       <ul className="space-y-1.5" data-testid="fin-settlement-recon-named">
         {(recon.gap?.named || []).map((g) => (
-          <li key={g.name} className="text-xs rounded-lg bg-foreground/5 px-3 py-2">
+          <li key={g.name} className="text-sm rounded-[var(--radius-md)] border border-[var(--glass-border)] px-3 py-2">
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className="text-[10px]">{humanize(g.name)}</Badge>
+              <Badge variant="outline" className="text-xs">{humanize(g.name)}</Badge>
               {g.amount ? <b className="tabular-nums">{rp(g.amount)}</b> : null}
             </div>
-            <div className="mt-0.5 text-foreground/80">{g.label}</div>
-            <div className="text-muted-foreground">{g.action}</div>
+            <div className="mt-0.5 text-foreground">{g.label}</div>
+            <div className="text-xs text-muted-foreground">{g.action}</div>
           </li>
         ))}
       </ul>
@@ -457,11 +495,15 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
         {storeFilter}
         <PeriodPicker value={period} onChange={setPeriod} testId="fin-settlement-period-filter" />
       </>}
-      tools={
+      tools={<>
+        {view === 'settlements' && (
+          <TombolUnduh namaBerkas={`dana-dilepas-${range.from}-${range.to}`} namaLembar="Dana dilepas" baris={rows}
+            ambilSemua={ambilSemua} kolom={KOLOM_UNDUH} testId="fin-settlement-unduh" />
+        )}
         <Button variant="outline" size="icon" data-testid="fin-settlement-refresh" onClick={load} title="Muat ulang" aria-label="Muat ulang">
           <RefreshCw className="w-4 h-4" />
         </Button>
-      }
+      </>}
       summary={summaryNode}
       detail={reconPanel}
     >
@@ -475,119 +517,81 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
         data-testid="fin-settlement-import-file"
         onChange={(e) => importFile(e.target.files?.[0])} />
 
-      {/* ── HASIL IMPOR ── */}
-      <SettlementImportPanel result={importRes} onClose={() => setImportRes(null)}
-        onMappingChange={changeMapping} />
-
-      {/* ── FORM ── */}
+      {/* ── FORM (popup standar, panjang) — hasil baca impor ikut di dalamnya ── */}
       {formOpen ? (
-        <div ref={formRef} className="scroll-mt-4">
-        <GlassCard className="p-4 space-y-3" data-testid="fin-settlement-form">
-          <div className="flex items-center justify-between">
-            <h3 className="font-medium text-sm">
-              {editId ? 'Koreksi laporan dana dilepas' : 'Catat dana dilepas ke saldo toko'}
-            </h3>
-            <Button variant="outline" size="icon" data-testid="fin-settlement-form-close" onClick={() => setFormOpen(false)}
-              title="Tutup" aria-label="Tutup"><X className="w-4 h-4" /></Button>
-          </div>
-
-          <div className="grid md:grid-cols-4 gap-3">
-            <label className="text-xs space-y-1">
-              <span className="text-muted-foreground">Toko</span>
+        <FormPopup open onClose={() => { setFormOpen(false); setImportRes(null); }} ukuran="panjang" testId="fin-settlement-form"
+          judul={editId ? 'Koreksi laporan dana dilepas' : 'Catat dana dilepas ke saldo toko'}
+          keterangan="Isi dari laporan Penghasilan (Shopee) / Settlement (TikTok). Selisih harus 0 sebelum dijurnal."
+          onSimpan={() => save(true)} menyimpan={busy === 'save'} bisaSimpan={Math.abs(diff) < 0.01}
+          labelSimpan="Simpan & posting"
+          aksiKiri={<Button type="button" variant="outline" data-testid="fin-settlement-save" disabled={busy === 'save'} onClick={() => save(false)}>Simpan draf</Button>}>
+          <div ref={formRef} />
+          <SettlementImportPanel result={importRes} onClose={() => setImportRes(null)}
+            onMappingChange={changeMapping} />
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Isian label="Toko" wajib>
               <SmartNativeSelect data-testid="fin-settlement-input-account" value={form.account_id}
                 onChange={(e) => setForm({ ...form, account_id: e.target.value })}
                 className="h-9 w-full">
                 <option value="">— pilih toko —</option>
                 {accounts.map((a) => (
-                  <option key={a.id} value={a.id}>{a.account_name} · {a.platform}</option>
+                  <option key={a.id} value={a.id}>{a.account_name} · {namaPlatform(a.platform)}</option>
                 ))}
               </SmartNativeSelect>
-            </label>
-            <label className="text-xs space-y-1">
-              <span className="text-muted-foreground">No. laporan (dari platform)</span>
+            </Isian>
+            <Isian label="No. laporan (dari platform)" wajib>
               <GlassInput data-testid="fin-settlement-input-settlement-id" value={form.settlement_id}
                 onChange={(e) => setForm({ ...form, settlement_id: e.target.value })}
                 placeholder="mis. 2026081512345" className={inputCls} />
-            </label>
-            <label className="text-xs space-y-1">
-              <span className="text-muted-foreground">Tanggal dana dilepas</span>
-              <GlassInput type="date" data-testid="fin-settlement-input-date" value={form.settlement_date}
-                onChange={(e) => setForm({ ...form, settlement_date: e.target.value })} className={inputCls} />
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="text-xs space-y-1">
-                <span className="text-muted-foreground">Periode pesanan dari <span className="text-[hsl(var(--warning))]">*</span></span>
-                <GlassInput type="date" data-testid="fin-settlement-input-period-from" value={form.period_from}
-                  onChange={(e) => setForm({ ...form, period_from: e.target.value })} className={inputCls} />
-              </label>
-              <label className="text-xs space-y-1">
-                <span className="text-muted-foreground">sampai <span className="text-[hsl(var(--warning))]">*</span>
-                  <span className="text-muted-foreground/70"> (wajib untuk Cocokkan)</span></span>
-                <GlassInput type="date" data-testid="fin-settlement-input-period-to" value={form.period_to}
-                  onChange={(e) => setForm({ ...form, period_to: e.target.value })} className={inputCls} />
-              </label>
-            </div>
+            </Isian>
+            <Isian label="Tanggal dana dilepas" wajib>
+              <DatePicker testId="fin-settlement-input-date" value={form.settlement_date}
+                onChange={(v) => setForm({ ...form, settlement_date: v })} />
+            </Isian>
+            <div className="hidden lg:block" />
+            <Isian label="Periode pesanan dari" petunjuk="Wajib untuk Cocokkan.">
+              <DatePicker testId="fin-settlement-input-period-from" value={form.period_from}
+                onChange={(v) => setForm({ ...form, period_from: v })} />
+            </Isian>
+            <Isian label="Periode pesanan sampai" petunjuk="Wajib untuk Cocokkan.">
+              <DatePicker testId="fin-settlement-input-period-to" value={form.period_to} min={form.period_from || undefined}
+                onChange={(v) => setForm({ ...form, period_to: v })} />
+            </Isian>
           </div>
-
-          <div className="grid md:grid-cols-5 gap-3">
+          <p className="text-sm font-medium text-foreground">Rincian laporan</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {MONEY_FIELDS.map(([f, label, sign]) => (
-              <label key={f} className="text-xs space-y-1">
-                <span className="text-muted-foreground">
-                  {label} <span className={sign > 0 ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--destructive))]'}>
-                    ({sign > 0 ? '+' : '−'})</span>
-                </span>
+              <Isian key={f} label={<>{label} <span className={sign > 0 ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--danger-text))]'}>({sign > 0 ? '+' : '−'})</span></>}>
                 <MoneyInput glass allowNegative={f === 'adjustments'} data-testid={`fin-settlement-input-${f}`}
                   value={form[f]} onChange={(e) => setForm({ ...form, [f]: e.target.value })}
                   className="h-9 text-right tabular-nums" />
-              </label>
+              </Isian>
             ))}
           </div>
-
-          <div className="grid md:grid-cols-3 gap-3">
-            <label className="text-xs space-y-1">
-              <span className="text-muted-foreground">
-                Dana bersih masuk saldo platform <b>menurut laporan platform</b>
-              </span>
+          <div className="grid sm:grid-cols-3 gap-4">
+            <Isian label="Dana bersih masuk saldo (menurut laporan platform)" wajib>
               <MoneyInput glass data-testid="fin-settlement-input-net-payout"
                 value={form.net_payout}
                 onChange={(e) => setForm({ ...form, net_payout: e.target.value })}
                 className="h-9 text-right tabular-nums font-semibold" />
-            </label>
-            <label className="text-xs space-y-1">
-              <span className="text-muted-foreground">Keterangan "potongan lain"</span>
+            </Isian>
+            <Isian label="Keterangan potongan lain" petunjuk="Wajib bila ada potongan lain.">
               <GlassInput data-testid="fin-settlement-input-other-note" value={form.other_deductions_note}
-                onChange={(e) => setForm({ ...form, other_deductions_note: e.target.value })}
-                placeholder="wajib bila ada potongan lain" className={inputCls} />
-            </label>
-            <label className="text-xs space-y-1">
-              <span className="text-muted-foreground">Catatan</span>
+                onChange={(e) => setForm({ ...form, other_deductions_note: e.target.value })} className={inputCls} />
+            </Isian>
+            <Isian label="Catatan">
               <GlassInput data-testid="fin-settlement-input-notes" value={form.notes}
                 onChange={(e) => setForm({ ...form, notes: e.target.value })} className={inputCls} />
-            </label>
+            </Isian>
           </div>
-
-          <Notice tone={Math.abs(diff) < 0.01 ? 'success' : 'danger'} className="text-xs tabular-nums" testId="fin-settlement-diff">
+          <Notice tone={Math.abs(diff) < 0.01 ? 'success' : 'danger'} className="tabular-nums" testId="fin-settlement-diff">
             Hasil hitung dari rincian: <b>{rp(expected)}</b> · yang diisi:{' '}
             <b>{rp(parseFloat(form.net_payout) || 0)}</b> · selisih: <b>{rp(diff)}</b>
             {Math.abs(diff) < 0.01
               ? ' — seimbang, boleh dijurnal.'
-              : ' — beri nama dulu di "Potongan lain" atau "Penyesuaian"; jurnal akan ditolak selama masih ada selisih.'}
+              : ' — beri nama dulu di "Potongan lain" atau "Penyesuaian"; jurnal akan ditolak selama masih ada selisih. "Simpan draf" tetap bisa.'}
           </Notice>
-
-          <div className="flex gap-2 flex-wrap">
-            <Button data-testid="fin-settlement-save-post" disabled={busy === 'save' || Math.abs(diff) >= 0.01}
-              onClick={() => save(true)}
-              title={Math.abs(diff) >= 0.01 ? 'Masih ada selisih — tidak bisa langsung diposting' : 'Simpan, buat jurnal, dan posting ke buku besar'}>
-              {busy === 'save' ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              Simpan &amp; posting
-            </Button>
-            <Button variant="outline" data-testid="fin-settlement-save" disabled={busy === 'save'} onClick={() => save(false)}>
-              Simpan draf
-            </Button>
-            <Button variant="outline" data-testid="fin-settlement-cancel" onClick={() => setFormOpen(false)}>Batal</Button>
-          </div>
-        </GlassCard>
-        </div>
+        </FormPopup>
       ) : null}
 
       {/* ── DAFTAR ── */}
@@ -624,7 +628,7 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
                     <td className="whitespace-nowrap">{r.settlement_id}</td>
                     <td>
                       {accName(r.account_id)}
-                      <span className="ml-1 text-xs text-muted-foreground uppercase">{r.platform}</span>
+                      <span className="block text-xs text-muted-foreground">{namaPlatform(r.platform)}</span>
                     </td>
                     <td className="text-right tabular-nums whitespace-nowrap">{rp(r.gross_sales || 0)}</td>
                     <td className="text-right tabular-nums whitespace-nowrap">
@@ -641,18 +645,13 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
                         ? <StatusBadge tone="success" label="Seimbang" />
                         : <StatusBadge tone="danger" label={`Selisih ${rp(r.net_payout_diff || 0)}`} />}
                     </td>
-                    <td className="text-xs whitespace-nowrap">
+                    <td className="whitespace-nowrap">
                       {r.je_number
                         ? <>{r.je_number} <span className="text-muted-foreground">({finStatus(r.je_status).label.toLowerCase()})</span></>
                         : <span className="text-muted-foreground">belum</span>}
                     </td>
                     <td>
                       <div className="flex items-center justify-end gap-1">
-                        <Button variant="ghost" size="icon-sm" title="Cocokkan dengan omzet periode" aria-label="Cocokkan dengan omzet periode"
-                          data-testid={`fin-settlement-reconcile-${r.settlement_id}`}
-                          disabled={busy === `recon:${r.id}`} onClick={() => reconcile(r)}>
-                          <Scale className="w-4 h-4" />
-                        </Button>
                         {!r.je_id && r.math_verified ? (
                           <Button variant="outline" size="sm" title="Buat jurnal draf"
                             data-testid={`fin-settlement-journal-${r.settlement_id}`}
@@ -661,27 +660,37 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
                           </Button>
                         ) : null}
                         {r.je_status === 'draft' ? (
-                          <Button variant="outline" size="sm" title="Posting jurnal ke buku besar"
+                          <Button variant="success" size="sm" title="Posting jurnal ke buku besar"
                             data-testid={`fin-settlement-post-${r.settlement_id}`}
                             disabled={busy === `post:${r.id}`} onClick={() => act(r, 'post')}>
                             <Send className="w-3.5 h-3.5" /> Posting
                           </Button>
                         ) : null}
-                        {!r.je_id ? (
-                          <>
-                            <Button variant="ghost" size="icon-sm" title="Koreksi angka" aria-label="Koreksi angka"
-                              data-testid={`fin-settlement-edit-${r.settlement_id}`}
-                              onClick={() => openEdit(r)}>
-                              <Pencil className="w-4 h-4" />
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon-sm" title="Lainnya" aria-label="Lainnya" data-testid={`fin-settlement-more-${r.settlement_id}`}>
+                              <MoreHorizontal className="w-4 h-4" />
                             </Button>
-                            <Button variant="ghost" size="icon-sm" title="Hapus" aria-label="Hapus"
-                              data-testid={`fin-settlement-delete-${r.settlement_id}`}
-                              disabled={busy === `delete:${r.id}`} className="ml-2 text-[hsl(var(--destructive))]"
-                              onClick={async () => { if (await confirmDialog({ title: `Hapus laporan dana dilepas ${r.settlement_id}?`, confirmLabel: 'Hapus', danger: true })) act(r, 'delete'); }}>
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </>
-                        ) : null}
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem data-testid={`fin-settlement-reconcile-${r.settlement_id}`}
+                              disabled={busy === `recon:${r.id}`} onClick={() => reconcile(r)}>
+                              <Scale className="w-4 h-4 mr-2" />Cocokkan dengan omzet periode
+                            </DropdownMenuItem>
+                            {!r.je_id ? (
+                              <>
+                                <DropdownMenuItem data-testid={`fin-settlement-edit-${r.settlement_id}`} onClick={() => openEdit(r)}>
+                                  <Pencil className="w-4 h-4 mr-2" />Koreksi angka
+                                </DropdownMenuItem>
+                                <DropdownMenuItem data-testid={`fin-settlement-delete-${r.settlement_id}`}
+                                  disabled={busy === `delete:${r.id}`} className="text-[hsl(var(--danger-text))]"
+                                  onClick={async () => { if (await confirmDialog({ title: `Hapus laporan dana dilepas ${r.settlement_id}?`, confirmLabel: 'Hapus', danger: true })) act(r, 'delete'); }}>
+                                  <Trash2 className="w-4 h-4 mr-2" />Hapus
+                                </DropdownMenuItem>
+                              </>
+                            ) : null}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </td>
                   </tr>
@@ -690,7 +699,7 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
             </table>
           </div>
         )}
-        <PaginationBar total={total} skip={skip} limit={PAGE} onPageChange={setSkip} className="px-3 py-2" />
+        {total > PAGE && <PaginationBar total={total} skip={skip} limit={PAGE} onPageChange={setSkip} className="px-3 py-2" />}
       </GlassCard>
       </>) : null}
     </PageLayout>
