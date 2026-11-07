@@ -517,6 +517,14 @@ function TabelLaporan({ judul, kolom, baris, namaBerkas, kosong = 'Tidak ada dat
       return merah && merah(r) && i === 0 ? <span className="text-[hsl(var(--danger-text))]">{v}</span> : v;
     },
   }));
+  // Tanpa data: satu baris ringkas (dulu kartu kosong + tombol unduh nonaktif berulang — di HP layar jadi panjang).
+  if (!baris || baris.length === 0) {
+    return (
+      <p className="px-1 text-sm text-muted-foreground" data-testid={testId}>
+        <span className={`font-medium text-foreground ${judulCls}`}>{judul}</span> — {kosong}
+      </p>
+    );
+  }
   return (
     <GlassCard className="space-y-2 p-3" hover={false} data-testid={testId}>
       <div className="flex flex-wrap items-center justify-between gap-2">
