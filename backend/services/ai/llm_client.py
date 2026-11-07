@@ -84,12 +84,16 @@ async def ai_text(
     user_id: Optional[str] = None,
     max_tokens: Optional[int] = None,
     image_base64: Optional[str] = None,
+    history: Optional[list] = None,
 ) -> str:
-    """Panggil Claude, kembalikan teks. Raise AIError (pesan ramah + `.code`) bila gagal."""
+    """Panggil Claude, kembalikan teks. Raise AIError (pesan ramah + `.code`) bila gagal.
+
+    `history` = giliran sebelumnya `[{"role": "user"|"assistant", "content": str}]` (multi-giliran).
+    """
     res = await _tracker.tracked_llm_call(
         feature=feature, user_id=user_id, model=tier,
         system_message=system_message, user_message=user_message,
-        image_base64=image_base64, max_tokens=max_tokens,
+        image_base64=image_base64, max_tokens=max_tokens, history=history,
     )
     if not res.success:
         raise AIError(res.error, over_budget=res.over_budget, code=res.error_code)
@@ -123,10 +127,12 @@ async def call_claude(
     db=None,
     tier: str = "standard",
     user_id: Optional[str] = None,
+    history: Optional[list] = None,
 ) -> str:
     """Satu titik panggilan untuk route lama. Return teks.
 
     `session_tag` menjadi label fitur di log pemakaian (sufiks id dibuang).
+    `history` (opsional) = giliran sebelumnya untuk percakapan multi-giliran.
 
     Raises:
         LLMUnavailable(503): kunci kosong / SDK tidak terpasang / AI dimatikan admin.
@@ -135,7 +141,7 @@ async def call_claude(
     resolved_tier = tier if tier in _tracker.TIER_MODELS else "standard"
     try:
         return await ai_text(session_tag, system_message, user_message,
-                             tier=resolved_tier, user_id=user_id)
+                             tier=resolved_tier, user_id=user_id, history=history)
     except AIError as e:
         if e.code not in _tracker.UNAVAILABLE_CODES:
             logger.warning("AI call gagal (%s): %s", session_tag, e.code)
@@ -160,8 +166,12 @@ async def cached_call_claude(
     ttl_seconds: int = 3600,
     session_tag: str = "ai",
     tier: str = "standard",
+    user_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """LLM call with application-level cache (MongoDB).
+
+    `user_id` (2026-11-07) diteruskan ke log pemakaian supaya Monitor AI tahu siapa pemicunya
+    (cache hit tidak memanggil AI sehingga tidak dicatat).
 
     Returns:
         dict with keys: text (str), cache_hit (bool), generated_at (iso str).
@@ -194,6 +204,7 @@ async def cached_call_claude(
         session_tag=session_tag,
         db=db,
         tier=tier,
+        user_id=user_id,
     )
 
     # Persist cache (fire-and-forget style; failure should not break user response)

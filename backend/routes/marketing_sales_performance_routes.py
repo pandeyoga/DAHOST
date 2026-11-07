@@ -5,11 +5,14 @@ Phase 3 Week 6: Aggregate sales data from marketing_sales_data + marketing_order
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-from fastapi import APIRouter, Request, Query
+from fastapi import APIRouter, HTTPException, Request, Query
 from database import get_db
 from auth import require_auth
 # F6 (sesi #9) — performa penjualan WAJIB berlingkup toko.
 from core import marketing_account_scope as _scope
+# 2026-11-07 (Asisten AI) — SATU definisi omzet untuk semua layar & AI.
+from core import ukuran_penjualan as _ukuran
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/performance", tags=["marketing-performance"])
@@ -39,6 +42,30 @@ def serialize(obj):
 
 # ── Endpoints ──
 
+async def _performance_accounts(db, user, *, account_id=None, account=None, platform=None):
+    """Toko untuk layar performa: lingkup pemakai (F6) + saringan toko/nama/platform."""
+    if account_id:
+        await _scope.assert_account_visible(db, user, account_id)
+    accs = await _ukuran.toko_terlihat(db, user, toko_id=account_id or None)
+    if account and not account_id:
+        accs = [a for a in accs if a.get("account_name") == account]
+    if platform:
+        fam = _scope.platform_family(platform)
+        accs = [a for a in accs if _scope.platform_family(a.get("platform")) == fam]
+    return accs
+
+
+def _range(start: Optional[str], end: Optional[str], days: int = 30) -> tuple:
+    """Rentang tanggal kalender (bagian tanggal APA ADANYA, seperti rekap harian)."""
+    today = today_wib()
+    d1 = (end or "")[:10] or today.isoformat()
+    d0 = (start or "")[:10] or (today - timedelta(days=days)).isoformat()
+    try:
+        return _ukuran.periode(d0, d1, maks_hari=3700)
+    except _ukuran.PeriodeSalah as e:
+        raise HTTPException(400, str(e)) from None
+
+
 @router.get("/overview")
 async def performance_overview(
     request: Request,
@@ -50,143 +77,62 @@ async def performance_overview(
     account: Optional[str] = Query(None),
     account_id: Optional[str] = Query(None),
 ):
-    """Ringkasan performa penjualan dari `marketing_orders`.
+    """Ringkasan performa penjualan.
 
-    F1.5/D05 (2026-08-12) — TIGA cacat yang ditutup di sini:
-      1. Filter toko diterjemahkan ke `account_name` (teks), padahal dokumen punya
-         `account_id`. Dua toko yang namanya diubah/mirip ⇒ angka tercampur.
-      2. Omzet memakai `total_payment` (= Order Amount, TERMASUK ongkir) sehingga
-         angkanya tidak pernah sama dengan omzet produk di rekap harian/Target.
-         Sekarang memakai `revenue_product` (dasar kanonik), dengan cadangan
-         `revenue`/`total_payment` untuk dokumen lama.
-      3. Nama parameter tanggal berbeda dengan pemanggil lain (`date_from/date_to`)
-         ⇒ layar mengirim rentang, endpoint diam-diam memakai "30 hari terakhir".
+    2026-11-07 (Asisten AI, audit §3.C #8/#9) — SATU definisi omzet
+    (`core.ukuran_penjualan`): total, per platform, dan tren harian dari REKAP HARIAN
+    (sama dengan dashboard, laporan bulanan, target, dan Asisten AI); pecahan kanal
+    dari pesanan dengan aturan yang sama (batal & belum dibayar tidak dihitung,
+    data contoh dibuang). Dulu angka ini dihitung langsung dari pesanan dengan
+    aturan sendiri — pesanan belum dibayar ikut omzet, dan pesanan bertanggal teks
+    hilang dari tren.
     """
     user = await require_auth(request)
     db = get_db()
+    d0, d1 = _range(start_date or date_from, end_date or date_to)
+    accs = await _performance_accounts(db, user, account_id=account_id, account=account,
+                                       platform=platform)
+    oms = await _ukuran.ringkas_omzet(db, accs, d0, d1)
+    tot = oms["total"]
+    by_acc = {a["id"]: a for a in accs}
 
-    start_date = start_date or date_from
-    end_date = end_date or date_to
+    by_platform: dict = {}
+    for aid, t in oms["per_toko"].items():
+        if not t["hari_ada_data"]:
+            continue
+        p = _scope.platform_family((by_acc.get(aid) or {}).get("platform")) or "lainnya"
+        b = by_platform.setdefault(p, {"revenue": 0.0, "orders": 0})
+        b["revenue"] += t["omzet"]
+        b["orders"] += t["pesanan"]
 
-    # Parse dates
-    if start_date:
-        start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-    else:
-        start_dt = _now() - timedelta(days=30)
-    
-    if end_date:
-        end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
-        if len(end_date) <= 10:           # tanggal saja ⇒ ikutkan seluruh harinya
-            end_dt = end_dt + timedelta(days=1) - timedelta(microseconds=1)
-    else:
-        end_dt = _now()
-    if start_dt.tzinfo is None:
-        start_dt = start_dt.replace(tzinfo=timezone.utc)
-    if end_dt.tzinfo is None:
-        end_dt = end_dt.replace(tzinfo=timezone.utc)
+    daily: dict = {}
+    for r in oms["baris"]:
+        b = daily.setdefault(r["date"], {"date": r["date"], "revenue": 0.0, "orders": 0})
+        b["revenue"] += r["omzet"]
+        b["orders"] += r["pesanan"]
 
-    # Aggregate from marketing_orders (committed import data)
-    match_stage = {
-        "order_date": {"$gte": start_dt, "$lte": end_dt},
-        "status": {"$nin": ["cancelled"]}
-    }
-    if platform:
-        match_stage["platform"] = platform
-    # F1.5 — lingkup toko memakai `account_id` (SSOT). `account_name` hanya
-    # dipertahankan sebagai jalur kompatibilitas dokumen lama.
-    if account_id:
-        await _scope.assert_account_visible(db, user, account_id)
-        acc = await db.marketing_platform_accounts.find_one(
-            {"id": account_id}, {"_id": 0, "account_name": 1})
-        ors = [{"account_id": account_id}]
-        if acc and acc.get("account_name"):
-            ors.append({"account_id": {"$exists": False}, "account_name": acc["account_name"]})
-        match_stage["$or"] = ors
-    elif account:
-        match_stage["account_name"] = account
-    else:
-        # F6 (sesi #9): tanpa filter toko, staf berlingkup hanya menjumlah toko
-        # yang di-assign kepadanya — sebelumnya angka SEMUA toko yang keluar.
-        _vis = await _scope.visible_account_ids(db, user)
-        if _vis is not None:
-            match_stage["account_id"] = {"$in": _vis}
+    orders = await _ukuran.baca_pesanan(db, list(by_acc), d0, d1)
+    by_channel = {c["kunci"]: {"revenue": c["omzet"], "orders": c["pesanan"]}
+                  for c in _ukuran.rincian_kanal(orders)}
 
-    # Omzet kanonik: omzet PRODUK (setelah diskon penjual, sebelum potongan platform).
-    REV_EXPR = {"$ifNull": ["$revenue_product", {"$ifNull": ["$revenue", "$total_payment"]}]}
-
-    pipeline = [
-        {"$match": match_stage},
-        {"$group": {
-            "_id": None,
-            "total_revenue": {"$sum": REV_EXPR},
-            "total_order_amount": {"$sum": {"$ifNull": ["$order_amount", "$total_payment"]}},
-            "total_orders": {"$sum": 1},
-            "total_items": {"$sum": "$quantity"}
-        }}
-    ]
-    
-    result = await db.marketing_orders.aggregate(pipeline).to_list(1)
-    stats = result[0] if result else {"total_revenue": 0, "total_order_amount": 0,
-                                      "total_orders": 0, "total_items": 0}
-    
-    # Calculate AOV
-    aov = stats["total_revenue"] / max(stats["total_orders"], 1)
-    
-    # By platform breakdown
-    platform_pipeline = [
-        {"$match": match_stage},
-        {"$group": {
-            "_id": "$platform",
-            "revenue": {"$sum": REV_EXPR},
-            "orders": {"$sum": 1}
-        }}
-    ]
-    by_platform = {}
-    async for doc in db.marketing_orders.aggregate(platform_pipeline):
-        by_platform[doc["_id"]] = {"revenue": doc["revenue"], "orders": doc["orders"]}
-
-    # Pecahan per kanal pesanan (live / video / product_card / …) — F1
-    channel_pipeline = [
-        {"$match": match_stage},
-        {"$group": {
-            "_id": {"$ifNull": ["$order_channel", "other"]},
-            "revenue": {"$sum": REV_EXPR},
-            "orders": {"$sum": 1}
-        }},
-        {"$sort": {"revenue": -1}},
-    ]
-    by_channel = {}
-    async for doc in db.marketing_orders.aggregate(channel_pipeline):
-        by_channel[doc["_id"]] = {"revenue": doc["revenue"], "orders": doc["orders"]}
-    
-    # Daily trend (rentang yang diminta, bukan selalu 30 hari terakhir)
-    daily_pipeline = [
-        {"$match": match_stage},
-        {"$group": {
-            "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$order_date"}},
-            "revenue": {"$sum": REV_EXPR},
-            "orders": {"$sum": 1}
-        }},
-        {"$sort": {"_id": 1}}
-    ]
-    daily_trend = []
-    async for doc in db.marketing_orders.aggregate(daily_pipeline):
-        daily_trend.append({"date": doc["_id"], "revenue": doc["revenue"], "orders": doc["orders"]})
-    
     return success_response(data={
-        "total_revenue": stats["total_revenue"],
-        "total_order_amount": stats.get("total_order_amount", 0),
-        "total_orders": stats["total_orders"],
-        "total_items": stats["total_items"],
-        "aov": round(aov, 2),
+        "total_revenue": tot["omzet"],
+        "total_order_amount": tot["nilai_pesanan"],
+        "total_orders": tot["pesanan"],
+        "total_items": tot["unit"],
+        "aov": tot["aov"],
+        "returned_value": tot["retur_nilai"],
+        "revenue_after_returns": tot["omzet_setelah_retur"],
         "revenue_label": "sebelum potongan platform",
+        "definition": _ukuran.DEFINISI_OMZET,
         "by_platform": by_platform,
         "by_channel": by_channel,
-        "daily_trend": daily_trend
+        "daily_trend": [daily[k] for k in sorted(daily)],
     }, metadata={
-        "start_date": start_dt.isoformat(),
-        "end_date": end_dt.isoformat()
+        "start_date": d0,
+        "end_date": d1,
     })
+
 
 @router.get("/top-products")
 async def top_products(
@@ -196,62 +142,28 @@ async def top_products(
     account_id: Optional[str] = Query(None),
     platform: Optional[str] = Query(None),
 ):
+    """Produk terlaris per ITEM KATALOG.
+
+    2026-11-07 (audit §3.C #2) — dulu dikelompokkan menurut NAMA teks, dan baris
+    pesanan manual (tanpa `sku_subtotal_after_discount`) jatuh ke omzet SELURUH
+    pesanan, sehingga pesanan 3 produk menyumbang omzetnya tiga kali. Sekarang
+    omzet & pcs dibaca per baris SKU lewat pembaca kanonik dan dikelompokkan per
+    `catalog_item_id` (cadangan: SKU, lalu nama untuk baris yang belum tertaut).
+    """
     user = await require_auth(request)
     db = get_db()
-    
-    start_dt = _now() - timedelta(days=days)
-    
-    match_stage: dict = {
-        "order_date": {"$gte": start_dt},
-        "status": {"$nin": ["cancelled"]}
-    }
-    if platform:
-        match_stage["platform"] = platform
-    if account_id:
-        acc = await db.marketing_platform_accounts.find_one(
-            {"id": account_id}, {"_id": 0, "account_name": 1})
-        ors = [{"account_id": account_id}]
-        if acc and acc.get("account_name"):
-            ors.append({"account_id": {"$exists": False}, "account_name": acc["account_name"]})
-        match_stage["$or"] = ors
-        await _scope.assert_account_visible(db, user, account_id)
-    else:
-        # F6 (sesi #9) — tanpa filter toko, staf berlingkup hanya melihat produk
-        # dari toko yang di-assign kepadanya.
-        _vis = await _scope.visible_account_ids(db, user)
-        if _vis is not None:
-            match_stage["account_id"] = {"$in": _vis}
+    d0, d1 = _range(None, None, days=days)
+    accs = await _performance_accounts(db, user, account_id=account_id, platform=platform)
+    orders = await _ukuran.baca_pesanan(db, [a["id"] for a in accs], d0, d1)
+    rows = await _ukuran.rincian_item(db, orders, "katalog")
 
-    # F1.5 — pecahan per PRODUK memakai `items[]` (1 dokumen = 1 pesanan, banyak SKU).
-    # Pipeline lama mengelompokkan `product_name` pada AKAR dokumen sehingga seluruh
-    # pesanan hasil impor Seller Center jatuh ke satu grup `null`.
-    pipeline = [
-        {"$match": match_stage},
-        {"$unwind": {"path": "$items", "preserveNullAndEmptyArrays": True}},
-        {"$group": {
-            "_id": {"$ifNull": ["$items.product_name_raw",
-                                {"$ifNull": ["$items.product_name", "$product_name"]}]},
-            "total_qty": {"$sum": {"$ifNull": ["$items.quantity", "$quantity"]}},
-            "total_revenue": {"$sum": {"$ifNull": [
-                "$items.sku_subtotal_after_discount",
-                {"$ifNull": ["$revenue_product", "$total_payment"]}]}},
-            "order_count": {"$addToSet": "$id"},
-            "sku": {"$first": {"$ifNull": ["$items.seller_sku", "$sku_id"]}},
-        }},
-        {"$project": {"total_qty": 1, "total_revenue": 1, "sku": 1,
-                      "order_count": {"$size": "$order_count"}}},
-        {"$sort": {"total_revenue": -1}},
-        {"$limit": limit}
-    ]
-    
-    products = []
-    async for doc in db.marketing_orders.aggregate(pipeline):
-        products.append({
-            "product_name": doc["_id"],
-            "sku": doc.get("sku"),
-            "total_qty": doc["total_qty"],
-            "total_revenue": doc["total_revenue"],
-            "order_count": doc["order_count"]
-        })
-    
-    return success_response(data={"products": products}, metadata={"days": days, "limit": limit})
+    products = [{
+        "product_name": r["label"],
+        "sku": r["sku"] or None,
+        "catalog_item_id": r["kunci"][5:] if r["kunci"].startswith("item:") else None,
+        "total_qty": r["unit"],
+        "total_revenue": r["omzet"],
+        "order_count": r["pesanan"],
+    } for r in rows[:limit]]
+    return success_response(data={"products": products}, metadata={"days": days, "limit": limit,
+                                                                   "start_date": d0, "end_date": d1})

@@ -189,7 +189,15 @@ def summarize_orders(orders: List[dict],
     retur" turun; omzet BRUTO, jumlah pesanan, dan tingkat retur pesanan tidak
     berubah (keputusan sesi #9: angka lama tidak bergeser).
     """
-    live_ok = [o for o in orders if (o.get("status") or "") not in EXCLUDED_FOR_REVENUE]
+    # 2026-11-07 (Asisten AI, audit §3.C #8) — definisi omzet SATU pintu:
+    # `core.ukuran_penjualan.dihitung_omzet` (bukan batal, bukan `new` belum
+    # dibayar, bukan data contoh). Dulu pesanan "Belum dibayar" ikut omzet sampai
+    # ekspor B/C menandainya batal. Pesanan belum bayar juga bukan penyebut tingkat
+    # batal/retur/pemenuhan — ia belum menjadi pesanan sungguhan.
+    from core import ukuran_penjualan as _ukuran
+    unpaid = [o for o in orders if _ukuran.belum_dibayar(o) and not _ukuran.data_contoh(o)]
+    orders = [o for o in orders if not _ukuran.belum_dibayar(o) and not _ukuran.data_contoh(o)]
+    live_ok = [o for o in orders if _ukuran.dihitung_omzet(o)]
     cancelled = [o for o in orders if (o.get("status") or "") == "cancelled"]
     returned = [o for o in orders if (o.get("status") or "") == "returned"]
     fulfilled = [o for o in orders if (o.get("status") or "") in FULFILLED_STATUSES]
@@ -233,6 +241,9 @@ def summarize_orders(orders: List[dict],
         # 2026-11-02 (No.16) — bagian retur modul, terpisah supaya bisa ditelusuri.
         "module_returns_count": msplit["module_returns_count"],
         "module_returns_value": mval,
+        # 2026-11-07 (audit #8) — pesanan belum dibayar dicatat terpisah, bukan omzet.
+        "unpaid_orders": len(unpaid),
+        "unpaid_value": round(sum(order_revenue_product(o) for o in unpaid), 2),
         "cancellation_rate": round(len(cancelled) / total_orders * 100, 2) if total_orders else 0.0,
         "return_rate": round(len(returned) / total_orders * 100, 2) if total_orders else 0.0,
         "fulfillment_rate": round(len(fulfilled) / total_orders * 100, 2) if total_orders else 0.0,
@@ -254,7 +265,8 @@ def summarize_orders(orders: List[dict],
 
 # Field fulfillment khusus retur modul. Tidak dikenal skema grup
 # (`core.marketing_sales_shape.FULFILLMENT_FIELDS`), jadi ditulis langsung.
-MODULE_RETURN_FULFILLMENT_KEYS = ("module_returns_count", "module_returns_value")
+MODULE_RETURN_FULFILLMENT_KEYS = ("module_returns_count", "module_returns_value",
+                                  "unpaid_orders", "unpaid_value")
 
 
 def _date_query(field: str, date: str) -> dict:

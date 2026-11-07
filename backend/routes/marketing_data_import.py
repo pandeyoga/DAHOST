@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import os
 import io
+import re
 import csv
 import json
 import uuid
@@ -65,6 +66,7 @@ router = APIRouter(prefix="/api/marketing/data-import", tags=["marketing-data-im
 
 UPLOAD_DIR = "marketing-data-import"   # prefix di object storage (bukan folder pod)
 from object_storage import put_object as _put_object, get_object as _get_object
+from object_storage import delete_object as _delete_object
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_ROLES  # T-01 2.3
 
@@ -95,6 +97,9 @@ FORMATS = "marketing_data_import_formats"
 # berkas 20.000 baris.
 UNDO = "marketing_data_import_undo"
 MAX_FILE_MB = 15
+# Jenis impor yang menulis `marketing_orders` ⇒ rekap harian turunan dihitung ulang
+# sesudah commit & rollback (2026-11-07, audit §3.C #13: dulu hanya ekspor Seller Center).
+ROLLUP_ORDER_TYPES = ("marketplace_orders", "orders")
 ROLLBACK_HOURS = 72
 
 # Nama platform di berkas ekspor vs `platform` di master toko. Dipakai penjaga
@@ -434,6 +439,10 @@ async def upload(
     # staf sampai ke langkah pemetaan dengan peringatan (`parse_warning`).
     try:
         headers, rows, parse_warning = eng.parse_table_lenient(raw, fname, st)
+    except eng.TooManyRows as e:
+        # 2026-11-07 (audit §3.C #10) — dulu baris ke-20.001 dst. DIBUANG diam-diam dan
+        # impor tampak "berhasil". Sekarang berkas ditolak dengan jalan keluarnya.
+        raise HTTPException(400, str(e)) from None
     except Exception as e:
         raise HTTPException(400, f"Berkas tidak bisa dibaca: {e}") from None
     if not headers:
@@ -444,10 +453,10 @@ async def upload(
     session_id = str(uuid.uuid4())
     ext = os.path.splitext(fname)[1] or ".csv"
     path = f"{UPLOAD_DIR}/{session_id}{ext}"
-    try:
-        _put_object(path, raw, "application/octet-stream")
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(503, f"Penyimpanan berkas tidak tersedia: {e}")
+    # 2026-11-07 (Asisten AI, audit §3.C #15) — berkas DISIMPAN setelah semua penjaga
+    # (baris keterangan, platform, gudang toko) lolos. Dulu disimpan lebih dulu, lalu
+    # berkas yang ditolak "dibuang" dengan `os.remove` atas KUNCI object storage (bukan
+    # path disk) — tidak pernah terhapus, menumpuk di penyimpanan selamanya.
 
     mapping = eng.auto_map(headers, st)
     # ── F1 — sidik format: pemetaan yang sudah dikonfirmasi manusia DIINGAT ──
@@ -545,11 +554,12 @@ async def upload(
     shop_guard_warehouse = ""
 
     def _discard(p: str) -> None:
-        """Buang berkas yang ditolak penjaga — jangan tinggalkan sampah di disk."""
+        """Berkas yang ditolak penjaga belum pernah disimpan (lihat di atas); panggilan
+        ini hanya jaring pengaman lewat API penyimpanan yang benar."""
         try:
-            os.remove(p)
-        except OSError:
-            pass
+            _delete_object(p)
+        except Exception:  # noqa: BLE001
+            logger.debug("hapus berkas ditolak %s dilewati", p, exc_info=True)
 
     if st.platform_guard and acc_doc:
         found = {str((r.get("data") or {}).get(st.platform_guard) or "").strip()
@@ -557,10 +567,7 @@ async def upload(
         found = {v for v in found if v}
         bad = sorted(v for v in found if not _platform_matches(acc_doc.get("platform"), v))
         if bad:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+            _discard(path)
             raise HTTPException(400,
                 f"Berkas ini berisi pesanan platform {', '.join(bad)}, sedangkan toko tujuan "
                 f"'{acc_doc.get('account_name')}' berplatform "
@@ -620,6 +627,11 @@ async def upload(
 
     preview = await _annotate_master_links(
         db, st, {"account_id": acc_doc.get("id")}, preview)
+
+    try:
+        _put_object(path, raw, "application/octet-stream")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(503, f"Penyimpanan berkas tidak tersedia: {e}")
 
     _live = resolved.get("live_session") or {}
     doc = {
@@ -1105,6 +1117,58 @@ async def download_errors(session_id: str, request: Request):
 # ═══════════════════════════════════════════════════════════════════════════════
 # AI OPSIONAL — hanya MENGUSULKAN pemetaan yang belum pasti
 # ═══════════════════════════════════════════════════════════════════════════════
+# 2026-11-07 (Asisten AI) — field berisi data pribadi pembeli/orang. Nilainya tidak
+# pernah dikirim ke AI; AI hanya butuh BENTUK isinya untuk menebak arti kolom.
+PII_FIELDS = frozenset({
+    "customer_name", "customer_phone", "customer_address", "buyer_username", "buyer_message",
+    "address_detail", "address_extra", "zipcode", "district", "phone", "email", "login_email",
+    "recipient_name", "recipient_phone", "username", "instagram_username", "tiktok_username",
+    "shopee_username",
+})
+_PII_HEADER_RE = re.compile(
+    r"pembeli|penerima|buyer|recipient|customer|pelanggan|username|telepon|telp|phone|no\.? ?hp|"
+    r"\bhp\b|alamat|address|e-?mail|kode ?pos|zip|kecamatan|kelurahan|catatan dari|pesan dari|message",
+    re.IGNORECASE)
+_NOT_PII_HEADER_RE = re.compile(r"produk|product|barang|sku|variasi|variation|toko|shop|gudang|"
+                                r"warehouse|kampanye|campaign|kurir|courier|ongkir|shipping fee|"
+                                r"jumlah|qty|harga|price|total|status|tanggal|waktu|time|date",
+                                re.IGNORECASE)
+
+
+def mask_sample_rows(rows: List[dict], mapping: List[dict]) -> List[dict]:
+    """Samarkan contoh baris sebelum dikirim ke AI usulan pemetaan.
+
+    * kolom yang dipetakan ke field data pribadi (:data:`PII_FIELDS`) → kode samaran
+      (``PLG-001``) atau ``[DISAMARKAN]``;
+    * kolom yang BELUM terpetakan tetapi namanya menunjuk data pribadi (pembeli,
+      penerima, telepon, alamat, email, kode pos) → disamarkan juga;
+    * semua teks lain tetap dibersihkan dari email, nomor HP, dan deret angka panjang.
+    """
+    from services.ai.privacy import Pseudonymizer, mask_pii
+    ps = Pseudonymizer()
+    field_of = {m.get("column"): m.get("field") for m in (mapping or [])}
+    out = []
+    for r in rows or []:
+        row = {}
+        for col, val in (r or {}).items():
+            fld = field_of.get(col)
+            name_hit = bool(_PII_HEADER_RE.search(str(col))) and not _NOT_PII_HEADER_RE.search(str(col))
+            if val in (None, ""):
+                row[col] = val
+            elif fld in PII_FIELDS or (not fld and name_hit):
+                low = f"{col} {fld or ''}".lower()
+                if any(k in low for k in ("name", "nama", "username", "pembeli", "penerima", "buyer")):
+                    row[col] = ps.code(str(val), "pelanggan") or "[DISAMARKAN]"
+                else:
+                    row[col] = "[DISAMARKAN]"
+            elif isinstance(val, str):
+                row[col] = mask_pii(val)
+            else:
+                row[col] = val
+        out.append(row)
+    return out
+
+
 @router.post("/sessions/{session_id}/ai-assist")
 async def ai_assist(session_id: str, request: Request):
     """Usulan pemetaan dari AI untuk kolom yang BELUM terpetakan.
@@ -1136,15 +1200,22 @@ async def ai_assist(session_id: str, request: Request):
             (f" pilihan: {', '.join(f.choices)}" if f.choices else "")
             for f in st.input_fields)
         sample_rows = eng.build_rows(_reparse(s), mapping, st, limit=3)
+        # 2026-11-07 (Asisten AI) — contoh baris dulu dikirim MENTAH: nama, nomor HP,
+        # dan alamat pembeli ikut ke penyedia AI. Sekarang disamarkan (K27) dan
+        # dibungkus sebagai data pihak luar (K28) — isinya tidak boleh memerintah AI.
+        from services.ai import with_untrusted_rule, wrap_untrusted
+        samples = mask_sample_rows([r["original"] for r in sample_rows], mapping)
         prompt = (
             f"Petakan nama kolom berkas ke field sistem untuk jenis data '{st.label}'.\n\n"
             f"FIELD SISTEM:\n{fields_txt}\n\n"
             f"KOLOM YANG BELUM TERPETAKAN: {json.dumps(unmapped, ensure_ascii=False)}\n\n"
-            f"CONTOH BARIS: {json.dumps([r['original'] for r in sample_rows], ensure_ascii=False)[:1500]}\n\n"
+            "CONTOH BARIS (sudah disamarkan):\n"
+            f"{wrap_untrusted(json.dumps(samples, ensure_ascii=False, default=str), 'contoh_baris_berkas', max_chars=1500)}\n\n"
             "Jawab HANYA JSON array: [{\"column\":\"...\",\"field\":\"nama_field_sistem_atau_null\","
             "\"confidence\":0.0-1.0,\"reason\":\"alasan singkat\"}]"
         )
-        reply = await ai_text("smart-import", "Kamu pemeta kolom berkas impor. Jawab JSON saja.",
+        reply = await ai_text("smart-import",
+                              with_untrusted_rule("Kamu pemeta kolom berkas impor. Jawab JSON saja."),
                               prompt, tier="light", user_id=user.get("id"))
         txt = (reply or "").strip()
         if txt.startswith("```"):
@@ -1459,7 +1530,20 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
                                        - _num("discount_seller"), 2)
         if not d.get("revenue"):
             d["revenue"] = round(price * qty - _num("discount_seller"), 2)
-        d.setdefault("status", "new")
+        # 2026-11-07 (Asisten AI, audit §3.C #13) — nama uang KANONIK juga untuk format
+        # lama. Dulu dokumen ini hanya punya `revenue`/`total_payment`, padahal rekap
+        # harian membaca `revenue_product` dan jatuh ke harga final × jumlah (diskon
+        # penjual hilang; tanpa harga final omzetnya Rp 0).
+        d.setdefault("revenue_product", round(float(d.get("revenue") or 0), 2))
+        d.setdefault("order_amount", round(float(d.get("total_payment") or 0), 2))
+        d.setdefault("revenue_gross", round((_num("price_original") or price) * qty, 2))
+        d.setdefault("seller_discount_total", round(_num("discount_seller"), 2))
+        d.setdefault("order_channel", "other")
+        if not d.get("status"):
+            # Berkas tanpa kolom status: status `new` di bawah TEBAKAN sistem, bukan
+            # "Belum dibayar" kata platform — jangan dikeluarkan dari omzet.
+            d["status"] = "new"
+            d["status_assumed"] = True
         # Impor TIDAK memesan stok: order lama sudah dikirim, dan memesan stok untuk
         # order lama akan mengunci barang yang sebenarnya sudah keluar.
         d["fulfillment_status"], _fs_reason = import_fulfillment_status(d)
@@ -3445,7 +3529,7 @@ async def _commit_locked(session_id: str, request: Request, body: Optional[Commi
     # datanya masuk lewat impor punya `health_score = null` selamanya, dan layar
     # kesehatan menampilkan "N/A" padahal datanya lengkap.
     if account and st.key in ("sales_daily", "account_health", "reviews",
-                              "returns", "complaints", "marketplace_orders"):
+                              "returns", "complaints", "marketplace_orders", "orders"):
         try:
             from routes.marketing_shared import _recalculate_health_score
             await _recalculate_health_score(db, account["id"])
@@ -3486,7 +3570,9 @@ async def _commit_locked(session_id: str, request: Request, body: Optional[Commi
 
     # ── F2 — REKAP HARIAN TURUNAN dihitung ulang untuk tanggal yang terdampak ─
     rollup_result = None
-    if st.key == "marketplace_orders" and (inserted or updated):
+    # 2026-11-07 (audit #13) — impor pesanan format lama juga menulis `marketing_orders`,
+    # jadi rekap hariannya WAJIB dihitung ulang (dulu hanya ekspor Seller Center).
+    if st.key in ROLLUP_ORDER_TYPES and (inserted or updated):
         try:
             from core import marketing_daily_rollup as rollup
             touched = set(await rollup.pairs_from_orders(
@@ -3668,7 +3754,7 @@ async def _rollback_locked(session_id: str, request: Request):
     # rekap harian akan tetap memuat omzet dari pesanan yang sudah tidak ada.
     touched: set = set()
     updated_doc_ids: list = []
-    if st.key == "marketplace_orders":
+    if st.key in ROLLUP_ORDER_TYPES:
         try:
             from core import marketing_daily_rollup as rollup
             touched = set(await rollup.pairs_from_orders(
@@ -3804,7 +3890,13 @@ async def delete_session(session_id: str, request: Request):
             os.remove(path)
         except OSError as e:
             logger.warning("gagal menghapus berkas sesi %s: %s", session_id, e)
-    # berkas di object storage tidak punya API hapus — referensinya cukup dilepas bersama sesi
+    elif path:
+        # 2026-11-07 (audit #15) — berkas sesi disimpan lewat API penyimpanan (kunci
+        # relatif), jadi dihapus lewat API yang sama.
+        try:
+            _delete_object(path)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("gagal menghapus berkas sesi %s: %s", session_id, e)
     await db[SESSIONS].delete_one({"id": session_id})
     return {"ok": True}
 

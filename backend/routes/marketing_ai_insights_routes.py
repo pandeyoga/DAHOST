@@ -12,7 +12,9 @@ from core import marketing_account_scope as _scope
 from database import get_db
 from auth import require_auth
 from services.ai import AIError, ai_http_error, ai_text, redact, require_ai, with_untrusted_rule, wrap_untrusted
-from utils.waktu import now_wib
+from utils.waktu import now_wib, today_wib
+# 2026-11-07 (Asisten AI) — SATU definisi omzet.
+from core import ukuran_penjualan as _ukuran
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/ai-insights", tags=["marketing-ai-insights"])
@@ -49,32 +51,39 @@ def serialize(obj):
 # Helper: fetch aggregated context data
 # ─────────────────────────────────────────────
 
-async def _get_orders_context(db, sq: dict | None = None) -> dict:
-    """Get 30-day orders summary. `sq` = penyaring lingkup toko (F6)."""
+async def _get_orders_context(db, user: dict | None, sq: dict | None = None) -> dict:
+    """Ringkasan penjualan 30 hari untuk bahan AI, berlingkup toko pemakai (F6).
+
+    2026-11-07 (Asisten AI, audit §3.C #3) — dulu memakai `created_at` (waktu IMPOR,
+    bukan tanggal pesanan) dan `total_amount` (field yang tidak dimiliki pesanan
+    impor), sehingga omzet terbaca 0; hitungan status juga tidak memperhatikan toko
+    pemakai. Sekarang memakai SATU definisi omzet (`core.ukuran_penjualan`): tren
+    harian dari rekap harian menurut tanggal pesanan, toko yang boleh dilihat saja.
+    """
     sq = dict(sq or {})
-    since = _now() - timedelta(days=30)
-    total = await db.marketing_orders.count_documents(dict(sq))
-    recent = await db.marketing_orders.count_documents({**sq, "created_at": {"$gte": since}})
+    today = today_wib()
+    dari = (today - timedelta(days=29)).isoformat()
+    sampai = today.isoformat()
+    accounts = await _ukuran.toko_terlihat(db, user)
+    oms = await _ukuran.ringkas_omzet(db, accounts, dari, sampai)
+    per_day: dict = {}
+    for r in oms["baris"]:
+        b = per_day.setdefault(r["date"], {"date": r["date"], "orders": 0, "revenue": 0.0})
+        b["orders"] += r["pesanan"]
+        b["revenue"] += r["omzet"]
+    daily_trend = [per_day[k] for k in sorted(per_day)]
 
-    pipeline = [
-        {"$match": {**sq, "created_at": {"$gte": since}}},
-        {"$group": {
-            "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$created_at"}},
-            "count": {"$sum": 1},
-            "revenue": {"$sum": {"$ifNull": ["$total_amount", 0]}}
-        }},
-        {"$sort": {"_id": 1}}
-    ]
-    daily_trend = []
-    async for d in db.marketing_orders.aggregate(pipeline):
-        daily_trend.append({"date": d["_id"], "orders": d["count"], "revenue": d["revenue"]})
-
+    base = {**sq, **_ukuran.TANPA_CONTOH}
+    total = await db.marketing_orders.count_documents(dict(base))
     status_counts = {}
-    pipeline2 = [{"$group": {"_id": "$status", "count": {"$sum": 1}}}]
+    pipeline2 = [{"$match": dict(base)}, {"$group": {"_id": "$status", "count": {"$sum": 1}}}]
     async for d in db.marketing_orders.aggregate(pipeline2):
         status_counts[d["_id"]] = d["count"]
 
-    return {"total": total, "recent_30d": recent, "daily_trend": daily_trend[-14:], "status_counts": status_counts}
+    return {"total": total, "recent_30d": oms["total"]["pesanan"],
+            "revenue_30d": oms["total"]["omzet"],
+            "daily_trend": daily_trend[-14:], "status_counts": status_counts,
+            "definition": _ukuran.DEFINISI_OMZET}
 
 
 async def _get_complaints_context(db, sq: dict | None = None) -> dict:
@@ -93,7 +102,7 @@ async def _get_complaints_context(db, sq: dict | None = None) -> dict:
 
     # Sample recent texts for AI
     samples = await db.marketing_complaints.find(
-        {"created_at": {"$gte": since}},
+        {**sq, "created_at": {"$gte": since}},   # 2026-11-07 (audit #3): berlingkup toko
         {"complaint_text": 1, "category": 1, "sla_status": 1, "customer_name": 1}
     ).limit(20).to_list(20)
 
@@ -175,7 +184,7 @@ async def get_overview(request: Request):
     # F6 (sesi #10) — ringkasan lintas modul ini adalah bahan kesimpulan AI;
     # memberi staf angka 9 toko di sini sama saja dengan membocorkannya di layar.
     sq = await _scope.scope_filter(db, user, {})
-    orders = await _get_orders_context(db, sq)
+    orders = await _get_orders_context(db, user, sq)
     complaints = await _get_complaints_context(db, sq)
     reviews = await _get_reviews_context(db, sq)
     discounts = await _get_discounts_context(db, sq)
@@ -200,7 +209,9 @@ async def sales_forecast(request: Request):
     # 2026-11-02: gerbang tunggal services.ai (dulu "EMERGENT_LLM_KEY missing" tampil ke pengguna).
     await require_ai("marketing-forecast", user_id=user.get("id"), db=db, tier=LLM_TIER)
 
-    orders = await _get_orders_context(db)
+    # 2026-11-07 (audit #3) — bahan AI berlingkup toko pemakai yang bertanya.
+    sq = await _scope.scope_filter(db, user, {})
+    orders = await _get_orders_context(db, user, sq)
     daily_trend = orders["daily_trend"]
 
     if len(daily_trend) < 3:
@@ -259,8 +270,9 @@ async def sentiment_analysis(request: Request):
 
     await require_ai("marketing-sentiment", user_id=user.get("id"), db=db, tier=LLM_TIER)
 
-    complaints = await _get_complaints_context(db)
-    reviews = await _get_reviews_context(db)
+    sq = await _scope.scope_filter(db, user, {})       # 2026-11-07 (audit #3)
+    complaints = await _get_complaints_context(db, sq)
+    reviews = await _get_reviews_context(db, sq)
 
     all_texts = []
     for c in complaints.get("sample_texts", []):
@@ -324,26 +336,28 @@ async def get_recommendations(request: Request):
 
     await require_ai("marketing-recommendations", user_id=user.get("id"), db=db, tier=LLM_TIER)
 
-    # Gather all context
-    orders = await _get_orders_context(db)
-    complaints = await _get_complaints_context(db)
-    reviews = await _get_reviews_context(db)
-    discounts = await _get_discounts_context(db)
-    health = await _get_health_context(db)
+    # Gather all context — 2026-11-07 (audit #3): semuanya berlingkup toko pemakai.
+    sq = await _scope.scope_filter(db, user, {})
+    orders = await _get_orders_context(db, user, sq)
+    complaints = await _get_complaints_context(db, sq)
+    reviews = await _get_reviews_context(db, sq)
+    discounts = await _get_discounts_context(db, sq)
+    health = await _get_health_context(db, sq)
 
     # Get upcoming launches
     upcoming_launches = await db.marketing_product_launches.count_documents(
-        {"status": "planning", "launch_date": {"$gte": _now(), "$lte": _now() + timedelta(days=14)}}
+        {**sq, "status": "planning", "launch_date": {"$gte": _now(), "$lte": _now() + timedelta(days=14)}}
     )
 
     # Content today
     today = now_wib().strftime("%Y-%m-%d")
     content_today = await db.marketing_content_calendar.count_documents(
-        {"post_date": {"$regex": f"^{today}"}, "status": {"$nin": ["posted", "cancelled"]}}
+        {**sq, "post_date": {"$regex": f"^{today}"}, "status": {"$nin": ["posted", "cancelled"]}}
     )
 
     context = {
         "orders_last_30d": orders["recent_30d"],
+        "revenue_last_30d": orders["revenue_30d"],
         "complaints_overdue": complaints["overdue"],
         "avg_rating": reviews["avg_rating"],
         "discounts_expiring_soon": discounts["expiring_soon"],

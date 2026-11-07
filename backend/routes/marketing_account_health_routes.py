@@ -53,7 +53,13 @@ def _get_user(request: Request) -> dict:
 async def seed_health_if_empty():
     """Auto-seed realistic account health snapshots if collection is empty.
     Menggunakan real platform accounts jika ada, fallback ke data dummy.
+
+    2026-11-07 (audit §3.C #4) — hanya di lingkungan demo (ALLOW_DEMO_SEED=true), dan
+    setiap baris kini bertanda `_seed_origin` supaya bisa dibedakan & dibuang.
     """
+    from core.demo_seed_guard import demo_seed_enabled
+    if not demo_seed_enabled():
+        return
     db = get_db()
     if await db.marketing_account_health.count_documents({}) > 0:
         return
@@ -111,6 +117,7 @@ async def seed_health_if_empty():
                 "total_reviews": random.randint(500, 5000),
                 "status": "healthy" if ses_score >= 75 and late_shipment < 3 and cancellation < 2 else "warning" if ses_score >= 60 else "critical",
                 "notes": [],
+                "_seed_origin": True,
                 "created_at": snapshot_date,
                 "updated_at": snapshot_date
             })

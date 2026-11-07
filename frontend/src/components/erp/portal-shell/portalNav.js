@@ -116,6 +116,8 @@ export const PORTAL_NAV = {
       {
         label: 'RINGKASAN EKSEKUTIF',
         items: [
+          // Asisten AI (layar) — Tahap A, 8 Nov 2026: chat analis data, menggantikan AI Business Intelligence
+          { id: 'asisten-ai',            label: 'Asisten AI',          icon: Sparkles },
           { id: 'management-dashboard',  label: 'Dashboard Eksekutif', icon: LayoutDashboard },
           { id: 'mgmt-overview',         label: 'Ringkasan Bisnis',    icon: TrendingUp },
           { id: 'reports-hub',           label: 'Pusat Laporan',       icon: FileSpreadsheet },

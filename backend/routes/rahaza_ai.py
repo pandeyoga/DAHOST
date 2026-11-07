@@ -129,6 +129,7 @@ async def daily_summary(
             cache_key_extra=[d.isoformat()],
             ttl_seconds=1800,  # 30m — production data evolves fast
             session_tag="rahaza-daily-summary",  # 2026-11-02: label fitur stabil (bukan per tanggal)
+            user_id=user.get("id"),  # 2026-11-07: Monitor AI tahu pemicunya
         )
         summary_text = cached["text"]
         cache_hit = cached.get("cache_hit", False)

@@ -48,11 +48,17 @@ def _get_user(request: Request) -> dict:
 
 # ── Seed Demo Data ──
 async def seed_live_if_empty():
-    """Auto-seed realistic live session data if collection is empty."""
+    """Isi sesi live CONTOH — hanya di lingkungan demo (ALLOW_DEMO_SEED=true).
+
+    2026-11-07 (audit §3.C #4) — data contoh tidak boleh lahir di koleksi produksi.
+    """
+    from core.demo_seed_guard import demo_seed_enabled
+    if not demo_seed_enabled():
+        return
     db = get_db()
     if await db.marketing_live_sessions.count_documents({}) > 0:
         return
-    
+
     # F14 — sesi live demo dulu hanya menyimpan `host_name` sebagai TEKS dan
     # tidak punya `account_id`/`host_id` (18/18 kosong). Akibatnya omzet live tidak
     # bisa dipertanggungjawabkan ke toko mana pun, dan jam kerja host tidak bisa

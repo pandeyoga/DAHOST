@@ -232,8 +232,11 @@ const PayrollDashboardModule      = lazyRetry(() => import('./PayrollDashboardMo
 const ExecutiveReportModule       = lazyRetry(() => import('./ExecutiveReportModule'));
 const ReportsHubModule            = lazyRetry(() => import('./ReportsHubModule'));
 
-// Session 14 — AI Business Intelligence
-const AIBusinessDashboard        = lazyRetry(() => import('./AIBusinessDashboard'));
+// ── Asisten AI (layar) — Tahap A, 8 Nov 2026 ───────────────────────────────
+// Chat analis data (Portal Management) menggantikan "AI Business Intelligence" (keputusan owner 4, 7 Nov 2026):
+// id lama 'ai-business-dashboard' dialihkan ke 'asisten-ai' (lihat entri di MODULE_REGISTRY).
+const AsistenAIModule            = lazyRetry(() => import('./asisten/AsistenAIModule'));
+// ── akhir Asisten AI (layar) ──
 
 // Phase 21 — Decision Support & Quality Metrics
 // FASE 5: Pareto & FPY (qc engine lama) diarsip.
@@ -964,8 +967,10 @@ export const MODULE_REGISTRY = {
   'mgmt-tools':            ManagementToolsModule,
   'warehouse-smart':       WarehouseSmartModule,
 
-  // Session 14 — AI Business Intelligence
-  'ai-business-dashboard': AIBusinessDashboard,  // Direct access masih bekerja (redirect dari sidebar dihapus DA46)
+  // ── Asisten AI (layar) — Tahap A, 8 Nov 2026 ──
+  'asisten-ai':            AsistenAIModule,
+  'ai-business-dashboard': makeRedirect('asisten-ai'),  // DIPENSIUNKAN → Asisten AI (4 tab laporan beku jadi saran chat)
+  // ── akhir Asisten AI (layar) ──
 
   // Phase 21 — Decision Support & Quality Metrics
   'prod-defect-codes':     makeRedirect('prod-progress'),  // K5 (Phase C): defect reports deprecated

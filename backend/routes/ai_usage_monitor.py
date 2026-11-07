@@ -35,8 +35,9 @@ router = APIRouter(prefix="/api/ai/usage", tags=["ai-usage-monitor"])
 # WS-B(d) — grup fitur AI yang dapat di-on/off oleh admin (match by prefix).
 # 2026-11-02 (K29): daftar dipindah ke ai_cost_tracker.AI_FEATURE_GROUPS (SSOT) supaya
 # label fitur di log (`feature_group`) selalu cocok dengan toggle di layar ini.
-# Tier yang boleh jadi default: executive (Opus) KHUSUS Laporan Eksekutif.
-DEFAULT_TIER_CHOICES = tuple(k for k in TIER_MODELS if k != "executive")
+# 2026-11-07 (keputusan owner no. 5): semua tier = Claude Opus 5.5 (tier hanya mengatur effort),
+# jadi aturan lama K29 "executive khusus Laporan Eksekutif" tidak berlaku lagi untuk tier bawaan.
+DEFAULT_TIER_CHOICES = tuple(TIER_MODELS)
 
 
 async def _check_admin(request: Request):
@@ -214,7 +215,6 @@ async def get_settings(request: Request):
             **settings,
             "feature_groups": AI_FEATURE_GROUPS,
             "tiers": list(DEFAULT_TIER_CHOICES),
-            "executive_features": ["executive-narrative"],  # K29: satu-satunya pemakai Opus
             "tier_models": {k: f"{v[0]}/{v[1]}" for k, v in TIER_MODELS.items()},
             "ai_status": await ai_status(db),
             "env_defaults": {
@@ -254,10 +254,8 @@ async def update_settings(request: Request, payload: dict = Body(...)):
                 raise HTTPException(400, f"{k} tidak boleh negatif")
             update[k] = round(fv, 4)
         elif k == "default_tier":
-            # K29 (2026-11-02): Opus (executive) hanya untuk Laporan Eksekutif, bukan default.
             if v not in DEFAULT_TIER_CHOICES:
-                raise HTTPException(400, f"default_tier harus salah satu dari {list(DEFAULT_TIER_CHOICES)} "
-                                         "(executive/Opus khusus Laporan Eksekutif)")
+                raise HTTPException(400, f"default_tier harus salah satu dari {list(DEFAULT_TIER_CHOICES)}")
             update[k] = v
         elif k == "disabled_features":
             if not isinstance(v, list):

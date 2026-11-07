@@ -140,54 +140,68 @@ async def orders_summary(request: Request,
     today_start = _wib_day_start()
     week_start  = today_start - timedelta(days=today_start.weekday())
 
-    # Total counts by status
-    _pre = [{"$match": dict(_scope_q)}] if _scope_q else []
-    pipeline_status = _pre + [
-        {"$group": {"_id": "$status", "count": {"$sum": 1},
-                    "revenue": {"$sum": "$revenue"}}}
+    # 2026-11-07 (Asisten AI, audit §3.C #8/#9) — omzet di kartu ini memakai SATU
+    # definisi (`core.ukuran_penjualan`): batal & belum dibayar keluar, data contoh
+    # dibuang, uang = omzet produk (`revenue_product`, cadangan dokumen lama). Dulu
+    # field `revenue` dijumlah apa adanya: pesanan manual menaruh ongkir di sana dan
+    # pesanan belum dibayar ikut. Retur DILAPORKAN TERPISAH, tidak dikurangkan diam-diam.
+    from core import ukuran_penjualan as _ukuran
+    _base = {"$and": [dict(_scope_q), dict(_ukuran.TANPA_CONTOH)]}
+    _counted = {"$and": [dict(_scope_q), _ukuran.filter_dihitung_omzet()]}
+    _rev = _ukuran.EKSPR_OMZET_PRODUK
+
+    # Total counts by status (semua pesanan, kecuali data contoh)
+    pipeline_status = [
+        {"$match": _base},
+        {"$group": {"_id": "$status", "count": {"$sum": 1}}}
     ]
     status_counts = {}
-    status_revenue = {}
     async for doc in db.marketing_orders.aggregate(pipeline_status):
         status_counts[doc["_id"]] = doc["count"]
-        status_revenue[doc["_id"]] = doc.get("revenue", 0)
 
-    # Revenue today
-    pipeline_today = [
-        {"$match": {**_scope_q, "order_date": {"$gte": today_start}, "status": {"$nin": ["cancelled", "returned"]}}},
-        {"$group": {"_id": None, "revenue": {"$sum": "$revenue"}, "orders": {"$sum": 1}}}
+    pipeline_rev = [
+        {"$match": _counted},
+        {"$group": {"_id": "$status", "revenue": {"$sum": _rev}, "count": {"$sum": 1}}}
     ]
-    today_data = {"revenue": 0, "orders": 0}
-    async for doc in db.marketing_orders.aggregate(pipeline_today):
-        today_data = {"revenue": doc.get("revenue", 0), "orders": doc.get("orders", 0)}
+    status_revenue = {}
+    async for doc in db.marketing_orders.aggregate(pipeline_rev):
+        status_revenue[doc["_id"]] = doc.get("revenue", 0) or 0
 
-    # Revenue this week
-    pipeline_week = [
-        {"$match": {**_scope_q, "order_date": {"$gte": week_start}, "status": {"$nin": ["cancelled", "returned"]}}},
-        {"$group": {"_id": None, "revenue": {"$sum": "$revenue"}, "orders": {"$sum": 1}}}
-    ]
-    week_data = {"revenue": 0, "orders": 0}
-    async for doc in db.marketing_orders.aggregate(pipeline_week):
-        week_data = {"revenue": doc.get("revenue", 0), "orders": doc.get("orders", 0)}
+    async def _window(since):
+        out = {"revenue": 0, "orders": 0}
+        async for doc in db.marketing_orders.aggregate([
+                {"$match": {"$and": [_counted, {"order_date": {"$gte": since}}]}},
+                {"$group": {"_id": None, "revenue": {"$sum": _rev}, "orders": {"$sum": 1}}}]):
+            out = {"revenue": doc.get("revenue", 0) or 0, "orders": doc.get("orders", 0)}
+        return out
+
+    today_data = await _window(today_start)
+    week_data = await _window(week_start)
 
     # By platform
-    pipeline_plat = _pre + [
-        {"$group": {"_id": "$platform", "count": {"$sum": 1},
-                    "revenue": {"$sum": "$revenue"}}}
-    ]
     by_platform = {}
-    async for doc in db.marketing_orders.aggregate(pipeline_plat):
-        by_platform[doc["_id"]] = {"count": doc["count"], "revenue": doc.get("revenue", 0)}
+    async for doc in db.marketing_orders.aggregate([
+            {"$match": _base},
+            {"$group": {"_id": "$platform", "count": {"$sum": 1}}}]):
+        by_platform[doc["_id"]] = {"count": doc["count"], "revenue": 0}
+    async for doc in db.marketing_orders.aggregate([
+            {"$match": _counted},
+            {"$group": {"_id": "$platform", "revenue": {"$sum": _rev}}}]):
+        by_platform.setdefault(doc["_id"], {"count": 0, "revenue": 0})["revenue"] = doc.get("revenue", 0) or 0
 
     # Need action (new + packed)
     need_action = (status_counts.get("new", 0) + status_counts.get("packed", 0))
     total = sum(status_counts.values())
-    total_revenue = sum(v for k, v in status_revenue.items() if k not in ["cancelled", "returned"])
+    total_revenue = sum(status_revenue.values())
+    returned_revenue = status_revenue.get("returned", 0) or 0
 
     return {
         "total_orders":     total,
         "need_action":      need_action,
         "total_revenue":    round(total_revenue),
+        "returned_revenue": round(returned_revenue),
+        "revenue_after_returns": round(total_revenue - returned_revenue),
+        "revenue_definition": _ukuran.DEFINISI_OMZET,
         "by_status":        status_counts,
         "by_platform":      by_platform,
         "today":            today_data,

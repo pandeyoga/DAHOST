@@ -59,6 +59,22 @@ logger = logging.getLogger(__name__)
 
 MAX_ROWS = 20_000
 MAX_PREVIEW_ROWS = 500
+
+
+class TooManyRows(ValueError):
+    """Berkas punya baris data lebih dari :data:`MAX_ROWS`.
+
+    2026-11-07 (Asisten AI, audit §3.C #10) — dulu pembaca BERHENTI diam-diam di baris
+    ke-20.000: sisa berkas hilang, impor tampak berhasil, dan omzet terhitung kurang
+    tanpa satu pun peringatan. Sekarang berkas ditolak dengan jalan keluarnya.
+    """
+
+    def __init__(self, filename: str = ""):
+        super().__init__(
+            f"Berkas{(' ' + filename) if filename else ''} berisi lebih dari "
+            f"{MAX_ROWS:,} baris data".replace(",", ".")
+            + ". Sistem tidak memotong berkas diam-diam. Pecah berkasnya (mis. ekspor per "
+              "minggu atau per setengah bulan) lalu unggah satu per satu.")
 FUZZY_AUTO = 0.86        # ≥ ini: dipetakan otomatis
 FUZZY_SUGGEST = 0.68     # ≥ ini: hanya diusulkan, wajib konfirmasi
 
@@ -92,10 +108,14 @@ def _read_xlsx(raw: bytes, read_only: bool) -> Tuple[List[str], List[Dict[str, A
             continue
         if values is None or all(v in (None, "") for v in values):
             continue
+        if len(rows) >= MAX_ROWS:
+            try:
+                wb.close()
+            except Exception:  # noqa: BLE001
+                pass
+            raise TooManyRows()
         rows.append({headers[i]: values[i] if i < len(values) else None
                      for i in range(len(headers))})
-        if len(rows) >= MAX_ROWS:
-            break
     try:
         wb.close()
     except Exception as e:  # noqa: BLE001
@@ -150,9 +170,9 @@ def parse_table(raw: bytes, filename: str,
     for r in reader:
         if all((v is None or str(v).strip() == "") for v in r.values()):
             continue
-        rows.append({(k or "").strip(): v for k, v in r.items() if k is not None})
         if len(rows) >= MAX_ROWS:
-            break
+            raise TooManyRows(filename or "")
+        rows.append({(k or "").strip(): v for k, v in r.items() if k is not None})
     return headers, rows
 
 
@@ -192,6 +212,8 @@ def parse_table_lenient(raw: bytes, filename: str, st: Optional[SourceType]
     try:
         headers, rows = parse_table(raw, filename, st)
         return headers, rows, None
+    except TooManyRows:
+        raise                       # bukan "bentuk belum dikenal": jangan dibaca ulang apa adanya
     except ValueError as e:
         if st is None or not getattr(st, "prenorm", ""):
             raise

@@ -259,9 +259,10 @@ def split_from_orders(orders: Iterable[dict]) -> Dict[str, Any]:
     ini dipanggil.
     """
     rows = list(orders or [])
-    live = [o for o in rows
-            if str(o.get("status") or "").strip().lower()
-            not in _rollup.EXCLUDED_FOR_REVENUE]
+    # 2026-11-07 (Asisten AI) — filter yang SAMA dengan rekap harian, kini dari
+    # satu definisi omzet (`core.ukuran_penjualan`): batal & belum dibayar keluar.
+    from core import ukuran_penjualan as _ukuran
+    live = [o for o in rows if _ukuran.dihitung_omzet(o)]
     ret = [o for o in live if is_returned(o)]
 
     gross_p = sum(_rollup.order_revenue_product(o) for o in live)

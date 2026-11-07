@@ -653,6 +653,20 @@ async def create_indexes():
             name="uniq_order_account_platform_orderid",
             partial={"order_id": {"$exists": True}},
         )
+        # ── Asisten AI (data) — indeks UNIK kunci dedup SETIAP jenis impor Marketing ──
+        # Audit AI 7 Nov 2026 §3.C #11: dua sesi impor bisa sama-sama menyisipkan baris
+        # kembar (iklan, retur, sesi live, KPI…). Daftar diturunkan dari kamus jenis impor
+        # (`core.marketing_import_indexes`). Indeks yang masih terhalang DATA KEMBAR tidak
+        # dipasang (dicatat di log); daftar kembarnya: migrasi
+        # `scripts/migrations/2026_11_08_cek_duplikat_impor_marketing.py`.
+        try:
+            from core.marketing_import_indexes import unique_import_specs as _uniq_impor
+            for _spec in _uniq_impor():
+                await _ensure_unique_index(db, _spec["collection"], _spec["keys"],
+                                           name=_spec["name"], partial=_spec["partial"])
+        except Exception as _e:  # noqa: BLE001
+            logger.warning("[index] indeks unik impor marketing dilewati: %s", _e)
+        # ── akhir Asisten AI (data) ──
         await db.marketing_orders.create_index("account_id")
         await db.marketing_orders.create_index("items.platform_sku_id", sparse=True)
         await db.marketing_orders.create_index("order_channel", sparse=True)

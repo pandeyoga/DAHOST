@@ -67,7 +67,13 @@ REGISTRY: dict[str, str] = {
     "wh_scan_out_rejects": "gudang",
     "wh_scan_out_settings": "gudang",
     "wh_scan_out_sheets": "gudang",
+    # Asisten AI (laporan): metadata laporan PDF/Excel buatan Asisten AI (berkasnya di penyimpanan unggahan).
+    "ai_reports": "lain",
     "ai_business_summaries": "lain",
+    # Asisten AI (inti) — 2026-11-07 Tahap A: percakapan chat analis (jenis `log`, lihat bawah)
+    "ai_chat_sessions": "lain",
+    "ai_chat_messages": "lain",
+    # ── akhir Asisten AI (inti) ──
     "ai_config": "lain",
     "ai_rca_history": "lain",
     "ai_response_cache": "lain",
@@ -682,6 +688,16 @@ rahaza_maintenance_predictions rahaza_period_alerts rahaza_skill_analyses rahaza
 rate_limit_buckets rate_limits reminders sync_log wh_barcode_print_jobs wh_legacy_drop_log
 wh_rack_alerts wh_rca_audit wh_stock_location_migration_log wh_stock_schema_reconcile_log
 """
+
+# Asisten AI (laporan): laporan buatan Asisten AI = log (boleh dihapus saat cutoff).
+_LOG += " ai_reports "
+
+
+# Asisten AI (inti) — 2026-11-07 Tahap A: percakapan Asisten AI = jejak/log (dihapus saat cutoff).
+_LOG += """
+ai_chat_messages ai_chat_sessions
+"""
+# ── akhir Asisten AI (inti) ──
 
 
 def _kind_table() -> dict[str, str]:

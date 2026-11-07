@@ -3,8 +3,8 @@
 K27  gaji tidak pernah ke LLM; nama orang → kode samaran, dipetakan balik di server.
 K28  output AI = usulan (Terima/Ubah/Tolak); teks pihak luar dibungkus pembatas;
      output divalidasi enum; Apply harga dinamis menulis harga katalog sungguhan.
-K29  Opus hanya Laporan Eksekutif; label biaya cocok dengan toggle Monitor AI;
-     batas biaya bulanan dari setelan Monitor AI yang sudah ada.
+K29  (dicabut 2026-11-07, keputusan no. 5: semua fitur = Opus 5.5) label biaya cocok dengan
+     toggle Monitor AI; batas biaya bulanan dari setelan Monitor AI yang sudah ada.
 +    IDOR career coach; konstanta mati EMERGENT_LLM_KEY.
 
 Klien Anthropic PALSU (`_ai_fakes.FakeAnthropic`) + Mongo PALSU — tidak ada API sungguhan.
@@ -90,7 +90,8 @@ def test_strip_sensitive_membuang_gaji_dan_kasbon():
     data = {"ref": "KRY-001", "base_salary": GAJI, "base_rate": GAJI, "kasbon_amount": 500000,
             "rows": [{"net_pay": 1, "gaji_pokok": 2, "dept": "QC"}], "payroll_total_rp": 9}
     clean = pv.strip_sensitive(data)
-    assert clean == {"ref": "KRY-001", "rows": [{"dept": "QC"}], "payroll_total_rp": 9}
+    # Asisten AI (laporan), 7 Nov 2026: kunci "payroll" kini juga dibuang (audit AI: total gaji di narasi eksekutif).
+    assert clean == {"ref": "KRY-001", "rows": [{"dept": "QC"}]}
     assert str(GAJI) not in pv.ai_json(data)
 
 
@@ -134,13 +135,13 @@ def test_decide_accept_modify_reject_dan_validasi():
     assert ei.value.status_code == 409
 
 
-# ═══ K29: Opus hanya Laporan Eksekutif ══════════════════════════════════════
-def test_executive_diturunkan_kecuali_laporan_eksekutif(ai):
+# ═══ Keputusan no. 5 (2026-11-07): semua fitur Opus 5.5, tanpa penurunan tier (K29 dicabut) ═══
+def test_semua_fitur_opus_tanpa_penurunan_tier(ai):
     ai["fake"].messages.responses = [fake_message("a"), fake_message("b")]
     run(t.tracked_llm_call("cashflow", "u", "executive", "s", "u"))
     run(t.tracked_llm_call("executive-narrative", "u", "executive", "s", "u"))
     models = [c["model"] for c in ai["fake"].messages.calls]
-    assert models == ["claude-sonnet-5-5", "claude-opus-5-5"]
+    assert models == ["claude-opus-5-5", "claude-opus-5-5"]
     logs = _logs(ai["db"])
     assert [(x["feature"], x["feature_group"]) for x in logs] == [("cashflow", "cashflow"),
                                                                   ("executive-narrative", "executive-narrative")]
@@ -178,7 +179,7 @@ def test_label_fitur_ai_cocok_dengan_toggle_monitor():
 
 
 # ═══ K29: batas bulanan di setelan Monitor AI yang sudah ada ═════════════════
-def test_monitor_budgets_memakai_setelan_db_dan_tolak_default_opus(monkeypatch):
+def test_monitor_budgets_memakai_setelan_db_dan_validasi_tier(monkeypatch):
     from routes import ai_usage_monitor as mon
     db = FakeDB()
     db.find_one_map["ai_config"] = {"id": "global", "monthly_budget_usd": 42.0}
@@ -191,8 +192,9 @@ def test_monitor_budgets_memakai_setelan_db_dan_tolak_default_opus(monkeypatch):
     d = run(mon.get_budgets(FakeRequest()))["data"]
     assert d["monthly_usd"] == 42.0 and d["month_cost_usd"] == 21.0 and d["monthly_used_pct"] == 50.0
     with pytest.raises(HTTPException) as ei:
-        run(mon.update_settings(FakeRequest(), payload={"default_tier": "executive"}))
+        run(mon.update_settings(FakeRequest(), payload={"default_tier": "turbo"}))
     assert ei.value.status_code == 400
+    assert "executive" in mon.DEFAULT_TIER_CHOICES  # 2026-11-07: semua tier = Opus 5.5
     t.invalidate_ai_settings_cache()
 
 
@@ -229,7 +231,7 @@ def test_attrition_tanpa_nama_dan_gaji_ke_ai_dan_respons(ai, monkeypatch):
     out = run(h.predict_attrition(FakeRequest(), department=None))["data"]
     sent = _sent(ai["fake"])
     assert NAMA_KARYAWAN not in sent and str(GAJI) not in sent and "e1" not in sent and "KRY-001" in sent
-    assert ai["fake"].messages.calls[-1]["model"] == "claude-sonnet-5-5"   # K29
+    assert ai["fake"].messages.calls[-1]["model"] == "claude-opus-5-5"   # keputusan no. 5
     assert "raw_employee_data" not in out and str(GAJI) not in json.dumps(out)
     emp = out["analysis"]["employees"][0]
     assert emp["name"] == NAMA_KARYAWAN and emp["employee_id"] == "e1" and emp["department"] == "QC"
@@ -296,7 +298,7 @@ def test_career_report_tanpa_nama_dan_dipulihkan(ai, monkeypatch):
     ai["fake"].messages.responses = [fake_message("Halo KRY-001, ini rencana karier.")]
     out = run(cc.generate_career_report(FakeRequest(user=ADMIN), cc.CareerCoachRequest()))["data"]
     assert NAMA_KARYAWAN not in _sent(ai["fake"]) and str(GAJI) not in _sent(ai["fake"])
-    assert ai["fake"].messages.calls[-1]["model"] == "claude-sonnet-5-5"
+    assert ai["fake"].messages.calls[-1]["model"] == "claude-opus-5-5"
     assert out["report"]["full_report"] == f"Halo {NAMA_KARYAWAN}, ini rencana karier."
 
 
@@ -335,7 +337,7 @@ def test_cashflow_nama_pelanggan_vendor_disamarkan(ai, monkeypatch):
     out = run(cf.ai_cashflow_prediction(FakeRequest()))
     sent = _sent(ai["fake"])
     assert "Probeyanti" not in sent and "Probesono" not in sent and "PLG-001" in sent and "VND-001" in sent
-    assert ai["fake"].messages.calls[-1]["model"] == "claude-sonnet-5-5"
+    assert ai["fake"].messages.calls[-1]["model"] == "claude-opus-5-5"
     assert out["analysis"] == "Piutang terbesar dari Probeyanti Kusuma; bayar Probesono Wijaya."
 
 
@@ -442,7 +444,7 @@ def test_sentimen_teks_pelanggan_disamarkan_dan_dibungkus(ai, monkeypatch):
     run(mi.sentiment_analysis(FakeRequest()))
     sent = _sent(ai["fake"])
     assert NAMA_PELANGGAN not in sent and "0812" not in sent and "081299998888" not in sent
-    assert "<data_pihak_luar" in sent and ai["fake"].messages.calls[-1]["model"] == "claude-sonnet-5-5"
+    assert "<data_pihak_luar" in sent and ai["fake"].messages.calls[-1]["model"] == "claude-opus-5-5"
 
 
 # ═══ K28: Harga dinamis — Apply menulis harga katalog sungguhan ═════════════
