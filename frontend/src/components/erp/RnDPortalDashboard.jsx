@@ -64,6 +64,7 @@ const NAMA_SUMBER = {
   dewi_rnd_patterns: 'Pola',
 };
 const kalimat = (s) => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t; };
+const labelTahap = (s) => kalimat(s).replace(/^Draft/, 'Draf');
 
 const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
 const STATUS_DOK = { draft: 'draf', approved: 'disetujui', rejected: 'ditolak', pending: 'menunggu', submitted: 'diajukan', in_progress: 'dikerjakan', done: 'selesai', completed: 'selesai' };
@@ -315,7 +316,7 @@ export default function RnDPortalDashboard({ token, onNavigate }) {
             kolom={[
               { label: 'Kode', nilai: (r) => r.style_code },
               { label: 'Nama', nilai: (r) => r.style_name },
-              { label: 'Tahap', nilai: (r) => r.stage_label },
+              { label: 'Tahap', nilai: (r) => labelTahap(r.stage_label) },
               { label: 'Menunggu (hari)', nilai: (r) => r.waiting_days || 0 },
               { label: 'Varian', nilai: (r) => r.variants || 0 },
               { label: 'Foto', nilai: (r) => r.photos || 0 },
@@ -330,7 +331,7 @@ export default function RnDPortalDashboard({ token, onNavigate }) {
           <FilterChips testId="rnd-funnel" ariaLabel="Saring tahap" hideWhenEmpty={false} value={tahap}
             onChange={(k) => { setTahap(k); setHal(1); }}
             options={[{ key: '', label: 'Semua', count: lifecycle?.total_styles ?? semuaStyle.length },
-              ...stages.map((f) => ({ key: f.key, label: kalimat(f.stage), count: f.count }))]} />
+              ...stages.map((f) => ({ key: f.key, label: labelTahap(f.stage), count: f.count }))]} />
         )}
         {!lifecycle ? (
           <Skeleton className="h-28 rounded-lg" />
@@ -358,7 +359,7 @@ export default function RnDPortalDashboard({ token, onNavigate }) {
                     <TableRow key={r.id} data-testid={`rnd-lifecycle-row-${r.id}`}>
                       <TableCell className="whitespace-nowrap"><span className="mr-2 text-xs text-muted-foreground">{r.style_code}</span>{r.style_name}</TableCell>
                       <TableCell className="whitespace-nowrap">
-                        <StatusBadge status={r.stage} label={r.stage_label} tone={STAGE_TONE[r.stage] || 'default'} />
+                        <StatusBadge status={r.stage} label={labelTahap(r.stage_label)} tone={STAGE_TONE[r.stage] || 'default'} />
                         {r.waiting_days > 0 && <span className="ml-1 text-xs text-muted-foreground">{r.waiting_days} hari</span>}
                       </TableCell>
                       <TableCell className="hidden text-right tabular-nums xl:table-cell">{fmtNum(r.variants)}</TableCell>

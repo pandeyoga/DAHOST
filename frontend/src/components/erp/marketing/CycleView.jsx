@@ -525,11 +525,13 @@ export default function CycleView({ token, period, monthLabel, scope = 'marketin
 
   const aksiBaris = (r) => (
     <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-      <Button size="sm" variant="outline" onClick={() => setTarget(r)} data-testid={`cycle-set-target-${r.account.account_code}`}>
-        <Target />Target
+      <Button size="icon-sm" variant="outline" onClick={() => setTarget(r)} title="Ubah target" aria-label="Ubah target"
+        data-testid={`cycle-set-target-${r.account.account_code}`}>
+        <Target />
       </Button>
-      <Button size="sm" variant="outline" onClick={() => setBudget(r)} data-testid={`cycle-set-budget-${r.account.account_code}`}>
-        <Wallet />Anggaran
+      <Button size="icon-sm" variant="outline" onClick={() => setBudget(r)} title="Ubah rencana anggaran" aria-label="Ubah rencana anggaran"
+        data-testid={`cycle-set-budget-${r.account.account_code}`}>
+        <Wallet />
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
