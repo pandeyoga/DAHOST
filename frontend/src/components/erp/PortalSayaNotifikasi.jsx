@@ -1,12 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Loader2, Bell, BellOff, CheckCheck, AlertCircle, History } from 'lucide-react';
+import { GlassCard } from '@/components/ui/glass';
+import FilterChips from '@/components/ui/filter-chips';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { CheckCheck, Loader2, RefreshCw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice } from './moduleAtoms';
 import {
-  INBOX_TABS, GroupRow, InboxRow, TabButton, navigateToGroup, navigateToNotification, punyaTujuan,
+  INBOX_TABS, GroupRow, InboxRow, formatWIB, navigateToGroup, navigateToNotification, punyaTujuan,
 } from './NotificationBell';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -100,75 +103,77 @@ export default function PortalSayaNotifikasi({ headers, onNavigate }) {
 
   const empty = !error && !loading && box.items.length === 0 && (box.groups || []).length === 0;
 
+  const LABEL_TAB = { action: 'Perlu tindakan', info: 'Pemberitahuan', history: 'Riwayat' };
+  const status = (n) => (n.kind === 'action' ? (n.resolved_at ? 'Selesai' : 'Perlu tindakan') : (n.read ? 'Dibaca' : 'Belum dibaca'));
+
   return (
-    <div className="p-4 sm:p-6 max-w-2xl mx-auto space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-lg font-bold flex items-center gap-2">
-          <Bell className="w-5 h-5" /> Notifikasi Saya
-        </h2>
-        <div className="flex items-center gap-2">
-          {counts.info > 0 && (
-            <Badge className="bg-red-100 text-red-700 border-red-200" data-testid="portal-notif-unread">{counts.info} Belum Dibaca</Badge>
-          )}
-          {tab === 'info' && counts.info > 0 && (
-            <Button variant="outline" size="sm" onClick={markAll} data-testid="portal-notif-mark-all">
-              <CheckCheck className="w-4 h-4 mr-1" /> Tandai semua dibaca
-            </Button>
-          )}
-        </div>
-      </div>
-
-      <div role="tablist" aria-label="Jenis notifikasi" className="flex border-b">
-        {INBOX_TABS.map((t) => (
-          <TabButton key={t.key} active={tab === t.key} label={t.label}
-                     count={t.key === 'action' ? counts.action : t.key === 'info' ? counts.info : 0}
-                     tone={t.key === 'action' ? 'action' : 'neutral'}
-                     onClick={() => { setExpandedId(null); setTab(t.key); }}
-                     testId={`portal-notif-tab-${t.key}`} />
-        ))}
-      </div>
-
-      {error && (
-        <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm px-3 py-2" role="alert">
-          <AlertCircle className="w-4 h-4 shrink-0" /> {error}
-        </div>
+    <PageLayout testId="portal-notifikasi" title="Notifikasi"
+      subtitle="Hal yang perlu Anda tindak lanjuti, pemberitahuan, dan riwayat tindakan."
+      filters={(
+        <FilterChips value={tab} hideWhenEmpty={false} testId="portal-notif-tab" ariaLabel="Jenis notifikasi"
+          onChange={(k) => { setExpandedId(null); setTab(k || 'action'); }}
+          options={INBOX_TABS.map((t) => ({
+            key: t.key, label: LABEL_TAB[t.key] || t.label,
+            count: t.key === 'action' ? counts.action : t.key === 'info' ? counts.info : undefined,
+          }))} />
+      )}
+      tools={<>
+        {tab === 'info' && counts.info > 0 && (
+          <Button variant="outline" onClick={markAll} data-testid="portal-notif-mark-all">
+            <CheckCheck /> Tandai semua dibaca
+          </Button>
+        )}
+        <TombolUnduh namaBerkas={`notifikasi-${tab}`} namaLembar="Notifikasi" baris={box.items} testId="portal-notif-unduh" kolom={[
+          { label: 'Waktu', nilai: (n) => formatWIB(n.created_at) }, { label: 'Kategori', nilai: (n) => n.category_label || '' },
+          { label: 'Judul', nilai: (n) => n.title || '' }, { label: 'Isi', nilai: (n) => n.message || n.body || '' },
+          { label: 'Status', nilai: (n) => status(n) },
+        ]} />
+        <Button variant="outline" size="icon" onClick={() => { load(tab); loadCounts(); }} disabled={loading}
+          title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}>
+      {counts.info > 0 && (
+        <p className="text-sm text-muted-foreground" data-testid="portal-notif-unread">{counts.info} pemberitahuan belum dibaca.</p>
       )}
 
-      {loading && (
-        <div className="flex items-center justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
-      )}
+      {error && <Notice tone="danger">{error}</Notice>}
+
+      {loading && <p className="py-10 text-center text-sm text-muted-foreground">Memuat notifikasi…</p>}
 
       {empty && (
-        <div className="text-center py-16 text-muted-foreground">
-          {tab === 'history' ? <History className="w-12 h-12 mx-auto mb-3 opacity-30" />
-            : <BellOff className="w-12 h-12 mx-auto mb-3 opacity-30" />}
-          <p>{tab === 'action' ? 'Tidak ada yang perlu ditindaklanjuti.'
-            : tab === 'history' ? 'Belum ada tindakan yang selesai.' : 'Tidak ada notifikasi saat ini.'}</p>
-        </div>
+        <EmptyState title={tab === 'action' ? 'Tidak ada yang perlu ditindaklanjuti.'
+          : tab === 'history' ? 'Belum ada tindakan yang selesai.' : 'Tidak ada notifikasi saat ini.'} />
       )}
 
       {!loading && !empty && (
-        <Card className="overflow-hidden divide-y">
-          {tab === 'action' && (box.groups || []).map((g) => (
-            <GroupRow key={g.key} g={g} onOpen={(x) => navigateToGroup(x, (moduleId, params) => onNavigate?.(moduleId, params))} />
-          ))}
-          {box.items.map((n) => (
-            <InboxRow key={n.id} n={n} expanded={expandedId === n.id}
-                      onActivate={activate}
-                      onAction={(x) => { if (!x.read) markRead(x.id); go(x); }}
-                      onMarkRead={markRead} />
-          ))}
-        </Card>
+        <GlassCard className="overflow-hidden p-0">
+          <ul className="divide-y divide-[var(--glass-border)]" data-testid="portal-notif-list">
+            {tab === 'action' && (box.groups || []).map((g) => (
+              <li key={g.key}>
+                <GroupRow g={g} onOpen={(x) => navigateToGroup(x, (moduleId, params) => onNavigate?.(moduleId, params))} />
+              </li>
+            ))}
+            {box.items.map((n) => (
+              <li key={n.id}>
+                <InboxRow n={n} expanded={expandedId === n.id}
+                          onActivate={activate}
+                          onAction={(x) => { if (!x.read) markRead(x.id); go(x); }}
+                          onMarkRead={markRead} />
+              </li>
+            ))}
+          </ul>
+        </GlassCard>
       )}
 
       {box.hasMore && !loading && (
         <div className="text-center">
           <Button variant="outline" size="sm" disabled={loadingMore}
                   onClick={() => load(tab, { append: true, skip: box.items.length })} data-testid="portal-notif-more">
-            {loadingMore && <Loader2 className="w-4 h-4 mr-1 animate-spin" />} Muat lebih banyak
+            {loadingMore && <Loader2 className="animate-spin" />} Muat lebih banyak
           </Button>
         </div>
       )}
-    </div>
+    </PageLayout>
   );
 }

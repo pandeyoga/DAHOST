@@ -21,7 +21,10 @@ import {
   Bell, X, CheckCheck, ArrowRight, Loader2, BellOff, Settings2, ChevronDown,
   ClipboardList, History, CheckCircle2,
 } from 'lucide-react';
-import Modal from './Modal';
+import { Button } from '@/components/ui/button';
+import FilterChips from '@/components/ui/filter-chips';
+import DetailPopup from '@/components/ui/detail-popup';
+import { Notice } from './moduleAtoms';
 import NotificationPrefsDialog from './NotificationPrefsDialog';
 import { parseServerTime } from '@/lib/waktu';
 
@@ -35,21 +38,9 @@ export const INBOX_TABS = [
   { key: 'history', label: 'Riwayat' },
 ];
 
-const CAT_TONE = {
-  // "Untuk Saya" = notifikasi yang dialamatkan langsung ke pengguna ini
-  personal: 'bg-indigo-50 text-indigo-700 border-indigo-200',
-  warehouse: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  production: 'bg-sky-50 text-sky-700 border-sky-200',
-  cutting: 'bg-orange-50 text-orange-700 border-orange-200',
-  maklon: 'bg-violet-50 text-violet-700 border-violet-200',
-  finance: 'bg-teal-50 text-teal-700 border-teal-200',
-  hr: 'bg-amber-50 text-amber-700 border-amber-200',
-  toko: 'bg-pink-50 text-pink-700 border-pink-200',
-  accessories: 'bg-cyan-50 text-cyan-700 border-cyan-200',
-  assets: 'bg-yellow-50 text-yellow-700 border-yellow-200',
-  rnd: 'bg-purple-50 text-purple-700 border-purple-200',
-  sysadmin: 'bg-slate-100 text-slate-700 border-slate-300',
-};
+// Standar UI/UX v2 (8 Nov 2026): kategori memakai SATU gaya netral (dulu 12 warna palet mentah, kontras rendah).
+const CAT_NETRAL = 'bg-[var(--glass-bg)] text-foreground/80 border-[var(--glass-border)]';
+const CAT_TONE = new Proxy({}, { get: () => CAT_NETRAL });
 
 // ── Waktu (dipakai juga oleh PortalSayaNotifikasi) ──────────────────────────
 // Server menyimpan UTC; stempel TANPA zona = UTC. Definisinya dipindah ke SSOT `@/lib/waktu`
@@ -141,23 +132,9 @@ export function navigateToGroup(g, fallback) {
   }, fallback);
 }
 
-function CatChip({ cat, label, count, active, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-medium
-        ${active ? 'ring-2 ring-[hsl(var(--primary)/0.35)]' : ''} ${CAT_TONE[cat] || CAT_TONE.sysadmin}`}
-      data-testid={`notif-cat-${cat}`}
-    >
-      {label}
-      <span className="tabular-nums font-semibold">{count}</span>
-    </button>
-  );
-}
-
 export function TabButton({ active, label, count, tone = 'neutral', onClick, testId }) {
   const badge = tone === 'action'
-    ? 'bg-red-500 text-white'
+    ? 'bg-[hsl(var(--destructive-strong))] text-white'
     : 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))]';
   return (
     <button
@@ -171,7 +148,7 @@ export function TabButton({ active, label, count, tone = 'neutral', onClick, tes
     >
       {label}
       {count > 0 && (
-        <span className={`min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold grid place-items-center tabular-nums ${badge}`}>
+        <span className={`min-w-[18px] h-[18px] px-1 rounded-full text-xs font-semibold grid place-items-center tabular-nums ${badge}`}>
           {count > 99 ? '99+' : count}
         </span>
       )}
@@ -183,18 +160,16 @@ export function TabButton({ active, label, count, tone = 'neutral', onClick, tes
 export function GroupRow({ g, onOpen }) {
   return (
     <div className="flex items-center gap-3 px-3 py-2.5" data-testid={`inbox-group-${g.key}`}>
-      <span className="shrink-0 grid place-items-center w-7 h-7 rounded-md bg-amber-50 text-amber-700 border border-amber-200">
+      <span className="shrink-0 grid place-items-center w-7 h-7 rounded-md bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] border border-[hsl(var(--warning)/0.35)]">
         <ClipboardList className="w-3.5 h-3.5" />
       </span>
-      <span className="min-w-0 flex-1 text-xs font-medium text-foreground">{g.label}</span>
-      <span className="shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-amber-500 text-white text-[10px] font-bold grid place-items-center tabular-nums">
+      <span className="min-w-0 flex-1 text-sm font-medium text-foreground">{g.label}</span>
+      <span className="shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-[hsl(var(--warning)/0.18)] text-[hsl(var(--warning-text))] text-xs font-semibold grid place-items-center tabular-nums">
         {g.count}
       </span>
-      <button type="button" onClick={() => onOpen(g)}
-              className="shrink-0 inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-[hsl(var(--primary))] text-white text-[11px] font-medium hover:opacity-90"
-              data-testid={`inbox-group-open-${g.key}`}>
-        Buka <ArrowRight className="w-3 h-3" />
-      </button>
+      <Button type="button" size="sm" onClick={() => onOpen(g)} className="shrink-0" data-testid={`inbox-group-open-${g.key}`}>
+        Buka <ArrowRight />
+      </Button>
     </div>
   );
 }
@@ -213,7 +188,7 @@ export function InboxRow({ n, compact = false, expanded = false, onActivate, onA
               aria-expanded={punyaTujuan(n) ? undefined : expanded}>
         <span className="flex items-center gap-1.5">
           {n.category_label && (
-            <span className={`shrink-0 px-1.5 py-0.5 rounded border text-[9px] font-semibold ${CAT_TONE[n.category] || CAT_TONE.sysadmin}`}>
+            <span className={`shrink-0 px-1.5 py-0.5 rounded border text-xs font-medium ${CAT_TONE[n.category] || CAT_TONE.sysadmin}`}>
               {n.category_label}
             </span>
           )}
@@ -224,10 +199,10 @@ export function InboxRow({ n, compact = false, expanded = false, onActivate, onA
         {text && !compact && (
           <span className={`block text-xs text-muted-foreground mt-0.5 whitespace-pre-line ${expanded ? '' : 'line-clamp-2'}`}>{text}</span>
         )}
-        <span className="block text-[10px] text-muted-foreground mt-1" title={formatWIB(n.created_at)}>
+        <span className="block text-xs text-muted-foreground mt-1" title={formatWIB(n.created_at)}>
           {timeAgo(n.created_at)}{compact ? '' : ` · ${formatWIB(n.created_at)}`}
           {isHistory && (
-            <span className="ml-1 inline-flex items-center gap-0.5 text-emerald-700">
+            <span className="ml-1 inline-flex items-center gap-0.5 text-[hsl(var(--success-text))]">
               · <CheckCircle2 className="w-3 h-3" /> {n.resolved_label || 'Selesai'}
               {n.resolved_at ? ` (${formatWIB(n.resolved_at)})` : ''}
             </span>
@@ -236,18 +211,17 @@ export function InboxRow({ n, compact = false, expanded = false, onActivate, onA
         </span>
       </button>
       {isAction && n.action && (
-        <button type="button" onClick={() => onAction?.(n)}
-                className="shrink-0 self-center inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-[hsl(var(--primary))] text-white text-[11px] font-medium hover:opacity-90"
+        <Button type="button" size="sm" onClick={() => onAction?.(n)} className="shrink-0 self-center"
                 data-testid="inbox-action-btn">
-          {n.action.label || 'Buka'} <ArrowRight className="w-3 h-3" />
-        </button>
+          {n.action.label || 'Buka'} <ArrowRight />
+        </Button>
       )}
       {!isAction && !isHistory && !n.read && onMarkRead && !compact && (
-        <button type="button" onClick={() => onMarkRead(n.id)}
-                className="shrink-0 self-center text-[11px] text-muted-foreground hover:text-foreground"
+        <Button type="button" variant="link" size="sm" onClick={() => onMarkRead(n.id)}
+                className="shrink-0 self-center h-auto px-1 text-muted-foreground"
                 data-testid="notif-mark-one">
           Tandai dibaca
-        </button>
+        </Button>
       )}
       {!isAction && !isHistory && !punyaTujuan(n) && !compact && (
         <ChevronDown className={`shrink-0 self-center w-3.5 h-3.5 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`} />
@@ -434,15 +408,17 @@ export function NotificationBell({ token, onNavigateModule }) {
       );
     }
     return (
-      <div className="divide-y divide-[var(--glass-border)]">
-        {groups.map((g) => <GroupRow key={g.key} g={g} onOpen={openGroup} />)}
+      <ul className="divide-y divide-[var(--glass-border)]">
+        {groups.map((g) => <li key={g.key}><GroupRow g={g} onOpen={openGroup} /></li>)}
         {box.items.map((n) => (
-          <InboxRow key={n.id} n={n} compact={compact} expanded={expandedId === n.id}
-                    onActivate={(x) => activate(x, compact ? 'dropdown' : 'center')}
-                    onAction={(x) => { if (!x.read) markRead(x.id); go(x); }}
-                    onMarkRead={markRead} />
+          <li key={n.id}>
+            <InboxRow n={n} compact={compact} expanded={expandedId === n.id}
+                      onActivate={(x) => activate(x, compact ? 'dropdown' : 'center')}
+                      onAction={(x) => { if (!x.read) markRead(x.id); go(x); }}
+                      onMarkRead={markRead} />
+          </li>
         ))}
-      </div>
+      </ul>
     );
   };
 
@@ -461,7 +437,7 @@ export function NotificationBell({ token, onNavigateModule }) {
         >
           <Bell className="w-4 h-4" />
           {actionCount > 0 ? (
-            <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold grid place-items-center"
+            <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[hsl(var(--destructive-strong))] text-white text-xs font-semibold grid place-items-center"
                   data-testid="notification-action-badge">
               {actionCount > 99 ? '99+' : actionCount}
             </span>
@@ -480,21 +456,20 @@ export function NotificationBell({ token, onNavigateModule }) {
           >
             <div className="flex items-center justify-between px-3 pt-2.5 pb-1">
               <div>
-                <p className="text-sm font-semibold text-foreground">Kotak Masuk</p>
-                <p className="text-[11px] text-muted-foreground tabular-nums">
+                <p className="text-sm font-semibold text-foreground">Kotak masuk</p>
+                <p className="text-xs text-muted-foreground tabular-nums">
                   {actionCount} perlu tindakan · {infoUnread} pemberitahuan belum dibaca
                 </p>
               </div>
               <div className="flex items-center gap-1">
-                <button onClick={() => { setOpen(false); setPrefsOpen(true); }}
-                        className="p-1.5 rounded-lg hover:bg-[var(--nav-pill-active)]"
+                <Button variant="ghost" size="icon-sm" onClick={() => { setOpen(false); setPrefsOpen(true); }}
                         title="Atur notifikasi saya" aria-label="Atur notifikasi saya"
                         data-testid="notification-prefs-btn">
-                  <Settings2 className="w-3.5 h-3.5 text-foreground/50" />
-                </button>
-                <button onClick={() => setOpen(false)} className="p-1 rounded-lg hover:bg-[var(--nav-pill-active)]" aria-label="Tutup">
-                  <X className="w-3.5 h-3.5 text-foreground/50" />
-                </button>
+                  <Settings2 />
+                </Button>
+                <Button variant="ghost" size="icon-sm" onClick={() => setOpen(false)} title="Tutup" aria-label="Tutup">
+                  <X />
+                </Button>
               </div>
             </div>
 
@@ -510,17 +485,16 @@ export function NotificationBell({ token, onNavigateModule }) {
             </div>
 
             <div className="flex border-t border-[var(--glass-border)]">
-              <button onClick={() => openCenter(tab)}
-                className="flex-1 py-2.5 text-xs font-medium text-[hsl(var(--primary))] hover:bg-[var(--nav-pill-active)] inline-flex items-center justify-center gap-1"
+              <Button variant="ghost" onClick={() => openCenter(tab)} className="h-10 flex-1 rounded-none text-[hsl(var(--primary))]"
                 data-testid="notification-see-all">
-                Lihat semua <ArrowRight className="w-3.5 h-3.5" />
-              </button>
+                Lihat semua <ArrowRight />
+              </Button>
               {tab === 'action' && (
-                <button onClick={() => openCenter('history')}
-                  className="flex-1 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-[var(--nav-pill-active)] inline-flex items-center justify-center gap-1 border-l border-[var(--glass-border)]"
+                <Button variant="ghost" onClick={() => openCenter('history')}
+                  className="h-10 flex-1 rounded-none border-l border-[var(--glass-border)] text-muted-foreground"
                   data-testid="notification-history">
-                  <History className="w-3.5 h-3.5" /> Riwayat tindakan
-                </button>
+                  <History /> Riwayat tindakan
+                </Button>
               )}
             </div>
           </div>
@@ -528,7 +502,16 @@ export function NotificationBell({ token, onNavigateModule }) {
       </div>
 
       {centerOpen && (
-        <Modal title="Kotak Masuk" size="xl" onClose={() => setCenterOpen(false)}>
+        <DetailPopup open onClose={() => setCenterOpen(false)} judul="Kotak masuk" testId="notification-center"
+          keterangan="Perlu tindakan, pemberitahuan, dan riwayat tindakan Anda."
+          aksi={centerTab === 'info' && (<>
+            <Button variant="outline" size="sm" onClick={() => setPrefsOpen(true)} data-testid="notif-open-prefs">
+              <Settings2 /> Notifikasi saya
+            </Button>
+            <Button variant="outline" size="sm" onClick={markAll} data-testid="notif-mark-all">
+              <CheckCheck /> Tandai semua dibaca
+            </Button>
+          </>)}>
           <div className="space-y-3" data-testid="notification-detail-modal">
             <div role="tablist" aria-label="Jenis kotak masuk" className="flex border-b border-[var(--glass-border)]">
               {INBOX_TABS.map((t) => (
@@ -540,56 +523,36 @@ export function NotificationBell({ token, onNavigateModule }) {
             </div>
 
             {centerTab === 'info' && (
-              <div className="flex flex-wrap items-center gap-1.5">
-                <button onClick={() => { setFilter(''); setExpandedId(null); loadBox('info'); }}
-                  className={`px-2.5 py-1 rounded-full border text-[11px] font-medium ${!filter ? 'bg-[hsl(var(--primary))] text-white border-transparent' : 'bg-[var(--card-surface)] border-[var(--glass-border)] text-foreground/70'}`}
-                  data-testid="notif-filter-all">
-                  Semua ({sum.info_total || 0})
-                </button>
-                {cats.map((c) => (
-                  <CatChip key={c.key} cat={c.key} label={c.label} count={c.total - (c.action || 0)} active={filter === c.key}
-                           onClick={() => { setFilter(c.key); setExpandedId(null); loadBox('info', { cat: c.key }); }} />
-                ))}
-                <div className="flex-1" />
-                <button onClick={() => setPrefsOpen(true)}
-                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] text-xs text-foreground hover:bg-[var(--nav-pill-active)]"
-                  data-testid="notif-open-prefs">
-                  <Settings2 className="w-3.5 h-3.5" /> Notifikasi saya
-                </button>
-                <button onClick={markAll}
-                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] text-xs text-foreground hover:bg-[var(--nav-pill-active)]"
-                  data-testid="notif-mark-all">
-                  <CheckCheck className="w-3.5 h-3.5" /> Tandai semua dibaca
-                </button>
-              </div>
+              <FilterChips value={filter} hideWhenEmpty={false} testId="notif-filter" ariaLabel="Kategori notifikasi"
+                onChange={(k) => { setFilter(k); setExpandedId(null); loadBox('info', k ? { cat: k } : undefined); }}
+                options={[
+                  { key: '', label: 'Semua', count: sum.info_total || 0 },
+                  ...cats.map((c) => ({ key: c.key, label: c.label, count: c.total - (c.action || 0) })),
+                ]} />
             )}
             {centerTab === 'action' && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 Item di sini tertutup sendiri begitu tindakannya selesai (mis. PR disetujui/ditolak,
                 stok kembali normal, cuti diputuskan) lalu pindah ke <b>Riwayat</b>.
               </p>
             )}
 
-            {notice && (
-              <p className="text-xs rounded-lg border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2" role="status">{notice}</p>
-            )}
+            {notice && <Notice tone="warning">{notice}</Notice>}
 
-            <div className="max-h-[60vh] overflow-y-auto rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)]">
+            <div className="rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)]">
               {renderList(centerTab, { compact: false })}
               {!loading && box.hasMore && (
                 <div className="p-2 text-center border-t border-[var(--glass-border)]">
-                  <button onClick={() => loadBox(centerTab, { cat: filter, append: true, skip: box.items.length })}
-                          disabled={loadingMore}
-                          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] text-xs text-foreground hover:bg-[var(--nav-pill-active)] disabled:opacity-60"
-                          data-testid="notif-load-more">
-                    {loadingMore ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                  <Button variant="outline" size="sm" onClick={() => loadBox(centerTab, { cat: filter, append: true, skip: box.items.length })}
+                          disabled={loadingMore} data-testid="notif-load-more">
+                    {loadingMore ? <Loader2 className="animate-spin" /> : null}
                     Muat lebih banyak ({box.items.length} dari {box.total})
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>
           </div>
-        </Modal>
+        </DetailPopup>
       )}
       {prefsOpen && (
         <NotificationPrefsDialog

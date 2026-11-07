@@ -10,11 +10,15 @@
  *   · Kategori yang tidak dibuka admin untuk peran Anda tidak muncul di sini.
  *   · Kategori "Untuk Saya" selalu aktif dan tidak bisa dibisukan — isinya
  *     notifikasi yang memang dialamatkan langsung kepada Anda.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): FormPopup standar (Batal · Simpan hijau), saklar per kategori, warna token.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { BellRing, BellOff, Loader2, Save, ShieldCheck, Lock } from 'lucide-react';
+import { Lock } from 'lucide-react';
 import { toast } from 'sonner';
-import Modal from './Modal';
+import { Switch } from '@/components/ui/switch';
+import FormPopup from '@/components/ui/form-popup';
+import { Notice } from './moduleAtoms';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -32,7 +36,7 @@ export default function NotificationPrefsDialog({ token, onClose, onSaved }) {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+      if (!r.ok) throw new Error(body.detail || `Kode ${r.status}`);
       setData(body);
       setMuted(body.muted_categories || []);
     } catch (e) {
@@ -60,7 +64,7 @@ export default function NotificationPrefsDialog({ token, onClose, onSaved }) {
         body: JSON.stringify({ muted_categories: muted.filter((c) => !locked.includes(c)) }),
       });
       const body = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+      if (!r.ok) throw new Error(body.detail || `Kode ${r.status}`);
       const off = (body.muted_categories || []).length;
       toast.success('Preferensi notifikasi disimpan', {
         description: off
@@ -75,88 +79,45 @@ export default function NotificationPrefsDialog({ token, onClose, onSaved }) {
   };
 
   return (
-    <Modal title="Notifikasi Saya" size="lg" onClose={onClose}>
-      <div className="space-y-3" data-testid="notif-prefs-dialog">
-        <div className="flex items-start gap-2 rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] p-3">
-          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[hsl(var(--primary))]" />
-          <p className="text-xs text-muted-foreground">
-            Matikan kategori yang tidak Anda perlukan. Yang dimatikan berhenti muncul di bel
-            <b className="text-foreground"> hanya untuk akun Anda</b> — rekan lain tidak terpengaruh.
-            Kategori yang belum dibuka admin untuk peran Anda tidak ditampilkan di sini.
-          </p>
-        </div>
-
-        {err && (
-          <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700">{err}</div>
-        )}
-
-        {loading ? (
-          <div className="py-10 text-center">
-            <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
-          </div>
-        ) : (
-          <ul className="divide-y divide-[var(--glass-border)] overflow-hidden rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)]">
-            {cats.map((c) => {
-              const isLocked = locked.includes(c.key);
-              const isOff = muted.includes(c.key) && !isLocked;
-              return (
-                <li key={c.key} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                  <div className="min-w-0">
-                    <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                      {c.label}
-                      {isLocked && (
-                        <span className="inline-flex items-center gap-1 rounded border border-[var(--glass-border)] px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
-                          <Lock className="h-2.5 w-2.5" /> selalu aktif
-                        </span>
-                      )}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {isLocked
-                        ? 'Notifikasi yang dialamatkan langsung kepada Anda — tidak bisa dibisukan.'
-                        : isOff ? 'Dibisukan — tidak muncul di bel Anda.' : 'Aktif — muncul di bel Anda.'}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => toggle(c.key)}
-                    disabled={isLocked}
-                    aria-pressed={!isOff}
-                    className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors
-                      ${isLocked
-                        ? 'cursor-not-allowed border-[var(--glass-border)] bg-[var(--nav-pill-bg)] text-muted-foreground'
-                        : isOff
-                          ? 'border-slate-300 bg-slate-100 text-slate-600 hover:bg-slate-200'
-                          : 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}
-                    data-testid={`notif-pref-${c.key}`}
-                  >
-                    {isOff
-                      ? (<><BellOff className="h-3.5 w-3.5" /> Dibisukan</>)
-                      : (<><BellRing className="h-3.5 w-3.5" /> Aktif</>)}
-                  </button>
-                </li>
-              );
-            })}
-            {cats.length === 0 && (
-              <li className="px-3 py-8 text-center text-sm text-muted-foreground">
-                Belum ada kategori notifikasi yang dibuka untuk peran Anda.
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="notif-prefs-dialog" judul="Notifikasi saya"
+      keterangan="Matikan kategori yang tidak Anda perlukan. Yang dimatikan berhenti muncul di lonceng hanya untuk akun Anda."
+      onSimpan={save} menyimpan={saving} bisaSimpan={!loading} galat={err || null}>
+      <p className="text-xs text-muted-foreground">
+        Rekan lain tidak terpengaruh. Kategori yang belum dibuka admin untuk peran Anda tidak ditampilkan di sini.
+      </p>
+      {loading ? (
+        <p className="py-8 text-center text-sm text-muted-foreground">Memuat preferensi…</p>
+      ) : cats.length === 0 ? (
+        <Notice tone="info">Belum ada kategori notifikasi yang dibuka untuk peran Anda.</Notice>
+      ) : (
+        <ul className="divide-y divide-[var(--glass-border)] rounded-lg border border-[var(--glass-border)]">
+          {cats.map((c) => {
+            const isLocked = locked.includes(c.key);
+            const isOff = muted.includes(c.key) && !isLocked;
+            return (
+              <li key={c.key} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                <div className="min-w-0">
+                  <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                    {c.label}
+                    {isLocked && (
+                      <span className="inline-flex items-center gap-1 text-xs font-normal text-muted-foreground">
+                        <Lock className="h-3 w-3" /> selalu aktif
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {isLocked
+                      ? 'Notifikasi yang dialamatkan langsung kepada Anda — tidak bisa dibisukan.'
+                      : isOff ? 'Dibisukan — tidak muncul di lonceng Anda.' : 'Aktif — muncul di lonceng Anda.'}
+                  </p>
+                </div>
+                <Switch checked={!isOff} disabled={isLocked} onCheckedChange={() => toggle(c.key)}
+                  aria-label={`${c.label} ${isOff ? 'dibisukan' : 'aktif'}`} data-testid={`notif-pref-${c.key}`} />
               </li>
-            )}
-          </ul>
-        )}
-
-        <div className="flex items-center justify-end gap-2">
-          <button onClick={onClose}
-                  className="h-9 rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] px-3 text-sm text-foreground hover:bg-[var(--nav-pill-active)]">
-            Batal
-          </button>
-          <button onClick={save} disabled={saving || loading}
-                  className="inline-flex h-9 items-center gap-2 rounded-lg bg-[hsl(var(--primary))] px-4 text-sm font-medium text-white disabled:opacity-60"
-                  data-testid="notif-prefs-save">
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Simpan
-          </button>
-        </div>
-      </div>
-    </Modal>
+            );
+          })}
+        </ul>
+      )}
+    </FormPopup>
   );
 }
