@@ -199,7 +199,7 @@ export default function RahazaHRReportsModule({ token }) {
   // ─── Penyaring (satu baris) ───
   const penyaring = (
     <>
-      <SmartNativeSelect value={periode.preset || 'custom'} searchable={false} className="w-40" aria-label="Periode"
+      <SmartNativeSelect value={periode.preset || 'custom'} searchable={false} className="w-[calc(50%-0.25rem)] sm:w-40" aria-label="Periode"
         onChange={(e) => setPeriode(periodFromPreset(e.target.value, periode))} data-testid="filter-period-preset">
         {PERIOD_PRESETS.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
       </SmartNativeSelect>
@@ -212,28 +212,28 @@ export default function RahazaHRReportsModule({ token }) {
             onChange={(v) => setPeriode((p) => ({ ...p, preset: 'custom', to: v }))} /></div>
         </>
       ) : null}
-      <SmartNativeSelect value={departmentId} onChange={e => setDepartmentId(e.target.value)} className="w-48" data-testid="filter-department">
+      <SmartNativeSelect value={departmentId} onChange={e => setDepartmentId(e.target.value)} className="w-[calc(50%-0.25rem)] sm:w-48" data-testid="filter-department">
         <option value="">Semua departemen</option>
         {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
       </SmartNativeSelect>
-      <SmartNativeSelect value={locationId} onChange={e => setLocationId(e.target.value)} className="w-40" data-testid="filter-location">
+      <SmartNativeSelect value={locationId} onChange={e => setLocationId(e.target.value)} className="w-[calc(50%-0.25rem)] sm:w-40" data-testid="filter-location">
         <option value="">Semua lokasi</option>
         {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
       </SmartNativeSelect>
       {activeTab !== 'turnover' && (
         <>
-          <SmartNativeSelect value={shiftId} onChange={e => setShiftId(e.target.value)} className="w-40" data-testid="filter-shift">
+          <SmartNativeSelect value={shiftId} onChange={e => setShiftId(e.target.value)} className="w-[calc(50%-0.25rem)] sm:w-40" data-testid="filter-shift">
             <option value="">Semua shift</option>
             {shifts.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </SmartNativeSelect>
-          <SmartNativeSelect value={employeeId} onChange={e => setEmployeeId(e.target.value)} className="w-44" data-testid="filter-employee">
+          <SmartNativeSelect value={employeeId} onChange={e => setEmployeeId(e.target.value)} className="w-[calc(50%-0.25rem)] sm:w-44" data-testid="filter-employee">
             <option value="">Semua karyawan</option>
             {employees.map(emp => <option key={emp.id} value={emp.id}>{`${emp.employee_code} - ${emp.name}`}</option>)}
           </SmartNativeSelect>
         </>
       )}
       {activeTab === 'payroll' && (
-        <SmartNativeSelect value={periodCode} onChange={e => setPeriodCode(e.target.value)} className="w-52" data-testid="filter-period">
+        <SmartNativeSelect value={periodCode} onChange={e => setPeriodCode(e.target.value)} className="w-[calc(50%-0.25rem)] sm:w-52" data-testid="filter-period">
           <option value="">Periode gaji terakhir</option>
           {payrollRuns.map(pr => <option key={pr.id} value={pr.period_code}>{pr.period_code}</option>)}
         </SmartNativeSelect>
@@ -252,7 +252,7 @@ export default function RahazaHRReportsModule({ token }) {
       </Button>
     </>
   );
-  const memuat = <p className="py-10 text-center text-sm text-muted-foreground">Memuat laporan…</p>;
+  const memuat = <p className="py-6 text-center text-sm text-muted-foreground">Memuat laporan…</p>;
   const labelPeriodeAktif = `Periode ${fmtDate(dateFrom)} – ${fmtDate(dateTo)}.`;
   const namaBerkas = (j) => `laporan-sdm-${j}-${dateFrom || ''}-${dateTo || ''}`;
 
@@ -393,7 +393,8 @@ export default function RahazaHRReportsModule({ token }) {
 
   return (
     <div data-testid="hr-reports-page">
-      <HubTabs hubId="hr-reports" title="Laporan SDM" subtitle="Kehadiran, lembur, penggajian, dan karyawan keluar-masuk per periode."
+      {/* Tanpa subjudul: nama tab sudah menjelaskan isinya, dan tabel tidak terdorong ke bawah. */}
+      <HubTabs hubId="hr-reports" title="Laporan SDM"
         value={activeTab} onValueChange={setActiveTab}
         tabs={[
           { key: 'attendance', label: 'Kehadiran', Component: IsiTab, props: {
@@ -431,7 +432,8 @@ export default function RahazaHRReportsModule({ token }) {
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
                 <StatTile label="Karyawan yang lembur" value={angka(otAgg.total_employees_with_ot)} sub={`Punya lembur disetujui. ${labelPeriodeAktif}`} />
                 <StatTile label="Total jam lembur" value={`${angka(otAgg.total_ot_hours)} jam`} sub="Semua karyawan dalam saringan." />
-                <StatTile label="Rata-rata per karyawan" value={`${angka(otAgg.avg_ot_per_emp)} jam`} sub="Dibagi karyawan yang lembur saja." />
+                <StatTile label="Rata-rata per karyawan" value={otAgg.total_employees_with_ot ? `${angka(otAgg.avg_ot_per_emp)} jam` : '—'}
+                  sub={otAgg.total_employees_with_ot ? 'Dibagi karyawan yang lembur saja.' : 'Belum ada karyawan yang lembur.'} />
               </div>
             ),
           } },
@@ -448,10 +450,10 @@ export default function RahazaHRReportsModule({ token }) {
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                 <StatTile label="Karyawan digaji" value={angka(prAgg.total_employees)}
                   sub={pr.period ? `Periode gaji ${typeof pr.period === 'string' ? pr.period : (pr.period.period_code || '')}.` : 'Belum ada proses penggajian.'} />
-                <StatTile label="Total kotor" value={formatRupiahShort(prAgg.total_gross)} sub={formatRupiah(prAgg.total_gross)} />
-                <StatTile label="Total potongan" value={formatRupiahShort(prAgg.total_deductions)} sub={formatRupiah(prAgg.total_deductions)} />
-                <StatTile label="Total bersih" value={formatRupiahShort(prAgg.total_net)}
-                  sub={`Rata-rata ${formatRupiah(prAgg.avg_net)} per karyawan.`} />
+                <StatTile label="Total kotor" value={pr.period ? formatRupiahShort(prAgg.total_gross) : '—'} sub={pr.period ? formatRupiah(prAgg.total_gross) : 'Belum ada data gaji.'} />
+                <StatTile label="Total potongan" value={pr.period ? formatRupiahShort(prAgg.total_deductions) : '—'} sub={pr.period ? formatRupiah(prAgg.total_deductions) : 'Belum ada data gaji.'} />
+                <StatTile label="Total bersih" value={pr.period ? formatRupiahShort(prAgg.total_net) : '—'}
+                  sub={pr.period ? `Rata-rata ${formatRupiah(prAgg.avg_net)} per karyawan.` : 'Belum ada data gaji.'} />
               </div>
             ),
           } },

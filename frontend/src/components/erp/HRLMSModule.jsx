@@ -268,7 +268,7 @@ export default function HRLMSModule({ token }) {
   const tabKursus = (
     <>
       {galat}
-      {memuat ? <p className="py-10 text-center text-sm text-muted-foreground">Memuat kursus…</p> : (
+      {memuat ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat kursus…</p> : (
         <TabelData kolom={kolomKursus} baris={filtered} kunci={(c) => c.course_id} onKlikBaris={setSelected} testId="lms-courses"
           kosong={<EmptyState title={courses.length ? 'Tidak ada kursus yang cocok' : 'Belum ada kursus'}
             description={courses.length ? 'Ubah saringan atau kata pencarian.' : 'Klik "Kursus baru", atau "Muat contoh" untuk melihat contoh.'} />} />

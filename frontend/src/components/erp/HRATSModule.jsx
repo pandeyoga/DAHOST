@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { GlassCard } from '@/components/ui/glass';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
@@ -512,7 +513,7 @@ function CandidateDetailModal({ candidate: initCandidate, headers, jobs, onStage
               </p>
             )}
           </div>
-        ) : <p className="text-sm text-muted-foreground">Belum ada CV.</p>}
+        ) : <p className="text-sm text-muted-foreground">CV belum diunggah.</p>}
         <div className="flex flex-wrap items-center gap-2">
           <SmartNativeSelect searchable={false} value={cvInput.mode} onChange={e => setCvInput(p => ({ ...p, mode: e.target.value }))} className="w-40"
             aria-label="Cara menyimpan CV">
@@ -643,7 +644,7 @@ function CandidateDetailModal({ candidate: initCandidate, headers, jobs, onStage
 function PipelineView({ pipeline, onViewCandidate }) {
   const stages = STAGES.filter(s => s !== 'Rejected');
   return (
-    <div className="overflow-x-auto rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)]">
+    <GlassCard hover={false} className="overflow-x-auto p-0">
       <div className="flex min-w-max divide-x divide-[var(--glass-border)]">
         {stages.map(stage => {
           const col = pipeline?.[stage] || { count: 0, candidates: [] };
@@ -675,7 +676,7 @@ function PipelineView({ pipeline, onViewCandidate }) {
           );
         })}
       </div>
-    </div>
+    </GlassCard>
   );
 }
 
@@ -876,7 +877,8 @@ export default function HRATSModule({ token }) {
       <StatTile label="Lowongan dibuka" value={s.open_jobs ?? 0} sub={`Dari ${s.total_jobs ?? 0} lowongan.`} />
       <StatTile label="Kandidat" value={s.total_candidates ?? 0} sub={`${s.in_progress ?? 0} masih diproses, ${s.rejected ?? 0} ditolak.`} />
       <StatTile label="Diterima" value={s.hired ?? 0} accent={s.hired ? 'success' : 'default'} sub="Kandidat di tahap diterima." />
-      <StatTile label="Tingkat diterima" value={`${s.conversion_rate || 0}%`} sub="Diterima ÷ semua kandidat." />
+      <StatTile label="Tingkat diterima" value={s.total_candidates ? `${s.conversion_rate || 0}%` : '—'}
+        sub={s.total_candidates ? 'Diterima ÷ semua kandidat.' : 'Belum ada kandidat.'} />
     </div>
   );
   const muatUlang = <Button variant="outline" size="icon" onClick={refresh} title="Muat ulang" aria-label="Muat ulang"><RefreshCw /></Button>;
@@ -887,7 +889,7 @@ export default function HRATSModule({ token }) {
     </SmartNativeSelect>
   );
   const galat = error && <Notice tone="danger" title="Gagal memuat data rekrutmen">{error}</Notice>;
-  const memuat = <p className="py-10 text-center text-sm text-muted-foreground">Memuat rekrutmen…</p>;
+  const memuat = <p className="py-6 text-center text-sm text-muted-foreground">Memuat rekrutmen…</p>;
   const aksiHalaman = <>
     <Button variant="outline" onClick={handleSeed} disabled={seeding}>{seeding ? 'Memuat…' : 'Muat contoh'}</Button>
     <Button onClick={() => openJobForm()} data-testid="ats-new-job"><Plus />Buat lowongan</Button>

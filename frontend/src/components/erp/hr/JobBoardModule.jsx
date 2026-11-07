@@ -245,7 +245,7 @@ export default function JobBoardModule({ token }) {
                 ]} />
               {muatUlang}
             </>,
-            children: loading && jobs.length === 0 ? <p className="py-10 text-center text-sm text-muted-foreground">Memuat lowongan…</p> : (
+            children: loading && jobs.length === 0 ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat lowongan…</p> : (
               <TabelData kolom={kolomLowongan} baris={jobs} onKlikBaris={(j) => handleViewJob(j.id)} testId="job-board-jobs"
                 kosong={<EmptyState title="Belum ada lowongan terbuka" description="Lowongan internal yang dipasang SDM akan tampil di sini." />} />
             ),

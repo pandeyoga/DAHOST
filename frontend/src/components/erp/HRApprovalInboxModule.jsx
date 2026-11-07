@@ -443,7 +443,7 @@ export default function HRApprovalInboxModule({ token, onNavigate }) {
       )}
 
       {loading && items.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat permohonan…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat permohonan…</p>
       ) : (
         <TabelData kolom={kolom} baris={filtered} kunci={(i) => `${i.type}-${i.id}`} onKlikBaris={setViewItem}
           testId="hr-inbox-list"

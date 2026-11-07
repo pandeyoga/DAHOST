@@ -350,7 +350,7 @@ export default function MultiLevelApprovalModule({ user, onModuleChange }) {
     </div>
   );
   const memuatAwal = loading && !summary;
-  const tabelAjuan = memuatAwal ? <p className="py-10 text-center text-sm text-muted-foreground">Memuat ajuan…</p> : (
+  const tabelAjuan = memuatAwal ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat ajuan…</p> : (
     <TabelData kolom={kolomAjuan} baris={displayItems} onKlikBaris={setSelectedItem} testId="approval-list"
       kosong={<EmptyState testId="approval-empty-state"
         title={tab === 'pending' ? 'Tidak ada ajuan yang menunggu keputusan Anda' : 'Tidak ada ajuan'}
@@ -372,7 +372,7 @@ export default function MultiLevelApprovalModule({ user, onModuleChange }) {
               ) : null } },
           { key: 'chains', label: 'Alur persetujuan', Component: IsiTab,
             props: { tools: alat, summary: ringkasan, children: memuatAwal
-              ? <p className="py-10 text-center text-sm text-muted-foreground">Memuat alur…</p>
+              ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat alur…</p>
               : (
                 <TabelData kolom={kolomAlur} baris={chains} testId="approval-chains-list"
                   kosong={<EmptyState title="Belum ada alur persetujuan"

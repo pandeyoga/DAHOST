@@ -16,7 +16,6 @@ import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
-import { cn } from '@/lib/utils';
 import { formatDateID } from '@/lib/format';
 import PageLayout from '../layout/PageLayout';
 import { EmptyState, StatusBadge } from '../moduleAtoms';
@@ -240,13 +239,10 @@ export default function HRResumeScreeningModule({ token }) {
             {AREA_FOKUS.map((a) => {
               const aktif = formData.focus_areas.includes(a.nilai);
               return (
-                <button key={a.nilai} type="button" onClick={() => alihFokus(a.nilai)} aria-pressed={aktif}
-                  data-testid={`resume-focus-${a.nilai}`}
-                  className={cn('rounded-full border px-3 py-1 text-sm transition-colors',
-                    aktif ? 'border-primary bg-primary text-primary-foreground'
-                      : 'border-[var(--glass-border)] bg-[var(--card-surface)] text-foreground hover:border-[hsl(var(--primary)/0.4)]')}>
+                <Button key={a.nilai} type="button" size="sm" variant={aktif ? 'default' : 'outline'} className="rounded-full"
+                  onClick={() => alihFokus(a.nilai)} aria-pressed={aktif} data-testid={`resume-focus-${a.nilai}`}>
                   {a.label}
-                </button>
+                </Button>
               );
             })}
           </div>

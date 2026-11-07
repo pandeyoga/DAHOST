@@ -641,14 +641,15 @@ export default function HROnboardingModule({ token }) {
       <StatTile label="Selesai" value={s.completed ?? 0} sub="Semua tugas sudah dikerjakan." />
       <StatTile label="Lewat target" value={s.overdue ?? 0} accent={s.overdue ? 'danger' : 'default'}
         sub="Masih aktif tetapi tanggal target sudah lewat." />
-      <StatTile label="Rata-rata kemajuan" value={`${s.avg_progress || 0}%`} sub="Rata-rata semua checklist." />
+      <StatTile label="Rata-rata kemajuan" value={s.total ? `${s.avg_progress || 0}%` : '—'}
+        sub={s.total ? 'Rata-rata semua checklist.' : 'Belum ada checklist.'} />
     </div>
   );
   const muatUlang = (
     <Button variant="outline" size="icon" onClick={refreshAll} title="Muat ulang" aria-label="Muat ulang"><RefreshCw /></Button>
   );
   const galat = error && <Notice tone="danger" title="Gagal memuat data onboarding">{error}</Notice>;
-  const memuat = <p className="py-10 text-center text-sm text-muted-foreground">Memuat onboarding…</p>;
+  const memuat = <p className="py-6 text-center text-sm text-muted-foreground">Memuat onboarding…</p>;
 
   const kolomChecklist = [
     { kunci: 'karyawan', label: 'Karyawan', hp: 'judul', isi: (c) => (

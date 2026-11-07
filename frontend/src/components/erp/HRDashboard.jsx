@@ -224,7 +224,7 @@ export default function HRDashboard({ token }) {
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <StatTile label="Karyawan aktif" value={total} sub="Berstatus aktif di data karyawan." />
       <StatTile label="Hadir hari ini" value={att.hadir || 0}
-        sub={total ? `${att.attendance_rate || 0}% dari ${total} karyawan aktif.` : 'Belum ada karyawan aktif.'} />
+        sub={!total ? 'Belum ada karyawan aktif.' : att.recorded ? `${att.attendance_rate || 0}% dari ${total} karyawan aktif.` : 'Belum ada catatan absen hari ini.'} />
       <StatTile label="Belum absen hari ini" value={att.not_recorded || 0} accent={att.not_recorded ? 'warning' : 'default'}
         sub="Belum ada catatan kehadiran hari ini." />
       <StatTile label="Alfa 7 hari terakhir" value={data?.alfa_last_7d || 0} accent={data?.alfa_last_7d ? 'danger' : 'default'}
