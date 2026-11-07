@@ -13,6 +13,9 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { EmptyState } from '../moduleAtoms';
 import { cn } from '@/lib/utils';
+
+const PLATFORM = { shopee: 'Shopee', tiktok: 'TikTok', tokopedia: 'Tokopedia', lazada: 'Lazada' };
+const namaPlatform = (p) => PLATFORM[String(p || '').toLowerCase()] || (p ? String(p).charAt(0).toUpperCase() + String(p).slice(1) : '');
 import { toast } from 'sonner';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -85,20 +88,20 @@ export function PayoutBankLinks({ accounts, banks, onChanged }) {
             {active.map((a) => (
               <TableRow key={a.id} data-testid={`payout-bank-${a.account_code}`}>
                 <TableCell className="font-medium">{a.account_name}</TableCell>
-                <TableCell className="whitespace-nowrap text-muted-foreground capitalize">{a.platform}</TableCell>
+                <TableCell className="whitespace-nowrap text-muted-foreground">{namaPlatform(a.platform)}</TableCell>
                 <TableCell>
                   <BankSelect banks={banks} value={a.coa_cash_code} onChange={(v) => save(a, v)}
-                    testId={`payout-bank-select-${a.account_code}`} emptyLabel="— belum ditautkan —" className="w-80 max-w-full" />
+                    testId={`payout-bank-select-${a.account_code}`} emptyLabel="— belum ditautkan —" className="w-full sm:w-72" />
                 </TableCell>
-                <TableCell className="text-xs">
+                <TableCell>
                   {busy === a.id ? (
                     <span className="inline-flex items-center gap-1 text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" /> menyimpan…</span>
                   ) : !a.coa_cash_code ? (
                     <span className="text-muted-foreground">Belum ditautkan</span>
                   ) : cashIsConfirmed(a) ? (
-                    <span className="inline-flex items-center gap-1 text-[hsl(var(--success))]"><CheckCircle2 className="w-3.5 h-3.5" /> Sudah diatur</span>
+                    <span className="inline-flex items-center gap-1 text-[hsl(var(--success-text))]"><CheckCircle2 className="w-3.5 h-3.5" /> Sudah diatur</span>
                   ) : (
-                    <span className="inline-flex items-center gap-1 text-[hsl(var(--warning))]" data-testid={`payout-bank-default-${a.account_code}`}>
+                    <span className="inline-flex items-center gap-1 text-[hsl(var(--warning-text))]" data-testid={`payout-bank-default-${a.account_code}`}>
                       <AlertTriangle className="w-3.5 h-3.5" /> Rekening bawaan {a.coa_cash_code} — belum diatur
                     </span>
                   )}
