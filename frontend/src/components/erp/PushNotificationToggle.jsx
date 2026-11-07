@@ -161,9 +161,9 @@ export default function PushNotificationToggle({ headers }) {
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
-              status === 'subscribed' ? 'bg-green-100 text-green-600' :
-              status === 'denied' ? 'bg-red-100 text-red-500' :
-              status === 'not_configured' ? 'bg-amber-100 text-amber-600' :
+              status === 'subscribed' ? 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))]' :
+              status === 'denied' ? 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))]' :
+              status === 'not_configured' ? 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))]' :
               'bg-muted text-muted-foreground'
             }`}>
               {status === 'subscribed' ? <BellRing className="w-5 h-5" /> :
@@ -186,7 +186,7 @@ export default function PushNotificationToggle({ headers }) {
 
           <div className="flex items-center gap-2 flex-shrink-0">
             {status === 'subscribed' && (
-              <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50 text-xs">
+              <Badge variant="outline" className="text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.12)] text-xs">
                 <CheckCircle2 className="w-3 h-3 mr-1" /> Aktif
                 {serverInfo?.active_subscriptions > 1 ? ` (${serverInfo.active_subscriptions} perangkat)` : ''}
               </Badge>
@@ -205,25 +205,25 @@ export default function PushNotificationToggle({ headers }) {
           {status === 'subscribed' && (
             <>
               <Button size="sm" variant="outline" onClick={sendTest} disabled={loading} data-testid="btn-push-test">
-                {testSent ? <CheckCircle2 className="w-4 h-4 mr-1 text-green-500" /> : loading ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <BellRing className="w-4 h-4 mr-1" />}
+                {testSent ? <CheckCircle2 className="w-4 h-4 mr-1 text-[hsl(var(--success-text))]" /> : loading ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <BellRing className="w-4 h-4 mr-1" />}
                 {testSent ? 'Terkirim!' : 'Tes Notifikasi'}
               </Button>
               <Button size="sm" variant="ghost" onClick={unsubscribe} disabled={loading} data-testid="btn-push-unsubscribe"
-                className="text-muted-foreground hover:text-red-600">
+                className="text-muted-foreground hover:text-[hsl(var(--danger-text))]">
                 <BellOff className="w-4 h-4 mr-1" /> Nonaktifkan
               </Button>
             </>
           )}
 
           {status === 'denied' && (
-            <p className="text-xs text-red-500 flex items-center gap-1">
+            <p className="text-xs text-[hsl(var(--danger-text))] flex items-center gap-1">
               <BellOff className="w-3.5 h-3.5" />
               Buka pengaturan browser → Notifications → Izinkan untuk situs ini.
             </p>
           )}
 
           {status === 'not_configured' && (
-            <div className="text-xs text-amber-700 dark:text-amber-400 space-y-1" data-testid="push-not-configured">
+            <div className="text-xs text-[hsl(var(--warning-text))] space-y-1" data-testid="push-not-configured">
               <p className="flex items-center gap-1 font-medium">
                 <ServerOff className="w-3.5 h-3.5" /> Web Push belum dikonfigurasi di server.
               </p>
