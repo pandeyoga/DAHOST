@@ -119,7 +119,7 @@ export const RequirementsPreviewCard = ({ bom, token }) => {
         </div>
       </div>
 
-      <Button
+      <Button type="button"
         onClick={calculateRequirements}
         disabled={loading || !qtyPcs}
         className="w-full"
@@ -146,7 +146,7 @@ export const RequirementsPreviewCard = ({ bom, token }) => {
                   Total bahan (kg): {readNumber(preview, FIELD.totalMaterialKg).toFixed(3)} kg
                 </Badge>
               )}
-              <Button
+              <Button type="button"
                 variant="outline"
                 size="sm"
                 onClick={exportCSV}

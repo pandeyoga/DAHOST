@@ -43,14 +43,14 @@ export function BomShortcuts({ headers, token, selectedModelId, modelLabel, cate
 
   return (
     <div className="flex items-center gap-2 flex-wrap" data-testid="bom-shortcuts">
-      <Button size="sm" variant="outline" disabled={!selectedModelId || !!busy} onClick={() => copyMissing(false)} title="Buat BOM untuk semua varian model ini yang belum punya BOM — potongan & kain otomatis mengikuti warna/ukuran tujuan, aksesoris disalin" data-testid="bom-copy-missing-model">
+      <Button type="button" size="sm" variant="outline" disabled={!selectedModelId || !!busy} onClick={() => copyMissing(false)} title="Buat BOM untuk semua varian model ini yang belum punya BOM — potongan & kain otomatis mengikuti warna/ukuran tujuan, aksesoris disalin" data-testid="bom-copy-missing-model">
         <Copy className="w-3.5 h-3.5 mr-1" />{busy === 'copy' ? 'Menyalin…' : 'Salin ke varian tanpa BOM'}
       </Button>
-      <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => copyMissing(true)} className="text-xs" data-testid="bom-copy-missing-all">semua model</Button>
-      <Button size="sm" variant="outline" disabled={!selectedModelId || !!busy} onClick={() => setAccOpen(true)} title="Tambah aksesoris yang sama ke SEMUA BOM aktif model ini" data-testid="bom-add-acc-bulk">
+      <Button type="button" size="sm" variant="ghost" disabled={!!busy} onClick={() => copyMissing(true)} className="text-xs" data-testid="bom-copy-missing-all">semua model</Button>
+      <Button type="button" size="sm" variant="outline" disabled={!selectedModelId || !!busy} onClick={() => setAccOpen(true)} title="Tambah aksesoris yang sama ke SEMUA BOM aktif model ini" data-testid="bom-add-acc-bulk">
         <PackagePlus className="w-3.5 h-3.5 mr-1" />Aksesoris massal
       </Button>
-      <Button size="sm" variant="outline" disabled={!!busy} onClick={recalc} title="Nilai potongan = qty kain × harga kain (standar, sampai cutting nyata), lalu HPP semua model diterapkan ke barang jadi & katalog" data-testid="bom-recalc-hpp">
+      <Button type="button" size="sm" variant="outline" disabled={!!busy} onClick={recalc} title="Nilai potongan = qty kain × harga kain (standar, sampai cutting nyata), lalu HPP semua model diterapkan ke barang jadi & katalog" data-testid="bom-recalc-hpp">
         <Calculator className="w-3.5 h-3.5 mr-1" />{busy === 'hpp' ? 'Menghitung…' : 'Hitung HPP standar'}
       </Button>
       <Dialog open={accOpen} onOpenChange={setAccOpen}>
@@ -63,16 +63,16 @@ export function BomShortcuts({ headers, token, selectedModelId, modelLabel, cate
                 <span className="font-mono text-xs w-28 truncate">{l.code}</span><span className="flex-1 truncate">{l.name}</span>
                 <GlassInput type="number" min="0" step="0.01" value={l.qty} onChange={(e) => setLines((xs) => xs.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} className="h-8 w-24" data-testid={`bom-acc-bulk-qty-${l.code}`} />
                 <span className="text-xs text-muted-foreground w-10">{l.unit}</span>
-                <button onClick={() => setLines((xs) => xs.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-rose-400"><X className="w-4 h-4" /></button>
+                <button type="button" onClick={() => setLines((xs) => xs.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-rose-400"><X className="w-4 h-4" /></button>
               </div>
             ))}
             <InlineMaterialPicker type="accessory" categories={categories} token={token} onSelect={(m) => setLines((xs) => (xs.some((x) => x.id === m.id) ? xs : [...xs, { id: m.id, code: m.code, name: m.name, type: m.type, unit: m.unit, qty: 1 }]))}>
-              <Button size="sm" variant="outline" data-testid="bom-acc-bulk-pick"><PackagePlus className="w-3.5 h-3.5 mr-1" />Pilih aksesoris</Button>
+              <Button type="button" size="sm" variant="outline" data-testid="bom-acc-bulk-pick"><PackagePlus className="w-3.5 h-3.5 mr-1" />Pilih aksesoris</Button>
             </InlineMaterialPicker>
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setAccOpen(false)}>Batal</Button>
-            <Button onClick={addAccessories} disabled={!lines.length || busy === 'acc'} data-testid="bom-acc-bulk-save">{busy === 'acc' ? 'Menyimpan…' : `Tambahkan ${lines.length} baris`}</Button>
+            <Button type="button" variant="ghost" onClick={() => setAccOpen(false)}>Batal</Button>
+            <Button type="button" onClick={addAccessories} disabled={!lines.length || busy === 'acc'} data-testid="bom-acc-bulk-save">{busy === 'acc' ? 'Menyimpan…' : `Tambahkan ${lines.length} baris`}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

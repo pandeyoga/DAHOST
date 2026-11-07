@@ -189,7 +189,7 @@ export function RahazaVariantsModule({ token }) {
       title="Varian produk (SKU)"
       subtitle="Warna × ukuran dengan SKU otomatis KODE-WARNA-UKURAN; status Stop tidak direncanakan cutting."
       actions={(
-        <Button onClick={openGenerate} disabled={!selectedModelId} data-testid="variant-generate-btn">
+        <Button type="button" onClick={openGenerate} disabled={!selectedModelId} data-testid="variant-generate-btn">
           <Wand2 className="w-4 h-4" /> Buat varian
         </Button>
       )}
@@ -265,11 +265,11 @@ export function RahazaVariantsModule({ token }) {
                   <TableCell><Badge variant="secondary">{v.size_code}</Badge></TableCell>
                   <TableCell><ProductStatusCell code={v.product_status} testId={`variant-status-${v.sku}`} /></TableCell>
                   <TableCell className="text-right whitespace-nowrap">
-                    <Button variant="ghost" size="icon-sm" onClick={() => openEdit(v)}
+                    <Button type="button" variant="ghost" size="icon-sm" onClick={() => openEdit(v)}
                       title="Ubah varian" aria-label={`Ubah varian ${v.sku}`} data-testid={`variant-edit-${v.sku}`}>
                       <Pencil className="w-3.5 h-3.5" />
                     </Button>
-                    <Button variant="ghost" size="icon-sm" onClick={() => handleDelete(v)}
+                    <Button type="button" variant="ghost" size="icon-sm" onClick={() => handleDelete(v)}
                       title="Hapus varian" aria-label={`Hapus varian ${v.sku}`} data-testid={`variant-delete-${v.sku}`}>
                       <Trash2 className="w-3.5 h-3.5" />
                     </Button>
@@ -313,8 +313,8 @@ export function RahazaVariantsModule({ token }) {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditing(null)}>Batal</Button>
-            <Button onClick={saveEdit} disabled={saving} data-testid="variant-edit-save">{saving ? 'Menyimpan…' : 'Simpan'}</Button>
+            <Button type="button" variant="outline" onClick={() => setEditing(null)}>Batal</Button>
+            <Button type="button" onClick={saveEdit} disabled={saving} data-testid="variant-edit-save">{saving ? 'Menyimpan…' : 'Simpan'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -329,7 +329,7 @@ export function RahazaVariantsModule({ token }) {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-semibold text-foreground">Pilih warna</span>
-                <Button variant="link" size="sm"
+                <Button type="button" variant="link" size="sm"
                   onClick={() => setGenColorIds(genColorIds.length === colors.length ? [] : colors.map(c => c.id))}
                   data-testid="variant-gen-toggle-all-colors">
                   {genColorIds.length === colors.length ? 'Kosongkan' : 'Pilih semua'}
@@ -355,7 +355,7 @@ export function RahazaVariantsModule({ token }) {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-semibold text-foreground">Pilih ukuran</span>
-                <Button variant="link" size="sm"
+                <Button type="button" variant="link" size="sm"
                   onClick={() => setGenSizeIds(genSizeIds.length === sizes.length ? [] : sizes.map(s => s.id))}
                   data-testid="variant-gen-toggle-all-sizes">
                   {genSizeIds.length === sizes.length ? 'Kosongkan' : 'Pilih semua'}
@@ -383,8 +383,8 @@ export function RahazaVariantsModule({ token }) {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setGenOpen(false)}>Batal</Button>
-            <Button onClick={runGenerate} disabled={generating} data-testid="variant-gen-run-btn">
+            <Button type="button" variant="outline" onClick={() => setGenOpen(false)}>Batal</Button>
+            <Button type="button" onClick={runGenerate} disabled={generating} data-testid="variant-gen-run-btn">
               <Plus className="w-4 h-4" /> {generating ? 'Membuat…' : 'Buat'}
             </Button>
           </DialogFooter>

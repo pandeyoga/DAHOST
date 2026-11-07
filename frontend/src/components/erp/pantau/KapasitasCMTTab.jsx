@@ -81,7 +81,7 @@ export default function KapasitasCMTTab(props) {
                 <option value="">Semua vendor</option>
                 {vendors.map((v) => <option key={v.vendor_id} value={v.vendor_id}>{v.name}</option>)}
               </SmartNativeSelect></div>
-            <Button onClick={runCheck} disabled={!(Number(qty) > 0) || checking} data-testid="pantau-cek-run">{checking ? 'Menghitung…' : 'Cek order'}</Button>
+            <Button type="button" onClick={runCheck} disabled={!(Number(qty) > 0) || checking} data-testid="pantau-cek-run">{checking ? 'Menghitung…' : 'Cek order'}</Button>
           </div>
           {checkErr && <Notice tone="danger" icon={AlertCircle}>{checkErr}</Notice>}
           {check && (

@@ -83,7 +83,7 @@ export function RahazaColorsModule({ token }) {
             <span className="tabular-nums text-foreground"> KODE-WARNA-SIZE</span>.
           </p>
         </div>
-        <Button onClick={openCreate} className="gap-1.5" data-testid="color-create-btn">
+        <Button type="button" onClick={openCreate} className="gap-1.5" data-testid="color-create-btn">
           <Plus className="w-4 h-4" /> Tambah Warna
         </Button>
       </div>
@@ -125,13 +125,13 @@ export function RahazaColorsModule({ token }) {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="inline-flex items-center gap-1">
-                      <button
+                      <button type="button"
                         onClick={() => openEdit(row)}
                         className="p-1.5 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground hover:text-foreground"
                         title="Edit" data-testid={`color-edit-${row.code}`}
                       ><Edit2 className="w-3.5 h-3.5" /></button>
                       {row.active !== false && (
-                        <button
+                        <button type="button"
                           onClick={() => handleDelete(row)}
                           className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.15)] text-muted-foreground hover:text-[hsl(var(--danger-text))]"
                           title="Nonaktifkan" data-testid={`color-delete-${row.code}`}
@@ -191,8 +191,8 @@ export function RahazaColorsModule({ token }) {
               </label>
             )}
             <div className="flex justify-end gap-2 pt-2 border-t border-[var(--glass-border)]">
-              <Button variant="ghost" onClick={() => setModalOpen(false)} data-testid="color-form-cancel">Batal</Button>
-              <Button onClick={handleSave} disabled={saving} data-testid="color-form-save">
+              <Button type="button" variant="ghost" onClick={() => setModalOpen(false)} data-testid="color-form-cancel">Batal</Button>
+              <Button type="button" onClick={handleSave} disabled={saving} data-testid="color-form-save">
                 {saving ? 'Menyimpan...' : 'Simpan'}
               </Button>
             </div>

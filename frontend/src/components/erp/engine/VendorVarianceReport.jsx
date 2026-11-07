@@ -107,7 +107,7 @@ export default function VendorVarianceReport({ token, user }) {
 
   return (
     <PageLayout testId="vendor-variance-report" title="Laporan selisih produksi" subtitle="Laporkan produksi yang lebih atau kurang dari pesanan."
-      actions={<Button onClick={openCreate} data-testid="vendor-variance-create"><Plus className="w-4 h-4" /> Buat laporan</Button>}
+      actions={<Button type="button" onClick={openCreate} data-testid="vendor-variance-create"><Plus className="w-4 h-4" /> Buat laporan</Button>}
       tools={<TombolUnduh namaBerkas="laporan-selisih-produksi" baris={variances} kolom={[
         { label: 'No. job', nilai: (v) => v.job_number || '' }, { label: 'No. PO', nilai: (v) => v.po_number || '' },
         { label: 'Jenis', nilai: (v) => lbl(JENIS, v.variance_type)[0] }, { label: 'Total selisih (pcs)', nilai: (v) => Number(v.total_variance_qty) || 0 },

@@ -187,7 +187,7 @@ export default function RahazaHPPModule({ portalId, userRole }) {
             { label: 'Harga jasa per pcs (Rp)', nilai: (r) => (r.selling_price_per_pcs == null ? '' : Number(r.selling_price_per_pcs)) },
             { label: 'Margin per pcs (Rp)', nilai: (r) => (r.margin_per_pcs == null ? '' : Number(r.margin_per_pcs)) },
           ]} />
-        <Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="hpp-po-refresh">
+        <Button type="button" variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="hpp-po-refresh">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </Button>
       </>}
@@ -219,7 +219,7 @@ export default function RahazaHPPModule({ portalId, userRole }) {
           <Notice tone="warning" icon={AlertTriangle} testId="hpp-po-residuals"
             title={`${residuals.length} PO yang sudah ditutup masih menyisakan biaya di barang dalam proses`}>
             {residuals.slice(0, 8).map((r) => (
-              <Button key={r.po_id} variant="link" size="sm" className="h-auto p-0 mr-3" onClick={() => openDetail(r.po_id)}
+              <Button type="button" key={r.po_id} variant="link" size="sm" className="h-auto p-0 mr-3" onClick={() => openDetail(r.po_id)}
                 data-testid={`hpp-residual-${r.po_number}`}>{r.po_number} · {rp(r.residual)}</Button>
             ))}
           </Notice>
@@ -245,7 +245,7 @@ export default function RahazaHPPModule({ portalId, userRole }) {
             {filtered ? (
               <EmptyState icon={Calculator} title="Tidak ada PO yang cocok dengan penyaring"
                 description="Ubah atau hapus penyaring untuk melihat PO lain."
-                action={<Button variant="outline" size="sm" onClick={resetFilters}>Tampilkan semua PO</Button>} />
+                action={<Button type="button" variant="outline" size="sm" onClick={resetFilters}>Tampilkan semua PO</Button>} />
             ) : (
               <EmptyState icon={Calculator} title="Belum ada PO dengan biaya"
                 description="HPP aktual muncul setelah PO dikonfirmasi dan bahan diserahkan ke CMT." />
@@ -273,7 +273,7 @@ export default function RahazaHPPModule({ portalId, userRole }) {
                 <TableRow key={r.po_id} data-testid={`hpp-po-row-${r.po_number}`}
                   className={detail?.po_id === r.po_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
                   <TableCell className="whitespace-nowrap">
-                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => openDetail(r.po_id)}
+                    <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => openDetail(r.po_id)}
                       data-testid={`hpp-po-open-${r.po_number}`}>{r.po_number}</Button>
                   </TableCell>
                   {!fixedType && <TableCell>{JENIS[r.business_type] || '—'}</TableCell>}
@@ -341,7 +341,7 @@ function PoHppDetail({ detail, canClear, onClose, onChanged }) {
       title={`${d.po_number} · ${maklon ? (d.client_name || 'Klien maklon') : 'PO internal'}`}
       description={`Vendor CMT ${d.vendor_name || '—'} · pesan ${num(d.qty_ordered)} · dikirim ke CMT ${num(d.qty_sent)}${d.sent_basis === 'pesanan' ? ' (belum ada surat jalan, dihitung dari pesanan)' : ''} · lolos QC ${num(d.qty_accepted)} pcs`}
       actions={canClear && !maklon && d.closed && Math.abs(residual) >= 0.01 && (
-        <Button onClick={clearWip} disabled={busy} data-testid="hpp-po-clear-wip">Tutup sisa biaya</Button>
+        <Button type="button" onClick={clearWip} disabled={busy} data-testid="hpp-po-clear-wip">Tutup sisa biaya</Button>
       )}>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Figure label="Total HPP aktual" value={rp(d.total_hpp)} testId="hpp-detail-total" />

@@ -440,7 +440,7 @@ export default function CMTOverrideWeeklyRecap({
 
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1">
-              <Button variant="outline" size="icon"
+              <Button type="button" variant="outline" size="icon"
                 onClick={() => setEnd(d => shiftDayUtil(d, -7))}
                 title="7 hari sebelumnya" aria-label="7 hari sebelumnya" data-testid="cmt-week-prev">
                 <ChevronLeft className="h-4 w-4" />
@@ -449,37 +449,37 @@ export default function CMTOverrideWeeklyRecap({
                 <DatePicker value={end} max={shiftDayUtil(isoToday(), 1)} bolehKosong={false}
                   onChange={(v) => v && setEnd(v)} testId="cmt-week-date-input" />
               </div>
-              <Button variant="outline" size="icon"
+              <Button type="button" variant="outline" size="icon"
                 onClick={() => setEnd(d => shiftDayUtil(d, 7))}
                 title="7 hari berikutnya" aria-label="7 hari berikutnya" data-testid="cmt-week-next">
                 <ChevronRight className="h-4 w-4" />
               </Button>
               {!isCurrent && (
-                <Button variant="link" size="sm"
+                <Button type="button" variant="link" size="sm"
                   onClick={() => setEnd(isoToday())} data-testid="cmt-week-today">
                   7 hari terakhir
                 </Button>
               )}
             </div>
 
-            <Button variant="outline" size="icon" onClick={() => load(end, compare)} data-testid="cmt-week-refresh"
+            <Button type="button" variant="outline" size="icon" onClick={() => load(end, compare)} data-testid="cmt-week-refresh"
               title="Muat ulang" aria-label="Muat ulang">
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </Button>
-            <Button variant={compare ? 'default' : 'outline'} size="sm"
+            <Button type="button" variant={compare ? 'default' : 'outline'} size="sm"
               onClick={() => setCompare(v => !v)} data-testid="cmt-week-compare-toggle"
               title="Bandingkan jendela ini dengan 7 hari sebelumnya">
               <GitCompareArrows className="mr-1.5 h-3.5 w-3.5" />
               {compare ? 'Sembunyikan perbandingan' : 'Bandingkan pekan lalu'}
             </Button>
-            <Button variant="outline" size="sm" onClick={() => download('xlsx')}
+            <Button type="button" variant="outline" size="sm" onClick={() => download('xlsx')}
               disabled={busy === 'xlsx'} data-testid="cmt-week-export-xlsx">
               {busy === 'xlsx'
                 ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
                 : <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5" />}
               Excel
             </Button>
-            <Button variant="outline" size="sm" onClick={() => download('pdf')}
+            <Button type="button" variant="outline" size="sm" onClick={() => download('pdf')}
               disabled={busy === 'pdf'} data-testid="cmt-week-export-pdf">
               {busy === 'pdf'
                 ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -670,7 +670,7 @@ export default function CMTOverrideWeeklyRecap({
             Hanya yang memburuk ({movers?.counts?.worsened ?? 0})
           </label>
         )}
-        <Button size="sm" onClick={() => setConfirmRemind(true)}
+        <Button type="button" size="sm" onClick={() => setConfirmRemind(true)}
           disabled={remindPending.length === 0 || busy === 'remind'}
           className="bg-[hsl(var(--warning))] text-white hover:bg-[hsl(var(--warning)/0.9)]"
           title={data?.remind_date
@@ -707,19 +707,19 @@ export default function CMTOverrideWeeklyRecap({
                 ))}
               </ul>
               <div className="mt-3 flex gap-2">
-                <Button size="sm" onClick={sendReminders} disabled={busy === 'remind'}
+                <Button type="button" size="sm" onClick={sendReminders} disabled={busy === 'remind'}
                   className="bg-[hsl(var(--warning))] text-white hover:bg-[hsl(var(--warning)/0.9)]"
                   data-testid="cmt-week-remind-confirm-yes">
                   {busy === 'remind' && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
                   Ya, kirim sekarang
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => setConfirmRemind(false)}
+                <Button type="button" size="sm" variant="outline" onClick={() => setConfirmRemind(false)}
                   data-testid="cmt-week-remind-confirm-no">
                   Batal
                 </Button>
               </div>
             </div>
-            <Button size="icon-sm" variant="ghost"
+            <Button type="button" size="icon-sm" variant="ghost"
               onClick={() => setConfirmRemind(false)} title="Tutup" aria-label="Tutup">
               <X className="h-4 w-4" />
             </Button>
@@ -776,7 +776,7 @@ export default function CMTOverrideWeeklyRecap({
             ? 'Aktifkan vendor CMT di master vendor supaya muncul di rekap ini.'
             : 'Ubah pencarian atau penyaring untuk melihat vendor lain.'}
           action={(onlyWorse || onlyProblem) && rows.length > 0 ? (
-            <Button variant="outline" size="sm"
+            <Button type="button" variant="outline" size="sm"
               onClick={() => { setOnlyWorse(false); setOnlyProblem(false); }}
               data-testid="cmt-week-clear-filters">
               <X className="mr-1.5 h-3.5 w-3.5" /> Tampilkan semua vendor
@@ -957,7 +957,7 @@ export default function CMTOverrideWeeklyRecap({
                       </span>
                     </td>
                     <td className="px-3 py-3 text-right">
-                      <Button size="sm" variant="outline" className="whitespace-nowrap"
+                      <Button type="button" size="sm" variant="outline" className="whitespace-nowrap"
                         onClick={() => openVendor(r)} disabled={!canFill}
                         data-testid={`cmt-week-fill-${r.vendor_id}`}>
                         <UserCog className="mr-1.5 h-3.5 w-3.5" /> Isi

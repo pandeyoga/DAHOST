@@ -230,14 +230,14 @@ export default function PODetailPanel({
           {!closed && detail?.sample_flag?.warning && (
             <StatusBadge status="warning" tone="warning" label="Sampel belum disetujui" testId="po-detail-sample-badge" className="hidden sm:inline-flex" />
           )}
-          <Button variant="outline" size="icon" onClick={refreshAll} title="Muat ulang" aria-label="Muat ulang" data-testid="po-detail-refresh">
+          <Button type="button" variant="outline" size="icon" onClick={refreshAll} title="Muat ulang" aria-label="Muat ulang" data-testid="po-detail-refresh">
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </Button>
-          <Button variant="outline" onClick={() => setSppOpen(true)} data-testid="spp-export-pdf-btn" title="Unduh SPP (PDF)" aria-label="Unduh SPP">
+          <Button type="button" variant="outline" onClick={() => setSppOpen(true)} data-testid="spp-export-pdf-btn" title="Unduh SPP (PDF)" aria-label="Unduh SPP">
             <FileDown className="w-4 h-4" /> <span className="hidden sm:inline">Unduh SPP</span>
           </Button>
           {canEdit && !closed && (
-            <Button variant="outline" size="icon" onClick={() => onEdit?.(po)} title="Ubah PO" aria-label="Ubah PO" data-testid="po-detail-edit">
+            <Button type="button" variant="outline" size="icon" onClick={() => onEdit?.(po)} title="Ubah PO" aria-label="Ubah PO" data-testid="po-detail-edit">
               <Pencil className="w-4 h-4" />
             </Button>
           )}
@@ -310,14 +310,14 @@ function SummaryTab({ po, detail, isInternal, canEdit, closed, costCheck, busy, 
       {canEdit && (next.length > 0 || po.can_close || !closed) && (
         <div className="flex flex-wrap items-center gap-2" data-testid="po-detail-actions">
           {next.map(ns => (
-            <Button key={ns} variant="outline" size="sm" disabled={!!busy} onClick={() => onTransition(ns)}
+            <Button type="button" key={ns} variant="outline" size="sm" disabled={!!busy} onClick={() => onTransition(ns)}
               data-testid={`po-action-${ns.toLowerCase().replace(/\s+/g, '-')}`}>{NEXT_LABEL[ns] || PO_STATUS_LABEL[ns] || ns}</Button>
           ))}
           {po.can_close && (
-            <Button variant="outline" size="sm" onClick={() => onClosePO?.(po)} data-testid="po-action-close">Tutup PO</Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => onClosePO?.(po)} data-testid="po-action-close">Tutup PO</Button>
           )}
           {!closed && (
-            <Button variant="outline" size="sm" onClick={() => onQuickComplete?.(po)} data-testid="detail-quick-complete-btn">
+            <Button type="button" variant="outline" size="sm" onClick={() => onQuickComplete?.(po)} data-testid="detail-quick-complete-btn">
               <Zap className="w-3.5 h-3.5" /> Selesaikan cepat
             </Button>
           )}
@@ -325,7 +325,7 @@ function SummaryTab({ po, detail, isInternal, canEdit, closed, costCheck, busy, 
       )}
       {!isInternal && flag?.warning && (
         <Notice tone="warning" icon={AlertTriangle} testId="po-detail-sample-warning"
-          action={<Button variant="link" size="sm" onClick={onGoSamples}>Buka tab Sampel</Button>}>
+          action={<Button type="button" variant="link" size="sm" onClick={onGoSamples}>Buka tab Sampel</Button>}>
           Sampel belum disetujui klien{flag.count ? ` (${flag.count} sampel, terakhir: ${flag.latest_label.toLowerCase()})` : ' — belum ada sampel'}.
           Hanya peringatan: kiriman ke CMT tetap bisa dibuat.
         </Notice>
@@ -469,10 +469,10 @@ function MaterialsTab({ poId, po, detail, isInternal, canEdit, accReq, onReloadA
         ] }}
         aside={!isInternal && canEdit && (
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={() => syncBom(null)} disabled={syncing} data-testid="po-bom-sync">
+            <Button type="button" variant="outline" size="sm" onClick={() => syncBom(null)} disabled={syncing} data-testid="po-bom-sync">
               <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} /> Sinkronkan dari template aktif
             </Button>
-            <Button variant="outline" size="sm" onClick={openTemplates} disabled={syncing} data-testid="po-bom-pick-version">
+            <Button type="button" variant="outline" size="sm" onClick={openTemplates} disabled={syncing} data-testid="po-bom-pick-version">
               <Layers className="w-3.5 h-3.5" /> Pilih versi template
             </Button>
           </div>
@@ -495,7 +495,7 @@ function MaterialsTab({ poId, po, detail, isInternal, canEdit, accReq, onReloadA
                   <TableCell>Versi {t.version}{t.version_label ? ` · ${t.version_label}` : ''}{t.is_active ? ' (aktif)' : ''}</TableCell>
                   <TableCell className="tabular-nums text-xs">{t.buyer_catalog_code || '—'}</TableCell>
                   <Num>{n((t.materials || []).length)}</Num>
-                  <TableCell className="text-right"><Button variant="outline" size="sm" disabled={syncing} onClick={() => syncBom(t.id)}>Terapkan</Button></TableCell>
+                  <TableCell className="text-right"><Button type="button" variant="outline" size="sm" disabled={syncing} onClick={() => syncBom(t.id)}>Terapkan</Button></TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -568,7 +568,7 @@ function MaterialsTab({ poId, po, detail, isInternal, canEdit, accReq, onReloadA
           { label: 'Status', nilai: (a) => (ACC_STATUS[a.status] || [a.status || ''])[0] },
         ] }}
         aside={canEdit && accReq?.summary?.shortage_lines > 0 && (
-          <Button variant="outline" size="sm" onClick={createRequest} disabled={creating} data-testid="po-acc-create-request-btn">
+          <Button type="button" variant="outline" size="sm" onClick={createRequest} disabled={creating} data-testid="po-acc-create-request-btn">
             {creating ? 'Mengajukan…' : `Ajukan pembelian (${accReq.summary.shortage_lines} kurang)`}
           </Button>
         )}>
@@ -744,13 +744,13 @@ function BillingTab({ po, detail, isInternal, costCheck, onNavigate }) {
         { label: 'Selisih rencana', sub: 'Margin aktual ada di HPP per PO', value: rp(totalSell - totalRate) },
       ]} />
       <div className="flex flex-wrap items-center gap-3">
-        <Button variant="link" size="sm" className="px-0" data-testid="po-detail-open-hpp"
+        <Button type="button" variant="link" size="sm" className="px-0" data-testid="po-detail-open-hpp"
           onClick={() => onNavigate?.(isInternal ? 'fin-hpp' : 'maklon-hpp', { po_id: po.id })}>Buka HPP per PO</Button>
         {!isInternal && (
-          <Button variant="link" size="sm" className="px-0" data-testid="po-detail-open-ar"
+          <Button type="button" variant="link" size="sm" className="px-0" data-testid="po-detail-open-ar"
             onClick={() => onNavigate?.('maklon-billing', { po_id: po.id })}>Buka Piutang Klien</Button>
         )}
-        <Button variant="link" size="sm" className="px-0" onClick={() => onNavigate?.('prod-cmt-billing', { po_id: po.id })}>Buka Tagihan CMT</Button>
+        <Button type="button" variant="link" size="sm" className="px-0" onClick={() => onNavigate?.('prod-cmt-billing', { po_id: po.id })}>Buka Tagihan CMT</Button>
       </div>
       <Section title={`Tagihan CMT (${bills.length})`} testId="po-detail-cmt-bills" unduh={{ namaBerkas: `tagihan-cmt-${po.po_number}`, baris: bills, kolom: [
         { label: 'No. tagihan', nilai: (b) => b.number || '' }, { label: 'CMT', nilai: (b) => b.vendor_name || '' },
@@ -819,7 +819,7 @@ function SamplesTab({ po, detail, canEdit, onReload }) {
         { label: 'Diperbarui', nilai: (x) => dt(x.updated_at || x.created_at) },
       ] }}
       aside={canEdit && (
-        <Button variant="outline" size="sm" onClick={() => setForm({})} data-testid="sample-create-btn"><Plus className="w-3.5 h-3.5" /> Buat sampel</Button>
+        <Button type="button" variant="outline" size="sm" onClick={() => setForm({})} data-testid="sample-create-btn"><Plus className="w-3.5 h-3.5" /> Buat sampel</Button>
       )}>
       <p className="text-xs text-muted-foreground">Sampel dibuat sesudah PO ada. Riwayatnya juga tampil di artikel Katalog Buyer. Sampel belum disetujui hanya peringatan — kiriman tetap jalan.</p>
       {samples.length === 0 ? (
@@ -842,12 +842,12 @@ function SamplesTab({ po, detail, canEdit, onReload }) {
               <TableCell>
                 {canEdit && (
                   <div className="flex justify-end gap-1">
-                    {s.can?.edit && <Button size="icon-sm" variant="ghost" onClick={() => setForm(s)} title="Ubah sampel" aria-label="Ubah sampel" data-testid={`sample-edit-${s.sample_code}`}><Edit2 className="w-3.5 h-3.5" /></Button>}
-                    {s.can?.submit && <Button size="icon-sm" variant="ghost" onClick={() => submit(s)} title="Kirim ke klien" aria-label="Kirim ke klien" data-testid={`sample-submit-${s.sample_code}`}><Send className="w-3.5 h-3.5" /></Button>}
+                    {s.can?.edit && <Button type="button" size="icon-sm" variant="ghost" onClick={() => setForm(s)} title="Ubah sampel" aria-label="Ubah sampel" data-testid={`sample-edit-${s.sample_code}`}><Edit2 className="w-3.5 h-3.5" /></Button>}
+                    {s.can?.submit && <Button type="button" size="icon-sm" variant="ghost" onClick={() => submit(s)} title="Kirim ke klien" aria-label="Kirim ke klien" data-testid={`sample-submit-${s.sample_code}`}><Send className="w-3.5 h-3.5" /></Button>}
                     {(s.can?.approve || s.can?.revision || s.can?.reject || s.can?.delete) && (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button size="icon-sm" variant="ghost" title="Aksi lainnya" aria-label="Aksi lainnya" data-testid={`sample-more-${s.sample_code}`}><MoreHorizontal className="w-3.5 h-3.5" /></Button>
+                          <Button type="button" size="icon-sm" variant="ghost" title="Aksi lainnya" aria-label="Aksi lainnya" data-testid={`sample-more-${s.sample_code}`}><MoreHorizontal className="w-3.5 h-3.5" /></Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           {s.can?.approve && <DropdownMenuItem onSelect={() => approve(s)} data-testid={`sample-approve-${s.sample_code}`}><CheckCircle2 className="mr-2 h-4 w-4" />Setujui</DropdownMenuItem>}

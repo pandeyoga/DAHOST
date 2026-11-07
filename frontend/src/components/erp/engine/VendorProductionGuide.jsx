@@ -179,7 +179,7 @@ export default function VendorProductionGuide() {
     { kunci: 'target', label: 'Target', rata: 'kanan', isi: (j) => (j.item_count != null
       ? <span className="tabular-nums text-sm">{j.item_count} baris · {j.total_available || j.total_ordered || 0} pcs</span> : '—') },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (j) => (
-      <Button size="sm" variant="outline" onClick={() => openGuide(j)} data-testid={`guide-job-${j.job_number}`}><BookOpen className="w-4 h-4" />Lihat panduan</Button>) },
+      <Button type="button" size="sm" variant="outline" onClick={() => openGuide(j)} data-testid={`guide-job-${j.job_number}`}><BookOpen className="w-4 h-4" />Lihat panduan</Button>) },
   ];
   const guides = guide?.guides || [];
 

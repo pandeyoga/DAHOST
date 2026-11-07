@@ -60,7 +60,7 @@ export default function VendorSerialTracking() {
     { kunci: 'kirim', label: 'Kirim', rata: 'kanan', isi: (s) => <span className="tabular-nums">{n(s.shipped_qty)}</span> },
     { kunci: 'status', label: 'Status', isi: (s) => { const [l, t] = statusSeri(s.status); return <StatusBadge status={s.status} label={l} tone={t} />; } },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
-      <Button size="icon-sm" variant="ghost" onClick={() => bukaJejak(s)} title="Lihat jejak" aria-label="Lihat jejak"><Eye className="w-4 h-4" /></Button>) },
+      <Button type="button" size="icon-sm" variant="ghost" onClick={() => bukaJejak(s)} title="Lihat jejak" aria-label="Lihat jejak"><Eye className="w-4 h-4" /></Button>) },
   ];
 
   return (

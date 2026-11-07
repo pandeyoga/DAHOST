@@ -69,7 +69,7 @@ export default function VendorReminderInbox() {
     { kunci: 'status', label: 'Status', isi: (r) => (r.status === 'pending'
       ? <StatusBadge status="pending" tone="warning" label="Menunggu balasan" /> : <StatusBadge status="done" tone="success" label="Dibalas" />) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (r.status === 'pending' && (
-      <Button size="sm" onClick={() => { setBalas(r); setResponseText(''); }}><MessageSquare className="w-3.5 h-3.5" />Balas</Button>)) },
+      <Button type="button" size="sm" onClick={() => { setBalas(r); setResponseText(''); }}><MessageSquare className="w-3.5 h-3.5" />Balas</Button>)) },
   ];
 
   return (
@@ -91,7 +91,7 @@ export default function VendorReminderInbox() {
       {detail && (
         <DetailPopup open onClose={() => setDetail(null)} judul={detail.subject || 'Pengingat'} testId="vendor-reminder-detail"
           status={(() => { const [l, t] = prioritas(detail.priority); return <StatusBadge status={detail.priority || 'normal'} label={l} tone={t} />; })()}
-          aksi={detail.status === 'pending' && <Button size="sm" onClick={() => { setBalas(detail); setResponseText(''); setDetail(null); }}><MessageSquare className="w-4 h-4" />Balas</Button>}>
+          aksi={detail.status === 'pending' && <Button type="button" size="sm" onClick={() => { setBalas(detail); setResponseText(''); setDetail(null); }}><MessageSquare className="w-4 h-4" />Balas</Button>}>
           <dl className="divide-y divide-[var(--glass-border)]">
             <BarisDetail label="Waktu">{waktu(detail.created_at)}</BarisDetail>
             {detail.po_number && <BarisDetail label="PO">{detail.po_number}</BarisDetail>}

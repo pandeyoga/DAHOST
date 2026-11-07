@@ -631,7 +631,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
     { key: 'po_number', label: 'No. PO', render: (v, row) => (
       <div>
         <div className="flex items-center gap-2">
-          <Button variant="link" size="sm" className="h-auto p-0 font-bold" onClick={(e) => { e.stopPropagation(); openDetail(row); }}
+          <Button type="button" variant="link" size="sm" className="h-auto p-0 font-bold" onClick={(e) => { e.stopPropagation(); openDetail(row); }}
             data-testid={`po-open-${row.id}`}>{v}</Button>
           <BizBadge type={row.business_type} size="xs" />
         </div>
@@ -648,7 +648,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
     { key: 'customer_name', label: isInternal ? 'Tujuan' : 'Klien' },
     // FASE 9 (keluhan #4 owner): teks "2 baris" tidak boleh terbelah — tombol satu baris.
     { key: 'item_count', label: 'Baris', render: (v, row) => (
-      <Button variant="link" size="sm" className="h-auto p-0 whitespace-nowrap" onClick={(e) => { e.stopPropagation(); togglePO(row.id); }}
+      <Button type="button" variant="link" size="sm" className="h-auto p-0 whitespace-nowrap" onClick={(e) => { e.stopPropagation(); togglePO(row.id); }}
         data-testid={`po-toggle-items-${row.id}`} aria-expanded={!!expandedPOs[row.id]}>
         {expandedPOs[row.id] ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
         {v || 0} baris
@@ -680,16 +680,16 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
       const bisaUbah = canEdit && !CLOSED_PO.includes(row.status);
       return (
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); openDetail(row); }} data-testid={`po-detail-btn-${row.id}`}
+          <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); openDetail(row); }} data-testid={`po-detail-btn-${row.id}`}
             title="Lihat rincian" aria-label="Lihat rincian"><Eye className="w-4 h-4" /></Button>
           {bisaUbah && (
-            <Button variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); openEdit(row); }} data-testid={`po-edit-btn-${row.id}`}
+            <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); openEdit(row); }} data-testid={`po-edit-btn-${row.id}`}
               title="Ubah PO" aria-label="Ubah PO"><Pencil className="w-4 h-4" /></Button>
           )}
           {(bisaUbah || canDelete) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon-sm" onClick={(e) => e.stopPropagation()} data-testid={`po-more-btn-${row.id}`}
+                <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => e.stopPropagation()} data-testid={`po-more-btn-${row.id}`}
                   title="Aksi lainnya" aria-label="Aksi lainnya"><MoreHorizontal className="w-4 h-4" /></Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -769,7 +769,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
           exportLabel="Unduh per baris produk" exportTitle="Excel dari server: satu baris per produk PO" />
         <ImportExportToolbar collectionKey="po_berjalan" label="PO berjalan saat cutoff"
           importLabel="Impor PO berjalan" size="default" onImported={() => refetchPOs()} />
-        {canCreate && <Button onClick={openCreate} data-testid="create-po-btn"><Plus className="w-4 h-4" /> Buat PO</Button>}
+        {canCreate && <Button type="button" onClick={openCreate} data-testid="create-po-btn"><Plus className="w-4 h-4" /> Buat PO</Button>}
       </>}
       detail={detailPo && (
         <PODetailPanel

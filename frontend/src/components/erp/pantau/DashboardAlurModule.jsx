@@ -33,7 +33,7 @@ export function useDashboardAlur(props) {
     testId: bt === 'maklon' ? 'maklon-dashboard-alur' : 'production-dashboard',
     title: bt === 'maklon' ? 'Dashboard Maklon' : 'Dashboard Produksi',
     subtitle: 'Perjalanan barang: bahan ke CMT, jahit, QC, sampai hasil akhirnya.',
-    actions: <Button variant="outline" onClick={() => go('pantau-produksi')} data-testid="dash-open-pantau">Buka Pantau Produksi</Button>,
+    actions: <Button type="button" variant="outline" onClick={() => go('pantau-produksi')} data-testid="dash-open-pantau">Buka Pantau Produksi</Button>,
     tools: <RefreshButton onClick={() => { reload(); next.reload(); }} loading={loading} testId="dash-refresh" />,
     summary: <>
         {error && <Notice tone="danger" icon={AlertTriangle}>{error}</Notice>}
@@ -64,7 +64,7 @@ export function useDashboardAlur(props) {
                   <TableCell className="font-medium">{s.label}{s.note ? <div className="text-xs text-muted-foreground">{s.note}</div> : null}</TableCell>
                   <TableCell className="text-right tabular-nums font-semibold" data-testid={`dash-alur-${s.key}-qty`}>{n(s.qty)}</TableCell>
                   <TableCell className="text-right tabular-nums text-muted-foreground">{n(s.docs)} {s.doc_label}</TableCell>
-                  <TableCell className="text-right"><Button variant="link" size="sm" className="h-auto p-0" onClick={() => go(s.module)}>Buka</Button></TableCell>
+                  <TableCell className="text-right"><Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => go(s.module)}>Buka</Button></TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -73,7 +73,7 @@ export function useDashboardAlur(props) {
 
         {!data.balance?.all_ok && (
           <Notice tone="warning" icon={AlertTriangle} testId="dash-balance-warning"
-            action={<Button variant="link" size="sm" className="h-auto p-0" onClick={() => go('pantau-produksi')}>Lihat PO penyebab</Button>}>
+            action={<Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => go('pantau-produksi')}>Lihat PO penyebab</Button>}>
             {(data.balance?.checks || []).filter((c) => !c.ok).map((c) => `${c.label}: ${n(c.offender_count)} PO tidak cocok`).join(' · ')}
           </Notice>
         )}
@@ -92,7 +92,7 @@ export function useDashboardAlur(props) {
                   <TableRow key={a.id}>
                     <TableCell>{a.title}{a.description ? <div className="text-xs text-muted-foreground">{a.description}</div> : null}</TableCell>
                     <TableCell><Badge meta={SEVERITY[a.severity] || SEVERITY.info} /></TableCell>
-                    <TableCell className="text-right"><Button variant="link" size="sm" className="h-auto p-0" onClick={() => go(a.cta_module, a.cta_params)}>{a.cta_label || 'Buka'}</Button></TableCell>
+                    <TableCell className="text-right"><Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => go(a.cta_module, a.cta_params)}>{a.cta_label || 'Buka'}</Button></TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -130,7 +130,7 @@ export function useDashboardAlur(props) {
         </Section>
         {data.overdue.length > 0 && (
           <Notice tone="danger" icon={ListChecks} testId="dash-overdue"
-            action={<Button variant="link" size="sm" className="h-auto p-0" onClick={() => go('pantau-produksi')}>Buka</Button>}>
+            action={<Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => go('pantau-produksi')}>Buka</Button>}>
             {n(data.overdue.filter((r) => r.risk === 'telat').length)} PO lewat batas kirim dan {n(data.overdue.filter((r) => r.risk === 'berisiko').length)} PO berisiko telat.
           </Notice>
         )}

@@ -89,7 +89,7 @@ export default function SelisihVendorTab() {
                       <TableCell><Badge meta={STATUS_META[v.status || 'Reported']} /></TableCell>
                       <TableCell className="text-right">
                         {(v.allowed_next || []).length > 0 && (
-                          <Button variant="outline" size="sm" onClick={() => setEditing(v)} data-testid={`selisih-vendor-status-${v.job_number}`}>Ubah status</Button>
+                          <Button type="button" variant="outline" size="sm" onClick={() => setEditing(v)} data-testid={`selisih-vendor-status-${v.job_number}`}>Ubah status</Button>
                         )}
                       </TableCell>
                     </TableRow>

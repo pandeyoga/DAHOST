@@ -254,7 +254,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
         ? 'Serah terima barang jadi ke gudang DA. Satu surat jalan bisa dikirim bertahap.'
         : `Pengiriman barang jadi ke ${receiverLabel}. Satu surat jalan bisa dikirim bertahap.`}
       actions={canEdit && (
-        <Button onClick={() => setPanel({ kind: 'form', key: Date.now() })} data-testid="buyer-shipment-new">
+        <Button type="button" onClick={() => setPanel({ kind: 'form', key: Date.now() })} data-testid="buyer-shipment-new">
           <Plus className="w-4 h-4" />Buat surat jalan
         </Button>
       )}
@@ -326,7 +326,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
       summary={view === 'list' ? (<>
         {(buyerShorts.items || []).length > 0 && (
           <Notice tone="danger" icon={PackageSearch} testId="buyer-short-panel" title={`${fmtNum(buyerShorts.total_qty_open)} pcs belum sampai di ${receiverLabel}`}
-            action={<Button size="sm" variant="outline" onClick={() => changeView('shorts')} data-testid="buyer-short-open">Lihat</Button>}>
+            action={<Button type="button" size="sm" variant="outline" onClick={() => changeView('shorts')} data-testid="buyer-short-open">Lihat</Button>}>
             Barang sudah dikembalikan ke stok barang jadi — kirim ulang, atau tentukan siapa yang menanggung.
           </Notice>
         )}
@@ -391,7 +391,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                           <RowToggle open={open} onClick={() => toggleExpand(row.id)} label="Lihat riwayat kirim" testId={`shipment-expand-${row.shipment_number}`} />
                         </TableCell>
                         <TableCell>
-                          <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => openDetail(row)}
+                          <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => openDetail(row)}
                             data-testid={`shipment-open-${row.shipment_number}`}>{row.shipment_number}</Button>
                           <span className="flex flex-wrap gap-1 mt-1">
                             {!businessType && <BizBadge type={row.business_type} size="xs" />}
@@ -418,16 +418,16 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1">
                             {canEdit && pct < 100 && (
-                              <Button size="sm" variant="outline" onClick={() => setPanel({ kind: 'form', key: Date.now(), continueShip: row })}
+                              <Button type="button" size="sm" variant="outline" onClick={() => setPanel({ kind: 'form', key: Date.now(), continueShip: row })}
                                 data-testid={`continue-dispatch-${row.shipment_number}`} title="Kirim sisa pada surat jalan ini (nomor tidak berubah)">
                                 <Plus className="w-3.5 h-3.5" />Kirim lagi
                               </Button>
                             )}
-                            <Button size="icon-sm" variant="ghost" onClick={() => openDetail(row)} title="Rincian" aria-label="Rincian"><Eye className="w-4 h-4" /></Button>
-                            <Button size="icon-sm" variant="ghost" onClick={() => downloadPDF(row)} title="Cetak surat jalan (PDF)" aria-label="Cetak surat jalan (PDF)"
+                            <Button type="button" size="icon-sm" variant="ghost" onClick={() => openDetail(row)} title="Rincian" aria-label="Rincian"><Eye className="w-4 h-4" /></Button>
+                            <Button type="button" size="icon-sm" variant="ghost" onClick={() => downloadPDF(row)} title="Cetak surat jalan (PDF)" aria-label="Cetak surat jalan (PDF)"
                               data-testid="buyer-shipment-print-sj"><Download className="w-4 h-4" /></Button>
                             {canCreate && (
-                              <Button size="icon-sm" variant="ghost" onClick={() => handleDelete(row)} title="Hapus" aria-label="Hapus"
+                              <Button type="button" size="icon-sm" variant="ghost" onClick={() => handleDelete(row)} title="Hapus" aria-label="Hapus"
                                 data-testid={`shipment-delete-${row.shipment_number}`}><Trash2 className="w-4 h-4" /></Button>
                             )}
                           </div>
@@ -593,7 +593,7 @@ function OutstandingView({ loading, rows, poBoard, canEdit, onDispatch }) {
               <TableCell className="text-xs">{g.openShip ? `${g.openShip.shipment_number} (${g.openShip.progress_pct || 0}%)` : <span className="text-muted-foreground">belum ada</span>}</TableCell>
               <TableCell className="text-right">
                 {canEdit && (
-                  <Button size="sm" variant="outline" disabled={g.shippable <= 0} onClick={() => onDispatch(g)} data-testid={`board-dispatch-${g.po_number}`}
+                  <Button type="button" size="sm" variant="outline" disabled={g.shippable <= 0} onClick={() => onDispatch(g)} data-testid={`board-dispatch-${g.po_number}`}
                     title={g.shippable > 0 ? (g.openShip ? `Tambah kiriman ke ${g.openShip.shipment_number}` : 'Buat surat jalan pertama untuk PO ini') : 'Barang belum diterima dari CMT'}>
                     <Plus className="w-3.5 h-3.5" />{g.openShip ? 'Kirim lagi' : 'Surat jalan baru'}
                   </Button>
@@ -660,7 +660,7 @@ function BuyerShortTable({ rows, onResolve }) {
             <TableCell className="text-right tabular-nums">{fmtNum(s.qty_received)}</TableCell>
             <TableCell className="text-right tabular-nums font-medium text-[hsl(var(--danger-text))]">{fmtNum(s.qty_open ?? s.qty_short)}</TableCell>
             <TableCell className="text-right">
-              <Button size="sm" variant="outline" data-testid={`buyer-short-resolve-${s.short_number}`} onClick={() => onResolve(s)}>Putuskan</Button>
+              <Button type="button" size="sm" variant="outline" data-testid={`buyer-short-resolve-${s.short_number}`} onClick={() => onResolve(s)}>Putuskan</Button>
             </TableCell>
           </TableRow>
         ))}
@@ -1060,7 +1060,7 @@ function ShipmentDetail({ data, canForceEdit, onClose, onEditReceived }) {
                       <TableCell className="text-right tabular-nums" data-testid={`detail-item-cogs-${item.id || idx}`}><CogsCell item={item} /></TableCell>
                       <TableCell className="text-right">
                         {canForceEdit && (
-                          <Button size="icon-sm" variant="ghost" onClick={() => onEditReceived(item, d.dispatch_seq)} title="Catat qty diterima (aktual)"
+                          <Button type="button" size="icon-sm" variant="ghost" onClick={() => onEditReceived(item, d.dispatch_seq)} title="Catat qty diterima (aktual)"
                             aria-label="Catat qty diterima" data-testid={`set-received-item-${item.id}`}><ClipboardCheck className="w-4 h-4" /></Button>
                         )}
                       </TableCell>

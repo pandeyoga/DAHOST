@@ -106,7 +106,7 @@ export function SearchBox({ value, onChange, placeholder, testId }) {
 
 export function RefreshButton({ onClick, loading, testId = 'pantau-refresh' }) {
   return (
-    <Button variant="outline" size="icon" onClick={onClick} title="Muat ulang" aria-label="Muat ulang" data-testid={testId}>
+    <Button type="button" variant="outline" size="icon" onClick={onClick} title="Muat ulang" aria-label="Muat ulang" data-testid={testId}>
       <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
     </Button>
   );

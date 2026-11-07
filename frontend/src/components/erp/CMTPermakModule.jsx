@@ -126,7 +126,7 @@ export default function CMTPermakModule({ portalId }) {
       testId="cmt-permak-module"
       title="Perbaikan (permak)"
       subtitle="Perbaikan barang cacat dari CMT. Permak yang belum selesai mengurangi stok barang jadi."
-      actions={<Button onClick={() => setCreating(true)} data-testid="btn-open-create-permak"><Plus className="w-4 h-4" />Buat permak</Button>}
+      actions={<Button type="button" onClick={() => setCreating(true)} data-testid="btn-open-create-permak"><Plus className="w-4 h-4" />Buat permak</Button>}
       filters={<>
         <div className="relative w-full sm:w-64">
           <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -145,7 +145,7 @@ export default function CMTPermakModule({ portalId }) {
           { label: 'Dibuang', nilai: (r) => Number(r.qty_scrap) || 0 }, { label: 'Biaya (Rp)', nilai: (r) => Number(r.total_cost) || 0 },
           { label: 'Status', nilai: (r) => r.status || '' }, { label: 'Dibuat', nilai: (r) => formatDateID(r.created_at, { fallback: '' }) },
         ]} />
-        <Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="btn-refresh-permak">
+        <Button type="button" variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="btn-refresh-permak">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </Button>
       </>}
@@ -215,17 +215,17 @@ export default function CMTPermakModule({ portalId }) {
                         {/* Standar UI/UX v2: aksi utama tampil (Mulai / Selesai); Gagal-buang & Hapus di menu Lainnya. */}
                         <div className="flex items-center justify-end gap-1">
                           {r.status === 'open' && (
-                            <Button variant="ghost" size="icon-sm" onClick={() => setStatusTarget({ record: r, action: 'in_progress' })}
+                            <Button type="button" variant="ghost" size="icon-sm" onClick={() => setStatusTarget({ record: r, action: 'in_progress' })}
                               data-testid={`btn-start-${r.id}`} title="Mulai kerjakan" aria-label="Mulai kerjakan"><Play className="w-4 h-4" /></Button>
                           )}
                           {!terminal && (
-                            <Button variant="ghost" size="icon-sm" onClick={() => setStatusTarget({ record: r, action: 'selesai_berhasil' })}
+                            <Button type="button" variant="ghost" size="icon-sm" onClick={() => setStatusTarget({ record: r, action: 'selesai_berhasil' })}
                               data-testid={`btn-complete-${r.id}`} title="Selesai (berhasil)" aria-label="Selesai (berhasil)"><CheckCircle2 className="w-4 h-4" /></Button>
                           )}
                           {!terminal && (
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon-sm" title="Aksi lainnya" aria-label="Aksi lainnya"><MoreHorizontal className="w-4 h-4" /></Button>
+                                <Button type="button" variant="ghost" size="icon-sm" title="Aksi lainnya" aria-label="Aksi lainnya"><MoreHorizontal className="w-4 h-4" /></Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
                                 <DropdownMenuItem onSelect={() => setStatusTarget({ record: r, action: 'gagal_buang' })} data-testid={`btn-scrap-${r.id}`}>

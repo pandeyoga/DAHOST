@@ -141,7 +141,7 @@ export default function POClosureModule({ portalId }) {
           { label: 'Status', nilai: (x) => poStatusLabel(x.po.status) },
           { label: 'Alasan tutup', nilai: (x) => REASON_LABELS[x.po.closed_reason] || '' },
         ]} />
-        <Button variant="outline" size="icon" onClick={fetchAll} title="Muat ulang" aria-label="Muat ulang" data-testid="po-closure-refresh">
+        <Button type="button" variant="outline" size="icon" onClick={fetchAll} title="Muat ulang" aria-label="Muat ulang" data-testid="po-closure-refresh">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </Button>
       </>}
@@ -198,11 +198,11 @@ export default function POClosureModule({ portalId }) {
                         {isTerminal ? (
                           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><Lock className="w-3.5 h-3.5" />Terkunci</span>
                         ) : f?.can_close_short ? (
-                          <Button variant="outline" size="sm" onClick={() => openClose({ po, fulfillment: f })} data-testid={`po-close-short-btn-${po.id}`}>
+                          <Button type="button" variant="outline" size="sm" onClick={() => openClose({ po, fulfillment: f })} data-testid={`po-close-short-btn-${po.id}`}>
                             <Scissors className="w-3.5 h-3.5" />Tutup kurang
                           </Button>
                         ) : f?.can_close && s === 0 ? (
-                          <Button variant="outline" size="sm" onClick={() => openClose({ po, fulfillment: f })} data-testid={`po-close-btn-${po.id}`}>
+                          <Button type="button" variant="outline" size="sm" onClick={() => openClose({ po, fulfillment: f })} data-testid={`po-close-btn-${po.id}`}>
                             <Lock className="w-3.5 h-3.5" />Tutup PO
                           </Button>
                         ) : <span className="text-xs text-muted-foreground">—</span>}

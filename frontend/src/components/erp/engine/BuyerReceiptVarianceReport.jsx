@@ -126,13 +126,13 @@ export default function BuyerReceiptVarianceReport() {
             data-testid="variance-search" className="pl-8" />
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <Button variant="outline" size="icon" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang">
+          <Button type="button" variant="outline" size="icon" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang">
             <RefreshCw className={loading ? 'animate-spin' : ''} />
           </Button>
-          <Button variant="outline" onClick={exportPDF} data-testid="variance-export-pdf">
+          <Button type="button" variant="outline" onClick={exportPDF} data-testid="variance-export-pdf">
             <FileDown /> Unduh PDF
           </Button>
-          <Button variant="outline" onClick={exportExcel} data-testid="variance-export-excel">
+          <Button type="button" variant="outline" onClick={exportExcel} data-testid="variance-export-excel">
             <FileSpreadsheet /> Unduh Excel
           </Button>
         </div>

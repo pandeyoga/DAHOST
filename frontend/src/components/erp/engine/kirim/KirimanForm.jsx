@@ -148,7 +148,7 @@ export default function KirimanForm({ businessType, onClose, onSaved, onNavigate
       )}
       {noRate.length > 0 && (
         <Notice tone="warning" icon={AlertTriangle} testId="kirim-no-rate" title="Upah jahit per pcs belum diisi"
-          action={onNavigate && <Button variant="link" size="sm" onClick={() => onNavigate(maklon ? 'maklon-pos-engine' : 'prod-pos-internal',
+          action={onNavigate && <Button type="button" variant="link" size="sm" onClick={() => onNavigate(maklon ? 'maklon-pos-engine' : 'prod-pos-internal',
             { edit_po_id: po.id, vendor_id: form.vendor_id })}>Isi upah di form PO</Button>}>
           Penjahit dipilih saat kirim, jadi upah per pcs untuk baris yang dikirim diisi dulu di form PO.
         </Notice>

@@ -51,7 +51,7 @@ function RincianKiriman({ s, induk, anak, onClose, onTerima }) {
     <DetailPopup open onClose={onClose} judul={`Kiriman ${s.shipment_number}`} testId="vendor-receiving-detail"
       keterangan={`${tgl(s.shipment_date)} · ${s.vendor_name || ''}`}
       status={<><StatusBadge status={s.shipment_type || 'NORMAL'} label={jl} tone={jt} /><StatusBadge status={s.status} label={kl} tone={kt} /></>}
-      aksi={s.status === 'Sent' && <Button size="sm" variant="success" onClick={() => onTerima(s)}><CheckCircle className="w-4 h-4" />Konfirmasi terima</Button>}>
+      aksi={s.status === 'Sent' && <Button type="button" size="sm" variant="success" onClick={() => onTerima(s)}><CheckCircle className="w-4 h-4" />Konfirmasi terima</Button>}>
       <dl className="divide-y divide-[var(--glass-border)]">
         {s.delivery_note_number && <BarisDetail label="No. surat jalan">{s.delivery_note_number}</BarisDetail>}
         {induk && <BarisDetail label="Turunan dari">{induk.shipment_number}</BarisDetail>}
@@ -166,11 +166,11 @@ export default function VendorReceiving() {
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
       <div className="flex justify-end gap-1">
         {s.status === 'Sent' && (
-          <Button size="sm" variant="success" onClick={() => confirmReceive(s)} data-testid={`vendor-receive-${s.id}`}>
+          <Button type="button" size="sm" variant="success" onClick={() => confirmReceive(s)} data-testid={`vendor-receive-${s.id}`}>
             <CheckCircle className="w-4 h-4" />Terima
           </Button>
         )}
-        <Button size="icon-sm" variant="ghost" onClick={() => setDetail(s)} title="Lihat rincian" aria-label="Lihat rincian"><Eye className="w-4 h-4" /></Button>
+        <Button type="button" size="icon-sm" variant="ghost" onClick={() => setDetail(s)} title="Lihat rincian" aria-label="Lihat rincian"><Eye className="w-4 h-4" /></Button>
       </div>) },
   ];
 
@@ -185,7 +185,7 @@ export default function VendorReceiving() {
           { label: 'Dikirim (pcs)', nilai: totalKirim }, { label: 'Diterima (pcs)', nilai: (s) => (s.total_received != null ? Number(s.total_received) : '') },
           { label: 'Kurang (pcs)', nilai: (s) => Number(s.total_missing) || 0 }, { label: 'Status', nilai: (s) => keadaan(s)[0] },
         ]} />
-        <Button variant="outline" size="icon" onClick={fetchShipments} title="Muat ulang" aria-label="Muat ulang">
+        <Button type="button" variant="outline" size="icon" onClick={fetchShipments} title="Muat ulang" aria-label="Muat ulang">
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
         </Button>
       </>}

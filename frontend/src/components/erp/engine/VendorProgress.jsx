@@ -106,7 +106,7 @@ export default function VendorProgress({ token, user }) {
     } },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => ((it.produced_qty || 0) >= tersedia(it) && tersedia(it) > 0
       ? <StatusBadge status="done" tone="success" label="Selesai" />
-      : <Button size="sm" onClick={() => openProgress(it)} data-testid={`vendor-progress-input-${it.id}`}><Plus className="w-3.5 h-3.5" />Isi progress</Button>) },
+      : <Button type="button" size="sm" onClick={() => openProgress(it)} data-testid={`vendor-progress-input-${it.id}`}><Plus className="w-3.5 h-3.5" />Isi progress</Button>) },
   ];
   const kolomUnduh = [
     { label: 'No. seri', nilai: (it) => it.serial_number || '' }, { label: 'Produk', nilai: (it) => it.product_name },

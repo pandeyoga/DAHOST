@@ -426,7 +426,7 @@ export default function RahazaBOMModuleV2({ token }) {
             )}.
           </>}
           action={
-            <Button size="sm" variant="outline" onClick={runRelink} disabled={relinking}
+            <Button type="button" size="sm" variant="outline" onClick={runRelink} disabled={relinking}
               data-testid="bom-relink-btn">
               <Wrench className="w-3.5 h-3.5" />
               {relinking ? 'Menautkan...' : 'Perbaiki Otomatis'}
@@ -441,7 +441,7 @@ export default function RahazaBOMModuleV2({ token }) {
       ) : (
         <Notice tone="success" testId="bom-link-health-banner" title="Kopling BOM sehat"
           action={
-            <Button size="sm" variant="outline" onClick={runRelink} disabled={relinking}
+            <Button type="button" size="sm" variant="outline" onClick={runRelink} disabled={relinking}
               data-testid="bom-relink-btn">
               <Wrench className="w-3.5 h-3.5" />
               {relinking ? 'Memeriksa...' : 'Periksa Ulang'}
@@ -551,7 +551,7 @@ export default function RahazaBOMModuleV2({ token }) {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="inline-flex items-center gap-1">
-                              <Button
+                              <Button type="button"
                                 variant="ghost" size="icon-sm"
                                 title={row.bom_id ? 'Ubah BOM' : 'Buat BOM'} aria-label={row.bom_id ? 'Ubah BOM' : 'Buat BOM'}
                                 onClick={() => openEditorForSize(row.size_id, row.bom_id)}
@@ -560,7 +560,7 @@ export default function RahazaBOMModuleV2({ token }) {
                                 {row.bom_id ? <Edit2 className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
                               </Button>
                               {row.bom_id && (
-                                <Button
+                                <Button type="button"
                                   variant="ghost" size="icon-sm"
                                   title="Salin ke size lain" aria-label="Salin ke size lain"
                                   onClick={() => openCopy(row)}
@@ -624,7 +624,7 @@ export default function RahazaBOMModuleV2({ token }) {
                             <span className="text-sm font-semibold text-foreground">Daftar Material</span>
                             <span className="text-xs text-muted-foreground">qty per pcs</span>
                           </div>
-                          <Button variant="outline" size="sm" onClick={addMaterial} data-testid="bom-add-material-btn">
+                          <Button type="button" variant="outline" size="sm" onClick={addMaterial} data-testid="bom-add-material-btn">
                             <Plus className="w-4 h-4 mr-1" /> Tambah Material
                           </Button>
                         </div>
@@ -652,7 +652,7 @@ export default function RahazaBOMModuleV2({ token }) {
                                         categories={categories}
                                         onSelect={mat => selectMaterialFromMaster(idx, mat)}
                                       >
-                                        <Button variant="ghost" size="icon-sm" title="Pilih dari master" aria-label="Pilih dari master">
+                                        <Button type="button" variant="ghost" size="icon-sm" title="Pilih dari master" aria-label="Pilih dari master">
                                           <Search className="w-3.5 h-3.5" />
                                         </Button>
                                       </InlineMaterialPicker>
@@ -738,7 +738,7 @@ export default function RahazaBOMModuleV2({ token }) {
                                     </SmartNativeSelect>
                                   </TableCell>
                                   <TableCell>
-                                    <Button
+                                    <Button type="button"
                                       variant="ghost" size="icon-sm"
                                       className="hover:bg-[hsl(var(--destructive)/0.1)] hover:text-[hsl(var(--danger-text))]"
                                       title="Hapus baris" aria-label="Hapus baris"
@@ -777,7 +777,7 @@ export default function RahazaBOMModuleV2({ token }) {
 
                       {/* Actions */}
                       <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--glass-border)]">
-                        <Button
+                        <Button type="button"
                           variant="ghost"
                           onClick={async () => {
                             if (isDirty && !(await confirmDialog({
@@ -793,7 +793,7 @@ export default function RahazaBOMModuleV2({ token }) {
                         >
                           Batal
                         </Button>
-                        <Button onClick={saveBOM} disabled={saving} data-testid="bom-save-btn">
+                        <Button type="button" onClick={saveBOM} disabled={saving} data-testid="bom-save-btn">
                           <Save className="w-4 h-4 mr-2" />
                           {saving ? 'Menyimpan...' : (editor.mode === 'edit' ? 'Simpan Perubahan' : 'Simpan Versi Baru')}
                         </Button>
@@ -818,10 +818,10 @@ export default function RahazaBOMModuleV2({ token }) {
                               </p>
                             </div>
                             <div className="flex gap-2">
-                              <Button variant="outline" size="sm" onClick={startCreateVersion} data-testid="bom-create-new-version-btn">
+                              <Button type="button" variant="outline" size="sm" onClick={startCreateVersion} data-testid="bom-create-new-version-btn">
                                 <Plus className="w-4 h-4 mr-2" /> Versi Baru
                               </Button>
-                              <Button variant="default" size="sm" onClick={startEditVersion} data-testid="bom-edit-version-btn">
+                              <Button type="button" variant="default" size="sm" onClick={startEditVersion} data-testid="bom-edit-version-btn">
                                 <Edit2 className="w-4 h-4 mr-2" /> Edit
                               </Button>
                             </div>
@@ -900,7 +900,7 @@ export default function RahazaBOMModuleV2({ token }) {
                         <EmptyState icon={FileText} title="Belum ada versi BOM untuk size ini"
                           description="Buat versi pertama untuk mulai mencatat material size ini."
                           action={
-                            <Button
+                            <Button type="button"
                               variant="outline" size="sm"
                               onClick={() => { setEditor({ mode: 'create', form: { color: '', materials: [blankMaterial()], notes: '' } }); setIsDirty(false); setFormError(''); }}
                               data-testid="bom-create-first-version-btn"
@@ -997,8 +997,8 @@ export default function RahazaBOMModuleV2({ token }) {
               </label>
             </div>
             <DialogFooter>
-              <Button variant="ghost" onClick={() => setCopyModal(null)}>Batal</Button>
-              <Button onClick={runCopy} data-testid="bom-copy-run-btn">Copy</Button>
+              <Button type="button" variant="ghost" onClick={() => setCopyModal(null)}>Batal</Button>
+              <Button type="button" onClick={runCopy} data-testid="bom-copy-run-btn">Copy</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

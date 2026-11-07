@@ -87,7 +87,7 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
       title="Kirim ke CMT"
       subtitle="Potongan & aksesoris keluar gudang otomatis saat kiriman dibuat; angkanya sama dengan surat jalan."
       actions={canCreate && (
-        <Button onClick={() => { setOpen(null); setCreating(true); }} data-testid="kirim-new"><Plus className="w-4 h-4" />Kiriman baru</Button>
+        <Button type="button" onClick={() => { setOpen(null); setCreating(true); }} data-testid="kirim-new"><Plus className="w-4 h-4" />Kiriman baru</Button>
       )}
       filters={<>
         <div className="relative w-full sm:w-64">
@@ -103,7 +103,7 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
         </SmartNativeSelect>
       </>}
       tools={<>
-        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="kirim-refresh">
+        <Button type="button" title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="kirim-refresh">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </Button>
         {/* Standar UI/UX v2: unduh daftar (Excel/CSV, SEMUA kiriman hasil saringan) + unduh lama per baris barang (server). */}
@@ -123,7 +123,7 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
             { label: 'Pengeluaran gudang', nilai: (r) => r.material_issue_number || (r.opening ? 'saldo awal' : '') },
             { label: 'Status', nilai: (r) => (r.status === 'Received' ? 'Diterima CMT' : r.status === 'Sent' ? 'Dikirim' : (r.status || '')) },
           ]} />
-        <Button variant="outline" onClick={exportExcel} data-testid="kirim-export" title="Excel dari server: satu baris per barang, semua kiriman">
+        <Button type="button" variant="outline" onClick={exportExcel} data-testid="kirim-export" title="Excel dari server: satu baris per barang, semua kiriman">
           <Download className="w-4 h-4" />Unduh per barang</Button>
       </>}
       summary={error && <Notice tone="danger" title="Gagal memuat data" testId="kirim-error">{error}</Notice>}
@@ -160,7 +160,7 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
                     <RowToggle open={!!expanded[r.id]} onClick={() => toggle(r)} label="Lihat kiriman tambahan"
                       testId={`kirim-row-toggle-${r.shipment_number}`} />)}</TableCell>
                   <TableCell className="whitespace-nowrap">
-                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => { setCreating(false); setOpen(r.id); }}
+                    <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => { setCreating(false); setOpen(r.id); }}
                       data-testid={`kirim-open-${r.shipment_number}`}>{r.shipment_number}</Button>
                   </TableCell>
                   <TableCell>{r.vendor_name || '—'}</TableCell>
@@ -175,11 +175,11 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
                     || <span className="text-muted-foreground">{r.opening ? 'saldo awal' : '—'}</span>}</TableCell>
                   <TableCell><ShipStatusBadge status={r.status} /></TableCell>
                   <TableCell className="text-right whitespace-nowrap">
-                    <Button variant="ghost" size="icon-sm" title="Surat jalan (PDF)" aria-label="Surat jalan (PDF)"
+                    <Button type="button" variant="ghost" size="icon-sm" title="Surat jalan (PDF)" aria-label="Surat jalan (PDF)"
                       onClick={() => downloadPdf('vendor-shipment', r.id, `SJ-${r.shipment_number}.pdf`, 'Surat jalan')}>
                       <Download className="w-4 h-4" /></Button>
                     {/* Panduan produk (PDF) ada di popup rincian — paling banyak 2 aksi tampil per baris. */}
-                    <Button variant="outline" size="sm" onClick={() => { setCreating(false); setOpen(r.id); }}>Rincian</Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => { setCreating(false); setOpen(r.id); }}>Rincian</Button>
                   </TableCell>
                 </TableRow>,
                 expanded[r.id] && (
@@ -188,7 +188,7 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
                       <div className="space-y-1">
                         {children[r.id].map((c) => (
                           <div key={c.id} className="flex flex-wrap items-center gap-3 text-sm">
-                            <Button variant="link" size="sm" className="h-auto p-0" onClick={() => { setCreating(false); setOpen(c.id); }}>
+                            <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => { setCreating(false); setOpen(c.id); }}>
                               {c.shipment_number}</Button>
                             <ShipTypeBadge type={c.shipment_type} />
                             <span className="text-xs text-muted-foreground">{fmtDate(c.shipment_date)} · {fmtNum(c.total_pcs)} pcs</span>

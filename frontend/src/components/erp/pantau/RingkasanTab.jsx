@@ -65,7 +65,7 @@ export default function RingkasanTab(props) {
                   <TableCell className="text-xs text-muted-foreground">{s.note || ''}</TableCell>
                   <TableCell className="text-right">
                     {s.module && s.module !== 'pantau-produksi' && (
-                      <Button variant="link" size="sm" className="h-auto p-0" onClick={() => go(s.module)}>Buka</Button>
+                      <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => go(s.module)}>Buka</Button>
                     )}
                   </TableCell>
                 </TableRow>

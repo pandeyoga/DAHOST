@@ -114,18 +114,18 @@ export default function RahazaMasterFillModule({ token }) {
     >
       <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
         <GlassCard className="p-4 space-y-3"><StepLabel n={1} /><h3 className="font-semibold text-sm">Unduh berkas isian</h3>
-          <Button variant="outline" onClick={dlFokus} className="w-full" data-testid="fill-download-fokus"><Download className="w-4 h-4" />{file ? 'Berkas fokus — sisa dari berkas ini' : 'Berkas fokus (yang perlu diisi saja)'}</Button>
+          <Button type="button" variant="outline" onClick={dlFokus} className="w-full" data-testid="fill-download-fokus"><Download className="w-4 h-4" />{file ? 'Berkas fokus — sisa dari berkas ini' : 'Berkas fokus (yang perlu diisi saja)'}</Button>
           <p className="text-xs text-muted-foreground">Hanya yang masih perlu diisi: sheet VARIAN_BARU, BOM_AKSESORIS, dan MATERIAL. Isi sel <span className="rounded px-1 bg-[#FFF2CC] text-black">kuning</span>; sel <span className="rounded px-1 bg-[#DDEBF7] text-black">biru</span> diisi otomatis (mis. varian dari nama bahan pembeda), cukup diperiksa. Kolom "Yang perlu diisi" menyebut persis kekurangan tiap baris.</p>
-          <Button size="sm" onClick={dlHarga} variant="outline" className="w-full" data-testid="fill-download-harga-review"><Download className="w-4 h-4" />Periksa harga aksesoris & kain (HPP)</Button>
-          <Button size="sm" onClick={dlGap} variant="outline" className="w-full" data-testid="fill-download-gap"><Download className="w-4 h-4" />{file ? 'Berkas lengkap — sisa dari berkas ini' : 'Berkas lengkap (semua sheet)'}</Button>
-          <Button size="sm" onClick={dl} variant="outline" className="w-full" data-testid="fill-download"><Download className="w-4 h-4" />Template lengkap (semua material)</Button></GlassCard>
+          <Button type="button" size="sm" onClick={dlHarga} variant="outline" className="w-full" data-testid="fill-download-harga-review"><Download className="w-4 h-4" />Periksa harga aksesoris & kain (HPP)</Button>
+          <Button type="button" size="sm" onClick={dlGap} variant="outline" className="w-full" data-testid="fill-download-gap"><Download className="w-4 h-4" />{file ? 'Berkas lengkap — sisa dari berkas ini' : 'Berkas lengkap (semua sheet)'}</Button>
+          <Button type="button" size="sm" onClick={dl} variant="outline" className="w-full" data-testid="fill-download"><Download className="w-4 h-4" />Template lengkap (semua material)</Button></GlassCard>
         <GlassCard className="p-4 space-y-3"><StepLabel n={2} /><h3 className="font-semibold text-sm">Unggah berkas terisi</h3>
           <input ref={inputRef} type="file" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} className="block w-full text-xs text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/20 file:px-3 file:py-1.5 file:text-xs file:text-primary" data-testid="fill-file" />
           <p className="text-xs text-muted-foreground">Pratinjau muncul otomatis: baris siap dan yang dilewati per kategori, varian tujuan, dan satuan dasar hasil konversi. BOM aksesoris per model & varian di berkas diganti utuh; model lain tidak disentuh.</p></GlassCard>
         <GlassCard className="p-4 space-y-3"><StepLabel n={3} /><h3 className="font-semibold text-sm">Terapkan</h3>
-          <Button onClick={() => doApply('bom')} disabled={!preview || busy || !(t.bom_lines > 0)} className="w-full" data-testid="fill-apply">
+          <Button type="button" onClick={() => doApply('bom')} disabled={!preview || busy || !(t.bom_lines > 0)} className="w-full" data-testid="fill-apply">
             <CheckCircle2 className="w-4 h-4" />Terapkan (hanya BOM)</Button>
-          <Button size="sm" onClick={() => doApply('all')} variant="outline" disabled={!preview?.ok || busy || !nApply} className="w-full" data-testid="fill-apply-all">
+          <Button type="button" size="sm" onClick={() => doApply('all')} variant="outline" disabled={!preview?.ok || busy || !nApply} className="w-full" data-testid="fill-apply-all">
             <Upload className="w-4 h-4" />Terapkan semua sheet</Button>
           <div>
             <label className="block text-xs text-muted-foreground mb-1" htmlFor="fill-reval-reason">Alasan revaluasi (barang yang sudah berstok)</label>
@@ -134,7 +134,7 @@ export default function RahazaMasterFillModule({ token }) {
             <p className="text-xs text-muted-foreground mt-1">Harga barang tanpa stok langsung jadi harga awal. Harga barang berstok hanya diubah lewat revaluasi berjurnal bila alasan diisi.</p>
           </div></GlassCard>
         <GlassCard className="p-4 space-y-3"><StepLabel n={4} /><h3 className="font-semibold text-sm">Laporan sisa</h3>
-          <Button onClick={dlLaporan} variant="outline" className="w-full" data-testid="fill-download-laporan"><ClipboardList className="w-4 h-4" />Unduh laporan sisa</Button>
+          <Button type="button" onClick={dlLaporan} variant="outline" className="w-full" data-testid="fill-download-laporan"><ClipboardList className="w-4 h-4" />Unduh laporan sisa</Button>
           <p className="text-xs text-muted-foreground">Kekurangan yang tidak diimpor: model tanpa SKU, kelompok tanpa varian, satuan/kode tak valid, warna tak dikenal, material harga 0, harga jual SKU, berat/toko/rekening/gaji, HPP belum tervalidasi. {file ? 'Memakai berkas yang sedang diunggah.' : 'Tanpa berkas: hanya dari data yang sudah ada di sistem.'}</p></GlassCard>
       </div>
       {preview && (

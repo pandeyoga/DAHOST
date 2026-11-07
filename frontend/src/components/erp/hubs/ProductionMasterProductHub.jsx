@@ -33,7 +33,7 @@ export default function ProductionMasterProductHub(props) {
             {onNavigate && (
               <p className="text-sm text-muted-foreground" data-testid="master-produk-crosslink-production">
                 Kategori, varian/SKU, BOM, ukuran, dan warna disunting di Portal RnD.{' '}
-                <Button variant="link" size="sm" className="h-auto p-0" onClick={() => onNavigate('rnd-master-product-hub')}>
+                <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => onNavigate('rnd-master-product-hub')}>
                   Buka Master Produk RnD <ArrowUpRight className="w-3.5 h-3.5" />
                 </Button>
               </p>

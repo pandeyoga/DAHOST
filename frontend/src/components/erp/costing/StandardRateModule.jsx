@@ -67,14 +67,14 @@ export default function StandardRateModule({ token }) {
       testId="hpp-standard-rates"
       title="Tarif standar per tahap"
       subtitle="Tarif per pcs tahap internal — dipakai HPP standar per potong bila produk belum punya laporan produksi bertarif."
-      actions={<Button variant="success" onClick={save} disabled={saving || !dirty} data-testid="std-rate-save"><Save className="w-4 h-4" />{saving ? 'Menyimpan…' : 'Simpan tarif'}</Button>}
+      actions={<Button type="button" variant="success" onClick={save} disabled={saving || !dirty} data-testid="std-rate-save"><Save className="w-4 h-4" />{saving ? 'Menyimpan…' : 'Simpan tarif'}</Button>}
       tools={<>
         <TombolUnduh namaBerkas="tarif-standar-per-tahap" namaLembar="Tarif" baris={rows} testId="std-rate-unduh" kolom={[
           { label: 'Tahap', nilai: (r) => r.name || r.code }, { label: 'Kode', nilai: (r) => r.code || '' },
           { label: 'Keterangan', nilai: (r) => (r.is_cmt ? 'Upah CMT diisi di form PO' : r.active === false ? 'Nonaktif' : 'Tahap internal') },
           { label: 'Tarif standar per pcs (Rp)', nilai: (r) => (r.is_cmt ? '' : Number(r.rate_per_pcs) || 0) },
         ]} />
-        <Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="std-rate-refresh">
+        <Button type="button" variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="std-rate-refresh">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </Button>
       </>}

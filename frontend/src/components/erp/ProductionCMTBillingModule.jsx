@@ -171,7 +171,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
           </SmartNativeSelect>
         )}
         {filtered && (
-          <Button variant="outline" onClick={resetFilters} data-testid="cmt-billing-reset"><X className="h-3.5 w-3.5" />Reset filter</Button>
+          <Button type="button" variant="outline" onClick={resetFilters} data-testid="cmt-billing-reset"><X className="h-3.5 w-3.5" />Reset filter</Button>
         )}
       </>}
       tools={<>
@@ -194,7 +194,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
             { label: 'Status', nilai: (r) => r.status || '' }, { label: 'Jurnal', nilai: (r) => (r.gl_posted ? (r.gl_je_number || 'terjurnal') : 'Belum dijurnal') },
           ]} />
         )}
-        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="cmt-billing-refresh">
+        <Button type="button" title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="cmt-billing-refresh">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </Button>
       </>}
@@ -237,7 +237,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
             {filtered ? (
               <EmptyState icon={Receipt} title="Tidak ada tagihan yang cocok dengan filter"
                 description="Ubah atau hapus penyaring untuk melihat tagihan lain."
-                action={<Button variant="outline" size="sm" onClick={resetFilters} data-testid="cmt-billing-empty-reset">Tampilkan semua tagihan</Button>} />
+                action={<Button type="button" variant="outline" size="sm" onClick={resetFilters} data-testid="cmt-billing-empty-reset">Tampilkan semua tagihan</Button>} />
             ) : (
               <EmptyState icon={Receipt} title="Belum ada tagihan CMT"
                 description="Tagihan terbit otomatis setelah Terima FG dari CMT selesai QC." />
@@ -256,7 +256,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
                 <TableRow key={r.id} data-testid={`cmt-billing-row-${r.payment_code}`}
                   className={detail?.bill?.id === r.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
                   <TableCell className="whitespace-nowrap">
-                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => openDetail(r.id)}
+                    <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => openDetail(r.id)}
                       data-testid={`cmt-billing-detail-${r.payment_code}`}>{r.payment_code || r.id?.slice(0, 8)}</Button>
                   </TableCell>
                   <TableCell>
@@ -285,11 +285,11 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
                   </TableCell>
                   <TableCell className="text-right">
                     {!r.gl_posted && (r.status || '').toLowerCase() !== 'cancelled' && canPost ? (
-                      <Button size="sm" variant="outline" disabled={posting === r.id} onClick={() => postToGl(r.id)} data-testid={`cmt-billing-post-${r.payment_code}`}>
+                      <Button type="button" size="sm" variant="outline" disabled={posting === r.id} onClick={() => postToGl(r.id)} data-testid={`cmt-billing-post-${r.payment_code}`}>
                         <Landmark className="w-3.5 h-3.5" />Jurnalkan
                       </Button>
                     ) : (
-                      <Button size="sm" variant="outline" onClick={() => openDetail(r.id)}>Rincian</Button>
+                      <Button type="button" size="sm" variant="outline" onClick={() => openDetail(r.id)}>Rincian</Button>
                     )}
                   </TableCell>
                 </TableRow>
@@ -427,14 +427,14 @@ function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
       title={`${bill.payment_code || 'Tagihan'} · ${bill.cmt_name || '—'}`}
       description={`PO ${bill.po_number || '—'} · ${fmtNum(bill.total_pcs)} pcs lolos QC · ditolak ${fmtNum(bill.total_rejected)} · nilai ${fmtRp(bill.amount)}`}
       actions={!bill.gl_posted && canPost && (bill.status || '').toLowerCase() !== 'cancelled' && (
-        <Button variant="outline" onClick={() => onPost(bill.id)} disabled={posting === bill.id} data-testid="cmt-billing-detail-post">
+        <Button type="button" variant="outline" onClick={() => onPost(bill.id)} disabled={posting === bill.id} data-testid="cmt-billing-detail-post">
           <Landmark className="w-4 h-4" />Jurnalkan
         </Button>
       )}>
       {isIc && (
         <Notice tone="info" icon={Landmark} testId="cmt-bill-ic"
           title="Tagihan antar CV — tim jahit CV Sukma"
-          action={bill.ic_ar_invoice_id && <Button size="sm" variant="outline" onClick={openIcPdf} data-testid="cmt-bill-ic-pdf">Tagihan jasa jahit (PDF)</Button>}>
+          action={bill.ic_ar_invoice_id && <Button type="button" size="sm" variant="outline" onClick={openIcPdf} data-testid="cmt-bill-ic-pdf">Tagihan jasa jahit (PDF)</Button>}>
           Hutang CV Dewi Aditya ke CV Sukma. Piutang pasangannya di buku CV Sukma: {bill.ic_ar_invoice_number || 'belum dibuat'}.
           Pembayaran di sini otomatis dicatat sebagai penerimaan di rekening CV Sukma yang dipilih.
         </Notice>
@@ -449,8 +449,8 @@ function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
           title={bill.variance_resolution ? 'Selisih sudah diputuskan Keuangan' : blocked > 0 ? `Rp ${fmtNum(blocked)} tertahan — selisih perlu diputuskan Keuangan` : 'Ada selisih qty pada penerimaan'}
           action={canPost && !bill.variance_resolution && Number(bill.overbilled_amount || 0) > 0 && (
             <span className="flex gap-2">
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => resolve('potong')} data-testid="cmt-resolve-potong">Potong dari tagihan</Button>
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => resolve('bayar')} data-testid="cmt-resolve-bayar">Bayar penuh</Button>
+              <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => resolve('potong')} data-testid="cmt-resolve-potong">Potong dari tagihan</Button>
+              <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => resolve('bayar')} data-testid="cmt-resolve-bayar">Bayar penuh</Button>
             </span>
           )}>
           {(bill.variance_reasons || []).length > 0
@@ -489,7 +489,7 @@ function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
           {disbursements.map((d) => (
             <div key={d.id} className="flex items-center justify-between gap-2 text-sm" data-testid={`cmt-disb-${d.id}`}>
               <span>{fmtDate(d.payment_date)} · {d.cash_account_name} · <span className="tabular-nums">{fmtRp(d.amount)}</span>{d.gl_je_number ? ` · ${d.gl_je_number}` : ''}</span>
-              {canPost && <Button size="sm" variant="outline" onClick={() => voidDisbursement(d.id)} data-testid={`cmt-disb-void-${d.id}`}>Batalkan</Button>}
+              {canPost && <Button type="button" size="sm" variant="outline" onClick={() => voidDisbursement(d.id)} data-testid={`cmt-disb-void-${d.id}`}>Batalkan</Button>}
             </div>
           ))}
         </div>
@@ -512,7 +512,7 @@ function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
             className="h-9 w-40" data-testid="cmt-pay-amount" />
           <div className="w-44"><DatePicker value={payForm.payment_date} onChange={(v) => setPayForm((f) => ({ ...f, payment_date: v }))} placeholder="Tanggal bayar" testId="cmt-pay-date" /></div>
           <GlassInput placeholder="No. referensi" value={payForm.reference_no} onChange={(e) => setPayForm((f) => ({ ...f, reference_no: e.target.value }))} className="h-9 w-40" data-testid="cmt-pay-ref" />
-          <Button variant="success" onClick={pay} disabled={busy} data-testid="cmt-pay-submit"><CheckCircle2 className="w-4 h-4" />Bayar vendor</Button>
+          <Button type="button" variant="success" onClick={pay} disabled={busy} data-testid="cmt-pay-submit"><CheckCircle2 className="w-4 h-4" />Bayar vendor</Button>
         </div>
       )}
       {bill.notes && <p className="text-xs text-muted-foreground">{bill.notes}</p>}

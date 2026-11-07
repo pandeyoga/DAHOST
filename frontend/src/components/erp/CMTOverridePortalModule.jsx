@@ -153,7 +153,7 @@ function VendorPicker({ vendors, loading, err, onPick, onReload }) {
       <span className={`text-xs ${v.has_active_portal_account ? 'text-[hsl(var(--warning-text))]' : 'text-muted-foreground'}`}
         data-testid={`cmt-override-account-${v.id}`}>{akun(v)}</span>) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (v) => (
-      <Button size="sm" variant="outline" onClick={() => onPick(v)} data-testid={`cmt-override-pick-${v.id}`}>
+      <Button type="button" size="sm" variant="outline" onClick={() => onPick(v)} data-testid={`cmt-override-pick-${v.id}`}>
         <UserCog className="w-3.5 h-3.5" />Isi atas nama
       </Button>) },
   ];
@@ -177,7 +177,7 @@ function VendorPicker({ vendors, loading, err, onPick, onReload }) {
             { label: 'Perlu diisi', nilai: (v) => Number(v.pending_actions) || 0 },
             { label: 'Akun Portal Vendor', nilai: akun },
           ]} />
-        <Button variant="outline" size="icon" onClick={onReload} title="Muat ulang" aria-label="Muat ulang" data-testid="cmt-override-refresh">
+        <Button type="button" variant="outline" size="icon" onClick={onReload} title="Muat ulang" aria-label="Muat ulang" data-testid="cmt-override-refresh">
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
         </Button>
       </>}
@@ -196,7 +196,7 @@ function VendorPicker({ vendors, loading, err, onPick, onReload }) {
           kosong={<div data-testid="cmt-override-empty">
             <EmptyState icon={Users} title={vendors.length ? 'Tidak ada vendor yang cocok' : 'Belum ada vendor CMT aktif'}
               description={vendors.length ? 'Ubah kata pencarian.' : 'Tambahkan vendor lewat menu Vendor CMT.'}
-              action={search ? <Button variant="outline" size="sm" onClick={() => setSearch('')}><X className="w-3.5 h-3.5" />Hapus pencarian</Button> : null} />
+              action={search ? <Button type="button" variant="outline" size="sm" onClick={() => setSearch('')}><X className="w-3.5 h-3.5" />Hapus pencarian</Button> : null} />
           </div>} />
       )}
     </PageLayoutSatuBaris>
@@ -235,7 +235,7 @@ function AuditPanel({ vendorName }) {
               { label: 'Peran', nilai: (e) => ROLE_LABEL[e.entered_by_role] || e.entered_by_role || '' },
               { label: 'Waktu', nilai: (e) => fmtDT(e.entered_at) },
             ]} />
-          <Button size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="cmt-override-audit-refresh">
+          <Button type="button" size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="cmt-override-audit-refresh">
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </Button>
         </div>
@@ -373,7 +373,7 @@ export default function CMTOverridePortalModule({ user, token }) {
   return (
     <PageLayoutSatuBaris testId="cmt-override-active" title={`Atas nama ${selected.name}`}
       subtitle={`Layar ini sama persis dengan Portal Vendor milik ${selected.name}. Yang Anda simpan tercatat dengan nama Anda.`}
-      actions={<Button variant="outline" onClick={backToPicker} data-testid="cmt-override-change-vendor"><ArrowLeft className="h-4 w-4" />Ganti vendor</Button>}
+      actions={<Button type="button" variant="outline" onClick={backToPicker} data-testid="cmt-override-change-vendor"><ArrowLeft className="h-4 w-4" />Ganti vendor</Button>}
       summary={<>
         {/* Penanda mode isi — satu baris tipis (dulu spanduk lengket yang memakan layar). Nama vendor juga di judul. */}
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[hsl(var(--warning-text))]" data-testid="cmt-override-mode-line">
@@ -385,7 +385,7 @@ export default function CMTOverridePortalModule({ user, token }) {
         {/* Peringatan dobel input (keputusan 5a) — memberi tahu, TIDAK memblokir. */}
         {selected.has_active_portal_account && warnOpen && (
           <Notice tone="warning" icon={AlertTriangle} title="Hati-hati dobel input" testId="cmt-override-double-warning"
-            action={<Button size="sm" variant="outline" onClick={() => setWarnOpen(false)} data-testid="cmt-override-warning-dismiss">Mengerti</Button>}>
+            action={<Button type="button" size="sm" variant="outline" onClick={() => setWarnOpen(false)} data-testid="cmt-override-warning-dismiss">Mengerti</Button>}>
             Vendor ini punya akun Portal Vendor aktif ({selected.last_login_at ? `terakhir login ${fmtDT(selected.last_login_at)}` : 'belum pernah login'}). Kalau vendor juga
             mengisi sendiri, progress bisa terhitung dua kali dan tagihan CMT ikut salah.
             {Array.isArray(selected.accounts) && selected.accounts.length > 0 && (

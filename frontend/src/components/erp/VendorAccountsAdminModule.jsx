@@ -193,11 +193,11 @@ function PartnerDetail({ partner, onClose, onChanged }) {
       description={`${partner.code || 'Tanpa kode'} · ${OWNER_LABEL[partner.owner_entity || ''] || 'Vendor CMT luar'}`}
       actions={!editing && (
         <>
-          <Button variant="outline" onClick={() => setEditing(true)} disabled={busy} data-testid="partner-edit"><Pencil className="w-4 h-4" />Ubah</Button>
-          <Button variant="outline" onClick={toggle} disabled={busy} data-testid="partner-toggle">
+          <Button type="button" variant="outline" onClick={() => setEditing(true)} disabled={busy} data-testid="partner-edit"><Pencil className="w-4 h-4" />Ubah</Button>
+          <Button type="button" variant="outline" onClick={toggle} disabled={busy} data-testid="partner-toggle">
             <Power className="w-4 h-4" />{isActive(partner) ? 'Nonaktifkan' : 'Aktifkan'}
           </Button>
-          <Button variant="outline" size="icon" onClick={remove} disabled={busy} title="Hapus permanen" aria-label="Hapus permanen"
+          <Button type="button" variant="outline" size="icon" onClick={remove} disabled={busy} title="Hapus permanen" aria-label="Hapus permanen"
             data-testid="partner-delete"><Trash2 className="w-4 h-4" /></Button>
         </>
       )}>
@@ -205,8 +205,8 @@ function PartnerDetail({ partner, onClose, onChanged }) {
         <div className="space-y-3" data-testid="partner-form">
           <PartnerFormFields form={form} setForm={setForm} />
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => { setForm(partnerForm(partner)); setEditing(false); }} disabled={busy}>Batal</Button>
-            <Button onClick={save} disabled={busy} data-testid="partner-save">Simpan perubahan</Button>
+            <Button type="button" variant="outline" onClick={() => { setForm(partnerForm(partner)); setEditing(false); }} disabled={busy}>Batal</Button>
+            <Button type="button" onClick={save} disabled={busy} data-testid="partner-save">Simpan perubahan</Button>
           </div>
         </div>
       ) : (
@@ -252,8 +252,8 @@ function NewPartnerDialog({ onClose, onCreated }) {
         <PartnerFormFields form={form} setForm={setForm} full={false} />
         <p className="text-xs text-muted-foreground">Alamat, kapasitas, dan catatan bisa dilengkapi dari rincian vendor setelah disimpan.</p>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={busy}>Batal</Button>
-          <Button onClick={save} disabled={busy} data-testid="partner-create-save">Simpan</Button>
+          <Button type="button" variant="outline" onClick={onClose} disabled={busy}>Batal</Button>
+          <Button type="button" onClick={save} disabled={busy} data-testid="partner-create-save">Simpan</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -292,7 +292,7 @@ export function VendorPartnersTab() {
 
   return (
     <PageLayoutSatuBaris testId="vendor-partners-tab" title="Vendor CMT" subtitle="Daftar penjahit (CMT) beserta kontak, kapasitas, dan catatan."
-      actions={<Button onClick={() => setCreating(true)} data-testid="btn-add-partner"><Plus className="w-4 h-4" />Vendor baru</Button>}
+      actions={<Button type="button" onClick={() => setCreating(true)} data-testid="btn-add-partner"><Plus className="w-4 h-4" />Vendor baru</Button>}
       filters={<>
         <SearchBox value={search} onChange={setSearch} placeholder="Cari nama / kode / kontak…" testId="partner-search" />
         <FilterChips value={status} onChange={setStatus} testId="partner-status-filter" ariaLabel="Status vendor"
@@ -301,7 +301,7 @@ export function VendorPartnersTab() {
       </>}
       tools={<>
         <ImportExportToolbar collectionKey="vendor_partners" label="Vendor CMT" onImported={load} />
-        <Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="partner-refresh">
+        <Button type="button" variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="partner-refresh">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </Button>
       </>}
@@ -314,7 +314,7 @@ export function VendorPartnersTab() {
         ) : !paged.length ? (
           rows.length ? (
             <EmptyState icon={Building2} title="Tidak ada vendor yang cocok" description="Ubah kata pencarian atau penyaring status."
-              action={<Button variant="outline" size="sm" onClick={resetFilters}><X className="w-3.5 h-3.5" />Tampilkan semua vendor</Button>} />
+              action={<Button type="button" variant="outline" size="sm" onClick={resetFilters}><X className="w-3.5 h-3.5" />Tampilkan semua vendor</Button>} />
           ) : (
             <EmptyState icon={Building2} title="Belum ada vendor CMT" description="Klik Vendor baru untuk mendaftarkan penjahit pertama." />
           )
@@ -330,7 +330,7 @@ export function VendorPartnersTab() {
               {paged.map((p) => (
                 <TableRow key={p.id} data-testid={`partner-row-${p.id}`} className={selectedId === p.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
                   <TableCell>
-                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold text-left" onClick={() => setSelectedId(p.id)}
+                    <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold text-left" onClick={() => setSelectedId(p.id)}
                       data-testid={`partner-open-${p.id}`}>{p.name}</Button>
                     {p.notes && <span className="block text-xs text-muted-foreground truncate max-w-[16rem]" title={p.notes}>{p.notes}</span>}
                   </TableCell>
@@ -416,11 +416,11 @@ function AccountDetail({ account, partners, onClose, onChanged }) {
       description={`${account.email} · ${account.partner_name || 'Vendor belum dipilih'}`}
       actions={!editing && (
         <>
-          <Button variant="outline" onClick={() => setEditing(true)} disabled={busy} data-testid="account-edit"><Pencil className="w-4 h-4" />Ubah</Button>
-          <Button variant="outline" onClick={toggle} disabled={busy} data-testid="account-toggle">
+          <Button type="button" variant="outline" onClick={() => setEditing(true)} disabled={busy} data-testid="account-edit"><Pencil className="w-4 h-4" />Ubah</Button>
+          <Button type="button" variant="outline" onClick={toggle} disabled={busy} data-testid="account-toggle">
             <Power className="w-4 h-4" />{isActive(account) ? 'Nonaktifkan' : 'Aktifkan'}
           </Button>
-          <Button variant="outline" size="icon" onClick={remove} disabled={busy} title="Hapus akun" aria-label="Hapus akun"
+          <Button type="button" variant="outline" size="icon" onClick={remove} disabled={busy} title="Hapus akun" aria-label="Hapus akun"
             data-testid="account-delete"><Trash2 className="w-4 h-4" /></Button>
         </>
       )}>
@@ -441,8 +441,8 @@ function AccountDetail({ account, partners, onClose, onChanged }) {
             </Field>
           </div>
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setEditing(false)} disabled={busy}>Batal</Button>
-            <Button onClick={save} disabled={busy} data-testid="account-edit-save">Simpan perubahan</Button>
+            <Button type="button" variant="outline" onClick={() => setEditing(false)} disabled={busy}>Batal</Button>
+            <Button type="button" onClick={save} disabled={busy} data-testid="account-edit-save">Simpan perubahan</Button>
           </div>
         </div>
       ) : (
@@ -488,8 +488,8 @@ function NewAccountDialog({ partners, onClose, onCreated }) {
           <Field label="Sandi *" className="sm:col-span-2"><GlassInput type="password" value={form.password} onChange={set('password')} data-testid="account-password" /></Field>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={busy}>Batal</Button>
-          <Button onClick={save} disabled={busy} data-testid="account-create-save"><KeyRound className="w-4 h-4" />Buat akun</Button>
+          <Button type="button" variant="outline" onClick={onClose} disabled={busy}>Batal</Button>
+          <Button type="button" onClick={save} disabled={busy} data-testid="account-create-save"><KeyRound className="w-4 h-4" />Buat akun</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -532,7 +532,7 @@ export function VendorAccountsTab() {
 
   return (
     <PageLayoutSatuBaris testId="vendor-accounts-tab" title="Akun vendor" subtitle="Login Portal Vendor untuk penjahit yang mengisi sendiri."
-      actions={<Button onClick={() => setCreating(true)} data-testid="btn-add-account"><Plus className="w-4 h-4" />Akun baru</Button>}
+      actions={<Button type="button" onClick={() => setCreating(true)} data-testid="btn-add-account"><Plus className="w-4 h-4" />Akun baru</Button>}
       filters={<>
         <SearchBox value={search} onChange={setSearch} placeholder="Cari nama / email / vendor…" testId="account-search" />
         <FilterChips value={status} onChange={setStatus} testId="account-status-filter" ariaLabel="Status akun"
@@ -546,7 +546,7 @@ export function VendorAccountsTab() {
           </SmartNativeSelect>
         )}
       </>}
-      tools={<Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="account-refresh">
+      tools={<Button type="button" variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="account-refresh">
         <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
       </Button>}
       summary={error && <Notice tone="danger" title="Gagal memuat akun vendor">{error}</Notice>}
@@ -568,7 +568,7 @@ export function VendorAccountsTab() {
               {paged.map((u) => (
                 <TableRow key={u.id} data-testid={`account-row-${u.id}`} className={selectedId === u.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
                   <TableCell>
-                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => setSelectedId(u.id)}
+                    <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => setSelectedId(u.id)}
                       data-testid={`account-open-${u.id}`}>{u.name}</Button>
                   </TableCell>
                   <TableCell className="text-sm">{u.email}</TableCell>

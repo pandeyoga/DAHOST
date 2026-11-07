@@ -224,7 +224,7 @@ export default function VendorMaterialInspection({ user }) {
     { kunci: 'batas', label: 'Batas 3 hari', isi: (s) => (isOverdue(s)
       ? <StatusBadge status="late" tone="danger" label="Terlambat" /> : <StatusBadge status="ok" tone="warning" label="Masih dalam batas" />) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
-      <Button size="sm" onClick={() => openInspect(s)} data-testid={`vendor-inspect-${s.id}`}><ClipboardCheck className="w-4 h-4" />Inspeksi</Button>) },
+      <Button type="button" size="sm" onClick={() => openInspect(s)} data-testid={`vendor-inspect-${s.id}`}><ClipboardCheck className="w-4 h-4" />Inspeksi</Button>) },
   ];
   const kolomRiwayat = [
     { kunci: 'no', label: 'Kiriman', hp: 'judul', isi: (i) => <span className="font-medium tabular-nums">{i.shipment_number}</span> },
@@ -233,13 +233,13 @@ export default function VendorMaterialInspection({ user }) {
     { kunci: 'kurang', label: 'Kurang', rata: 'kanan', isi: (i) => (
       <span className={`tabular-nums ${i.total_missing > 0 ? 'text-[hsl(var(--danger-text))] font-medium' : 'text-muted-foreground'}`}>{i.total_missing} pcs</span>) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (i) => (
-      <Button size="icon-sm" variant="ghost" onClick={() => openDetail(i)} title="Lihat rincian" aria-label="Lihat rincian"><Eye className="w-4 h-4" /></Button>) },
+      <Button type="button" size="icon-sm" variant="ghost" onClick={() => openDetail(i)} title="Lihat rincian" aria-label="Lihat rincian"><Eye className="w-4 h-4" /></Button>) },
   ];
 
   return (
     <PageLayout testId="vendor-material-inspection" title="Inspeksi material"
       subtitle="Laporkan hasil inspeksi bahan yang diterima (wajib dalam 3 hari)."
-      tools={<Button variant="outline" size="icon" onClick={() => { fetchShipments(); fetchInspections(); }} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="h-4 w-4" /></Button>}>
+      tools={<Button type="button" variant="outline" size="icon" onClick={() => { fetchShipments(); fetchInspections(); }} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="h-4 w-4" /></Button>}>
       <section className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm font-semibold text-foreground">Menunggu inspeksi ({pendingShipments.length})</p>
@@ -346,7 +346,7 @@ export default function VendorMaterialInspection({ user }) {
       {/* Rincian inspeksi — DetailPopup */}
       {showDetail && detailData && (
         <DetailPopup open onClose={() => setShowDetail(false)} judul={`Inspeksi ${detailData.shipment_number}`} testId="vendor-inspection-detail"
-          aksi={<Button size="sm" variant="outline" onClick={() => unduhPdf(detailData)} data-testid="export-inspection-pdf"><FileDown className="w-4 h-4" />Unduh PDF</Button>}>
+          aksi={<Button type="button" size="sm" variant="outline" onClick={() => unduhPdf(detailData)} data-testid="export-inspection-pdf"><FileDown className="w-4 h-4" />Unduh PDF</Button>}>
           <dl className="divide-y divide-[var(--glass-border)]">
             <BarisDetail label="Tanggal inspeksi">{fmtDate(detailData.inspection_date)}</BarisDetail>
             <BarisDetail label="Total diterima">{detailData.total_received} pcs</BarisDetail>

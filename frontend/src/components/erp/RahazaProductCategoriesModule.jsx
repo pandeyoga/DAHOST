@@ -151,19 +151,19 @@ export default function RahazaProductCategoriesModule({ token }) {
       key: 'actions', label: 'Aksi',
       render: (row) => (
         <div className="flex items-center gap-1">
-          <button onClick={(e) => { e.stopPropagation(); openEdit(row); }}
+          <button type="button" onClick={(e) => { e.stopPropagation(); openEdit(row); }}
             className="p-1.5 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground hover:text-foreground"
             title="Ubah" data-testid={`cat-edit-${row.code}`}>
             <Edit2 className="w-3.5 h-3.5" />
           </button>
           {row.active === false ? (
-            <button onClick={(e) => { e.stopPropagation(); handleReactivate(row); }}
+            <button type="button" onClick={(e) => { e.stopPropagation(); handleReactivate(row); }}
               className="p-1.5 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground hover:text-[hsl(var(--success-text))]"
               title="Aktifkan kembali" data-testid={`cat-reactivate-${row.code}`}>
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
           ) : (
-            <button onClick={(e) => { e.stopPropagation(); handleDeactivate(row); }}
+            <button type="button" onClick={(e) => { e.stopPropagation(); handleDeactivate(row); }}
               className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.15)] text-muted-foreground hover:text-[hsl(var(--danger-text))] "
               title="Nonaktifkan (ditolak bila masih dipakai)" data-testid={`cat-deactivate-${row.code}`}>
               <Ban className="w-3.5 h-3.5" />
@@ -188,7 +188,7 @@ export default function RahazaProductCategoriesModule({ token }) {
                 data-testid="cat-show-inactive" />
               Tampilkan non-aktif
             </label>
-            <Button onClick={openCreate} className="gap-1.5" data-testid="cat-create-btn">
+            <Button type="button" onClick={openCreate} className="gap-1.5" data-testid="cat-create-btn">
               <Plus className="w-4 h-4" /> Tambah Kategori
             </Button>
           </>
@@ -252,8 +252,8 @@ export default function RahazaProductCategoriesModule({ token }) {
                 placeholder="Opsional" data-testid="cat-form-description" />
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t border-[var(--glass-border)]">
-              <Button variant="ghost" onClick={() => setModalOpen(false)} data-testid="cat-form-cancel">Batal</Button>
-              <Button onClick={handleSave} disabled={saving} data-testid="cat-form-save">
+              <Button type="button" variant="ghost" onClick={() => setModalOpen(false)} data-testid="cat-form-cancel">Batal</Button>
+              <Button type="button" onClick={handleSave} disabled={saving} data-testid="cat-form-save">
                 {saving ? 'Menyimpan…' : 'Simpan'}
               </Button>
             </div>

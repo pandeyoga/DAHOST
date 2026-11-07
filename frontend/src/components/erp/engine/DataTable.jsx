@@ -364,7 +364,7 @@ export default function DataTable({
               baris={renderRows} ambilSemua={unduh.ambilSemua} testId={unduh.testId || 'datatable-unduh'} />
           )}
           {exportData && (
-            <Button
+            <Button type="button"
               variant="outline"
               onClick={exportData}
               data-testid="datatable-export-btn"
@@ -535,20 +535,20 @@ export default function DataTable({
               {(clientPage - 1) * clientPageSize + 1}–{Math.min(clientPage * clientPageSize, clientFiltered.length)} dari {clientFiltered.length}
             </span>
             <div className="flex items-center gap-1">
-              <Button variant="ghost" size="icon-sm" onClick={() => setClientPage((p) => Math.max(1, p - 1))}
+              <Button type="button" variant="ghost" size="icon-sm" onClick={() => setClientPage((p) => Math.max(1, p - 1))}
                 disabled={clientPage === 1} title="Halaman sebelumnya" aria-label="Halaman sebelumnya">
                 <ChevronLeft className="h-4 w-4" />
               </Button>
               {Array.from({ length: Math.min(5, clientTotalPages) }, (_, i) => {
                 const p = i + 1;
                 return (
-                  <Button key={p} size="icon-sm" variant={clientPage === p ? 'default' : 'ghost'}
+                  <Button type="button" key={p} size="icon-sm" variant={clientPage === p ? 'default' : 'ghost'}
                     onClick={() => setClientPage(p)} aria-label={`Halaman ${p}`} aria-current={clientPage === p ? 'page' : undefined}>
                     {p}
                   </Button>
                 );
               })}
-              <Button variant="ghost" size="icon-sm" onClick={() => setClientPage((p) => Math.min(clientTotalPages, p + 1))}
+              <Button type="button" variant="ghost" size="icon-sm" onClick={() => setClientPage((p) => Math.min(clientTotalPages, p + 1))}
                 disabled={clientPage === clientTotalPages} title="Halaman berikutnya" aria-label="Halaman berikutnya">
                 <ChevronRight className="h-4 w-4" />
               </Button>

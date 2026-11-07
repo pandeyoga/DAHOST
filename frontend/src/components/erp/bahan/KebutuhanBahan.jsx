@@ -91,7 +91,7 @@ export default function KebutuhanBahan({ portalId }) {
         <FilterChips value={scope} onChange={setScope} testId="kebutuhan-scope" ariaLabel="Penyaring PO" hideWhenEmpty={false}
           options={[{ key: 'open', label: 'Berjalan', count: counts.open }, { key: 'all', label: 'Semua', count: counts.all }]} />
       </>}
-      tools={<Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="kebutuhan-refresh">
+      tools={<Button type="button" variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="kebutuhan-refresh">
         <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
       </Button>}
       detail={detail && <NeedPanel detail={detail} onClose={() => setDetail(null)} />}
@@ -116,7 +116,7 @@ export default function KebutuhanBahan({ portalId }) {
                 <TableRow key={p.id} data-testid={`kebutuhan-po-${p.po_number}`}
                   className={detail?.po?.id === p.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
                   <TableCell className="whitespace-nowrap">
-                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => openNeed(p)}>{p.po_number}</Button>
+                    <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => openNeed(p)}>{p.po_number}</Button>
                   </TableCell>
                   <TableCell>{p.customer_name || '—'}</TableCell>
                   <TableCell>{p.vendor_name || '—'}</TableCell>
@@ -124,7 +124,7 @@ export default function KebutuhanBahan({ portalId }) {
                   <TableCell className="whitespace-nowrap">{p.po_date || p.created_at ? formatDateID(p.po_date || p.created_at) : '—'}</TableCell>
                   <TableCell><StatusBadge status={p.status} label={poStatusLabel(p.status)} tone={poStatusTone(p.status)} /></TableCell>
                   <TableCell className="text-right">
-                    <Button size="sm" variant="outline" onClick={() => openNeed(p)} data-testid={`kebutuhan-open-${p.po_number}`}>Lihat kebutuhan</Button>
+                    <Button type="button" size="sm" variant="outline" onClick={() => openNeed(p)} data-testid={`kebutuhan-open-${p.po_number}`}>Lihat kebutuhan</Button>
                   </TableCell>
                 </TableRow>
               ))}
@@ -160,7 +160,7 @@ function NeedPanel({ detail, onClose }) {
   return (
     <DetailPanel testId="kebutuhan-detail" onClose={onClose} title={`Kebutuhan bahan ${po.po_number}`}
       description={`${po.customer_name || (po.business_type === 'internal' ? 'Internal' : '—')} · ${fmtQty(po.total_qty)} pcs · sumber: ${sourceLabel}`}
-      actions={<Button variant="outline" onClick={exportCSV} disabled={!rows.length} data-testid="kebutuhan-export-csv">
+      actions={<Button type="button" variant="outline" onClick={exportCSV} disabled={!rows.length} data-testid="kebutuhan-export-csv">
         <Download className="w-4 h-4" />Unduh CSV
       </Button>}>
       <p className="text-sm text-muted-foreground" data-testid="kebutuhan-summary">

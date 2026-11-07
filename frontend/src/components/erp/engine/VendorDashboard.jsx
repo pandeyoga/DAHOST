@@ -57,12 +57,12 @@ export default function VendorDashboard({ user, onNavigate }) {
   return (
     <PageLayout testId="vendor-dashboard" title="Ringkasan vendor" subtitle={`Ikhtisar produksi ${user?.name || ''}`.trim()}
       actions={onNavigate && <>
-        <Button variant="outline" onClick={() => onNavigate('receiving')}><Package className="w-4 h-4" />Penerimaan material</Button>
-        <Button variant="outline" onClick={() => onNavigate('production-jobs')}><Briefcase className="w-4 h-4" />Job produksi</Button>
-        <Button variant="outline" onClick={() => onNavigate('progress')}><TrendingUp className="w-4 h-4" />Isi progress</Button>
-        <Button variant="outline" onClick={() => onNavigate('buyer-shipments')}><Send className="w-4 h-4" />Kirim ke DA</Button>
+        <Button type="button" variant="outline" onClick={() => onNavigate('receiving')}><Package className="w-4 h-4" />Penerimaan material</Button>
+        <Button type="button" variant="outline" onClick={() => onNavigate('production-jobs')}><Briefcase className="w-4 h-4" />Job produksi</Button>
+        <Button type="button" variant="outline" onClick={() => onNavigate('progress')}><TrendingUp className="w-4 h-4" />Isi progress</Button>
+        <Button type="button" variant="outline" onClick={() => onNavigate('buyer-shipments')}><Send className="w-4 h-4" />Kirim ke DA</Button>
       </>}
-      tools={<Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang">
+      tools={<Button type="button" variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang">
         <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
       </Button>}
       summary={<>

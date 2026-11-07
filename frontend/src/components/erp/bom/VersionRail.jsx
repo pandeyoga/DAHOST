@@ -65,7 +65,7 @@ export const VersionRail = ({
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
+                  <Button type="button"
                     size="sm"
                     variant="outline"
                     className="h-8 px-2"
@@ -146,7 +146,7 @@ export const VersionRail = ({
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <Button
+                              <Button type="button"
                                 size="sm"
                                 variant="ghost"
                                 className="h-7 w-7 p-0"

@@ -223,16 +223,16 @@ export default function VendorBuyerShipments({ user }) {
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
       <div className="flex justify-end gap-1">
         {hitung(s).progressPct < 100 && (
-          <Button size="sm" variant="outline" onClick={() => openDispatch(s)} data-testid={`vendor-dispatch-${s.id}`}><Plus className="w-3.5 h-3.5" />Dispatch</Button>
+          <Button type="button" size="sm" variant="outline" onClick={() => openDispatch(s)} data-testid={`vendor-dispatch-${s.id}`}><Plus className="w-3.5 h-3.5" />Dispatch</Button>
         )}
-        <Button size="icon-sm" variant="ghost" onClick={() => bukaRincian(s)} title="Riwayat dispatch & PDF" aria-label="Riwayat dispatch"><Eye className="w-4 h-4" /></Button>
+        <Button type="button" size="icon-sm" variant="ghost" onClick={() => bukaRincian(s)} title="Riwayat dispatch & PDF" aria-label="Riwayat dispatch"><Eye className="w-4 h-4" /></Button>
       </div>) },
   ];
 
   return (
     <PageLayout testId="vendor-buyer-shipments" title="Kirim ke DA"
       subtitle="Deklarasi kiriman barang jadi dari CMT ke gudang DA; DA memverifikasi qty dan reject."
-      actions={<Button onClick={() => { setForm({ job_id: '', shipment_date: todayWIB(), notes: '', items: [] }); setSelectedJob(null); setJobItems([]); setShowModal(true); }}
+      actions={<Button type="button" onClick={() => { setForm({ job_id: '', shipment_date: todayWIB(), notes: '', items: [] }); setSelectedJob(null); setJobItems([]); setShowModal(true); }}
         data-testid="btn-create-cmt-shipment"><Plus /> Deklarasi kirim ke DA</Button>}
       tools={<TombolUnduh namaBerkas="deklarasi-kirim-ke-da" namaLembar="Deklarasi" baris={shipments} kolom={[
         { label: 'Deklarasi', nilai: (s) => s.shipment_number }, { label: 'PO', nilai: (s) => s.po_number || '' },
@@ -293,8 +293,8 @@ export default function VendorBuyerShipments({ user }) {
             keterangan={`PO ${rincian.po_number || '—'} · ${rincian.customer_name || '—'}`}
             status={<StatusBadge status={sl} label={sl} tone={st} />}
             aksi={<>
-              {h.progressPct < 100 && <Button size="sm" variant="outline" onClick={() => { tutupRincian(); openDispatch(rincian); }}><Plus className="w-4 h-4" />Dispatch</Button>}
-              <Button size="sm" variant="outline" disabled={!list} onClick={() => downloadPDF(rincian, list)}><Download className="w-4 h-4" />Unduh PDF</Button>
+              {h.progressPct < 100 && <Button type="button" size="sm" variant="outline" onClick={() => { tutupRincian(); openDispatch(rincian); }}><Plus className="w-4 h-4" />Dispatch</Button>}
+              <Button type="button" size="sm" variant="outline" disabled={!list} onClick={() => downloadPDF(rincian, list)}><Download className="w-4 h-4" />Unduh PDF</Button>
             </>}>
             <dl className="divide-y divide-[var(--glass-border)]">
               <BarisDetail label="Dikirim / dipesan">{n(h.totalShipped)} / {n(h.totalOrdered)} pcs ({h.progressPct}%)</BarisDetail>

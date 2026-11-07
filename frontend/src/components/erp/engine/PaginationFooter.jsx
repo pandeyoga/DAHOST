@@ -82,7 +82,7 @@ export default function PaginationFooter({
       </div>
 
       <div className="flex items-center gap-1">
-        <Button variant="ghost" size="icon-sm"
+        <Button type="button" variant="ghost" size="icon-sm"
           onClick={() => onPageChange(Math.max(1, page - 1))}
           disabled={disabled || page <= 1}
           aria-label="Halaman sebelumnya" title="Halaman sebelumnya"
@@ -92,7 +92,7 @@ export default function PaginationFooter({
         </Button>
         {pageNumbers[0] > 1 && (
           <>
-            <Button variant="ghost" size="icon-sm"
+            <Button type="button" variant="ghost" size="icon-sm"
               onClick={() => onPageChange(1)}
               disabled={loading} aria-label="Halaman 1"
               data-testid={`${testIdPrefix}-page-1`}
@@ -103,7 +103,7 @@ export default function PaginationFooter({
           </>
         )}
         {pageNumbers.map((p) => (
-          <Button
+          <Button type="button"
             key={p}
             size="icon-sm"
             variant={page === p ? 'default' : 'ghost'}
@@ -121,7 +121,7 @@ export default function PaginationFooter({
             {pageNumbers[pageNumbers.length - 1] < totalPages - 1 && (
               <span className="px-1 text-muted-foreground/70 text-xs">…</span>
             )}
-            <Button variant="ghost" size="icon-sm"
+            <Button type="button" variant="ghost" size="icon-sm"
               onClick={() => onPageChange(totalPages)}
               disabled={loading} aria-label={`Halaman ${totalPages}`}
               data-testid={`${testIdPrefix}-page-last`}
@@ -130,7 +130,7 @@ export default function PaginationFooter({
             </Button>
           </>
         )}
-        <Button variant="ghost" size="icon-sm"
+        <Button type="button" variant="ghost" size="icon-sm"
           onClick={() => onPageChange(Math.min(totalPages, page + 1))}
           disabled={disabled || page >= totalPages}
           aria-label="Halaman berikutnya" title="Halaman berikutnya"

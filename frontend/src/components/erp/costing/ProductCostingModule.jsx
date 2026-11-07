@@ -215,10 +215,10 @@ export default function ProductCostingModule({ token, onNavigate }) {
       title="HPP per potong & per model"
       subtitle="HPP/pcs = BOM × harga beli rata-rata + upah CMT. Upah internal dan overhead tidak masuk HPP."
       actions={<>
-        <Button variant="outline" onClick={() => setShowSettings(true)} data-testid="costing-open-settings">
+        <Button type="button" variant="outline" onClick={() => setShowSettings(true)} data-testid="costing-open-settings">
           <Settings2 className="w-4 h-4" />Setelan margin
         </Button>
-        <Button onClick={applyAll} disabled={applyingAll || !readyCount} data-testid="costing-apply-all">
+        <Button type="button" onClick={applyAll} disabled={applyingAll || !readyCount} data-testid="costing-apply-all">
           {applyingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
           Terapkan semua yang siap{readyCount ? ` (${readyCount})` : ''}
         </Button>
@@ -236,7 +236,7 @@ export default function ProductCostingModule({ token, onNavigate }) {
           { label: 'Usulan harga (Rp)', nilai: (r) => (r.suggested_price > 0 ? Number(r.suggested_price) : '') },
           { label: 'Status', nilai: (r) => r.status || '' }, { label: 'Kekurangan', nilai: (r) => Number(r.gap_count) || 0 },
         ]} />
-        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} disabled={loading} data-testid="costing-refresh">
+        <Button type="button" title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} disabled={loading} data-testid="costing-refresh">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </Button>
       </>}
@@ -372,9 +372,9 @@ export default function ProductCostingModule({ token, onNavigate }) {
                   </TableCell>
                   <TableCell className="text-right whitespace-nowrap">
                     <span className="inline-flex items-center gap-2">
-                      <Button variant="link" size="sm" className="h-auto p-0" onClick={() => toggleDetail(r.model_id)}
+                      <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => toggleDetail(r.model_id)}
                         data-testid={`costing-detail-${r.code}`}>{openId === r.model_id ? 'Tutup' : 'Rincian'}</Button>
-                      <Button variant="outline" size="sm" onClick={() => applyModel(r.model_id)}
+                      <Button type="button" variant="outline" size="sm" onClick={() => applyModel(r.model_id)}
                         disabled={r.sizes_with_bom === 0}
                         data-testid={`costing-apply-${r.code}`}>Terapkan</Button>
                     </span>
@@ -461,11 +461,11 @@ function CostDetail({ detail, token, onClose, onApply, onReload, onGoto }) {
     <DetailPanel title={`HPP — ${m.code} · ${m.name}`} onClose={onClose} testId="costing-detail-modal"
       description={`HPP rata-rata ${fmtRp(detail.hpp_model_avg)}/pcs · usulan harga jual ${fmtRp(detail.suggested_price_model)} (target margin ${fmtPct(detail.target_margin_pct)})`}
       actions={<>
-        <Button onClick={saveLabor} disabled={saving} data-testid="costing-save-labor">
+        <Button type="button" onClick={saveLabor} disabled={saving} data-testid="costing-save-labor">
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
           Kunci upah
         </Button>
-        <Button variant="outline" onClick={onApply} data-testid="costing-detail-apply">
+        <Button type="button" variant="outline" onClick={onApply} data-testid="costing-detail-apply">
           <CheckCircle2 className="w-4 h-4" />Hitung &amp; terapkan
         </Button>
       </>}>
@@ -484,7 +484,7 @@ function CostDetail({ detail, token, onClose, onApply, onReload, onGoto }) {
             {(detail.cmt.candidates || []).length > 0 && (
               <div className="flex flex-wrap gap-1.5" data-testid="costing-cmt-candidates">
                 {detail.cmt.candidates.slice(0, 6).map((c, i) => (
-                  <Button key={i} variant="outline" size="sm" onClick={() => setCmt(String(c.rate))}
+                  <Button type="button" key={i} variant="outline" size="sm" onClick={() => setCmt(String(c.rate))}
                     title={`${c.label} — ${c.detail}`} className="text-xs">
                     {fmtRp(c.rate)} · {c.label.slice(0, 22)}
                   </Button>
@@ -538,12 +538,12 @@ function CostDetail({ detail, token, onClose, onApply, onReload, onGoto }) {
                     <span className="block text-xs text-muted-foreground">{g.message}</span>
                   </div>
                   {g.code === 'bom_missing_other_sizes' && g.copy_bom_id ? (
-                    <Button variant="link" size="sm" className="h-auto p-0 shrink-0" onClick={() => onCopyBom(g)}
+                    <Button type="button" variant="link" size="sm" className="h-auto p-0 shrink-0" onClick={() => onCopyBom(g)}
                       data-testid="costing-copy-bom">
                       Salin BOM ke {(g.target_size_ids || []).length} ukuran <ArrowRight className="w-3 h-3" />
                     </Button>
                   ) : g.target && g.target !== 'fin-hpp-produk' ? (
-                    <Button variant="link" size="sm" className="h-auto p-0 shrink-0" onClick={() => onGoto(g.target)}
+                    <Button type="button" variant="link" size="sm" className="h-auto p-0 shrink-0" onClick={() => onGoto(g.target)}
                       data-testid={`costing-fix-${g.code}`}>
                       {g.action || 'Perbaiki'} <ArrowRight className="w-3 h-3" />
                     </Button>
@@ -671,7 +671,7 @@ function CostDetail({ detail, token, onClose, onApply, onReload, onGoto }) {
         {/* riwayat penerapan */}
         <div className={section}>
           {snapshots === null ? (
-            <Button variant="link" size="sm" className="h-auto p-0" onClick={loadSnapshots} data-testid="costing-load-history">
+            <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={loadSnapshots} data-testid="costing-load-history">
               <History className="w-3.5 h-3.5" /> Lihat riwayat penerapan HPP
             </Button>
           ) : snapshots.length === 0 ? (

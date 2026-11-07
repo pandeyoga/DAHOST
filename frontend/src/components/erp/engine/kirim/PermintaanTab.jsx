@@ -71,7 +71,7 @@ export default function PermintaanTab({ portalId, userRole }) {
       title="Permintaan tambahan"
       subtitle="Permintaan vendor dan input staf; setelah disetujui menjadi kiriman tambahan yang mengurangi stok."
       actions={canDecide && (
-        <Button onClick={() => { setOpen(null); setCreating(true); }} data-testid="permintaan-new"><Plus className="w-4 h-4" />Permintaan baru</Button>
+        <Button type="button" onClick={() => { setOpen(null); setCreating(true); }} data-testid="permintaan-new"><Plus className="w-4 h-4" />Permintaan baru</Button>
       )}
       filters={<>
         <FilterChips value={status} onChange={(v) => { setPage(1); setStatus(v); }} testId="permintaan-status" ariaLabel="Status permintaan"
@@ -110,7 +110,7 @@ export default function PermintaanTab({ portalId, userRole }) {
             { label: 'Isi', nilai: (r) => r.summary || '' }, { label: 'Status', nilai: (r) => STATUS_LABEL[r.status] || r.status || '' },
             { label: 'Kiriman tambahan', nilai: (r) => r.child_shipment_number || '' }, { label: 'Tanggal', nilai: (r) => fmtDate(r.created_at) },
           ]} />
-        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="permintaan-refresh">
+        <Button type="button" title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="permintaan-refresh">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>
       </>}
       summary={error && <Notice tone="danger" title="Gagal memuat data">{error}</Notice>}
@@ -144,7 +144,7 @@ export default function PermintaanTab({ portalId, userRole }) {
                 <TableRow key={r.key} data-testid={`permintaan-row-${r.number}`}
                   className={open && `${open.src}:${open.id}` === r.key ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
                   <TableCell className="whitespace-nowrap">
-                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => { setCreating(false); setOpen({ src: r.src, id: r.id }); }}
+                    <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => { setCreating(false); setOpen({ src: r.src, id: r.id }); }}
                       data-testid={`permintaan-open-${r.number}`}>{r.number}</Button>
                     <span className="block text-xs text-muted-foreground">{r.kind_label}</span>
                   </TableCell>
@@ -161,7 +161,7 @@ export default function PermintaanTab({ portalId, userRole }) {
                     {r.material_issue_number && <span className="block text-muted-foreground">{r.material_issue_number}</span>}</TableCell>
                   <TableCell className="text-xs whitespace-nowrap">{fmtDate(r.created_at)}</TableCell>
                   <TableCell className="text-right">
-                    <Button variant="outline" size="sm" onClick={() => { setCreating(false); setOpen({ src: r.src, id: r.id }); }}>Rincian</Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => { setCreating(false); setOpen({ src: r.src, id: r.id }); }}>Rincian</Button>
                   </TableCell>
                 </TableRow>
               ))}
@@ -220,8 +220,8 @@ function PermintaanDetail({ src, id, canDecide, onClose, onChanged }) {
       title={`${r.number} · ${r.vendor_name || '—'}`}
       description={`${r.kind_label} · ${r.source_label} · PO ${r.po_number || '—'}${r.shipment_number ? ` · dari ${r.shipment_number}` : ''} · ${fmtDate(r.created_at)}`}
       actions={pending && canDecide && <>
-        <Button variant="destructive" onClick={reject} data-testid="permintaan-reject"><X className="w-4 h-4" />Tolak</Button>
-        <Button variant="success" onClick={approve} disabled={busy || !pv || pv.blocking} data-testid="permintaan-approve">
+        <Button type="button" variant="destructive" onClick={reject} data-testid="permintaan-reject"><X className="w-4 h-4" />Tolak</Button>
+        <Button type="button" variant="success" onClick={approve} disabled={busy || !pv || pv.blocking} data-testid="permintaan-approve">
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}Setujui & kirim
         </Button>
       </>}>
@@ -367,7 +367,7 @@ function PermintaanForm({ businessType, onClose, onSaved }) {
       )}
       {poId && (
         <>
-          <SectionLabel aside={<Button variant="outline" size="sm" onClick={() => setAcc((a) => [...a, { material_id: '', qty: '', uom: '' }])}
+          <SectionLabel aside={<Button type="button" variant="outline" size="sm" onClick={() => setAcc((a) => [...a, { material_id: '', qty: '', uom: '' }])}
             data-testid="permintaan-form-add-acc"><Plus className="w-3.5 h-3.5" />Tambah aksesoris</Button>}>Aksesoris</SectionLabel>
           {acc.length === 0 && <p className="text-xs text-muted-foreground">Klik "Tambah aksesoris" bila CMT kekurangan aksesoris.</p>}
           {acc.map((a, idx) => {
@@ -386,7 +386,7 @@ function PermintaanForm({ businessType, onClose, onSaved }) {
                   onChange={(e) => setAcc((rows) => rows.map((x, i) => (i === idx ? { ...x, uom: e.target.value } : x)))}>
                   {ho.options.map((o) => <option key={o.uom} value={o.uom}>{o.label}</option>)}
                 </SmartNativeSelect>
-                <Button variant="outline" size="icon" title="Hapus baris" aria-label="Hapus baris"
+                <Button type="button" variant="outline" size="icon" title="Hapus baris" aria-label="Hapus baris"
                   onClick={() => setAcc((rows) => rows.filter((_, i) => i !== idx))}><X className="w-4 h-4" /></Button>
               </div>
             );

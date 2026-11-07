@@ -88,13 +88,13 @@ export default function ImportExportPanel({ token, importType, exportType, expor
     <>
       <div className="flex gap-2">
         {importType && (
-          <Button variant="outline" onClick={() => { setShowImportModal(true); setImportResult(null); }}>
+          <Button type="button" variant="outline" onClick={() => { setShowImportModal(true); setImportResult(null); }}>
             <Upload className="w-4 h-4" />
             Impor
           </Button>
         )}
         {exportType && (
-          <Button variant="outline" onClick={handleExport} disabled={exporting} title={exportTitle} data-testid="export-excel-btn">
+          <Button type="button" variant="outline" onClick={handleExport} disabled={exporting} title={exportTitle} data-testid="export-excel-btn">
             {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />}
             {exportLabel}
           </Button>

@@ -254,7 +254,7 @@ export default function CMTOverrideDailyRecap({
         filters={<>
           {viewSwitch}
           <div className="flex items-center gap-1">
-            <Button variant="outline" size="icon" onClick={() => setDay(d => shiftDay(d, -1))}
+            <Button type="button" variant="outline" size="icon" onClick={() => setDay(d => shiftDay(d, -1))}
               title="Hari sebelumnya" aria-label="Hari sebelumnya" data-testid="cmt-recap-prev-day">
               <ChevronLeft className="h-4 w-4" />
             </Button>
@@ -262,25 +262,25 @@ export default function CMTOverrideDailyRecap({
               <DatePicker value={day} max={shiftDay(isoToday(), 1)} bolehKosong={false}
                 onChange={(v) => v && setDay(v)} testId="cmt-recap-date-input" />
             </div>
-            <Button variant="outline" size="icon" onClick={() => setDay(d => shiftDay(d, 1))}
+            <Button type="button" variant="outline" size="icon" onClick={() => setDay(d => shiftDay(d, 1))}
               title="Hari berikutnya" aria-label="Hari berikutnya" data-testid="cmt-recap-next-day">
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
           {isToday ? <StatusBadge status="today" tone="primary" label="Hari ini" testId="cmt-recap-day-label" />
-            : <Button variant="link" size="sm" onClick={() => setDay(isoToday())} data-testid="cmt-recap-today">Kembali ke hari ini</Button>}
+            : <Button type="button" variant="link" size="sm" onClick={() => setDay(isoToday())} data-testid="cmt-recap-today">Kembali ke hari ini</Button>}
         </>}
         tools={<>
-          <Button variant="outline" size="icon" onClick={() => load(day)}
+          <Button type="button" variant="outline" size="icon" onClick={() => load(day)}
             title="Muat ulang" aria-label="Muat ulang" data-testid="cmt-recap-refresh">
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </Button>
-          <Button variant="outline" onClick={() => download('xlsx')} disabled={busy === 'xlsx'} data-testid="cmt-recap-export-xlsx"
+          <Button type="button" variant="outline" onClick={() => download('xlsx')} disabled={busy === 'xlsx'} data-testid="cmt-recap-export-xlsx"
             title="Unduh Excel (isinya sama dengan layar ini)">
             {busy === 'xlsx' ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
             Excel
           </Button>
-          <Button variant="outline" onClick={() => download('pdf')} disabled={busy === 'pdf'} data-testid="cmt-recap-export-pdf"
+          <Button type="button" variant="outline" onClick={() => download('pdf')} disabled={busy === 'pdf'} data-testid="cmt-recap-export-pdf"
             title="Unduh PDF (isinya sama dengan layar ini)">
             {busy === 'pdf' ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
             PDF
@@ -309,7 +309,7 @@ export default function CMTOverrideDailyRecap({
             Hanya yang belum lengkap
           </label>
         </>}
-        tools={<Button variant="outline" onClick={askRemind} disabled={pendingRows.length === 0 || busy === 'remind'} data-testid="cmt-recap-remind">
+        tools={<Button type="button" variant="outline" onClick={askRemind} disabled={pendingRows.length === 0 || busy === 'remind'} data-testid="cmt-recap-remind">
           {busy === 'remind' ? <Loader2 className="h-4 w-4 animate-spin" /> : <BellRing className="h-4 w-4" />}
           Kirim reminder ({pendingRows.length})
         </Button>} />
@@ -375,7 +375,7 @@ export default function CMTOverrideDailyRecap({
                       </TableCell>
                     ))}
                     <TableCell className="text-right">
-                      <Button size="sm" variant="outline" className="whitespace-nowrap" onClick={() => openVendor(r, null)}
+                      <Button type="button" size="sm" variant="outline" className="whitespace-nowrap" onClick={() => openVendor(r, null)}
                         data-testid={`cmt-recap-fill-${r.vendor_id}`}>
                         <UserCog className="h-3.5 w-3.5" /> Isi
                       </Button>

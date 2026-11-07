@@ -149,14 +149,14 @@ export default function VendorProductionJobs({ user }) {
       : <span className="tabular-nums text-muted-foreground">0</span>) },
     { kunci: 'status', label: 'Status', isi: (job) => { const [l, t] = statusJob(job.status); return <StatusBadge status={job.status} label={l} tone={t} />; } },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (job) => (
-      <Button size="icon-sm" variant="ghost" onClick={() => openDetail(job)} data-testid={`vendor-job-detail-${job.job_number}`}
+      <Button type="button" size="icon-sm" variant="ghost" onClick={() => openDetail(job)} data-testid={`vendor-job-detail-${job.job_number}`}
         title="Lihat rincian" aria-label="Lihat rincian"><Eye className="w-4 h-4" /></Button>) },
   ];
 
   return (
     <PageLayout testId="vendor-production-jobs" title="Pekerjaan produksi"
       subtitle="Job dibuat dari bahan yang sudah diterima & diinspeksi; qty job = bahan diterima."
-      actions={<Button onClick={() => { setForm({ vendor_shipment_id: '', notes: '' }); setSelectedShipment(null); setShowModal(true); }}
+      actions={<Button type="button" onClick={() => { setForm({ vendor_shipment_id: '', notes: '' }); setSelectedShipment(null); setShowModal(true); }}
         disabled={receivedShipments.length === 0} data-testid="vendor-create-job-btn">
         <Plus className="w-4 h-4" /> Buat job produksi
       </Button>}
@@ -169,7 +169,7 @@ export default function VendorProductionJobs({ user }) {
           { label: 'Kemajuan (%)', nilai: (j) => Number(j.progress_pct) || 0 }, { label: 'Belum sampai di DA', nilai: (j) => Number(j.total_short_open) || 0 },
           { label: 'Status', nilai: (j) => statusJob(j.status)[0] }, { label: 'No. seri', nilai: (j) => (j.serial_numbers || []).join(', ') },
         ]} />
-        <Button variant="outline" size="icon" onClick={fetchAll} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="h-4 w-4" /></Button>
+        <Button type="button" variant="outline" size="icon" onClick={fetchAll} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="h-4 w-4" /></Button>
       </>}
       summary={<>
         {receivedShipments.length === 0 && jobs.length === 0 && (

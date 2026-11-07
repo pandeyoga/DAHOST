@@ -383,10 +383,10 @@ export default function DAReceiveFromCMTModule({ portalId }) {
             { label: 'Status', nilai: (r) => r.status_label || STATUS_LABEL[r.status] || r.status || '' },
           ]} />
         )}
-        <Button variant="outline" onClick={() => openAql(undefined, '')} data-testid="receipt-aql-open">
+        <Button type="button" variant="outline" onClick={() => openAql(undefined, '')} data-testid="receipt-aql-open">
           <Calculator className="w-4 h-4" />Hitung sampel AQL
         </Button>
-        <Button size="icon" variant="outline" onClick={fetchAll} disabled={loading} data-testid="receipt-refresh"
+        <Button type="button" size="icon" variant="outline" onClick={fetchAll} disabled={loading} data-testid="receipt-refresh"
           title="Muat ulang" aria-label="Muat ulang">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </Button>
@@ -475,17 +475,17 @@ export default function DAReceiveFromCMTModule({ portalId }) {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                          <Button size="sm" variant="outline" onClick={() => setSjReceipt(r)} title="Cetak surat jalan CMT ke DA (pilih kolom)"
+                          <Button type="button" size="sm" variant="outline" onClick={() => setSjReceipt(r)} title="Cetak surat jalan CMT ke DA (pilih kolom)"
                             data-testid={`receipt-surat-jalan-${r.receipt_code}`}><FileText className="w-3.5 h-3.5" />Surat jalan</Button>
                           {editable && (
                             <>
-                              <Button size="sm" variant="outline" onClick={() => completeQc(r)} disabled={!r.can_complete_qc || finishing[r.id]}
+                              <Button type="button" size="sm" variant="outline" onClick={() => completeQc(r)} disabled={!r.can_complete_qc || finishing[r.id]}
                                 title={r.can_complete_qc ? 'Selesaikan QC' : 'Isi qty lolos semua baris dulu'} data-testid={`receipt-complete-${r.receipt_code}`}>
                                 {finishing[r.id] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}Selesaikan QC
                               </Button>
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
-                                  <Button size="icon-sm" variant="ghost" title="Aksi lainnya" aria-label="Aksi lainnya"><MoreHorizontal className="w-4 h-4" /></Button>
+                                  <Button type="button" size="icon-sm" variant="ghost" title="Aksi lainnya" aria-label="Aksi lainnya"><MoreHorizontal className="w-4 h-4" /></Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
                                   <DropdownMenuItem onSelect={() => cancelReceipt(r)} data-testid={`receipt-cancel-${r.receipt_code}`}
@@ -672,24 +672,24 @@ function ReceiptLines({ receipt: r, editable, draft, savingLine, lineValue, setL
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1.5 flex-wrap">
                         {editable && (
-                          <Button size="sm" variant="outline" onClick={() => onSave(r, line)} disabled={!dirty || savingLine[line.id]} data-testid={`line-save-${line.id}`}>
+                          <Button type="button" size="sm" variant="outline" onClick={() => onSave(r, line)} disabled={!dirty || savingLine[line.id]} data-testid={`line-save-${line.id}`}>
                             {savingLine[line.id] && <Loader2 className="w-3.5 h-3.5 animate-spin" />}Simpan
                           </Button>
                         )}
                         {!editable && (
                           <>
-                            <Button size="icon-sm" variant="ghost" onClick={() => onKoreksi('qc', line, r)} data-testid={`line-koreksi-qc-${line.id}`}
+                            <Button type="button" size="icon-sm" variant="ghost" onClick={() => onKoreksi('qc', line, r)} data-testid={`line-koreksi-qc-${line.id}`}
                               title="Koreksi hasil QC (stok barang jadi ikut dikoreksi)" aria-label="Koreksi hasil QC"><Pencil className="w-4 h-4" /></Button>
-                            <Button size="icon-sm" variant="ghost" onClick={() => onKoreksi('deklarasi', line, r)} data-testid={`line-koreksi-deklarasi-${line.id}`}
+                            <Button type="button" size="icon-sm" variant="ghost" onClick={() => onKoreksi('deklarasi', line, r)} data-testid={`line-koreksi-deklarasi-${line.id}`}
                               title="Koreksi klaim vendor (dokumen deklarasi diperbarui, vendor diberi tahu)" aria-label="Koreksi klaim vendor"><FileWarning className="w-4 h-4" /></Button>
                           </>
                         )}
                         {!editable && Number(line.reject_qty || 0) > 0 && (
                           <>
-                            <Button size="sm" variant="outline" onClick={() => onRework(line, r, 'permak_sendiri')} data-testid={`line-permak-${line.id}`}>
+                            <Button type="button" size="sm" variant="outline" onClick={() => onRework(line, r, 'permak_sendiri')} data-testid={`line-permak-${line.id}`}>
                               <Wrench className="w-3.5 h-3.5" />Permak
                             </Button>
-                            <Button size="sm" variant="outline" onClick={() => onRework(line, r, 'retur_ke_cmt')} data-testid={`line-retur-${line.id}`}>
+                            <Button type="button" size="sm" variant="outline" onClick={() => onRework(line, r, 'retur_ke_cmt')} data-testid={`line-retur-${line.id}`}>
                               <Undo2 className="w-3.5 h-3.5" />Retur CMT
                             </Button>
                           </>
@@ -709,7 +709,7 @@ function ReceiptLines({ receipt: r, editable, draft, savingLine, lineValue, setL
             ? 'Isi lolos dan ditolak lalu simpan per baris. Setelah semua baris terisi, Selesaikan QC aktif: stok barang jadi naik, barang ditolak masuk karantina, tagihan CMT dibuat. Bila lolos + ditolak kurang dari klaim vendor, sisanya dicatat sebagai barang belum sampai dan vendor diberi tahu.'
             : 'QC sudah selesai — angka tidak bisa diubah langsung. Pakai koreksi hasil QC atau koreksi klaim vendor; semua koreksi wajib beralasan dan tercatat.'}
         </p>
-        <Button size="sm" variant="outline" onClick={onAql} data-testid={`receipt-aql-${r.receipt_code}`}>
+        <Button type="button" size="sm" variant="outline" onClick={onAql} data-testid={`receipt-aql-${r.receipt_code}`}>
           <Calculator className="w-3.5 h-3.5" />Hitung sampel AQL
         </Button>
       </div>
@@ -745,10 +745,10 @@ function RejectTable({ rows, onRework }) {
               <TableCell className="text-muted-foreground">{r.reject_reason || '—'}</TableCell>
               <TableCell className="text-right">
                 <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                  <Button size="sm" variant="outline" data-testid={`rq-permak-${r.receipt_line_id}`} onClick={() => onRework(line, rc, 'permak_sendiri')}>
+                  <Button type="button" size="sm" variant="outline" data-testid={`rq-permak-${r.receipt_line_id}`} onClick={() => onRework(line, rc, 'permak_sendiri')}>
                     <Wrench className="w-3.5 h-3.5" />Permak sendiri
                   </Button>
-                  <Button size="sm" variant="outline" data-testid={`rq-retur-${r.receipt_line_id}`} onClick={() => onRework(line, rc, 'retur_ke_cmt')}>
+                  <Button type="button" size="sm" variant="outline" data-testid={`rq-retur-${r.receipt_line_id}`} onClick={() => onRework(line, rc, 'retur_ke_cmt')}>
                     <Undo2 className="w-3.5 h-3.5" />Retur ke CMT
                   </Button>
                 </div>
@@ -786,7 +786,7 @@ function ShortTable({ rows, onResolve }) {
               <TableCell className="text-right tabular-nums font-medium text-[hsl(var(--danger-text))]">{fmtNum(s.qty_open ?? s.qty_short)}</TableCell>
               <TableCell className="whitespace-nowrap text-muted-foreground">{s.receipt_code || '—'}</TableCell>
               <TableCell className="text-right">
-                <Button size="sm" variant="outline" data-testid={`short-resolve-${s.short_number}`} onClick={() => onResolve(s)}>Selesaikan</Button>
+                <Button type="button" size="sm" variant="outline" data-testid={`short-resolve-${s.short_number}`} onClick={() => onResolve(s)}>Selesaikan</Button>
               </TableCell>
             </TableRow>
           ))}

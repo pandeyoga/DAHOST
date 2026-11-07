@@ -125,7 +125,7 @@ export default function RahazaModelsAndBOMModule({ token, user, headers, userRol
   return (
     <PageLayout testId={`models-bom-module-${variant}`} title={V.title} subtitle={V.subtitle}
       actions={variant === 'rnd' && (
-        <Button variant="outline" onClick={runMasterSync} disabled={syncing} data-testid="master-sync-btn"
+        <Button type="button" variant="outline" onClick={runMasterSync} disabled={syncing} data-testid="master-sync-btn"
           title="Samakan varian SSOT dengan BOM & barang jadi, buat style RnD untuk tiap model, tautkan karyawan↔user">
           <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />{syncing ? 'Menyinkron…' : 'Sinkron master'}
         </Button>
@@ -133,7 +133,7 @@ export default function RahazaModelsAndBOMModule({ token, user, headers, userRol
       summary={<p className="text-sm text-muted-foreground" data-testid="models-bom-tab-hint">
         {current.hint}
         {V.crossLink && (<>
-          {' '}<Button variant="link" size="sm" className="h-auto p-0" onClick={() => onNavigate && onNavigate(V.crossLink.module)}
+          {' '}<Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => onNavigate && onNavigate(V.crossLink.module)}
             data-testid={`master-produk-crosslink-${variant}`}>{V.crossLink.label} <ArrowUpRight className="w-3.5 h-3.5" /></Button>
         </>)}
       </p>}>

@@ -279,10 +279,10 @@ export default function VendorMaterialRequests({ user }) {
       const canResubmit = isAdditional && row.status === 'Rejected' && !row.resubmitted_as_id;
       return (
         <div className="flex justify-end gap-1">
-          <Button size="icon-sm" variant="ghost" onClick={() => openDetail(row)} title="Lihat rincian" aria-label="Lihat rincian"
+          <Button type="button" size="icon-sm" variant="ghost" onClick={() => openDetail(row)} title="Lihat rincian" aria-label="Lihat rincian"
             data-testid={`vendor-mr-detail-btn-${row.id}`}><Eye className="w-4 h-4" /></Button>
           {canResubmit && (
-            <Button size="icon-sm" variant="ghost" onClick={() => openResubmit(row)} title="Ajukan ulang" aria-label="Ajukan ulang"
+            <Button type="button" size="icon-sm" variant="ghost" onClick={() => openResubmit(row)} title="Ajukan ulang" aria-label="Ajukan ulang"
               data-testid={`vendor-mr-resubmit-btn-${row.id}`}><RotateCcw className="w-4 h-4" /></Button>
           )}
         </div>
@@ -294,11 +294,11 @@ export default function VendorMaterialRequests({ user }) {
     <PageLayoutSatuBaris testId="vendor-material-requests" title="Permintaan material"
       subtitle="Permintaan bahan tambahan (kurang kirim) dan pengganti (cacat) ke DA."
       actions={isAdditional ? (
-        <Button onClick={() => openShipmentPicker('ADDITIONAL')} data-testid="vendor-create-manual-request-btn">
+        <Button type="button" onClick={() => openShipmentPicker('ADDITIONAL')} data-testid="vendor-create-manual-request-btn">
           <Plus className="w-4 h-4" /> Buat permintaan manual
         </Button>
       ) : (
-        <Button onClick={() => openShipmentPicker('REPLACEMENT')} data-testid="vendor-create-replacement-request-btn">
+        <Button type="button" onClick={() => openShipmentPicker('REPLACEMENT')} data-testid="vendor-create-replacement-request-btn">
           <Plus className="w-4 h-4" /> Buat permintaan pengganti
         </Button>
       )}
@@ -361,11 +361,11 @@ export default function VendorMaterialRequests({ user }) {
           status={(() => { const [l, t] = statusLabel(selectedReq.status); return <StatusBadge status={selectedReq.status} label={l} tone={t} />; })()}
           aksi={<>
             {selectedReq.status === 'Rejected' && isAdditional && !selectedReq.resubmitted_as_id && (
-              <Button size="sm" onClick={() => openResubmit(selectedReq)} data-testid="vendor-mr-resubmit-detail-btn">
+              <Button type="button" size="sm" onClick={() => openResubmit(selectedReq)} data-testid="vendor-mr-resubmit-detail-btn">
                 <RotateCcw className="w-4 h-4" /> Ajukan ulang dengan revisi
               </Button>
             )}
-            <Button size="sm" variant="outline" onClick={() => downloadPDF(selectedReq)} data-testid="vendor-mr-pdf-btn">
+            <Button type="button" size="sm" variant="outline" onClick={() => downloadPDF(selectedReq)} data-testid="vendor-mr-pdf-btn">
               <FileText className="w-4 h-4" /> Unduh PDF
             </Button>
           </>}>
@@ -437,7 +437,7 @@ export default function VendorMaterialRequests({ user }) {
                 { kunci: 'baris', label: 'Baris', rata: 'kanan', isi: (s) => (s.items || []).length },
                 { kunci: 'tgl', label: 'Tanggal', isi: (s) => fmtDate(s.shipment_date) },
                 { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
-                  <Button size="sm" variant="outline" onClick={() => pickShipmentForManual(s)} data-testid={`vendor-pick-shipment-${s.id}`}>
+                  <Button type="button" size="sm" variant="outline" onClick={() => pickShipmentForManual(s)} data-testid={`vendor-pick-shipment-${s.id}`}>
                     <Truck className="w-4 h-4" />Pilih
                   </Button>) },
               ]}
