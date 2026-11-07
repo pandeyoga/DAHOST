@@ -157,7 +157,7 @@ export default function WMSBarcodeModule() {
   const kolomMaster = [
     { kunci: 'code', label: 'Kode', hp: 'judul', isi: (it) => <span className="tabular-nums">{it.code}</span> },
     { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (it) => it.name },
-    { kunci: 'unit', label: 'Satuan', isi: (it) => <span className="text-muted-foreground">{it.unit}</span> },
+    { kunci: 'unit', label: 'Satuan', hp: false, isi: (it) => <span className="text-muted-foreground">{it.unit}</span> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (
       <Button size="icon-sm" variant="outline" onClick={() => addItem(it)} title="Tambah ke daftar cetak"
         aria-label={`Tambah ${it.code} ke daftar cetak`} data-testid={`barcode-add-${it.code}`}>
@@ -175,7 +175,7 @@ export default function WMSBarcodeModule() {
         )}
       </div>) },
     { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (r) => r.name },
-    { kunci: 'varian', label: 'Varian', isi: (r) => [r.color, r.size].filter(Boolean).join(' · ') || '—' },
+    { kunci: 'varian', label: 'Varian', hp: false, isi: (r) => [r.color, r.size].filter(Boolean).join(' · ') || '—' },
     { kunci: 'copies', label: 'Lembar', rata: 'kanan', isi: (r) => (
       <Input type="number" min="1" max="200" value={r.copies} onChange={e => setCopies(r.code, e.target.value)}
         className="ml-auto h-8 w-20 text-right" aria-label={`Jumlah lembar ${r.code}`} data-testid={`barcode-copies-${r.code}`} />) },
@@ -185,11 +185,11 @@ export default function WMSBarcodeModule() {
   ];
   const kolomRiwayat = [
     { kunci: 'job', label: 'No. cetak', hp: 'judul', isi: (h) => <span className="tabular-nums" data-testid={`barcode-history-${h.job_number}`}>{h.job_number}</span> },
-    { kunci: 'kind', label: 'Jenis', isi: (h) => (h.kind === 'fg' ? (h.size === 'hangtag' ? 'Barang jadi · hangtag' : 'Barang jadi') : 'Bahan') },
-    { kunci: 'source', label: 'Sumber', isi: (h) => (h.source === 'produksi' ? 'Dari produksi' : 'Manual') },
-    { kunci: 'items', label: 'Item', rata: 'kanan', isi: (h) => <span className="tabular-nums">{angka(h.item_count)}</span> },
+    { kunci: 'kind', label: 'Jenis', hp: false, isi: (h) => (h.kind === 'fg' ? (h.size === 'hangtag' ? 'Barang jadi · hangtag' : 'Barang jadi') : 'Bahan') },
+    { kunci: 'source', label: 'Sumber', hp: false, isi: (h) => (h.source === 'produksi' ? 'Dari produksi' : 'Manual') },
+    { kunci: 'items', label: 'Item', hp: false, rata: 'kanan', isi: (h) => <span className="tabular-nums">{angka(h.item_count)}</span> },
     { kunci: 'labels', label: 'Lembar', rata: 'kanan', isi: (h) => <span className="tabular-nums font-medium">{angka(h.total_labels)}</span> },
-    { kunci: 'by', label: 'Oleh', isi: (h) => h.created_by_name || '—' },
+    { kunci: 'by', label: 'Oleh', hp: false, isi: (h) => h.created_by_name || '—' },
     { kunci: 'at', label: 'Waktu', hp: 'keterangan', isi: (h) => formatDateTimeID(h.created_at) },
   ];
   const jenisRiwayat = (h) => (h.kind === 'fg' ? (h.size === 'hangtag' ? 'Barang jadi · hangtag' : 'Barang jadi') : 'Bahan');

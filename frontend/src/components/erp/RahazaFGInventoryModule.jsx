@@ -170,7 +170,7 @@ export default function RahazaFGInventoryModule({ token }) {
     { kunci: 'code', label: 'Kode', hp: 'judul', isi: (m) => <span className="tabular-nums">{m.code}</span> },
     { kunci: 'name', label: 'Nama produk', hp: 'keterangan', isi: (m) => <span className="text-foreground">{m.name}</span> },
     { kunci: 'qty', label: 'Stok (pcs)', rata: 'kanan', isi: (m) => <span className="tabular-nums font-medium">{pcs(stocks[m.id] || 0)}</span> },
-    { kunci: 'status', label: 'Status', isi: (m) => statusStok(stocks[m.id] || 0) },
+    { kunci: 'status', label: 'Status', hp: false, isi: (m) => statusStok(stocks[m.id] || 0) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (m) => ((stocks[m.id] || 0) > 0 ? (
       <Button size="sm" variant="outline" onClick={() => bukaForm(m.id)} data-testid={`fg-issue-quick-${m.code}`}>
         <MinusCircle />Keluarkan
@@ -179,24 +179,26 @@ export default function RahazaFGInventoryModule({ token }) {
   ];
   const kolomPengeluaran = [
     { kunci: 'issue_number', label: 'No. pengeluaran', hp: 'judul', isi: (i) => <span className="tabular-nums">{i.issue_number}</span> },
-    { kunci: 'fg', label: 'Produk', hp: 'keterangan', isi: (i) => (
+    { kunci: 'fg', label: 'Produk', hp: false, isi: (i) => (
       <div className="min-w-0"><div className="tabular-nums text-xs text-muted-foreground">{i.fg_code}</div><div className="truncate">{i.fg_name}</div></div>) },
+    { kunci: 'hp-ket', label: '', hp: 'keterangan', lebar: 'hidden', isi: (i) => [i.fg_code, i.fg_name].filter(Boolean).join(' · ') },
     { kunci: 'qty', label: 'Qty (pcs)', rata: 'kanan', isi: (i) => <span className="tabular-nums font-medium">{pcs(i.qty)}</span> },
-    { kunci: 'reason', label: 'Alasan', isi: (i) => { const a = alasanDari(i.reason); return <StatusBadge status={i.reason} label={a.label} tone={a.tone} />; } },
-    { kunci: 'customer', label: 'Tujuan', isi: (i) => i.customer_name || '—' },
-    { kunci: 'ref', label: 'Referensi', isi: (i) => i.reference_number || '—' },
-    { kunci: 'by', label: 'Diproses oleh', isi: (i) => i.issued_by || '—' },
+    { kunci: 'reason', label: 'Alasan', hp: false, isi: (i) => { const a = alasanDari(i.reason); return <StatusBadge status={i.reason} label={a.label} tone={a.tone} />; } },
+    { kunci: 'customer', label: 'Tujuan', hp: false, isi: (i) => i.customer_name || '—' },
+    { kunci: 'ref', label: 'Referensi', hp: false, isi: (i) => i.reference_number || '—' },
+    { kunci: 'by', label: 'Diproses oleh', hp: false, isi: (i) => i.issued_by || '—' },
     { kunci: 'tgl', label: 'Tanggal', isi: (i) => <span className="whitespace-nowrap">{formatDateID(i.issued_at)}</span> },
   ];
   const kolomRiwayat = [
-    { kunci: 'waktu', label: 'Waktu', hp: 'keterangan', isi: (mv) => <span className="whitespace-nowrap">{formatDateTimeID(mv.timestamp)}</span> },
+    { kunci: 'waktu', label: 'Waktu', hp: false, isi: (mv) => <span className="whitespace-nowrap">{formatDateTimeID(mv.timestamp)}</span> },
     { kunci: 'fg_code', label: 'Kode', hp: 'judul', isi: (mv) => <span className="tabular-nums">{mv.fg_code}</span> },
-    { kunci: 'arah', label: 'Arah', isi: (mv) => (mv.direction === 'in'
+    { kunci: 'hp-ket', label: '', hp: 'keterangan', lebar: 'hidden', isi: (mv) => `${formatDateTimeID(mv.timestamp)} · ${sumberDari(mv.source).label}` },
+    { kunci: 'arah', label: 'Arah', hp: false, isi: (mv) => (mv.direction === 'in'
       ? <StatusBadge status="masuk" label="Masuk" tone="success" /> : <StatusBadge status="keluar" label="Keluar" tone="danger" />) },
     { kunci: 'qty', label: 'Qty (pcs)', rata: 'kanan', isi: (mv) => <span className="tabular-nums font-medium">{mv.direction === 'in' ? '' : '−'}{pcs(mv.qty)}</span> },
-    { kunci: 'sumber', label: 'Sumber', isi: (mv) => { const s = sumberDari(mv.source); return <StatusBadge status={mv.source} label={s.label} tone={s.tone} />; } },
-    { kunci: 'ref', label: 'WO / SJ / referensi', isi: (mv) => mv.wo_number || mv.shipment_number || mv.reference_number || '—' },
-    { kunci: 'notes', label: 'Keterangan', isi: (mv) => <span className="line-clamp-1 text-muted-foreground">{mv.notes || '—'}</span> },
+    { kunci: 'sumber', label: 'Sumber', hp: false, isi: (mv) => { const s = sumberDari(mv.source); return <StatusBadge status={mv.source} label={s.label} tone={s.tone} />; } },
+    { kunci: 'ref', label: 'WO / SJ / referensi', hp: false, isi: (mv) => mv.wo_number || mv.shipment_number || mv.reference_number || '—' },
+    { kunci: 'notes', label: 'Keterangan', hp: false, isi: (mv) => <span className="line-clamp-1 text-muted-foreground">{mv.notes || '—'}</span> },
   ];
 
   const unduh = activeTab === 'stock' ? (

@@ -193,7 +193,7 @@ function StructureTab({ token }) {
   const kolomGedung = [
     { kunci: 'code', label: 'Kode', hp: 'judul', isi: (b) => <span className="tabular-nums font-medium" data-testid="building-card">{b.code}</span> },
     { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (b) => b.name },
-    { kunci: 'address', label: 'Alamat', isi: (b) => <span className="text-muted-foreground">{b.address || '—'}</span> },
+    { kunci: 'address', label: 'Alamat', hp: false, isi: (b) => <span className="text-muted-foreground">{b.address || '—'}</span> },
     { kunci: 'zone_count', label: 'Zona', rata: 'kanan', isi: (b) => <span className="tabular-nums">{fmt(b.zone_count)}</span> },
     { kunci: 'rack_count', label: 'Rak', rata: 'kanan', isi: (b) => <span className="tabular-nums">{fmt(b.rack_count)}</span> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (b) => (
@@ -202,7 +202,7 @@ function StructureTab({ token }) {
   const kolomZona = [
     { kunci: 'code', label: 'Kode', hp: 'judul', isi: (z) => <span className="tabular-nums font-medium" data-testid="zone-card">{z.code}</span> },
     { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (z) => z.name },
-    { kunci: 'zone_type', label: 'Jenis zona', isi: (z) => (
+    { kunci: 'zone_type', label: 'Jenis zona', hp: false, isi: (z) => (
       <StatusBadge status={z.zone_type} label={ZONE_TYPE_LABELS[z.zone_type] || 'Umum'} tone={ZONE_TYPE_TONE[z.zone_type] || 'muted'} />) },
     { kunci: 'rack_count', label: 'Rak', rata: 'kanan', isi: (z) => <span className="tabular-nums">{fmt(z.rack_count)}</span> },
     { kunci: 'location', label: 'Lokasi gudang (opname)', isi: (z) => (
@@ -218,8 +218,8 @@ function StructureTab({ token }) {
   const kolomRak = [
     { kunci: 'code', label: 'Kode', hp: 'judul', isi: (r) => <span className="tabular-nums font-medium" data-testid="rack-card">{r.code}</span> },
     { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (r) => r.name },
-    { kunci: 'susunan', label: 'Tingkat × slot', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.num_shelves} × {r.slots_per_shelf}</span> },
-    { kunci: 'total', label: 'Total posisi', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmt(r.total_positions)}</span> },
+    { kunci: 'susunan', label: 'Tingkat × slot', hp: false, rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.num_shelves} × {r.slots_per_shelf}</span> },
+    { kunci: 'total', label: 'Total posisi', hp: false, rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmt(r.total_positions)}</span> },
     { kunci: 'terisi', label: 'Terisi', rata: 'kanan', isi: (r) => (
       <span className="tabular-nums">{fmt(r.occupied_positions)} <span className="text-muted-foreground">({r.occupancy_pct ?? 0}%)</span></span>) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
@@ -440,20 +440,21 @@ function UnitsTab({ token }) {
 
   const kolomSatuan = [
     { kunci: 'code', label: 'Kode', hp: 'judul', isi: (u) => <span className="font-medium" data-testid="unit-card">{u.code}</span> },
-    { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (u) => u.name },
-    { kunci: 'symbol', label: 'Simbol', isi: (u) => u.symbol || '—' },
-    { kunci: 'category', label: 'Kategori', isi: (u) => kategoriSatuan(u.category) },
-    { kunci: 'is_base', label: 'Satuan dasar', isi: (u) => (u.is_base ? <StatusBadge status="dasar" label="Dasar" tone="primary" /> : <span className="text-muted-foreground">—</span>) },
+    { kunci: 'hp-ket', label: '', hp: 'keterangan', lebar: 'hidden', isi: (u) => `${u.name} · ${kategoriSatuan(u.category)}${u.is_base ? ' · satuan dasar' : ''}` },
+    { kunci: 'name', label: 'Nama', hp: false, isi: (u) => u.name },
+    { kunci: 'symbol', label: 'Simbol', hp: false, isi: (u) => u.symbol || '—' },
+    { kunci: 'category', label: 'Kategori', hp: false, isi: (u) => kategoriSatuan(u.category) },
+    { kunci: 'is_base', label: 'Satuan dasar', hp: false, isi: (u) => (u.is_base ? <StatusBadge status="dasar" label="Dasar" tone="primary" /> : <span className="text-muted-foreground">—</span>) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (u) => (
       <Button variant="ghost" size="icon-sm" onClick={() => { setGalat(''); setForm({ ...u }); setModal({ type: 'unit', data: u }); }}
         title="Ubah satuan" aria-label={`Ubah satuan ${u.code}`}><Pencil /></Button>) },
   ];
   const kolomKonversi = [
-    { kunci: 'from', label: 'Dari', hp: 'judul', isi: (c) => <span className="font-medium" data-testid="conversion-row">{c.from_unit_code}</span> },
-    { kunci: 'to', label: 'Ke', isi: (c) => <span className="font-medium">{c.to_unit_code}</span> },
-    { kunci: 'factor', label: 'Faktor', rata: 'kanan', isi: (c) => <span className="tabular-nums">{String(c.factor).replace('.', ',')}</span> },
-    { kunci: 'rumus', label: 'Rumus', hp: 'keterangan', isi: (c) => <span className="text-muted-foreground">1 {c.from_unit_code} = {String(c.factor).replace('.', ',')} {c.to_unit_code}</span> },
-    { kunci: 'notes', label: 'Catatan', isi: (c) => <span className="text-muted-foreground">{c.notes || '—'}</span> },
+    { kunci: 'from', label: 'Dari', hp: false, isi: (c) => <span className="font-medium" data-testid="conversion-row">{c.from_unit_code}</span> },
+    { kunci: 'to', label: 'Ke', hp: false, isi: (c) => <span className="font-medium">{c.to_unit_code}</span> },
+    { kunci: 'factor', label: 'Faktor', hp: false, rata: 'kanan', isi: (c) => <span className="tabular-nums">{String(c.factor).replace('.', ',')}</span> },
+    { kunci: 'rumus', label: 'Rumus', hp: 'judul', isi: (c) => <span className="text-muted-foreground">1 {c.from_unit_code} = {String(c.factor).replace('.', ',')} {c.to_unit_code}</span> },
+    { kunci: 'notes', label: 'Catatan', hp: false, isi: (c) => <span className="text-muted-foreground">{c.notes || '—'}</span> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (c) => (
       <Button variant="ghost" size="icon-sm" onClick={() => { setGalat(''); setForm({ ...c }); setModal({ type: 'conversion', data: c }); }}
         title="Ubah konversi" aria-label={`Ubah konversi ${c.from_unit_code} ke ${c.to_unit_code}`}><Pencil /></Button>) },
@@ -680,9 +681,9 @@ function ReceivingTab({ token }) {
 
   const kolom = [
     { kunci: 'ref', label: 'Ref', hp: 'judul', isi: (m) => <span className="tabular-nums" data-testid="pending-movement-row">{m.ref_number}</span> },
-    { kunci: 'type', label: 'Jenis', isi: (m) => <StatusBadge status={m.type} label={TYPE_LABEL[m.type] || 'Lainnya'} tone={TYPE_TONE[m.type] || 'muted'} /> },
+    { kunci: 'type', label: 'Jenis', hp: false, isi: (m) => <StatusBadge status={m.type} label={TYPE_LABEL[m.type] || 'Lainnya'} tone={TYPE_TONE[m.type] || 'muted'} /> },
     { kunci: 'material', label: 'Barang', hp: 'keterangan', isi: (m) => m.material_name },
-    { kunci: 'source', label: 'Sumber', isi: (m) => <span className="text-muted-foreground">{m.source_ref || '—'}</span> },
+    { kunci: 'source', label: 'Sumber', hp: false, isi: (m) => <span className="text-muted-foreground">{m.source_ref || '—'}</span> },
     { kunci: 'progres', label: 'Terscan / diharapkan', rata: 'kanan', isi: (m) => <span className="tabular-nums">{fmt(m.scanned_qty || 0)} / {fmt(m.expected_qty)} {m.unit}</span> },
     { kunci: 'status', label: 'Status', isi: (m) => { const s = moveStatus(m.status); return <StatusBadge status={m.status} label={s.label} tone={s.tone} />; } },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (m) => (
@@ -976,21 +977,22 @@ function AuditTrailTab({ token }) {
 
   const lokasiDari = (r) => (r.building_code ? `${r.building_code}/${r.zone_code}/${r.rack_code}` : (r.location_code || '—'));
   const kolom = [
-    { kunci: 'waktu', label: 'Waktu', hp: 'keterangan', isi: (r) => <span className="whitespace-nowrap" data-testid="audit-row">{formatDateTimeID(r.timestamp)}</span> },
+    { kunci: 'waktu', label: 'Waktu', hp: false, isi: (r) => <span className="whitespace-nowrap" data-testid="audit-row">{formatDateTimeID(r.timestamp)}</span> },
     { kunci: 'session', label: 'Sesi', hp: 'judul', isi: (r) => <span className="tabular-nums">{r.session_ref || '—'}</span> },
-    { kunci: 'operator', label: 'Operator', isi: (r) => r.created_by || '—' },
-    { kunci: 'lokasi', label: 'Lokasi', isi: (r) => lokasiDari(r) },
-    { kunci: 'barcode', label: 'Barcode posisi', isi: (r) => <span className="tabular-nums">{r.position_barcode || '—'}</span> },
-    { kunci: 'material', label: 'Barang', isi: (r) => r.fg_code || '—' },
+    { kunci: 'hp-ket', label: '', hp: 'keterangan', lebar: 'hidden', isi: (r) => `${formatDateTimeID(r.timestamp)} · ${r.fg_code || '—'}` },
+    { kunci: 'operator', label: 'Operator', hp: false, isi: (r) => r.created_by || '—' },
+    { kunci: 'lokasi', label: 'Lokasi', hp: false, isi: (r) => lokasiDari(r) },
+    { kunci: 'barcode', label: 'Barcode posisi', hp: false, isi: (r) => <span className="tabular-nums">{r.position_barcode || '—'}</span> },
+    { kunci: 'material', label: 'Barang', hp: false, isi: (r) => r.fg_code || '—' },
     { kunci: 'arah', label: 'Arah', isi: (r) => { const a = arahDari(r.direction); return <StatusBadge status={r.direction} label={a.label} tone={a.tone} />; } },
     { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (r) => <span className="tabular-nums font-medium">{fmt(r.qty || 0)}</span> },
-    { kunci: 'notes', label: 'Catatan', isi: (r) => <span className="line-clamp-1 max-w-[16rem] text-muted-foreground" title={r.notes}>{r.notes || '—'}</span> },
+    { kunci: 'notes', label: 'Catatan', hp: false, isi: (r) => <span className="line-clamp-1 max-w-[16rem] text-muted-foreground" title={r.notes}>{r.notes || '—'}</span> },
   ];
   const kolomOperator = [
     { kunci: 'operator', label: 'Operator', hp: 'judul', isi: (op) => <span data-testid="audit-operator-row">{op.operator}</span> },
     { kunci: 'count', label: 'Penyesuaian', rata: 'kanan', isi: (op) => <span className="tabular-nums">{fmt(op.count)}</span> },
-    { kunci: 'surplus', label: 'Lebih', rata: 'kanan', isi: (op) => <span className="tabular-nums">{fmt(op.surplus_qty)}</span> },
-    { kunci: 'shortage', label: 'Kurang', rata: 'kanan', isi: (op) => <span className="tabular-nums">{fmt(op.shortage_qty)}</span> },
+    { kunci: 'surplus', label: 'Lebih', hp: false, rata: 'kanan', isi: (op) => <span className="tabular-nums">{fmt(op.surplus_qty)}</span> },
+    { kunci: 'shortage', label: 'Kurang', hp: false, rata: 'kanan', isi: (op) => <span className="tabular-nums">{fmt(op.shortage_qty)}</span> },
     { kunci: 'last', label: 'Terakhir aktif', hp: 'keterangan', isi: (op) => formatDateTimeID(op.last_activity) },
   ];
   const kolomHotspot = [

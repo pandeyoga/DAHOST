@@ -179,12 +179,13 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
 
   const kolomRiwayat = [
     { kunci: 'number', label: 'Nomor PR', hp: 'judul', isi: (h) => <span className="tabular-nums" data-testid={`shopping-history-row-${h.number}`}>{h.number}</span> },
-    { kunci: 'week', label: 'Minggu', isi: (h) => h.week },
+    { kunci: 'hp-ket', label: '', hp: 'keterangan', lebar: 'hidden', isi: (h) => `Minggu ${h.week} · ${h.lines} baris` },
+    { kunci: 'week', label: 'Minggu', hp: false, isi: (h) => h.week },
     { kunci: 'status', label: 'Status', isi: (h) => { const s = statusPr(h.status); return <StatusBadge status={h.status} label={s.label} tone={s.tone} />; } },
-    { kunci: 'lines', label: 'Baris', rata: 'kanan', isi: (h) => <span className="tabular-nums">{h.lines}</span> },
+    { kunci: 'lines', label: 'Baris', hp: false, rata: 'kanan', isi: (h) => <span className="tabular-nums">{h.lines}</span> },
     { kunci: 'total', label: 'Perkiraan nilai', rata: 'kanan', isi: (h) => <span className="tabular-nums">{rp(h.total_estimated)}</span> },
-    { kunci: 'by', label: 'Diminta oleh', isi: (h) => h.requested_by_name || '—' },
-    { kunci: 'barang', label: 'Barang', hp: 'keterangan', isi: (h) => (
+    { kunci: 'by', label: 'Diminta oleh', hp: false, isi: (h) => h.requested_by_name || '—' },
+    { kunci: 'barang', label: 'Barang', hp: false, isi: (h) => (
       <span className="line-clamp-2 text-xs text-muted-foreground">
         {(h.materials || []).map(m => `${m.code || ''} ${num(m.qty)} ${m.uom}`).join(' · ')}
       </span>) },

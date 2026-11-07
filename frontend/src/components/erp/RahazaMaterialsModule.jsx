@@ -227,17 +227,18 @@ export default function RahazaMaterialsModule({ token }) {
         </span>
       );
     } },
-    { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (r) => <span className="text-foreground">{r.name}</span> },
-    { kunci: 'type', label: 'Jenis', isi: (r) => jenisLabel(r.type) },
-    { kunci: 'unit', label: 'Satuan', isi: (r) => <span className="text-muted-foreground">{r.unit}</span> },
-    { kunci: 'min', label: 'Min stok', rata: 'kanan', isi: (r) => (
+    { kunci: 'hp-ket', label: '', hp: 'keterangan', lebar: 'hidden', isi: (r) => [r.name, jenisLabel(r.type), r.unit].filter(Boolean).join(' · ') },
+    { kunci: 'name', label: 'Nama', hp: false, isi: (r) => <span className="text-foreground">{r.name}</span> },
+    { kunci: 'type', label: 'Jenis', hp: false, isi: (r) => jenisLabel(r.type) },
+    { kunci: 'unit', label: 'Satuan', hp: false, isi: (r) => <span className="text-muted-foreground">{r.unit}</span> },
+    { kunci: 'min', label: 'Min stok', hp: false, rata: 'kanan', isi: (r) => (
       <span className="tabular-nums text-muted-foreground">
         {minStokTeks(r) || '—'}
         {r.min_stock_percentage ? <span className="ml-1 text-xs">({r.min_stock_percentage}%)</span> : null}
       </span>
     ) },
-    { kunci: 'color', label: 'Warna / komposisi', isi: (r) => <span className="text-muted-foreground">{r.color || readField(r, FIELD.composition) || '—'}</span> },
-    { kunci: 'active', label: 'Status', isi: (r) => (r.active
+    { kunci: 'color', label: 'Warna / komposisi', hp: false, isi: (r) => <span className="text-muted-foreground">{r.color || readField(r, FIELD.composition) || '—'}</span> },
+    { kunci: 'active', label: 'Status', hp: false, isi: (r) => (r.active
       ? <StatusBadge status="aktif" label="Aktif" tone="success" />
       : <StatusBadge status="nonaktif" label="Nonaktif" tone="muted" />) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (

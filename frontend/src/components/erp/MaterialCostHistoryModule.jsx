@@ -115,16 +115,16 @@ export default function MaterialCostHistoryModule({ token }) {
   const memuat = loadingMats || loadingData;
 
   const kolom = [
-    { kunci: 'waktu', label: 'Waktu', hp: 'keterangan', isi: (r) => <span className="whitespace-nowrap">{formatDateTimeID(r.created_at)}</span> },
+    { kunci: 'waktu', label: 'Waktu', hp: selectedId ? 'judul' : 'keterangan', isi: (r) => <span className="whitespace-nowrap">{formatDateTimeID(r.created_at)}</span> },
     ...(!selectedId ? [{ kunci: 'barang', label: 'Barang', hp: 'judul', isi: (r) => (
       <div className="min-w-0">
         <div className="tabular-nums text-xs text-muted-foreground">{r.material_code}</div>
         <div className={r.material_missing ? 'text-[hsl(var(--warning-text))]' : 'text-foreground'}>{r.material_name}</div>
       </div>) }] : []),
-    { kunci: 'sumber', label: 'Sumber', isi: (r) => { const x = sumberDari(r); return <StatusBadge status="sumber" label={x.label} tone={x.tone} />; } },
-    { kunci: 'qty_in', label: 'Qty masuk', rata: 'kanan', isi: (r) => <span className="tabular-nums">{num(r.qty_in)}</span> },
-    { kunci: 'cost_in', label: 'Harga masuk', rata: 'kanan', isi: (r) => <span className="tabular-nums">{rp(r.unit_cost_in)}</span> },
-    { kunci: 'old', label: 'Harga lama', rata: 'kanan', isi: (r) => <span className="tabular-nums text-muted-foreground">{rp(r.old_unit_cost)}</span> },
+    { kunci: 'sumber', label: 'Sumber', hp: false, isi: (r) => { const x = sumberDari(r); return <StatusBadge status="sumber" label={x.label} tone={x.tone} />; } },
+    { kunci: 'qty_in', label: 'Qty masuk', hp: false, rata: 'kanan', isi: (r) => <span className="tabular-nums">{num(r.qty_in)}</span> },
+    { kunci: 'cost_in', label: 'Harga masuk', hp: false, rata: 'kanan', isi: (r) => <span className="tabular-nums">{rp(r.unit_cost_in)}</span> },
+    { kunci: 'old', label: 'Harga lama', hp: false, rata: 'kanan', isi: (r) => <span className="tabular-nums text-muted-foreground">{rp(r.old_unit_cost)}</span> },
     { kunci: 'new', label: 'Harga baru', rata: 'kanan', isi: (r) => <span className="tabular-nums font-medium">{rp(r.new_unit_cost)}</span> },
     { kunci: 'pct', label: 'Perubahan', rata: 'kanan', isi: (r) => (r.change_pct == null
       ? <span className="text-xs text-muted-foreground">harga pertama</span>
@@ -132,7 +132,7 @@ export default function MaterialCostHistoryModule({ token }) {
           data-testid={`cost-change-${r.id}`}>
           {r.change_pct > 0 ? '+' : ''}{String(r.change_pct).replace('.', ',')}%
         </span>) },
-    { kunci: 'oleh', label: 'Oleh', isi: (r) => (
+    { kunci: 'oleh', label: 'Oleh', hp: false, isi: (r) => (
       <div className="text-muted-foreground">
         {r.actor_name}
         {r.notes && <span className="block line-clamp-1 text-xs" title={r.notes}>{r.notes}</span>}
