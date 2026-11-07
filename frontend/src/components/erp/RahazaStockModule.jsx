@@ -321,7 +321,7 @@ export default function RahazaStockModule({ token }) {
         )}
       </>}>
       {!termuat ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat stok…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat stok…</p>
       ) : (
         <DataTable
           tableId="stock"
@@ -382,7 +382,7 @@ export default function RahazaStockModule({ token }) {
               accessor: (r) => r.location_code ? `${r.location_code} · ${r.location_name || ''}` : '',
               render: (r) => r.location_code
                 ? <span className="text-sm">{r.location_code} · {r.location_name}</span>
-                : <span className="text-sm text-muted-foreground">Belum ada baris stok</span> },
+                : <span className="text-sm text-muted-foreground">Tanpa lokasi (stok 0)</span> },
             { key: 'qty', label: 'Qty', align: 'right', sortable: true,
               render: (r) => (
                 <span className={`tabular-nums font-medium whitespace-nowrap ${Number(r.qty) < 0 ? 'text-[hsl(var(--danger-text))]' : ''}`}>

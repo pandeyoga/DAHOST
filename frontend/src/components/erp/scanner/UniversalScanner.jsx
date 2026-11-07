@@ -43,6 +43,7 @@ import Modal from '../Modal';
 import { useCameraScanner, useWedgeInput } from './useScanner';
 import { normalizeScanCode, scanFeedback } from './scanCode';
 import ScanResult from './ScanResult';
+import { Notice } from '../moduleAtoms';
 
 // ─── Internal: Camera + Manual modal contents ─────────────────────────────────
 function ScannerModalContent({ onScan, onClose, title = 'Scan barcode', continuous = false, feedback }) {
@@ -150,11 +151,9 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan barcode', continuo
             />
           </div>
           {continuous && (
-            <div
-              className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs border ${
-                justRead
-                  ? 'bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.35)] text-[hsl(var(--success-text))]'
-                  : 'bg-[var(--glass-bg)] border-[var(--glass-border)] text-muted-foreground'}`}
+            <p
+              className={`flex items-center justify-between px-1 text-sm ${
+                justRead ? 'text-[hsl(var(--success-text))]' : 'text-muted-foreground'}`}
               data-testid="scanner-continuous-status"
             >
               <span className="inline-flex items-center gap-1.5 tabular-nums truncate">
@@ -162,7 +161,7 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan barcode', continuo
                 {reads.last || 'Siap — scan berkali-kali tanpa menutup kamera'}
               </span>
               <span className="font-semibold shrink-0 ml-2" data-testid="scanner-continuous-count">{reads.count} scan</span>
-            </div>
+            </p>
           )}
           <div className="text-center text-xs text-muted-foreground">
             {cameraState === 'starting' && (
@@ -178,11 +177,7 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan barcode', continuo
             )}
           </div>
           {cameraError && (
-            <div
-              className="flex items-start gap-2 rounded-lg border border-[hsl(var(--destructive)/0.2)] bg-[hsl(var(--destructive)/0.1)] p-2.5 text-sm text-[hsl(var(--danger-text))]"
-              data-testid="scanner-camera-error"
-            >
-              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+            <Notice tone="danger" icon={AlertTriangle} testId="scanner-camera-error">
               <span>
                 {cameraError}
                 <Button type="button" variant="link" className="ml-2 h-auto p-0" onClick={() => switchTab('manual')}
@@ -190,7 +185,7 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan barcode', continuo
                   Ketik kode saja
                 </Button>
               </span>
-            </div>
+            </Notice>
           )}
         </div>
       )}
@@ -211,7 +206,8 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan barcode', continuo
           <Button
             type="submit"
             disabled={scanLoading || !manual.trim()}
-            className="w-full h-11"
+            size="lg"
+            className="w-full"
             data-testid="scanner-manual-submit"
           >
             {scanLoading ? (

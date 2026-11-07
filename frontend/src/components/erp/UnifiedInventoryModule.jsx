@@ -311,7 +311,7 @@ export default function UnifiedInventoryModule() {
       )}
     >
       {loading && !items.length ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat stok…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat stok…</p>
       ) : (
         <TabelData kolom={titipan ? kolomTitipan : kolomDa} baris={items} onKlikBaris={bukaRiwayat}
           kunci={(i) => (titipan ? i.stock_key : `${i.id || i.material_id || 'baris'}-${i.location_id || ''}`)}

@@ -463,7 +463,7 @@ function ScanTab({ token }) {
               ]} />
           </div>
           <div className="divide-y divide-[var(--glass-border)] max-h-[60vh] overflow-y-auto" data-testid="scan-out-lines">
-            {lines.length === 0 && <div className="px-3 py-6 text-center text-sm text-muted-foreground">Belum ada scan.</div>}
+            {lines.length === 0 && <EmptyState className="py-6" title="Belum ada scan hari ini" description="Scan pertama membuat lembar hari ini otomatis." />}
             {lines.map((l) => {
               const voided = l.status !== 'active';
               const red = !voided && (l.flags || []).length > 0;

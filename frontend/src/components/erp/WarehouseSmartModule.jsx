@@ -69,7 +69,7 @@ function KotakCari({ value, onChange, placeholder, testId }) {
 
 // Alat (unduh, muat ulang) ditaruh di akhir `filters` dalam div ml-auto: bila `filters` dan `tools` sama-sama diisi,
 // Toolbar bersama memeras kotak cari di HP 390 px (lihat Permintaan komponen bersama di laporan).
-const Memuat = ({ teks }) => <p className="py-10 text-center text-sm text-muted-foreground">{teks}</p>;
+const Memuat = ({ teks }) => <p className="py-6 text-center text-sm text-muted-foreground">{teks}</p>;
 
 // ─── Tab 1: Alert stok & rak ──────────────────────────────────────────────────
 function AlertsTab() {

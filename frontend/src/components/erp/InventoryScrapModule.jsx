@@ -221,7 +221,7 @@ export default function InventoryScrapModule({ token }) {
         <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={25} onPageChange={setPage} />
       ) : null}>
       {loading && movements.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat…</p>
       ) : (
         <TabelData kolom={kolom} baris={paged} kunci={(m) => m.id} testId="adj-table"
           kosong={<EmptyState title="Belum ada riwayat penyesuaian"

@@ -130,7 +130,7 @@ export default function RahazaMaterialReturnModule({ deepLinkParams, portalId })
     >
       <GlassCard className="p-0 overflow-hidden">
         {loading && !rows.length ? (
-          <p className="py-10 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Memuat…</p>
+          <p className="py-6 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Memuat…</p>
         ) : rows.length === 0 ? (
           <EmptyState icon={Undo2} title="Belum ada retur material" description="Retur dibuat dari pengeluaran material atau surat jalan ke CMT yang bahannya sudah keluar." />
         ) : (

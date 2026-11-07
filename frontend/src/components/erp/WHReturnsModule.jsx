@@ -33,7 +33,6 @@ import {
   Package, Plus, Search, RefreshCw, CheckCircle, Truck, RotateCcw, ChevronDown,
   PackageOpen, XCircle, Trash2, ClipboardCheck, DownloadCloud, Link2, Zap, MapPin, Undo2, Info,
 } from 'lucide-react';
-import OnwardCTA from './OnwardCTA';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import { formatRupiah } from '@/lib/format';
@@ -612,17 +611,18 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
           )}
           {/* RC-FLOW-UX-11b: retur asal Toko selesai → kembali ke Marketing untuk credit note */}
           {data.source_marketing_return_id && onNavigate && (
-            <OnwardCTA
-              onNavigate={onNavigate}
-              title="Barang sudah masuk stok — langkah berikutnya"
-              actions={[
-                { module: 'marketing-after-sales', params: { tab: 'returns', return_id: data.source_marketing_return_id },
-                  label: 'Terbitkan credit note & refund', primary: true,
-                  hint: 'Kembali ke portal Toko untuk menerbitkan credit note', testId: 'onward-issue-credit-note' },
-                { module: 'wms-stock-hub', params: { tab: 'stock' }, label: 'Cek stok barang jadi',
-                  hint: 'Periksa stok setelah barang masuk', testId: 'onward-check-stock' },
-              ]}
-            />
+            // Dulu OnwardCTA bersama (judul huruf besar); tujuan, parameter, dan tombolnya sama.
+            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground" data-testid="onward-cta">
+              <span>Barang sudah masuk stok — langkah berikutnya:</span>
+              <Button size="sm" title="Kembali ke portal Toko untuk menerbitkan credit note" data-testid="onward-issue-credit-note"
+                onClick={() => onNavigate('marketing-after-sales', { tab: 'returns', return_id: data.source_marketing_return_id })}>
+                Terbitkan credit note & refund
+              </Button>
+              <Button size="sm" variant="outline" title="Periksa stok setelah barang masuk" data-testid="onward-check-stock"
+                onClick={() => onNavigate('wms-stock-hub', { tab: 'stock' })}>
+                Cek stok barang jadi
+              </Button>
+            </div>
           )}
         </section>
       )}
@@ -898,14 +898,17 @@ export default function WHReturnsModule({ token, onNavigate }) {
         )}
       </>}
       footer={(
-        // RC-FLOW-UX — setelah barang retur diterima → cek/perbarui stok (Alur 8 selesai)
-        <OnwardCTA
-          onNavigate={onNavigate}
-          title="Setelah barang retur diterima"
-          actions={[
-            { module: 'wms-stock-hub', label: 'Lihat & sesuaikan stok', icon: Package, primary: true, hint: 'Barang retur layak jual masuk kembali ke stok' },
-          ]}
-        />
+        // RC-FLOW-UX — setelah barang retur diterima → cek/perbarui stok (Alur 8 selesai).
+        // Dulu OnwardCTA bersama (judul huruf besar "SETELAH BARANG RETUR DITERIMA"); tujuannya sama.
+        onNavigate ? (
+          <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground" data-testid="onward-cta">
+            <span>Setelah barang retur diterima:</span>
+            <Button size="sm" variant="outline" onClick={() => onNavigate('wms-stock-hub')}
+              title="Barang retur layak jual masuk kembali ke stok" data-testid="onward-cta-wms-stock-hub">
+              <Package />Lihat & sesuaikan stok
+            </Button>
+          </div>
+        ) : null
       )}>
       {ringkasan ? (
         dashLoading && !summary ? (

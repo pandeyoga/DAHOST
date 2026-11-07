@@ -88,7 +88,7 @@ export default function NegativeStockModule({ token }) {
         )}
       </>}>
       {loading && rows.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat…</p>
       ) : (
         <TabelData kolom={kolom} baris={rows} kunci={(r) => r.id || `${r.material_id}-${r.location_id}`} testId="negative-stock-table"
           kosong={<div data-testid="negative-stock-empty"><EmptyState title="Tidak ada stok minus"
