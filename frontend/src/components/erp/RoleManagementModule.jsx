@@ -18,18 +18,19 @@
  *   DELETE /api/roles/{id}
  *
  * Daftar portal & menu diambil dari SSOT navigasi `portal-shell/portalNav.js`.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): daftar peran = tabel (kartu ringkas di HP) + unduh Excel/CSV; pengaturan satu
+ * peran (5 langkah: identitas, portal, izin, menu, riwayat) dibuka sebagai popup form panjang (dulu panel kanan
+ * di samping daftar); tambah peran = FormPopup; hapus & buang perubahan lewat confirmDialog; bandingkan = popup
+ * (dulu panel samping). Nama peran tampil dari keterangannya (dulu kode `admin_gudang`). Logika simpan tidak berubah.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Shield, Plus, Trash2, Search, Save, RotateCcw, Loader2, Users, LayoutGrid,
-  KeyRound, History, Copy, TriangleAlert, EyeOff, Check, Columns3, X, Info,
+  Plus, Trash2, Search, RotateCcw, Loader2, History, Check, Columns3, X, Pencil, Eye, RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
   Accordion, AccordionItem, AccordionTrigger, AccordionContent,
 } from '@/components/ui/accordion';
@@ -37,28 +38,28 @@ import {
   Collapsible, CollapsibleContent, CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
-} from '@/components/ui/dialog';
-import {
-  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter,
-  AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel,
-} from '@/components/ui/alert-dialog';
-import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '@/components/ui/select';
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
-import { GlassCard } from '@/components/ui/glass';
-import { PageHeader, EmptyState } from './moduleAtoms';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { formatDateTimeID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import { PORTAL_NAV, PORTAL_LABEL } from './portal-shell/portalNav';
 import GranularModuleRow from './GranularModuleRow';
+import { labelPeran } from './akses/labelPeran';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
+const instan = (ts) => (typeof ts === 'string' && /T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(ts) ? `${ts}Z` : ts);
 
 /* Preset cepat — dihitung dari metadata `action` katalog, bukan daftar hardcode. */
 const PRESETS = [
   { id: 'view', label: 'Lihat saja', actions: ['view'], hint: 'Hanya membaca data' },
   { id: 'operator', label: 'Operator', actions: ['view', 'input', 'create', 'edit'], hint: 'Baca + tambah/ubah data harian' },
-  { id: 'approver', label: 'Approver', actions: ['view', 'approve', 'export'], hint: 'Baca + setujui dokumen + export' },
+  { id: 'approver', label: 'Penyetuju', actions: ['view', 'approve', 'export'], hint: 'Baca + setujui dokumen + unduh' },
   { id: 'full', label: 'Penuh', actions: ['view', 'input', 'create', 'edit', 'delete', 'manage', 'approve', 'run', 'export'], hint: 'Semua izin' },
 ];
 
@@ -97,11 +98,11 @@ export default function RoleManagementModule({ token, userRole }) {
   const [permSearch, setPermSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [newRole, setNewRole] = useState({ name: '', description: '' });
-  const [confirmDelete, setConfirmDelete] = useState(null);
   const [auditRows, setAuditRows] = useState([]);
   const [auditOpen, setAuditOpen] = useState(false);
   const [compareWith, setCompareWith] = useState('');
   const [compareOpen, setCompareOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
 
   const headers = useMemo(() => ({
     'Content-Type': 'application/json', Authorization: `Bearer ${token}`,
@@ -152,6 +153,7 @@ export default function RoleManagementModule({ token, userRole }) {
   );
 
   const selectRole = (role) => {
+    setEditorOpen(true);
     setSelectedId(role.id);
     setPermSearch('');
     setAuditOpen(false);
@@ -346,6 +348,7 @@ export default function RoleManagementModule({ token, userRole }) {
       setShowCreate(false);
       setNewRole({ name: '', description: '' });
       await load(body.id);
+      setEditorOpen(true);
     } catch (e) {
       toast.error('Gagal membuat peran', { description: e.message });
     } finally {
@@ -353,16 +356,21 @@ export default function RoleManagementModule({ token, userRole }) {
     }
   };
 
-  const removeRole = async () => {
-    const role = confirmDelete;
+  const removeRole = async (role) => {
     if (!role) return;
+    const ok = await confirmDialog({
+      title: `Hapus peran "${labelPeran(role.name, role.description)}"?`,
+      body: 'Peran beserta izinnya akan dihapus permanen. Peran yang masih dipakai pengguna tidak bisa dihapus.',
+      confirmLabel: 'Hapus', danger: true,
+    });
+    if (!ok) return;
     setSaving(true);
     try {
       const res = await fetch(`${API}/api/roles/${role.id}`, { method: 'DELETE', headers });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`);
       toast.success(`Peran "${role.name}" dihapus`);
-      setConfirmDelete(null);
+      setEditorOpen(false);
       setSelectedId(null);
       await load(null);
     } catch (e) {
@@ -383,7 +391,7 @@ export default function RoleManagementModule({ token, userRole }) {
     }
   };
 
-  /* ── daftar peran (kolom kiri) ───────────────────────────────────────── */
+  /* ── daftar peran (tabel) ────────────────────────────────────────────── */
   const filteredRoles = useMemo(() => {
     const q = roleSearch.trim().toLowerCase();
     if (!q) return roles;
@@ -392,627 +400,512 @@ export default function RoleManagementModule({ token, userRole }) {
   }, [roles, roleSearch]);
 
   const compareRole = roles.find((r) => r.id === compareWith) || null;
+  const namaPeran = (r) => labelPeran(r?.name, r?.description);
+  const labelIzin = useMemo(() => Object.fromEntries(allPerms.map((p) => [p.key, p.description || p.key])), [allPerms]);
+  const jumlahPortal = (r) => ((r.portals || []).length ? `${r.portals.length} portal` : 'Bawaan sistem');
+
+  const tutupEditor = async () => {
+    if (dirty && canEdit) {
+      const ok = await confirmDialog({
+        title: 'Buang perubahan?', body: 'Perubahan pada peran ini belum disimpan dan akan hilang.',
+        confirmLabel: 'Buang perubahan', danger: true,
+      });
+      if (!ok) return;
+      if (selected) selectRole(selected);
+    }
+    setEditorOpen(false);
+  };
+
+  const bukaBandingkan = () => {
+    if (!compareWith) {
+      const other = roles.find((r) => r.id !== selectedId);
+      if (other) setCompareWith(other.id);
+    }
+    setCompareOpen(true);
+  };
+
+  const kolomPeran = [
+    { kunci: 'nama', label: 'Peran', hp: 'judul', isi: (r) => (
+      <div className="min-w-0" data-testid={`role-item-${r.name}`}>
+        <p className="font-medium text-foreground">{namaPeran(r)}</p>
+        {r.is_system && <p className="text-xs text-muted-foreground">Peran sistem</p>}
+      </div>) },
+    { kunci: 'pengguna', label: 'Pengguna', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.user_count || 0}</span> },
+    { kunci: 'portal', label: 'Portal', isi: (r) => <span className="text-sm">{jumlahPortal(r)}</span> },
+    { kunci: 'izin', label: 'Izin', rata: 'kanan', isi: (r) => <span className="tabular-nums">{(r.permission_keys || []).length}</span> },
+    { kunci: 'menu', label: 'Menu disembunyikan', rata: 'kanan', isi: (r) => <span className="tabular-nums">{(r.hidden_modules || []).length}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+      <Button size="sm" variant="outline" onClick={() => selectRole(r)} data-testid={`role-open-${r.name}`}>
+        {canEdit ? <><Pencil />Atur</> : <><Eye />Lihat</>}
+      </Button>) },
+  ];
 
   /* ── render ──────────────────────────────────────────────────────────── */
   return (
-    <div className="space-y-4" data-testid="role-access-page">
-      <PageHeader
-        icon={Shield}
-        title="Peran & Hak Akses"
-        subtitle="Satu tempat untuk semuanya: portal yang boleh dibuka, menu yang disembunyikan, dan izin aksi/approval."
-        testId="role-access-header"
-        actions={(
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => {
-                      if (!compareWith) {
-                        const other = roles.find((r) => r.id !== selectedId);
-                        if (other) setCompareWith(other.id);
-                      }
-                      setCompareOpen(true);
-                    }}
-                    disabled={!selected} data-testid="compare-roles-btn">
-              <Columns3 /> Bandingkan
-            </Button>
-            {canEdit && (
-              <Button size="sm" onClick={() => setShowCreate(true)} data-testid="add-role-btn">
-                <Plus /> Tambah Peran
-              </Button>
-            )}
-          </div>
+    <PageLayout testId="role-access-page" headerTestId="role-access-header" title="Peran & hak akses"
+      subtitle="Satu tempat untuk portal yang boleh dibuka, menu yang disembunyikan, dan izin aksi/persetujuan tiap peran."
+      actions={canEdit && (
+        <Button onClick={() => setShowCreate(true)} data-testid="add-role-btn"><Plus />Tambah peran</Button>
+      )}
+      filters={(
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={roleSearch} onChange={(e) => setRoleSearch(e.target.value)} placeholder="Cari peran"
+            className="pl-8" data-testid="role-search-input" />
+        </div>
+      )}
+      tools={<>
+        <TombolUnduh namaBerkas="peran-dan-hak-akses" namaLembar="Peran" baris={filteredRoles} testId="role-unduh" kolom={[
+          { label: 'Peran', nilai: (r) => namaPeran(r) }, { label: 'Kode peran', nilai: (r) => r.name },
+          { label: 'Pengguna', nilai: (r) => r.user_count || 0 },
+          { label: 'Portal', nilai: (r) => ((r.portals || []).length ? r.portals.map((p) => PORTAL_LABEL?.[p] || p).join(', ') : 'Bawaan sistem') },
+          { label: 'Jumlah izin', nilai: (r) => (r.permission_keys || []).length },
+          { label: 'Menu disembunyikan', nilai: (r) => (r.hidden_modules || []).length },
+        ]} />
+        <Button variant="outline" size="icon" onClick={() => load()} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}>
+      <Notice tone="info" testId="role-access-notice">
+        Selama daftar izin sebuah peran <b>masih kosong</b>, sistem memakai aturan bawaan (tidak ada fitur yang mati).
+        Begitu minimal satu izin dicentang, peran itu mengikuti daftar izinnya.
+      </Notice>
+
+      {loading && roles.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat peran…</p>
+      ) : (
+        <TabelData kolom={kolomPeran} baris={filteredRoles} onKlikBaris={selectRole} testId="role-list"
+          kosong={<EmptyState title={roles.length ? 'Tidak ada peran yang cocok' : 'Belum ada peran'}
+            description={roles.length ? 'Ubah kata pencarian.' : 'Buat peran pertama untuk mulai mengatur akses.'}
+            testId="role-detail-empty" />} />
+      )}
+
+      {/* ── Popup atur peran (5 langkah) ─────────────────────────────────── */}
+      <FormPopup open={editorOpen && !!selected} onClose={tutupEditor} ukuran="panjang" testId="role-detail-panel"
+        judul={<span data-testid="role-detail-name">{selected ? namaPeran(selected) : '—'}</span>}
+        keterangan={(
+          <span data-testid="role-detail-summary">
+            Boleh membuka {draft.portals.length ? `${draft.portals.length} portal` : 'portal bawaan sistem'} · {draft.permissions.length} izin
+            {' '}· {draft.hidden_modules.length} menu disembunyikan · dipakai {selected?.user_count || 0} pengguna
+            {dirty && <span className="ml-1 font-medium text-[hsl(var(--warning-text))]" data-testid="role-dirty-badge">· belum disimpan</span>}
+          </span>
         )}
-      />
+        onSimpan={save} menyimpan={saving} bisaSimpan={canEdit && dirty} labelSimpan="Simpan"
+        aksiKiri={<>
+          <Button type="button" variant="outline" size="sm" onClick={bukaBandingkan} data-testid="compare-roles-btn">
+            <Columns3 />Bandingkan
+          </Button>
+          {canEdit && (
+            <Button type="button" variant="outline" size="sm" disabled={!dirty || saving}
+              onClick={() => selected && selectRole(selected)} data-testid="role-reset-btn">
+              <RotateCcw />Batalkan perubahan
+            </Button>
+          )}
+          {canEdit && selected && !selected.is_system && (
+            <Button type="button" variant="destructive" size="sm" onClick={() => removeRole(selected)} data-testid="role-delete-btn">
+              <Trash2 />Hapus
+            </Button>
+          )}
+        </>}>
+        {!canEdit && (
+          <Notice tone="info">Hanya Super Admin yang boleh mengubah konfigurasi peran. Anda melihat mode baca.</Notice>
+        )}
 
-      <div className="flex items-start gap-2 rounded-lg border border-border bg-[var(--glass-bg)] px-3 py-2"
-           data-testid="role-access-notice">
-        <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          Matriks izin yang lama sudah dihapus. Semua konfigurasi akses kini di layar ini.
-          Selama daftar izin sebuah peran <span className="font-medium text-foreground">masih kosong</span>,
-          sistem memakai aturan bawaan lama (tidak ada fitur yang mati). Begitu Anda mencentang minimal satu izin,
-          peran itu mengikuti daftar izin di bawah.
-        </p>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-[minmax(240px,300px)_1fr]">
-        {/* ── KIRI: daftar peran ──────────────────────────────────────── */}
-        <GlassCard className="self-start p-3 lg:sticky lg:top-4" hover={false}>
-          <div className="relative mb-3">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={roleSearch}
-              onChange={(e) => setRoleSearch(e.target.value)}
-              placeholder="Cari peran..."
-              className="pl-8"
-              data-testid="role-search-input"
-            />
+        {/* 1. Identitas */}
+        <section className="space-y-3">
+          <SectionTitle step="1" title="Identitas peran" desc="Kode dipakai pada akun pengguna; keterangan tampil sebagai nama peran." />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Isian label="Kode peran" htmlFor="role-name">
+              <Input id="role-name" value={draft.name} disabled={!canEdit}
+                onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+                placeholder="cth. approver_material" data-testid="role-name" />
+            </Isian>
+            <Isian label="Keterangan" htmlFor="role-desc">
+              <Input id="role-desc" value={draft.description} disabled={!canEdit}
+                onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
+                placeholder="cth. Menyetujui pengeluaran material" data-testid="role-description" />
+            </Isian>
           </div>
-          <div className="max-h-[62vh] space-y-1.5 overflow-y-auto pr-1" data-testid="role-list">
-            {loading && Array.from({ length: 6 }).map((_, i) => (
-              <Skeleton key={i} className="h-14 w-full rounded-lg" />
-            ))}
-            {!loading && filteredRoles.length === 0 && (
-              <p className="px-2 py-6 text-center text-xs text-muted-foreground">Tidak ada peran yang cocok.</p>
+          {canEdit && roles.length > 1 && (
+            <Isian label="Salin pengaturan dari peran lain" petunjuk="Portal, menu, dan izin disalin; belum tersimpan sampai Anda menekan Simpan.">
+              <Select onValueChange={copyFromRole}>
+                <SelectTrigger className="w-full sm:w-72" data-testid="copy-from-role">
+                  <SelectValue placeholder="Pilih peran sumber…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {roles.filter((r) => r.id !== selectedId).map((r) => (
+                    <SelectItem key={r.id} value={r.id}>
+                      {namaPeran(r)} ({(r.permission_keys || []).length} izin)
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Isian>
+          )}
+        </section>
+
+        {/* 2. Akses portal */}
+        <section className="space-y-3 border-t border-[var(--glass-border)] pt-4">
+          <SectionTitle
+            step="2" title="Portal yang boleh dibuka"
+            desc="Kosongkan semua bila ingin memakai aturan bawaan sistem untuk peran ini."
+            right={canEdit && (
+              <div className="flex gap-1.5">
+                <Button type="button" variant="outline" size="sm" data-testid="portal-select-all"
+                  onClick={() => setDraft((d) => ({ ...d, portals: Object.keys(PORTAL_NAV) }))}>
+                  Pilih semua
+                </Button>
+                <Button type="button" variant="outline" size="sm" data-testid="portal-clear"
+                  onClick={() => setDraft((d) => ({ ...d, portals: [] }))}>
+                  Pakai bawaan
+                </Button>
+              </div>
             )}
-            {!loading && filteredRoles.map((r) => {
-              const active = r.id === selectedId;
+          />
+          <div className="flex flex-wrap gap-2" data-testid="role-portals">
+            {Object.keys(PORTAL_NAV).map((pid) => {
+              const on = draft.portals.includes(pid);
               return (
                 <button
-                  key={r.id}
-                  type="button"
-                  onClick={() => selectRole(r)}
-                  data-testid={`role-item-${r.name}`}
-                  aria-current={active ? 'true' : undefined}
-                  className={`w-full rounded-lg border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                    active
-                      ? 'border-primary bg-primary/10'
-                      : 'border-border bg-transparent hover:border-primary/40 hover:bg-[var(--glass-bg-hover)]'
+                  key={pid} type="button" disabled={!canEdit}
+                  onClick={() => togglePortal(pid)}
+                  data-testid={`role-portal-${pid}`}
+                  aria-pressed={on}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 ${
+                    on
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-[var(--glass-border)] bg-[var(--card-surface)] text-foreground hover:border-[hsl(var(--primary)/0.4)]'
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-sm font-semibold text-foreground">{r.name}</span>
-                    {r.is_system && <Badge variant="outline" className="shrink-0 text-[10px]">sistem</Badge>}
-                  </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
-                    <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" />{r.user_count || 0}</span>
-                    <span className="inline-flex items-center gap-1"><LayoutGrid className="h-3 w-3" />{(r.portals || []).length || 'bawaan'}</span>
-                    <span className="inline-flex items-center gap-1"><KeyRound className="h-3 w-3" />{(r.permission_keys || []).length}</span>
-                    {(r.hidden_modules || []).length > 0 && (
-                      <span className="inline-flex items-center gap-1"><EyeOff className="h-3 w-3" />{r.hidden_modules.length}</span>
-                    )}
-                  </div>
+                  {on && <Check className="h-3.5 w-3.5" />}
+                  {PORTAL_LABEL?.[pid] || pid}
                 </button>
               );
             })}
           </div>
-        </GlassCard>
+        </section>
 
-        {/* ── KANAN: detail peran ─────────────────────────────────────── */}
-        {!selected && !loading ? (
-          <GlassCard className="p-6" hover={false}>
-            <EmptyState
-              icon={Shield}
-              title="Belum ada peran dipilih"
-              description="Pilih peran di kiri, atau buat peran baru untuk mulai mengatur akses."
-              testId="role-detail-empty"
-            />
-          </GlassCard>
-        ) : (
-          <div className="space-y-4" data-testid="role-detail-panel">
-            {/* Ringkasan + tombol simpan */}
-            <GlassCard className="p-4" hover={false}>
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h3 className="truncate text-lg font-semibold text-foreground" data-testid="role-detail-name">
-                      {selected?.name || '—'}
-                    </h3>
-                    {dirty && (
-                      <Badge variant="outline" className="border-amber-500/50 text-amber-600 dark:text-amber-400"
-                             data-testid="role-dirty-badge">
-                        Belum disimpan
-                      </Badge>
-                    )}
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground" data-testid="role-detail-summary">
-                    Boleh membuka <span className="font-medium text-foreground">
-                      {draft.portals.length ? `${draft.portals.length} portal` : 'portal bawaan sistem'}
-                    </span> · <span className="font-medium text-foreground">{draft.permissions.length} izin</span>
-                    {' '}· <span className="font-medium text-foreground">{draft.hidden_modules.length} menu disembunyikan</span>
-                    {' '}· dipakai <span className="font-medium text-foreground">{selected?.user_count || 0} pengguna</span>
-                  </p>
-                </div>
-                {canEdit && (
-                  <div className="flex items-center gap-2">
-                    <Button variant="ghost" size="sm" disabled={!dirty || saving}
-                            onClick={() => selected && selectRole(selected)} data-testid="role-reset-btn">
-                      <RotateCcw /> Batalkan
-                    </Button>
-                    <Button size="sm" disabled={!dirty || saving} onClick={save} data-testid="role-save-btn">
-                      {saving ? <Loader2 className="animate-spin" /> : <Save />} Simpan
-                    </Button>
-                  </div>
-                )}
-              </div>
-              {!canEdit && (
-                <p className="mt-3 rounded-md bg-[var(--glass-bg)] px-3 py-2 text-xs text-muted-foreground">
-                  Hanya Super Admin yang boleh mengubah konfigurasi peran. Anda melihat mode baca.
-                </p>
-              )}
-            </GlassCard>
+        {/* 3. Hak akses */}
+        <section className="space-y-3 border-t border-[var(--glass-border)] pt-4">
+          <SectionTitle
+            step="3" title="Hak akses (izin aksi & persetujuan)"
+            desc="Per modul: Lihat / Tambah / Ubah / Hapus / Setujui / Unduh. Begitu satu izin per modul dicentang di sebuah portal, semua modul portal itu wajib izinnya (menu tanpa Lihat disembunyikan, aksi tanpa izin ditolak server)."
+            right={<StatusBadge status="izin" label={`${draft.permissions.length} izin dipilih`} tone="primary" testId="perm-count-badge" />}
+          />
 
-            {/* 1. Identitas */}
-            <GlassCard className="p-4" hover={false}>
-              <SectionTitle step="1" title="Identitas Peran"
-                            desc="Nama dipakai sebagai kode role pada akun pengguna." />
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-muted-foreground" htmlFor="role-name">Nama peran</label>
-                  <Input id="role-name" value={draft.name} disabled={!canEdit}
-                         onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-                         placeholder="cth. approver_material" data-testid="role-name" />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-muted-foreground" htmlFor="role-desc">Keterangan</label>
-                  <Input id="role-desc" value={draft.description} disabled={!canEdit}
-                         onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
-                         placeholder="cth. Menyetujui pengeluaran material" data-testid="role-description" />
-                </div>
-              </div>
-              {canEdit && roles.length > 1 && (
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-muted-foreground">Salin pengaturan dari peran lain:</span>
-                  <Select onValueChange={copyFromRole}>
-                    <SelectTrigger className="h-8 w-56 text-xs" data-testid="copy-from-role">
-                      <SelectValue placeholder="Pilih peran sumber..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {roles.filter((r) => r.id !== selectedId).map((r) => (
-                        <SelectItem key={r.id} value={r.id} className="text-xs">
-                          {r.name} ({(r.permission_keys || []).length} izin)
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Copy className="h-3.5 w-3.5 text-muted-foreground" />
-                </div>
-              )}
-            </GlassCard>
-
-            {/* 2. Akses Portal */}
-            <GlassCard className="p-4" hover={false}>
-              <SectionTitle
-                step="2" title="Portal yang Boleh Dibuka"
-                desc="Kosongkan semua bila ingin memakai aturan bawaan sistem untuk peran ini."
-                right={canEdit && (
-                  <div className="flex gap-1.5">
-                    <Button variant="outline" size="sm" data-testid="portal-select-all"
-                            onClick={() => setDraft((d) => ({ ...d, portals: Object.keys(PORTAL_NAV) }))}>
-                      Pilih semua
-                    </Button>
-                    <Button variant="ghost" size="sm" data-testid="portal-clear"
-                            onClick={() => setDraft((d) => ({ ...d, portals: [] }))}>
-                      Pakai bawaan
-                    </Button>
-                  </div>
-                )}
-              />
-              <div className="flex flex-wrap gap-2" data-testid="role-portals">
-                {Object.keys(PORTAL_NAV).map((pid) => {
-                  const on = draft.portals.includes(pid);
-                  return (
-                    <button
-                      key={pid} type="button" disabled={!canEdit}
-                      onClick={() => togglePortal(pid)}
-                      data-testid={`role-portal-${pid}`}
-                      aria-pressed={on}
-                      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 ${
-                        on
-                          ? 'border-primary bg-primary text-primary-foreground'
-                          : 'border-border bg-transparent text-foreground/70 hover:border-primary/50 hover:bg-[var(--glass-bg-hover)]'
-                      }`}
-                    >
-                      {on && <Check className="h-3 w-3" />}
-                      {PORTAL_LABEL?.[pid] || pid}
-                    </button>
-                  );
-                })}
-              </div>
-            </GlassCard>
-
-            {/* 3. Hak Akses */}
-            <GlassCard className="p-4" hover={false}>
-              <SectionTitle
-                step="3" title="Hak Akses (Izin Aksi & Approval)"
-                desc="Per modul: Lihat / Tambah / Ubah / Hapus / Approve / Export. Begitu satu izin per modul dicentang di sebuah portal, semua modul portal itu wajib izinnya (menu tanpa 'Lihat' disembunyikan, aksi tanpa izin ditolak server)."
-                right={(
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="text-[11px]" data-testid="perm-count-badge">
-                      {draft.permissions.length} izin dipilih
-                    </Badge>
-                  </div>
-                )}
-              />
-
-              {canEdit && (
-                <div className="mb-3 flex flex-wrap items-center gap-1.5">
-                  <span className="mr-1 text-xs text-muted-foreground">Preset:</span>
-                  {PRESETS.map((p) => (
-                    <Button key={p.id} variant="outline" size="sm" title={p.hint}
-                            onClick={() => applyPreset(p)} data-testid={`preset-${p.id}`}>
-                      {p.label}
-                    </Button>
-                  ))}
-                  <Button variant="outline" size="sm" disabled={!!converting}
-                          title="Isi izin per modul (Lihat/Tambah/Ubah/...) dari izin lama & portal peran ini"
-                          onClick={() => convertLegacy(null)} data-testid="convert-legacy-all-btn">
-                    {converting === 'all' ? <Loader2 className="animate-spin" /> : <RotateCcw />} Konversi izin lama → per modul
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={clearPerms} data-testid="preset-clear">
-                    <X /> Kosongkan
-                  </Button>
-                </div>
-              )}
-
-              {draft.permissions.length > 0 && (
-                <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
-                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-                  <p className="text-xs text-amber-700 dark:text-amber-300">
-                    Peran ini memakai daftar izin di bawah. Aturan bawaan lama tidak lagi dipakai untuk peran ini —
-                    pastikan izin yang dibutuhkan sudah dicentang sebelum menyimpan.
-                  </p>
-                </div>
-              )}
-
-              <div className="relative mb-3">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input value={permSearch} onChange={(e) => setPermSearch(e.target.value)}
-                       placeholder="Cari izin, modul, atau portal..." className="pl-8"
-                       data-testid="perm-search-input" />
-              </div>
-
-              {loading ? (
-                <div className="space-y-2">
-                  {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-11 w-full rounded-lg" />)}
-                </div>
-              ) : visibleGroups.length === 0 ? (
-                <p className="py-6 text-center text-xs text-muted-foreground">Tidak ada izin yang cocok dengan pencarian.</p>
-              ) : (
-                <Accordion type="multiple" className="space-y-2" data-testid="perm-accordion">
-                  {visibleGroups.map((grp) => {
-                    const total = grp.modules.reduce((n, m) => n + m.permissions.length, 0);
-                    const on = grp.modules.reduce(
-                      (n, m) => n + m.permissions.filter((p) => permSet.has(p.key)).length, 0,
-                    );
-                    const inScope = !draft.portals.length || draft.portals.includes(grp.portal);
-                    return (
-                      <AccordionItem key={grp.portal} value={grp.portal}
-                                     className="overflow-hidden rounded-lg border border-border px-3">
-                        <AccordionTrigger className="py-3 hover:no-underline" data-testid={`perm-group-${grp.portal}`}>
-                          <div className="flex w-full items-center justify-between gap-3 pr-2">
-                            <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                              {grp.portal_label}
-                              {!inScope && (
-                                <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground">
-                                  portal tidak dipilih
-                                </Badge>
-                              )}
-                            </span>
-                            <Badge variant={on ? 'default' : 'secondary'} className="shrink-0 text-[11px]">
-                              {on}/{total}
-                            </Badge>
-                          </div>
-                        </AccordionTrigger>
-                        <AccordionContent className="pb-3">
-                          {canEdit && (
-                            <div className="mb-3 flex flex-wrap items-center gap-1.5">
-                              <span className="text-[11px] text-muted-foreground">Seluruh portal ini:</span>
-                              {LEVELS.map((lv) => (
-                                <Button key={lv.id} variant="outline" size="sm" className="h-7 text-[11px]"
-                                        onClick={() => applyLevelToGroup(grp, lv.id)}
-                                        data-testid={`group-${grp.portal}-level-${lv.id}`}>
-                                  {lv.label}
-                                </Button>
-                              ))}
-                              {grp.modules.some((m) => m.granular) && (
-                                <Button variant="ghost" size="sm" className="h-7 text-[11px]" disabled={!!converting}
-                                        onClick={() => convertLegacy(grp.portal)}
-                                        data-testid={`group-${grp.portal}-convert-legacy`}>
-                                  {converting === grp.portal ? <Loader2 className="animate-spin" /> : <RotateCcw />} Konversi izin lama
-                                </Button>
-                              )}
-                            </div>
-                          )}
-                          <div className="space-y-2">
-                            {[...grp.modules, ...(legacyOpen[grp.portal] ? (grp.legacy_modules || []) : [])].map((mod, idx) => {
-                              const lvl = levelOfModule(mod);
-                              const levelControl = canEdit && (
-                                <div className="inline-flex overflow-hidden rounded-md border border-border"
-                                     role="group" aria-label={`Tingkat akses ${mod.label}`}>
-                                  {LEVELS.map((lv) => (
-                                    <button
-                                      key={lv.id} type="button"
-                                      onClick={() => applyLevelToModule(mod, lv.id)}
-                                      data-testid={`module-${mod.id}-level-${lv.id}`}
-                                      aria-pressed={lvl === lv.id}
-                                      className={`px-2.5 py-1 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
-                                        lvl === lv.id
-                                          ? 'bg-primary text-primary-foreground'
-                                          : 'bg-transparent text-muted-foreground hover:bg-[var(--glass-bg-hover)]'
-                                      }`}
-                                    >
-                                      {lv.label}
-                                    </button>
-                                  ))}
-                                </div>
-                              );
-                              const legacyHeader = idx === grp.modules.length && (
-                                <p className="pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                                  Izin lama (kompatibilitas)
-                                </p>
-                              );
-                              if (mod.granular) {
-                                return (
-                                  <GranularModuleRow key={mod.id} mod={mod} permSet={permSet} canEdit={canEdit}
-                                                     onToggle={togglePerm} levelControl={levelControl} />
-                                );
-                              }
-                              return (
-                                <div key={mod.id}>
-                                {legacyHeader}
-                                <div className="rounded-lg border border-border/70 p-2.5"
-                                     data-testid={`perm-module-${mod.id}`}>
-                                  <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <span className="text-xs font-semibold text-foreground">{mod.label}</span>
-                                    {levelControl}
-                                  </div>
-                                  <div className="mt-2 flex flex-wrap gap-1.5">
-                                    {mod.permissions.map((p) => {
-                                      const on2 = permSet.has(p.key);
-                                      return (
-                                        <button
-                                          key={p.key} type="button" disabled={!canEdit}
-                                          onClick={() => togglePerm(p.key)}
-                                          title={`${p.key} — ${p.description}`}
-                                          data-testid={`perm-${p.key}`}
-                                          aria-pressed={on2}
-                                          className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 ${
-                                            on2
-                                              ? 'border-primary bg-primary/15 text-primary'
-                                              : 'border-border text-muted-foreground hover:border-primary/40 hover:text-foreground'
-                                          }`}
-                                        >
-                                          {on2 && <Check className="h-3 w-3" />}
-                                          {p.description}
-                                          <span className="opacity-50">· {p.action}</span>
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                                </div>
-                              );
-                            })}
-                            {(grp.legacy_modules || []).length > 0 && (
-                              <button
-                                type="button"
-                                onClick={() => setLegacyOpen((o) => ({ ...o, [grp.portal]: !o[grp.portal] }))}
-                                className="text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                                data-testid={`legacy-toggle-${grp.portal}`}
-                              >
-                                {legacyOpen[grp.portal] ? 'Sembunyikan' : 'Tampilkan'} izin lama ({grp.legacy_modules.reduce((n, m) => n + m.permissions.length, 0)})
-                                {' '}— otomatis diberikan oleh izin per modul di atas
-                              </button>
-                            )}
-                          </div>
-                        </AccordionContent>
-                      </AccordionItem>
-                    );
-                  })}
-                </Accordion>
-              )}
-            </GlassCard>
-
-            {/* 4. Menu disembunyikan */}
-            <GlassCard className="p-4" hover={false}>
-              <Collapsible>
-                <CollapsibleTrigger asChild>
-                  <button type="button" className="flex w-full items-center justify-between gap-2 text-left"
-                          data-testid="hidden-menus-toggle">
-                    <SectionTitle step="4" title="Sembunyikan Menu Tertentu (opsional)"
-                                  desc="Untuk kasus khusus: menu tetap ada di sistem tapi tidak muncul untuk peran ini." />
-                    <Badge variant="secondary" className="shrink-0 text-[11px]">
-                      {draft.hidden_modules.length} disembunyikan
-                    </Badge>
-                  </button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="mt-3 space-y-3" data-testid="role-hidden-modules">
-                  {(draft.portals.length ? draft.portals : Object.keys(PORTAL_NAV)).map((pid) => {
-                    const items = menusOfPortal(pid);
-                    if (!items.length) return null;
-                    return (
-                      <div key={pid}>
-                        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-foreground/50">
-                          {PORTAL_LABEL?.[pid] || pid}
-                        </p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {items.map((it) => {
-                            const off = draft.hidden_modules.includes(it.id);
-                            return (
-                              <button
-                                key={`${pid}-${it.id}`} type="button" disabled={!canEdit}
-                                onClick={() => toggleMenu(it.id)}
-                                data-testid={`role-menu-${it.id}`}
-                                aria-pressed={off}
-                                className={`rounded-md border px-2 py-1 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 ${
-                                  off
-                                    ? 'border-destructive/40 bg-destructive/10 text-destructive line-through'
-                                    : 'border-border text-muted-foreground hover:border-primary/40 hover:text-foreground'
-                                }`}
-                              >
-                                {it.label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </CollapsibleContent>
-              </Collapsible>
-            </GlassCard>
-
-            {/* 5. Riwayat perubahan */}
-            <GlassCard className="p-4" hover={false}>
-              <Collapsible open={auditOpen} onOpenChange={(v) => { setAuditOpen(v); if (v) loadAudit(); }}>
-                <CollapsibleTrigger asChild>
-                  <button type="button" className="flex w-full items-center justify-between gap-2 text-left"
-                          data-testid="role-audit-toggle">
-                    <SectionTitle step="5" title="Riwayat Perubahan" desc="Siapa mengubah akses peran ini dan kapan." />
-                    <History className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  </button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="mt-3" data-testid="role-audit-list">
-                  {auditRows.length === 0 ? (
-                    <p className="py-4 text-center text-xs text-muted-foreground">Belum ada perubahan tercatat.</p>
-                  ) : (
-                    <ul className="space-y-2">
-                      {auditRows.map((row) => (
-                        <li key={row.id} className="rounded-md border border-border px-3 py-2 text-xs">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="font-medium text-foreground">
-                              {row.action === 'create' ? 'Dibuat' : row.action === 'delete' ? 'Dihapus' : 'Diubah'}
-                              {' '}oleh {row.user_name || '—'}
-                            </span>
-                            <span className="text-muted-foreground">
-                              {row.timestamp ? new Date(row.timestamp).toLocaleString('id-ID') : ''}
-                            </span>
-                          </div>
-                          <AuditDiff row={row} />
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </CollapsibleContent>
-              </Collapsible>
-            </GlassCard>
-
-            {/* Hapus peran */}
-            {canEdit && selected && !selected.is_system && (
-              <div className="flex justify-end">
-                <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10"
-                        onClick={() => setConfirmDelete(selected)} data-testid="role-delete-btn">
-                  <Trash2 /> Hapus peran ini
+          {canEdit && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="mr-1 text-sm text-muted-foreground">Preset:</span>
+              {PRESETS.map((p) => (
+                <Button type="button" key={p.id} variant="outline" size="sm" title={p.hint}
+                  onClick={() => applyPreset(p)} data-testid={`preset-${p.id}`}>
+                  {p.label}
                 </Button>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Dialog tambah peran */}
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent data-testid="create-role-dialog">
-          <DialogHeader>
-            <DialogTitle>Tambah Peran</DialogTitle>
-            <DialogDescription>
-              Beri nama dulu. Portal & hak aksesnya diatur setelah peran dibuat.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-muted-foreground" htmlFor="new-role-name">Nama peran</label>
-              <Input id="new-role-name" value={newRole.name} data-testid="new-role-name"
-                     onChange={(e) => setNewRole((s) => ({ ...s, name: e.target.value }))}
-                     placeholder="cth. approver_material" />
+              ))}
+              <Button type="button" variant="outline" size="sm" disabled={!!converting}
+                title="Isi izin per modul (Lihat/Tambah/Ubah/...) dari izin lama & portal peran ini"
+                onClick={() => convertLegacy(null)} data-testid="convert-legacy-all-btn">
+                {converting === 'all' ? <Loader2 className="animate-spin" /> : <RotateCcw />} Konversi izin lama → per modul
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={clearPerms} data-testid="preset-clear">
+                <X />Kosongkan
+              </Button>
             </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-muted-foreground" htmlFor="new-role-desc">Keterangan</label>
-              <Input id="new-role-desc" value={newRole.description} data-testid="new-role-description"
-                     onChange={(e) => setNewRole((s) => ({ ...s, description: e.target.value }))}
-                     placeholder="cth. Menyetujui pengeluaran material" />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreate(false)} data-testid="create-role-cancel">Batal</Button>
-            <Button onClick={createRole} disabled={saving || !newRole.name.trim()} data-testid="create-role-submit">
-              {saving ? <Loader2 className="animate-spin" /> : <Plus />} Buat Peran
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          )}
 
-      {/* Konfirmasi hapus */}
-      <AlertDialog open={!!confirmDelete} onOpenChange={(v) => !v && setConfirmDelete(null)}>
-        <AlertDialogContent data-testid="delete-role-dialog">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Hapus peran &ldquo;{confirmDelete?.name}&rdquo;?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Peran beserta izinnya akan dihapus permanen. Peran yang masih dipakai pengguna tidak bisa dihapus.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel data-testid="delete-role-cancel">Batal</AlertDialogCancel>
-            <AlertDialogAction onClick={removeRole} data-testid="delete-role-confirm"
-                               className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Hapus
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+          {draft.permissions.length > 0 && (
+            <Notice tone="warning">
+              Peran ini memakai daftar izin di bawah. Aturan bawaan lama tidak lagi dipakai untuk peran ini —
+              pastikan izin yang dibutuhkan sudah dicentang sebelum menyimpan.
+            </Notice>
+          )}
+
+          <div className="relative w-full sm:w-72">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={permSearch} onChange={(e) => setPermSearch(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
+              placeholder="Cari izin, modul, atau portal" className="pl-8"
+              data-testid="perm-search-input" />
+          </div>
+
+          {loading ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">Memuat katalog izin…</p>
+          ) : visibleGroups.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">Tidak ada izin yang cocok dengan pencarian.</p>
+          ) : (
+            <Accordion type="multiple" className="space-y-2" data-testid="perm-accordion">
+              {visibleGroups.map((grp) => {
+                const total = grp.modules.reduce((n, m) => n + m.permissions.length, 0);
+                const on = grp.modules.reduce(
+                  (n, m) => n + m.permissions.filter((p) => permSet.has(p.key)).length, 0,
+                );
+                const inScope = !draft.portals.length || draft.portals.includes(grp.portal);
+                return (
+                  <AccordionItem key={grp.portal} value={grp.portal}
+                    className="overflow-hidden rounded-lg border border-[var(--glass-border)] px-3">
+                    <AccordionTrigger className="py-3 hover:no-underline" data-testid={`perm-group-${grp.portal}`}>
+                      <div className="flex w-full items-center justify-between gap-3 pr-2">
+                        <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+                          {grp.portal_label}
+                          {!inScope && <StatusBadge status="luar" label="Portal tidak dipilih" tone="muted" />}
+                        </span>
+                        <StatusBadge status="jumlah" label={`${on}/${total}`} tone={on ? 'primary' : 'muted'} className="shrink-0 tabular-nums" />
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="pb-3">
+                      {canEdit && (
+                        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                          <span className="text-xs text-muted-foreground">Seluruh portal ini:</span>
+                          {LEVELS.map((lv) => (
+                            <Button type="button" key={lv.id} variant="outline" size="sm"
+                              onClick={() => applyLevelToGroup(grp, lv.id)}
+                              data-testid={`group-${grp.portal}-level-${lv.id}`}>
+                              {lv.label}
+                            </Button>
+                          ))}
+                          {grp.modules.some((m) => m.granular) && (
+                            <Button type="button" variant="outline" size="sm" disabled={!!converting}
+                              onClick={() => convertLegacy(grp.portal)}
+                              data-testid={`group-${grp.portal}-convert-legacy`}>
+                              {converting === grp.portal ? <Loader2 className="animate-spin" /> : <RotateCcw />} Konversi izin lama
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                      <div className="space-y-2">
+                        {[...grp.modules, ...(legacyOpen[grp.portal] ? (grp.legacy_modules || []) : [])].map((mod, idx) => {
+                          const lvl = levelOfModule(mod);
+                          const levelControl = canEdit && (
+                            <div className="inline-flex overflow-hidden rounded-md border border-[var(--glass-border)]"
+                              role="group" aria-label={`Tingkat akses ${mod.label}`}>
+                              {LEVELS.map((lv) => (
+                                <button
+                                  key={lv.id} type="button"
+                                  onClick={() => applyLevelToModule(mod, lv.id)}
+                                  data-testid={`module-${mod.id}-level-${lv.id}`}
+                                  aria-pressed={lvl === lv.id}
+                                  className={`px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+                                    lvl === lv.id
+                                      ? 'bg-primary text-primary-foreground'
+                                      : 'bg-[var(--card-surface)] text-muted-foreground hover:text-foreground'
+                                  }`}
+                                >
+                                  {lv.label}
+                                </button>
+                              ))}
+                            </div>
+                          );
+                          const legacyHeader = idx === grp.modules.length && (
+                            <p className="pt-1 text-xs font-medium text-muted-foreground">Izin lama (kompatibilitas)</p>
+                          );
+                          if (mod.granular) {
+                            return (
+                              <GranularModuleRow key={mod.id} mod={mod} permSet={permSet} canEdit={canEdit}
+                                onToggle={togglePerm} levelControl={levelControl} />
+                            );
+                          }
+                          return (
+                            <div key={mod.id}>
+                              {legacyHeader}
+                              <div className="rounded-lg border border-[var(--glass-border)] p-2.5"
+                                data-testid={`perm-module-${mod.id}`}>
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="text-sm font-medium text-foreground">{mod.label}</span>
+                                  {levelControl}
+                                </div>
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                  {mod.permissions.map((p) => {
+                                    const on2 = permSet.has(p.key);
+                                    return (
+                                      <button
+                                        key={p.key} type="button" disabled={!canEdit}
+                                        onClick={() => togglePerm(p.key)}
+                                        title={p.description}
+                                        data-testid={`perm-${p.key}`}
+                                        aria-pressed={on2}
+                                        className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 ${
+                                          on2
+                                            ? 'border-primary bg-primary/15 text-primary'
+                                            : 'border-[var(--glass-border)] text-muted-foreground hover:border-[hsl(var(--primary)/0.4)] hover:text-foreground'
+                                        }`}
+                                      >
+                                        {on2 && <Check className="h-3 w-3" />}
+                                        {p.description}
+                                        <span className="opacity-60">· {AKSI_IZIN[p.action] || p.action}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {(grp.legacy_modules || []).length > 0 && (
+                          <Button type="button" variant="link" size="sm" className="h-auto px-0"
+                            onClick={() => setLegacyOpen((o) => ({ ...o, [grp.portal]: !o[grp.portal] }))}
+                            data-testid={`legacy-toggle-${grp.portal}`}>
+                            {legacyOpen[grp.portal] ? 'Sembunyikan' : 'Tampilkan'} izin lama ({grp.legacy_modules.reduce((n, m) => n + m.permissions.length, 0)})
+                            {' '}— otomatis diberikan oleh izin per modul di atas
+                          </Button>
+                        )}
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                );
+              })}
+            </Accordion>
+          )}
+        </section>
+
+        {/* 4. Menu disembunyikan */}
+        <section className="border-t border-[var(--glass-border)] pt-4">
+          <Collapsible>
+            <CollapsibleTrigger asChild>
+              <button type="button" className="flex w-full items-center justify-between gap-2 text-left"
+                data-testid="hidden-menus-toggle">
+                <SectionTitle step="4" title="Sembunyikan menu tertentu (opsional)"
+                  desc="Untuk kasus khusus: menu tetap ada di sistem tapi tidak muncul untuk peran ini." />
+                <StatusBadge status="menu" label={`${draft.hidden_modules.length} disembunyikan`} tone="muted" className="shrink-0" />
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-3 space-y-3" data-testid="role-hidden-modules">
+              {(draft.portals.length ? draft.portals : Object.keys(PORTAL_NAV)).map((pid) => {
+                const items = menusOfPortal(pid);
+                if (!items.length) return null;
+                return (
+                  <div key={pid}>
+                    <p className="mb-1.5 text-sm font-medium text-foreground">{PORTAL_LABEL?.[pid] || pid}</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {items.map((it) => {
+                        const off = draft.hidden_modules.includes(it.id);
+                        return (
+                          <button
+                            key={`${pid}-${it.id}`} type="button" disabled={!canEdit}
+                            onClick={() => toggleMenu(it.id)}
+                            data-testid={`role-menu-${it.id}`}
+                            aria-pressed={off}
+                            className={`rounded-md border px-2 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 ${
+                              off
+                                ? 'border-[hsl(var(--destructive)/0.4)] bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--danger-text))] line-through'
+                                : 'border-[var(--glass-border)] text-muted-foreground hover:border-[hsl(var(--primary)/0.4)] hover:text-foreground'
+                            }`}
+                          >
+                            {it.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </CollapsibleContent>
+          </Collapsible>
+        </section>
+
+        {/* 5. Riwayat perubahan */}
+        <section className="border-t border-[var(--glass-border)] pt-4">
+          <Collapsible open={auditOpen} onOpenChange={(v) => { setAuditOpen(v); if (v) loadAudit(); }}>
+            <CollapsibleTrigger asChild>
+              <button type="button" className="flex w-full items-center justify-between gap-2 text-left"
+                data-testid="role-audit-toggle">
+                <SectionTitle step="5" title="Riwayat perubahan" desc="Siapa mengubah akses peran ini dan kapan." />
+                <History className="h-4 w-4 shrink-0 text-muted-foreground" />
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-3" data-testid="role-audit-list">
+              {auditRows.length === 0 ? (
+                <p className="py-4 text-center text-sm text-muted-foreground">Belum ada perubahan tercatat.</p>
+              ) : (
+                <ul className="divide-y divide-[var(--glass-border)]">
+                  {auditRows.map((row) => (
+                    <li key={row.id} className="py-2 text-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-medium text-foreground">
+                          {row.action === 'create' ? 'Dibuat' : row.action === 'delete' ? 'Dihapus' : 'Diubah'}
+                          {' '}oleh {row.user_name || '—'}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {row.timestamp ? formatDateTimeID(instan(row.timestamp)) : ''}
+                        </span>
+                      </div>
+                      <AuditDiff row={row} labelIzin={labelIzin} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CollapsibleContent>
+          </Collapsible>
+        </section>
+      </FormPopup>
+
+      {/* Tambah peran */}
+      <FormPopup open={showCreate} onClose={() => setShowCreate(false)} ukuran="pendek" testId="create-role-dialog"
+        judul="Tambah peran" keterangan="Beri nama dulu. Portal dan hak aksesnya diatur setelah peran dibuat."
+        onSimpan={createRole} menyimpan={saving} bisaSimpan={!!newRole.name.trim()} labelSimpan="Buat peran">
+        <Isian label="Kode peran" wajib htmlFor="new-role-name" petunjuk="Huruf kecil dan garis bawah, mis. approver_material.">
+          <Input id="new-role-name" value={newRole.name} data-testid="new-role-name"
+            onChange={(e) => setNewRole((s) => ({ ...s, name: e.target.value }))}
+            placeholder="cth. approver_material" />
+        </Isian>
+        <Isian label="Keterangan" htmlFor="new-role-desc" petunjuk="Tampil sebagai nama peran di layar.">
+          <Input id="new-role-desc" value={newRole.description} data-testid="new-role-description"
+            onChange={(e) => setNewRole((s) => ({ ...s, description: e.target.value }))}
+            placeholder="cth. Menyetujui pengeluaran material" />
+        </Isian>
+      </FormPopup>
 
       {/* Bandingkan peran */}
-      <Sheet open={compareOpen} onOpenChange={setCompareOpen}>
-        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl" data-testid="compare-sheet">
-          <SheetHeader>
-            <SheetTitle>Bandingkan Peran</SheetTitle>
-            <SheetDescription>
-              Lihat selisih izin antara peran terpilih dan peran lain.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="mt-4 space-y-4">
-            <div className="flex items-center gap-2">
-              <Badge variant="default" className="text-[11px]">{selected?.name || '—'}</Badge>
-              <span className="text-xs text-muted-foreground">dibandingkan dengan</span>
-              <Select value={compareWith} onValueChange={setCompareWith}>
-                <SelectTrigger className="h-8 w-48 text-xs" data-testid="compare-role-select">
-                  <SelectValue placeholder="Pilih peran..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {roles.filter((r) => r.id !== selectedId).map((r) => (
-                    <SelectItem key={r.id} value={r.id} className="text-xs">{r.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {compareRole ? (
-              <CompareBody
-                a={{ name: selected?.name, portals: draft.portals, perms: draft.permissions }}
-                b={{ name: compareRole.name, portals: compareRole.portals || [], perms: compareRole.permission_keys || [] }}
-                allPerms={allPerms}
-              />
-            ) : (
-              <p className="py-6 text-center text-xs text-muted-foreground">Pilih peran pembanding di atas.</p>
-            )}
+      {compareOpen && (
+        <DetailPopup open onClose={() => setCompareOpen(false)} testId="compare-sheet" judul="Bandingkan peran"
+          keterangan="Selisih izin antara peran terpilih (termasuk perubahan yang belum disimpan) dan peran lain.">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge status="a" label={selected ? namaPeran(selected) : '—'} tone="primary" />
+            <span className="text-sm text-muted-foreground">dibandingkan dengan</span>
+            <Select value={compareWith} onValueChange={setCompareWith}>
+              <SelectTrigger className="w-full sm:w-60" data-testid="compare-role-select">
+                <SelectValue placeholder="Pilih peran…" />
+              </SelectTrigger>
+              <SelectContent>
+                {roles.filter((r) => r.id !== selectedId).map((r) => (
+                  <SelectItem key={r.id} value={r.id}>{namaPeran(r)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-        </SheetContent>
-      </Sheet>
-    </div>
+          {compareRole ? (
+            <CompareBody
+              a={{ name: selected ? namaPeran(selected) : 'A', portals: draft.portals, perms: draft.permissions }}
+              b={{ name: namaPeran(compareRole), portals: compareRole.portals || [], perms: compareRole.permission_keys || [] }}
+              allPerms={allPerms}
+            />
+          ) : (
+            <p className="py-6 text-center text-sm text-muted-foreground">Pilih peran pembanding di atas.</p>
+          )}
+        </DetailPopup>
+      )}
+    </PageLayout>
   );
 }
 
 /* ── potongan UI kecil ───────────────────────────────────────────────────── */
+const AKSI_IZIN = {
+  view: 'lihat', input: 'input', create: 'tambah', edit: 'ubah', delete: 'hapus', manage: 'kelola',
+  approve: 'setujui', run: 'jalankan', export: 'unduh',
+};
+const namaPortalIzin = (list) => list.map((p) => PORTAL_LABEL?.[p] || p).join(', ');
+
 function SectionTitle({ step, title, desc, right }) {
   return (
-    <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+    <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="flex items-start gap-2">
         {step && (
-          <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[11px] font-bold text-primary">
+          <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
             {step}
           </span>
         )}
         <div>
-          <h4 className="text-sm font-semibold text-foreground">{title}</h4>
-          {desc && <p className="mt-0.5 text-xs text-muted-foreground">{desc}</p>}
+          <h4 className="text-base font-semibold text-foreground">{title}</h4>
+          {desc && <p className="mt-0.5 text-sm text-muted-foreground">{desc}</p>}
         </div>
       </div>
       {right}
@@ -1020,7 +913,7 @@ function SectionTitle({ step, title, desc, right }) {
   );
 }
 
-function AuditDiff({ row }) {
+function AuditDiff({ row, labelIzin = {} }) {
   const before = (row.before?.permissions) || [];
   const after = (row.after?.permissions) || [];
   const added = after.filter((k) => !before.includes(k));
@@ -1029,19 +922,20 @@ function AuditDiff({ row }) {
   const pAfter = (row.after?.portals) || [];
   const portalChanged = pBefore.join(',') !== pAfter.join(',');
   if (!added.length && !removed.length && !portalChanged) return null;
+  const nama = (k) => labelIzin[k] || k;
   return (
-    <div className="mt-1.5 space-y-1 text-[11px]">
+    <div className="mt-1.5 space-y-1 text-xs">
       {portalChanged && (
         <p className="text-muted-foreground">
-          Portal: <span className="line-through">{pBefore.join(', ') || 'bawaan'}</span>
-          {' → '}<span className="text-foreground">{pAfter.join(', ') || 'bawaan'}</span>
+          Portal: <span className="line-through">{namaPortalIzin(pBefore) || 'bawaan'}</span>
+          {' → '}<span className="text-foreground">{namaPortalIzin(pAfter) || 'bawaan'}</span>
         </p>
       )}
       {added.length > 0 && (
-        <p className="text-emerald-700 dark:text-emerald-400">+ {added.join(', ')}</p>
+        <p className="text-[hsl(var(--success-text))]">Ditambah: {added.map(nama).join(', ')}</p>
       )}
       {removed.length > 0 && (
-        <p className="text-destructive">− {removed.join(', ')}</p>
+        <p className="text-[hsl(var(--danger-text))]">Dicabut: {removed.map(nama).join(', ')}</p>
       )}
     </div>
   );
@@ -1055,40 +949,23 @@ function CompareBody({ a, b, allPerms }) {
   const both = allPerms.filter((p) => setA.has(p.key) && setB.has(p.key));
   return (
     <div className="space-y-4" data-testid="compare-body">
-      <div className="grid grid-cols-3 gap-2 text-center">
-        {[['Hanya ' + (a.name || 'A'), onlyA.length], ['Sama', both.length], ['Hanya ' + (b.name || 'B'), onlyB.length]].map(([label, n]) => (
-          <div key={label} className="rounded-lg border border-border px-2 py-3">
-            <p className="text-lg font-bold text-foreground">{n}</p>
-            <p className="truncate text-[11px] text-muted-foreground">{label}</p>
-          </div>
-        ))}
+      <div className="grid grid-cols-3 gap-2">
+        <StatTile label={`Hanya ${a.name || 'A'}`} value={onlyA.length} />
+        <StatTile label="Sama" value={both.length} />
+        <StatTile label={`Hanya ${b.name || 'B'}`} value={onlyB.length} />
       </div>
-      <Separator />
-      <div>
-        <p className="mb-1.5 text-xs font-semibold text-foreground">Portal</p>
-        <div className="grid grid-cols-2 gap-2 text-[11px]">
-          <div className="rounded-md border border-border p-2">
-            <p className="mb-1 font-medium">{a.name}</p>
-            <p className="text-muted-foreground">{a.portals.length ? a.portals.join(', ') : 'bawaan sistem'}</p>
-          </div>
-          <div className="rounded-md border border-border p-2">
-            <p className="mb-1 font-medium">{b.name}</p>
-            <p className="text-muted-foreground">{b.portals.length ? b.portals.join(', ') : 'bawaan sistem'}</p>
-          </div>
-        </div>
-      </div>
+      <dl className="divide-y divide-[var(--glass-border)]">
+        <BarisDetail label={`Portal ${a.name}`}>{a.portals.length ? namaPortalIzin(a.portals) : 'Bawaan sistem'}</BarisDetail>
+        <BarisDetail label={`Portal ${b.name}`}>{b.portals.length ? namaPortalIzin(b.portals) : 'Bawaan sistem'}</BarisDetail>
+      </dl>
       {[[`Hanya ada di ${a.name}`, onlyA], [`Hanya ada di ${b.name}`, onlyB]].map(([label, list]) => (
-        <div key={label}>
-          <p className="mb-1.5 text-xs font-semibold text-foreground">{label} ({list.length})</p>
+        <div key={label} className="space-y-1.5">
+          <p className="text-sm font-medium text-foreground">{label} ({list.length})</p>
           {list.length === 0 ? (
-            <p className="text-[11px] text-muted-foreground">Tidak ada.</p>
+            <p className="text-sm text-muted-foreground">Tidak ada.</p>
           ) : (
             <div className="flex flex-wrap gap-1.5">
-              {list.map((p) => (
-                <span key={p.key} className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                  {p.description}
-                </span>
-              ))}
+              {list.map((p) => <StatusBadge key={p.key} status="izin" label={p.description} tone="default" />)}
             </div>
           )}
         </div>
