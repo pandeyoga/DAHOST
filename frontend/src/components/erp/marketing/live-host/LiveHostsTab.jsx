@@ -1,20 +1,24 @@
+/**
+ * Host live (Live Selling › Host live) — daftar host live.
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, penyaring satu baris (akun aktif kini pilihan di baris penyaring, dulu bar
+ * lebar), tabel + unduh, form = FormPopup (AddEditHostModal), label Indonesia.
+ */
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { useState, useEffect, useCallback } from 'react';
-import {
-  Users, Plus, Edit, Trash2, RefreshCw, Search, Loader2,
-} from 'lucide-react';
+import { Users, Plus, Edit, Trash2, RefreshCw, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { toast } from 'sonner';
-import { AccountBadge } from '../AccountBadge';
-import { ActiveAccountBar } from '../ActiveAccountBar';
-import { useActiveMarketingAccount } from '@/hooks/useActiveMarketingAccount';
-import { API, fmtRp } from './utils';
-import { StatusBadge, EmploymentTypeBadge } from './Badges';
-import AddEditHostModal from './AddEditHostModal';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { toast } from 'sonner';
+import { useActiveMarketingAccount } from '@/hooks/useActiveMarketingAccount';
+import PageLayout from '../../layout/PageLayout';
+import { EmptyState } from '../../moduleAtoms';
+import { API, fmtRp } from './utils';
+import { StatusBadge, EmploymentTypeBadge, LABEL_STATUS_HOST, LABEL_JENIS_KERJA } from './Badges';
+import AddEditHostModal from './AddEditHostModal';
 
 export default function LiveHostsTab({ authH }) {
   const [hosts, setHosts] = useState([]);
@@ -47,7 +51,7 @@ export default function LiveHostsTab({ authH }) {
         setHosts(data);
       }
     } catch (e) {
-      toast.error('Gagal memuat data LiveHost');
+      toast.error('Gagal memuat host live');
     } finally {
       setLoading(false);
     }
@@ -69,177 +73,84 @@ export default function LiveHostsTab({ authH }) {
   }, [fetchHosts, fetchAccounts]);
 
   const handleDelete = async (host) => {
-    if (!(await confirmDialog(`Yakin ingin menghapus LiveHost "${host.name}"?`))) return;
+    if (!(await confirmDialog({ title: `Hapus host live "${host.name}"?`, confirmLabel: 'Hapus', danger: true }))) return;
     try {
       const res = await fetch(`${API}/api/marketing/livehost/${host.id}`, {
         method: 'DELETE',
         headers: authH,
       });
       if (res.ok) {
-        toast.success('LiveHost berhasil dihapus');
+        toast.success('Host live dihapus.');
         fetchHosts();
       } else {
         const err = await res.json();
-        toast.error(err.detail || 'Gagal menghapus LiveHost');
+        toast.error(err.detail || 'Gagal menghapus host live');
       }
     } catch (e) {
-      toast.error('Gagal menghapus LiveHost');
+      toast.error('Gagal menghapus host live');
     }
   };
 
   const displayedHosts = filterAccountId
     ? hosts.filter((h) => (h.assigned_accounts || []).some((a) => a.id === filterAccountId))
     : hosts;
-
   const { page, setPage, totalPages, total, paged } = useClientPagination(displayedHosts, 10);
+  const namaToko = (h) => (h.assigned_accounts || []).map((a) => accounts.find((x) => x.id === a.id)?.account_name || a.name).filter(Boolean).join(', ');
+  const bukaBaru = () => { setEditingHost(null); setShowAddEditModal(true); };
+
+  const kolom = [
+    { kunci: 'nama', label: 'Nama', hp: 'judul', isi: (h) => <span className="font-medium" data-testid={`host-row-${h.id}`}>{h.name}</span> },
+    { kunci: 'email', label: 'Email', hp: 'keterangan', isi: (h) => <span className="text-muted-foreground">{h.email}</span> },
+    { kunci: 'jenis', label: 'Jenis kerja', isi: (h) => <EmploymentTypeBadge type={h.employment_type} /> },
+    { kunci: 'tarif', label: 'Tarif per jam', rata: 'kanan', isi: (h) => <span className="tabular-nums">{fmtRp(h.hourly_rate)}</span> },
+    { kunci: 'toko', label: 'Toko yang ditugaskan', isi: (h) => <span className="text-sm">{namaToko(h) || <span className="text-muted-foreground">Belum ditugaskan</span>}</span> },
+    { kunci: 'status', label: 'Status', isi: (h) => <StatusBadge status={h.status} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (h) => (
+      <div className="flex justify-end gap-1">
+        <Button variant="ghost" size="icon-sm" onClick={() => { setEditingHost(h); setShowAddEditModal(true); }}
+          data-testid={`edit-host-${h.id}`} title="Ubah host" aria-label="Ubah host"><Edit /></Button>
+        <Button variant="ghost" size="icon-sm" className="text-[hsl(var(--danger-text))]" onClick={() => handleDelete(h)}
+          data-testid={`delete-host-${h.id}`} title="Hapus host" aria-label="Hapus host"><Trash2 /></Button>
+      </div>) },
+  ];
+
   return (
-    <div className="space-y-4">
-      <ActiveAccountBar
-        accounts={accounts}
-        activeAccount={accounts.find((a) => a.id === filterAccountId) || null}
-        onAccountChange={(acc) => setFilterAccountId(acc ? acc.id : '')}
-        hint="Filter LiveHost by akun:"
-      />
-
-      <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
-        <div className="flex gap-2 w-full sm:w-auto">
-          <div className="relative flex-1 sm:w-64">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Cari nama atau email..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 h-9"
-              data-testid="search-livehost"
-            />
-          </div>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[130px] h-9" data-testid="filter-status">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Semua Status</SelectItem>
-              <SelectItem value="active">Active</SelectItem>
-              <SelectItem value="inactive">Inactive</SelectItem>
-              <SelectItem value="on_leave">On Leave</SelectItem>
-            </SelectContent>
-          </Select>
+    <PageLayout testId="livehosts-tab" title="Host live" subtitle="Daftar host live, jenis kerja, tarif, dan toko yang ditugaskan."
+      actions={<Button onClick={bukaBaru} data-testid="add-livehost-btn"><Plus />Tambah host</Button>}
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Cari nama atau email" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-8" data-testid="search-livehost" />
         </div>
-        <div className="flex gap-2 w-full sm:w-auto">
-          <Button variant="outline" size="sm" onClick={fetchHosts} className="h-9" data-testid="refresh-hosts">
-            <RefreshCw size={14} className="mr-1.5" />
-            Refresh
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => {
-              setEditingHost(null);
-              setShowAddEditModal(true);
-            }}
-            className="h-9"
-            data-testid="add-livehost-btn"
-          >
-            <Plus size={14} className="mr-1.5" />
-            Tambah LiveHost
-          </Button>
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="flex justify-center py-6">
-          <Loader2 size={28} className="animate-spin text-muted-foreground" />
-        </div>
-      ) : hosts.length === 0 ? (
-        <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-6 gap-3">
-            <Users size={40} className="text-muted-foreground opacity-40" />
-            <p className="font-medium">Belum ada LiveHost</p>
-            <p className="text-sm text-muted-foreground">Tambahkan LiveHost pertama untuk mulai scheduling</p>
-            <Button size="sm" onClick={() => setShowAddEditModal(true)}>
-              <Plus size={14} className="mr-1.5" />
-              Tambah LiveHost
-            </Button>
-          </CardContent>
-        </Card>
+        <SmartNativeSelect value={filterAccountId} onChange={(e) => setFilterAccountId(e.target.value)} className="w-48" data-testid="filter-account">
+          <option value="">Semua toko</option>
+          {accounts.map((a) => <option key={a.id} value={a.id}>{a.account_name}</option>)}
+        </SmartNativeSelect>
+        <SmartNativeSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-40" searchable={false} data-testid="filter-status">
+          <option value="all">Semua status</option>
+          {Object.entries(LABEL_STATUS_HOST).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </SmartNativeSelect>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="host-live" namaLembar="Host" baris={displayedHosts} testId="livehost-unduh"
+          kolom={[
+            { label: 'Nama', nilai: (h) => h.name }, { label: 'Email', nilai: (h) => h.email || '' }, { label: 'Telepon', nilai: (h) => h.phone || '' },
+            { label: 'Jenis kerja', nilai: (h) => LABEL_JENIS_KERJA[h.employment_type] || '' }, { label: 'Tarif per jam', nilai: (h) => Number(h.hourly_rate) || 0 },
+            { label: 'Toko', nilai: namaToko }, { label: 'Status', nilai: (h) => LABEL_STATUS_HOST[h.status] || '' },
+          ]} />
+        <Button variant="outline" size="icon" onClick={fetchHosts} data-testid="refresh-hosts" title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      footer={displayedHosts.length > 10 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}>
+      {loading && hosts.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat host live…</p>
       ) : (
-        <Card>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm" data-testid="livehosts-table">
-                <thead>
-                  <tr className="border-b bg-muted/30">
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Nama</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Email</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Employment</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Hourly Rate</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Assigned Accounts</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Status</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {paged.map((host) => (
-                    <tr key={host.id} className="hover:bg-muted/30 transition-colors" data-testid={`host-row-${host.id}`}>
-                      <td className="px-4 py-3 font-medium">{host.name}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{host.email}</td>
-                      <td className="px-4 py-3">
-                        <EmploymentTypeBadge type={host.employment_type} />
-                      </td>
-                      <td className="px-4 py-3 tabular-nums">{fmtRp(host.hourly_rate)}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-1">
-                          {(host.assigned_accounts || []).length > 0 ? (
-                            host.assigned_accounts.map((a) => {
-                              const full = accounts.find((x) => x.id === a.id);
-                              return (
-                                <AccountBadge
-                                  key={a.id}
-                                  account={full || { account_name: a.name, platform: 'unknown' }}
-                                  size="xs"
-                                />
-                              );
-                            })
-                          ) : (
-                            <span className="text-xs text-muted-foreground italic">Belum di-assign</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <StatusBadge status={host.status} />
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 w-8 p-0"
-                            onClick={() => {
-                              setEditingHost(host);
-                              setShowAddEditModal(true);
-                            }}
-                            data-testid={`edit-host-${host.id}`}
-                          >
-                            <Edit size={14} />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 w-8 p-0 text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))] hover:bg-[hsl(var(--destructive)/0.08)]"
-                            onClick={() => handleDelete(host)}
-                            data-testid={`delete-host-${host.id}`}
-                          >
-                            <Trash2 size={14} />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
-            </div>
-          </CardContent>
-        </Card>
+        <TabelData kolom={kolom} baris={paged} testId="livehosts-table" onKlikBaris={(h) => { setEditingHost(h); setShowAddEditModal(true); }}
+          kosong={<EmptyState icon={Users} title={hosts.length ? 'Tidak ada host yang cocok' : 'Belum ada host live'}
+            description={hosts.length ? 'Ubah penyaring.' : 'Tambahkan host live pertama untuk mulai menjadwalkan shift.'}
+            action={!hosts.length && <Button onClick={bukaBaru}><Plus />Tambah host</Button>} />} />
       )}
 
       {showAddEditModal && (
@@ -247,17 +158,10 @@ export default function LiveHostsTab({ authH }) {
           host={editingHost}
           accounts={accounts}
           authH={authH}
-          onClose={() => {
-            setShowAddEditModal(false);
-            setEditingHost(null);
-          }}
-          onSuccess={() => {
-            setShowAddEditModal(false);
-            setEditingHost(null);
-            fetchHosts();
-          }}
+          onClose={() => { setShowAddEditModal(false); setEditingHost(null); }}
+          onSuccess={() => { setShowAddEditModal(false); setEditingHost(null); fetchHosts(); }}
         />
       )}
-    </div>
+    </PageLayout>
   );
 }

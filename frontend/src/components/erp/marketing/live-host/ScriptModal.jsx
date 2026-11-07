@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import FormPopup from '@/components/ui/form-popup';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { API } from './utils';
@@ -22,9 +22,9 @@ export default function ScriptModal({ script, accounts, authH, onClose, onSucces
   const [saving, setSaving] = useState(false);
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     if (!form.title || !form.script_text) {
-      toast.error('Title dan script text wajib diisi');
+      toast.error('Judul dan isi naskah wajib diisi');
       return;
     }
 
@@ -42,63 +42,58 @@ export default function ScriptModal({ script, accounts, authH, onClose, onSucces
       });
 
       if (res.ok) {
-        toast.success(isEdit ? 'Script berhasil diupdate' : 'Script berhasil dibuat');
+        toast.success(isEdit ? 'Naskah disimpan.' : 'Naskah dibuat.');
         onSuccess();
       } else {
         const err = await res.json();
-        toast.error(err.detail || 'Gagal menyimpan script');
+        toast.error(err.detail || 'Gagal menyimpan naskah');
       }
     } catch (e) {
-      toast.error('Gagal menyimpan script');
+      toast.error('Gagal menyimpan naskah');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{isEdit ? 'Edit Script' : 'Add Script'}</DialogTitle>
-        </DialogHeader>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
+    <FormPopup open onClose={onClose} ukuran="panjang" judul={isEdit ? 'Ubah naskah live' : 'Tambah naskah live'} onSimpan={handleSubmit} menyimpan={saving}
+      testId="livehost-script">
           <div>
-            <Label className="text-xs font-semibold">Title *</Label>
+            <Label className="text-sm font-medium">Judul *</Label>
             <Input
               value={form.title}
               onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
               className="mt-1 h-9"
-              placeholder="e.g., Opening Script - Fashion Live"
+              placeholder="cth: Naskah pembuka live fashion"
             />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-xs font-semibold">Category</Label>
+              <Label className="text-sm font-medium">Kategori</Label>
               <Select value={form.category} onValueChange={(v) => setForm((f) => ({ ...f, category: v }))}>
                 <SelectTrigger className="mt-1 h-9">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="opening">Opening</SelectItem>
-                  <SelectItem value="demo">Demo/Product</SelectItem>
+                  <SelectItem value="opening">Pembuka</SelectItem>
+                  <SelectItem value="demo">Demo produk</SelectItem>
                   <SelectItem value="promo">Promo</SelectItem>
-                  <SelectItem value="closing">Closing</SelectItem>
-                  <SelectItem value="faq">FAQ</SelectItem>
-                  <SelectItem value="objection_handling">Objection Handling</SelectItem>
+                  <SelectItem value="closing">Penutup</SelectItem>
+                  <SelectItem value="faq">Tanya jawab</SelectItem>
+                  <SelectItem value="objection_handling">Menangani keberatan</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label className="text-xs font-semibold">Language</Label>
+              <Label className="text-sm font-medium">Bahasa</Label>
               <Select value={form.language} onValueChange={(v) => setForm((f) => ({ ...f, language: v }))}>
                 <SelectTrigger className="mt-1 h-9">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="indonesia">Indonesia</SelectItem>
-                  <SelectItem value="english">English</SelectItem>
+                  <SelectItem value="english">Inggris</SelectItem>
                   <SelectItem value="mandarin">Mandarin</SelectItem>
                 </SelectContent>
               </Select>
@@ -106,16 +101,16 @@ export default function ScriptModal({ script, accounts, authH, onClose, onSucces
           </div>
 
           <div>
-            <Label className="text-xs font-semibold">Account (Optional)</Label>
+            <Label className="text-sm font-medium">Akun toko (opsional)</Label>
             <Select
               value={form.account_id || 'global'}
               onValueChange={(v) => setForm((f) => ({ ...f, account_id: v === 'global' ? '' : v }))}
             >
               <SelectTrigger className="mt-1 h-9">
-                <SelectValue placeholder="Global (All Accounts)" />
+                <SelectValue placeholder="Semua akun toko" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="global">Global (All Accounts)</SelectItem>
+                <SelectItem value="global">Semua akun toko</SelectItem>
                 {accounts.map((acc) => (
                   <SelectItem key={acc.id} value={acc.id}>
                     {acc.account_name} ({acc.platform})
@@ -126,7 +121,7 @@ export default function ScriptModal({ script, accounts, authH, onClose, onSucces
           </div>
 
           <div>
-            <Label className="text-xs font-semibold">Script Text *</Label>
+            <Label className="text-sm font-medium">Isi naskah *</Label>
             <Textarea
               value={form.script_text}
               onChange={(e) => setForm((f) => ({ ...f, script_text: e.target.value }))}
@@ -135,27 +130,6 @@ export default function ScriptModal({ script, accounts, authH, onClose, onSucces
               placeholder="Tulis script lengkap di sini..."
             />
           </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={saving}>
-              {saving ? (
-                <>
-                  <Loader2 size={14} className="mr-1.5 animate-spin" />
-                  Menyimpan...
-                </>
-              ) : (
-                <>
-                  <Save size={14} className="mr-1.5" />
-                  {isEdit ? 'Update' : 'Simpan'}
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    </FormPopup>
   );
 }

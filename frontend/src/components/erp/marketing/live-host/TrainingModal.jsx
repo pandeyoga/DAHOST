@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import FormPopup from '@/components/ui/form-popup';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { API } from './utils';
@@ -24,9 +24,9 @@ export default function TrainingModal({ training, authH, onClose, onSuccess }) {
   const [saving, setSaving] = useState(false);
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     if (!form.title || !form.description) {
-      toast.error('Title dan description wajib diisi');
+      toast.error('Judul dan deskripsi wajib diisi');
       return;
     }
 
@@ -44,54 +44,49 @@ export default function TrainingModal({ training, authH, onClose, onSuccess }) {
       });
 
       if (res.ok) {
-        toast.success(isEdit ? 'Training berhasil diupdate' : 'Training berhasil dibuat');
+        toast.success(isEdit ? 'Pelatihan disimpan.' : 'Pelatihan dibuat.');
         onSuccess();
       } else {
         const err = await res.json();
-        toast.error(err.detail || 'Gagal menyimpan training');
+        toast.error(err.detail || 'Gagal menyimpan pelatihan');
       }
     } catch (e) {
-      toast.error('Gagal menyimpan training');
+      toast.error('Gagal menyimpan pelatihan');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{isEdit ? 'Edit Training' : 'Add Training'}</DialogTitle>
-        </DialogHeader>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
+    <FormPopup open onClose={onClose} ukuran="panjang" judul={isEdit ? 'Ubah pelatihan' : 'Tambah pelatihan'} onSimpan={handleSubmit} menyimpan={saving}
+      testId="livehost-training">
           <div>
-            <Label className="text-xs font-semibold">Title *</Label>
+            <Label className="text-sm font-medium">Judul *</Label>
             <Input
               value={form.title}
               onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
               className="mt-1 h-9"
-              placeholder="e.g., Product Knowledge 101"
+              placeholder="e.g., Pengetahuan produk 101"
             />
           </div>
 
           <div>
-            <Label className="text-xs font-semibold">Category</Label>
+            <Label className="text-sm font-medium">Kategori</Label>
             <Select value={form.category} onValueChange={(v) => setForm((f) => ({ ...f, category: v }))}>
               <SelectTrigger className="mt-1 h-9">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="product_knowledge">Product Knowledge</SelectItem>
-                <SelectItem value="platform_rules">Platform Rules</SelectItem>
-                <SelectItem value="engagement">Engagement Techniques</SelectItem>
-                <SelectItem value="sales_techniques">Sales Techniques</SelectItem>
+                <SelectItem value="product_knowledge">Pengetahuan produk</SelectItem>
+                <SelectItem value="platform_rules">Aturan platform</SelectItem>
+                <SelectItem value="engagement">Teknik interaksi</SelectItem>
+                <SelectItem value="sales_techniques">Teknik penjualan</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           <div>
-            <Label className="text-xs font-semibold">Description *</Label>
+            <Label className="text-sm font-medium">Deskripsi *</Label>
             <Textarea
               value={form.description}
               onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
@@ -103,7 +98,7 @@ export default function TrainingModal({ training, authH, onClose, onSuccess }) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-xs font-semibold">Content Type</Label>
+              <Label className="text-sm font-medium">Jenis materi</Label>
               <Select value={form.content_type} onValueChange={(v) => setForm((f) => ({ ...f, content_type: v }))}>
                 <SelectTrigger className="mt-1 h-9">
                   <SelectValue />
@@ -111,13 +106,13 @@ export default function TrainingModal({ training, authH, onClose, onSuccess }) {
                 <SelectContent>
                   <SelectItem value="video">Video</SelectItem>
                   <SelectItem value="pdf">PDF</SelectItem>
-                  <SelectItem value="quiz">Quiz</SelectItem>
-                  <SelectItem value="external_link">External Link</SelectItem>
+                  <SelectItem value="quiz">Kuis</SelectItem>
+                  <SelectItem value="external_link">Tautan luar</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label className="text-xs font-semibold">Duration (minutes)</Label>
+              <Label className="text-sm font-medium">Durasi (menit)</Label>
               <Input
                 type="number"
                 min="0"
@@ -130,7 +125,7 @@ export default function TrainingModal({ training, authH, onClose, onSuccess }) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-xs font-semibold">Passing Score (%) - Optional</Label>
+              <Label className="text-sm font-medium">Nilai lulus (%) — opsional</Label>
               <Input
                 type="number"
                 min="0"
@@ -143,11 +138,11 @@ export default function TrainingModal({ training, authH, onClose, onSuccess }) {
                   }))
                 }
                 className="mt-1 h-9"
-                placeholder="For quiz only"
+                placeholder="Khusus kuis"
               />
             </div>
             <div>
-              <Label className="text-xs font-semibold">Expiry (months) - Optional</Label>
+              <Label className="text-sm font-medium">Masa berlaku (bulan) — opsional</Label>
               <Input
                 type="number"
                 min="0"
@@ -159,7 +154,7 @@ export default function TrainingModal({ training, authH, onClose, onSuccess }) {
                   }))
                 }
                 className="mt-1 h-9"
-                placeholder="Re-certification"
+                placeholder="Sertifikasi ulang"
               />
             </div>
           </div>
@@ -171,29 +166,8 @@ export default function TrainingModal({ training, authH, onClose, onSuccess }) {
               onChange={(e) => setForm((f) => ({ ...f, is_required: e.target.checked }))}
               className="rounded"
             />
-            <Label className="text-xs font-medium cursor-pointer">Required Training</Label>
+            <Label className="text-xs font-medium cursor-pointer">Pelatihan wajib</Label>
           </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={saving}>
-              {saving ? (
-                <>
-                  <Loader2 size={14} className="mr-1.5 animate-spin" />
-                  Menyimpan...
-                </>
-              ) : (
-                <>
-                  <Save size={14} className="mr-1.5" />
-                  {isEdit ? 'Update' : 'Simpan'}
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    </FormPopup>
   );
 }

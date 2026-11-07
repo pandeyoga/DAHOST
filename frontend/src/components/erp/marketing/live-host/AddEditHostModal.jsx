@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import FormPopup from '@/components/ui/form-popup';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { API } from './utils';
@@ -30,13 +30,13 @@ export default function AddEditHostModal({ host, accounts, authH, onClose, onSuc
   const [saving, setSaving] = useState(false);
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     if (!form.name || !form.email) {
       toast.error('Nama dan email wajib diisi');
       return;
     }
     if (!isEdit && !form.password) {
-      toast.error('Password wajib diisi untuk LiveHost baru');
+      toast.error('Sandi wajib diisi untuk LiveHost baru');
       return;
     }
 
@@ -57,14 +57,14 @@ export default function AddEditHostModal({ host, accounts, authH, onClose, onSuc
       });
 
       if (res.ok) {
-        toast.success(isEdit ? 'LiveHost berhasil diupdate' : 'LiveHost berhasil ditambahkan');
+        toast.success(isEdit ? 'Host live disimpan.' : 'Host live ditambahkan.');
         onSuccess();
       } else {
         const err = await res.json();
-        toast.error(err.detail || 'Gagal menyimpan LiveHost');
+        toast.error(err.detail || 'Gagal menyimpan host live');
       }
     } catch (e) {
-      toast.error('Gagal menyimpan LiveHost');
+      toast.error('Gagal menyimpan host live');
     } finally {
       setSaving(false);
     }
@@ -80,29 +80,21 @@ export default function AddEditHostModal({ host, accounts, authH, onClose, onSuc
   };
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <User size={18} className="text-primary" />
-            {isEdit ? 'Edit LiveHost' : 'Tambah LiveHost Baru'}
-          </DialogTitle>
-        </DialogHeader>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
+    <FormPopup open onClose={onClose} ukuran="panjang" judul={host ? 'Ubah host live' : 'Tambah host live'} onSimpan={handleSubmit} menyimpan={saving}
+      testId="livehost-addedithost">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-xs font-semibold">Nama *</Label>
+              <Label className="text-sm font-medium">Nama *</Label>
               <Input
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                 className="mt-1 h-9"
-                placeholder="Nama LiveHost"
+                placeholder="Nama host live"
                 data-testid="input-name"
               />
             </div>
             <div>
-              <Label className="text-xs font-semibold">Email *</Label>
+              <Label className="text-sm font-medium">Email *</Label>
               <Input
                 type="email"
                 value={form.email}
@@ -116,18 +108,18 @@ export default function AddEditHostModal({ host, accounts, authH, onClose, onSuc
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-xs font-semibold">Password {!isEdit && '*'}</Label>
+              <Label className="text-sm font-medium">Sandi {!isEdit && '*'}</Label>
               <Input
                 type="password"
                 value={form.password}
                 onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
                 className="mt-1 h-9"
-                placeholder={isEdit ? 'Kosongkan jika tidak diubah' : 'Password login'}
+                placeholder={isEdit ? 'Kosongkan jika tidak diubah' : 'Sandi login'}
                 data-testid="input-password"
               />
             </div>
             <div>
-              <Label className="text-xs font-semibold">Phone</Label>
+              <Label className="text-sm font-medium">Telepon</Label>
               <Input
                 value={form.phone}
                 onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
@@ -140,21 +132,21 @@ export default function AddEditHostModal({ host, accounts, authH, onClose, onSuc
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-xs font-semibold">Employment Type</Label>
+              <Label className="text-sm font-medium">Jenis kerja</Label>
               <Select value={form.employment_type} onValueChange={(v) => setForm((f) => ({ ...f, employment_type: v }))}>
                 <SelectTrigger className="mt-1 h-9" data-testid="select-employment">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="full_time">Full Time</SelectItem>
-                  <SelectItem value="part_time">Part Time</SelectItem>
+                  <SelectItem value="full_time">Penuh waktu</SelectItem>
+                  <SelectItem value="part_time">Paruh waktu</SelectItem>
                   <SelectItem value="freelance">Freelance</SelectItem>
-                  <SelectItem value="contract">Contract</SelectItem>
+                  <SelectItem value="contract">Kontrak</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label className="text-xs font-semibold">Hourly Rate (Rp)</Label>
+              <Label className="text-sm font-medium">Tarif per jam (Rp)</Label>
               <MoneyInput
                 value={form.hourly_rate}
                 onChange={(e) => setForm((f) => ({ ...f, hourly_rate: Number(e.target.value) }))}
@@ -165,73 +157,49 @@ export default function AddEditHostModal({ host, accounts, authH, onClose, onSuc
           </div>
 
           <div>
-            <Label className="text-xs font-semibold mb-2 block">Shift Preferences</Label>
+            <Label className="mb-2 block text-sm font-medium">Preferensi shift</Label>
             <div className="flex flex-wrap gap-2">
               {['morning', 'afternoon', 'evening', 'night'].map((shift) => (
-                <button
-                  key={shift}
-                  type="button"
-                  onClick={() => toggleArrayItem('shift_preferences', shift)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                    (form.shift_preferences || []).includes(shift)
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                  }`}
+                <Button key={shift} type="button" size="sm" variant={(form.shift_preferences || []).includes(shift) ? 'default' : 'outline'} onClick={() => toggleArrayItem('shift_preferences', shift)}
                   data-testid={`shift-${shift}`}
                 >
-                  {shift.charAt(0).toUpperCase() + shift.slice(1)}
-                </button>
+                  {({ morning: 'Pagi', afternoon: 'Siang', evening: 'Sore', night: 'Malam' })[shift] || shift}
+                </Button>
               ))}
             </div>
           </div>
 
           <div>
-            <Label className="text-xs font-semibold mb-2 block">Language Skills</Label>
+            <Label className="mb-2 block text-sm font-medium">Bahasa yang dikuasai</Label>
             <div className="flex flex-wrap gap-2">
               {['indonesia', 'english', 'mandarin'].map((lang) => (
-                <button
-                  key={lang}
-                  type="button"
-                  onClick={() => toggleArrayItem('language_skills', lang)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                    (form.language_skills || []).includes(lang)
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                  }`}
+                <Button key={lang} type="button" size="sm" variant={(form.language_skills || []).includes(lang) ? 'default' : 'outline'} onClick={() => toggleArrayItem('language_skills', lang)}
                   data-testid={`lang-${lang}`}
                 >
-                  {lang.charAt(0).toUpperCase() + lang.slice(1)}
-                </button>
+                  {({ indonesia: 'Indonesia', english: 'Inggris', mandarin: 'Mandarin' })[lang] || lang}
+                </Button>
               ))}
             </div>
           </div>
 
           <div>
-            <Label className="text-xs font-semibold mb-2 block">Product Expertise</Label>
+            <Label className="mb-2 block text-sm font-medium">Keahlian produk</Label>
             <div className="flex flex-wrap gap-2">
               {['fashion', 'electronics', 'food', 'beauty', 'health', 'home'].map((prod) => (
-                <button
-                  key={prod}
-                  type="button"
-                  onClick={() => toggleArrayItem('product_expertise', prod)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                    (form.product_expertise || []).includes(prod)
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                  }`}
+                <Button key={prod} type="button" size="sm" variant={(form.product_expertise || []).includes(prod) ? 'default' : 'outline'} onClick={() => toggleArrayItem('product_expertise', prod)}
                   data-testid={`product-${prod}`}
                 >
-                  {prod.charAt(0).toUpperCase() + prod.slice(1)}
-                </button>
+                  {({ fashion: 'Fesyen', electronics: 'Elektronik', food: 'Makanan', beauty: 'Kecantikan', health: 'Kesehatan', home: 'Rumah tangga' })[prod] || prod}
+                </Button>
               ))}
             </div>
           </div>
 
           <div>
-            <Label className="text-xs font-semibold mb-2 block">Assigned Platform Accounts</Label>
+            <Label className="mb-2 block text-sm font-medium">Akun toko yang ditugaskan</Label>
             <div className="max-h-32 overflow-y-auto border rounded-lg p-2 space-y-1">
               {accounts.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-2">Belum ada platform account</p>
+                <p className="text-xs text-muted-foreground text-center py-2">Belum ada akun toko</p>
               ) : (
                 accounts.map((acc) => (
                   <label key={acc.id} className="flex items-center gap-2 p-2 rounded hover:bg-muted/50 cursor-pointer">
@@ -254,22 +222,22 @@ export default function AddEditHostModal({ host, accounts, authH, onClose, onSuc
 
           {isEdit && (
             <div>
-              <Label className="text-xs font-semibold">Status</Label>
+              <Label className="text-sm font-medium">Status</Label>
               <Select value={form.status} onValueChange={(v) => setForm((f) => ({ ...f, status: v }))}>
                 <SelectTrigger className="mt-1 h-9" data-testid="select-status">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="inactive">Inactive</SelectItem>
-                  <SelectItem value="on_leave">On Leave</SelectItem>
+                  <SelectItem value="active">Aktif</SelectItem>
+                  <SelectItem value="inactive">Nonaktif</SelectItem>
+                  <SelectItem value="on_leave">Cuti</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           )}
 
           <div>
-            <Label className="text-xs font-semibold">Notes</Label>
+            <Label className="text-sm font-medium">Catatan</Label>
             <Textarea
               value={form.notes}
               onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
@@ -279,27 +247,6 @@ export default function AddEditHostModal({ host, accounts, authH, onClose, onSuc
               data-testid="input-notes"
             />
           </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={saving} data-testid="submit-host">
-              {saving ? (
-                <>
-                  <Loader2 size={14} className="mr-1.5 animate-spin" />
-                  Menyimpan...
-                </>
-              ) : (
-                <>
-                  <Save size={14} className="mr-1.5" />
-                  {isEdit ? 'Update' : 'Simpan'}
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    </FormPopup>
   );
 }

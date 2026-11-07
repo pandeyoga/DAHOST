@@ -2,44 +2,23 @@
  * Shared status badges for LiveHost Management module.
  */
 
-import { Badge } from '@/components/ui/badge';
-import { CheckCircle, XCircle, AlertCircle, Calendar as CalendarIcon } from 'lucide-react';
+import { StatusBadge as Lencana } from '../../moduleAtoms';
+
+// Standar UI/UX v2 (8 Nov 2026): satu bentuk lencana (StatusBadge) + label Indonesia.
+export const LABEL_STATUS_HOST = { active: 'Aktif', inactive: 'Nonaktif', on_leave: 'Cuti' };
+export const LABEL_KEHADIRAN = { scheduled: 'Terjadwal', on_time: 'Tepat waktu', late: 'Terlambat', no_show: 'Tidak hadir', completed: 'Selesai' };
+export const LABEL_JENIS_KERJA = { full_time: 'Penuh waktu', part_time: 'Paruh waktu', freelance: 'Lepas', contract: 'Kontrak' };
 
 export const StatusBadge = ({ status }) => {
-  const config = {
-    active: { label: 'Active', color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ' },
-    inactive: { label: 'Inactive', color: 'bg-muted text-foreground dark:text-foreground/70' },
-    on_leave: { label: 'On Leave', color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ' },
-  };
-  const cfg = config[status] || config.inactive;
-  return <Badge className={`text-xs ${cfg.color}`}>{cfg.label}</Badge>;
+  const tone = { active: 'success', inactive: 'muted', on_leave: 'warning' }[status] || 'muted';
+  return <Lencana status={status} label={LABEL_STATUS_HOST[status] || LABEL_STATUS_HOST.inactive} tone={tone} />;
 };
 
 export const AttendanceBadge = ({ status }) => {
-  const config = {
-    scheduled: { label: 'Scheduled', color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))]', icon: CalendarIcon },
-    on_time: { label: 'On Time', color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))]', icon: CheckCircle },
-    late: { label: 'Late', color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))]', icon: AlertCircle },
-    no_show: { label: 'No Show', color: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))]', icon: XCircle },
-    completed: { label: 'Completed', color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))]', icon: CheckCircle },
-  };
-  const cfg = config[status] || config.scheduled;
-  const Icon = cfg.icon;
-  return (
-    <Badge className={`text-xs ${cfg.color} flex items-center gap-1`}>
-      <Icon size={10} />
-      {cfg.label}
-    </Badge>
-  );
+  const tone = { scheduled: 'info', on_time: 'success', late: 'warning', no_show: 'danger', completed: 'success' }[status] || 'info';
+  return <Lencana status={status} label={LABEL_KEHADIRAN[status] || LABEL_KEHADIRAN.scheduled} tone={tone} />;
 };
 
-export const EmploymentTypeBadge = ({ type }) => {
-  const config = {
-    full_time: { label: 'Full Time', color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))]' },
-    part_time: { label: 'Part Time', color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))]' },
-    freelance: { label: 'Freelance', color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))]' },
-    contract: { label: 'Contract', color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))]' },
-  };
-  const cfg = config[type] || config.part_time;
-  return <Badge className={`text-xs ${cfg.color}`}>{cfg.label}</Badge>;
-};
+export const EmploymentTypeBadge = ({ type }) => (
+  <Lencana status={type} label={LABEL_JENIS_KERJA[type] || LABEL_JENIS_KERJA.part_time} tone={type === 'contract' ? 'warning' : 'muted'} />
+);

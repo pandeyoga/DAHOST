@@ -1,16 +1,10 @@
 import { Calendar } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
+import { EmptyState } from '../../moduleAtoms';
 
+/** Kalender shift — belum dibuat (Standar UI/UX v2: tampilan kosong standar, bahasa Indonesia). */
 export default function CalendarTab() {
   return (
-    <Card>
-      <CardContent className="flex flex-col items-center justify-center py-6 gap-3">
-        <Calendar size={48} className="text-muted-foreground opacity-40" />
-        <p className="font-medium">Calendar View - Coming Soon</p>
-        <p className="text-sm text-muted-foreground text-center max-w-md">
-          Weekly/monthly calendar view untuk visualisasi shift akan diimplementasi di iterasi berikutnya
-        </p>
-      </CardContent>
-    </Card>
+    <EmptyState icon={Calendar} title="Kalender shift segera hadir"
+      description="Tampilan kalender mingguan/bulanan untuk shift akan dibuat pada tahap berikutnya. Sementara itu, lihat tab Shift." />
   );
 }

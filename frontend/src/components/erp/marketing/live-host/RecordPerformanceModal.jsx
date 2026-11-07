@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import FormPopup from '@/components/ui/form-popup';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { API } from './utils';
@@ -27,7 +27,7 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
   const [saving, setSaving] = useState(false);
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
 
     setSaving(true);
     try {
@@ -38,14 +38,14 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
       });
 
       if (res.ok) {
-        toast.success('Performance berhasil dicatat');
+        toast.success('Performa dicatat.');
         onSuccess();
       } else {
         const err = await res.json();
-        toast.error(err.detail || 'Gagal mencatat performance');
+        toast.error(err.detail || 'Gagal mencatat performa');
       }
     } catch (e) {
-      toast.error('Gagal mencatat performance');
+      toast.error('Gagal mencatat performa');
     } finally {
       setSaving(false);
     }
@@ -62,21 +62,10 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
   };
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <BarChart3 size={18} className="text-primary" />
-            Record Shift Performance
-          </DialogTitle>
-          <p className="text-sm text-muted-foreground">
-            {shift.host_name} - {shift.date} ({shift.shift_start_time}-{shift.shift_end_time})
-          </p>
-        </DialogHeader>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
+    <FormPopup open onClose={onClose} ukuran="panjang" judul="Catat performa shift" onSimpan={handleSubmit} menyimpan={saving}
+      testId="livehost-recordperformance">
           <div>
-            <Label className="text-xs font-semibold">Platform</Label>
+            <Label className="text-sm font-medium">Platform</Label>
             <div className="mt-1 h-9 flex items-center px-3 rounded-md border border-input bg-muted/30 text-sm" data-testid="select-platform">
               {shift.account_name ? `${shift.account_name} · ` : ''}{shift.platform || 'platform mengikuti toko'}
             </div>
@@ -85,7 +74,7 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-xs font-semibold">Viewers</Label>
+              <Label className="text-sm font-medium">Penonton</Label>
               <Input
                 type="number"
                 min="0"
@@ -96,7 +85,7 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
               />
             </div>
             <div>
-              <Label className="text-xs font-semibold">Peak Viewers</Label>
+              <Label className="text-sm font-medium">Penonton puncak</Label>
               <Input
                 type="number"
                 min="0"
@@ -110,7 +99,7 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-xs font-semibold">Revenue (Rp)</Label>
+              <Label className="text-sm font-medium">Omzet (Rp)</Label>
               <MoneyInput
                 value={form.revenue}
                 onChange={(e) => setForm((f) => ({ ...f, revenue: Number(e.target.value) }))}
@@ -119,7 +108,7 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
               />
             </div>
             <div>
-              <Label className="text-xs font-semibold">Orders</Label>
+              <Label className="text-sm font-medium">Pesanan</Label>
               <Input
                 type="number"
                 min="0"
@@ -132,7 +121,7 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
           </div>
 
           <div>
-            <Label className="text-xs font-semibold">Items Promoted</Label>
+            <Label className="text-sm font-medium">Produk yang dipromosikan</Label>
             <CatalogItemSelect accountId={shift.account_id} value="" label="" required={false}
               onChange={addItem} testId="input-item" className="mt-1" />
             {form.items_promoted.length > 0 && (
@@ -140,13 +129,10 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
                 {form.items_promoted.map((item, i) => (
                   <Badge key={i} variant="secondary" className="text-xs">
                     {item}
-                    <button
-                      type="button"
-                      onClick={() => removeItem(i)}
-                      className="ml-1 hover:text-[hsl(var(--danger-text))]"
-                    >
+                    <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeItem(i)}
+                      className="ml-1 h-5 w-5 hover:text-[hsl(var(--danger-text))]" title="Hapus" aria-label="Hapus">
                       <X size={10} />
-                    </button>
+                    </Button>
                   </Badge>
                 ))}
               </div>
@@ -154,7 +140,7 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
           </div>
 
           <div>
-            <Label className="text-xs font-semibold">Script Adherence Score (0-100)</Label>
+            <Label className="text-sm font-medium">Skor kepatuhan naskah (0–100)</Label>
             <Input
               type="number"
               min="0"
@@ -167,13 +153,13 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
                 }))
               }
               className="mt-1 h-9"
-              placeholder="Optional"
+              placeholder="Opsional"
               data-testid="input-script-score"
             />
           </div>
 
           <div>
-            <Label className="text-xs font-semibold">Challenges Faced</Label>
+            <Label className="text-sm font-medium">Kendala yang dihadapi</Label>
             <Textarea
               value={form.challenges_faced}
               onChange={(e) => setForm((f) => ({ ...f, challenges_faced: e.target.value }))}
@@ -185,7 +171,7 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
           </div>
 
           <div>
-            <Label className="text-xs font-semibold">Notes</Label>
+            <Label className="text-sm font-medium">Catatan</Label>
             <Textarea
               value={form.notes}
               onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
@@ -195,27 +181,6 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
               data-testid="input-performance-notes"
             />
           </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={saving} data-testid="submit-performance">
-              {saving ? (
-                <>
-                  <Loader2 size={14} className="mr-1.5 animate-spin" />
-                  Menyimpan...
-                </>
-              ) : (
-                <>
-                  <Save size={14} className="mr-1.5" />
-                  Simpan
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    </FormPopup>
   );
 }
