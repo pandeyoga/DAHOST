@@ -16,7 +16,6 @@ import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { BarisDetail } from '@/components/ui/detail-popup';
 import { toast } from 'sonner';
 import { MapPin, Search, RefreshCw, Warehouse, ArrowDownToLine, CheckCircle2, PackageOpen } from 'lucide-react';
-import OnwardCTA from './OnwardCTA';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice } from './moduleAtoms';
 import useUomOptions from '@/hooks/useUomOptions';
@@ -272,14 +271,16 @@ export default function PutAwayModule({ token, onNavigate }) {
         <Notice tone="success" icon={CheckCircle2} testId="putaway-message" title={message.text} />
       ) : null}
       footer={(
-        <OnwardCTA
-          onNavigate={onNavigate}
-          title="Langkah berikutnya"
-          actions={[
-            { module: 'wms-stock-hub', label: 'Lihat stok terkini', icon: Warehouse, primary: true, hint: 'Cek posisi stok setelah disimpan' },
-            { module: 'wh-receiving', label: 'Kembali ke penerimaan', icon: ArrowDownToLine, hint: 'Terima barang lain' },
-          ]}
-        />
+        // Dulu OnwardCTA bersama (judul HURUF BESAR "LANGKAH BERIKUTNYA"); tujuan & tombolnya sama.
+        onNavigate ? (
+          <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground" data-testid="onward-cta">
+            <span>Langkah berikutnya:</span>
+            <Button size="sm" variant="outline" onClick={() => onNavigate('wms-stock-hub')} title="Cek posisi stok setelah disimpan"
+              data-testid="onward-cta-wms-stock-hub"><Warehouse />Lihat stok terkini</Button>
+            <Button size="sm" variant="outline" onClick={() => onNavigate('wh-receiving')} title="Terima barang lain"
+              data-testid="onward-cta-wh-receiving"><ArrowDownToLine />Kembali ke penerimaan</Button>
+          </div>
+        ) : null
       )}
     >
       {/* Scan kode barang → popup penempatan terbuka. Di HP tombol kamera besar tampil otomatis. */}

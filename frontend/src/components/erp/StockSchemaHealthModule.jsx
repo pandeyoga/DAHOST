@@ -36,6 +36,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { BarisDetail } from '@/components/ui/detail-popup';
 import { formatDateTimeID } from '@/lib/format';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
@@ -359,13 +360,16 @@ export default function StockSchemaHealthModule({ token }) {
           </p>
         )}
         {roleTargets.length > 0 && (
-          <p className="text-sm text-muted-foreground">
-            Zona tujuan: {roleTargets.map((r, i) => (
-              <span key={r.role} data-testid={`role-target-${r.role}`}>
-                {i > 0 ? ' · ' : ''}{PERAN[r.role] || r.role} → <span className="font-medium text-foreground">{r.code || r.name}</span>
-              </span>
-            ))}
-          </p>
+          <div>
+            <p className="text-sm font-medium text-foreground">Zona tujuan rekonsiliasi</p>
+            <dl className="divide-y divide-[var(--glass-border)]">
+              {roleTargets.map((r) => (
+                <div key={r.role} data-testid={`role-target-${r.role}`}>
+                  <BarisDetail label={PERAN[r.role] || 'Lainnya'}>{r.code || r.name}{r.name && r.code ? ` · ${r.name}` : ''}</BarisDetail>
+                </div>
+              ))}
+            </dl>
+          </div>
         )}
       </Bagian>
 

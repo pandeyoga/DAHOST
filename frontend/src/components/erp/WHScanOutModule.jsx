@@ -260,20 +260,20 @@ function ScanTab({ token }) {
   return (
     <div className="space-y-3" data-testid="scan-out-tab-scan">
       <GlassCard className="p-3 space-y-2" hover={false}>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <label className="block text-xs">
-            <span className="flex items-center gap-1 text-muted-foreground mb-1"><MapPin className="w-3 h-3" /> Lokasi asal (wajib)</span>
+        <div className="flex flex-wrap gap-3">
+          <label className="block w-full text-xs sm:w-80">
+            <span className="mb-1 flex items-center gap-1 text-sm text-muted-foreground"><MapPin className="w-3 h-3" /> Lokasi asal (wajib)</span>
             <SmartNativeSelect value={loc} data-testid="scan-out-location"
               onChange={(e) => { setLoc(e.target.value); lsSet(LS_LOC, e.target.value); }}
               className="w-full h-10 rounded-md border border-[var(--glass-border)] bg-[var(--glass-bg)] px-2 text-sm">
-              <option value="">— pilih lokasi —</option>
+              <option value="">Pilih lokasi</option>
               {locOptions.map((l) => (
                 <option key={l.id} value={l.id}>{locLabel(l)}</option>
               ))}
             </SmartNativeSelect>
           </label>
-          <label className="block text-xs">
-            <span className="flex items-center gap-1 text-muted-foreground mb-1"><Store className="w-3 h-3" /> Toko (opsional)</span>
+          <label className="block w-full text-xs sm:w-72">
+            <span className="mb-1 flex items-center gap-1 text-sm text-muted-foreground"><Store className="w-3 h-3" /> Toko (opsional)</span>
             <SmartNativeSelect value={store} data-testid="scan-out-store"
               onChange={(e) => { setStore(e.target.value); lsSet(LS_STORE, e.target.value); }}
               className="w-full h-10 rounded-md border border-[var(--glass-border)] bg-[var(--glass-bg)] px-2 text-sm">

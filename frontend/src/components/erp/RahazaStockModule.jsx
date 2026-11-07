@@ -17,7 +17,7 @@
  *    pada baris tanpa stok. Kini status dihitung dari qty & stok minimum yang sudah dikirim server.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { Package, ArrowDown, ArrowRightLeft, AlertTriangle, PlusCircle, RefreshCw } from 'lucide-react';
+import { Package, ArrowDown, ArrowRightLeft, PlusCircle, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Input } from '@/components/ui/input';
@@ -32,7 +32,7 @@ import { todayWIB } from '@/lib/waktu';
 import { formatDateTimeID } from '@/lib/format';
 import { DataTable } from './DataTableV2';
 import PageLayout from './layout/PageLayout';
-import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
+import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
 
 // Tampilan per 3 kategori bisnis (Bahan/Aksesoris/Produk jadi).
 const CAT_LABEL = { bahan: 'Bahan', aksesoris: 'Aksesoris', fg: 'Produk jadi' };
@@ -309,21 +309,15 @@ export default function RahazaStockModule({ token }) {
             <StatTile testId="stock-summary-fg" label="Produk jadi · baris stok" value={fmtNum(cat('fg').row_count, 0)}
               sub={`Total ${fmtNum(cat('fg').total_qty, 0)} pcs di semua lokasi.`}
               subTone={Number(cat('fg').total_qty || 0) < 0 ? 'danger' : undefined} />
+            {/* U8 — dulu juga kotak berisi deretan 43 pil kode barang; rinciannya ada di Alert & Reorder (tabel + unduh). */}
             <StatTile testId="stock-summary-low" label="Di bawah ambang stok" value={fmtNum(reorderAlerts.length, 0)}
               accent={reorderAlerts.length > 0 ? 'warning' : 'default'}
-              sub="Barang berambang yang stoknya di bawah minimum / titik pesan ulang." />
+              hint="Lihat rinciannya di Alert & Reorder"
+              onClick={() => {
+                if (window.location.hash === '#warehouse-smart') window.location.hash = '';
+                window.location.hash = '#warehouse-smart';
+              }} />
           </div>
-        )}
-        {/* U8 — dulu deretan 43 pil kode barang; rinciannya ada di Alert & Reorder (tabel + unduh). */}
-        {reorderAlerts.length > 0 && (
-          <Notice tone="warning" icon={AlertTriangle} testId="reorder-alert-banner"
-            title={`${fmtNum(reorderAlerts.length, 0)} barang perlu dipesan ulang`}
-            action={<Button variant="link" className="h-auto p-0" onClick={() => {
-              if (window.location.hash === '#warehouse-smart') window.location.hash = '';
-              window.location.hash = '#warehouse-smart';
-            }}>Lihat di Alert & Reorder</Button>}>
-            Terbesar: {reorderAlerts.slice(0, 3).map(a => `${a.code} (butuh ${fmtNum(a.shortage)} ${a.unit})`).join(', ')}.
-          </Notice>
         )}
       </>}>
       {!termuat ? (

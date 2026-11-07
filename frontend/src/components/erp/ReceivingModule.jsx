@@ -29,7 +29,6 @@ import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import UniversalScanner from './scanner/UniversalScanner';
 import ScanResult from './scanner/ScanResult';
 import { sameScanCode, scanFeedback } from './scanner/scanCode';
-import OnwardCTA from './OnwardCTA';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 // FASE H-5 — rincian gulungan kain diisi DI SINI (pintu masuk kain), nomor roll otomatis.
 import RollLinesEditor from './warehouse/RollLinesEditor';
@@ -717,14 +716,16 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
             <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
           )}
           {/* RC-FLOW-UX Alur 1/2 — GRN → Put-Away → Stok (dulu di atas daftar, mendorong tabel ke bawah) */}
-          <OnwardCTA
-            onNavigate={onNavigate}
-            title="Langkah berikutnya"
-            actions={[
-              { module: 'wh-putaway', label: 'Simpan ke rak sekarang', icon: MapPin, primary: true, hint: 'Alokasikan barang yang sudah diterima ke lokasi/bin' },
-              { module: 'wms-stock-hub', label: 'Lihat stok', icon: Warehouse, hint: 'Cek stok terkini setelah penerimaan' },
-            ]}
-          />
+          {/* Dulu OnwardCTA bersama (judul HURUF BESAR "LANGKAH BERIKUTNYA"); tujuan & tombolnya sama. */}
+          {onNavigate && (
+            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground" data-testid="onward-cta">
+              <span>Langkah berikutnya:</span>
+              <Button size="sm" variant="outline" onClick={() => onNavigate('wh-putaway')} title="Alokasikan barang yang sudah diterima ke lokasi/bin"
+                data-testid="onward-cta-wh-putaway"><MapPin />Simpan ke rak sekarang</Button>
+              <Button size="sm" variant="outline" onClick={() => onNavigate('wms-stock-hub')} title="Cek stok terkini setelah penerimaan"
+                data-testid="onward-cta-wms-stock-hub"><Warehouse />Lihat stok</Button>
+            </div>
+          )}
         </>
       )}
     >
