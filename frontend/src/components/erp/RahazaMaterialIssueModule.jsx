@@ -1,13 +1,27 @@
+/**
+ * Pengeluaran Material (MI) — Portal Gudang.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout (kepala tipis, penyaring satu baris), tabel ui/table + unduh Excel/CSV,
+ * form Buat MI = FormPopup panjang, detail = DetailPopup (dulu Modal), status & sumber = StatusBadge berlabel Indonesia,
+ * tolak lewat confirmDialog (dulu window.prompt), Setujui hijau / Tolak merah.
+ */
 import { useState, useEffect, useCallback } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { materialOptionLabel } from '@/lib/materialFields';
-import { Plus, Eye, Trash2, CheckCircle2, XCircle, AlertTriangle, Package, Sparkles, FileText, Send, ScanLine, Scissors, ExternalLink, Info } from 'lucide-react';
-import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
+import { Plus, Trash2, CheckCircle2, XCircle, AlertTriangle, Package, Send, ScanLine, Scissors, ExternalLink, Info, RefreshCw } from 'lucide-react';
+import { GlassCard } from '@/components/ui/glass';
+import { Input } from '@/components/ui/input';
+import FilterChips from '@/components/ui/filter-chips';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { formatDateID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { EmptyState, Notice } from './moduleAtoms';
-import Modal from './Modal';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 // Sprint A.1: UniversalScanner SSOT replaces inline BarcodeScanner
 import UniversalScanner from './scanner/UniversalScanner';
 import ScanResult from './scanner/ScanResult';
@@ -22,23 +36,17 @@ import { UomSelect, UomConversionHint, baseUnitOf } from './uom/UomPicker';
 // pernah tampil di sini. Sekarang setiap baris membawa SUMBER-nya, dan sumber
 // bisa disaring lewat chip (angkanya dari `GET /material-issues/sources`).
 const SOURCE_META = {
-  cutting: { label: 'Cutting', cls: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' },
-  vendor_shipment: { label: 'Kirim Material CMT', cls: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' },
-  job: { label: 'Job Produksi', cls: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' },
-  work_order: { label: 'Work Order', cls: 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)] ' },
-  manual: { label: 'Manual', cls: 'bg-muted text-muted-foreground border-border' },
+  cutting: { label: 'Cutting', tone: 'primary' },
+  vendor_shipment: { label: 'Kirim material CMT', tone: 'primary' },
+  job: { label: 'Job produksi', tone: 'primary' },
+  work_order: { label: 'Work order', tone: 'warning' },
+  manual: { label: 'Manual', tone: 'muted' },
 };
 
 function SourceBadge({ mi }) {
   const key = mi.source_key || 'manual';
   const m = SOURCE_META[key] || SOURCE_META.manual;
-  return (
-    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-semibold ${m.cls}`}
-      data-testid={`mi-source-${mi.mi_number}`}>
-      {key === 'cutting' && <Scissors className="w-2.5 h-2.5" />}
-      {mi.source_label || m.label}
-    </span>
-  );
+  return <StatusBadge status={key} label={mi.source_label || m.label} tone={m.tone} testId={`mi-source-${mi.mi_number}`} />;
 }
 
 /** Acuan dokumen per sumber — supaya kolom "Acuan" tidak pernah kosong. */
@@ -51,16 +59,18 @@ function refOf(mi) {
 }
 
 const STATUS_META = {
-  draft:             { label: 'Draft',             bg: 'bg-muted',   border: 'border-border/25',   text: 'text-foreground/70' },
-  pending_approval:  { label: 'Menunggu Approval', bg: 'bg-[hsl(var(--warning)/0.1)] ',   border: 'border-[hsl(var(--warning)/0.25)]',   text: 'text-[hsl(var(--warning))] ' },
-  rejected:          { label: 'Ditolak',           bg: 'bg-[hsl(var(--destructive)/0.1)] ',     border: 'border-[hsl(var(--destructive)/0.25)]',     text: 'text-[hsl(var(--destructive))] ' },
-  issued:            { label: 'Issued',            bg: 'bg-[hsl(var(--success)/0.1)] ', border: 'border-[hsl(var(--success)/0.25)]', text: 'text-[hsl(var(--success))] ' },
-  cancelled:         { label: 'Cancelled',         bg: 'bg-muted',    border: 'border-border/25',    text: 'text-foreground/80' },
+  draft:            { label: 'Draf', tone: 'muted' },
+  pending_approval: { label: 'Menunggu persetujuan', tone: 'warning' },
+  rejected:         { label: 'Ditolak', tone: 'danger' },
+  issued:           { label: 'Sudah keluar', tone: 'success' },
+  cancelled:        { label: 'Dibatalkan', tone: 'muted' },
 };
+const JENIS_MATERIAL = { fabric: 'Kain', yarn: 'Benang', accessory: 'Aksesoris', packaging: 'Kemasan', interlining: 'Kain keras', fg: 'Produk jadi' };
+const fmtQty = (v) => Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 3 });
 
-function StatusBadge({ status }) {
+function StatusMI({ status }) {
   const s = STATUS_META[status] || STATUS_META.draft;
-  return <span className={`inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full ${s.bg} ${s.border} border ${s.text}`}>{s.label}</span>;
+  return <StatusBadge status={status} label={s.label} tone={s.tone} />;
 }
 
 export default function RahazaMaterialIssueModule({ token, onNavigate }) {
@@ -256,8 +266,9 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
 
   // Sprint 2.2: Reject MI
   const rejectMI = async (mi) => {
-    const reason = prompt(`Alasan menolak MI ${mi.mi_number}:`);
-    if (!reason) return;
+    const reason = await confirmDialog({ title: `Tolak MI ${mi.mi_number}?`, confirmLabel: 'Tolak', danger: true,
+      input: { label: 'Alasan penolakan' } });
+    if (!reason || typeof reason !== 'string') return;
     const r = await fetch(`/api/rahaza/material-issues/${mi.id}/reject`, { method: 'POST', headers, body: JSON.stringify({ reason }) });
     if (!r.ok) {
       toast.error(`Gagal menolak MI (HTTP ${r.status})`);
@@ -455,524 +466,465 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
   const setManualRow = (idx, patch) => setManualRows(
     rows => rows.map((r, i) => i === idx ? { ...r, ...patch } : r));
 
-  if (loading) return (<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" /></div>);
+  if (loading && list.length === 0) return (<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" /></div>);
+
+  const tglMI = (mi) => (mi.created_at ? formatDateID(mi.created_at) : '—');
+  const selPil = 'w-full';
+  const chips = [
+    { key: '', label: 'Semua', count: srcMeta.all_count ?? 0 },
+    ...(srcMeta.sources || []).map((s) => ({ key: s.key, label: s.label, count: s.count, icon: s.key === 'cutting' ? Scissors : undefined })),
+  ];
 
   return (
-    <div className="space-y-5" data-testid="rahaza-mi-page">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Pengeluaran Material (MI)</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            SATU daftar untuk seluruh arus keluar gudang: MI manual, BOM job produksi,
-            Kirim Material CMT, dan — sejak Fase H-6b — kain yang dipotong di Portal Cutting.
-            Untuk MI manual/job, Approval-lah yang memotong stok; dokumen Cutting lahir sudah
-            &quot;issued&quot; karena kainnya memang sudah keluar saat progres dilaporkan.
-          </p>
+    <PageLayout testId="rahaza-mi-page" title="Pengeluaran Material"
+      subtitle="Satu daftar semua bahan keluar gudang: MI manual, job produksi, kirim ke CMT, dan kain yang dipotong di Portal Cutting."
+      actions={<Button onClick={openCreate} data-testid="mi-create-btn"><Plus /> Buat MI</Button>}
+      filters={<>
+        {/* FASE H-6b — penyaring SUMBER arus keluar; angka dari `GET /material-issues/sources`. Pil berangka 0 tetap
+            tampil supaya jelas pintunya ada tapi kosong. */}
+        <div className="w-full sm:w-auto" data-testid="mi-source-chips">
+          <FilterChips value={filterSource} onChange={setFilterSource} options={chips} hideWhenEmpty={false}
+            testId="mi-src" ariaLabel="Sumber arus keluar" />
         </div>
-        <div className="flex items-center gap-2">
-          <Button onClick={openCreate} data-testid="mi-create-btn">
-            <Plus className="w-4 h-4 mr-1.5" /> Buat MI
-          </Button>
-          {buildings.length > 0 && (
-            <SmartNativeSelect
-              value={filterBuilding}
-              onChange={e => setFilterBuilding(e.target.value)}
-              className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-              data-testid="mi-filter-building"
-              title="Filter berdasarkan gedung WMS"
-            >
-              <option value="">🏢 Semua Gedung</option>
-              {buildings.map(b => <option key={b.id} value={b.id}>🏢 {b.name}</option>)}
-            </SmartNativeSelect>
-          )}
-          <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="mi-filter-status">
-            <option value="">Semua Status</option>
-            <option value="draft">Draft</option>
-            <option value="pending_approval">Menunggu Approval</option>
-            <option value="rejected">Ditolak</option>
-            <option value="issued">Sudah Keluar</option>
-            <option value="cancelled">Dibatalkan</option>
+        <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className={selPil}
+          wrapperClassName="w-full sm:w-48" searchable={false} aria-label="Status" data-testid="mi-filter-status">
+          <option value="">Semua status</option>
+          {Object.entries(STATUS_META).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+        </SmartNativeSelect>
+        {buildings.length > 0 && (
+          <SmartNativeSelect value={filterBuilding} onChange={e => setFilterBuilding(e.target.value)} className={selPil}
+            wrapperClassName="w-full sm:w-48" aria-label="Gedung" data-testid="mi-filter-building" title="Saring berdasarkan gedung WMS">
+            <option value="">Semua gedung</option>
+            {buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
           </SmartNativeSelect>
-        </div>
-      </div>
-
-      {/* ── FASE H-6b — CHIP PENYARING SUMBER ARUS KELUAR ──────────────────────
-          Angka diambil dari `GET /material-issues/sources` (read-only). Chip yang
-          angkanya 0 tetap ditampilkan supaya jelas pintu itu ADA tapi masih kosong
-          — bukan hilang. */}
-      <div className="flex flex-wrap items-center gap-1.5" data-testid="mi-source-chips">
-        <span className="text-[11px] text-muted-foreground mr-1">Sumber:</span>
-        <button type="button" onClick={() => setFilterSource('')}
-          className={`h-8 px-2.5 rounded-lg text-xs border transition-colors ${filterSource === ''
-            ? 'bg-primary text-primary-foreground border-primary'
-            : 'bg-foreground/5 text-foreground border-foreground/10 hover:bg-foreground/10'}`}
-          data-testid="mi-src-all">
-          Semua ({srcMeta.all_count ?? 0})
-        </button>
-        {(srcMeta.sources || []).map(s => (
-          <button key={s.key} type="button" onClick={() => setFilterSource(s.key)}
-            className={`h-8 px-2.5 rounded-lg text-xs border transition-colors ${filterSource === s.key
-              ? 'bg-primary text-primary-foreground border-primary'
-              : 'bg-foreground/5 text-foreground border-foreground/10 hover:bg-foreground/10'}`}
-            data-testid={`mi-src-${s.key}`}>
-            {s.key === 'cutting' && <Scissors className="w-3 h-3 mr-1 inline-block align-[-1px]" />}
-            {s.label} ({s.count})
-          </button>
-        ))}
-        {onNavigate && (
-          <button type="button" onClick={() => onNavigate('cutting-orders')}
-            className="h-8 px-2.5 rounded-lg text-xs border border-foreground/10 bg-foreground/5 text-muted-foreground hover:text-foreground hover:bg-foreground/10 ml-auto inline-flex items-center gap-1"
-            data-testid="mi-open-cutting">
-            <ExternalLink className="w-3 h-3" /> Buka Portal Cutting
-          </button>
         )}
-      </div>
-
-      <GlassCard className="p-0 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-[var(--glass-bg)]">
-              <tr className="text-left text-xs text-muted-foreground">
-                <th className="px-4 py-3">No. MI</th>
-                <th className="px-4 py-3">Sumber</th>
-                <th className="px-4 py-3">Acuan</th>
-                <th className="px-4 py-3">Item</th>
-                <th className="px-4 py-3 text-right">Total Qty</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Tanggal</th>
-                <th className="px-4 py-3 text-right">Aksi</th>
-              </tr>
-            </thead>
-            <tbody>
-              {list.length === 0 ? (
-                <tr><td colSpan={8}>
-                  <EmptyState icon={Package}
-                    title={filterSource ? `Belum ada arus keluar dari sumber "${SOURCE_META[filterSource]?.label || filterSource}"` : 'Belum ada Material Issue'}
-                    description="MI draft dibuat otomatis saat job produksi internal dibuat — gudang tinggal konfirmasi. MI manual juga bisa dibuat di sini, dan dokumen Cutting terbit sendiri saat progres potong dilaporkan."
-                    action={
-                    <div className="flex items-center justify-center gap-2">
-                      {filterSource && (
-                        <Button size="sm" variant="outline" onClick={() => setFilterSource('')} data-testid="mi-empty-cta-clear-source">
-                          Tampilkan semua sumber
-                        </Button>
-                      )}
-                      <Button size="sm" onClick={openCreate} data-testid="mi-empty-cta-create">
-                        <Plus className="w-3.5 h-3.5 mr-1.5" /> Buat MI
-                      </Button>
-                      {onNavigate && (
-                        <Button size="sm" variant="outline" onClick={() => onNavigate('prod-work-orders')} data-testid="mi-empty-cta-wo" >
-                          Buka Work Order
-                        </Button>
-                      )}
-                    </div>
-                    } />
-                </td></tr>
-              ) : list.map(mi => (
-                <tr key={mi.id} className="border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)]" data-testid={`mi-row-${mi.mi_number}`}>
-                  <td className="px-4 py-3 tabular-nums text-xs text-foreground">{mi.mi_number}</td>
-                  <td className="px-4 py-3"><SourceBadge mi={mi} /></td>
-                  <td className="px-4 py-3">
-                    {refOf(mi)
-                      ? <span className="text-foreground text-xs">{refOf(mi)}</span>
-                      : <span className="text-muted-foreground italic text-xs">Manual</span>}
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground">
-                    {mi.item_count} item
-                    {mi.first_material_code && (
-                      <span className="block text-[10px] text-foreground/50 tabular-nums">{mi.first_material_code}</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-right font-semibold text-foreground">
-                    {Number(mi.total_required || 0).toFixed(2)}
-                    {mi.first_unit && <span className="text-[10px] text-muted-foreground font-normal ml-1">{mi.first_unit}</span>}
-                  </td>
-                  <td className="px-4 py-3"><StatusBadge status={mi.status} /></td>
-                  <td className="px-4 py-3 text-muted-foreground text-xs">{new Date(mi.created_at).toLocaleDateString('id-ID')}</td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="inline-flex items-center gap-1">
-                      <button onClick={() => openDetail(mi)} className="p-1.5 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground hover:text-foreground" title="Detail" data-testid={`mi-detail-${mi.mi_number}`}><Eye className="w-3.5 h-3.5" /></button>
-                      {/* FASE H-6b: dokumen Cutting tidak punya tombol Approve/Hapus —
-                          kainnya sudah keluar; menyetujuinya akan memotong stok dua kali. */}
-                      {mi.source_key === 'cutting' && onNavigate && (
-                        <button onClick={() => onNavigate('cutting-orders')}
-                          className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-muted-foreground hover:text-[hsl(var(--primary))] "
-                          title={`Buka order cutting ${mi.cutting_order_number || ''}`}
-                          data-testid={`mi-open-cutting-${mi.mi_number}`}>
-                          <Scissors className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                      {mi.status === 'draft' && (
-                        <>
-                          <button onClick={() => submitMI(mi)} className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-muted-foreground hover:text-[hsl(var(--primary))] " title="Ajukan Approval" data-testid={`mi-submit-${mi.mi_number}`}><Send className="w-3.5 h-3.5" /></button>
-                          <button onClick={() => deleteMI(mi)} className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.1)] text-muted-foreground hover:text-[hsl(var(--destructive))] " title="Hapus"><Trash2 className="w-3.5 h-3.5" /></button>
-                        </>
-                      )}
-                      {mi.status === 'pending_approval' && (
-                        <>
-                          <button onClick={() => approveMI(mi)} className="p-1.5 rounded hover:bg-[hsl(var(--success)/0.1)] text-muted-foreground hover:text-[hsl(var(--success))] " title="Setujui" data-testid={`mi-approve-${mi.mi_number}`}><CheckCircle2 className="w-3.5 h-3.5" /></button>
-                          <button onClick={() => rejectMI(mi)} className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.1)] text-muted-foreground hover:text-[hsl(var(--destructive))] " title="Tolak" data-testid={`mi-reject-${mi.mi_number}`}><XCircle className="w-3.5 h-3.5" /></button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {/* Alat di akhir baris penyaring (bukan slot tools): di HP 390 px Toolbar bersama memeras penyaring. */}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {onNavigate && (
+            <Button variant="outline" onClick={() => onNavigate('cutting-orders')} data-testid="mi-open-cutting">
+              <ExternalLink /> Portal Cutting
+            </Button>
+          )}
+          <TombolUnduh namaBerkas="pengeluaran-material" namaLembar="Pengeluaran material" baris={list} testId="mi-unduh"
+            kolom={[
+              { label: 'No. MI', nilai: (mi) => mi.mi_number },
+              { label: 'Sumber', nilai: (mi) => mi.source_label || (SOURCE_META[mi.source_key] || SOURCE_META.manual).label },
+              { label: 'Acuan', nilai: (mi) => refOf(mi) || 'Manual' },
+              { label: 'Jumlah item', nilai: (mi) => Number(mi.item_count || 0) },
+              { label: 'Material pertama', nilai: (mi) => mi.first_material_code || '' },
+              { label: 'Total qty', nilai: (mi) => Number(mi.total_required || 0) },
+              { label: 'Satuan', nilai: (mi) => mi.first_unit || '' },
+              { label: 'Status', nilai: (mi) => (STATUS_META[mi.status] || STATUS_META.draft).label },
+              { label: 'Tanggal', nilai: (mi) => tglMI(mi) },
+            ]} />
+          <Button variant="outline" size="icon" onClick={() => { fetchList(); fetchSources(); }} disabled={loading}
+            title="Muat ulang" aria-label="Muat ulang" data-testid="mi-refresh">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
+          </Button>
         </div>
+      </>}>
+      <GlassCard className="p-0 overflow-hidden">
+        {list.length === 0 ? (
+          <EmptyState icon={Package}
+            title={filterSource ? `Belum ada arus keluar dari sumber "${SOURCE_META[filterSource]?.label || filterSource}"` : 'Belum ada pengeluaran material'}
+            description="MI draf dibuat otomatis saat job produksi internal dibuat — gudang tinggal konfirmasi. MI manual juga bisa dibuat di sini, dan dokumen Cutting terbit sendiri saat progres potong dilaporkan."
+            action={
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {filterSource && (
+                <Button size="sm" variant="outline" onClick={() => setFilterSource('')} data-testid="mi-empty-cta-clear-source">
+                  Tampilkan semua sumber
+                </Button>
+              )}
+              <Button size="sm" onClick={openCreate} data-testid="mi-empty-cta-create">
+                <Plus /> Buat MI
+              </Button>
+              {onNavigate && (
+                <Button size="sm" variant="outline" onClick={() => onNavigate('prod-work-orders')} data-testid="mi-empty-cta-wo" >
+                  Buka work order
+                </Button>
+              )}
+            </div>
+            } />
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>No. MI</TableHead>
+                  <TableHead>Sumber</TableHead>
+                  <TableHead>Acuan</TableHead>
+                  <TableHead>Item</TableHead>
+                  <TableHead className="text-right">Total qty</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Tanggal</TableHead>
+                  <TableHead className="text-right">Aksi</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {list.map(mi => (
+                  <TableRow key={mi.id} data-testid={`mi-row-${mi.mi_number}`} className="cursor-pointer" onClick={() => openDetail(mi)}>
+                    <TableCell className="whitespace-nowrap">
+                      <Button variant="link" className="h-auto p-0 font-medium" onClick={(e) => { e.stopPropagation(); openDetail(mi); }}
+                        title="Lihat rincian" data-testid={`mi-detail-${mi.mi_number}`}>{mi.mi_number}</Button>
+                    </TableCell>
+                    <TableCell><SourceBadge mi={mi} /></TableCell>
+                    <TableCell className="text-sm">{refOf(mi) || <span className="text-muted-foreground">Manual</span>}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {mi.item_count} item
+                      {mi.first_material_code && <span className="block text-xs">{mi.first_material_code}</span>}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-right font-medium tabular-nums">
+                      {fmtQty(mi.total_required)}
+                      {mi.first_unit && <span className="ml-1 text-xs font-normal text-muted-foreground">{mi.first_unit}</span>}
+                    </TableCell>
+                    <TableCell><StatusMI status={mi.status} /></TableCell>
+                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{tglMI(mi)}</TableCell>
+                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                      <div className="inline-flex items-center gap-1">
+                        {/* FASE H-6b: dokumen Cutting tidak punya tombol Setujui/Hapus —
+                            kainnya sudah keluar; menyetujuinya akan memotong stok dua kali. */}
+                        {mi.source_key === 'cutting' && onNavigate && (
+                          <Button variant="ghost" size="icon-sm" onClick={() => onNavigate('cutting-orders')}
+                            title={`Buka order cutting ${mi.cutting_order_number || ''}`} aria-label="Buka order cutting"
+                            data-testid={`mi-open-cutting-${mi.mi_number}`}>
+                            <Scissors />
+                          </Button>
+                        )}
+                        {mi.status === 'draft' && (
+                          <>
+                            <Button size="sm" variant="outline" onClick={() => submitMI(mi)} title="Ajukan persetujuan" data-testid={`mi-submit-${mi.mi_number}`}><Send />Ajukan</Button>
+                            <Button variant="ghost" size="icon-sm" onClick={() => deleteMI(mi)} title="Hapus" aria-label="Hapus"><Trash2 /></Button>
+                          </>
+                        )}
+                        {mi.status === 'pending_approval' && (
+                          <>
+                            <Button size="sm" variant="success" onClick={() => approveMI(mi)} data-testid={`mi-approve-${mi.mi_number}`}><CheckCircle2 />Setujui</Button>
+                            <Button size="sm" variant="destructive" onClick={() => rejectMI(mi)} data-testid={`mi-reject-${mi.mi_number}`}><XCircle />Tolak</Button>
+                          </>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
       </GlassCard>
 
-      {/* FASE 5: modal Draft-dari-WO dihapus (MI draft auto dari job internal) */}
+      {/* FASE H-2 — form Buat MI (dari job BOM / manual dari master) = FormPopup panjang */}
+      <FormPopup open={showCreate} onClose={closeCreate} ukuran="panjang" judul="Buat pengeluaran material"
+        keterangan="MI dibuat sebagai draf; stok baru berkurang setelah disetujui."
+        onSimpan={createTab === 'job' ? createFromJob : createManual} menyimpan={creating} galat={createErr}
+        labelSimpan="Buat draf MI" testId="mi-create-form">
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Cara membuat MI">
+          <Button type="button" size="sm" variant={createTab === 'job' ? 'default' : 'outline'} aria-pressed={createTab === 'job'}
+            onClick={() => setCreateTab('job')} data-testid="mi-create-tab-job">Dari job produksi</Button>
+          <Button type="button" size="sm" variant={createTab === 'manual' ? 'default' : 'outline'} aria-pressed={createTab === 'manual'}
+            onClick={() => setCreateTab('manual')} data-testid="mi-create-tab-manual">Manual dari master</Button>
+        </div>
 
-      {/* FASE H-2 — modal Buat MI (dari job BOM / manual dari master) */}
-      {showCreate && (
-        <Modal onClose={closeCreate} title="Buat Pengeluaran Material" size="xl">
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <button onClick={() => setCreateTab('job')} data-testid="mi-create-tab-job"
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                  createTab === 'job'
-                    ? 'bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] border-transparent'
-                    : 'bg-[var(--glass-bg)] text-muted-foreground border-[var(--glass-border)]'}`}>
-                Dari job produksi
-              </button>
-              <button onClick={() => setCreateTab('manual')} data-testid="mi-create-tab-manual"
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                  createTab === 'manual'
-                    ? 'bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] border-transparent'
-                    : 'bg-[var(--glass-bg)] text-muted-foreground border-[var(--glass-border)]'}`}>
-                Manual dari master
-              </button>
+        {createTab === 'job' ? (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Kebutuhan material dihitung dari BOM job (kain + aksesoris × qty job) — tidak diketik, sehingga tidak mungkin
+              berbeda dengan rencana produksi. Hanya job <b>internal</b>: material job maklon milik klien, bukan stok DA.
+            </p>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <Isian label="Job produksi internal" wajib>
+                <SmartNativeSelect value={jobId} onChange={e => setJobId(e.target.value)} className="w-full" data-testid="mi-create-job-select">
+                  <option value="">Pilih job</option>
+                  {jobs.map(j => (
+                    <option key={j.id} value={j.id}>
+                      {j.job_number} · {j.po_number || '-'} · {j.status}
+                    </option>
+                  ))}
+                </SmartNativeSelect>
+              </Isian>
+              <Isian label="Lokasi ambil" petunjuk="Bawaan untuk semua baris; bisa diubah nanti.">
+                <SmartNativeSelect value={createLoc} onChange={e => setCreateLoc(e.target.value)} className="w-full" data-testid="mi-create-location-select">
+                  <option value="">Tentukan per baris nanti</option>
+                  {locations.map(l => <option key={l.id} value={l.id}>{`${l.code}${l.name ? ` · ${l.name}` : ''}`}</option>)}
+                </SmartNativeSelect>
+              </Isian>
             </div>
-
-            {createTab === 'job' ? (
-              <div className="space-y-3">
-                <p className="text-xs text-muted-foreground">
-                  Kebutuhan material DIHITUNG dari BOM job (kain + aksesoris × qty job) —
-                  tidak diketik, sehingga tidak mungkin berbeda dengan rencana produksi.
-                  Hanya job <b>internal</b>: material job maklon milik klien, bukan stok DA.
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <div className="text-xs text-muted-foreground mb-1">Job produksi internal</div>
-                    <SmartNativeSelect value={jobId} onChange={e => setJobId(e.target.value)}
-                      className="h-9 px-2 text-sm w-full" data-testid="mi-create-job-select">
-                      <option value="">— Pilih job —</option>
-                      {jobs.map(j => (
-                        <option key={j.id} value={j.id}>
-                          {j.job_number} · {j.po_number || '-'} · {j.status}
-                        </option>
-                      ))}
-                    </SmartNativeSelect>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted-foreground mb-1">Lokasi ambil (bawaan, bisa diubah nanti)</div>
-                    <SmartNativeSelect value={createLoc} onChange={e => setCreateLoc(e.target.value)}
-                      className="h-9 px-2 text-sm w-full" data-testid="mi-create-location-select">
-                      <option value="">— Tentukan per baris nanti —</option>
-                      {locations.map(l => <option key={l.id} value={l.id}>{`${l.code}${l.name ? ` · ${l.name}` : ''}`}</option>)}
-                    </SmartNativeSelect>
-                  </div>
-                </div>
-                {jobs.length === 0 && (
-                  <div className="text-xs text-[hsl(var(--warning))] bg-[hsl(var(--warning)/0.1)]  border border-[hsl(var(--warning)/0.4)] rounded-md px-3 py-2"
-                    data-testid="mi-create-no-jobs">
-                    Belum ada job produksi internal. Buat PO internal & job-nya dulu di Portal
-                    Produksi, atau pakai tab “Manual dari master”.
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <p className="text-xs text-muted-foreground">
-                  Material WAJIB dipilih dari master — barang jadi tidak ikut, karena yang
-                  keluar ke produksi adalah bahan.
-                </p>
-                <GlassPanel className="p-0 overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead className="bg-[var(--glass-bg)]">
-                      <tr className="text-left text-xs text-muted-foreground">
-                        <th className="px-3 py-2">Material</th>
-                        <th className="px-3 py-2 text-right">Jumlah</th>
-                        <th className="px-3 py-2">Satuan</th>
-                        <th className="px-3 py-2">Lokasi ambil</th>
-                        <th className="px-3 py-2" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {manualRows.map((row, idx) => {
-                        const mat = materials.find(m => m.id === row.material_id) || {};
-                        return (
-                          <tr key={idx} className="border-t border-[var(--glass-border)]">
-                            <td className="px-3 py-2">
-                              <SmartNativeSelect value={row.material_id}
-                                onChange={e => setManualRow(idx, { material_id: e.target.value, uom: '' })}
-                                className="h-8 px-2 text-xs w-full" data-testid={`mi-manual-material-${idx}`}>
-                                <option value="">— Pilih material —</option>
-                                {issuableMaterials.map(m => (
-                                  <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>
-                                ))}
-                              </SmartNativeSelect>
-                            </td>
-                            <td className="px-3 py-2 text-right">
-                              <input type="number" min="0" step="0.0001" value={row.qty}
-                                onChange={e => setManualRow(idx, { qty: e.target.value })}
-                                className="h-8 w-24 rounded-md border border-input bg-background px-2 text-right text-xs text-foreground"
-                                data-testid={`mi-manual-qty-${idx}`} />
-                            </td>
-                            <td className="px-3 py-2">
-                              <UomSelect opt={manualUom[row.material_id]} fallbackUnit={mat.unit}
-                                value={row.uom || baseUnitOf(manualUom[row.material_id], mat.unit)}
-                                onChange={e => setManualRow(idx, { uom: e.target.value })}
-                                testId={`mi-manual-uom-${idx}`} className="w-24 h-8 text-xs" />
-                              <UomConversionHint opt={manualUom[row.material_id]} qty={row.qty}
-                                unit={row.uom || baseUnitOf(manualUom[row.material_id], mat.unit)}
-                                fallbackUnit={mat.unit} testId={`mi-manual-uom-hint-${idx}`} />
-                            </td>
-                            <td className="px-3 py-2">
-                              <SmartNativeSelect value={row.location_id}
-                                onChange={e => setManualRow(idx, { location_id: e.target.value })}
-                                className="h-8 px-2 text-xs" data-testid={`mi-manual-location-${idx}`}>
-                                <option value="">— Pilih —</option>
-                                {locations.map(l => <option key={l.id} value={l.id}>{`${l.code}${l.name ? ` · ${l.name}` : ''}`}</option>)}
-                              </SmartNativeSelect>
-                            </td>
-                            <td className="px-3 py-2 text-right">
-                              {manualRows.length > 1 && (
-                                <button onClick={() => setManualRows(rows => rows.filter((_, i) => i !== idx))}
-                                  className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.1)] text-muted-foreground hover:text-[hsl(var(--destructive))]"
-                                  data-testid={`mi-manual-remove-${idx}`}>
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </GlassPanel>
-                <Button size="sm" variant="outline" onClick={() => setManualRows(rows => [...rows, { material_id: '', qty: '', uom: '', location_id: '' }])} data-testid="mi-manual-add-row">
-                  <Plus className="w-3.5 h-3.5 mr-1.5" /> Tambah baris
-                </Button>
-                <GlassInput value={createNotes} onChange={e => setCreateNotes(e.target.value)}
-                  placeholder="Keterangan (mis. 'sampel buyer', 'permak lot 3')"
-                  data-testid="mi-manual-notes" />
-              </div>
+            {jobs.length === 0 && (
+              <Notice tone="warning" testId="mi-create-no-jobs">
+                Belum ada job produksi internal. Buat PO internal & job-nya dulu di Portal Produksi, atau pakai “Manual dari master”.
+              </Notice>
             )}
-
-            {/* SESI #19 — kolom nomor mengikuti kebijakan Otomatis/Manual owner. */}
-            <DocNumberField
-              policy={numPolicy}
-              value={miNumber}
-              onChange={setMiNumber}
-              label="Nomor Pengeluaran Material"
-              testId="mi-number"
-              className="mt-3"
-            />
-
-            {createErr && (
-              <div className="text-xs text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.1)]  border border-[hsl(var(--destructive)/0.35)]  rounded-md px-3 py-2"
-                data-testid="mi-create-error">{createErr}</div>
-            )}
-
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <Button variant="outline" onClick={closeCreate} data-testid="mi-create-cancel">Batal</Button>
-              <Button onClick={createTab === 'job' ? createFromJob : createManual} disabled={creating}
-                data-testid="mi-create-submit">
-                <FileText className="w-4 h-4 mr-1.5" />
-                {creating ? 'Menyimpan…' : 'Buat Draft MI'}
-              </Button>
-            </div>
           </div>
-        </Modal>
-      )}
-
-      {/* Detail modal */}
-      {detail && (
-        <Modal onClose={() => setDetail(null)} title={`Detail ${detail.mi_number}`} size="xl">
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-2 text-sm">
-              <div><span className="text-muted-foreground">Status:</span> <StatusBadge status={detail.status} /></div>
-              <div><span className="text-muted-foreground">Sumber:</span> <SourceBadge mi={detail} /></div>
-              <div><span className="text-muted-foreground">Acuan:</span> <b>{refOf(detail) || 'Manual'}</b></div>
-              <div><span className="text-muted-foreground">Tanggal:</span> <b>{new Date(detail.created_at).toLocaleDateString('id-ID')}</b></div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Material wajib dipilih dari master — barang jadi tidak ikut, karena yang keluar ke produksi adalah bahan.
+            </p>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Material</TableHead>
+                    <TableHead className="text-right">Jumlah</TableHead>
+                    <TableHead>Satuan</TableHead>
+                    <TableHead>Lokasi ambil</TableHead>
+                    <TableHead><span className="sr-only">Hapus</span></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {manualRows.map((row, idx) => {
+                    const mat = materials.find(m => m.id === row.material_id) || {};
+                    return (
+                      <TableRow key={idx}>
+                        <TableCell className="min-w-[14rem]">
+                          <SmartNativeSelect value={row.material_id}
+                            onChange={e => setManualRow(idx, { material_id: e.target.value, uom: '' })}
+                            className="h-8 w-full text-sm" aria-label="Material" data-testid={`mi-manual-material-${idx}`}>
+                            <option value="">Pilih material</option>
+                            {issuableMaterials.map(m => (
+                              <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>
+                            ))}
+                          </SmartNativeSelect>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Input type="number" min="0" step="0.0001" value={row.qty} aria-label="Jumlah"
+                            onChange={e => setManualRow(idx, { qty: e.target.value })}
+                            className="ml-auto h-8 w-24 text-right" data-testid={`mi-manual-qty-${idx}`} />
+                        </TableCell>
+                        <TableCell>
+                          <UomSelect opt={manualUom[row.material_id]} fallbackUnit={mat.unit}
+                            value={row.uom || baseUnitOf(manualUom[row.material_id], mat.unit)}
+                            onChange={e => setManualRow(idx, { uom: e.target.value })}
+                            testId={`mi-manual-uom-${idx}`} className="h-8 w-24 text-sm" />
+                          <UomConversionHint opt={manualUom[row.material_id]} qty={row.qty}
+                            unit={row.uom || baseUnitOf(manualUom[row.material_id], mat.unit)}
+                            fallbackUnit={mat.unit} testId={`mi-manual-uom-hint-${idx}`} />
+                        </TableCell>
+                        <TableCell className="min-w-[10rem]">
+                          <SmartNativeSelect value={row.location_id}
+                            onChange={e => setManualRow(idx, { location_id: e.target.value })}
+                            className="h-8 w-full text-sm" aria-label="Lokasi ambil" data-testid={`mi-manual-location-${idx}`}>
+                            <option value="">Pilih</option>
+                            {locations.map(l => <option key={l.id} value={l.id}>{`${l.code}${l.name ? ` · ${l.name}` : ''}`}</option>)}
+                          </SmartNativeSelect>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {manualRows.length > 1 && (
+                            <Button type="button" variant="ghost" size="icon-sm" title="Hapus baris" aria-label="Hapus baris"
+                              onClick={() => setManualRows(rows => rows.filter((_, i) => i !== idx))}
+                              data-testid={`mi-manual-remove-${idx}`}>
+                              <Trash2 />
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
             </div>
+            <Button type="button" size="sm" variant="outline" onClick={() => setManualRows(rows => [...rows, { material_id: '', qty: '', uom: '', location_id: '' }])} data-testid="mi-manual-add-row">
+              <Plus /> Tambah baris
+            </Button>
+            <Isian label="Keterangan" htmlFor="mi-manual-notes-in">
+              <Input id="mi-manual-notes-in" value={createNotes} onChange={e => setCreateNotes(e.target.value)}
+                placeholder="Mis. sampel buyer, permak lot 3" data-testid="mi-manual-notes" />
+            </Isian>
+          </div>
+        )}
 
-            {/* ── FASE H-6b — ASAL DOKUMEN CUTTING (jejak yang bisa dipertanggungjawabkan) ── */}
-            {detail.source_key === 'cutting' && (
-              <Notice tone="info" icon={Scissors} testId="mi-cutting-panel"
-                title={<>
-                  Dari Portal Cutting — order {detail.cutting_order_number || '-'}
-                  {detail.backfilled && (
-                    <span className="ml-2 px-1.5 py-0.5 rounded-full border border-[hsl(var(--warning)/0.4)] bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]  text-[10px] font-semibold"
-                      data-testid="mi-cutting-backfilled">diterbitkan retroaktif</span>
-                  )}
-                </>}>
-                <div className="space-y-2">
-                <div className="text-xs">{detail.stock_note}</div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1 text-xs">
-                  <div><span className="text-[hsl(var(--primary)/0.7)] ">Style:</span> <b>{detail.cutting_style_name || '-'}</b></div>
-                  <div><span className="text-[hsl(var(--primary)/0.7)] ">Potongan jadi:</span> <b>{Number(detail.cutting_output_qty || 0).toLocaleString('id-ID')} pcs</b></div>
-                  <div><span className="text-[hsl(var(--primary)/0.7)] ">Buangan:</span> <b>{Number(detail.cutting_waste_qty || 0).toLocaleString('id-ID')}</b></div>
-                  <div><span className="text-[hsl(var(--primary)/0.7)] ">Kode potongan:</span> <b className="tabular-nums">{detail.cutting_output_material_code || '-'}</b></div>
-                </div>
+        {/* SESI #19 — kolom nomor mengikuti kebijakan Otomatis/Manual owner. */}
+        <DocNumberField
+          policy={numPolicy}
+          value={miNumber}
+          onChange={setMiNumber}
+          label="Nomor pengeluaran material"
+          testId="mi-number"
+        />
+        {createErr && <span className="sr-only" data-testid="mi-create-error">{createErr}</span>}
+      </FormPopup>
+
+      {/* Detail = DetailPopup */}
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} judul={`Pengeluaran material ${detail.mi_number}`} testId="mi-detail-popup"
+          status={<><StatusMI status={detail.status} /><SourceBadge mi={detail} /></>}
+          keterangan={`Acuan: ${refOf(detail) || 'Manual'} · ${tglMI(detail)}`}
+          aksi={detail.status === 'draft' ? (
+            <>
+              <Button size="sm" variant="destructive" onClick={() => cancelMI(detail)}><XCircle /> Batalkan</Button>
+              {/* PROD-01: tombol legacy "Konfirmasi & Kurangi Stok" (tanpa persetujuan) DIMATIKAN — satu jalur: Ajukan → Setujui */}
+              <Button size="sm" onClick={() => submitMI(detail)} data-testid="mi-submit-approval-btn"><Send /> Ajukan persetujuan</Button>
+            </>
+          ) : null}>
+          {/* ── FASE H-6b — ASAL DOKUMEN CUTTING (jejak yang bisa dipertanggungjawabkan) ── */}
+          {detail.source_key === 'cutting' && (
+            <Notice tone="info" icon={Scissors} testId="mi-cutting-panel"
+              title={<>
+                Dari Portal Cutting — order {detail.cutting_order_number || '-'}
+                {detail.backfilled && (
+                  <span className="ml-2" data-testid="mi-cutting-backfilled"><StatusBadge status="backfilled" label="Diterbitkan retroaktif" tone="warning" /></span>
+                )}
+              </>}>
+              <div className="space-y-2 text-sm">
+                <div>{detail.stock_note}</div>
+                <dl className="divide-y divide-[var(--glass-border)]">
+                  <BarisDetail label="Model">{detail.cutting_style_name || '-'}</BarisDetail>
+                  <BarisDetail label="Potongan jadi">{Number(detail.cutting_output_qty || 0).toLocaleString('id-ID')} pcs</BarisDetail>
+                  <BarisDetail label="Buangan">{Number(detail.cutting_waste_qty || 0).toLocaleString('id-ID')}</BarisDetail>
+                  <BarisDetail label="Kode potongan">{detail.cutting_output_material_code || '-'}</BarisDetail>
+                </dl>
                 {(detail.roll_numbers || []).length > 0 && (
-                  <div className="text-xs" data-testid="mi-cutting-rolls">
-                    <span className="text-[hsl(var(--primary)/0.7)] ">Gulungan dipakai:</span>{' '}
+                  <div data-testid="mi-cutting-rolls">
+                    <span className="text-muted-foreground">Gulungan dipakai:</span>{' '}
                     {(detail.roll_consumption || []).length > 0
                       ? (detail.roll_consumption || []).map((c, i) => (
-                        <span key={i} className="inline-block mr-2 tabular-nums">
-                          {c.roll_no} <span className="text-[hsl(var(--primary))] ">−{Number(c.qty || 0).toLocaleString('id-ID')}</span>
-                          {c.remaining_after != null && <span className="text-[hsl(var(--primary)/0.6)] "> (sisa {Number(c.remaining_after).toLocaleString('id-ID')})</span>}
+                        <span key={i} className="mr-2 inline-block tabular-nums">
+                          {c.roll_no} <span className="font-medium">−{Number(c.qty || 0).toLocaleString('id-ID')}</span>
+                          {c.remaining_after != null && <span className="text-muted-foreground"> (sisa {Number(c.remaining_after).toLocaleString('id-ID')})</span>}
                         </span>
                       ))
                       : <span className="tabular-nums">{(detail.roll_numbers || []).join(', ')}</span>}
                   </div>
                 )}
                 {detail.gl_skip_reason && (
-                  <div className="flex items-start gap-1.5 text-[11px] text-[hsl(var(--primary)/0.8)] "
-                    data-testid="mi-cutting-gl-reason">
-                    <Info className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                  <div className="flex items-start gap-1.5 text-xs text-muted-foreground" data-testid="mi-cutting-gl-reason">
+                    <Info className="mt-0.5 h-3 w-3 flex-shrink-0" />
                     <span><b>Tidak dijurnal.</b> {detail.gl_skip_reason}</span>
                   </div>
                 )}
                 {onNavigate && (
                   <div>
-                    <Button size="sm" variant="outline" className="text-xs border-[hsl(var(--primary)/0.4)]"
-                      onClick={() => { setDetail(null); onNavigate('cutting-orders'); }}
+                    <Button size="sm" variant="outline" onClick={() => { setDetail(null); onNavigate('cutting-orders'); }}
                       data-testid="mi-cutting-open-order">
-                      <ExternalLink className="w-3 h-3 mr-1" /> Buka order cutting
+                      <ExternalLink /> Buka order cutting
                     </Button>
                   </div>
                 )}
-                </div>
-              </Notice>
-            )}
-
-            {detail.missing_codes?.length > 0 && (
-              <Notice tone="warning" icon={AlertTriangle} title="Kode material kosong pada BOM">
-                <span className="text-xs">{detail.missing_codes.join(', ')} — item ini tidak ikut di MI. Lengkapi kode di BOM lalu buat ulang.</span>
-              </Notice>
-            )}
-
-            {/* U3 — Scan button for draft MI */}
-            {detail.status === 'draft' && (
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button type="button" size="sm" variant="outline"
-                    onClick={() => { setScanTarget({ miId: detail.id }); setShowScanner(true); }}
-                    data-testid="mi-scan-barcode-btn">
-                    <ScanLine className="w-4 h-4" /> Scan barcode material
-                  </Button>
-                  <span className="text-xs text-muted-foreground">Cek apakah material ada di daftar; ikon scan di baris mengganti material baris itu.</span>
-                </div>
-                {scanRes && scanRes.idx === null && <ScanResult {...scanRes} testId="mi-scan-result" />}
               </div>
-            )}
+            </Notice>
+          )}
 
-            <GlassPanel className="p-0 overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-[var(--glass-bg)]">
-                  <tr className="text-left text-xs text-muted-foreground">
-                    <th className="px-3 py-2">Material</th>
-                    <th className="px-3 py-2">Type</th>
-                    <th className="px-3 py-2 text-right">Qty Required</th>
-                    <th className="px-3 py-2 text-right">Qty Issued</th>
-                    <th className="px-3 py-2">Lokasi Ambil</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(detail.items || []).map((it, idx) => (
-                    <tr key={it.id} className="border-t border-[var(--glass-border)]">
-                      <td className="px-3 py-2">
-                        <div className="tabular-nums text-xs text-foreground flex items-center gap-1">
-                          {it.material_code}
-                          {detail.status === 'draft' && (
-                            <Button type="button" variant="ghost" size="icon-sm"
-                              onClick={() => { setScanTarget({ miId: detail.id, itemIdx: idx }); setShowScanner(true); }}
-                              className="text-[hsl(var(--primary))]"
-                              title="Scan barcode untuk material ini" aria-label="Scan barcode untuk material ini"
-                              data-testid={`mi-item-scan-${it.material_code}`}
-                            >
-                              <ScanLine className="w-4 h-4" />
-                            </Button>
-                          )}
-                        </div>
-                        <div className="text-xs text-muted-foreground">{it.material_name}</div>
-                        {scanRes && scanRes.idx === idx && <ScanResult {...scanRes} testId={`mi-item-scan-result-${idx}`} />}
-                      </td>
-                      <td className="px-3 py-2 text-xs text-muted-foreground">{it.material_type}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-foreground">
-                        {detail.status === 'draft' ? (
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-end gap-1.5">
-                              <input type="number" min="0" step="0.0001"
-                                value={it._qty_input ?? it.input_qty ?? it.qty_required ?? 0}
-                                onChange={e => updateDetailItem(it.id, { _qty_input: e.target.value })}
-                                className="h-8 w-24 rounded-md border border-input bg-background px-2 text-right text-xs text-foreground"
-                                data-testid={`mi-item-qty-${it.material_code}`} />
-                              <UomSelect opt={uomOpts[it.material_id]} fallbackUnit={it.unit}
-                                value={it._uom || it.input_uom || baseUnitOf(uomOpts[it.material_id], it.unit)}
-                                onChange={e => updateDetailItem(it.id, { _uom: e.target.value })}
-                                testId={`mi-item-uom-${it.material_code}`} className="w-20 shrink-0 h-8 text-xs" />
-                            </div>
-                            <UomConversionHint opt={uomOpts[it.material_id]}
-                              qty={it._qty_input ?? it.input_qty ?? it.qty_required}
-                              unit={it._uom || it.input_uom || baseUnitOf(uomOpts[it.material_id], it.unit)}
-                              fallbackUnit={it.unit} className="text-right"
-                              testId={`mi-item-uom-hint-${it.material_code}`} />
-                          </div>
-                        ) : (
-                          <>
-                            {Number(it.qty_required).toFixed(3)} {it.unit}
-                            {it.input_uom && it.input_qty != null && (
-                              <div className="text-[10px] text-muted-foreground font-normal" data-testid={`mi-item-uom-trace-${it.material_code}`}>
-                                input: {Number(it.input_qty)} {it.input_uom}
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{Number(it.qty_issued || 0).toFixed(3)} {it.unit}</td>
-                      <td className="px-3 py-2">
-                        {detail.status === 'draft' ? (
-                          <SmartNativeSelect value={it.location_id || ''} onChange={e => updateDetailItemLocation(it.id, e.target.value)} className="h-8 px-2 text-xs" data-testid={`mi-item-location-${it.material_code}`}>
-                            <option value="">— Pilih —</option>
-                            {locations.map(l => <option key={l.id} value={l.id}>{`${l.code}${l.name ? ` · ${l.name}` : ''}`}</option>)}
-                          </SmartNativeSelect>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">{it.location_code || '—'}</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </GlassPanel>
+          {detail.missing_codes?.length > 0 && (
+            <Notice tone="warning" icon={AlertTriangle} title="Kode material kosong pada BOM">
+              {detail.missing_codes.join(', ')} — item ini tidak ikut di MI. Lengkapi kode di BOM lalu buat ulang.
+            </Notice>
+          )}
 
-            <div className="flex items-center justify-between gap-2 pt-2 flex-wrap">
-              {formError && (
-                <div className="w-full text-xs text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.1)]  border border-[hsl(var(--destructive)/0.35)]  rounded-md px-3 py-2"
-                  data-testid="mi-form-error">{formError}</div>
-              )}
-              {detail.status === 'draft' && (
-                <Button variant="outline" onClick={saveDetailItems} disabled={saving} data-testid="mi-save-items-btn">
-                  {saving ? 'Menyimpan…' : 'Simpan Qty, Satuan & Lokasi'}
+          {/* U3 — Scan button for draft MI */}
+          {detail.status === 'draft' && (
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" size="sm" variant="outline"
+                  onClick={() => { setScanTarget({ miId: detail.id }); setShowScanner(true); }}
+                  data-testid="mi-scan-barcode-btn">
+                  <ScanLine /> Scan barcode material
                 </Button>
-              )}
-              <div className="flex items-center gap-2 ml-auto">
-                {detail.status === 'draft' && (
-                  <>
-                    <Button variant="ghost" onClick={() => cancelMI(detail)} className="text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.1)] "><XCircle className="w-4 h-4 mr-1.5" /> Batalkan</Button>
-                    {/* PROD-01: tombol legacy "Konfirmasi & Kurangi Stok" (tanpa approval) DIMATIKAN — satu jalur: Ajukan Approval → Approve */}
-                    <Button onClick={() => submitMI(detail)} data-testid="mi-submit-approval-btn"><Send className="w-4 h-4 mr-1.5" /> Ajukan Approval</Button>
-                  </>
-                )}
+                <span className="text-xs text-muted-foreground">Cek apakah material ada di daftar; ikon scan di baris mengganti material baris itu.</span>
               </div>
+              {scanRes && scanRes.idx === null && <ScanResult {...scanRes} testId="mi-scan-result" />}
             </div>
+          )}
+
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-base font-semibold text-foreground">Barang ({(detail.items || []).length})</p>
+            <TombolUnduh namaBerkas={`mi-${detail.mi_number}`} namaLembar="Barang MI" baris={detail.items || []} testId="mi-detail-unduh"
+              kolom={[
+                { label: 'Kode', nilai: (it) => it.material_code },
+                { label: 'Material', nilai: (it) => it.material_name || '' },
+                { label: 'Jenis', nilai: (it) => JENIS_MATERIAL[it.material_type] || it.material_type || '' },
+                { label: 'Qty dibutuhkan', nilai: (it) => Number(it.qty_required || 0) },
+                { label: 'Qty keluar', nilai: (it) => Number(it.qty_issued || 0) },
+                { label: 'Satuan', nilai: (it) => it.unit || '' },
+                { label: 'Lokasi ambil', nilai: (it) => it.location_code || '' },
+              ]} />
           </div>
-        </Modal>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Material</TableHead>
+                  <TableHead>Jenis</TableHead>
+                  <TableHead className="text-right">Qty dibutuhkan</TableHead>
+                  <TableHead className="text-right">Qty keluar</TableHead>
+                  <TableHead>Lokasi ambil</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(detail.items || []).map((it, idx) => (
+                  <TableRow key={it.id}>
+                    <TableCell>
+                      <div className="flex items-center gap-1 font-medium text-foreground">
+                        {it.material_code}
+                        {detail.status === 'draft' && (
+                          <Button type="button" variant="ghost" size="icon-sm"
+                            onClick={() => { setScanTarget({ miId: detail.id, itemIdx: idx }); setShowScanner(true); }}
+                            title="Scan barcode untuk material ini" aria-label="Scan barcode untuk material ini"
+                            data-testid={`mi-item-scan-${it.material_code}`}
+                          >
+                            <ScanLine />
+                          </Button>
+                        )}
+                      </div>
+                      <div className="text-xs text-muted-foreground">{it.material_name}</div>
+                      {scanRes && scanRes.idx === idx && <ScanResult {...scanRes} testId={`mi-item-scan-result-${idx}`} />}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{JENIS_MATERIAL[it.material_type] || it.material_type || '—'}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {detail.status === 'draft' ? (
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Input type="number" min="0" step="0.0001" aria-label="Qty dibutuhkan"
+                              value={it._qty_input ?? it.input_qty ?? it.qty_required ?? 0}
+                              onChange={e => updateDetailItem(it.id, { _qty_input: e.target.value })}
+                              className="h-8 w-24 text-right" data-testid={`mi-item-qty-${it.material_code}`} />
+                            <UomSelect opt={uomOpts[it.material_id]} fallbackUnit={it.unit}
+                              value={it._uom || it.input_uom || baseUnitOf(uomOpts[it.material_id], it.unit)}
+                              onChange={e => updateDetailItem(it.id, { _uom: e.target.value })}
+                              testId={`mi-item-uom-${it.material_code}`} className="h-8 w-20 shrink-0 text-sm" />
+                          </div>
+                          <UomConversionHint opt={uomOpts[it.material_id]}
+                            qty={it._qty_input ?? it.input_qty ?? it.qty_required}
+                            unit={it._uom || it.input_uom || baseUnitOf(uomOpts[it.material_id], it.unit)}
+                            fallbackUnit={it.unit} className="text-right"
+                            testId={`mi-item-uom-hint-${it.material_code}`} />
+                        </div>
+                      ) : (
+                        <>
+                          {fmtQty(it.qty_required)} {it.unit}
+                          {it.input_uom && it.input_qty != null && (
+                            <div className="text-xs font-normal text-muted-foreground" data-testid={`mi-item-uom-trace-${it.material_code}`}>
+                              input: {Number(it.input_qty)} {it.input_uom}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{fmtQty(it.qty_issued)} {it.unit}</TableCell>
+                    <TableCell className="min-w-[9rem]">
+                      {detail.status === 'draft' ? (
+                        <SmartNativeSelect value={it.location_id || ''} onChange={e => updateDetailItemLocation(it.id, e.target.value)}
+                          className="h-8 w-full text-sm" aria-label="Lokasi ambil" data-testid={`mi-item-location-${it.material_code}`}>
+                          <option value="">Pilih</option>
+                          {locations.map(l => <option key={l.id} value={l.id}>{`${l.code}${l.name ? ` · ${l.name}` : ''}`}</option>)}
+                        </SmartNativeSelect>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">{it.location_code || '—'}</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          {formError && <Notice tone="danger" testId="mi-form-error">{formError}</Notice>}
+          {detail.status === 'draft' && (
+            <div className="flex justify-end">
+              <Button variant="success" onClick={saveDetailItems} disabled={saving} data-testid="mi-save-items-btn">
+                {saving ? 'Menyimpan…' : 'Simpan qty, satuan & lokasi'}
+              </Button>
+            </div>
+          )}
+        </DetailPopup>
       )}
 
       {/* U3 — Barcode Scanner Modal (Sprint A.1: UniversalScanner SSOT) */}
@@ -981,8 +933,8 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
         open={showScanner}
         onClose={() => { setShowScanner(false); setScanTarget(null); }}
         onScan={handleBarcodeScan}
-        title="Scan Barcode Material"
+        title="Scan barcode material"
       />
-    </div>
+    </PageLayout>
   );
 }
