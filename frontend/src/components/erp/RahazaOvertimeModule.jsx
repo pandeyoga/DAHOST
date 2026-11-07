@@ -164,7 +164,7 @@ export default function RahazaOvertimeModule({ token, user }) {
         ? 'Kelola pengajuan lembur karyawan. Hanya lembur yang disetujui masuk ke penggajian.'
         : 'Ajukan lembur lalu tunggu persetujuan atasan.'}
       actions={<Button onClick={() => setDialog({})} data-testid="overtime-create"><Plus />Ajukan lembur</Button>}
-      filters={
+      filters={<>
         <FilterChips hideWhenEmpty={false} value={tab} onChange={setTab} testId="overtime-status" ariaLabel="Status"
           options={[
             { key: 'pending', label: 'Menunggu' },
@@ -173,24 +173,25 @@ export default function RahazaOvertimeModule({ token, user }) {
             { key: 'cancelled', label: 'Dibatalkan' },
             { key: 'all', label: 'Semua' },
           ]} />
-      }
-      tools={<>
-        <TombolUnduh namaBerkas={`lembur-${tab}`} namaLembar="Lembur" baris={items} testId="overtime-unduh"
-          kolom={[
-            { label: 'Kode karyawan', nilai: (it) => it.employee?.employee_code || '' },
-            { label: 'Nama karyawan', nilai: (it) => it.employee?.name || '' },
-            { label: 'Tanggal', nilai: (it) => formatTanggalID(it.date) || it.date },
-            { label: 'Mulai', nilai: (it) => it.start_time },
-            { label: 'Selesai', nilai: (it) => it.end_time },
-            { label: 'Durasi (jam)', nilai: (it) => Number(it.hours) || 0 },
-            { label: 'Pengali', nilai: (it) => (it.rate_multiplier != null ? Number(it.rate_multiplier) : '') },
-            { label: 'Alasan', nilai: (it) => it.reason || '' },
-            { label: 'Status', nilai: (it) => statusCfg(it.status).label },
-            { label: 'Alasan ditolak', nilai: (it) => it.rejected_reason || '' },
-          ]} />
-        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid="overtime-refresh">
-          <RefreshCw className={loading ? 'animate-spin' : ''} />
-        </Button>
+        {/* Unduh & muat ulang di ujung kanan; di HP turun ke baris sendiri (tidak menimpa penyaring) */}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <TombolUnduh namaBerkas={`lembur-${tab}`} namaLembar="Lembur" baris={items} testId="overtime-unduh"
+            kolom={[
+              { label: 'Kode karyawan', nilai: (it) => it.employee?.employee_code || '' },
+              { label: 'Nama karyawan', nilai: (it) => it.employee?.name || '' },
+              { label: 'Tanggal', nilai: (it) => formatTanggalID(it.date) || it.date },
+              { label: 'Mulai', nilai: (it) => it.start_time },
+              { label: 'Selesai', nilai: (it) => it.end_time },
+              { label: 'Durasi (jam)', nilai: (it) => Number(it.hours) || 0 },
+              { label: 'Pengali', nilai: (it) => (it.rate_multiplier != null ? Number(it.rate_multiplier) : '') },
+              { label: 'Alasan', nilai: (it) => it.reason || '' },
+              { label: 'Status', nilai: (it) => statusCfg(it.status).label },
+              { label: 'Alasan ditolak', nilai: (it) => it.rejected_reason || '' },
+            ]} />
+          <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid="overtime-refresh">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
+          </Button>
+        </div>
       </>}
       footer={items.length > 0 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}>
       {loading && items.length === 0 ? (
@@ -249,25 +250,27 @@ function OvertimeDialog({ employees, isApprover, currentUser, onSave, onClose })
     <FormPopup open onClose={onClose} ukuran="pendek" testId="overtime-form" judul="Ajukan lembur"
       keterangan="Pengali upah lembur mengikuti Pengaturan penggajian." onSimpan={submit} menyimpan={saving}
       labelSimpan="Ajukan">
-      {isApprover && (
-        <Isian label="Karyawan" wajib>
-          {/* Tahap 5 (2026-11-07): dulu Select tanpa kotak cari & hanya 100 karyawan pertama */}
-          <EmployeeSelect employees={employees} value={form.employee_id}
-            onChange={v => setForm(f => ({ ...f, employee_id: v }))} testId="overtime-employee" />
+      <div className="grid gap-4 sm:grid-cols-2">
+        {isApprover && (
+          <Isian label="Karyawan" wajib>
+            {/* Tahap 5 (2026-11-07): dulu Select tanpa kotak cari & hanya 100 karyawan pertama */}
+            <EmployeeSelect employees={employees} value={form.employee_id}
+              onChange={v => setForm(f => ({ ...f, employee_id: v }))} testId="overtime-employee" />
+          </Isian>
+        )}
+        <Isian label="Tanggal" wajib>
+          <DatePicker value={form.date} onChange={v => setForm(f => ({ ...f, date: v }))} bolehKosong={false} testId="overtime-date" />
         </Isian>
-      )}
-      <Isian label="Tanggal" wajib>
-        <DatePicker value={form.date} onChange={v => setForm(f => ({ ...f, date: v }))} bolehKosong={false} testId="overtime-date" />
-      </Isian>
+      </div>
       {/* Jam: belum ada pemilih jam bersama — isian jam bawaan peramban dipertahankan */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <Isian label="Mulai" htmlFor="ot-start">
           <Input id="ot-start" type="time" value={form.start_time} onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} />
         </Isian>
         <Isian label="Selesai" htmlFor="ot-end">
           <Input id="ot-end" type="time" value={form.end_time} onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))} />
         </Isian>
-        <Isian label="Durasi">
+        <Isian label="Durasi" className="col-span-2 sm:col-span-1">
           <p className="flex h-9 items-center text-sm tabular-nums">{hours} jam</p>
         </Isian>
       </div>

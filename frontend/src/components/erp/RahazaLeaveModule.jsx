@@ -120,6 +120,8 @@ function DocumentUpload({ value, onChange, required, docNote, token }) {
 // ─── MAIN MODULE ──────────────────────────────────────────────────────────────
 export default function RahazaLeaveModule({ token, onNavigate, bagian }) {
   const [leaves, setLeaves] = useState([]);
+  const [totalServer, setTotalServer] = useState(0);   // jumlah pengajuan di server (daftar memuat 100 terbaru)
+  const [dimuat, setDimuat] = useState(0);
   const [leaveTypes, setLeaveTypes] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [filterStatus, setFilterStatus] = useState('');
@@ -168,6 +170,8 @@ export default function RahazaLeaveModule({ token, onNavigate, bagian }) {
         fetch(`${API}/api/rahaza/employees?active_only=true&limit=500`, { headers }).then(r => r.json()),
       ]);
       let allLeaves = lr?.items || (Array.isArray(lr) ? lr : []);
+      setTotalServer(Number(lr?.total) || allLeaves.length);
+      setDimuat(allLeaves.length);
       if (filterReqType) allLeaves = allLeaves.filter(l => l.request_type === filterReqType);
       setLeaves(allLeaves);
       setLeaveTypes(Array.isArray(lts) ? lts : []);
@@ -352,6 +356,22 @@ export default function RahazaLeaveModule({ token, onNavigate, bagian }) {
 
   const { page, setPage, totalPages, total, paged } = useClientPagination(leaves, 10);
 
+  // Unduh: SEMUA pengajuan sesuai penyaring (bukan hanya 100 terbaru yang tampil) — API yang sama, per 500 baris.
+  const ambilSemuaPengajuan = async () => {
+    const semua = [];
+    for (let skip = 0; skip < 20000; skip += 500) {
+      const params = new URLSearchParams({ skip: String(skip), limit: '500' });
+      if (filterStatus) params.append('status', filterStatus);
+      const r = await fetch(`${API}/api/rahaza/leaves?${params}`, { headers });
+      if (!r.ok) throw new Error('Gagal memuat pengajuan');
+      const d = await r.json();
+      const items = d?.items || [];
+      semua.push(...items);
+      if (!d?.has_more || items.length === 0) break;
+    }
+    return filterReqType ? semua.filter(l => l.request_type === filterReqType) : semua;
+  };
+
   // ── Aksi per pengajuan (dipakai di tabel & popup rincian) ──
   const aksiPengajuan = (lv) => {
     if (lv.status === 'pending_approval' || lv.status === 'pending_hr_approval') {
@@ -468,38 +488,41 @@ export default function RahazaLeaveModule({ token, onNavigate, bagian }) {
           <option value="cancelled">Dibatalkan</option>
         </SmartNativeSelect>
         <SmartNativeSelect value={filterReqType} onChange={e => setFilterReqType(e.target.value)} searchable={false}
-          className="h-9 w-40" aria-label="Kelompok" data-testid="filter-reqtype">
+          className="h-9 w-44" aria-label="Kelompok" data-testid="filter-reqtype">
           <option value="">Semua kelompok</option>
           <option value="cuti">Cuti</option>
           <option value="sakit">Sakit</option>
           <option value="izin">Izin</option>
         </SmartNativeSelect>
         {pindahBagian}
+        {/* Unduh & muat ulang di ujung kanan; di HP turun ke baris sendiri (tidak menimpa penyaring) */}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <TombolUnduh namaBerkas="pengajuan-cuti" namaLembar="Pengajuan cuti" baris={leaves} testId="leave-unduh"
+            ambilSemua={ambilSemuaPengajuan}
+            kolom={[
+              { label: 'Karyawan', nilai: (lv) => lv.employee_name || lv.employee_id },
+              { label: 'Kelompok', nilai: (lv) => (REQ_TYPE_CFG[lv.request_type || 'cuti'] || REQ_TYPE_CFG.izin).label },
+              { label: 'Jenis cuti', nilai: (lv) => lv.leave_type_name || '' },
+              { label: 'Dari', nilai: (lv) => fmt(lv.from_date) },
+              { label: 'Sampai', nilai: (lv) => fmt(lv.to_date) },
+              { label: 'Hari kalender', nilai: (lv) => Number(lv.duration_days) || 0 },
+              { label: 'Hari kerja', nilai: (lv) => Number(lv.duration_working_days) || 0 },
+              { label: 'Setengah hari', nilai: (lv) => (lv.is_half_day ? PERIODE_SETENGAH[lv.half_day_period] || 'Ya' : '') },
+              { label: 'Alasan', nilai: (lv) => lv.reason || '' },
+              { label: 'Status', nilai: (lv) => (STATUS_CFG[lv.status] || STATUS_CFG.draft).label },
+              { label: 'Dokumen', nilai: (lv) => (lv.attachment_url ? 'Ada' : '') },
+            ]} />
+          {muatUlang}
+        </div>
       </>}
-      tools={<>
-        <TombolUnduh namaBerkas="pengajuan-cuti" namaLembar="Pengajuan cuti" baris={leaves} testId="leave-unduh"
-          kolom={[
-            { label: 'Karyawan', nilai: (lv) => lv.employee_name || lv.employee_id },
-            { label: 'Kelompok', nilai: (lv) => (REQ_TYPE_CFG[lv.request_type || 'cuti'] || REQ_TYPE_CFG.izin).label },
-            { label: 'Jenis cuti', nilai: (lv) => lv.leave_type_name || '' },
-            { label: 'Dari', nilai: (lv) => fmt(lv.from_date) },
-            { label: 'Sampai', nilai: (lv) => fmt(lv.to_date) },
-            { label: 'Hari kalender', nilai: (lv) => Number(lv.duration_days) || 0 },
-            { label: 'Hari kerja', nilai: (lv) => Number(lv.duration_working_days) || 0 },
-            { label: 'Setengah hari', nilai: (lv) => (lv.is_half_day ? PERIODE_SETENGAH[lv.half_day_period] || 'Ya' : '') },
-            { label: 'Alasan', nilai: (lv) => lv.reason || '' },
-            { label: 'Status', nilai: (lv) => (STATUS_CFG[lv.status] || STATUS_CFG.draft).label },
-            { label: 'Dokumen', nilai: (lv) => (lv.attachment_url ? 'Ada' : '') },
-          ]} />
-        {muatUlang}
-      </>}
-      summary={typeof onNavigate === 'function' && (
+      summary={(typeof onNavigate === 'function' || totalServer > dimuat) && (
         <p className="text-sm text-muted-foreground">
-          Saldo cuti berkurang otomatis setelah pengajuan disetujui.{' '}
+          {totalServer > dimuat && `Menampilkan ${dimuat} pengajuan terbaru dari ${totalServer}; unduhan berisi semuanya. `}
+          {typeof onNavigate === 'function' && <>Saldo cuti berkurang otomatis setelah pengajuan disetujui.{' '}
           <Button variant="link" className="h-auto p-0" onClick={() => onNavigate('hr-leave-balances', {})}
             data-testid="onward-hr-leave-balances" title="Cek saldo cuti karyawan setelah pengajuan disetujui">
             Lihat saldo cuti
-          </Button>
+          </Button></>}
         </p>
       )}
       footer={leaves.length > 0 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}>
@@ -556,6 +579,7 @@ export default function RahazaLeaveModule({ token, onNavigate, bagian }) {
       {/* ── POPUP: PENGAJUAN BARU ── */}
       <FormPopup open={requestModal} onClose={() => setRequestModal(false)} ukuran="panjang" testId="new-request-dialog"
         judul="Buat pengajuan cuti, izin, atau sakit" onSimpan={submitRequest} menyimpan={saving} labelSimpan="Kirim pengajuan">
+        <div className="grid gap-4 sm:grid-cols-2">
         <Isian label="Karyawan" wajib>
           <EmployeeSelect employees={employees} value={rf.employee_id}
             onChange={v => setRf({ employee_id: v })} testId="req-employee" />
@@ -574,6 +598,7 @@ export default function RahazaLeaveModule({ token, onNavigate, bagian }) {
             ))}
           </SmartNativeSelect>
         </Isian>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Isian label="Dari tanggal" wajib>
             <DatePicker value={rf.from_date} testId="req-from" bolehKosong={false}

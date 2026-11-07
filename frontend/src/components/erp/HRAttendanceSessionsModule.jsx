@@ -299,32 +299,34 @@ export default function HRAttendanceSessionsModule({ token }) {
             <option value="not_required">Istirahat (tercatat)</option>
           </SmartNativeSelect>
         </>}
-      </>}
-      tools={<>
-        {tab === 'rekap' ? <>
-          <TombolUnduh namaBerkas={`rekap-istirahat-izin-${filters.from_date}-${filters.to_date}`} namaLembar="Rekap"
-            baris={filtered} kolom={unduhRekap} testId="rekap-unduh" />
-          <Button variant="outline" onClick={exportExcel} disabled={exporting} data-testid="export-excel"
-            title="Rekap Excel dari server, sesuai penyaring periode, karyawan, jenis, dan status">
-            {exporting ? <Loader2 className="animate-spin" /> : <Download />}
-            Rekap Excel
+        {/* Unduh & muat ulang di ujung kanan; di HP turun ke baris sendiri (tidak menimpa penyaring) */}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {tab === 'rekap' ? <>
+            <TombolUnduh namaBerkas={`rekap-istirahat-izin-${filters.from_date}-${filters.to_date}`} namaLembar="Rekap"
+              baris={filtered} kolom={unduhRekap} testId="rekap-unduh" />
+            <Button variant="outline" onClick={exportExcel} disabled={exporting} data-testid="export-excel"
+              title="Rekap Excel dari server, sesuai penyaring periode, karyawan, jenis, dan status">
+              {exporting ? <Loader2 className="animate-spin" /> : <Download />}
+              Rekap Excel
+            </Button>
+          </> : (
+            <TombolUnduh namaBerkas="izin-menunggu-persetujuan" namaLembar="Menunggu" baris={pendingShown}
+              kolom={unduhPending} testId="pending-unduh" />
+          )}
+          <Button variant="outline" size="icon" onClick={loadAll} disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid="sessions-refresh">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
           </Button>
-        </> : (
-          <TombolUnduh namaBerkas="izin-menunggu-persetujuan" namaLembar="Menunggu" baris={pendingShown}
-            kolom={unduhPending} testId="pending-unduh" />
-        )}
-        <Button variant="outline" size="icon" onClick={loadAll} disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid="sessions-refresh">
-          <RefreshCw className={loading ? 'animate-spin' : ''} />
-        </Button>
+        </div>
       </>}
       summary={tab === 'rekap' && !loading && adaRingkasan && (
-        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        /* Angka dari server untuk periode & penyaring yang sama dengan tabel (kata cari tidak ikut dihitung). */
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4" data-testid="rekap-ringkasan">
           <StatTile label="Sesi istirahat" value={summary.istirahat_count || 0} sub={`${fmtDur(summary.istirahat_minutes)} total`}
             testId="stat-istirahat" />
           <StatTile label="Sesi izin" value={summary.izin_count || 0} sub={`${fmtDur(summary.izin_minutes)} disetujui`}
             testId="stat-izin" />
           <StatTile label="Menunggu" value={summary.pending || 0} accent={summary.pending ? 'warning' : 'muted'}
-            sub="Izin yang perlu keputusan" testId="stat-pending" />
+            sub="Izin menunggu keputusan dalam periode ini" testId="stat-pending" />
           <StatTile label="Ditolak / batal" value={ditolakBatal} sub="Tidak memotong jam kerja" testId="stat-rejected" />
         </div>
       )}>

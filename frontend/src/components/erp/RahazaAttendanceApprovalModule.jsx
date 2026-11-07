@@ -114,7 +114,7 @@ export default function RahazaAttendanceApprovalModule({ token }) {
     { kunci: 'karyawan', label: 'Karyawan', hp: 'judul', isi: (rec) => (
       <div className="min-w-0">
         <p className="font-medium text-foreground">{rec.employee_name || '-'}</p>
-        <p className="text-xs text-muted-foreground">{rec.employee_code}{rec.department ? ` · ${rec.department}` : ''}</p>
+        <p className="text-xs text-muted-foreground">{rec.employee_code}{rec.department && rec.department !== '-' ? ` · ${rec.department}` : ''}</p>
       </div>) },
     { kunci: 'tanggal', label: 'Tanggal', isi: (rec) => <span className="whitespace-nowrap">{fmtDate(rec.date)}</span> },
     { kunci: 'jam', label: 'Masuk / pulang', isi: (rec) => <span className="tabular-nums">{fmtTime(rec.clock_in)} / {fmtTime(rec.clock_out)}</span> },
@@ -140,7 +140,7 @@ export default function RahazaAttendanceApprovalModule({ token }) {
       filters={(
         <>
           <SmartNativeSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} searchable={false}
-            className="h-9 w-44" aria-label="Status" data-testid="att-approval-status">
+            className="h-9 w-56" aria-label="Status" data-testid="att-approval-status">
             <option value="pending">Menunggu pemeriksaan</option>
             <option value="approved">Disetujui</option>
             <option value="rejected">Ditolak</option>
@@ -148,30 +148,31 @@ export default function RahazaAttendanceApprovalModule({ token }) {
             <option value="all">Semua</option>
           </SmartNativeSelect>
           <PeriodPicker value={period} onChange={setPeriod} testId="att-approval-period" />
+          {/* Unduh & muat ulang di ujung kanan; di HP turun ke baris sendiri (tidak menimpa penyaring) */}
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+          <TombolUnduh namaBerkas="persetujuan-absen" namaLembar="Persetujuan absen" baris={records} testId="att-approval-unduh"
+            kolom={[
+              { label: 'Kode karyawan', nilai: (r) => r.employee_code || '' },
+              { label: 'Nama karyawan', nilai: (r) => r.employee_name || '' },
+              { label: 'Departemen', nilai: (r) => r.department || '' },
+              { label: 'Tanggal', nilai: (r) => fmtDate(r.date) },
+              { label: 'Masuk', nilai: (r) => fmtTime(r.clock_in) },
+              { label: 'Pulang', nilai: (r) => fmtTime(r.clock_out) },
+              { label: 'Metode', nilai: (r) => METHOD[r.attendance_method] || 'Selfie' },
+              { label: 'Lokasi', nilai: (r) => geoText(r) },
+              { label: 'Terlambat (menit)', nilai: (r) => Number(r.late_minutes) || 0 },
+              { label: 'Status', nilai: (r) => APPROVAL[r.approval_status]?.label || r.approval_status || '' },
+              { label: 'Diperiksa oleh', nilai: (r) => r.approval_by_name || '' },
+              { label: 'Catatan', nilai: (r) => r.approval_notes || '' },
+            ]} />
+          <Button variant="outline" size="icon" onClick={loadRecords} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
+          </Button>
+          </div>
         </>
       )}
-      tools={(<>
-        <TombolUnduh namaBerkas="persetujuan-absen" namaLembar="Persetujuan absen" baris={records} testId="att-approval-unduh"
-          kolom={[
-            { label: 'Kode karyawan', nilai: (r) => r.employee_code || '' },
-            { label: 'Nama karyawan', nilai: (r) => r.employee_name || '' },
-            { label: 'Departemen', nilai: (r) => r.department || '' },
-            { label: 'Tanggal', nilai: (r) => fmtDate(r.date) },
-            { label: 'Masuk', nilai: (r) => fmtTime(r.clock_in) },
-            { label: 'Pulang', nilai: (r) => fmtTime(r.clock_out) },
-            { label: 'Metode', nilai: (r) => METHOD[r.attendance_method] || 'Selfie' },
-            { label: 'Lokasi', nilai: (r) => geoText(r) },
-            { label: 'Terlambat (menit)', nilai: (r) => Number(r.late_minutes) || 0 },
-            { label: 'Status', nilai: (r) => APPROVAL[r.approval_status]?.label || r.approval_status || '' },
-            { label: 'Diperiksa oleh', nilai: (r) => r.approval_by_name || '' },
-            { label: 'Catatan', nilai: (r) => r.approval_notes || '' },
-          ]} />
-        <Button variant="outline" size="icon" onClick={loadRecords} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
-          <RefreshCw className={loading ? 'animate-spin' : ''} />
-        </Button>
-      </>)}
       summary={msg && (
-        <Notice tone={msg.tone} action={<Button size="sm" variant="ghost" onClick={() => setMsg(null)}>Tutup</Button>}>
+        <Notice tone={msg.tone} action={<Button size="sm" variant="outline" onClick={() => setMsg(null)}>Tutup</Button>}>
           {msg.text}
         </Notice>
       )}

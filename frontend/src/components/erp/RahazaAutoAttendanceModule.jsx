@@ -591,19 +591,20 @@ export function AbsenOtomatisHariIni({ token }) {
           <option value="all">Semua metode</option>
         </SmartNativeSelect>
         <span className="text-sm text-muted-foreground">{formatTanggalID(today)}</span>
-      </>}
-      tools={<>
-        <TombolUnduh namaBerkas={`absen-otomatis-${today}`} namaLembar="Absen hari ini" baris={records} testId="live-unduh"
-          kolom={[
-            { label: 'Karyawan', nilai: (r) => r.employee_name || r.employee_id },
-            { label: 'Metode', nilai: (r) => METODE[r.attendance_method] || 'Manual' },
-            { label: 'Lokasi', nilai: lokasi },
-            { label: 'Kecocokan wajah', nilai: wajah },
-            { label: 'Masuk', nilai: (r) => fmtJam(r.clock_in) },
-            { label: 'Pulang', nilai: (r) => (r.clock_out ? fmtJam(r.clock_out) : '') },
-            { label: 'Status', nilai: (r) => persetujuan(r).label },
-          ]} />
-        <MuatUlang onClick={load} memuat={loading} />
+        {/* Unduh & muat ulang di ujung kanan; di HP turun ke baris sendiri (tidak menimpa penyaring) */}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <TombolUnduh namaBerkas={`absen-otomatis-${today}`} namaLembar="Absen hari ini" baris={records} testId="live-unduh"
+            kolom={[
+              { label: 'Karyawan', nilai: (r) => r.employee_name || r.employee_id },
+              { label: 'Metode', nilai: (r) => METODE[r.attendance_method] || 'Manual' },
+              { label: 'Lokasi', nilai: lokasi },
+              { label: 'Kecocokan wajah', nilai: wajah },
+              { label: 'Masuk', nilai: (r) => fmtJam(r.clock_in) },
+              { label: 'Pulang', nilai: (r) => (r.clock_out ? fmtJam(r.clock_out) : '') },
+              { label: 'Status', nilai: (r) => persetujuan(r).label },
+            ]} />
+          <MuatUlang onClick={load} memuat={loading} />
+        </div>
       </>}
       footer={records.length > 0 && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
       {loading && records.length === 0 ? <Memuat /> : (

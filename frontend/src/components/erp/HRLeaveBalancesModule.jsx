@@ -128,21 +128,22 @@ export default function HRLeaveBalancesModule({ token }) {
           <Input value={cari} onChange={(e) => setCari(e.target.value)} placeholder="Cari nama atau kode karyawan"
             className="pl-8" aria-label="Cari karyawan" />
         </div>
-      </>}
-      tools={<>
-        <TombolUnduh namaBerkas={`saldo-cuti-${year}`} namaLembar={`Saldo cuti ${year}`} baris={tampil} testId="balance-unduh"
-          kolom={[
-            { label: 'Tahun', nilai: () => year },
-            { label: 'Kode karyawan', nilai: (r) => r.employee?.employee_code || '' },
-            { label: 'Nama karyawan', nilai: (r) => r.employee?.name || '' },
-            { label: 'Jenis cuti', nilai: (r) => r.leave_type?.name || '' },
-            { label: 'Jatah (hari)', nilai: (r) => Number(r.allocated) || 0 },
-            { label: 'Terpakai (hari)', nilai: (r) => Number(r.used) || 0 },
-            { label: 'Sisa (hari)', nilai: (r) => Number(r.remaining) || 0 },
-          ]} />
-        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
-          <RefreshCw className={loading ? 'animate-spin' : ''} />
-        </Button>
+        {/* Unduh & muat ulang di ujung kanan; di HP turun ke baris sendiri (tidak menimpa penyaring) */}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <TombolUnduh namaBerkas={`saldo-cuti-${year}`} namaLembar={`Saldo cuti ${year}`} baris={tampil} testId="balance-unduh"
+            kolom={[
+              { label: 'Tahun', nilai: () => year },
+              { label: 'Kode karyawan', nilai: (r) => r.employee?.employee_code || '' },
+              { label: 'Nama karyawan', nilai: (r) => r.employee?.name || '' },
+              { label: 'Jenis cuti', nilai: (r) => r.leave_type?.name || '' },
+              { label: 'Jatah (hari)', nilai: (r) => Number(r.allocated) || 0 },
+              { label: 'Terpakai (hari)', nilai: (r) => Number(r.used) || 0 },
+              { label: 'Sisa (hari)', nilai: (r) => Number(r.remaining) || 0 },
+            ]} />
+          <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
+          </Button>
+        </div>
       </>}
       summary={loadError && !loading && (
         /* RC-22: banner error nyata — jangan tampilkan empty-state menyesatkan saat backend gagal */
@@ -204,7 +205,7 @@ function EditBalanceDialog({ balance, onSave, onClose }) {
       </Isian>
       <Isian label="Alasan" wajib htmlFor="adj-reason">
         <Input id="adj-reason" value={reason} onChange={e => setReason(e.target.value)}
-          placeholder="Contoh: bonus cuti kinerja, kompensasi hari libur" data-testid="adjust-reason" />
+          placeholder="Contoh: bonus cuti kinerja" data-testid="adjust-reason" />
       </Isian>
     </FormPopup>
   );

@@ -21,7 +21,7 @@ import TombolUnduh from '@/components/ui/tombol-unduh';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { StatTile, EmptyState, Notice, StatusBadge } from './moduleAtoms';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import PageLayout, { RowDetail, RowToggle } from './layout/PageLayout';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
@@ -267,30 +267,6 @@ export default function RahazaAttendanceModule({ token }) {
         title="Absensi harian"
         subtitle="Isian cepat kehadiran semua karyawan aktif. Perubahan HR tercatat di riwayat tiap baris."
         actions={<>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" disabled={rows.length === 0 || loading} data-testid="att-setall">
-                <ListChecks />Isi cepat
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Isi status semua baris (belum disimpan)</DropdownMenuLabel>
-              {STATUS_OPTS.map(s => (
-                <DropdownMenuItem key={s.code} onSelect={() => setAll(s.code)} data-testid={`att-setall-${s.code}`}>
-                  Semua {s.label.toLowerCase()}
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={salinKemarin} disabled={copying || loading} data-testid="att-copy-yesterday">
-                <Copy className="mr-2 h-4 w-4" />{copying ? 'Menyalin…' : 'Salin dari kemarin'}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button variant="outline" onClick={markAllHadirAndSave} disabled={saving || rows.length === 0}
-            data-testid="att-setall-hadir-save"
-            title="Isi Hadir (shift otomatis + 8 jam) untuk karyawan yang belum tercatat, lalu simpan. Cuti, izin, sakit, alpa, dan absen selfie tidak ditimpa.">
-            <CheckCircle2 />Tandai hadir & simpan
-          </Button>
           <Button variant="success" onClick={saveAll} disabled={saving || rows.length === 0} data-testid="attendance-save">
             {saving ? <><RefreshCw className="animate-spin" />Menyimpan…</> : <><Save />Simpan semua</>}
           </Button>
@@ -309,24 +285,49 @@ export default function RahazaAttendanceModule({ token }) {
               <ChevronRight />
             </Button>
           </div>
-        </>}
-        tools={<>
-          <TombolUnduh namaBerkas={`absensi-harian-${date}`} namaLembar="Absensi harian" baris={rows} testId="att-unduh"
-            kolom={[
-              { label: 'Tanggal', nilai: () => formatTanggalID(date) },
-              { label: 'Kode karyawan', nilai: (r) => r.employee_code },
-              { label: 'Nama karyawan', nilai: (r) => r.employee_name },
-              { label: 'Status', nilai: (r) => LABEL_STATUS[r.status || 'hadir'] || r.status },
-              { label: 'Tercatat', nilai: (r) => (r.existing_id ? 'Sudah' : 'Belum') },
-              { label: 'Shift', nilai: (r) => shiftLabel(r.shift_id) },
-              { label: 'Jam kerja', nilai: (r) => Number(r.hours_worked) || 0 },
-              { label: 'Lembur (jam)', nilai: (r) => Number(r.overtime_hours) || 0 },
-              { label: 'Catatan', nilai: (r) => r.notes || '' },
-              { label: 'Terkunci gaji final', nilai: (r) => (r.locked ? 'Ya' : '') },
-            ]} />
-          <Button variant="outline" size="icon" onClick={() => fetchGrid()} title="Muat ulang" aria-label="Muat ulang" data-testid="att-refresh">
-            <RefreshCw className={loading ? 'animate-spin' : ''} />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" disabled={rows.length === 0 || loading} data-testid="att-setall">
+                <ListChecks />Isi cepat
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Isi status semua baris (belum disimpan)</DropdownMenuLabel>
+              {STATUS_OPTS.map(s => (
+                <DropdownMenuItem key={s.code} onSelect={() => setAll(s.code)} data-testid={`att-setall-${s.code}`}>
+                  Semua {s.label.toLowerCase()}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={salinKemarin} disabled={copying || loading} data-testid="att-copy-yesterday">
+                <Copy className="mr-2 h-4 w-4" />{copying ? 'Menyalin…' : 'Salin dari kemarin'}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button variant="outline" onClick={markAllHadirAndSave} disabled={saving || rows.length === 0}
+            data-testid="att-setall-hadir-save"
+            title="Isi Hadir (shift otomatis + 8 jam) untuk karyawan yang belum tercatat, lalu simpan. Cuti, izin, sakit, alpa, dan absen selfie tidak ditimpa.">
+            <CheckCircle2 />Tandai hadir & simpan
           </Button>
+          {/* Unduh & muat ulang di ujung kanan baris yang sama; di HP turun ke baris sendiri (tidak menimpa tanggal) */}
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            <TombolUnduh namaBerkas={`absensi-harian-${date}`} namaLembar="Absensi harian" baris={rows} testId="att-unduh"
+              kolom={[
+                { label: 'Tanggal', nilai: () => formatTanggalID(date) },
+                { label: 'Kode karyawan', nilai: (r) => r.employee_code },
+                { label: 'Nama karyawan', nilai: (r) => r.employee_name },
+                { label: 'Status', nilai: (r) => LABEL_STATUS[r.status || 'hadir'] || r.status },
+                { label: 'Tercatat', nilai: (r) => (r.existing_id ? 'Sudah' : 'Belum') },
+                { label: 'Shift', nilai: (r) => shiftLabel(r.shift_id) },
+                { label: 'Jam kerja', nilai: (r) => Number(r.hours_worked) || 0 },
+                { label: 'Lembur (jam)', nilai: (r) => Number(r.overtime_hours) || 0 },
+                { label: 'Catatan', nilai: (r) => r.notes || '' },
+                { label: 'Terkunci gaji final', nilai: (r) => (r.locked ? 'Ya' : '') },
+              ]} />
+            <Button variant="outline" size="icon" onClick={() => fetchGrid()} title="Muat ulang" aria-label="Muat ulang" data-testid="att-refresh">
+              <RefreshCw className={loading ? 'animate-spin' : ''} />
+            </Button>
+          </div>
         </>}
         summary={<>
           {/* Tanggal lampau: perubahan menimpa data yang ada */}
@@ -343,18 +344,15 @@ export default function RahazaAttendanceModule({ token }) {
               {lockedCount} karyawan sudah masuk penggajian final untuk tanggal ini — barisnya dikunci. Koreksi lewat pengajuan koreksi absen.
             </p>
           )}
+          {/* Ringkasan = absen yang SUDAH TERSIMPAN untuk tanggal ini (bukan isian layar yang belum disimpan). */}
           {rows.length > 0 && (
-            <div className="grid grid-cols-2 gap-2 md:grid-cols-4" data-testid="att-summary">
-              <StatTile label="Karyawan aktif" value={rows.length} testId="att-count-total"
-                sub="Semua karyawan aktif di daftar absen" />
-              <StatTile label="Sudah dicatat" value={tersimpan.length} testId="att-count-recorded"
-                accent={tersimpan.length ? 'primary' : 'muted'}
-                sub={`${rows.length - tersimpan.length} belum dicatat untuk tanggal ini`} />
-              <StatTile label="Hadir" value={hitungSimpan.hadir || 0} accent="success" testId="att-count-hadir"
-                sub={tersimpan.length ? `${jam(jamSimpan)} jam kerja · ${jam(lemburSimpan)} jam lembur` : 'Dari absen yang sudah disimpan'} />
-              <StatTile label="Tidak hadir" value={tidakHadir} accent={hitungSimpan.alpa ? 'danger' : 'default'} testId="att-count-absent"
-                sub={rincianTidakHadir || 'Izin, sakit, alpa, cuti, libur yang sudah disimpan'} />
-            </div>
+            <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground" data-testid="att-summary">
+              <span data-testid="att-count-total"><b className="font-semibold text-foreground tabular-nums">{rows.length}</b> karyawan aktif</span>
+              <span data-testid="att-count-recorded"><b className="font-semibold text-foreground tabular-nums">{tersimpan.length}</b> sudah dicatat · {rows.length - tersimpan.length} belum</span>
+              <span data-testid="att-count-hadir">Hadir <b className="font-semibold text-[hsl(var(--success-text))] tabular-nums">{hitungSimpan.hadir || 0}</b></span>
+              <span data-testid="att-count-absent">Tidak hadir <b className={`font-semibold tabular-nums ${hitungSimpan.alpa ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`}>{tidakHadir}</b>{rincianTidakHadir ? ` (${rincianTidakHadir})` : ''}</span>
+              {tersimpan.length > 0 && <span>{jam(jamSimpan)} jam kerja · {jam(lemburSimpan)} jam lembur tersimpan</span>}
+            </p>
           )}
         </>}
         footer={rows.length > 0 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}
