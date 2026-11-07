@@ -161,12 +161,12 @@ function TabSemuaSumber({ token, onNavigate, onBuat }) {
       const b = SOURCE_BADGE[r.source] || SOURCE_BADGE.gudang;
       return <StatusBadge status={r.source} label={b.label} tone={b.tone} />;
     } },
-    { kunci: 'jenis', label: 'Jenis', isi: (r) => <span className="text-sm md:whitespace-nowrap">{r.doc_type || '—'}</span> },
+    { kunci: 'jenis', label: 'Jenis', hp: false, isi: (r) => <span className="text-sm md:whitespace-nowrap">{r.doc_type || '—'}</span> },
     { kunci: 'tanggal', label: 'Tanggal', isi: (r) => <span className="text-sm md:whitespace-nowrap">{tgl(r.date)}</span> },
     { kunci: 'tujuan', label: 'Tujuan', hp: 'keterangan', isi: (r) => r.recipient || '—' },
-    { kunci: 'acuan', label: 'Acuan', isi: (r) => <span className="text-sm">{r.reference || '—'}</span> },
+    { kunci: 'acuan', label: 'Acuan', hp: false, isi: (r) => <span className="text-sm">{r.reference || '—'}</span> },
     { kunci: 'status', label: 'Status', isi: (r) => <span className="text-sm">{r.status || '—'}</span> },
-    { kunci: 'baris', label: 'Baris', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.lines}</span> },
+    { kunci: 'baris', label: 'Baris', hp: false, rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.lines}</span> },
     { kunci: 'qty', label: 'Total qty', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtQty(r.qty)}</span> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
       <div className="inline-flex flex-wrap justify-end gap-1">
@@ -361,15 +361,15 @@ function TabSJGudang({ token, onNavigate, onBuat, buatTerbuka, setBuatTerbuka })
   const kolom = [
     { kunci: 'no', label: 'No. SJ', hp: 'judul', isi: (n) => (
       <span className="font-medium md:whitespace-nowrap" data-testid={`sj-row-${n.sj_number}`}>{n.sj_number}</span>) },
-    { kunci: 'jenis', label: 'Jenis', isi: (n) => <span className="text-sm">{SJ_TYPES[n.sj_type]?.label || n.sj_type || '—'}</span> },
+    { kunci: 'jenis', label: 'Jenis', hp: false, isi: (n) => <span className="text-sm">{SJ_TYPES[n.sj_type]?.label || n.sj_type || '—'}</span> },
     { kunci: 'status', label: 'Status', isi: (n) => <StatusSJ status={n.status} /> },
     { kunci: 'penerima', label: 'Penerima', hp: 'keterangan', isi: (n) => (
       <div className="min-w-0 md:max-w-[16rem]">
         <p className="truncate" title={n.recipient_name}>{n.recipient_name}</p>
         <p className="hidden truncate text-xs text-muted-foreground md:block" title={n.recipient_address}>{n.recipient_address}</p>
       </div>) },
-    { kunci: 'kendaraan', label: 'Kendaraan', isi: (n) => <span className="text-sm md:whitespace-nowrap">{n.vehicle_no || '—'}</span> },
-    { kunci: 'item', label: 'Item', rata: 'kanan', isi: (n) => <span className="tabular-nums">{n.lines?.length || 0}</span> },
+    { kunci: 'kendaraan', label: 'Kendaraan', hp: false, isi: (n) => <span className="text-sm md:whitespace-nowrap">{n.vehicle_no || '—'}</span> },
+    { kunci: 'item', label: 'Item', hp: false, rata: 'kanan', isi: (n) => <span className="tabular-nums">{n.lines?.length || 0}</span> },
     { kunci: 'dibuat', label: 'Dibuat', isi: (n) => <span className="text-sm md:whitespace-nowrap">{tgl(n.created_at)}</span> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (n) => (
       <div className="inline-flex flex-wrap justify-end gap-1">

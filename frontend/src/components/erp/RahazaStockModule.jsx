@@ -264,9 +264,9 @@ export default function RahazaStockModule({ token }) {
     { kunci: 'jenis', label: 'Jenis', isi: (m) => (m.type === 'opname' ? 'Opname' : (JENIS_MUTASI[m.type] || 'Mutasi')) },
     { kunci: 'barang', label: 'Barang', hp: 'judul', isi: (m) => <span className="font-medium">{m.material_code}</span> },
     { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (m) => <span className="tabular-nums md:whitespace-nowrap">{fmtNum(m.qty, 3)} {m.unit || ''}</span> },
-    { kunci: 'dari', label: 'Dari', isi: (m) => <span className="text-sm text-muted-foreground">{m.from_location_name || '—'}</span> },
-    { kunci: 'ke', label: 'Ke', isi: (m) => <span className="text-sm text-muted-foreground">{m.to_location_name || '—'}</span> },
-    { kunci: 'ref', label: 'Catatan', isi: (m) => <span className="block max-w-[14rem] truncate text-sm text-muted-foreground" title={m.notes || m.ref_type || ''}>{m.notes || m.ref_type || '—'}</span> },
+    { kunci: 'dari', label: 'Dari', hp: false, isi: (m) => <span className="text-sm text-muted-foreground">{m.from_location_name || '—'}</span> },
+    { kunci: 'ke', label: 'Ke', hp: false, isi: (m) => <span className="text-sm text-muted-foreground">{m.to_location_name || '—'}</span> },
+    { kunci: 'ref', label: 'Catatan', hp: false, isi: (m) => <span className="block max-w-[14rem] truncate text-sm text-muted-foreground" title={m.notes || m.ref_type || ''}>{m.notes || m.ref_type || '—'}</span> },
   ];
 
   return (

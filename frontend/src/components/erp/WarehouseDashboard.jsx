@@ -155,9 +155,9 @@ export default function WarehouseDashboard({ token }) {
         <p className="truncate font-medium text-foreground" title={m.name}>{m.name}</p>
         <p className="truncate text-xs text-muted-foreground">{m.code}</p>
       </div>) },
-    { kunci: 'jenis', label: 'Jenis', isi: (m) => JENIS_BARANG[m.type] || m.category_name || '—' },
+    { kunci: 'jenis', label: 'Jenis', hp: false, isi: (m) => JENIS_BARANG[m.type] || m.category_name || '—' },
     { kunci: 'stok', label: 'Stok', rata: 'kanan', isi: (m) => <span className="tabular-nums">{angka(m.current_qty ?? 0)} {m.unit}</span> },
-    { kunci: 'min', label: 'Ambang', rata: 'kanan', isi: (m) => <span className="tabular-nums">{m._min ? `${angka(m._min)} ${m.unit}` : '—'}</span> },
+    { kunci: 'min', label: 'Ambang', hp: false, rata: 'kanan', isi: (m) => <span className="tabular-nums">{m._min ? `${angka(m._min)} ${m.unit}` : '—'}</span> },
     { kunci: 'kurang', label: 'Kurang', rata: 'kanan', isi: (m) => (m._kurang > 0
       ? <span className="tabular-nums font-medium text-[hsl(var(--danger-text))]">{angka(m._kurang)} {m.unit}</span>
       : <span className="text-muted-foreground">—</span>) },

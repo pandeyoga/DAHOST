@@ -50,7 +50,7 @@ export default function NegativeStockModule({ token }) {
     { kunci: 'lokasi', label: 'Lokasi', isi: (r) => <span className="text-sm">{lokasi(r)}</span> },
     { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (r) => (
       <span className="tabular-nums font-semibold text-[hsl(var(--danger-text))]">{fmt(r.qty)} {r.unit || ''}</span>) },
-    { kunci: 'waktu', label: 'Terakhir berubah', isi: (r) => (
+    { kunci: 'waktu', label: 'Terakhir berubah', hp: false, isi: (r) => (
       <span className="text-sm text-muted-foreground md:whitespace-nowrap">{formatDateTimeID(r.updated_at)}</span>) },
   ];
 

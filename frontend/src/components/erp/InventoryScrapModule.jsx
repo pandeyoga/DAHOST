@@ -173,14 +173,14 @@ export default function InventoryScrapModule({ token }) {
         <p className="font-medium">{m.material_name}</p>
         <p className="text-xs text-muted-foreground">{m.material_code}</p>
       </div>) },
-    { kunci: 'lokasi', label: 'Lokasi', isi: (m) => <span className="text-sm">{m.location_name || m.from_location_name || m.to_location_name || '—'}</span> },
+    { kunci: 'lokasi', label: 'Lokasi', hp: false, isi: (m) => <span className="text-sm">{m.location_name || m.from_location_name || m.to_location_name || '—'}</span> },
     { kunci: 'qty', label: 'Perubahan', rata: 'kanan', isi: (m) => (
       <span className={`tabular-nums ${Number(m.qty) < 0 ? 'text-[hsl(var(--danger-text))]' : 'text-[hsl(var(--success-text))]'}`}>
         {Number(m.qty) > 0 ? '+' : ''}{fmtQty(m.qty)} {m.unit || ''}
       </span>) },
     { kunci: 'alasan', label: 'Alasan', isi: (m) => (
       <span className="block max-w-xs truncate text-sm text-muted-foreground" title={m.notes || ''}>{m.notes || '—'}</span>) },
-    { kunci: 'oleh', label: 'Oleh', isi: (m) => <span className="text-sm">{m.created_by_name || '—'}</span> },
+    { kunci: 'oleh', label: 'Oleh', hp: false, isi: (m) => <span className="text-sm">{m.created_by_name || '—'}</span> },
   ];
 
   return (

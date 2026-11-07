@@ -291,7 +291,7 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
         </span>) },
       { kunci: 'cakupan', label: 'Cakupan', hp: 'keterangan', isi: (s) => <span className="text-sm">{s.scope_label || '—'}</span> },
       { kunci: 'dibuat', label: 'Dibuat', isi: (s) => <span className="text-sm md:whitespace-nowrap">{formatDateTimeID(s.created_at)}</span> },
-      { kunci: 'jurnal', label: 'Jurnal', isi: (s) => <span className="text-sm">{s.je_number || '—'}</span> },
+      { kunci: 'jurnal', label: 'Jurnal', hp: false, isi: (s) => <span className="text-sm">{s.je_number || '—'}</span> },
       { kunci: 'status', label: 'Status', isi: (s) => lencana(s.status) },
     ];
     return (

@@ -511,7 +511,7 @@ function ScanTab({ token }) {
  */
 function TabelLaporan({ judul, kolom, baris, namaBerkas, kosong = 'Tidak ada data.', testId, merah, judulCls = '' }) {
   const kol = kolom.map((k, i) => ({
-    kunci: `k${i}`, label: k.label, rata: k.rata, hp: i === 0 ? 'judul' : 'nilai',
+    kunci: `k${i}`, label: k.label, rata: k.rata, hp: k.hp !== undefined ? k.hp : (i === 0 ? 'judul' : 'nilai'),
     isi: (r) => {
       const v = k.isi ? k.isi(r) : k.nilai(r);
       return merah && merah(r) && i === 0 ? <span className="text-[hsl(var(--danger-text))]">{v}</span> : v;
@@ -597,7 +597,7 @@ function ReportTab({ token }) {
           <TabelLaporan judul="Per SKU" testId="scan-out-report-sku" namaBerkas={`scan-keluar-${day}`}
             baris={berkunci(rep.per_sku)} merah={(r) => r.negative_lines > 0} kolom={[
               { label: 'SKU', nilai: (r) => r.sku },
-              { label: 'Nama', nilai: (r) => r.name || '' },
+              { label: 'Nama', nilai: (r) => r.name || '', hp: 'keterangan' },
               { label: 'Keluar', nilai: (r) => r.out, rata: 'kanan' },
               { label: 'Batal kirim', nilai: (r) => r.cancel, rata: 'kanan' },
               { label: 'Neto', nilai: (r) => r.net, rata: 'kanan' },
@@ -707,7 +707,7 @@ function ControlTab({ token, canSupervise }) {
             baris={berkunci(ctl.rows)} merah={(r) => r.flag} kolom={[
               { label: 'Tanggal', nilai: (r) => r.date },
               { label: 'Impor', nilai: (r) => r.import_pcs, rata: 'kanan' },
-              { label: 'Basis pesanan', nilai: (r) => r.import_pcs_order || '', rata: 'kanan' },
+              { label: 'Basis pesanan', nilai: (r) => r.import_pcs_order || '', rata: 'kanan', hp: false },
               { label: 'Scan', nilai: (r) => r.scan_pcs, rata: 'kanan' },
               { label: 'Selisih', nilai: (r) => r.gap, rata: 'kanan' },
               { label: 'Kumulatif', nilai: (r) => r.cum_gap, rata: 'kanan' },

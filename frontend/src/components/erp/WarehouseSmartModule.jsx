@@ -114,14 +114,14 @@ function AlertsTab() {
         <p className="truncate font-medium text-foreground" title={nama(a)}>{nama(a)}</p>
         {kode(a) && <p className="truncate text-xs text-muted-foreground">{kode(a)}</p>}
       </div>) },
-    { kunci: 'jenis', label: 'Jenis', isi: (a) => (a.type === 'rack_occupancy' ? 'Rak' : 'Stok') },
+    { kunci: 'jenis', label: 'Jenis', hp: false, isi: (a) => (a.type === 'rack_occupancy' ? 'Rak' : 'Stok') },
     { kunci: 'posisi', label: 'Sekarang', rata: 'kanan', isi: (a) => <span className="tabular-nums">{posisi(a)}</span> },
-    { kunci: 'ambang', label: 'Ambang', rata: 'kanan', isi: (a) => <span className="tabular-nums">{ambang(a)}</span> },
+    { kunci: 'ambang', label: 'Ambang', hp: false, rata: 'kanan', isi: (a) => <span className="tabular-nums">{ambang(a)}</span> },
     { kunci: 'kurang', label: 'Kurang', rata: 'kanan', isi: (a) => (
       a.type === 'low_stock' && a.shortage > 0
         ? <span className="tabular-nums font-medium text-[hsl(var(--danger-text))]">{angka(a.shortage)} {a.unit || ''}</span>
         : <span className="text-muted-foreground">—</span>) },
-    { kunci: 'keparahan', label: 'Status', isi: (a) => {
+    { kunci: 'keparahan', label: 'Status', hp: 'keterangan', isi: (a) => {
       const k = KEPARAHAN[a.severity] || KEPARAHAN.warning;
       return <StatusBadge status={a.severity} label={k.label} tone={k.tone} />;
     } },
@@ -243,11 +243,11 @@ function SmartReorderTab() {
         <p className="truncate text-xs text-muted-foreground">{i.sku}</p>
       </div>) },
     { kunci: 'stok', label: 'Stok', rata: 'kanan', isi: (i) => <span className="tabular-nums">{angka(i.current_qty)} {i.unit}</span> },
-    { kunci: 'rp', label: 'Titik pesan ulang', rata: 'kanan', isi: (i) => <span className="tabular-nums">{angka(i.current_reorder_point)}</span> },
+    { kunci: 'rp', label: 'Titik pesan ulang', hp: false, rata: 'kanan', isi: (i) => <span className="tabular-nums">{angka(i.current_reorder_point)}</span> },
     { kunci: 'usulan', label: 'Usulan', rata: 'kanan', isi: (i) => (i.smart_reorder_point > 0
       ? <span className="tabular-nums font-medium text-[hsl(var(--primary))]">{angka(i.smart_reorder_point)}</span>
       : <span className="text-muted-foreground" title="Belum ada pemakaian 30 hari terakhir">—</span>) },
-    { kunci: 'pakai', label: 'Pakai/hari', rata: 'kanan', isi: (i) => (i.no_usage_data
+    { kunci: 'pakai', label: 'Pakai/hari', hp: false, rata: 'kanan', isi: (i) => (i.no_usage_data
       ? <span className="text-muted-foreground" title="Belum ada pemakaian 30 hari terakhir">—</span>
       : <span className="tabular-nums">{angka(i.avg_daily_consumption)}</span>) },
     { kunci: 'status', label: 'Status', isi: (i) => <StatusBadge status={i.status} label={status(i).label} tone={status(i).tone} /> },
@@ -363,7 +363,7 @@ function UndoStockTab() {
           title={m.material_name || m.sku}>{m.material_name || m.sku}</p>
         <p className="truncate text-xs text-muted-foreground">{m.sku}</p>
       </div>) },
-    { kunci: 'jenis', label: 'Jenis', isi: (m) => JENIS_PENYESUAIAN[m.movement_type] || 'Penyesuaian' },
+    { kunci: 'jenis', label: 'Jenis', hp: false, isi: (m) => JENIS_PENYESUAIAN[m.movement_type] || 'Penyesuaian' },
     { kunci: 'qty', label: 'Perubahan', rata: 'kanan', isi: (m) => <span className="tabular-nums">{angka(m.qty)} {m.unit}</span> },
     { kunci: 'waktu', label: 'Waktu', hp: 'keterangan', isi: (m) => <span className="text-sm md:whitespace-nowrap">{waktu(m)}</span> },
     ...(tampil === 'soft_deleted'

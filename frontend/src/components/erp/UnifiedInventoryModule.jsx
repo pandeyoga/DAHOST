@@ -175,7 +175,7 @@ export default function UnifiedInventoryModule() {
         {i.material_name && <p className="text-xs text-muted-foreground">{i.material_name}</p>}
       </div>) },
     { kunci: 'klien', label: 'Klien', hp: 'keterangan', isi: (i) => i.owner_client_name || '—' },
-    { kunci: 'kode', label: 'Kode barang', isi: (i) => <span className="md:whitespace-nowrap">{i.material_code || '—'}</span> },
+    { kunci: 'kode', label: 'Kode barang', hp: false, isi: (i) => <span className="md:whitespace-nowrap">{i.material_code || '—'}</span> },
     { kunci: 'varian', label: 'Warna · ukuran', isi: (i) => <span className="text-sm">{i.color_name || '—'}{i.size_code ? <span className="text-muted-foreground"> · {i.size_code}</span> : null}</span> },
     { kunci: 'qty', label: 'Jumlah (pcs)', rata: 'kanan', isi: (i) => <span className={qtyCls(i.quantity)}>{fmtNum(i.quantity)}</span> },
     { kunci: 'lokasi', label: 'Lokasi', isi: (i) => <span className="text-sm text-muted-foreground md:whitespace-nowrap" title={locLabel(i)}>{locCode(i)}</span> },
@@ -189,12 +189,12 @@ export default function UnifiedInventoryModule() {
         <p className="font-medium">{i.material_name || '—'}</p>
         {i.category_name && <p className="text-xs text-muted-foreground">{i.category_name}</p>}
       </div>) },
-    { kunci: 'varian', label: 'Warna · ukuran · opsi', isi: (i) => (
+    { kunci: 'varian', label: 'Warna · ukuran · opsi', hp: false, isi: (i) => (
       <span className="text-sm">{i.color_name || '—'}{i.size_code ? <span className="text-muted-foreground"> · {i.size_code}</span> : null}{i.option_name ? <span className="text-muted-foreground"> · {i.option_name}</span> : null}</span>) },
-    { kunci: 'jenis', label: 'Jenis', isi: (i) => <span className="text-sm">{jenisLabel(i)}</span> },
+    { kunci: 'jenis', label: 'Jenis', hp: false, isi: (i) => <span className="text-sm">{jenisLabel(i)}</span> },
     { kunci: 'qty', label: 'Jumlah', rata: 'kanan', isi: (i) => <span className={qtyCls(i.quantity)}>{fmtNum(i.quantity)} {i.unit}</span> },
-    { kunci: 'tersedia', label: 'Tersedia', rata: 'kanan', isi: (i) => <span className="tabular-nums md:whitespace-nowrap">{fmtNum(i.available_quantity)} {i.unit}</span> },
-    { kunci: 'cadang', label: 'Dicadangkan', rata: 'kanan', isi: (i) => <span className="tabular-nums">{fmtNum(i.reserved_quantity)}</span> },
+    { kunci: 'tersedia', label: 'Tersedia', hp: false, rata: 'kanan', isi: (i) => <span className="tabular-nums md:whitespace-nowrap">{fmtNum(i.available_quantity)} {i.unit}</span> },
+    { kunci: 'cadang', label: 'Dicadangkan', hp: false, rata: 'kanan', isi: (i) => <span className="tabular-nums">{fmtNum(i.reserved_quantity)}</span> },
     { kunci: 'lokasi', label: 'Lokasi', isi: (i) => <span className="text-sm text-muted-foreground md:whitespace-nowrap" title={locLabel(i)}>{locCode(i)}</span> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (i) => tombolRiwayat(i, `view-movements-${i.material_code || i.material_id}`) },
   ];

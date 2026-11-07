@@ -199,16 +199,16 @@ export default function StockSchemaHealthModule({ token }) {
         <p className="font-medium">{d.material_name}</p>
         <p className="text-xs text-muted-foreground">{d.material_code || d.material_id}</p>
       </div>) },
-    { kunci: 'skema', label: 'Skema', rata: 'tengah', isi: (d) => (
+    { kunci: 'skema', label: 'Skema', hp: false, rata: 'tengah', isi: (d) => (
       <StatusBadge status={d.schema} label={d.schema} tone={d.schema === 'A' ? 'success' : 'warning'} />) },
     { kunci: 'lokasi', label: 'Lokasi', isi: (d) => (d.location_id || d.nested_location_id
       ? <span className="text-sm">{lokasiBaris(d)}</span>
       : <span className="text-sm text-[hsl(var(--warning-text))]">Tanpa lokasi</span>) },
-    { kunci: 'usulan', label: 'Usulan zona', isi: (d) => (
+    { kunci: 'usulan', label: 'Usulan zona', hp: false, isi: (d) => (
       <span className="text-sm" data-testid={`schema-suggest-${d.row_id}`}>{d.suggested_location_code ? `→ ${d.suggested_location_code}` : '—'}</span>) },
     { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (d) => (
       <span className="tabular-nums font-medium md:whitespace-nowrap">{fmtNum(d.qty)} <span className="text-xs font-normal text-muted-foreground">{d.unit}</span></span>) },
-    { kunci: 'reserved', label: 'Dicadangkan', rata: 'kanan', isi: (d) => <span className="tabular-nums text-muted-foreground">{fmtNum(d.reserved)}</span> },
+    { kunci: 'reserved', label: 'Dicadangkan', hp: false, rata: 'kanan', isi: (d) => <span className="tabular-nums text-muted-foreground">{fmtNum(d.reserved)}</span> },
     { kunci: 'masalah', label: 'Masalah', isi: (d) => (
       <div className="flex flex-wrap gap-1">
         {(d.issues || []).map((i) => (
@@ -223,9 +223,9 @@ export default function StockSchemaHealthModule({ token }) {
     { kunci: 'waktu', label: 'Waktu', hp: 'judul', isi: (l) => (
       <span className="md:whitespace-nowrap" data-testid={`schema-log-${l.id}`}>{formatDateTimeID(l.created_at)}</span>) },
     { kunci: 'oleh', label: 'Oleh', hp: 'keterangan', isi: (l) => l.actor?.name || '—' },
-    { kunci: 'norm', label: 'Dinormalkan', rata: 'kanan', isi: (l) => <span className="tabular-nums">{fmtNum(l.summary?.rows_normalized)}</span> },
-    { kunci: 'pindah', label: 'Dipindah', rata: 'kanan', isi: (l) => <span className="tabular-nums">{fmtNum(l.summary?.rows_relocated)}</span> },
-    { kunci: 'gabung', label: 'Digabung', rata: 'kanan', isi: (l) => <span className="tabular-nums">{fmtNum(l.summary?.rows_merged)}</span> },
+    { kunci: 'norm', label: 'Dinormalkan', hp: false, rata: 'kanan', isi: (l) => <span className="tabular-nums">{fmtNum(l.summary?.rows_normalized)}</span> },
+    { kunci: 'pindah', label: 'Dipindah', hp: false, rata: 'kanan', isi: (l) => <span className="tabular-nums">{fmtNum(l.summary?.rows_relocated)}</span> },
+    { kunci: 'gabung', label: 'Digabung', hp: false, rata: 'kanan', isi: (l) => <span className="tabular-nums">{fmtNum(l.summary?.rows_merged)}</span> },
     { kunci: 'status', label: 'Status', isi: (l) => (l.rolled_back_at
       ? <StatusBadge status="rolled_back" label="Sudah dikembalikan" tone="muted" />
       : <StatusBadge status="aktif" label="Berlaku" tone="success" />) },
