@@ -1,71 +1,95 @@
+/**
+ * Pembelajaran (Portal SDM) — kursus, materi, pendaftaran, dan kemajuan karyawan.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): tab halaman (HubTabs) + cetakan PageLayout per tab, daftar kursus = tabel
+ * (dulu kartu besar berulang), detail kursus = popup, form kursus = FormPopup, unduh Excel/CSV di tiap tabel,
+ * kartu angka StatTile, warna token.
+ * Perbaikan angka: "Peserta"/"Selesai" per kursus dulu dari penghitung tersimpan (data contoh mengisinya
+ * angka karangan, dan "selesai" hanya bertambah bila lulus) — kini dihitung dari daftar pendaftaran yang sama
+ * dengan tab Pendaftaran. Daftar kursus/pendaftaran dulu diam-diam 50 baris pertama — kini semua halaman.
+ * Materi kursus kini benar-benar tampil di detail (dulu daftar tidak membawa materi).
+ */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { confirmDialog } from '@/components/ui/confirm-dialog';
-import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { GlassCard } from '@/components/ui/glass';
-import {
-  BookOpen, Plus, Search, Filter, Users, Clock, Award, TrendingUp,
-  ChevronRight, Play, CheckCircle2, Circle, BarChart3, RefreshCw,
-  Pencil, Trash2, X, BookMarked, Video, FileText, HelpCircle,
-  GraduationCap, Star, AlertCircle, Eye, UserPlus, ChevronDown, Check
-} from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { formatDateID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import HubTabs from './hubs/HubTabs';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = (path, opts = {}) => fetch(`${BACKEND_URL}/api/dewi/lms${path}`, opts);
-const fmtDate = d => d ? new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
-const fmtPct = v => `${v ?? 0}%`;
+const fmtDate = (d) => (d ? formatDateID(d) : '—');
 
 const STATUS_CONFIG = {
-  enrolled:    { label: 'Terdaftar',    color: 'bg-blue-50 dark:bg-blue-400/15 text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-400/20' },
-  in_progress: { label: 'Berjalan',    color: 'bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-400/20' },
-  completed:   { label: 'Selesai',     color: 'bg-emerald-50 dark:bg-emerald-400/15 text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-400/20' },
-  failed:      { label: 'Gagal',       color: 'bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-400 border-red-300 dark:border-red-400/20' },
-  draft:       { label: 'Draft',       color: 'bg-muted dark:bg-slate-400/15 text-muted-foreground border-border dark:border-slate-400/20' },
-  active:      { label: 'Aktif',       color: 'bg-emerald-50 dark:bg-emerald-400/15 text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-400/20' },
-  archived:    { label: 'Diarsipkan', color: 'bg-muted dark:bg-slate-400/15 text-muted-foreground border-border dark:border-slate-400/20' },
+  enrolled:    { label: 'Terdaftar',  tone: 'info' },
+  in_progress: { label: 'Berjalan',   tone: 'warning' },
+  completed:   { label: 'Selesai',    tone: 'success' },
+  failed:      { label: 'Gagal',      tone: 'danger' },
+  draft:       { label: 'Draf',       tone: 'muted' },
+  active:      { label: 'Aktif',      tone: 'success' },
+  archived:    { label: 'Diarsipkan', tone: 'muted' },
 };
-
-const MATERIAL_TYPE_CONFIG = {
-  text:  { label: 'Teks',    icon: FileText,   color: '#6366f1' },
-  video: { label: 'Video',   icon: Video,      color: '#ec4899' },
-  pdf:   { label: 'PDF',     icon: BookMarked, color: '#ef4444' },
-  slides:{ label: 'Slides',  icon: BookOpen,   color: '#f59e0b' },
-  quiz:  { label: 'Quiz',    icon: HelpCircle, color: '#10b981' },
-};
-
-const LEVEL_CONFIG = {
-  Beginner:     { label: 'Pemula',       color: '#10b981' },
-  Intermediate: { label: 'Menengah',     color: '#f59e0b' },
-  Advanced:     { label: 'Lanjutan',     color: '#ef4444' },
-};
-
-const CATEGORY_COLORS = [
-  '#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#14b8a6','#ec4899'
-];
-
-function StatusBadge({ status }) {
-  const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.draft;
-  return (
-    <span className={`text-xs px-2 py-0.5 rounded-full font-medium border ${cfg.color}`}>{cfg.label}</span>
-  );
+const labelStatus = (s) => (STATUS_CONFIG[s] || STATUS_CONFIG.draft).label;
+function Status({ status }) {
+  const c = STATUS_CONFIG[status] || STATUS_CONFIG.draft;
+  return <StatusBadge status={status} label={c.label} tone={c.tone} />;
 }
 
-function ProgressRing({ pct, size = 48 }) {
-  const r = (size / 2) - 4;
-  const circ = 2 * Math.PI * r;
-  const dash = ((pct ?? 0) / 100) * circ;
-  const color = pct >= 100 ? '#10b981' : pct > 0 ? '#6366f1' : '#475569';
+const MATERIAL_TYPE = { text: 'Teks', video: 'Video', pdf: 'PDF', slides: 'Slide', quiz: 'Kuis' };
+const LEVEL_CONFIG = { Beginner: 'Pemula', Intermediate: 'Menengah', Advanced: 'Lanjutan' };
+const labelLevel = (l) => LEVEL_CONFIG[l] || l || '—';
+const KOSONG = { title: '', description: '', category: 'Umum', level: 'Beginner', duration_hours: 4, instructor: '', pass_score: 75, status: 'draft' };
+
+/** Ambil semua halaman satu daftar (API membatasi 200 baris per halaman). */
+async function ambilSemua(path, kunci, headers) {
+  const semua = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const r = await API(`${path}${path.includes('?') ? '&' : '?'}limit=200&page=${page}`, { headers });
+    if (!r.ok) throw new Error(`Gagal memuat (${r.status})`);
+    const d = await r.json();
+    const rows = d[kunci] || [];
+    semua.push(...rows);
+    if (rows.length < 200 || (d.total != null && semua.length >= d.total)) break;
+  }
+  return semua;
+}
+
+/** Isi satu tab: cetakan PageLayout di dalam hub. */
+function IsiTab({ actions, filters, tools, summary, footer, children }) {
+  return <PageLayout actions={actions} filters={filters} tools={tools} summary={summary} footer={footer}>{children}</PageLayout>;
+}
+
+/** Pendaftaran berhalaman (20 baris), tetap di tab sendiri. */
+function TabelPendaftaran({ enrollments, alat }) {
+  const { page, setPage, totalPages, total, paged } = useClientPagination(enrollments, 20);
+  const kolom = [
+    { kunci: 'karyawan', label: 'Karyawan', hp: 'judul', isi: (e) => <span className="font-medium text-foreground">{e.employee_name || '—'}</span> },
+    { kunci: 'kursus', label: 'Kursus', hp: 'keterangan', isi: (e) => <span className="block truncate md:max-w-[18rem]" title={e.course_title}>{e.course_title || '—'}</span> },
+    { kunci: 'status', label: 'Status', isi: (e) => <Status status={e.status} /> },
+    { kunci: 'progres', label: 'Kemajuan', rata: 'kanan', isi: (e) => <span className="tabular-nums">{e.progress_pct || 0}%</span> },
+    { kunci: 'nilai', label: 'Nilai', rata: 'kanan', isi: (e) => (e.quiz_score != null
+      ? <span className={`font-semibold tabular-nums ${e.passed ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--danger-text))]'}`}>{e.quiz_score}</span>
+      : <span className="text-muted-foreground">—</span>) },
+    { kunci: 'sertifikat', label: 'Sertifikat', isi: (e) => <span className="text-sm">{e.certificate_issued ? e.certificate_no : '—'}</span> },
+    { kunci: 'terdaftar', label: 'Terdaftar', isi: (e) => <span className="text-sm md:whitespace-nowrap">{fmtDate(e.enrolled_at)}</span> },
+  ];
   return (
-    <svg width={size} height={size} className="-rotate-90">
-      <circle cx={size/2} cy={size/2} r={r} stroke="rgba(100,116,139,0.2)" strokeWidth={4} fill="none" />
-      <circle cx={size/2} cy={size/2} r={r} stroke={color} strokeWidth={4} fill="none"
-        strokeDasharray={circ} strokeDashoffset={circ - dash}
-        strokeLinecap="round" style={{ transition: 'stroke-dashoffset 0.5s ease' }}
-      />
-    </svg>
+    <IsiTab tools={alat}
+      footer={total > 20 ? <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={20} onPageChange={setPage} /> : null}>
+      <TabelData kolom={kolom} baris={paged} kunci={(e) => e.enrollment_id} testId="lms-enrollments"
+        kosong={<EmptyState title="Belum ada pendaftaran" description="Karyawan yang didaftarkan ke kursus akan tampil di sini." />} />
+    </IsiTab>
   );
 }
 
@@ -81,9 +105,10 @@ export default function HRLMSModule({ token }) {
   const [filterCat, setFilterCat] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [selected, setSelected] = useState(null); // course detail
+  const [materi, setMateri] = useState(null);     // materi kursus terpilih (GET /courses/{id})
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ title: '', description: '', category: 'Umum', level: 'Beginner', duration_hours: 4, instructor: '', pass_score: 75, status: 'draft' });
+  const [form, setForm] = useState(KOSONG);
   const [saving, setSaving] = useState(false);
   const [seeding, setSeeding] = useState(false);
 
@@ -92,27 +117,33 @@ export default function HRLMSModule({ token }) {
   const fetchAll = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [cRes, aRes] = await Promise.all([
-        API(`/courses?limit=50`, { headers }),
+      const [cs, es, aRes] = await Promise.all([
+        ambilSemua('/courses', 'courses', headers),
+        ambilSemua('/enrollments', 'enrollments', headers),
         API(`/analytics`, { headers }),
       ]);
-      const [cData, aData] = await Promise.all([cRes.json(), aRes.json()]);
-      setCourses(cData.courses || []);
-      setAnalytics(aData);
+      setCourses(cs);
+      setEnrollments(es);
+      setAnalytics(aRes.ok ? await aRes.json() : null);
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }, [headers]);
 
-  const fetchEnrollments = useCallback(async () => {
-    try {
-      const r = await API(`/enrollments?limit=50`, { headers });
-      const d = await r.json();
-      setEnrollments(d.enrollments || []);
-    } catch {}
-  }, [headers]);
-
   useEffect(() => { fetchAll(); }, [fetchAll]);
-  useEffect(() => { if (tab === 'enrollments') fetchEnrollments(); }, [tab, fetchEnrollments]);
+
+  // Materi kursus hanya dibawa oleh GET /courses/{id}
+  useEffect(() => {
+    if (!selected) { setMateri(null); return; }
+    let batal = false;
+    (async () => {
+      try {
+        const r = await API(`/courses/${selected.course_id}`, { headers });
+        const d = r.ok ? await r.json() : null;
+        if (!batal) setMateri(d?.course?.materials || []);
+      } catch { if (!batal) setMateri([]); }
+    })();
+    return () => { batal = true; };
+  }, [selected, headers]);
 
   const handleSeed = async () => {
     // Tahap 5 (2026-11-07): data contoh dulu MENGHAPUS semua kursus/materi/peserta; kini hanya ke data kosong
@@ -128,7 +159,7 @@ export default function HRLMSModule({ token }) {
     setEditing(c);
     setForm(c ? { title: c.title, description: c.description, category: c.category, level: c.level,
       duration_hours: c.duration_hours, instructor: c.instructor, pass_score: c.pass_score, status: c.status }
-      : { title: '', description: '', category: 'Umum', level: 'Beginner', duration_hours: 4, instructor: '', pass_score: 75, status: 'draft' });
+      : KOSONG);
     setShowForm(true);
   };
 
@@ -150,427 +181,267 @@ export default function HRLMSModule({ token }) {
   };
 
   const handleDelete = async (cid) => {
-    if (!(await confirmDialog({ title: 'Yakin hapus kursus ini?', danger: true }))) return;
+    if (!(await confirmDialog({ title: 'Yakin hapus kursus ini?', danger: true, confirmLabel: 'Hapus' }))) return;
     const r = await API(`/courses/${cid}`, { method: 'DELETE', headers });
     if (!r.ok) { toast.error('Gagal menghapus kursus'); return; }  // 2026-11-06 (pola P6): dulu penolakan diam
     fetchAll();
     if (selected?.course_id === cid) setSelected(null);
   };
 
+  // Peserta & selesai per kursus dihitung dari pendaftaran (bukan penghitung tersimpan).
+  const hitungKursus = useMemo(() => {
+    const m = {};
+    enrollments.forEach((e) => {
+      const k = m[e.course_id] || (m[e.course_id] = { peserta: 0, selesai: 0 });
+      k.peserta += 1;
+      if (e.status === 'completed') k.selesai += 1;
+    });
+    return m;
+  }, [enrollments]);
+  const peserta = (c) => hitungKursus[c.course_id]?.peserta || 0;
+  const selesai = (c) => hitungKursus[c.course_id]?.selesai || 0;
+  const persenSelesai = (c) => (peserta(c) ? Math.round((selesai(c) / peserta(c)) * 100) : null);
+
   const filtered = useMemo(() => courses.filter(c => {
     if (filterCat && c.category !== filterCat) return false;
     if (filterStatus && c.status !== filterStatus) return false;
-    if (q && !c.title.toLowerCase().includes(q.toLowerCase()) && !c.description.toLowerCase().includes(q.toLowerCase())) return false;
+    if (q && !(c.title || '').toLowerCase().includes(q.toLowerCase()) && !(c.description || '').toLowerCase().includes(q.toLowerCase())) return false;
     return true;
   }), [courses, q, filterCat, filterStatus]);
 
-  const categories = useMemo(() => [...new Set(courses.map(c => c.category))], [courses]);
-  const { page, setPage, totalPages, total, paged } = useClientPagination(enrollments, 10);
+  const categories = useMemo(() => [...new Set(courses.map(c => c.category).filter(Boolean))], [courses]);
 
-  if (loading) return (
-    <div className="space-y-4 p-4" data-testid="hr-lms-skeleton">
-      <Skeleton className="h-16 rounded-xl" />
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-48 rounded-xl" />)}
-      </div>
+  const perKategori = useMemo(() => categories.map((cat) => {
+    const cs = courses.filter((c) => c.category === cat);
+    return { kategori: cat, kursus: cs.length, peserta: cs.reduce((a, c) => a + peserta(c), 0), selesai: cs.reduce((a, c) => a + selesai(c), 0) };
+  }).sort((a, b) => b.kursus - a.kursus), [categories, courses, hitungKursus]); // eslint-disable-line react-hooks/exhaustive-deps
+  const palingDiminati = useMemo(() => [...courses].filter((c) => peserta(c) > 0)
+    .sort((a, b) => peserta(b) - peserta(a)).slice(0, 5), [courses, hitungKursus]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const muatUlang = (
+    <Button variant="outline" size="icon" onClick={fetchAll} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+      <RefreshCw className={loading ? 'animate-spin' : ''} />
+    </Button>
+  );
+  const aksiHalaman = (
+    <>
+      <Button variant="outline" onClick={handleSeed} disabled={seeding} data-testid="lms-seed-btn">
+        {seeding ? 'Memuat…' : 'Muat contoh'}
+      </Button>
+      <Button onClick={() => openForm()} data-testid="lms-add-btn"><Plus />Kursus baru</Button>
+    </>
+  );
+
+  const kolomKursus = [
+    { kunci: 'judul', label: 'Kursus', hp: 'judul', isi: (c) => (
+      <div className="min-w-0 md:max-w-[22rem]" data-testid={`course-card-${c.course_id}`}>
+        <p className="truncate font-medium text-foreground" title={c.title}>{c.title}</p>
+        {c.description && <p className="hidden truncate text-xs text-muted-foreground md:block" title={c.description}>{c.description}</p>}
+      </div>) },
+    { kunci: 'kategori', label: 'Kategori', isi: (c) => <span className="text-sm">{c.category || '—'}</span> },
+    { kunci: 'tingkat', label: 'Tingkat', isi: (c) => <span className="text-sm">{labelLevel(c.level)}</span> },
+    { kunci: 'durasi', label: 'Durasi', rata: 'kanan', isi: (c) => <span className="tabular-nums">{c.duration_hours ?? '—'} jam</span> },
+    { kunci: 'peserta', label: 'Peserta', rata: 'kanan', isi: (c) => <span className="tabular-nums">{peserta(c)}</span> },
+    { kunci: 'selesai', label: 'Selesai', rata: 'kanan', isi: (c) => (
+      <span className="tabular-nums">{selesai(c)}{persenSelesai(c) != null && <span className="text-muted-foreground"> ({persenSelesai(c)}%)</span>}</span>) },
+    { kunci: 'status', label: 'Status', isi: (c) => <Status status={c.status} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (c) => (
+      <Button size="sm" variant="outline" onClick={() => openForm(c)} data-testid={`lms-edit-${c.course_id}`}><Pencil />Ubah</Button>) },
+  ];
+  const kolomUnduhKursus = [
+    { label: 'Kursus', nilai: (c) => c.title },
+    { label: 'Deskripsi', nilai: (c) => c.description || '' },
+    { label: 'Kategori', nilai: (c) => c.category || '' },
+    { label: 'Tingkat', nilai: (c) => labelLevel(c.level) },
+    { label: 'Durasi (jam)', nilai: (c) => c.duration_hours ?? '' },
+    { label: 'Nilai lulus (%)', nilai: (c) => c.pass_score ?? '' },
+    { label: 'Instruktur', nilai: (c) => c.instructor || '' },
+    { label: 'Peserta', nilai: (c) => peserta(c) },
+    { label: 'Selesai', nilai: (c) => selesai(c) },
+    { label: 'Status', nilai: (c) => labelStatus(c.status) },
+  ];
+
+  const galat = error && <Notice tone="danger" title="Gagal memuat data pembelajaran">{error}</Notice>;
+  const memuat = loading && courses.length === 0;
+
+  // ─── Tab: kursus ───
+  const tabKursus = (
+    <>
+      {galat}
+      {memuat ? <p className="py-10 text-center text-sm text-muted-foreground">Memuat kursus…</p> : (
+        <TabelData kolom={kolomKursus} baris={filtered} kunci={(c) => c.course_id} onKlikBaris={setSelected} testId="lms-courses"
+          kosong={<EmptyState title={courses.length ? 'Tidak ada kursus yang cocok' : 'Belum ada kursus'}
+            description={courses.length ? 'Ubah saringan atau kata pencarian.' : 'Klik "Kursus baru", atau "Muat contoh" untuk melihat contoh.'} />} />
+      )}
+    </>
+  );
+
+  // ─── Tab: analitik ───
+  const s = analytics?.summary || {};
+  const tabAnalitik = (
+    <div className="space-y-4">
+      {galat}
+      {analytics ? (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile label="Kursus" value={s.total_courses ?? 0} sub={`${s.active_courses ?? 0} aktif`} />
+          <StatTile label="Pendaftaran" value={s.total_enrollments ?? 0} sub={`${s.in_progress ?? 0} sedang berjalan`} />
+          <StatTile label="Selesai" value={s.completed ?? 0}
+            sub={s.total_enrollments ? `${s.completion_rate ?? 0}% dari semua pendaftaran` : 'Belum ada pendaftaran'} />
+          <StatTile label="Sertifikat terbit" value={s.certificates_issued ?? 0} sub="Peserta yang lulus nilai minimum." />
+        </div>
+      ) : !loading && <p className="text-sm text-muted-foreground">Ringkasan tidak dapat dimuat.</p>}
+
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-base font-semibold text-foreground">Per kategori</p>
+          <TombolUnduh namaBerkas="pembelajaran-per-kategori" namaLembar="Per kategori" baris={perKategori}
+            kolom={[{ label: 'Kategori', nilai: (r) => r.kategori }, { label: 'Kursus', nilai: (r) => r.kursus },
+              { label: 'Peserta', nilai: (r) => r.peserta }, { label: 'Selesai', nilai: (r) => r.selesai }]} />
+        </div>
+        <TabelData baris={perKategori} kunci={(r) => r.kategori} testId="lms-per-kategori"
+          kolom={[
+            { kunci: 'kategori', label: 'Kategori', hp: 'judul' },
+            { kunci: 'kursus', label: 'Kursus', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.kursus}</span> },
+            { kunci: 'peserta', label: 'Peserta', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.peserta}</span> },
+            { kunci: 'selesai', label: 'Selesai', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.selesai}</span> },
+          ]}
+          kosong={<EmptyState title="Belum ada kursus" description="Kategori muncul setelah kursus dibuat." />} />
+      </section>
+
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-base font-semibold text-foreground">Kursus paling banyak peserta</p>
+          <TombolUnduh namaBerkas="kursus-paling-diminati" namaLembar="Paling diminati" baris={palingDiminati}
+            kolom={[{ label: 'Kursus', nilai: (c) => c.title }, { label: 'Kategori', nilai: (c) => c.category || '' },
+              { label: 'Peserta', nilai: (c) => peserta(c) }, { label: 'Selesai', nilai: (c) => selesai(c) }]} />
+        </div>
+        <TabelData baris={palingDiminati} kunci={(c) => c.course_id} onKlikBaris={setSelected} testId="lms-top-courses"
+          kolom={[
+            { kunci: 'judul', label: 'Kursus', hp: 'judul', isi: (c) => <span className="font-medium text-foreground">{c.title}</span> },
+            { kunci: 'kategori', label: 'Kategori', isi: (c) => c.category || '—' },
+            { kunci: 'peserta', label: 'Peserta', rata: 'kanan', isi: (c) => <span className="tabular-nums">{peserta(c)}</span> },
+            { kunci: 'selesai', label: 'Selesai', rata: 'kanan', isi: (c) => <span className="tabular-nums">{selesai(c)}</span> },
+          ]}
+          kosong={<EmptyState title="Belum ada peserta" description="Urutan muncul setelah karyawan didaftarkan ke kursus." />} />
+      </section>
     </div>
   );
 
   return (
-    <div className="space-y-5" data-testid="hr-lms-module">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <GraduationCap className="w-6 h-6 text-primary" />
-            Learning Management System
-          </h1>
-          <p className="text-muted-foreground text-sm">Manajemen kursus, materi, dan progress karyawan</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={handleSeed} disabled={seeding}
-            className="h-9 px-3 rounded-lg border border-dashed border-[var(--glass-border)] text-xs text-muted-foreground hover:text-foreground transition-colors"
-            data-testid="lms-seed-btn">
-            {seeding ? 'Memuat...' : 'Muat Demo'}
-          </button>
-          <button onClick={() => openForm()} data-testid="lms-add-btn"
-            className="h-9 px-4 rounded-xl bg-[hsl(var(--primary))] text-foreground text-sm font-medium hover:opacity-90 flex items-center gap-1.5">
-            <Plus className="w-4 h-4" /> Kursus Baru
-          </button>
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex gap-1 p-1 rounded-xl bg-[var(--nav-pill-bg)] border border-[var(--glass-border)] w-fit">
-        {[['courses','Daftar Kursus'],['enrollments','Pendaftaran'],['analytics','Analitik']].map(([k, l]) => (
-          <button key={k} onClick={() => setTab(k)}
-            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all duration-150 ${
-              tab === k ? 'bg-[var(--nav-pill-active)] text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-            }`} data-testid={`lms-tab-${k}`}>{l}</button>
-        ))}
-      </div>
-
-      {error && (
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-400/10 border border-red-300 dark:border-red-400/20 text-sm text-red-700 dark:text-red-400">
-          <AlertCircle className="w-4 h-4" />{error}
-        </div>
-      )}
-
-      {/* ─── COURSES TAB ──────────────────────────────────── */}
-      {tab === 'courses' && (
-        <div className="space-y-4">
-          {/* Filters */}
-          <div className="flex flex-wrap gap-2">
-            <div className="flex items-center gap-2 flex-1 min-w-56 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)]">
-              <Search className="w-4 h-4 text-muted-foreground" />
-              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Cari kursus..."
-                className="flex-1 bg-transparent text-sm focus:outline-none" data-testid="lms-search" />
-            </div>
-            <SmartNativeSelect value={filterCat} onChange={e => setFilterCat(e.target.value)}
-              className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" data-testid="lms-filter-cat">
-              <option value="">Semua Kategori</option>
-              {categories.map(c => <option key={c}>{c}</option>)}
-            </SmartNativeSelect>
-            <SmartNativeSelect searchable={false} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-              className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-              <option value="">Semua Status</option>
-              <option value="active">Aktif</option>
-              <option value="draft">Draf</option>
-              <option value="archived">Diarsipkan</option>
-            </SmartNativeSelect>
-            <button onClick={fetchAll} className="h-9 w-9 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] flex items-center justify-center text-muted-foreground hover:text-foreground">
-              <RefreshCw className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* Course Grid */}
-          {filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-48 gap-3">
-              <GraduationCap className="w-10 h-10 text-muted-foreground/30" />
-              <p className="text-muted-foreground text-sm">Belum ada kursus. Klik "Kursus Baru" atau "Muat Demo".</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filtered.map(c => (
-                <GlassCard key={c.course_id} hover className="p-5 cursor-pointer group" onClick={() => setSelected(c)} data-testid={`course-card-${c.course_id}`}>
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-10 h-10 rounded-xl flex items-center justify-center"
-                        style={{ background: `${CATEGORY_COLORS[categories.indexOf(c.category) % CATEGORY_COLORS.length]}20`, border: `1px solid ${CATEGORY_COLORS[categories.indexOf(c.category) % CATEGORY_COLORS.length]}35` }}>
-                        <BookOpen className="w-5 h-5" style={{ color: CATEGORY_COLORS[categories.indexOf(c.category) % CATEGORY_COLORS.length] }} />
-                      </div>
-                      <div>
-                        <StatusBadge status={c.status} />
-                        <div className="text-xs text-muted-foreground mt-0.5">{c.category}</div>
-                      </div>
-                    </div>
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={e => { e.stopPropagation(); openForm(c); }}
-                        className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-[var(--nav-pill-active)] text-muted-foreground hover:text-foreground">
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button onClick={e => { e.stopPropagation(); handleDelete(c.course_id); }}
-                        className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-red-50 dark:bg-red-400/10 text-muted-foreground hover:text-red-700 dark:text-red-400">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <h3 className="font-semibold text-foreground text-sm mb-1 line-clamp-2 group-hover:text-primary transition-colors">{c.title}</h3>
-                  <p className="text-xs text-muted-foreground line-clamp-2 mb-3">{c.description}</p>
-
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <div className="flex items-center gap-3">
-                      <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{c.duration_hours}j</span>
-                      <span style={{ color: LEVEL_CONFIG[c.level]?.color }}>{LEVEL_CONFIG[c.level]?.label || c.level}</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" />{c.enrollment_count || 0}</span>
-                      <span className="flex items-center gap-1"><Award className="w-3.5 h-3.5" />{c.completion_count || 0}</span>
-                    </div>
-                  </div>
-
-                  {(c.enrollment_count > 0) && (
-                    <div className="mt-3">
-                      <div className="flex justify-between text-xs mb-1">
-                        <span className="text-muted-foreground">Completion rate</span>
-                        <span className="font-medium">{Math.round((c.completion_count || 0) / (c.enrollment_count || 1) * 100)}%</span>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-[var(--glass-border)] overflow-hidden">
-                        <div className="h-full rounded-full bg-[hsl(var(--primary))]" style={{ width: `${Math.round((c.completion_count || 0) / (c.enrollment_count || 1) * 100)}%` }} />
-                      </div>
-                    </div>
-                  )}
-                </GlassCard>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ─── ENROLLMENTS TAB ──────────────────────────────── */}
-      {tab === 'enrollments' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">{enrollments.length} total enrollment</p>
-            <button onClick={fetchEnrollments} className="h-8 px-3 rounded-lg border border-[var(--glass-border)] text-xs flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
-              <RefreshCw className="w-3.5 h-3.5" /> Refresh
-            </button>
-          </div>
-          <GlassCard hover={false} className="overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="border-b border-[var(--glass-border)]">
-                  <tr>
-                    {['Karyawan','Kursus','Status','Progress','Nilai','Sertifikat','Terdaftar'].map(h => (
-                      <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--glass-border)]">
-                  {paged.map(e => (
-                    <tr key={e.enrollment_id} className="hover:bg-[var(--glass-bg-hover)] transition-colors">
-                      <td className="px-4 py-3 font-medium text-foreground">{e.employee_name}</td>
-                      <td className="px-4 py-3 text-muted-foreground max-w-xs truncate">{e.course_title}</td>
-                      <td className="px-4 py-3"><StatusBadge status={e.status} /></td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-16 h-1.5 rounded-full bg-[var(--glass-border)] overflow-hidden">
-                            <div className="h-full rounded-full bg-[hsl(var(--primary))]" style={{ width: `${e.progress_pct || 0}%` }} />
-                          </div>
-                          <span className="text-xs font-medium">{e.progress_pct || 0}%</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        {e.quiz_score != null ? <span className="text-sm font-bold" style={{ color: e.passed ? '#10b981' : '#ef4444' }}>{e.quiz_score}</span> : <span className="text-muted-foreground">—</span>}
-                      </td>
-                      <td className="px-4 py-3">
-                        {e.certificate_issued ? (
-                          <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400"><Award className="w-3.5 h-3.5" />{e.certificate_no}</span>
-                        ) : <span className="text-muted-foreground text-xs">—</span>}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">{fmtDate(e.enrolled_at)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
-              {enrollments.length === 0 && (
-                <div className="py-12 text-center text-muted-foreground text-sm">Belum ada pendaftaran</div>
-              )}
-            </div>
-          </GlassCard>
-        </div>
-      )}
-
-      {/* ─── ANALYTICS TAB ───────────────────────────────── */}
-      {tab === 'analytics' && analytics && (
-        <div className="space-y-5">
-          <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-            {[
-              { label: 'Total Kursus', value: analytics.summary?.total_courses, icon: BookOpen, color: '#6366f1' },
-              { label: 'Total Pendaftar', value: analytics.summary?.total_enrollments, icon: Users, color: '#10b981' },
-              { label: 'Sudah Selesai', value: analytics.summary?.completed, icon: CheckCircle2, color: '#10b981' },
-              { label: 'Sedang Berjalan', value: analytics.summary?.in_progress, icon: Play, color: '#f59e0b' },
-              { label: 'Sertifikat Diterbitkan', value: analytics.summary?.certificates_issued, icon: Award, color: '#8b5cf6' },
-              { label: 'Completion Rate', value: `${analytics.summary?.completion_rate || 0}%`, icon: TrendingUp, color: '#14b8a6' },
-            ].map((k, i) => (
-              <GlassCard key={i} hover={false} className="p-5 flex items-start gap-4">
-                <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0" style={{ background: `${k.color}20`, border: `1px solid ${k.color}35` }}>
-                  <k.icon className="w-5 h-5" style={{ color: k.color }} />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">{k.label}</p>
-                  <p className="text-2xl font-bold text-foreground">{k.value}</p>
-                </div>
-              </GlassCard>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {/* Category Breakdown */}
-            <GlassCard hover={false} className="p-5">
-              <h3 className="text-sm font-semibold mb-4 flex items-center gap-2"><BarChart3 className="w-4 h-4 text-primary" />Kursus per Kategori</h3>
-              {(analytics.category_breakdown || []).length > 0 ? (
-                <ResponsiveContainer width="100%" height={180}>
-                  <BarChart data={analytics.category_breakdown} layout="vertical" margin={{ left: 60 }}>
-                    <XAxis type="number" tick={{ fontSize: 11 }} />
-                    <YAxis type="category" dataKey="category" tick={{ fontSize: 11 }} width={60} />
-                    <Tooltip contentStyle={{ background: 'var(--glass-bg)', border: '1px solid var(--glass-border)', borderRadius: 10, fontSize: 12 }} />
-                    <Bar dataKey="count" radius={[0,4,4,0]}>
-                      {(analytics.category_breakdown || []).map((_, i) => (
-                        <Cell key={i} fill={CATEGORY_COLORS[i % CATEGORY_COLORS.length]} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : <p className="text-sm text-muted-foreground text-center py-8">Belum ada data</p>}
-            </GlassCard>
-
-            {/* Top Courses */}
-            <GlassCard hover={false} className="p-5">
-              <h3 className="text-sm font-semibold mb-4 flex items-center gap-2"><Star className="w-4 h-4 text-primary" />Kursus Paling Banyak Diminati</h3>
-              <div className="space-y-3">
-                {(analytics.top_courses || []).map((c, i) => (
-                  <div key={c.course_id} className="flex items-center gap-3">
-                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
-                      style={{ background: `${CATEGORY_COLORS[i % CATEGORY_COLORS.length]}20`, color: CATEGORY_COLORS[i % CATEGORY_COLORS.length] }}>{i + 1}</div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{c.title}</p>
-                      <p className="text-xs text-muted-foreground">{c.enrollment_count} pendaftar · {c.completion_count} selesai</p>
-                    </div>
-                  </div>
-                ))}
-                {(analytics.top_courses || []).length === 0 && <p className="text-sm text-muted-foreground text-center py-4">Belum ada data</p>}
+    <div data-testid="hr-lms-module">
+      <HubTabs hubId="hr-lms" title="Pembelajaran" subtitle="Kursus, materi, dan kemajuan belajar karyawan."
+        value={tab} onValueChange={setTab}
+        tabs={[
+          { key: 'courses', label: `Kursus (${courses.length})`, Component: IsiTab, props: {
+            actions: aksiHalaman,
+            filters: <>
+              <div className="relative w-full sm:w-64">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari kursus" className="pl-8" data-testid="lms-search" />
               </div>
-            </GlassCard>
-          </div>
-        </div>
-      )}
+              <SmartNativeSelect value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="w-44" data-testid="lms-filter-cat">
+                <option value="">Semua kategori</option>
+                {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+              </SmartNativeSelect>
+              <SmartNativeSelect searchable={false} value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="w-40">
+                <option value="">Semua status</option>
+                <option value="active">Aktif</option>
+                <option value="draft">Draf</option>
+                <option value="archived">Diarsipkan</option>
+              </SmartNativeSelect>
+            </>,
+            tools: <>
+              <TombolUnduh namaBerkas="kursus-pembelajaran" namaLembar="Kursus" baris={filtered} kolom={kolomUnduhKursus} testId="lms-unduh-kursus" />
+              {muatUlang}
+            </>,
+            children: tabKursus,
+          } },
+          { key: 'enrollments', label: `Pendaftaran (${enrollments.length})`, Component: TabelPendaftaran, props: {
+            enrollments,
+            alat: <>
+              <TombolUnduh namaBerkas="pendaftaran-kursus" namaLembar="Pendaftaran" baris={enrollments} testId="lms-unduh-pendaftaran"
+                kolom={[
+                  { label: 'Karyawan', nilai: (e) => e.employee_name || '' },
+                  { label: 'Kursus', nilai: (e) => e.course_title || '' },
+                  { label: 'Status', nilai: (e) => labelStatus(e.status) },
+                  { label: 'Kemajuan (%)', nilai: (e) => e.progress_pct || 0 },
+                  { label: 'Nilai', nilai: (e) => e.quiz_score ?? '' },
+                  { label: 'Sertifikat', nilai: (e) => (e.certificate_issued ? e.certificate_no : '') },
+                  { label: 'Terdaftar', nilai: (e) => fmtDate(e.enrolled_at) },
+                ]} />
+              {muatUlang}
+            </>,
+          } },
+          { key: 'analytics', label: 'Analitik', Component: IsiTab, props: { tools: muatUlang, children: tabAnalitik } },
+        ]} />
 
-      {/* ─── COURSE DETAIL MODAL ──────────────────────────── */}
+      {/* ─── Detail kursus (popup) ─── */}
       {selected && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setSelected(null)}>
-          <div className="bg-[var(--card-surface)] rounded-2xl border border-[var(--glass-border)] shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="p-6">
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <StatusBadge status={selected.status} />
-                  <h2 className="text-xl font-bold text-foreground mt-2">{selected.title}</h2>
-                  <p className="text-muted-foreground text-sm mt-1">{selected.description}</p>
-                </div>
-                <button onClick={() => setSelected(null)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-[var(--nav-pill-active)]">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-5">
-                <div className="p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)] text-center">
-                  <p className="text-lg font-bold">{selected.duration_hours}j</p>
-                  <p className="text-xs text-muted-foreground">Durasi</p>
-                </div>
-                <div className="p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)] text-center">
-                  <p className="text-lg font-bold" style={{ color: LEVEL_CONFIG[selected.level]?.color }}>{LEVEL_CONFIG[selected.level]?.label || selected.level}</p>
-                  <p className="text-xs text-muted-foreground">Level</p>
-                </div>
-                <div className="p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)] text-center">
-                  <p className="text-lg font-bold">{selected.enrollment_count || 0}</p>
-                  <p className="text-xs text-muted-foreground">Pendaftar</p>
-                </div>
-                <div className="p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)] text-center">
-                  <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400">{selected.pass_score}%</p>
-                  <p className="text-xs text-muted-foreground">Pass Score</p>
-                </div>
-              </div>
-              {selected.instructor && (
-                <div className="flex items-center gap-2 text-sm mb-4">
-                  <Users className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-muted-foreground">Instruktur:</span>
-                  <span className="font-medium">{selected.instructor}</span>
-                </div>
-              )}
-              {selected.tags?.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mb-4">
-                  {selected.tags.map(t => (
-                    <span key={t} className="text-xs px-2 py-0.5 rounded-full bg-[var(--nav-pill-active)] text-muted-foreground">{t}</span>
-                  ))}
-                </div>
-              )}
-              {(selected.materials || []).length > 0 && (
-                <div>
-                  <h3 className="text-sm font-semibold mb-3">Materi Kursus</h3>
-                  <div className="space-y-2">
-                    {selected.materials.map((m, i) => {
-                      const tc = MATERIAL_TYPE_CONFIG[m.type] || MATERIAL_TYPE_CONFIG.text;
-                      return (
-                        <div key={m.material_id} className="flex items-center gap-3 p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-                          <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: `${tc.color}20` }}>
-                            <tc.icon className="w-4 h-4" style={{ color: tc.color }} />
-                          </div>
-                          <div className="flex-1">
-                            <p className="text-sm font-medium">{m.title}</p>
-                            <p className="text-xs text-muted-foreground">{tc.label} · {m.duration_minutes}m</p>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
+        <DetailPopup open onClose={() => setSelected(null)} judul={selected.title} testId="lms-course-detail"
+          keterangan={selected.description} status={<Status status={selected.status} />}
+          aksi={<>
+            <Button size="sm" variant="outline" onClick={() => { openForm(selected); setSelected(null); }}><Pencil />Ubah</Button>
+            <Button size="sm" variant="destructive" onClick={() => handleDelete(selected.course_id)} data-testid="lms-delete-btn"><Trash2 />Hapus</Button>
+          </>}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Kategori">{selected.category || '—'}</BarisDetail>
+            <BarisDetail label="Tingkat">{labelLevel(selected.level)}</BarisDetail>
+            <BarisDetail label="Durasi">{selected.duration_hours ?? '—'} jam</BarisDetail>
+            <BarisDetail label="Nilai lulus">{selected.pass_score ?? '—'}%</BarisDetail>
+            <BarisDetail label="Instruktur">{selected.instructor || '—'}</BarisDetail>
+            <BarisDetail label="Peserta">{peserta(selected)} terdaftar · {selesai(selected)} selesai</BarisDetail>
+            {selected.tags?.length > 0 && <BarisDetail label="Label">{selected.tags.join(', ')}</BarisDetail>}
+          </dl>
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-foreground">Materi kursus</p>
+            {materi === null ? <p className="text-sm text-muted-foreground">Memuat materi…</p> : (
+              <TabelData baris={materi} kunci={(m) => m.material_id} testId="lms-materials"
+                kolom={[
+                  { kunci: 'judul', label: 'Materi', hp: 'judul', isi: (m) => <span className="font-medium text-foreground">{m.title}</span> },
+                  { kunci: 'jenis', label: 'Jenis', isi: (m) => MATERIAL_TYPE[m.type] || 'Teks' },
+                  { kunci: 'durasi', label: 'Durasi', rata: 'kanan', isi: (m) => <span className="tabular-nums">{m.duration_minutes ?? '—'} menit</span> },
+                ]}
+                kosong={<p className="text-sm text-muted-foreground">Kursus ini belum punya materi.</p>} />
+            )}
           </div>
-        </div>
+        </DetailPopup>
       )}
 
-      {/* ─── ADD/EDIT FORM MODAL ──────────────────────────── */}
-      {showForm && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-[var(--card-surface)] rounded-2xl border border-[var(--glass-border)] shadow-2xl w-full max-w-lg" onClick={e => e.stopPropagation()}>
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-5">
-                <h2 className="text-lg font-bold">{editing ? 'Edit Kursus' : 'Buat Kursus Baru'}</h2>
-                <button onClick={() => setShowForm(false)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-[var(--nav-pill-active)]">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">Judul Kursus *</label>
-                  <input value={form.title} onChange={e => setForm(p => ({...p, title: e.target.value}))}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" placeholder="Judul kursus" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">Deskripsi</label>
-                  <textarea value={form.description} onChange={e => setForm(p => ({...p, description: e.target.value}))}
-                    className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm resize-none h-20" placeholder="Deskripsi kursus" />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Kategori</label>
-                    <input value={form.category} onChange={e => setForm(p => ({...p, category: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" placeholder="e.g. K3, Orientasi" />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Level</label>
-                    <SmartNativeSelect searchable={false} value={form.level} onChange={e => setForm(p => ({...p, level: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                      <option value="Beginner">Pemula</option><option value="Intermediate">Menengah</option><option value="Advanced">Lanjutan</option>
-                    </SmartNativeSelect>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Durasi (jam)</label>
-                    <input type="number" value={form.duration_hours} onChange={e => setForm(p => ({...p, duration_hours: +e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" min={1} />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Pass Score (%)</label>
-                    <input type="number" value={form.pass_score} onChange={e => setForm(p => ({...p, pass_score: +e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" min={0} max={100} />
-                  </div>
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">Instruktur</label>
-                  <input value={form.instructor} onChange={e => setForm(p => ({...p, instructor: e.target.value}))}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" placeholder="Nama instruktur" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">Status</label>
-                  <SmartNativeSelect searchable={false} value={form.status} onChange={e => setForm(p => ({...p, status: e.target.value}))}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                    <option value="draft">Draf</option><option value="active">Aktif</option><option value="archived">Diarsipkan</option>
-                  </SmartNativeSelect>
-                </div>
-              </div>
-              <div className="flex gap-3 mt-6">
-                <button onClick={() => setShowForm(false)} className="flex-1 h-10 rounded-xl border border-[var(--glass-border)] text-sm text-muted-foreground hover:text-foreground">Batal</button>
-                <button onClick={handleSave} disabled={saving || !form.title}
-                  className="flex-1 h-10 rounded-xl bg-[hsl(var(--primary))] text-foreground text-sm font-medium hover:opacity-90 disabled:opacity-50">
-                  {saving ? 'Menyimpan...' : (editing ? 'Simpan' : 'Buat Kursus')}
-                </button>
-              </div>
-            </div>
-          </div>
+      {/* ─── Form kursus (popup) ─── */}
+      <FormPopup open={showForm} onClose={() => setShowForm(false)} ukuran="panjang" onSimpan={handleSave} menyimpan={saving}
+        bisaSimpan={!!form.title} judul={editing ? 'Ubah kursus' : 'Buat kursus baru'}
+        labelSimpan={editing ? 'Simpan' : 'Buat kursus'} testId="lms-form">
+        <Isian label="Judul kursus" wajib htmlFor="lms-judul">
+          <Input id="lms-judul" value={form.title} onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))} placeholder="Judul kursus" />
+        </Isian>
+        <Isian label="Deskripsi" htmlFor="lms-deskripsi">
+          <Textarea id="lms-deskripsi" rows={3} value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} placeholder="Deskripsi kursus" />
+        </Isian>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Kategori" htmlFor="lms-kategori">
+            <Input id="lms-kategori" value={form.category} onChange={(e) => setForm((p) => ({ ...p, category: e.target.value }))} placeholder="Contoh: K3, Orientasi" />
+          </Isian>
+          <Isian label="Tingkat" htmlFor="lms-tingkat">
+            <SmartNativeSelect id="lms-tingkat" searchable={false} value={form.level} onChange={(e) => setForm((p) => ({ ...p, level: e.target.value }))}>
+              <option value="Beginner">Pemula</option><option value="Intermediate">Menengah</option><option value="Advanced">Lanjutan</option>
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Durasi (jam)" htmlFor="lms-durasi">
+            <Input id="lms-durasi" type="number" min={1} value={form.duration_hours} onChange={(e) => setForm((p) => ({ ...p, duration_hours: +e.target.value }))} />
+          </Isian>
+          <Isian label="Nilai lulus (%)" htmlFor="lms-lulus">
+            <Input id="lms-lulus" type="number" min={0} max={100} value={form.pass_score} onChange={(e) => setForm((p) => ({ ...p, pass_score: +e.target.value }))} />
+          </Isian>
+          <Isian label="Instruktur" htmlFor="lms-instruktur">
+            <Input id="lms-instruktur" value={form.instructor} onChange={(e) => setForm((p) => ({ ...p, instructor: e.target.value }))} placeholder="Nama instruktur" />
+          </Isian>
+          <Isian label="Status" htmlFor="lms-status">
+            <SmartNativeSelect id="lms-status" searchable={false} value={form.status} onChange={(e) => setForm((p) => ({ ...p, status: e.target.value }))}>
+              <option value="draft">Draf</option><option value="active">Aktif</option><option value="archived">Diarsipkan</option>
+            </SmartNativeSelect>
+          </Isian>
         </div>
-      )}
+      </FormPopup>
     </div>
   );
 }
