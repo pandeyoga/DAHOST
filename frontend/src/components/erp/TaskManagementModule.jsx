@@ -1,30 +1,47 @@
+/**
+ * Papan tugas (tab di Manajemen Tugas, Portal Toko) — kanban tugas marketing + tampilan tabel.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (judul disembunyikan di hub), penyaring satu baris (dulu panel
+ * Filter yang dibuka-tutup), ViewToggle Papan/Tabel, unduh Excel/CSV semua tugas, label Indonesia.
+ * Perbaikan angka: kartu dulu menghitung hanya 20 tugas di halaman ini dan diberi label "Total" (70 tugas tampil 20);
+ * kini jumlah per status diambil dari server (penyaring yang sama), kolom papan menulis "x dari y".
+ */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
-import { CheckSquare, Plus, RefreshCw, Filter, X, Zap, AlertTriangle } from 'lucide-react';
-import { GlassPanel, GlassInput } from '@/components/ui/glass';
-import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
+import { Plus, RefreshCw, Zap, AlertTriangle, Columns3, Table2 } from 'lucide-react';
+import { Button, buttonVariants } from '@/components/ui/button';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import ViewToggle from '@/components/ui/view-toggle';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
   AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
 } from '@/components/ui/alert-dialog';
-import { PageHeader } from './moduleAtoms';
+import { formatDateID } from '@/lib/format';
+import { cn } from '@/lib/utils';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
 import PaginationBar from './PaginationBar';
-import { TaskCard } from './TaskCard';
+import { TaskCard, PRIORITAS, JENIS_TUGAS, STATUS_TUGAS } from './TaskCard';
 import { CreateTaskDialog } from './CreateTaskDialog';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
 import { toast } from 'sonner';
 
 const COLUMNS = [
-  { id: 'to_do', title: 'To Do', color: 'bg-muted/10 border-border/30' },
-  { id: 'in_progress', title: 'In Progress', color: 'bg-[hsl(var(--primary)/0.1)] border-[hsl(var(--primary)/0.3)]' },
-  { id: 'pending_approval', title: 'Pending Approval', color: 'bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.3)]' },
-  { id: 'done', title: 'Done', color: 'bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.3)]' },
+  { id: 'to_do', title: 'Akan dikerjakan' },
+  { id: 'in_progress', title: 'Sedang dikerjakan' },
+  { id: 'pending_approval', title: 'Menunggu persetujuan' },
+  { id: 'done', title: 'Selesai' },
 ];
+const VIEWS = [
+  { key: 'board', label: 'Tampilan papan', icon: Columns3 },
+  { key: 'table', label: 'Tampilan tabel', icon: Table2 },
+];
+const tgl = (v) => (v ? formatDateID(v) : '—');
+const Lencana = ({ peta, nilai }) => (nilai
+  ? <StatusBadge status={nilai} label={(peta[nilai] || [nilai])[0]} tone={(peta[nilai] || [])[1]} />
+  : <span className="text-muted-foreground">—</span>);
 
 export default function TaskManagementModule({ token }) {
   const [loading, setLoading] = useState(true);
@@ -34,9 +51,10 @@ export default function TaskManagementModule({ token }) {
   const [columns, setColumns] = useState({});
   const [accounts, setAccounts] = useState([]);
   const [filter, setFilter] = useState({ priority: 'all', account_id: 'all' });
-  const [showFilters, setShowFilters] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [detailTaskId, setDetailTaskId] = useState(null);
+  const [view, setView] = useState('board');
+  const [jumlah, setJumlah] = useState({});
   // Guard: bypass dialog untuk drag actionable task ke done tanpa eksekusi
   const [bypassConfirm, setBypassConfirm] = useState(null); // { task, newStatus }
 
@@ -56,15 +74,32 @@ export default function TaskManagementModule({ token }) {
     }
   }, [headers]);
 
+  const paramSaring = useCallback(() => {
+    const params = new URLSearchParams();
+    if (filter.priority !== 'all') params.append('priority', filter.priority);
+    if (filter.account_id !== 'all') params.append('account_id', filter.account_id);
+    return params;
+  }, [filter]);
+
+  /** Jumlah per status dari server (penyaring sama) — bukan hanya tugas di halaman ini. */
+  const fetchJumlah = useCallback(async () => {
+    try {
+      const hasil = await Promise.all(COLUMNS.map(async (c) => {
+        const p = paramSaring(); p.append('status', c.id); p.append('limit', '1');
+        const r = await fetch(`/api/marketing/tasks?${p.toString()}`, { headers });
+        const d = r.ok ? await r.json() : null;
+        return [c.id, d?.pagination?.total ?? null];
+      }));
+      setJumlah(Object.fromEntries(hasil));
+    } catch { setJumlah({}); }
+  }, [headers, paramSaring]);
+
   const fetchTasks = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (filter.priority !== 'all') params.append('priority', filter.priority);
-      if (filter.account_id !== 'all') params.append('account_id', filter.account_id);
+      const params = paramSaring();
       params.append('page', String(taskPage));
       params.append('limit', '20');
-
       const res = await fetch(`/api/marketing/tasks?${params.toString()}`, { headers });
       if (res.ok) {
         const data = await res.json();
@@ -79,11 +114,12 @@ export default function TaskManagementModule({ token }) {
         setColumns(grouped);
       }
     } catch (e) {
-      toast.error('Gagal memuat tasks');
+      toast.error('Gagal memuat tugas');
     } finally {
       setLoading(false);
     }
-  }, [headers, filter, taskPage]);
+    fetchJumlah();
+  }, [headers, paramSaring, taskPage, fetchJumlah]);
 
   useEffect(() => {
     fetchAccounts();
@@ -119,17 +155,13 @@ export default function TaskManagementModule({ token }) {
     const newColumns = { ...columns };
     const sourceColId = source?.droppableId || Object.keys(newColumns).find(k => newColumns[k].some(t => t.id === taskId));
     const destColId   = newStatus;
-
     const sourceCol = [...(newColumns[sourceColId] || [])];
     const destCol   = sourceColId === destColId ? sourceCol : [...(newColumns[destColId] || [])];
-
     const srcIdx    = source?.index ?? sourceCol.findIndex(t => t.id === taskId);
     const destIdx   = destination?.index ?? destCol.length;
-
     const [movedTask] = sourceCol.splice(srcIdx, 1);
     movedTask.status = newStatus;
     destCol.splice(destIdx, 0, movedTask);
-
     if (sourceColId !== destColId) {
       newColumns[sourceColId] = sourceCol;
     }
@@ -144,187 +176,154 @@ export default function TaskManagementModule({ token }) {
       });
       if (!res.ok) throw new Error('Update failed');
       const label =
-        newStatus === 'pending_approval' ? 'Task dikirim untuk approval' :
-        newStatus === 'done'             ? 'Task selesai ✅' : 'Status task diupdate';
+        newStatus === 'pending_approval' ? 'Tugas dikirim untuk persetujuan.' :
+        newStatus === 'done'             ? 'Tugas selesai.' : 'Status tugas disimpan.';
       toast.success(label);
+      fetchJumlah();
     } catch (e) {
-      toast.error('Gagal update task');
+      toast.error('Gagal mengubah tugas');
       fetchTasks();
     }
   };
 
-  const totalCount = tasks.length;
-  const overdueCount = useMemo(
-    () =>
-      tasks.filter(
-        t => t.due_date && new Date(t.due_date) < new Date() && t.status !== 'done' && t.status !== 'cancelled'
-      ).length,
-    [tasks]
-  );
-
-  const resetFilter = () => setFilter({ priority: 'all', account_id: 'all' });
-  const hasActiveFilter = filter.priority !== 'all' || filter.account_id !== 'all';
+  const namaAkun = (id) => accounts.find((a) => a.id === id)?.account_name || '—';
+  /** Unduh: semua tugas sesuai penyaring (bukan hanya 20 di halaman ini). */
+  const ambilSemua = async () => {
+    const semua = [];
+    for (let p = 1; p <= 100; p += 1) {
+      const params = paramSaring(); params.append('page', String(p)); params.append('limit', '100');
+      const r = await fetch(`/api/marketing/tasks?${params.toString()}`, { headers });
+      const d = r.ok ? await r.json() : {};
+      semua.push(...(d?.tasks || []));
+      if (!d?.pagination?.has_next) break;
+    }
+    return semua;
+  };
+  const kolomUnduh = [
+    { label: 'Kode', nilai: (t) => t.task_code || '' },
+    { label: 'Tugas', nilai: (t) => t.title || '' },
+    { label: 'Jenis', nilai: (t) => JENIS_TUGAS[t.task_type] || 'Lainnya' },
+    { label: 'Toko', nilai: (t) => (t.account_id ? namaAkun(t.account_id) : '') },
+    { label: 'Prioritas', nilai: (t) => (PRIORITAS[t.priority] || [t.priority || ''])[0] },
+    { label: 'Status', nilai: (t) => (STATUS_TUGAS[t.status] || [t.status || ''])[0] },
+    { label: 'Tenggat', nilai: (t) => (t.due_date ? tgl(t.due_date) : '') },
+    { label: 'Penanggung jawab', nilai: (t) => t.assigned_to_name || '' },
+    { label: 'Daftar periksa', nilai: (t) => ((t.checklist || []).length ? `${(t.checklist || []).filter((c) => c.completed).length}/${t.checklist.length}` : '') },
+  ];
+  const terlambat = (t) => t.due_date && new Date(t.due_date) < new Date() && t.status !== 'done' && t.status !== 'cancelled';
+  const kolom = [
+    { kunci: 'tugas', label: 'Tugas', hp: 'judul', isi: (t) => (
+      <div className="min-w-0 md:max-w-[22rem]"><p className="truncate font-medium" title={t.title}>{t.title}</p>
+        <p className="text-xs text-muted-foreground">{t.task_code} · {JENIS_TUGAS[t.task_type] || 'Lainnya'}</p></div>) },
+    { kunci: 'toko', label: 'Toko', isi: (t) => (t.account_id ? namaAkun(t.account_id) : '—') },
+    { kunci: 'prioritas', label: 'Prioritas', isi: (t) => <Lencana peta={PRIORITAS} nilai={t.priority} /> },
+    { kunci: 'tenggat', label: 'Tenggat', hp: 'keterangan', isi: (t) => (
+      <span className={cn('tabular-nums md:whitespace-nowrap', terlambat(t) && 'text-[hsl(var(--danger-text))]')}>
+        {tgl(t.due_date)}{terlambat(t) ? ' · terlambat' : ''}</span>) },
+    { kunci: 'status', label: 'Status', isi: (t) => <Lencana peta={STATUS_TUGAS} nilai={t.status} /> },
+    { kunci: 'pj', label: 'Penanggung jawab', isi: (t) => t.assigned_to_name || '—' },
+  ];
+  const adaSaring = filter.priority !== 'all' || filter.account_id !== 'all';
+  const angka = (id) => (jumlah[id] == null ? '—' : jumlah[id]);
 
   return (
-    <div className="space-y-4" data-testid="task-management-page">
-      <PageHeader
-        icon={CheckSquare}
-        eyebrow="Portal Marketing · Task Management"
-        title="Kanban Board"
-        subtitle="Kelola task harian, mingguan, bulanan dengan approval workflow"
-        actions={
-          <div className="flex items-center gap-2">
-            <Button onClick={fetchTasks} variant="outline" size="sm" data-testid="refresh-tasks-btn">
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Refresh
-            </Button>
-            <Button
-              onClick={() => setShowFilters(s => !s)}
-              variant={showFilters || hasActiveFilter ? 'default' : 'outline'}
-              size="sm"
-              data-testid="toggle-filters-btn"
-            >
-              <Filter className="w-3.5 h-3.5 mr-1.5" />
-              Filter
-              {hasActiveFilter && (
-                <Badge variant="outline" className="ml-2 h-4 px-1 text-xs">
-                  {(filter.priority !== 'all' ? 1 : 0) + (filter.account_id !== 'all' ? 1 : 0)}
-                </Badge>
-              )}
-            </Button>
-            <Button onClick={() => setCreateOpen(true)} size="sm" data-testid="create-task-button">
-              <Plus className="w-3.5 h-3.5 mr-1.5" /> Buat Task
-            </Button>
-          </div>
-        }
-      />
-
-      {/* Stats strip */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <GlassPanel className="p-3">
-          <div className="text-xs text-muted-foreground ">Total</div>
-          <div className="text-xl font-bold tabular-nums">{totalCount}</div>
-        </GlassPanel>
-        {COLUMNS.map(col => (
-          <GlassPanel key={col.id} className="p-3">
-            <div className="text-xs text-muted-foreground truncate">{col.title}</div>
-            <div className="text-xl font-bold tabular-nums">{columns[col.id]?.length || 0}</div>
-            {col.id === 'to_do' && overdueCount > 0 && (
-              <div className="text-xs text-[hsl(var(--danger-text))] mt-0.5">{overdueCount} overdue</div>
-            )}
-          </GlassPanel>
-        ))}
-      </div>
-
-      {/* Filter Panel */}
-      {showFilters && (
-        <GlassPanel className="p-4">
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="min-w-[160px]">
-              <Label className="text-xs">Prioritas</Label>
-              <Select value={filter.priority} onValueChange={v => setFilter(f => ({ ...f, priority: v }))}>
-                <SelectTrigger data-testid="filter-priority"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Semua</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="low">Low</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="min-w-[200px]">
-              <Label className="text-xs">Akun</Label>
-              <Select value={filter.account_id} onValueChange={v => setFilter(f => ({ ...f, account_id: v }))}>
-                <SelectTrigger data-testid="filter-account"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Semua Akun</SelectItem>
-                  {accounts.map(acc => (
-                    <SelectItem key={acc.id} value={acc.id}>{acc.account_name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {hasActiveFilter && (
-              <Button variant="ghost" size="sm" onClick={resetFilter} data-testid="reset-filter-btn">
-                <X className="w-3.5 h-3.5 mr-1" /> Reset
-              </Button>
-            )}
-          </div>
-        </GlassPanel>
+    <PageLayout testId="task-management-page" title="Papan tugas"
+      subtitle="Tugas harian, mingguan, dan bulanan dengan alur persetujuan."
+      actions={<Button onClick={() => setCreateOpen(true)} data-testid="create-task-button"><Plus />Buat tugas</Button>}
+      filters={<>
+        <SmartNativeSelect value={filter.priority} onChange={(e) => { setFilter(f => ({ ...f, priority: e.target.value })); setTaskPage(1); }}
+          className="w-40" searchable={false} data-testid="filter-priority">
+          <option value="all">Semua prioritas</option>
+          {Object.entries(PRIORITAS).map(([k, v]) => <option key={k} value={k}>{v[0]}</option>)}
+        </SmartNativeSelect>
+        <SmartNativeSelect value={filter.account_id} onChange={(e) => { setFilter(f => ({ ...f, account_id: e.target.value })); setTaskPage(1); }}
+          className="w-56" data-testid="filter-account">
+          <option value="all">Semua toko</option>
+          {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.account_name}</option>)}
+        </SmartNativeSelect>
+      </>}
+      tools={<>
+        <ViewToggle value={view} onChange={setView} options={VIEWS} testId="task-view" />
+        <TombolUnduh namaBerkas="tugas-marketing" namaLembar="Tugas" baris={tasks} ambilSemua={ambilSemua} kolom={kolomUnduh} testId="task-unduh" />
+        <Button onClick={fetchTasks} variant="outline" size="icon" title="Muat ulang" aria-label="Muat ulang" data-testid="refresh-tasks-btn">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={(
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="task-stats">
+          {COLUMNS.map((c) => (
+            <StatTile key={c.id} label={c.title} value={angka(c.id)}
+              accent={c.id === 'pending_approval' ? 'warning' : c.id === 'done' ? 'success' : 'default'}
+              hint={adaSaring ? 'Semua tugas yang cocok dengan penyaring (bukan hanya halaman ini).' : 'Semua tugas (bukan hanya halaman ini).'} />
+          ))}
+        </div>
       )}
-
-      {loading ? (
-        <div className="text-center py-6 text-muted-foreground">Loading tasks...</div>
+      footer={taskPagination && (
+        <PaginationBar pagination={taskPagination} onPageChange={(p) => setTaskPage(p)} />
+      )}>
+      {loading && tasks.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat tugas…</p>
+      ) : view === 'table' ? (
+        <TabelData kolom={kolom} baris={tasks} onKlikBaris={(t) => setDetailTaskId(t.id)} testId="task-table"
+          kosong={<EmptyState title={adaSaring ? 'Tidak ada tugas yang cocok' : 'Belum ada tugas'}
+            description={adaSaring ? 'Ubah penyaring.' : 'Buat tugas pertama atau aktifkan templat tugas berulang.'} />} />
       ) : (
-        <>
-          <DragDropContext onDragEnd={handleDragEnd}>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {COLUMNS.map(column => (
-                <div key={column.id} data-testid={`column-${column.id}`}>
-                  <div className={`mb-3 p-3 rounded-lg border ${column.color}`}>
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-sm">{column.title}</span>
-                      <span className="text-xs tabular-nums px-2 py-0.5 rounded-full bg-foreground/10">
-                        {columns[column.id]?.length || 0}
-                      </span>
-                    </div>
-                  </div>
-
-                  <Droppable droppableId={column.id} isDropDisabled={false} isCombineEnabled={false} ignoreContainerClipping={false}>
-                    {(provided, snapshot) => (
-                      <div
-                        ref={provided.innerRef}
-                        {...provided.droppableProps}
-                        className={`space-y-2 min-h-[200px] p-2 rounded-lg transition-colors ${
-                          snapshot.isDraggingOver
-                            ? 'bg-primary/5 border border-primary/30'
-                            : 'border border-transparent'
-                        }`}
-                      >
-                        {columns[column.id]?.length === 0 && (
-                          <div className="text-center text-xs text-muted-foreground py-6 italic">
-                            {snapshot.isDraggingOver ? 'Drop di sini...' : 'Tidak ada task'}
-                          </div>
-                        )}
-                        {columns[column.id]?.map((task, index) => (
-                          <Draggable key={task.id} draggableId={task.id} index={index}>
-                            {(provided, snapshot) => (
-                              <div
-                                ref={provided.innerRef}
-                                {...provided.draggableProps}
-                                {...provided.dragHandleProps}
-                                style={provided.draggableProps.style}
-                                onClick={() => {
-                                  if (!snapshot.isDragging) setDetailTaskId(task.id);
-                                }}
-                              >
-                                <TaskCard
-                                  task={task}
-                                  isDragging={snapshot.isDragging}
-                                  onRefresh={fetchTasks}
-                                  token={token}
-                                  accounts={accounts}
-                                  onViewDetail={(id) => setDetailTaskId(id)}
-                                />
-                              </div>
-                            )}
-                          </Draggable>
-                        ))}
-                        {provided.placeholder}
-                      </div>
-                    )}
-                  </Droppable>
+        <DragDropContext onDragEnd={handleDragEnd}>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+            {COLUMNS.map(column => (
+              <div key={column.id} data-testid={`column-${column.id}`}>
+                <div className="mb-2 flex items-center justify-between gap-2 border-b border-[var(--glass-border)] pb-2">
+                  <span className="text-sm font-semibold">{column.title}</span>
+                  <span className="text-xs tabular-nums text-muted-foreground"
+                    title="Tugas di halaman ini dari seluruh tugas berstatus ini">
+                    {columns[column.id]?.length || 0}{jumlah[column.id] != null ? ` dari ${jumlah[column.id]}` : ''}
+                  </span>
                 </div>
-              ))}
-            </div>
-          </DragDropContext>
-          {taskPagination && (
-            <PaginationBar
-              pagination={taskPagination}
-              onPageChange={(p) => setTaskPage(p)}
-              className="mt-3"
-            />
-          )}
-        </>
+                <Droppable droppableId={column.id} isDropDisabled={false} isCombineEnabled={false} ignoreContainerClipping={false}>
+                  {(provided, snapshot) => (
+                    <div
+                      ref={provided.innerRef}
+                      {...provided.droppableProps}
+                      className={cn('min-h-[12rem] space-y-2 rounded-[var(--radius-md)] p-1 transition-colors',
+                        snapshot.isDraggingOver ? 'border border-[hsl(var(--primary)/0.3)] bg-primary/5' : 'border border-transparent')}
+                    >
+                      {columns[column.id]?.length === 0 && (
+                        <p className="py-6 text-center text-xs text-muted-foreground">
+                          {snapshot.isDraggingOver ? 'Lepas di sini…' : 'Tidak ada tugas'}
+                        </p>
+                      )}
+                      {columns[column.id]?.map((task, index) => (
+                        <Draggable key={task.id} draggableId={task.id} index={index}>
+                          {(provided, snapshot) => (
+                            <div
+                              ref={provided.innerRef}
+                              {...provided.draggableProps}
+                              {...provided.dragHandleProps}
+                              style={provided.draggableProps.style}
+                              onClick={() => {
+                                if (!snapshot.isDragging) setDetailTaskId(task.id);
+                              }}
+                            >
+                              <TaskCard
+                                task={task}
+                                isDragging={snapshot.isDragging}
+                                onRefresh={fetchTasks}
+                                token={token}
+                                accounts={accounts}
+                                onViewDetail={(id) => setDetailTaskId(id)}
+                              />
+                            </div>
+                          )}
+                        </Draggable>
+                      ))}
+                      {provided.placeholder}
+                    </div>
+                  )}
+                </Droppable>
+              </div>
+            ))}
+          </div>
+        </DragDropContext>
       )}
 
       <CreateTaskDialog
@@ -343,49 +342,43 @@ export default function TaskManagementModule({ token }) {
         token={token}
       />
 
-      {/* Guard: konfirmasi saat drag actionable task ke Done tanpa eksekusi */}
+      {/* Guard: konfirmasi saat drag tugas beraksi ke Selesai tanpa eksekusi */}
       <AlertDialog open={!!bypassConfirm} onOpenChange={(o) => !o && setBypassConfirm(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
-              <AlertTriangle size={18} className="text-[hsl(var(--warning-text))]" />
-              Task Belum Dieksekusi
+              <AlertTriangle className="h-4 w-4 text-[hsl(var(--warning-text))]" />
+              Aksi tugas belum dijalankan
             </AlertDialogTitle>
             <AlertDialogDescription>
-              <strong>"{bypassConfirm?.task?.title}"</strong> memiliki aksi sistem
-              (<span className="tabular-nums text-xs">{bypassConfirm?.task?.action_type}</span>) yang
-              belum dijalankan. Jika ditandai Done tanpa eksekusi, data tidak akan tersimpan ke sistem.
-              <br /><br />
-              Pilih tindakan:
+              "{bypassConfirm?.task?.title}" punya aksi sistem yang belum dijalankan. Bila ditandai selesai tanpa
+              menjalankannya, datanya tidak tersimpan ke sistem. Pilih tindakan:
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
-            <AlertDialogCancel onClick={() => setBypassConfirm(null)}>
-              Batal (Buka Drawer)
-            </AlertDialogCancel>
+          <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
+            <AlertDialogCancel onClick={() => setBypassConfirm(null)}>Batal</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.9)]"
-              onClick={() => {
-                // Open drawer instead so user can execute action
-                setDetailTaskId(bypassConfirm.task.id);
-                setBypassConfirm(null);
-              }}
-            >
-              <Zap size={14} className="mr-1.5" /> Eksekusi Sekarang
-            </AlertDialogAction>
-            <AlertDialogAction
-              className="bg-muted text-muted-foreground hover:bg-muted/80"
+              className={buttonVariants({ variant: 'outline' })}
               onClick={async () => {
                 const t = bypassConfirm;
                 setBypassConfirm(null);
                 await _applyStatusChange(t.task.id, t.newStatus, null, null);
               }}
             >
-              Tandai Done Manual
+              Tandai selesai manual
+            </AlertDialogAction>
+            <AlertDialogAction
+              onClick={() => {
+                // Buka rincian supaya aksi bisa dijalankan
+                setDetailTaskId(bypassConfirm.task.id);
+                setBypassConfirm(null);
+              }}
+            >
+              <Zap className="h-4 w-4" />Jalankan sekarang
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </PageLayout>
   );
 }

@@ -1,41 +1,35 @@
+/**
+ * CreateTaskDialog — form buat tugas marketing (dipakai Papan tugas).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): FormPopup panjang (dulu Dialog buatan sendiri), isian di `Isian`, pilihan =
+ * SmartNativeSelect, tenggat = DatePicker + jam (dulu input datetime-local bawaan peramban), galat di kaki form,
+ * label Indonesia tanpa emoji. Isi yang dikirim (`payload`) tidak berubah.
+ */
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { GlassInput } from '@/components/ui/glass';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Plus, X, Loader2, UserCheck, Zap } from 'lucide-react';
+import { Plus, X, Zap } from 'lucide-react';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import DatePicker from '@/components/ui/date-picker';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { todayWIB, fromWIBLocalInput } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
 const TASK_TYPES = [
-  { value: 'data_entry', label: 'Input Data' },
-  { value: 'review', label: 'Review' },
+  { value: 'data_entry', label: 'Input data' },
+  { value: 'review', label: 'Tinjauan' },
   { value: 'analysis', label: 'Analisis' },
-  { value: 'reporting', label: 'Reporting' },
+  { value: 'reporting', label: 'Pelaporan' },
   { value: 'operational', label: 'Operasional' },
 ];
 
 const PRIORITIES = [
-  { value: 'high', label: 'High' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'low', label: 'Low' },
+  { value: 'high', label: 'Tinggi' },
+  { value: 'medium', label: 'Sedang' },
+  { value: 'low', label: 'Rendah' },
 ];
 
 // Roles yang relevan untuk Marketing portal (untuk filter staff dropdown)
@@ -65,6 +59,7 @@ export function CreateTaskDialog({ open, onOpenChange, onCreated, token, account
     related_entity_id: '',  // optional UUID
   });
   const [newChecklistItem, setNewChecklistItem] = useState('');
+  const [galat, setGalat] = useState('');
 
   const headers = useMemo(
     () => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
@@ -109,6 +104,7 @@ export function CreateTaskDialog({ open, onOpenChange, onCreated, token, account
         related_entity_id: '',
       });
       setNewChecklistItem('');
+      setGalat('');
     }
   }, [open, fetchStaff]);
 
@@ -123,15 +119,16 @@ export function CreateTaskDialog({ open, onOpenChange, onCreated, token, account
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
+    setGalat('');
     if (!form.title.trim()) {
-      toast.error('Judul task wajib diisi');
+      setGalat('Judul tugas wajib diisi.');
       return;
     }
 
     // Validation: data_entry tasks should have account
     if (form.task_type === 'data_entry' && !form.account_id) {
-      toast.error('Task tipe "Input Data" wajib pilih Akun Platform');
+      setGalat('Tugas jenis "Input data" wajib memilih akun toko.');
       return;
     }
 
@@ -182,254 +179,123 @@ export function CreateTaskDialog({ open, onOpenChange, onCreated, token, account
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || 'Gagal membuat task');
+        throw new Error(err.detail || 'Gagal membuat tugas');
       }
 
-      toast.success('Task berhasil dibuat');
+      toast.success('Tugas dibuat.');
       onOpenChange(false);
       if (onCreated) onCreated();
     } catch (err) {
-      toast.error(err.message || 'Gagal membuat task');
+      setGalat(err.message || 'Gagal membuat tugas');
     } finally {
       setSubmitting(false);
     }
   };
 
+  // Tenggat: tanggal (DatePicker) + jam; disimpan dalam format lama "YYYY-MM-DDTHH:mm" untuk fromWIBLocalInput.
+  const tglTenggat = (form.due_date || '').slice(0, 10);
+  const jamTenggat = (form.due_date || '').slice(11, 16);
+  const aturTenggat = (ymd, jam) => setForm(f => ({ ...f, due_date: ymd ? `${ymd}T${jam || '23:59'}` : '' }));
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl" data-testid="create-task-dialog">
-        <DialogHeader>
-          <DialogTitle>Buat Task Baru</DialogTitle>
-          <DialogDescription>
-            Isi detail task untuk staff marketing. Task akan masuk ke kolom <b>To Do</b>.
-          </DialogDescription>
-        </DialogHeader>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Label htmlFor="task-title">Judul Task <span className="text-[hsl(var(--danger-text))]">*</span></Label>
-            <GlassInput
-              id="task-title"
-              value={form.title}
-              onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
-              placeholder="Contoh: Input Sales Harian Shopee Official"
-              data-testid="task-title-input"
-              required
-            />
-          </div>
-
-          <div>
-            <Label htmlFor="task-desc">Deskripsi</Label>
-            <Textarea
-              id="task-desc"
-              value={form.description}
-              onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-              placeholder="Detail langkah-langkah / catatan..."
-              rows={3}
-              data-testid="task-desc-input"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>Tipe</Label>
-              <Select
-                value={form.task_type}
-                onValueChange={v => setForm(f => ({ ...f, task_type: v }))}
-              >
-                <SelectTrigger data-testid="task-type-select"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {TASK_TYPES.map(t => (
-                    <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+    <FormPopup open={open} onClose={() => onOpenChange(false)} ukuran="panjang" judul="Buat tugas baru"
+      keterangan="Tugas masuk ke kolom Akan dikerjakan." onSimpan={handleSubmit} menyimpan={submitting}
+      galat={galat} labelSimpan="Buat tugas" testId="create-task-dialog">
+      <Isian label="Judul tugas" wajib htmlFor="task-title">
+        <Input id="task-title" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+          placeholder="Contoh: Input penjualan harian Shopee Official" data-testid="task-title-input" />
+      </Isian>
+      <Isian label="Deskripsi" htmlFor="task-desc">
+        <Textarea id="task-desc" value={form.description} rows={3} placeholder="Langkah-langkah atau catatan"
+          onChange={e => setForm(f => ({ ...f, description: e.target.value }))} data-testid="task-desc-input" />
+      </Isian>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Jenis" htmlFor="task-type">
+          <SmartNativeSelect id="task-type" value={form.task_type} searchable={false}
+            onChange={(e) => setForm(f => ({ ...f, task_type: e.target.value }))} data-testid="task-type-select">
+            {TASK_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Prioritas" htmlFor="task-priority">
+          <SmartNativeSelect id="task-priority" value={form.priority} searchable={false}
+            onChange={(e) => setForm(f => ({ ...f, priority: e.target.value }))} data-testid="task-priority-select">
+            {PRIORITIES.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Penanggung jawab" htmlFor="task-assigned"
+          petunjuk={staffList.length === 0 && !staffLoading ? 'Belum ada staf marketing aktif.' : undefined}>
+          <SmartNativeSelect id="task-assigned" value={form.assigned_to || ''}
+            onChange={(e) => setForm(f => ({ ...f, assigned_to: e.target.value }))} data-testid="task-assigned-select">
+            <option value="">{staffLoading ? 'Memuat…' : 'Belum ditugaskan'}</option>
+            {staffList.map(staff => <option key={staff.id} value={staff.id}>{staff.name || staff.email}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Tenggat" petunjuk="Tanpa jam = sampai 23.59 WIB.">
+          <div className="flex gap-2">
+            <div className="min-w-0 flex-1">
+              <DatePicker value={tglTenggat} onChange={(v) => aturTenggat(v, jamTenggat)} placeholder="Tanpa tenggat" testId="task-due-input" />
             </div>
-            <div>
-              <Label>Prioritas</Label>
-              <Select
-                value={form.priority}
-                onValueChange={v => setForm(f => ({ ...f, priority: v }))}
-              >
-                <SelectTrigger data-testid="task-priority-select"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {PRIORITIES.map(p => (
-                    <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <Input type="time" className="w-28" value={jamTenggat} disabled={!tglTenggat} aria-label="Jam tenggat"
+              onChange={(e) => aturTenggat(tglTenggat, e.target.value)} data-testid="task-due-time" />
           </div>
+        </Isian>
+      </div>
+      <Isian label="Akun / toko marketplace" wajib={form.task_type === 'data_entry'} htmlFor="task-account"
+        galat={form.task_type === 'data_entry' && !form.account_id ? 'Tugas jenis Input data wajib memilih akun toko.' : undefined}>
+        <SmartNativeSelect id="task-account" value={form.account_id || ''}
+          onChange={(e) => setForm(f => ({ ...f, account_id: e.target.value }))} data-testid="task-account-select">
+          <option value="">{accounts.length === 0 ? 'Belum ada akun aktif' : 'Tidak terkait akun'}</option>
+          {accounts.map(acc => <option key={acc.id} value={acc.id}>{`${acc.account_name} (${acc.platform})`}</option>)}
+        </SmartNativeSelect>
+      </Isian>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>
-                <UserCheck className="w-3.5 h-3.5 inline mr-1" />
-                Assign Ke Staff
-              </Label>
-              <Select
-                value={form.assigned_to || 'unassigned'}
-                onValueChange={v => setForm(f => ({ ...f, assigned_to: v === 'unassigned' ? '' : v }))}
-              >
-                <SelectTrigger data-testid="task-assigned-select">
-                  <SelectValue placeholder={staffLoading ? 'Memuat...' : 'Pilih staff...'} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="unassigned">— Belum di-assign —</SelectItem>
-                  {staffList.length === 0 && !staffLoading && (
-                    <SelectItem value="no-staff" disabled>
-                      Belum ada staff marketing aktif
-                    </SelectItem>
-                  )}
-                  {staffList.map(staff => (
-                    <SelectItem key={staff.id} value={staff.id}>
-                      <span className="font-medium">{staff.name || staff.email}</span>
-                      <span className="text-xs text-muted-foreground ml-2">
-                        ({staff.role})
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label htmlFor="task-due">Due Date</Label>
-              <GlassInput
-                id="task-due"
-                type="datetime-local"
-                value={form.due_date}
-                onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))}
-                data-testid="task-due-input"
-              />
-            </div>
-          </div>
+      {/* ── AKSI DALAM SISTEM (opsional) ── */}
+      <div className="space-y-3 border-t border-[var(--glass-border)] pt-3">
+        <Isian label="Aksi dalam sistem (opsional)" htmlFor="task-action"
+          petunjuk="Pilih bila tugas perlu menjalankan aksi langsung dari papan, bukan sekadar pengingat.">
+          <SmartNativeSelect id="task-action" value={form.related_entity || ''} searchable={false}
+            onChange={(e) => setForm(f => ({ ...f, related_entity: e.target.value }))} data-testid="task-action-entity-select">
+            <option value="">Tanpa aksi (hanya pengingat)</option>
+            <option value="sales_data">Isi data penjualan</option>
+            <option value="return">Setujui / tolak retur</option>
+            <option value="review">Balas ulasan</option>
+            <option value="manual_check">Pemeriksaan manual</option>
+          </SmartNativeSelect>
+        </Isian>
+        {(form.related_entity === 'return' || form.related_entity === 'review') && (
+          <Isian label={`Nomor ${form.related_entity === 'return' ? 'retur' : 'ulasan'}`} wajib htmlFor="task-entity"
+            petunjuk={`Salin dari menu ${form.related_entity === 'return' ? 'Komplain & Retur' : 'Rating & Ulasan'}.`}>
+            <Input id="task-entity" value={form.related_entity_id} placeholder="Nomor data yang akan diproses"
+              onChange={e => setForm(f => ({ ...f, related_entity_id: e.target.value }))} data-testid="task-entity-id-input" />
+          </Isian>
+        )}
+        {form.related_entity === 'sales_data' && form.account_id && (
+          <p className="flex items-center gap-1.5 text-sm text-[hsl(var(--success-text))]">
+            <Zap className="h-4 w-4" />Akun terpilih jadi isian awal form penjualan. Staf cukup mengisi omzet/pesanan di papan.
+          </p>
+        )}
+      </div>
 
-          <div>
-            <Label>
-              Akun / Toko Marketplace
-              {form.task_type === 'data_entry' && <span className="text-[hsl(var(--danger-text))] ml-1">*</span>}
-            </Label>
-            <Select
-              value={form.account_id || 'none'}
-              onValueChange={v => setForm(f => ({ ...f, account_id: v === 'none' ? '' : v }))}
-            >
-              <SelectTrigger data-testid="task-account-select">
-                <SelectValue placeholder={accounts.length === 0 ? 'Belum ada akun — buat di Manage Accounts' : 'Pilih akun...'} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">— Tidak terkait akun —</SelectItem>
-                {accounts.map(acc => (
-                  <SelectItem key={acc.id} value={acc.id}>
-                    {acc.account_name} ({acc.platform})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {form.task_type === 'data_entry' && !form.account_id && (
-              <p className="text-xs text-[hsl(var(--warning-text))] mt-1">
-                Task tipe Input Data wajib pilih akun marketplace
-              </p>
-            )}
-          </div>
-
-          {/* ── ACTIONABLE TASK LINKAGE ── */}
-          <div className="rounded-md border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.05)] p-3 space-y-3">
-            <div>
-              <Label className="text-xs flex items-center gap-1">
-                <Zap className="w-3 h-3" />
-                In-System Action (Opsional)
-              </Label>
-              <p className="text-xs text-muted-foreground mt-0.5 mb-2">
-                Pilih jika task perlu eksekusi aksi langsung dari Kanban (bukan sekadar reminder).
-              </p>
-              <Select
-                value={form.related_entity || 'none'}
-                onValueChange={v => setForm(f => ({ ...f, related_entity: v === 'none' ? '' : v }))}
-              >
-                <SelectTrigger data-testid="task-action-entity-select">
-                  <SelectValue placeholder="Pilih tipe action..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">— Tanpa action (reminder only) —</SelectItem>
-                  <SelectItem value="sales_data">📊 Submit Sales Data</SelectItem>
-                  <SelectItem value="return">📦 Approve / Reject Return</SelectItem>
-                  <SelectItem value="review">⭐ Reply Review</SelectItem>
-                  <SelectItem value="manual_check">✅ Manual Check</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Show related_entity_id input if action needs existing entity */}
-            {(form.related_entity === 'return' || form.related_entity === 'review') && (
-              <div>
-                <Label className="text-xs">
-                  ID {form.related_entity === 'return' ? 'Return' : 'Review'} *
-                </Label>
-                <GlassInput
-                  value={form.related_entity_id}
-                  onChange={e => setForm(f => ({ ...f, related_entity_id: e.target.value }))}
-                  placeholder={`UUID ${form.related_entity} yang akan di-action`}
-                  data-testid="task-entity-id-input"
-                />
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Copy ID dari modul {form.related_entity === 'return' ? 'Returns & Refunds' : 'Rating & Review'}.
-                </p>
-              </div>
-            )}
-
-            {form.related_entity === 'sales_data' && form.account_id && (
-              <p className="text-xs text-[hsl(var(--success-text))]">
-                ✓ Akun terpilih akan jadi pre-fill untuk form sales data. Staff cukup isi revenue/orders di Kanban.
-              </p>
-            )}
-          </div>
-
-          <div>
-            <Label>Checklist</Label>
-            <div className="flex gap-2 mb-2">
-              <GlassInput
-                value={newChecklistItem}
-                onChange={e => setNewChecklistItem(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addChecklist(); } }}
-                placeholder="Tambah item checklist..."
-                data-testid="checklist-input"
-              />
-              <Button type="button" onClick={addChecklist} size="sm" variant="outline" data-testid="checklist-add-btn">
-                <Plus className="w-4 h-4" />
-              </Button>
-            </div>
-            {form.checklist.length > 0 && (
-              <ul className="space-y-1 max-h-32 overflow-auto">
-                {form.checklist.map((c, i) => (
-                  <li key={i} className="flex items-center justify-between gap-2 px-3 py-2 rounded-md bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-                    <span className="text-sm flex-1 truncate">{c.item}</span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 w-6 p-0"
-                      onClick={() => removeChecklist(i)}
-                      data-testid={`checklist-remove-${i}`}
-                    >
-                      <X className="w-3 h-3" />
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={submitting} data-testid="task-submit-btn">
-              {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Buat Task
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+      <Isian label="Daftar periksa" htmlFor="checklist-input">
+        <div className="flex gap-2">
+          <Input id="checklist-input" value={newChecklistItem} onChange={e => setNewChecklistItem(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addChecklist(); } }}
+            placeholder="Tambah butir daftar periksa" data-testid="checklist-input" />
+          <Button type="button" onClick={addChecklist} size="icon" variant="outline" data-testid="checklist-add-btn"
+            title="Tambah butir" aria-label="Tambah butir"><Plus /></Button>
+        </div>
+        {form.checklist.length > 0 && (
+          <ul className="max-h-32 space-y-1 overflow-auto">
+            {form.checklist.map((c, i) => (
+              <li key={i} className="flex items-center justify-between gap-2 border-b border-[var(--glass-border)] py-1.5">
+                <span className="flex-1 truncate text-sm">{c.item}</span>
+                <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeChecklist(i)}
+                  title="Hapus butir" aria-label="Hapus butir" data-testid={`checklist-remove-${i}`}><X /></Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Isian>
+    </FormPopup>
   );
 }

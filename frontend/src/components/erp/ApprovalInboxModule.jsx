@@ -1,40 +1,37 @@
+/**
+ * Menunggu persetujuan (tab di Manajemen Tugas, Portal Toko) — tugas yang dikirim staf untuk disetujui.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout (judul disembunyikan di hub), daftar = tabel (dulu kartu per tugas)
+ * + unduh, form tolak = FormPopup pendek, rincian = TaskDetailDrawer (popup). Tombol Setujui hijau / Tolak merah.
+ * Perbaikan angka: dulu hanya 20 tugas pertama yang dimuat dan jumlahnya ditulis sebagai total; kini dimuat sampai
+ * 100 (batas server) dan jumlah memakai total dari server.
+ */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { ClipboardCheck, RefreshCw, CheckCircle, XCircle, Loader2, AlertCircle, Clock } from 'lucide-react';
-import { GlassCard, GlassPanel } from '@/components/ui/glass';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { PageHeader } from './moduleAtoms';
-import { TaskDetailDrawer } from './TaskDetailDrawer';
+import { RefreshCw, CheckCircle, XCircle, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { formatDateTimeID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatusBadge } from './moduleAtoms';
+import { TaskDetailDrawer } from './TaskDetailDrawer';
+import { PRIORITAS } from './TaskCard';
 
-const priorityColors = {
-  high: 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--danger-text))] border-[hsl(var(--destructive)/0.3)]',
-  medium: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning-text))] border-[hsl(var(--warning)/0.3)]',
-  low: 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.3)]',
-};
-
-function RejectDialog({ open, onOpenChange, onConfirm }) {
+function RejectDialog({ open, onOpenChange, onConfirm, judul }) {
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [galat, setGalat] = useState('');
 
   useEffect(() => {
-    if (!open) setReason('');
+    if (!open) { setReason(''); setGalat(''); }
   }, [open]);
 
   const handleConfirm = async () => {
     if (!reason.trim()) {
-      toast.error('Alasan reject wajib diisi');
+      setGalat('Alasan penolakan wajib diisi.');
       return;
     }
     setSubmitting(true);
@@ -43,45 +40,22 @@ function RejectDialog({ open, onOpenChange, onConfirm }) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="reject-dialog">
-        <DialogHeader>
-          <DialogTitle>Reject Task</DialogTitle>
-          <DialogDescription>
-            Berikan alasan penolakan. Task akan dikembalikan ke status <b>In Progress</b> dengan catatan ini.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-2">
-          <Label htmlFor="reject-reason">Alasan</Label>
-          <Textarea
-            id="reject-reason"
-            value={reason}
-            onChange={e => setReason(e.target.value)}
-            rows={3}
-            placeholder="Contoh: Data revenue tidak sesuai dengan yang ada di Shopee Seller Center."
-            data-testid="reject-reason-input"
-          />
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>Batal</Button>
-          <Button
-            onClick={handleConfirm}
-            disabled={submitting}
-            className="bg-[hsl(var(--destructive-strong))] hover:bg-[hsl(var(--destructive-strong)/0.9)]"
-            data-testid="confirm-reject-btn"
-          >
-            {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-            Reject Task
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open={open} onClose={() => onOpenChange(false)} ukuran="pendek" testId="reject-dialog"
+      judul={judul ? `Tolak tugas "${judul}"` : 'Tolak tugas'}
+      keterangan="Tugas dikembalikan ke status Sedang dikerjakan dengan catatan ini."
+      onSimpan={handleConfirm} menyimpan={submitting} galat={galat} labelSimpan="Tolak tugas">
+      <Isian label="Alasan" wajib htmlFor="reject-reason">
+        <Textarea id="reject-reason" value={reason} onChange={e => setReason(e.target.value)} rows={3}
+          placeholder="Contoh: Data omzet tidak sesuai dengan Shopee Seller Center." data-testid="reject-reason-input" />
+      </Isian>
+    </FormPopup>
   );
 }
 
 export default function ApprovalInboxModule({ token }) {
   const [loading, setLoading] = useState(true);
   const [tasks, setTasks] = useState([]);
+  const [total, setTotal] = useState(null);
   const [actioning, setActioning] = useState(null);
   const [rejectTarget, setRejectTarget] = useState(null);
   const [detailTaskId, setDetailTaskId] = useState(null);
@@ -91,14 +65,16 @@ export default function ApprovalInboxModule({ token }) {
   const fetchPending = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/marketing/tasks?status=pending_approval', { headers });
+      const res = await fetch('/api/marketing/tasks?status=pending_approval&limit=100', { headers });
       if (res.ok) {
         const data = await res.json();
         // API returns paginated {tasks: [], pagination: {}} — extract the array
-        setTasks(data?.tasks || (Array.isArray(data) ? data : []));
+        const list = data?.tasks || (Array.isArray(data) ? data : []);
+        setTasks(list);
+        setTotal(data?.pagination?.total ?? list.length);
       }
     } catch (e) {
-      toast.error('Gagal memuat task pending approval');
+      toast.error('Gagal memuat tugas yang menunggu persetujuan');
     } finally {
       setLoading(false);
     }
@@ -118,9 +94,9 @@ export default function ApprovalInboxModule({ token }) {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || 'Gagal approve');
+        throw new Error(err.detail || 'Gagal menyetujui');
       }
-      toast.success(`Task "${task.title}" approved`);
+      toast.success(`Tugas "${task.title}" disetujui.`);
       fetchPending();
     } catch (e) {
       toast.error(e.message);
@@ -138,9 +114,9 @@ export default function ApprovalInboxModule({ token }) {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || 'Gagal reject');
+        throw new Error(err.detail || 'Gagal menolak');
       }
-      toast.success(`Task "${rejectTarget.title}" rejected`);
+      toast.success(`Tugas "${rejectTarget.title}" ditolak.`);
       setRejectTarget(null);
       fetchPending();
     } catch (e) {
@@ -148,129 +124,65 @@ export default function ApprovalInboxModule({ token }) {
     }
   };
 
-  const fmtDate = (d) => d ? new Date(d).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '-';
+  const fmtDate = (d) => (d ? formatDateTimeID(d) : '—');
+  const terlambat = (t) => t.due_date && new Date(t.due_date) < new Date();
+  const kolom = [
+    { kunci: 'tugas', label: 'Tugas', hp: 'judul', isi: (t) => (
+      <div className="min-w-0 md:max-w-[24rem]" data-testid={`approval-row-${t.task_code}`}>
+        <p className="truncate font-medium" data-testid={`approval-title-${t.task_code}`} title={t.title}>{t.title}</p>
+        <p className="truncate text-xs text-muted-foreground">{t.task_code}{t.completion_notes ? ` · catatan: ${t.completion_notes}` : ''}</p>
+      </div>) },
+    { kunci: 'prioritas', label: 'Prioritas', isi: (t) => (
+      <StatusBadge status={t.priority} label={(PRIORITAS[t.priority] || [t.priority || '—'])[0]} tone={(PRIORITAS[t.priority] || [])[1]} />) },
+    { kunci: 'tenggat', label: 'Tenggat', hp: 'keterangan', isi: (t) => (
+      <span className={`tabular-nums md:whitespace-nowrap ${terlambat(t) ? 'text-[hsl(var(--danger-text))]' : ''}`}>{fmtDate(t.due_date)}{terlambat(t) ? ' · terlambat' : ''}</span>) },
+    { kunci: 'pj', label: 'Penanggung jawab', isi: (t) => t.assigned_to_name || (t.assigned_to ? 'Staf' : '—') },
+    { kunci: 'periksa', label: 'Daftar periksa', rata: 'kanan', isi: (t) => (t.checklist?.length
+      ? <span className="tabular-nums">{t.checklist.filter(c => c.completed).length}/{t.checklist.length}</span> : '—') },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (t) => (
+      <div className="flex justify-end gap-1">
+        <Button size="sm" variant="success" onClick={() => handleApprove(t)} disabled={actioning === t.id} data-testid={`approve-btn-${t.task_code}`}>
+          {actioning === t.id ? <Loader2 className="animate-spin" /> : <CheckCircle />}Setujui
+        </Button>
+        <Button size="sm" variant="destructive" onClick={() => setRejectTarget(t)} disabled={actioning === t.id} data-testid={`reject-btn-${t.task_code}`}>
+          <XCircle />Tolak
+        </Button>
+      </div>) },
+  ];
 
   return (
-    <div className="space-y-4" data-testid="approval-inbox-module">
-      <PageHeader
-        icon={ClipboardCheck}
-        eyebrow="Portal Marketing · Approvals"
-        title="Approval Inbox"
-        subtitle="Review task yang sudah disubmit oleh staff marketing"
-        actions={
-          <Button onClick={fetchPending} variant="outline" size="sm" data-testid="refresh-approvals-btn">
-            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Refresh
-          </Button>
-        }
-      />
-
-      <GlassPanel className="p-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.3)] flex items-center justify-center">
-            <Clock className="w-5 h-5 text-[hsl(var(--warning-text))]" />
-          </div>
-          <div>
-            <div className="text-2xl font-bold tabular-nums" data-testid="pending-count">{tasks.length}</div>
-            <div className="text-xs text-muted-foreground ">Pending Approval</div>
-          </div>
-        </div>
-      </GlassPanel>
-
-      {loading ? (
-        <div className="space-y-3">
-          {[1, 2, 3].map(i => <Skeleton key={i} className="h-32" />)}
-        </div>
-      ) : tasks.length === 0 ? (
-        <GlassCard className="p-4 text-center">
-          <CheckCircle className="w-16 h-16 mx-auto mb-4 text-[hsl(var(--success-text))] opacity-50" />
-          <p className="text-muted-foreground">Tidak ada task yang menunggu approval. 🎉</p>
-        </GlassCard>
+    <PageLayout testId="approval-inbox-module" title="Menunggu persetujuan"
+      subtitle="Tinjau tugas yang sudah dikirim staf marketing."
+      tools={<>
+        <TombolUnduh namaBerkas="tugas-menunggu-persetujuan" namaLembar="Persetujuan" baris={tasks} testId="approval-unduh"
+          kolom={[
+            { label: 'Kode', nilai: (t) => t.task_code || '' },
+            { label: 'Tugas', nilai: (t) => t.title || '' },
+            { label: 'Prioritas', nilai: (t) => (PRIORITAS[t.priority] || [t.priority || ''])[0] },
+            { label: 'Tenggat', nilai: (t) => (t.due_date ? fmtDate(t.due_date) : '') },
+            { label: 'Penanggung jawab', nilai: (t) => t.assigned_to_name || '' },
+            { label: 'Daftar periksa', nilai: (t) => (t.checklist?.length ? `${t.checklist.filter(c => c.completed).length}/${t.checklist.length}` : '') },
+            { label: 'Catatan', nilai: (t) => t.completion_notes || '' },
+          ]} />
+        <Button onClick={fetchPending} variant="outline" size="icon" title="Muat ulang" aria-label="Muat ulang" data-testid="refresh-approvals-btn">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={!loading && (
+        <p className="text-sm text-muted-foreground">
+          <span className="font-semibold text-foreground tabular-nums" data-testid="pending-count">{total ?? tasks.length}</span> tugas menunggu persetujuan
+          {total != null && total > tasks.length ? ` · ${tasks.length} pertama ditampilkan` : ''}.
+        </p>
+      )}>
+      {loading && tasks.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat tugas…</p>
       ) : (
-        <div className="space-y-3">
-          {tasks.map(task => {
-            const isOverdue = task.due_date && new Date(task.due_date) < new Date();
-            return (
-              <GlassCard
-                key={task.id}
-                className={`p-4 ${isOverdue ? 'border-red-500/30' : ''}`}
-                data-testid={`approval-row-${task.task_code}`}
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs tabular-nums text-muted-foreground">{task.task_code}</span>
-                      <Badge variant="outline" className={priorityColors[task.priority]}>{task.priority}</Badge>
-                      {isOverdue && (
-                        <Badge variant="outline" className="bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--danger-text))] border-[hsl(var(--destructive)/0.3)]">
-                          <AlertCircle className="w-3 h-3 mr-1" /> Overdue
-                        </Badge>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setDetailTaskId(task.id)}
-                      className="text-left text-base font-semibold text-foreground hover:text-primary transition-colors mb-1 line-clamp-2 cursor-pointer w-full"
-                      data-testid={`approval-title-${task.task_code}`}
-                    >
-                      {task.title}
-                    </button>
-                    {task.description && (
-                      <p className="text-sm text-muted-foreground line-clamp-2 mb-2">{task.description}</p>
-                    )}
-                    <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                      {task.due_date && <span>Due: {fmtDate(task.due_date)}</span>}
-                      {task.assigned_to && <span>Assigned: {task.assigned_to.slice(0, 10)}…</span>}
-                      {task.checklist?.length > 0 && (
-                        <span>
-                          Checklist: {task.checklist.filter(c => c.completed).length}/{task.checklist.length}
-                        </span>
-                      )}
-                    </div>
-                    {task.completion_notes && (
-                      <div className="mt-2 px-3 py-2 rounded-md bg-[var(--glass-bg)] border border-[var(--glass-border)] text-xs">
-                        <span className="text-muted-foreground">Catatan: </span>
-                        <span>{task.completion_notes}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex flex-col gap-2 shrink-0">
-                    <Button
-                      size="sm"
-                      onClick={() => handleApprove(task)}
-                      disabled={actioning === task.id}
-                      className="bg-[hsl(var(--success-strong))] hover:bg-[hsl(var(--success-strong)/0.9)]"
-                      data-testid={`approve-btn-${task.task_code}`}
-                    >
-                      {actioning === task.id ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <><CheckCircle className="w-3.5 h-3.5 mr-1" /> Approve</>
-                      )}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setRejectTarget(task)}
-                      disabled={actioning === task.id}
-                      className="text-[hsl(var(--danger-text))] hover:bg-[hsl(var(--destructive)/0.1)]"
-                      data-testid={`reject-btn-${task.task_code}`}
-                    >
-                      <XCircle className="w-3.5 h-3.5 mr-1" /> Reject
-                    </Button>
-                  </div>
-                </div>
-              </GlassCard>
-            );
-          })}
-        </div>
+        <TabelData kolom={kolom} baris={tasks} onKlikBaris={(t) => setDetailTaskId(t.id)} testId="approval-table"
+          kosong={<EmptyState title="Tidak ada tugas yang menunggu persetujuan" description="Tugas yang dikirim staf untuk disetujui muncul di sini." />} />
       )}
 
-      <RejectDialog
-        open={!!rejectTarget}
-        onOpenChange={(o) => !o && setRejectTarget(null)}
-        onConfirm={handleReject}
-      />
+      <RejectDialog open={!!rejectTarget} judul={rejectTarget?.title}
+        onOpenChange={(o) => !o && setRejectTarget(null)} onConfirm={handleReject} />
 
       <TaskDetailDrawer
         taskId={detailTaskId}
@@ -279,6 +191,6 @@ export default function ApprovalInboxModule({ token }) {
         onUpdated={fetchPending}
         token={token}
       />
-    </div>
+    </PageLayout>
   );
 }

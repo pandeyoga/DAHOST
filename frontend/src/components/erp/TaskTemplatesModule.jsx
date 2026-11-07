@@ -1,32 +1,24 @@
+/**
+ * Templat tugas (tab di Manajemen Tugas, Portal Toko) — templat tugas berulang yang dibuat otomatis oleh penjadwal.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout (judul disembunyikan di hub), daftar = tabel (dulu kartu per templat)
+ * + unduh, form = FormPopup panjang, pilihan = SmartNativeSelect, label Indonesia. Isi yang dikirim tidak berubah.
+ */
 import { useState, useEffect, useCallback } from 'react';
-import { FileCog, Plus, RefreshCw, Pencil, Power, PowerOff, Loader2, Clock } from 'lucide-react';
-import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
+import { Plus, RefreshCw, Pencil, Power, PowerOff, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { PageHeader } from './moduleAtoms';
-import { toast } from 'sonner';
-import { X } from 'lucide-react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { useMarketingAccounts } from '@/hooks/useMarketingAccounts';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatusBadge } from './moduleAtoms';
+import { PRIORITAS, JENIS_TUGAS } from './TaskCard';
 
 // 2026-11-07 (Tahap 6, MK1 — keputusan owner): tugas dari template diberikan ke PIC TOKO template itu
 // (Kelola Akun). Isian lama "peran bawaan" (staff/pic) bukan peran yang ada dan membuat tugas otomatis
@@ -42,24 +34,24 @@ function assigneeText(acc) {
 }
 
 const FREQUENCIES = [
-  { value: 'daily', label: 'Setiap Hari' },
+  { value: 'daily', label: 'Setiap hari' },
   { value: 'weekly', label: 'Mingguan' },
   { value: 'monthly', label: 'Bulanan' },
-  { value: 'one-time', label: 'Sekali (One-time)' },
+  { value: 'one-time', label: 'Sekali' },
 ];
 
 const TASK_TYPES = [
-  { value: 'data_entry', label: 'Input Data' },
-  { value: 'review', label: 'Review' },
+  { value: 'data_entry', label: 'Input data' },
+  { value: 'review', label: 'Tinjauan' },
   { value: 'analysis', label: 'Analisis' },
-  { value: 'reporting', label: 'Reporting' },
+  { value: 'reporting', label: 'Pelaporan' },
   { value: 'operational', label: 'Operasional' },
 ];
 
 const PRIORITIES = [
-  { value: 'high', label: 'High' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'low', label: 'Low' },
+  { value: 'high', label: 'Tinggi' },
+  { value: 'medium', label: 'Sedang' },
+  { value: 'low', label: 'Rendah' },
 ];
 
 const DAYS = [
@@ -91,12 +83,14 @@ function TemplateFormDialog({ open, onOpenChange, template, onSaved, token, acco
     checklist_template: [],
   });
   const [newChecklistItem, setNewChecklistItem] = useState('');
+  const [galat, setGalat] = useState('');
   const storeOptions = accounts.filter(a => a.status === 'active' || a.id === form.account_id);
   const selectedStore = form.account_id ? byId[form.account_id] : null;
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   useEffect(() => {
+    if (open) setGalat('');
     if (open && template) {
       const cfg = template.recurrence_config || {};
       setForm({
@@ -154,13 +148,14 @@ function TemplateFormDialog({ open, onOpenChange, template, onSaved, token, acco
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
+    setGalat('');
     if (!form.template_name.trim()) {
-      toast.error('Nama template wajib diisi');
+      setGalat('Nama templat wajib diisi.');
       return;
     }
     if (!form.title.trim()) {
-      toast.error('Judul task wajib diisi');
+      setGalat('Judul tugas wajib diisi.');
       return;
     }
 
@@ -199,221 +194,120 @@ function TemplateFormDialog({ open, onOpenChange, template, onSaved, token, acco
       const res = await fetch(url, { method, headers, body: JSON.stringify(payload) });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || 'Gagal menyimpan template');
+        throw new Error(err.detail || 'Gagal menyimpan templat');
       }
 
-      toast.success(isEdit ? 'Template berhasil diupdate' : 'Template berhasil dibuat');
+      toast.success(isEdit ? 'Templat disimpan.' : 'Templat dibuat.');
       onOpenChange(false);
       if (onSaved) onSaved();
     } catch (err) {
-      toast.error(err.message);
+      setGalat(err.message);
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto" data-testid="template-form-dialog">
-        <DialogHeader>
-          <DialogTitle>{isEdit ? 'Edit Template Task' : 'Buat Template Task'}</DialogTitle>
-          <DialogDescription>
-            Template untuk membuat task otomatis berulang sesuai jadwal.
-          </DialogDescription>
-        </DialogHeader>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Label htmlFor="tpl-name">Nama Template <span className="text-[hsl(var(--danger-text))]">*</span></Label>
-            <GlassInput
-              id="tpl-name"
-              value={form.template_name}
-              onChange={e => setForm(f => ({ ...f, template_name: e.target.value }))}
-              placeholder="Input Sales Harian Shopee"
-              data-testid="tpl-name-input"
-              required
-            />
-          </div>
-
-          <div>
-            <Label htmlFor="tpl-title">Judul Task <span className="text-[hsl(var(--danger-text))]">*</span></Label>
-            <GlassInput
-              id="tpl-title"
-              value={form.title}
-              onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
-              placeholder="Input Sales Harian - Shopee Official Store"
-              data-testid="tpl-title-input"
-              required
-            />
-          </div>
-
-          <div>
-            <Label htmlFor="tpl-desc">Deskripsi</Label>
-            <Textarea
-              id="tpl-desc"
-              value={form.description}
-              onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-              rows={2}
-              data-testid="tpl-desc-input"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>Tipe</Label>
-              <Select value={form.task_type} onValueChange={v => setForm(f => ({ ...f, task_type: v }))}>
-                <SelectTrigger data-testid="tpl-type-select"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {TASK_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Prioritas</Label>
-              <Select value={form.priority} onValueChange={v => setForm(f => ({ ...f, priority: v }))}>
-                <SelectTrigger data-testid="tpl-priority-select"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {PRIORITIES.map(p => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>Recurrence</Label>
-              <Select value={form.recurrence} onValueChange={v => setForm(f => ({ ...f, recurrence: v }))}>
-                <SelectTrigger data-testid="tpl-recurrence-select"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {FREQUENCIES.map(fr => <SelectItem key={fr.value} value={fr.value}>{fr.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label htmlFor="tpl-time">Waktu</Label>
-              <GlassInput
-                id="tpl-time"
-                type="time"
-                value={form.time}
-                onChange={e => setForm(f => ({ ...f, time: e.target.value }))}
-                data-testid="tpl-time-input"
-              />
-            </div>
-          </div>
-
-          {form.recurrence === 'weekly' && (
-            <div>
-              <Label>Hari (multi-pilih)</Label>
-              <div className="flex flex-wrap gap-2 mt-1">
-                {DAYS.map(d => (
-                  <Button
-                    key={d.value}
-                    type="button"
-                    size="sm"
-                    variant={form.days_of_week.includes(d.value) ? 'default' : 'outline'}
-                    onClick={() => toggleDay(d.value)}
-                    data-testid={`day-toggle-${d.value}`}
-                  >
-                    {d.label}
-                  </Button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {form.recurrence === 'monthly' && (
-            <div>
-              <Label htmlFor="tpl-day-of-month">Tanggal di Bulan (1-31)</Label>
-              <GlassInput
-                id="tpl-day-of-month"
-                type="number"
-                min="1"
-                max="31"
-                value={form.day_of_month}
-                onChange={e => setForm(f => ({ ...f, day_of_month: e.target.value }))}
-                data-testid="tpl-day-month-input"
-              />
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>Toko</Label>
-              <SmartNativeSelect value={form.account_id} onChange={e => setForm(f => ({ ...f, account_id: e.target.value }))}
-                className="w-full mt-1" data-testid="tpl-store-select">
-                <option value="">— Tanpa toko —</option>
-                {storeOptions.map(a => (
-                  <option key={a.id} value={a.id}>{`${a.account_code ? `${a.account_code} · ` : ''}${a.account_name}`}</option>
-                ))}
-              </SmartNativeSelect>
-            </div>
-            <div>
-              <Label>Penanggung jawab</Label>
-              <p className="mt-2 text-sm text-foreground" data-testid="tpl-assignee-text">{assigneeText(selectedStore)}</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex items-end gap-3">
-              <div className="flex items-center gap-2">
-                <Switch
-                  checked={form.auto_create}
-                  onCheckedChange={(v) => setForm(f => ({ ...f, auto_create: v }))}
-                  data-testid="tpl-auto-switch"
-                />
-                <Label>Auto-create</Label>
-              </div>
-              <div className="flex items-center gap-2">
-                <Switch
-                  checked={form.is_active}
-                  onCheckedChange={(v) => setForm(f => ({ ...f, is_active: v }))}
-                  data-testid="tpl-active-switch"
-                />
-                <Label>Active</Label>
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <Label>Checklist Template</Label>
-            <div className="flex gap-2 mb-2">
-              <GlassInput
-                value={newChecklistItem}
-                onChange={e => setNewChecklistItem(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addChecklist(); } }}
-                placeholder="Tambah item checklist..."
-                data-testid="tpl-checklist-input"
-              />
-              <Button type="button" onClick={addChecklist} size="sm" variant="outline">
-                <Plus className="w-4 h-4" />
+    <FormPopup open={open} onClose={() => onOpenChange(false)} ukuran="panjang" testId="template-form"
+      judul={isEdit ? 'Ubah templat tugas' : 'Buat templat tugas'} keterangan="Templat untuk membuat tugas otomatis berulang sesuai jadwal."
+      onSimpan={handleSubmit} menyimpan={submitting} galat={galat} labelSimpan={isEdit ? 'Simpan' : 'Buat templat'}>
+      <Isian label="Nama templat" wajib htmlFor="tpl-name">
+        <Input id="tpl-name" value={form.template_name} onChange={e => setForm(f => ({ ...f, template_name: e.target.value }))}
+          placeholder="Input penjualan harian Shopee" data-testid="tpl-name-input" />
+      </Isian>
+      <Isian label="Judul tugas" wajib htmlFor="tpl-title">
+        <Input id="tpl-title" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+          placeholder="Input penjualan harian - Shopee Official Store" data-testid="tpl-title-input" />
+      </Isian>
+      <Isian label="Deskripsi" htmlFor="tpl-desc">
+        <Textarea id="tpl-desc" value={form.description} rows={2} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+          data-testid="tpl-desc-input" />
+      </Isian>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Jenis" htmlFor="tpl-type">
+          <SmartNativeSelect id="tpl-type" value={form.task_type} searchable={false}
+            onChange={(e) => setForm(f => ({ ...f, task_type: e.target.value }))} data-testid="tpl-type-select">
+            {TASK_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Prioritas" htmlFor="tpl-priority">
+          <SmartNativeSelect id="tpl-priority" value={form.priority} searchable={false}
+            onChange={(e) => setForm(f => ({ ...f, priority: e.target.value }))} data-testid="tpl-priority-select">
+            {PRIORITIES.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Pengulangan" htmlFor="tpl-recurrence">
+          <SmartNativeSelect id="tpl-recurrence" value={form.recurrence} searchable={false}
+            onChange={(e) => setForm(f => ({ ...f, recurrence: e.target.value }))} data-testid="tpl-recurrence-select">
+            {FREQUENCIES.map(fr => <option key={fr.value} value={fr.value}>{fr.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Jam" htmlFor="tpl-time">
+          <Input id="tpl-time" type="time" value={form.time} onChange={e => setForm(f => ({ ...f, time: e.target.value }))}
+            data-testid="tpl-time-input" />
+        </Isian>
+      </div>
+      {form.recurrence === 'weekly' && (
+        <Isian label="Hari" petunjuk="Boleh lebih dari satu.">
+          <div className="flex flex-wrap gap-1.5">
+            {DAYS.map(d => (
+              <Button key={d.value} type="button" size="sm" variant={form.days_of_week.includes(d.value) ? 'default' : 'outline'}
+                aria-pressed={form.days_of_week.includes(d.value)} onClick={() => toggleDay(d.value)} data-testid={`day-toggle-${d.value}`}>
+                {d.label}
               </Button>
-            </div>
-            {form.checklist_template.length > 0 && (
-              <ul className="space-y-1 max-h-32 overflow-auto">
-                {form.checklist_template.map((c, i) => (
-                  <li key={i} className="flex items-center justify-between gap-2 px-3 py-2 rounded-md bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-                    <span className="text-sm flex-1 truncate">{c}</span>
-                    <Button type="button" variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => removeChecklist(i)}>
-                      <X className="w-3 h-3" />
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            )}
+            ))}
           </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={submitting} data-testid="tpl-submit-btn">
-              {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              {isEdit ? 'Simpan' : 'Buat Template'}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+        </Isian>
+      )}
+      {form.recurrence === 'monthly' && (
+        <Isian label="Tanggal dalam bulan (1–31)" htmlFor="tpl-day-of-month">
+          <Input id="tpl-day-of-month" type="number" min="1" max="31" value={form.day_of_month} className="w-28"
+            onChange={e => setForm(f => ({ ...f, day_of_month: e.target.value }))} data-testid="tpl-day-month-input" />
+        </Isian>
+      )}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Toko" htmlFor="tpl-store">
+          <SmartNativeSelect id="tpl-store" value={form.account_id} onChange={e => setForm(f => ({ ...f, account_id: e.target.value }))}
+            className="w-full" data-testid="tpl-store-select">
+            <option value="">Tanpa toko</option>
+            {storeOptions.map(a => (
+              <option key={a.id} value={a.id}>{`${a.account_code ? `${a.account_code} · ` : ''}${a.account_name}`}</option>
+            ))}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Penanggung jawab">
+          <p className="flex h-9 items-center text-sm text-foreground" data-testid="tpl-assignee-text">{assigneeText(selectedStore)}</p>
+        </Isian>
+      </div>
+      <div className="flex flex-wrap gap-6">
+        <label className="flex items-center gap-2 text-sm">
+          <Switch checked={form.auto_create} onCheckedChange={(v) => setForm(f => ({ ...f, auto_create: v }))} data-testid="tpl-auto-switch" />
+          Buat tugas otomatis
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <Switch checked={form.is_active} onCheckedChange={(v) => setForm(f => ({ ...f, is_active: v }))} data-testid="tpl-active-switch" />
+          Aktif
+        </label>
+      </div>
+      <Isian label="Daftar periksa templat" htmlFor="tpl-checklist">
+        <div className="flex gap-2">
+          <Input id="tpl-checklist" value={newChecklistItem} onChange={e => setNewChecklistItem(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addChecklist(); } }}
+            placeholder="Tambah butir daftar periksa" data-testid="tpl-checklist-input" />
+          <Button type="button" onClick={addChecklist} size="icon" variant="outline" title="Tambah butir" aria-label="Tambah butir"><Plus /></Button>
+        </div>
+        {form.checklist_template.length > 0 && (
+          <ul className="max-h-32 space-y-1 overflow-auto">
+            {form.checklist_template.map((c, i) => (
+              <li key={i} className="flex items-center justify-between gap-2 border-b border-[var(--glass-border)] py-1.5">
+                <span className="flex-1 truncate text-sm">{c}</span>
+                <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeChecklist(i)} title="Hapus butir" aria-label="Hapus butir"><X /></Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Isian>
+    </FormPopup>
   );
 }
 
@@ -434,7 +328,7 @@ export default function TaskTemplatesModule({ token }) {
         setTemplates(await res.json());
       }
     } catch (e) {
-      toast.error('Gagal memuat template');
+      toast.error('Gagal memuat templat');
     } finally {
       setLoading(false);
     }
@@ -452,8 +346,8 @@ export default function TaskTemplatesModule({ token }) {
         const res = await fetch(`/api/marketing/task-templates/${tpl.id}`, {
           method: 'DELETE', headers,
         });
-        if (!res.ok) throw new Error('Gagal nonaktifkan');
-        toast.success('Template dinonaktifkan');
+        if (!res.ok) throw new Error('Gagal menonaktifkan');
+        toast.success('Templat dinonaktifkan.');
       } else {
         const payload = {
           template_name: tpl.template_name,
@@ -471,8 +365,8 @@ export default function TaskTemplatesModule({ token }) {
         const res = await fetch(`/api/marketing/task-templates/${tpl.id}`, {
           method: 'PUT', headers, body: JSON.stringify(payload),
         });
-        if (!res.ok) throw new Error('Gagal aktifkan');
-        toast.success('Template diaktifkan');
+        if (!res.ok) throw new Error('Gagal mengaktifkan');
+        toast.success('Templat diaktifkan.');
       }
       fetchTemplates();
     } catch (e) {
@@ -482,95 +376,70 @@ export default function TaskTemplatesModule({ token }) {
 
   const recurrenceLabel = (tpl) => {
     const cfg = tpl.recurrence_config || {};
-    if (tpl.recurrence === 'daily') return `Harian @ ${cfg.time || '09:00'}`;
-    if (tpl.recurrence === 'weekly') return `Mingguan (${(cfg.days_of_week || []).join(', ') || '-'}) @ ${cfg.time || '09:00'}`;
-    if (tpl.recurrence === 'monthly') return `Bulanan tgl ${cfg.day_of_month || 1} @ ${cfg.time || '09:00'}`;
-    return 'One-time';
+    const hari = (cfg.days_of_week || []).map((d) => DAYS.find((x) => x.value === d)?.label || d).join(', ');
+    if (tpl.recurrence === 'daily') return `Harian, pukul ${cfg.time || '09:00'}`;
+    if (tpl.recurrence === 'weekly') return `Mingguan (${hari || '-'}), pukul ${cfg.time || '09:00'}`;
+    if (tpl.recurrence === 'monthly') return `Bulanan tgl ${cfg.day_of_month || 1}, pukul ${cfg.time || '09:00'}`;
+    return 'Sekali';
   };
 
+  const bukaBaru = () => { setEditTpl(null); setDialogOpen(true); };
+  const namaToko = (tpl) => (tpl.account_id && byId[tpl.account_id] ? byId[tpl.account_id].account_name : '—');
+  const kolom = [
+    { kunci: 'nama', label: 'Templat', hp: 'judul', isi: (tpl) => (
+      <div className="min-w-0 md:max-w-[20rem]" data-testid={`template-row-${tpl.id}`}>
+        <p className="truncate font-medium">{tpl.template_name}</p>
+        <p className="truncate text-xs text-muted-foreground">{tpl.title}</p>
+      </div>) },
+    { kunci: 'jadwal', label: 'Jadwal', hp: 'keterangan', isi: (tpl) => <span className="md:whitespace-nowrap">{recurrenceLabel(tpl)}</span> },
+    { kunci: 'jenis', label: 'Jenis / prioritas', isi: (tpl) => (
+      <span className="flex flex-wrap gap-1">
+        <StatusBadge status={tpl.task_type} label={JENIS_TUGAS[tpl.task_type] || 'Lainnya'} tone="muted" />
+        <StatusBadge status={tpl.priority} label={(PRIORITAS[tpl.priority] || [tpl.priority || '—'])[0]} tone={(PRIORITAS[tpl.priority] || [])[1]} />
+      </span>) },
+    { kunci: 'pj', label: 'Toko · penanggung jawab', isi: (tpl) => (
+      <span className="text-sm" data-testid={`tpl-assignee-${tpl.id}`}>
+        {tpl.account_id && byId[tpl.account_id] ? `${byId[tpl.account_id].account_name} · ` : ''}
+        {assigneeText(tpl.account_id ? byId[tpl.account_id] : null)}
+      </span>) },
+    { kunci: 'status', label: 'Status', isi: (tpl) => (tpl.is_active
+      ? <StatusBadge status="aktif" label="Aktif" tone="success" /> : <StatusBadge status="nonaktif" label="Nonaktif" tone="muted" />) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (tpl) => (
+      <div className="flex justify-end gap-1">
+        <Button size="sm" variant="outline" onClick={() => { setEditTpl(tpl); setDialogOpen(true); }} data-testid={`edit-tpl-${tpl.id}`}><Pencil />Ubah</Button>
+        <Button size="sm" variant="outline" onClick={() => toggleActive(tpl)} data-testid={`toggle-tpl-${tpl.id}`}>
+          {tpl.is_active ? <><PowerOff />Nonaktifkan</> : <><Power />Aktifkan</>}
+        </Button>
+      </div>) },
+  ];
+
   return (
-    <div className="space-y-4" data-testid="task-templates-module">
-      <PageHeader
-        icon={FileCog}
-        eyebrow="Portal Marketing · Templates"
-        title="Task Templates"
-        subtitle="Konfigurasi template task berulang (daily/weekly/monthly) dengan auto-create scheduler"
-        actions={
-          <div className="flex items-center gap-2">
-            <Button onClick={fetchTemplates} variant="outline" size="sm" data-testid="refresh-templates-btn">
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Refresh
-            </Button>
-            <Button onClick={() => { setEditTpl(null); setDialogOpen(true); }} size="sm" data-testid="create-template-btn">
-              <Plus className="w-3.5 h-3.5 mr-1.5" /> Buat Template
-            </Button>
-          </div>
-        }
-      />
-
-      {loading ? (
-        <div className="space-y-3">
-          {[1, 2, 3].map(i => <Skeleton key={i} className="h-28" />)}
-        </div>
-      ) : templates.length === 0 ? (
-        <GlassCard className="p-4 text-center">
-          <FileCog className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
-          <p className="text-muted-foreground mb-4">Belum ada template task</p>
-          <Button size="sm" onClick={() => { setEditTpl(null); setDialogOpen(true); }} data-testid="create-first-template-btn">
-            <Plus className="w-4 h-4 mr-2" /> Buat Template Pertama
-          </Button>
-        </GlassCard>
+    <PageLayout testId="task-templates-module" title="Templat tugas"
+      subtitle="Templat tugas berulang (harian/mingguan/bulanan) yang dibuat otomatis oleh penjadwal."
+      actions={<Button onClick={bukaBaru} data-testid="create-template-btn"><Plus />Buat templat</Button>}
+      tools={<>
+        <TombolUnduh namaBerkas="templat-tugas" namaLembar="Templat" baris={templates} testId="template-unduh"
+          kolom={[
+            { label: 'Nama templat', nilai: (tpl) => tpl.template_name },
+            { label: 'Judul tugas', nilai: (tpl) => tpl.title },
+            { label: 'Jadwal', nilai: recurrenceLabel },
+            { label: 'Jenis', nilai: (tpl) => JENIS_TUGAS[tpl.task_type] || 'Lainnya' },
+            { label: 'Prioritas', nilai: (tpl) => (PRIORITAS[tpl.priority] || [tpl.priority || ''])[0] },
+            { label: 'Toko', nilai: namaToko },
+            { label: 'Penanggung jawab', nilai: (tpl) => assigneeText(tpl.account_id ? byId[tpl.account_id] : null) },
+            { label: 'Daftar periksa', nilai: (tpl) => (tpl.checklist_template || []).length },
+            { label: 'Status', nilai: (tpl) => (tpl.is_active ? 'Aktif' : 'Nonaktif') },
+          ]} />
+        <Button onClick={fetchTemplates} variant="outline" size="icon" title="Muat ulang" aria-label="Muat ulang" data-testid="refresh-templates-btn">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}>
+      {loading && templates.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat templat…</p>
       ) : (
-        <div className="space-y-3">
-          {templates.map(tpl => (
-            <GlassCard key={tpl.id} className={`p-4 ${!tpl.is_active ? 'opacity-60' : ''}`} data-testid={`template-row-${tpl.id}`}>
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className="text-base font-semibold text-foreground">{tpl.template_name}</h3>
-                    <Badge variant="outline" className={tpl.is_active ? 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))]' : 'bg-muted/10 text-muted-foreground'}>
-                      {tpl.is_active ? 'Active' : 'Inactive'}
-                    </Badge>
-                  </div>
-                  <p className="text-sm text-muted-foreground mb-2">{tpl.title}</p>
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {recurrenceLabel(tpl)}</span>
-                    <span>·</span>
-                    <Badge variant="outline" className="text-xs">{tpl.task_type}</Badge>
-                    <Badge variant="outline" className="text-xs">{tpl.priority}</Badge>
-                    <span data-testid={`tpl-assignee-${tpl.id}`}>
-                      {tpl.account_id && byId[tpl.account_id] ? `${byId[tpl.account_id].account_name} · ` : ''}
-                      {assigneeText(tpl.account_id ? byId[tpl.account_id] : null)}
-                    </span>
-                  </div>
-                  {tpl.checklist_template?.length > 0 && (
-                    <div className="text-xs text-muted-foreground mt-2">
-                      Checklist items: {tpl.checklist_template.length}
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex flex-col gap-2 shrink-0">
-                  <Button size="sm" variant="outline" onClick={() => { setEditTpl(tpl); setDialogOpen(true); }} data-testid={`edit-tpl-${tpl.id}`}>
-                    <Pencil className="w-3 h-3 mr-1" /> Edit
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => toggleActive(tpl)}
-                    className={tpl.is_active ? 'text-[hsl(var(--warning-text))]' : 'text-[hsl(var(--success-text))]'}
-                    data-testid={`toggle-tpl-${tpl.id}`}
-                  >
-                    {tpl.is_active ? (
-                      <><PowerOff className="w-3 h-3 mr-1" /> Disable</>
-                    ) : (
-                      <><Power className="w-3 h-3 mr-1" /> Enable</>
-                    )}
-                  </Button>
-                </div>
-              </div>
-            </GlassCard>
-          ))}
-        </div>
+        <TabelData kolom={kolom} baris={templates} onKlikBaris={(tpl) => { setEditTpl(tpl); setDialogOpen(true); }} testId="template-table"
+          kosong={<EmptyState title="Belum ada templat tugas" description="Buat templat untuk tugas yang berulang setiap hari, pekan, atau bulan."
+            action={<Button onClick={bukaBaru} data-testid="create-first-template-btn"><Plus />Buat templat pertama</Button>} />} />
       )}
 
       <TemplateFormDialog
@@ -582,6 +451,6 @@ export default function TaskTemplatesModule({ token }) {
         accounts={accounts}
         byId={byId}
       />
-    </div>
+    </PageLayout>
   );
 }
