@@ -1,70 +1,66 @@
+/**
+ * Kalender konten (Portal Toko) — rencana konten multi-platform, performa, scorecard kreator, KPI platform.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): empat tampilan memakai HubTabs (dulu deret tombol buatan sendiri); tab Kalender
+ * memakai PageLayout: penyaring satu baris, ViewToggle Kalender/Daftar di alat, 4 StatTile berketerangan, daftar =
+ * tabel + unduh Excel/CSV semua baris (kalender: unduh isi bulan itu), detail popup, form = FormPopup + DatePicker.
+ * Emoji platform dan label Inggris ("Draft", "Content Calendar", "AI Hook") diganti. Panggilan API tidak berubah.
+ */
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import ContentPerformanceView from './ContentPerformanceView';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import CreatorScorecardView from './CreatorScorecardView';
 import PlatformKpiView from './PlatformKpiView';
-import {
-  Calendar, Plus, Pencil, Trash2, Sparkles, ChevronLeft, ChevronRight,
-  Loader2, RefreshCw, CheckCircle2, Clock, XCircle, AlertCircle, Filter, X, Search
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue
-} from '@/components/ui/select';
-import { useToast } from '@/hooks/use-toast';
-import { useMarketingAccounts, getPlatformIcon } from '@/hooks/useMarketingAccounts';
+import { Plus, Pencil, Trash2, Sparkles, ChevronLeft, ChevronRight, Loader2, RefreshCw, Search, CalendarDays, List } from 'lucide-react';
 import axios from 'axios';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { GlassCard } from '@/components/ui/glass';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import DatePicker from '@/components/ui/date-picker';
+import ViewToggle from '@/components/ui/view-toggle';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import PaginationLite from '@/components/ui/pagination-lite';
+import { useToast } from '@/hooks/use-toast';
+import { useMarketingAccounts } from '@/hooks/useMarketingAccounts';
+import { formatDateID } from '@/lib/format';
+import { cn } from '@/lib/utils';
+import HubTabs from '../hubs/HubTabs';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, StatTile, StatusBadge } from '../moduleAtoms';
 import { MarketingAccountSelect } from './pickers/MarketingPickers';
-// F10 (sesi #10) — kalender konten dipakai rapat konten; wajib bisa diunduh.
-import ExportCsvButton from '@/components/ui/export-csv-button';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
-const PLATFORM_ICONS = { shopee: '🛒', tiktok: '🎵', tokopedia: '🟢', instagram: '📷', facebook: '🔵' };
+const PLATFORM_LABEL = { shopee: 'Shopee', tiktok: 'TikTok', tokopedia: 'Tokopedia', instagram: 'Instagram', facebook: 'Facebook' };
+const labelPlatform = (p) => PLATFORM_LABEL[p] || (p ? p.charAt(0).toUpperCase() + p.slice(1) : '—');
 const STATUS_CONFIG = {
-  draft:     { label: 'Draft',     color: 'bg-muted text-muted-foreground ', icon: AlertCircle },
-  scheduled: { label: 'Terjadwal', color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] ', icon: Clock },
-  posted:    { label: 'Tayang',    color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ', icon: CheckCircle2 },
-  cancelled: { label: 'Batal',     color: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] ', icon: XCircle },
+  draft: { label: 'Draf', tone: 'muted' },
+  scheduled: { label: 'Terjadwal', tone: 'info' },
+  posted: { label: 'Tayang', tone: 'success' },
+  cancelled: { label: 'Batal', tone: 'danger' },
 };
-
+const StatusKonten = ({ status }) => {
+  const c = STATUS_CONFIG[status] || STATUS_CONFIG.draft;
+  return <StatusBadge status={status} label={c.label} tone={c.tone} />;
+};
+const CHIP = {
+  posted: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))]',
+  scheduled: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))]',
+  cancelled: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))]',
+  draft: 'bg-foreground/5 text-muted-foreground',
+};
+const VIEWS = [
+  { key: 'calendar', label: 'Tampilan kalender', icon: CalendarDays },
+  { key: 'list', label: 'Tampilan daftar', icon: List },
+];
 const MONTHS_ID = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
 const DAYS_ID   = ['Min','Sen','Sel','Rab','Kam','Jum','Sab'];
-
-function StatusBadge({ status }) {
-  const c = STATUS_CONFIG[status] || STATUS_CONFIG.draft;
-  const Icon = c.icon;
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${c.color}`}>
-      <Icon size={10} />{c.label}
-    </span>
-  );
-}
-
-function KPICard({ label, value, sub, color, bg, icon: Icon }) {
-  return (
-    <Card className={`${bg} border-0`}>
-      <CardContent className="p-4 flex items-center gap-3">
-        <div className={`p-2 rounded-lg bg-background/60 dark:bg-black/20`}>
-          <Icon size={20} className={color} />
-        </div>
-        <div>
-          <p className="text-xl font-bold leading-tight">{value}</p>
-          <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+const tgl = (v) => (v ? formatDateID(String(v).slice(0, 10)) : '—');
 
 const EMPTY_FORM = {
   account_id: '', account_name: '', platform: 'shopee', date: '', content_type: 'foto_produk',
@@ -108,6 +104,7 @@ function ContentCalendarBase({ token }) {
   const [formLoading,setFormLoading]= useState(false);
 
   const [showDetail, setShowDetail] = useState(null);
+  const [galatForm, setGalatForm] = useState('');
 
   const fetchTypes = useCallback(async () => {
     try {
@@ -131,7 +128,7 @@ function ContentCalendarBase({ token }) {
       if (filterAccountId) params.account_id = filterAccountId;
       const res = await axios.get(`${API}/api/marketing/content-calendar/monthly`, { params, headers: authH });
       if (res.data.success) setCalendarData(res.data.data || []);
-    } catch { toast({ title: 'Gagal load kalender', variant: 'destructive' }); }
+    } catch { toast({ title: 'Gagal memuat kalender', variant: 'destructive' }); }
     finally { setLoading(false); }
   }, [year, month, filterPlatform, filterAccountId, authH, toast]);
 
@@ -158,7 +155,7 @@ function ContentCalendarBase({ token }) {
         const accs = [...new Set((res.data.data || []).map(e => e.account_name))].filter(Boolean);
         if (accs.length) setAccounts(accs);
       }
-    } catch { toast({ title: 'Gagal load konten', variant: 'destructive' }); }
+    } catch { toast({ title: 'Gagal memuat konten', variant: 'destructive' }); }
     finally { setLoading(false); }
   }, [listPage, filterStatus, filterPlatform, filterType, filterAccountId, authH, toast]);
 
@@ -187,6 +184,7 @@ function ContentCalendarBase({ token }) {
   const openCreate = (dateStr) => {
     setEditTarget(null);
     setForm({ ...EMPTY_FORM, date: dateStr || '' });
+    setGalatForm('');
     setShowForm(true);
   };
 
@@ -201,6 +199,7 @@ function ContentCalendarBase({ token }) {
       reference_link: entry.reference_link || '', status: entry.status || 'draft',
       published_url: entry.published_url || '',
     });
+    setGalatForm('');
     setShowForm(true);
   };
 
@@ -217,41 +216,42 @@ function ContentCalendarBase({ token }) {
 
   const handleSave = async () => {
     if (!form.account_id || !form.date || !form.title) {
-      toast({ title: 'Wajib pilih Akun, isi Tanggal, dan Judul/Hook', variant: 'destructive' }); return;
+      setGalatForm('Pilih akun, isi tanggal, dan judul/hook.'); return;
     }
     // 2026-11-07 (Tahap 5) — server menolak status Tayang tanpa link terbit; dulu form tidak
     // punya isian link terbit sama sekali sehingga konten tidak pernah bisa disimpan "Tayang".
     if (form.status === 'posted' && !/^https?:\/\/\S+$/i.test((form.published_url || '').trim())) {
-      toast({ title: 'Status Tayang wajib diisi link terbit (https://…)', variant: 'destructive' }); return;
+      setGalatForm('Status Tayang wajib diisi tautan terbit (https://…).'); return;
     }
+    setGalatForm('');
     setFormLoading(true);
     try {
       if (editTarget) {
         await axios.put(`${API}/api/marketing/content-calendar/${editTarget.id}`, form, { headers: authH });
-        toast({ title: 'Konten diperbarui' });
+        toast({ title: 'Konten disimpan.' });
       } else {
         await axios.post(`${API}/api/marketing/content-calendar`, form, { headers: authH });
-        toast({ title: 'Konten berhasil ditambahkan' });
+        toast({ title: 'Konten ditambahkan.' });
       }
       setShowForm(false);
       fetchSummary();
       if (view === 'calendar') fetchMonthly(); else fetchList();
     } catch (e) {
       const d = e?.response?.data?.detail;
-      toast({ title: typeof d === 'string' ? d : 'Gagal menyimpan', variant: 'destructive' });
+      setGalatForm(typeof d === 'string' ? d : 'Gagal menyimpan.');
     }
     finally { setFormLoading(false); }
   };
 
   const handleDelete = async (id) => {
-    if (!(await confirmDialog('Hapus entri ini?'))) return;
+    if (!(await confirmDialog({ title: 'Hapus konten ini?', body: 'Rencana konten dihapus dari kalender.', confirmLabel: 'Hapus', danger: true }))) return;
     try {
       await axios.delete(`${API}/api/marketing/content-calendar/${id}`, { headers: authH });
-      toast({ title: 'Dihapus' });
+      toast({ title: 'Konten dihapus.' });
       if (showDetail?.id === id) setShowDetail(null);
       fetchSummary();
       if (view === 'calendar') fetchMonthly(); else fetchList();
-    } catch { toast({ title: 'Gagal hapus', variant: 'destructive' }); }
+    } catch { toast({ title: 'Gagal menghapus', variant: 'destructive' }); }
   };
 
   const handleAIHook = async (entryId) => {
@@ -259,17 +259,17 @@ function ContentCalendarBase({ token }) {
     try {
       const res = await axios.post(`${API}/api/marketing/content-calendar/${entryId}/ai-hook`, {}, { headers: authH });
       if (res.data.success) {
-        toast({ title: '✨ AI Hook Generated', description: res.data.applied_hook });
+        toast({ title: 'Hook dari AI dipasang', description: res.data.applied_hook });
         if (view === 'calendar') fetchMonthly(); else fetchList();
       }
-    } catch { toast({ title: 'AI Hook gagal', variant: 'destructive' }); }
+    } catch { toast({ title: 'Hook AI gagal dibuat', variant: 'destructive' }); }
     finally { setAiLoading(''); }
   };
 
   const handleStatusChange = async (entryId, newStatus) => {
     try {
       await axios.post(`${API}/api/marketing/content-calendar/${entryId}/status`, { status: newStatus }, { headers: authH });
-      toast({ title: `Status → ${STATUS_CONFIG[newStatus]?.label}` });
+      toast({ title: `Status diubah: ${STATUS_CONFIG[newStatus]?.label}` });
       fetchSummary();
       if (view === 'calendar') fetchMonthly(); else fetchList();
     } catch (e) {
@@ -279,455 +279,284 @@ function ContentCalendarBase({ token }) {
     }
   };
 
-  const kpis = [
-    { label: 'Total Konten',  value: summary?.total     ?? '—', sub: `${summary?.this_month ?? 0} bulan ini`,  color: 'text-[hsl(var(--primary))]',  bg: 'bg-[hsl(var(--primary)/0.08)] ', icon: Calendar },
-    { label: 'Terjadwal',     value: summary?.scheduled ?? '—', sub: 'Menunggu posting',                       color: 'text-[hsl(var(--primary))]',    bg: 'bg-[hsl(var(--primary)/0.08)] ',   icon: Clock },
-    { label: 'Sudah Tayang',  value: summary?.posted    ?? '—', sub: 'Total posted',                           color: 'text-[hsl(var(--success-text))]', bg: 'bg-[hsl(var(--success)/0.08)] ', icon: CheckCircle2 },
-    { label: 'Draft',         value: summary?.draft     ?? '—', sub: 'Perlu finalisasi',                       color: 'text-[hsl(var(--warning-text))]',   bg: 'bg-[hsl(var(--warning)/0.08)] ', icon: AlertCircle },
-  ];
-
   const grid = buildGrid();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  const muatUlang = () => { fetchSummary(); if (view === 'calendar') fetchMonthly(); else fetchList(); };
+  const jenis = (e) => e.content_type_label || contentTypes.find((t) => t.value === e.content_type)?.label || '—';
+
+  /** Unduh daftar: semua konten hasil saringan (dulu hanya 20 baris halaman ini). Kalender: isi bulan yang tampil. */
+  const ambilSemua = async () => {
+    if (view === 'calendar') return calendarData;
+    const semua = [];
+    for (let p = 1; p <= 200; p += 1) {
+      const params = { page: p, page_size: 100 };
+      if (filterStatus)   params.status = filterStatus;
+      if (filterPlatform) params.platform = filterPlatform;
+      if (filterAccountId) params.account_id = filterAccountId;
+      if (filterType)     params.content_type = filterType;
+      const res = await axios.get(`${API}/api/marketing/content-calendar`, { params, headers: authH });
+      semua.push(...(res.data.data || []));
+      if (p >= (res.data.pagination?.total_pages || 1)) break;
+    }
+    return needle ? semua.filter((e) => [e.title, e.cta, e.account_name, e.platform, e.content_type_label, e.published_url]
+      .some((v) => String(v || '').toLowerCase().includes(needle))) : semua;
+  };
+
+  const kolom = [
+    { kunci: 'tanggal', label: 'Tanggal', hp: 'keterangan', isi: (e) => <span className="tabular-nums md:whitespace-nowrap">{tgl(e.date)}{e.post_time ? ` · ${e.post_time}` : ''}</span> },
+    { kunci: 'toko', label: 'Toko', isi: (e) => (
+      <span className="md:whitespace-nowrap">{e.account_name || '—'}<span className="block text-xs text-muted-foreground">{labelPlatform(e.platform)}</span></span>) },
+    { kunci: 'jenis', label: 'Jenis', isi: (e) => <span className="md:whitespace-nowrap">{jenis(e)}</span> },
+    { kunci: 'judul', label: 'Judul / hook', hp: 'judul', isi: (e) => (
+      <div className="min-w-0 md:max-w-[18rem]"><p className="truncate font-medium" title={e.title}>{e.title}</p>
+        {e.cta && <p className="truncate text-xs text-muted-foreground">{e.cta}</p>}</div>) },
+    { kunci: 'status', label: 'Status', isi: (e) => <StatusKonten status={e.status} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (e) => (
+      <div className="flex justify-end gap-1">
+        <Button size="icon-sm" variant="ghost" onClick={() => handleAIHook(e.id)} disabled={aiLoading === e.id}
+          title="Buat hook dengan AI" aria-label="Buat hook dengan AI">
+          {aiLoading === e.id ? <Loader2 className="animate-spin" /> : <Sparkles />}
+        </Button>
+        <Button size="icon-sm" variant="ghost" onClick={() => openEdit(e)} title="Ubah konten" aria-label="Ubah konten"><Pencil /></Button>
+      </div>) },
+  ];
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-4" data-testid="content-calendar-dashboard">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Content Calendar</h1>
-          <p className="text-sm text-muted-foreground">Jadwal konten multi-platform dengan AI hook generation</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => { fetchSummary(); if (view==='calendar') fetchMonthly(); else fetchList(); }}>
-            <RefreshCw size={14} className="mr-1" />Refresh
-          </Button>
-          <Button size="sm" onClick={() => openCreate('')} data-testid="btn-add-content">
-            <Plus size={14} className="mr-1" />Tambah Konten
-          </Button>
-        </div>
-      </div>
-
-      {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-        {kpis.map(k => <KPICard key={k.label} {...k} />)}
-      </div>
-
-      {/* View toggle + filters */}
-      <Card className="mb-4">
-        <CardContent className="p-3 flex flex-wrap gap-3 items-center">
-          <div className="flex rounded-md border overflow-hidden">
-            <button onClick={() => setView('calendar')}
-              className={`px-3 py-1.5 text-sm font-medium transition-colors ${view==='calendar' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>
-              📅 Kalender
-            </button>
-            <button onClick={() => setView('list')}
-              className={`px-3 py-1.5 text-sm font-medium transition-colors ${view==='list' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>
-              📋 Daftar
-            </button>
+    <PageLayout testId="content-calendar-dashboard" title="Kalender konten"
+      subtitle="Jadwal konten semua platform, dengan bantuan AI untuk hook."
+      actions={<Button onClick={() => openCreate('')} data-testid="btn-add-content"><Plus />Tambah konten</Button>}
+      filters={<>
+        {view === 'list' && (
+          <div className="relative w-full sm:w-56">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input className="pl-8" placeholder="Cari judul, hook, toko" value={listSearch}
+              onChange={(e) => setListSearch(e.target.value)} data-testid="content-search" />
           </div>
-
-          <div className="w-52">
-            <MarketingAccountSelect token={token} value={filterAccountId}
-              onChange={setFilterAccountId} label="" includeAll allLabel="Semua Toko"
-              required={false} testId="content-filter-account" />
-          </div>
-          <Select value={filterPlatform || 'all'} onValueChange={v => setFilterPlatform(v === 'all' ? '' : v)}>
-            <SelectTrigger className="w-40 h-8 text-xs">
-              <SelectValue placeholder="Platform" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Semua Platform</SelectItem>
-              {['shopee','tiktok','tokopedia','instagram','facebook'].map(p => (
-                <SelectItem key={p} value={p}>{PLATFORM_ICONS[p]} {p.charAt(0).toUpperCase()+p.slice(1)}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {view === 'list' && (
-            <>
-              <div className="relative">
-                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                <Input className="h-8 pl-8 w-52 text-xs" placeholder="cari judul / hook / toko"
-                  value={listSearch} onChange={(e) => setListSearch(e.target.value)}
-                  data-testid="content-search" />
-              </div>
-              <Select value={filterStatus || 'all'} onValueChange={v => { setFilterStatus(v === 'all' ? '' : v); setListPage(1); }}>
-                <SelectTrigger className="w-36 h-8 text-xs"><SelectValue placeholder="Status" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Semua Status</SelectItem>
-                  {Object.entries(STATUS_CONFIG).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Select value={filterType || 'all'} onValueChange={v => { setFilterType(v === 'all' ? '' : v); setListPage(1); }}>
-                <SelectTrigger className="w-40 h-8 text-xs"><SelectValue placeholder="Jenis Konten" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Semua Jenis</SelectItem>
-                  {contentTypes.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </>
-          )}
-
-          {(filterStatus || filterPlatform || filterType) && (
-            <Button size="sm" variant="ghost" className="h-8 px-2" onClick={() => { setFilterStatus(''); setFilterPlatform(''); setFilterType(''); }}>
-              <X size={12} className="mr-1" />Reset
-            </Button>
-          )}
-
-          {view === 'list' && (
-            <ExportCsvButton
-              filename="kalender-konten"
-              testId="content-export-csv"
-              head={['Tanggal', 'Platform', 'Toko', 'Jenis', 'Judul', 'CTA/Hook', 'Jam',
-                'Status', 'Link terbit', 'Views', 'Likes', 'Komentar', 'Orders', 'GMV']}
-              rows={visibleList.map((e) => [e.date, e.platform, e.account_name,
-                e.content_type_label || e.content_type, e.title, e.cta, e.post_time,
-                e.status, e.published_url || '',
-                e.kpi?.views ?? '', e.kpi?.likes ?? '', e.kpi?.comments ?? '',
-                e.kpi?.orders ?? '', e.kpi?.gmv ?? ''])}
-            />
-          )}
-        </CardContent>
-      </Card>
-
-      {/* CALENDAR VIEW */}
-      {view === 'calendar' && (
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <Button variant="ghost" size="icon" onClick={prevMonth}><ChevronLeft size={16} /></Button>
-              <CardTitle className="text-base">{MONTHS_ID[month - 1]} {year}</CardTitle>
-              <Button variant="ghost" size="icon" onClick={nextMonth}><ChevronRight size={16} /></Button>
-            </div>
-          </CardHeader>
-          <CardContent className="p-3">
-            {loading ? (
-              <div className="flex justify-center py-6"><Loader2 size={28} className="animate-spin text-muted-foreground" /></div>
-            ) : (
-              <>
-                <div className="grid grid-cols-7 mb-1">
-                  {DAYS_ID.map(d => (
-                    <div key={d} className="text-center text-xs font-semibold text-muted-foreground py-1">{d}</div>
-                  ))}
-                </div>
-                <div className="grid grid-cols-7 gap-1">
-                  {grid.map((day, idx) => {
-                    const entries = day ? getEntriesForDay(day) : [];
-                    const dateStr = day ? `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}` : '';
-                    const isToday = dateStr === todayStr;
-                    return (
-                      <div key={idx}
-                        className={`min-h-[80px] rounded-lg border p-1 transition-colors ${
-                          !day ? 'bg-muted/20 border-transparent' :
-                          isToday ? 'border-primary bg-primary/5' :
-                          'border-border hover:border-primary/40 cursor-pointer'
-                        }`}
-                        onClick={() => day && openCreate(dateStr)}
-                      >
-                        {day && (
-                          <>
-                            <div className={`text-xs font-semibold mb-1 text-right ${isToday ? 'text-primary' : 'text-muted-foreground'}`}>
-                              {isToday ? <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-xs">{day}</span> : day}
-                            </div>
-                            <div className="space-y-0.5">
-                              {entries.slice(0, 3).map(e => (
-                                <div key={e.id}
-                                  className={`text-xs px-1 py-0.5 rounded truncate cursor-pointer hover:opacity-80 ${
-                                    e.status === 'posted'    ? 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ' :
-                                    e.status === 'scheduled' ? 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] ' :
-                                    e.status === 'cancelled' ? 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] ' :
-                                    'bg-muted text-muted-foreground '
-                                  }`}
-                                  onClick={(ev) => { ev.stopPropagation(); setShowDetail(e); }}
-                                  title={e.title}
-                                >
-                                  {PLATFORM_ICONS[e.platform] || '📌'} {e.title}
-                                </div>
-                              ))}
-                              {entries.length > 3 && (
-                                <div className="text-xs text-muted-foreground text-center">+{entries.length - 3} lagi</div>
-                              )}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
+        )}
+        <MarketingAccountSelect token={token} value={filterAccountId} className="w-52"
+          onChange={setFilterAccountId} label="" includeAll allLabel="Semua toko"
+          required={false} testId="content-filter-account" />
+        <SmartNativeSelect value={filterPlatform} onChange={(e) => setFilterPlatform(e.target.value)} className="w-40" searchable={false}>
+          <option value="">Semua platform</option>
+          {Object.entries(PLATFORM_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </SmartNativeSelect>
+        {view === 'list' && <>
+          <SmartNativeSelect value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setListPage(1); }} className="w-36" searchable={false}>
+            <option value="">Semua status</option>
+            {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </SmartNativeSelect>
+          <SmartNativeSelect value={filterType} onChange={(e) => { setFilterType(e.target.value); setListPage(1); }} className="w-44">
+            <option value="">Semua jenis</option>
+            {contentTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </SmartNativeSelect>
+        </>}
+      </>}
+      tools={<>
+        <ViewToggle value={view} onChange={setView} options={VIEWS} testId="content-view" />
+        <TombolUnduh namaBerkas={view === 'calendar' ? `kalender-konten-${year}-${String(month).padStart(2, '0')}` : 'kalender-konten'}
+          namaLembar="Konten" baris={view === 'calendar' ? calendarData : visibleList} ambilSemua={ambilSemua} testId="content-export-csv"
+          kolom={[
+            { label: 'Tanggal', nilai: (e) => tgl(e.date) },
+            { label: 'Platform', nilai: (e) => labelPlatform(e.platform) },
+            { label: 'Toko', nilai: (e) => e.account_name || '' },
+            { label: 'Jenis', nilai: jenis },
+            { label: 'Judul', nilai: (e) => e.title || '' },
+            { label: 'CTA / hook', nilai: (e) => e.cta || '' },
+            { label: 'Jam', nilai: (e) => e.post_time || '' },
+            { label: 'Status', nilai: (e) => STATUS_CONFIG[e.status]?.label || e.status || '' },
+            { label: 'Tautan terbit', nilai: (e) => e.published_url || '' },
+            { label: 'Tayangan', nilai: (e) => e.kpi?.views ?? '' },
+            { label: 'Suka', nilai: (e) => e.kpi?.likes ?? '' },
+            { label: 'Komentar', nilai: (e) => e.kpi?.comments ?? '' },
+            { label: 'Pesanan', nilai: (e) => e.kpi?.orders ?? '' },
+            { label: 'GMV', nilai: (e) => e.kpi?.gmv ?? '' },
+          ]} />
+        <Button variant="outline" size="icon" onClick={muatUlang} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={(summary?.total || 0) > 0 && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="content-kpi">
+          <StatTile label="Total konten" value={summary?.total ?? '—'} sub={`${summary?.this_month ?? 0} bulan ini`}
+            hint="Semua toko; tidak ikut penyaring." />
+          <StatTile label="Terjadwal" value={summary?.scheduled ?? '—'} accent="primary" hint="Menunggu diposting." />
+          <StatTile label="Sudah tayang" value={summary?.posted ?? '—'} accent="success" hint="Konten berstatus tayang." />
+          <StatTile label="Draf" value={summary?.draft ?? '—'} accent="warning" hint="Perlu dirampungkan." />
+        </div>
       )}
-
-      {/* LIST VIEW */}
-      {view === 'list' && (
-        <Card>
-          <CardContent className="p-0">
-            {loading ? (
-              <div className="flex justify-center py-6"><Loader2 size={28} className="animate-spin text-muted-foreground" /></div>
-            ) : visibleList.length === 0 ? (
-              <div className="text-center py-6 text-muted-foreground">
-                <Calendar size={40} className="mx-auto mb-3 opacity-30" />
-                <p className="font-medium">Belum ada konten</p>
-                <Button size="sm" className="mt-3" onClick={() => openCreate('')}><Plus size={12} className="mr-1" />Tambah</Button>
+      footer={view === 'list' && pagination && pagination.total_pages > 1 && (
+        <PaginationLite page={listPage} totalPages={pagination.total_pages} total={pagination.total} pageSize={20} onPageChange={setListPage} />
+      )}>
+      {view === 'calendar' ? (
+        <GlassCard className="p-3" data-testid="content-calendar-grid">
+          <div className="mb-2 flex items-center justify-between">
+            <Button variant="ghost" size="icon" onClick={prevMonth} title="Bulan sebelumnya" aria-label="Bulan sebelumnya"><ChevronLeft /></Button>
+            <p className="text-base font-semibold">{MONTHS_ID[month - 1]} {year}</p>
+            <Button variant="ghost" size="icon" onClick={nextMonth} title="Bulan berikutnya" aria-label="Bulan berikutnya"><ChevronRight /></Button>
+          </div>
+          {loading ? (
+            <div className="flex justify-center py-6"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+          ) : (
+            <>
+              <div className="mb-1 grid grid-cols-7">
+                {DAYS_ID.map(d => <div key={d} className="py-1 text-center text-xs font-medium text-muted-foreground">{d}</div>)}
               </div>
-            ) : (
-              <>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-muted/40">
-                        <th className="px-4 py-3 text-left font-semibold text-xs text-muted-foreground ">Tanggal</th>
-                        <th className="px-4 py-3 text-left font-semibold text-xs text-muted-foreground ">Platform / Akun</th>
-                        <th className="px-4 py-3 text-left font-semibold text-xs text-muted-foreground ">Jenis</th>
-                        <th className="px-4 py-3 text-left font-semibold text-xs text-muted-foreground ">Judul / Hook</th>
-                        <th className="px-4 py-3 text-left font-semibold text-xs text-muted-foreground ">Jam</th>
-                        <th className="px-4 py-3 text-left font-semibold text-xs text-muted-foreground ">Status</th>
-                        <th className="px-4 py-3 text-right font-semibold text-xs text-muted-foreground ">Aksi</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {visibleList.map((e, i) => (
-                        <tr key={e.id} className={`border-b last:border-0 hover:bg-muted/30 transition-colors ${i % 2 === 0 ? '' : 'bg-muted/10'}`}>
-                          <td className="px-4 py-3 tabular-nums text-xs">{e.date}</td>
-                          <td className="px-4 py-3">
-                            <div className="font-medium">{PLATFORM_ICONS[e.platform] || '📌'} {e.platform}</div>
-                            <div className="text-xs text-muted-foreground">{e.account_name}</div>
-                          </td>
-                          <td className="px-4 py-3 text-xs">{e.content_type_label || e.content_type}</td>
-                          <td className="px-4 py-3 max-w-[220px]">
-                            <div className="font-medium truncate" title={e.title}>{e.title}</div>
-                            {e.cta && <div className="text-xs text-muted-foreground">{e.cta}</div>}
-                          </td>
-                          <td className="px-4 py-3 text-xs">{e.post_time || '—'}</td>
-                          <td className="px-4 py-3"><StatusBadge status={e.status} /></td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center justify-end gap-1">
-                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => handleAIHook(e.id)}
-                                disabled={aiLoading === e.id} title="Generate AI Hook">
-                                {aiLoading === e.id ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                              </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(e)}>
-                                <Pencil size={12} />
-                              </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))]" onClick={() => handleDelete(e.id)}>
-                                <Trash2 size={12} />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {pagination && pagination.total_pages > 1 && (
-                  <div className="flex items-center justify-between px-4 py-3 border-t">
-                    <p className="text-xs text-muted-foreground">{pagination.total} konten ditemukan</p>
-                    <div className="flex gap-1">
-                      <Button size="sm" variant="outline" disabled={listPage <= 1} onClick={() => setListPage(p => p - 1)}>‹ Prev</Button>
-                      <span className="px-3 py-1.5 text-xs">{listPage} / {pagination.total_pages}</span>
-                      <Button size="sm" variant="outline" disabled={listPage >= pagination.total_pages} onClick={() => setListPage(p => p + 1)}>Next ›</Button>
+              <div className="grid grid-cols-7 gap-1">
+                {grid.map((day, idx) => {
+                  const entries = day ? getEntriesForDay(day) : [];
+                  const dateStr = day ? `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}` : '';
+                  const isToday = dateStr === todayStr;
+                  return (
+                    <div key={idx} onClick={() => day && openCreate(dateStr)} title={day ? 'Klik untuk menambah konten di tanggal ini' : undefined}
+                      className={cn('min-h-[4.5rem] rounded-[var(--radius-sm)] border p-1 transition-colors sm:min-h-[5rem]',
+                        !day ? 'border-transparent' : isToday ? 'border-primary bg-primary/5' : 'cursor-pointer border-[var(--glass-border)] hover:border-[hsl(var(--primary)/0.4)]')}>
+                      {day && (
+                        <>
+                          <div className={cn('mb-1 text-right text-xs font-medium', isToday ? 'text-primary' : 'text-muted-foreground')}>{day}</div>
+                          <div className="space-y-0.5">
+                            {entries.slice(0, 3).map(e => (
+                              <div key={e.id} title={e.title} onClick={(ev) => { ev.stopPropagation(); setShowDetail(e); }}
+                                className={cn('cursor-pointer truncate rounded px-1 py-0.5 text-xs hover:opacity-80', CHIP[e.status] || CHIP.draft)}>
+                                {e.title}
+                              </div>
+                            ))}
+                            {entries.length > 3 && <div className="text-center text-xs text-muted-foreground">+{entries.length - 3} lagi</div>}
+                          </div>
+                        </>
+                      )}
                     </div>
-                  </div>
-                )}
-              </>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* DETAIL DIALOG */}
-      <Dialog open={!!showDetail} onOpenChange={() => setShowDetail(null)}>
-        <DialogContent className="max-w-lg">
-          {showDetail && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  {PLATFORM_ICONS[showDetail.platform]} {showDetail.title}
-                </DialogTitle>
-              </DialogHeader>
-              <div className="space-y-3 text-sm">
-                <div className="grid grid-cols-2 gap-2">
-                  <div><span className="text-muted-foreground">Akun:</span> <strong>{showDetail.account_name}</strong></div>
-                  <div><span className="text-muted-foreground">Tanggal:</span> <strong>{showDetail.date}</strong></div>
-                  <div><span className="text-muted-foreground">Jenis:</span> {showDetail.content_type_label}</div>
-                  <div><span className="text-muted-foreground">Jam:</span> {showDetail.post_time || '—'}</div>
-                </div>
-                {showDetail.description && <p className="text-muted-foreground">{showDetail.description}</p>}
-                {showDetail.cta && <div><span className="text-muted-foreground">CTA:</span> {showDetail.cta}</div>}
-                {showDetail.reference_link && (
-                  <div data-testid="content-reference-link-view">
-                    <span className="text-muted-foreground">Link Referensi:</span>{' '}
-                    <a href={showDetail.reference_link} target="_blank" rel="noopener noreferrer"
-                      className="text-primary underline break-all hover:opacity-80">
-                      {showDetail.reference_link}
-                    </a>
-                  </div>
-                )}
-                <div className="flex items-center gap-2">
-                  <StatusBadge status={showDetail.status} />
-                  <div className="flex gap-1">
-                    {Object.keys(STATUS_CONFIG).map(s => s !== showDetail.status && (
-                      <Button key={s} size="sm" variant="outline" className="h-6 text-xs px-2"
-                        onClick={() => { handleStatusChange(showDetail.id, s); setShowDetail(null); }}>
-                        → {STATUS_CONFIG[s].label}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
+                  );
+                })}
               </div>
-              <DialogFooter className="gap-2">
-                <Button variant="outline" size="sm" onClick={() => { setShowDetail(null); openEdit(showDetail); }}>
-                  <Pencil size={12} className="mr-1" />Edit
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => { handleAIHook(showDetail.id); setShowDetail(null); }}
-                  disabled={aiLoading === showDetail.id}>
-                  <Sparkles size={12} className="mr-1" />AI Hook
-                </Button>
-                <Button variant="destructive" size="sm" onClick={() => handleDelete(showDetail.id)}>
-                  <Trash2 size={12} className="mr-1" />Hapus
-                </Button>
-              </DialogFooter>
+              {calendarData.length === 0 && (
+                <p className="mt-2 text-center text-sm text-muted-foreground">Belum ada konten di bulan ini. Klik tanggal untuk menambah.</p>
+              )}
             </>
           )}
-        </DialogContent>
-      </Dialog>
+        </GlassCard>
+      ) : loading && visibleList.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat konten…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={visibleList} onKlikBaris={setShowDetail} testId="content-table"
+          kosong={<EmptyState title="Belum ada konten" description="Tambahkan rencana konten atau ubah saringan."
+            action={<Button onClick={() => openCreate('')}><Plus />Tambah konten</Button>} />} />
+      )}
 
-      {/* CREATE/EDIT DIALOG */}
-      <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{editTarget ? 'Edit Konten' : 'Tambah Konten'}</DialogTitle>
-          </DialogHeader>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2">
-              <Label>Akun / Toko Marketplace *</Label>
-              <Select value={form.account_id || ''} onValueChange={handleAccountChange}>
-                <SelectTrigger className="mt-1" data-testid="content-account-select">
-                  <SelectValue placeholder={masterAccounts.length === 0 ? 'Belum ada akun — buat di Manage Accounts' : 'Pilih akun...'} />
-                </SelectTrigger>
-                <SelectContent>
-                  {masterAccounts.length === 0 && (
-                    <SelectItem value="empty" disabled>Belum ada akun aktif</SelectItem>
-                  )}
-                  {masterAccounts.map(acc => (
-                    <SelectItem key={acc.id} value={acc.id}>
-                      {getPlatformIcon(acc.platform)} {acc.account_name} <span className="text-xs text-muted-foreground ml-1">({acc.platform})</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {form.account_id && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  Platform: <strong>{form.platform}</strong> (otomatis dari akun terpilih)
-                </p>
-              )}
-            </div>
-            <div>
-              <Label>Tanggal *</Label>
-              <Input type="date" value={form.date} onChange={e => setForm(f => ({...f, date: e.target.value}))} className="mt-1" />
-            </div>
-            <div>
-              <Label>Status</Label>
-              <Select value={form.status} onValueChange={v => setForm(f => ({...f, status: v}))}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Object.entries(STATUS_CONFIG).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="col-span-2">
-              <Label>Jenis Konten *</Label>
-              <Select value={form.content_type} onValueChange={v => setForm(f => ({...f, content_type: v}))}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {contentTypes.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="col-span-2">
-              <Label>Judul / Hook *</Label>
-              <Input value={form.title} onChange={e => setForm(f => ({...f, title: e.target.value}))}
-                placeholder="Hook atau judul konten yang menarik" className="mt-1" />
-            </div>
-            <div className="col-span-2">
-              <Label>Deskripsi</Label>
-              <Textarea value={form.description} onChange={e => setForm(f => ({...f, description: e.target.value}))}
-                placeholder="Deskripsi detail konten..." className="mt-1" rows={2} />
-            </div>
-            <div>
-              <Label>CTA</Label>
-              <Input value={form.cta} onChange={e => setForm(f => ({...f, cta: e.target.value}))}
-                placeholder="Klik di bio!" className="mt-1" />
-            </div>
-            <div>
-              <Label>Jam Posting</Label>
-              <Input type="time" value={form.post_time} onChange={e => setForm(f => ({...f, post_time: e.target.value}))} className="mt-1" />
-            </div>
-            <div className="col-span-2">
-              <Label>Link Referensi / Google Drive</Label>
-              <Input type="url" value={form.reference_link}
-                data-testid="content-reference-link-input"
-                onChange={e => setForm(f => ({...f, reference_link: e.target.value}))}
-                placeholder="https://drive.google.com/... (materi foto/video/brief)" className="mt-1" />
-              <p className="text-xs text-muted-foreground mt-1">Tautan aset konten (Drive/Canva/Figma) — bisa dibuka langsung dari detail konten.</p>
-            </div>
-            {/* 2026-11-07 (Tahap 5) — dulu di sini ada isian "Status" KEDUA (duplikat yang di atas). */}
-            {form.status === 'posted' && (
-              <div className="col-span-2">
-                <Label>Link terbit *</Label>
-                <Input type="url" value={form.published_url}
-                  data-testid="content-published-url-input"
-                  onChange={e => setForm(f => ({...f, published_url: e.target.value}))}
-                  placeholder="https://… (tautan unggahan yang sudah tayang)" className="mt-1" />
-                <p className="text-xs text-muted-foreground mt-1">Wajib untuk status Tayang — bukti konten benar-benar terbit.</p>
-              </div>
-            )}
-          </div>
-          <DialogFooter className="mt-2">
-            <Button variant="outline" onClick={() => setShowForm(false)}>Batal</Button>
-            <Button onClick={handleSave} disabled={formLoading}>
-              {formLoading && <Loader2 size={14} className="mr-2 animate-spin" />}
-              {editTarget ? 'Simpan Perubahan' : 'Tambah Konten'}
+      {showDetail && (
+        <DetailPopup open onClose={() => setShowDetail(null)} judul={showDetail.title} testId="content-detail"
+          status={<StatusKonten status={showDetail.status} />}
+          keterangan={`${showDetail.account_name || '—'} · ${labelPlatform(showDetail.platform)} · ${tgl(showDetail.date)}${showDetail.post_time ? ` ${showDetail.post_time}` : ''}`}
+          aksi={<>
+            <Button variant="outline" size="sm" onClick={() => { handleAIHook(showDetail.id); setShowDetail(null); }} disabled={aiLoading === showDetail.id}>
+              <Sparkles />Hook AI
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+            <Button variant="outline" size="sm" onClick={() => { const e = showDetail; setShowDetail(null); openEdit(e); }}><Pencil />Ubah</Button>
+            <Button variant="destructive" size="sm" onClick={() => handleDelete(showDetail.id)}><Trash2 />Hapus</Button>
+          </>}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Jenis">{jenis(showDetail)}</BarisDetail>
+            {showDetail.description && <BarisDetail label="Deskripsi">{showDetail.description}</BarisDetail>}
+            {showDetail.cta && <BarisDetail label="CTA">{showDetail.cta}</BarisDetail>}
+            {showDetail.reference_link && (
+              <BarisDetail label="Tautan referensi">
+                <a href={showDetail.reference_link} target="_blank" rel="noopener noreferrer" data-testid="content-reference-link-view"
+                  className="break-all text-primary underline hover:opacity-80">{showDetail.reference_link}</a>
+              </BarisDetail>
+            )}
+            {showDetail.published_url && (
+              <BarisDetail label="Tautan terbit">
+                <a href={showDetail.published_url} target="_blank" rel="noopener noreferrer" className="break-all text-primary underline">{showDetail.published_url}</a>
+              </BarisDetail>
+            )}
+          </dl>
+          <div className="flex flex-wrap items-center gap-2 border-t border-[var(--glass-border)] pt-3">
+            <span className="text-sm text-muted-foreground">Ubah status:</span>
+            {Object.keys(STATUS_CONFIG).filter((s) => s !== showDetail.status).map(s => (
+              <Button key={s} size="sm" variant="outline"
+                onClick={() => { handleStatusChange(showDetail.id, s); setShowDetail(null); }}>{STATUS_CONFIG[s].label}</Button>
+            ))}
+          </div>
+        </DetailPopup>
+      )}
+
+      <FormPopup open={showForm} onClose={() => setShowForm(false)} ukuran="panjang" onSimpan={handleSave} menyimpan={formLoading}
+        judul={editTarget ? 'Ubah konten' : 'Tambah konten'} galat={galatForm} testId="content-form"
+        labelSimpan={editTarget ? 'Simpan perubahan' : 'Tambah konten'}>
+        <Isian label="Akun / toko marketplace" wajib htmlFor="cc-account"
+          petunjuk={form.account_id ? `Platform: ${labelPlatform(form.platform)} (otomatis dari akun terpilih)` : undefined}>
+          <SmartNativeSelect id="cc-account" value={form.account_id || ''} onChange={(e) => handleAccountChange(e.target.value)}
+            data-testid="content-account-select">
+            <option value="">{masterAccounts.length === 0 ? 'Belum ada akun aktif' : 'Pilih akun'}</option>
+            {masterAccounts.map(acc => <option key={acc.id} value={acc.id}>{`${acc.account_name} · ${labelPlatform(acc.platform)}`}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Tanggal" wajib>
+            <DatePicker value={form.date || ''} onChange={(v) => setForm(f => ({...f, date: v}))} testId="content-date" />
+          </Isian>
+          <Isian label="Status" htmlFor="cc-status">
+            <SmartNativeSelect id="cc-status" value={form.status} searchable={false} onChange={(e) => setForm(f => ({...f, status: e.target.value}))}>
+              {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+        </div>
+        <Isian label="Jenis konten" wajib htmlFor="cc-type">
+          <SmartNativeSelect id="cc-type" value={form.content_type} onChange={(e) => setForm(f => ({...f, content_type: e.target.value}))}>
+            {contentTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Judul / hook" wajib htmlFor="cc-title">
+          <Input id="cc-title" value={form.title} placeholder="Hook atau judul konten yang menarik"
+            onChange={e => setForm(f => ({...f, title: e.target.value}))} />
+        </Isian>
+        <Isian label="Deskripsi" htmlFor="cc-desc">
+          <Textarea id="cc-desc" value={form.description} rows={2} placeholder="Rincian konten"
+            onChange={e => setForm(f => ({...f, description: e.target.value}))} />
+        </Isian>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="CTA" htmlFor="cc-cta">
+            <Input id="cc-cta" value={form.cta} placeholder="Klik di bio!" onChange={e => setForm(f => ({...f, cta: e.target.value}))} />
+          </Isian>
+          <Isian label="Jam posting" htmlFor="cc-time">
+            <Input id="cc-time" type="time" value={form.post_time} onChange={e => setForm(f => ({...f, post_time: e.target.value}))} />
+          </Isian>
+        </div>
+        <Isian label="Tautan referensi / Google Drive" htmlFor="cc-ref"
+          petunjuk="Tautan aset konten (Drive/Canva/Figma) — bisa dibuka langsung dari detail konten.">
+          <Input id="cc-ref" type="url" value={form.reference_link} data-testid="content-reference-link-input"
+            onChange={e => setForm(f => ({...f, reference_link: e.target.value}))}
+            placeholder="https://drive.google.com/... (materi foto/video/brief)" />
+        </Isian>
+        {/* 2026-11-07 (Tahap 5) — status Tayang wajib tautan terbit. */}
+        {form.status === 'posted' && (
+          <Isian label="Tautan terbit" wajib htmlFor="cc-pub" petunjuk="Wajib untuk status Tayang — bukti konten benar-benar terbit.">
+            <Input id="cc-pub" type="url" value={form.published_url} data-testid="content-published-url-input"
+              onChange={e => setForm(f => ({...f, published_url: e.target.value}))}
+              placeholder="https://… (tautan unggahan yang sudah tayang)" />
+          </Isian>
+        )}
+      </FormPopup>
+    </PageLayout>
   );
 }
 
-
 /**
- * F7.4 — kalender konten kini punya EMPAT sisi dalam satu pintu:
- * "Kalender & Rencana", **"Performa Konten"** (KPI per kreator), **"Scorecard
- * Kreator"** (target vs pencapaian), dan **"KPI Platform"** (hasil impor ekspor
- * Seller Center). Dibungkus di sini (bukan menyalin modul) supaya tidak lahir
- * pintu kembar: satu pintu, beberapa tampilan, satu sumber angka.
+ * F7.4 — kalender konten punya EMPAT sisi dalam satu pintu: "Kalender & rencana", "Performa konten" (KPI per
+ * kreator), "Scorecard kreator" (target vs pencapaian), dan "KPI platform" (hasil impor ekspor Seller Center).
+ * Dibungkus di sini (bukan menyalin modul) supaya tidak lahir pintu kembar: satu pintu, beberapa tampilan, satu sumber angka.
+ * Standar UI/UX v2: tab halaman = HubTabs (judul hub tampil sekali; judul tiap tampilan disembunyikan).
  */
 export default function ContentCalendarModule(props) {
-  const [tab, setTab] = useState('kalender');
   return (
-    <div className="space-y-3 p-4 lg:p-4">
-      <div className="flex flex-wrap gap-1.5" data-testid="content-tabs">
-        {[['kalender', 'Kalender & Rencana'], ['performa', 'Performa Konten'],
-          ['scorecard', 'Scorecard Kreator'], ['kpi', 'KPI Platform']].map(([v, l]) => (
-          <button key={v} type="button" onClick={() => setTab(v)}
-            data-testid={`content-tab-${v}`}
-            className={`px-3 py-1.5 rounded-md text-xs font-semibold border ${tab === v
-              ? 'bg-primary text-primary-foreground border-primary'
-              : 'bg-background text-foreground border-border hover:bg-muted/50'}`}>
-            {l}
-          </button>
-        ))}
-      </div>
-      {tab === 'kalender' && <ContentCalendarBase {...props} />}
-      {tab === 'performa' && <ContentPerformanceView token={props.token} />}
-      {tab === 'scorecard' && (
-        <CreatorScorecardView token={props.token} onNavigate={props.onNavigate} />
-      )}
-      {tab === 'kpi' && <PlatformKpiView token={props.token} onNavigate={props.onNavigate} />}
+    <div data-testid="content-tabs">
+      <HubTabs hubId="marketing-content-calendar" title="Kalender konten"
+        subtitle="Rencana konten, performa, scorecard kreator, dan KPI platform."
+        tabs={[
+          { key: 'kalender', label: 'Kalender & rencana', Component: ContentCalendarBase, props },
+          { key: 'performa', label: 'Performa konten', Component: ContentPerformanceView, props: { token: props.token } },
+          { key: 'scorecard', label: 'Scorecard kreator', Component: CreatorScorecardView, props: { token: props.token, onNavigate: props.onNavigate } },
+          { key: 'kpi', label: 'KPI platform', Component: PlatformKpiView, props: { token: props.token, onNavigate: props.onNavigate } },
+        ]} />
     </div>
   );
 }
