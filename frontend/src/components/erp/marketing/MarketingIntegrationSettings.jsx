@@ -1,167 +1,45 @@
+/**
+ * Integrasi API (Portal Toko) — kunci API platform marketplace + pengaturan peringatan marketing.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout; platform = tabel; form kunci API & form pengaturan peringatan
+ * dibuka sebagai FormPopup (dulu terbuka di dalam kartu/halaman); riwayat evaluasi = tabel + unduh.
+ * Isian, panggilan API, dan data yang disimpan tidak berubah. Waktu riwayat dari server = UTC tanpa zona → WIB.
+ */
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Settings, CheckCircle2, XCircle, Clock, Save, Trash2, Eye, EyeOff,
-  ExternalLink, RefreshCw, Loader2, AlertTriangle, Zap, Bell, Info,
-  ChevronDown, ChevronUp
+  CheckCircle2, Trash2, Eye, EyeOff, ExternalLink, RefreshCw, AlertTriangle, Zap, Settings, Info,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { useToast } from '@/hooks/use-toast';
 import axios from 'axios';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { useToast } from '@/hooks/use-toast';
+import { formatDateTimeID } from '@/lib/format';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
-const PLATFORM_COLORS = {
-  shopee:    { ring: 'ring-orange-400/40', bg: 'from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20', badge: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ' },
-  tiktok:    { ring: 'ring-border/40',   bg: 'from-gray-50 to-slate-50 dark:from-gray-900/20 dark:to-slate-900/20',   badge: 'bg-muted text-foreground ' },
-  tokopedia: { ring: 'ring-green-400/40',  bg: 'from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20', badge: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ' },
+const waktu = (v) => {
+  if (!v) return '—';
+  const s = String(v);
+  const d = new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(s) ? s : `${s}Z`);
+  return Number.isNaN(d.getTime()) ? '—' : formatDateTimeID(d);
 };
-
-function StatusBadge({ connected }) {
-  return connected ? (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ">
-      <CheckCircle2 size={10} />Terkonfigurasi
-    </span>
-  ) : (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground ">
-      <XCircle size={10} />Belum Dikonfigurasi
-    </span>
-  );
-}
-
-function PlatformCard({ platform, meta, config, onSave, onDisconnect, onTest }) {
-  const [expanded, setExpanded]    = useState(false);
-  const [form,     setForm]        = useState({});
-  const [showPass, setShowPass]    = useState({});
-  const [testing,  setTesting]     = useState(false);
-  const [saving,   setSaving]      = useState(false);
-  const [testResult, setTestResult]= useState(null);
-  const colors = PLATFORM_COLORS[platform] || {};
-
-  const handleSave = async () => {
-    setSaving(true);
-    const res = await onSave(platform, form);
-    setSaving(false);
-    setForm({});
-    if (res) setExpanded(false);
-  };
-
-  const handleTest = async () => {
-    setTesting(true);
-    const res = await onTest(platform);
-    setTestResult(res);
-    setTesting(false);
-  };
-
-  const connected = config?.connected;
-
-  return (
-    <Card className={`ring-2 ${colors.ring || 'ring-border/40'} overflow-hidden`}>
-      {/* Card header row */}
-      <div className={` ${colors.bg || 'from-muted/30 to-muted/10'} p-4 flex items-center justify-between`}>
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">{meta?.icon}</span>
-          <div>
-            <h3 className="font-bold text-sm">{meta?.name}</h3>
-            <StatusBadge connected={connected} />
-          </div>
-        </div>
-        <button onClick={() => setExpanded(e => !e)}
-          className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline">
-          {expanded ? <><ChevronUp size={14} />Tutup</> : <><ChevronDown size={14} />Konfigurasi</>}
-        </button>
-      </div>
-
-      {/* Expanded config form */}
-      {expanded && (
-        <CardContent className="p-4 space-y-4 border-t">
-          {/* Info banner */}
-          <div className="p-3 rounded-lg bg-[hsl(var(--primary)/0.08)] border border-[hsl(var(--primary)/0.35)] flex gap-2 text-sm">
-            <Info size={14} className="text-[hsl(var(--primary))] flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="font-medium text-[hsl(var(--primary))] ">Placeholder — Phase 4 Ready</p>
-              <p className="text-xs text-[hsl(var(--primary))] mt-0.5">{meta?.note}</p>
-              {meta?.docs_url && (
-                <a href={meta.docs_url} target="_blank" rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-xs text-[hsl(var(--primary))] hover:underline mt-1">
-                  <ExternalLink size={10} />Dokumentasi API
-                </a>
-              )}
-            </div>
-          </div>
-
-          {/* Fields */}
-          <div className="grid grid-cols-1 gap-3">
-            {(meta?.fields || []).map(field => (
-              <div key={field.key}>
-                <Label className="text-xs">{field.label}</Label>
-                <div className="relative mt-1">
-                  <Input
-                    type={field.type === 'password' && !showPass[field.key] ? 'password' : 'text'}
-                    placeholder={field.placeholder}
-                    value={form[field.key] || ''}
-                    onChange={e => setForm(f => ({...f, [field.key]: e.target.value}))}
-                    className="pr-8"
-                  />
-                  {field.type === 'password' && (
-                    <button type="button"
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      onClick={() => setShowPass(s => ({...s, [field.key]: !s[field.key]}))}
-                    >
-                      {showPass[field.key] ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
-                  )}
-                </div>
-                {connected && config?.credentials?.[`_${field.key}_masked`] && (
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Tersimpan: <code className="tabular-nums bg-muted px-1 rounded">{config.credentials[`_${field.key}_masked`]}</code>
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Actions */}
-          <div className="flex flex-wrap gap-2 pt-2 border-t">
-            <Button size="sm" onClick={handleSave} disabled={saving}>
-              {saving ? <Loader2 size={14} className="mr-1 animate-spin" /> : <Save size={14} className="mr-1" />}
-              Simpan
-            </Button>
-            <Button size="sm" variant="outline" onClick={handleTest} disabled={testing || !connected}>
-              {testing ? <Loader2 size={14} className="mr-1 animate-spin" /> : <Zap size={14} className="mr-1" />}
-              Test Koneksi
-            </Button>
-            {connected && (
-              <Button size="sm" variant="outline" className="text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))] hover:border-[hsl(var(--destructive)/0.35)]"
-                onClick={() => { onDisconnect(platform); setExpanded(false); }}>
-                <Trash2 size={14} className="mr-1" />Hapus Credentials
-              </Button>
-            )}
-          </div>
-
-          {/* Test result */}
-          {testResult && (
-            <div className={`p-3 rounded-lg text-sm flex gap-2 ${
-              testResult.success
-                ? 'bg-[hsl(var(--success)/0.08)] border border-[hsl(var(--success)/0.35)] text-[hsl(var(--success-text))] '
-                : 'bg-[hsl(var(--warning)/0.08)] border border-[hsl(var(--warning)/0.35)] text-[hsl(var(--warning-text))] '
-            }`}>
-              {testResult.success ? <CheckCircle2 size={14} className="flex-shrink-0 mt-0.5" /> : <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />}
-              <div>
-                <p className="font-medium">{testResult.message}</p>
-                {testResult.note && <p className="text-xs opacity-75 mt-0.5">{testResult.note}</p>}
-              </div>
-            </div>
-          )}
-        </CardContent>
-      )}
-    </Card>
-  );
-}
+const JENIS_PERINGATAN = {
+  expiring_discount: 'Diskon akan habis',
+  sla_breach: 'Batas waktu komplain terlewat',
+  upcoming_launch: 'Peluncuran mendekat',
+  content_today: 'Konten terjadwal hari ini',
+  target_behind: 'Target tertinggal',
+  budget_overrun: 'Anggaran terlampaui',
+  budget_warning: 'Anggaran hampir habis',
+};
+const labelJenis = (types) => (types || []).map((t) => JENIS_PERINGATAN[t] || 'Lainnya').join(', ') || '—';
 
 const DEFAULT_ALERT_SETTINGS = {
   enabled: true,
@@ -171,18 +49,136 @@ const DEFAULT_ALERT_SETTINGS = {
   alert_expiring_discount: true,
   alert_upcoming_launch: true,
 };
+const PILIHAN_PERINGATAN = (s) => [
+  { key: 'alert_expiring_discount', label: 'Diskon akan habis', desc: `${s.discount_expiry_days} hari sebelum diskon berakhir` },
+  { key: 'alert_sla_breach', label: 'Batas waktu komplain terlewat', desc: 'Komplain lewat batas waktu atau hampir lewat' },
+  { key: 'alert_upcoming_launch', label: 'Peluncuran mendekat', desc: 'H-7, H-3, dan H-1 sebelum peluncuran produk' },
+  { key: 'alert_content_today', label: 'Konten terjadwal hari ini', desc: 'Konten terjadwal yang belum diposting' },
+];
+
+/** Form kunci API satu platform (popup). Simpan / uji koneksi / hapus kunci memakai handler yang sama seperti dulu. */
+function FormPlatform({ platform, meta, config, onClose, onSave, onDisconnect, onTest }) {
+  const [form, setForm] = useState({});
+  const [showPass, setShowPass] = useState({});
+  const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const connected = config?.connected;
+
+  const handleSave = async () => {
+    setSaving(true);
+    const res = await onSave(platform, form);
+    setSaving(false);
+    setForm({});
+    if (res) onClose();
+  };
+  const handleTest = async () => {
+    setTesting(true);
+    const res = await onTest(platform);
+    setTestResult(res);
+    setTesting(false);
+  };
+
+  return (
+    <FormPopup open onClose={onClose} judul={`Kunci API ${meta?.name || platform}`} ukuran="pendek"
+      keterangan={meta?.note} onSimpan={handleSave} menyimpan={saving} labelSimpan="Simpan kunci"
+      testId={`integration-form-${platform}`}
+      aksiKiri={<>
+        <Button type="button" variant="outline" onClick={handleTest} disabled={testing || !connected}
+          title={connected ? 'Uji koneksi dengan kunci tersimpan' : 'Simpan kunci dulu'}>
+          {testing ? <RefreshCw className="animate-spin" /> : <Zap />}Uji koneksi
+        </Button>
+        {connected && (
+          <Button type="button" variant="destructive" onClick={async () => { await onDisconnect(platform); onClose(); }}>
+            <Trash2 />Hapus kunci
+          </Button>
+        )}
+      </>}>
+      {meta?.docs_url && (
+        <a href={meta.docs_url} target="_blank" rel="noreferrer"
+          className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
+          <ExternalLink className="h-3.5 w-3.5" />Dokumentasi API platform
+        </a>
+      )}
+      {(meta?.fields || []).map((field) => (
+        <Isian key={field.key} label={field.label} htmlFor={`int-${platform}-${field.key}`}
+          petunjuk={connected && config?.credentials?.[`_${field.key}_masked`]
+            ? `Tersimpan: ${config.credentials[`_${field.key}_masked`]} — kosongkan bila tidak diganti.` : undefined}>
+          <div className="relative">
+            <Input id={`int-${platform}-${field.key}`}
+              type={field.type === 'password' && !showPass[field.key] ? 'password' : 'text'}
+              placeholder={field.placeholder} value={form[field.key] || ''}
+              onChange={(e) => setForm((f) => ({ ...f, [field.key]: e.target.value }))} className="pr-10" />
+            {field.type === 'password' && (
+              <Button type="button" variant="ghost" size="icon-sm"
+                className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground"
+                title={showPass[field.key] ? 'Sembunyikan' : 'Tampilkan'} aria-label={showPass[field.key] ? 'Sembunyikan' : 'Tampilkan'}
+                onClick={() => setShowPass((s) => ({ ...s, [field.key]: !s[field.key] }))}>
+                {showPass[field.key] ? <EyeOff /> : <Eye />}
+              </Button>
+            )}
+          </div>
+        </Isian>
+      ))}
+      {testResult && (
+        <Notice tone={testResult.success ? 'success' : 'warning'} icon={testResult.success ? CheckCircle2 : AlertTriangle}
+          title={testResult.message}>
+          {testResult.note}
+        </Notice>
+      )}
+    </FormPopup>
+  );
+}
+
+/** Form pengaturan peringatan (popup). Isian dan isi yang dikirim sama dengan form lama di halaman. */
+function FormPeringatan({ awal, onClose, onSimpan }) {
+  const [s, setS] = useState(awal);
+  const [menyimpan, setMenyimpan] = useState(false);
+  const simpan = async () => {
+    setMenyimpan(true);
+    const ok = await onSimpan(s);
+    setMenyimpan(false);
+    if (ok) onClose();
+  };
+  return (
+    <FormPopup open onClose={onClose} judul="Pengaturan peringatan marketing" ukuran="pendek"
+      keterangan="Evaluasi berjalan otomatis setiap 30 menit dan mengirim notifikasi." onSimpan={simpan}
+      menyimpan={menyimpan} labelSimpan="Simpan pengaturan" testId="alert-settings-form">
+      <label className="flex items-center justify-between gap-3" htmlFor="alert-enabled">
+        <span>
+          <span className="block text-sm font-medium">Peringatan aktif</span>
+          <span className="block text-xs text-muted-foreground">Matikan untuk menghentikan semua peringatan.</span>
+        </span>
+        <Switch id="alert-enabled" checked={s.enabled || false} onCheckedChange={(v) => setS((x) => ({ ...x, enabled: v }))} />
+      </label>
+      <div className="space-y-3 border-t border-[var(--glass-border)] pt-3">
+        {PILIHAN_PERINGATAN(s).map((item) => (
+          <label key={item.key} className="flex items-center justify-between gap-3" htmlFor={`alert-${item.key}`}>
+            <span>
+              <span className="block text-sm">{item.label}</span>
+              <span className="block text-xs text-muted-foreground">{item.desc}</span>
+            </span>
+            <Switch id={`alert-${item.key}`} checked={s[item.key] || false}
+              onCheckedChange={(v) => setS((x) => ({ ...x, [item.key]: v }))} />
+          </label>
+        ))}
+      </div>
+    </FormPopup>
+  );
+}
 
 export default function MarketingIntegrationSettings({ token }) {
   const { toast } = useToast();
   const authH = useMemo(() => ({ Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` }), [token]);
 
-  const [meta,           setMeta]           = useState({});
-  const [configs,        setConfigs]        = useState({});
-  const [alertSettings,  setAlertSettings]  = useState(DEFAULT_ALERT_SETTINGS);
-  const [loading,        setLoading]        = useState(true);
-  const [savingAlerts,   setSavingAlerts]   = useState(false);
-  const [alertHistory,   setAlertHistory]   = useState([]);
-  const [histLoading,    setHistLoading]    = useState(false);
+  const [meta, setMeta] = useState({});
+  const [configs, setConfigs] = useState({});
+  const [alertSettings, setAlertSettings] = useState(DEFAULT_ALERT_SETTINGS);
+  const [loading, setLoading] = useState(true);
+  const [alertHistory, setAlertHistory] = useState([]);
+  const [histLoading, setHistLoading] = useState(false);
+  const [formPlatform, setFormPlatform] = useState(null);
+  const [formAlert, setFormAlert] = useState(false);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -194,7 +190,7 @@ export default function MarketingIntegrationSettings({ token }) {
       ]);
       if (r1.status === 'fulfilled') setMeta(r1.value.data.platforms || {});
       if (r2.status === 'fulfilled') setConfigs(r2.value.data.data || {});
-      if (r3.status === 'fulfilled') setAlertSettings(s => ({...s, ...r3.value.data.data}));
+      if (r3.status === 'fulfilled') setAlertSettings((s) => ({ ...s, ...r3.value.data.data }));
     } catch {}
     finally { setLoading(false); }
   }, [authH]);
@@ -210,26 +206,31 @@ export default function MarketingIntegrationSettings({ token }) {
 
   useEffect(() => { fetchAll(); fetchHistory(); }, [fetchAll, fetchHistory]);
 
+  const namaPlatform = (p) => meta[p]?.name || p;
+
   const handleSavePlatform = async (platform, form) => {
     try {
       const res = await axios.put(`${API}/api/marketing/integration-settings/${platform}`,
         { credentials: form }, { headers: authH });
       if (res.data.success) {
-        toast({ title: `✅ ${platform} credentials tersimpan` });
+        toast({ title: `Kunci API ${namaPlatform(platform)} tersimpan.` });
         fetchAll();
         return true;
       }
-    } catch { toast({ title: 'Gagal menyimpan credentials', variant: 'destructive' }); }
+    } catch { toast({ title: 'Gagal menyimpan kunci API', variant: 'destructive' }); }
     return false;
   };
 
   const handleDisconnect = async (platform) => {
-    if (!(await confirmDialog(`Hapus credentials ${platform}?`))) return;
+    if (!(await confirmDialog({
+      title: `Hapus kunci API ${namaPlatform(platform)}?`, body: 'Kunci yang tersimpan dihapus. Isi lagi bila ingin menyambung.',
+      confirmLabel: 'Hapus kunci', danger: true,
+    }))) return;
     try {
       await axios.delete(`${API}/api/marketing/integration-settings/${platform}`, { headers: authH });
-      toast({ title: `${platform} credentials dihapus` });
+      toast({ title: `Kunci API ${namaPlatform(platform)} dihapus.` });
       fetchAll();
-    } catch { toast({ title: 'Gagal hapus credentials', variant: 'destructive' }); }
+    } catch { toast({ title: 'Gagal menghapus kunci API', variant: 'destructive' }); }
   };
 
   const handleTestPlatform = async (platform) => {
@@ -241,163 +242,111 @@ export default function MarketingIntegrationSettings({ token }) {
     }
   };
 
-  const saveAlertSettings = async () => {
-    setSavingAlerts(true);
+  const saveAlertSettings = async (nilai) => {
     try {
-      await axios.put(`${API}/api/marketing/alerts/settings`, alertSettings, { headers: authH });
-      toast({ title: '✅ Alert settings disimpan' });
-    } catch { toast({ title: 'Gagal simpan alert settings', variant: 'destructive' }); }
-    finally { setSavingAlerts(false); }
+      await axios.put(`${API}/api/marketing/alerts/settings`, nilai, { headers: authH });
+      setAlertSettings(nilai);
+      toast({ title: 'Pengaturan peringatan disimpan.' });
+      return true;
+    } catch { toast({ title: 'Gagal menyimpan pengaturan peringatan', variant: 'destructive' }); return false; }
   };
 
   const triggerNow = async () => {
     try {
       const res = await axios.post(`${API}/api/marketing/alerts/evaluate`, {}, { headers: authH });
-      toast({ title: `🔔 ${res.data.total_fired} alert dikirim` });
+      toast({ title: `${res.data.total_fired} peringatan dikirim.` });
       fetchHistory();
-    } catch { toast({ title: 'Gagal trigger alerts', variant: 'destructive' }); }
+    } catch { toast({ title: 'Gagal menjalankan evaluasi peringatan', variant: 'destructive' }); }
   };
 
-  if (loading) return (
-    <div className="flex justify-center items-center py-24">
-      <Loader2 size={32} className="animate-spin text-muted-foreground" />
-    </div>
-  );
+  const platforms = Object.entries(meta).map(([key, m]) => ({ id: key, key, meta: m, config: configs[key] }));
+  const jumlahSambung = platforms.filter((p) => p.config?.connected).length;
+  const kunciTersimpan = (p) => (p.meta?.fields || [])
+    .map((f) => p.config?.credentials?.[`_${f.key}_masked`] && `${f.label}: ${p.config.credentials[`_${f.key}_masked`]}`)
+    .filter(Boolean).join(' · ');
+
+  const kolomPlatform = [
+    { kunci: 'nama', label: 'Platform', hp: 'judul', isi: (p) => <span className="font-medium text-foreground">{p.meta?.name || p.key}</span> },
+    { kunci: 'status', label: 'Status', isi: (p) => (p.config?.connected
+      ? <StatusBadge status="terhubung" label="Kunci tersimpan" tone="success" />
+      : <StatusBadge status="belum" label="Belum diatur" tone="muted" />) },
+    { kunci: 'kunci', label: 'Kunci tersimpan', isi: (p) => <span className="text-sm text-muted-foreground">{kunciTersimpan(p) || '—'}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (p) => (
+      <Button size="sm" variant="outline" onClick={() => setFormPlatform(p)} data-testid={`integration-edit-${p.key}`}>
+        <Settings />Atur kunci
+      </Button>) },
+  ];
+
+  const kolomRiwayat = [
+    { kunci: 'waktu', label: 'Waktu evaluasi', hp: 'judul', isi: (r) => <span className="tabular-nums md:whitespace-nowrap">{waktu(r.ran_at)}</span> },
+    { kunci: 'jumlah', label: 'Peringatan dikirim', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.fired_count ?? 0}</span> },
+    { kunci: 'jenis', label: 'Jenis', isi: (r) => <span className="text-sm">{labelJenis(r.types)}</span> },
+  ];
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-4" data-testid="integration-settings-page">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <Settings size={22} className="text-primary" />Integration Settings
-          </h1>
-          <p className="text-sm text-muted-foreground">Kelola API credentials platform marketplace — siap untuk Phase 4 Direct API Integration</p>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => { fetchAll(); fetchHistory(); }}>
-          <RefreshCw size={14} className="mr-1" />Refresh
+    <PageLayout testId="integration-settings-page" title="Integrasi API"
+      subtitle="Kunci API platform marketplace dan pengaturan peringatan marketing."
+      tools={
+        <Button variant="outline" size="icon" onClick={() => { fetchAll(); fetchHistory(); }} disabled={loading}
+          title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
-      </div>
+      }>
+      <Notice tone="info" icon={Info} title="Sinkronisasi langsung belum aktif">
+        Kunci API disimpan dulu untuk sinkronisasi pesanan, stok, dan iklan langsung dari platform nanti.
+        Saat ini belum ada koneksi nyata ke platform.
+      </Notice>
 
-      {/* Phase 4 Info Banner */}
-      <div className="mb-4 p-4 rounded-xl border border-[hsl(var(--primary)/0.35)] ">
-        <div className="flex gap-3">
-          <div className="p-2 rounded-lg bg-[hsl(var(--primary)/0.12)] flex-shrink-0">
-            <Info size={16} className="text-[hsl(var(--primary))]" />
-          </div>
-          <div>
-            <h3 className="font-semibold text-sm text-[hsl(var(--primary))] ">Placeholder UI — Phase 4 Direct API Integration</h3>
-            <p className="text-xs text-[hsl(var(--primary))] mt-1">
-              Halaman ini menyimpan credentials API untuk digunakan saat Phase 4 (Direct Sync: orders, inventory, ads).
-              Saat ini belum ada koneksi real ke platform — simpan credentials Anda agar siap saat Phase 4 aktif.
-            </p>
-          </div>
+      <section className="space-y-2" data-testid="integration-platforms">
+        <p className="text-base font-semibold text-foreground">
+          Platform · {loading ? '…' : `${jumlahSambung} dari ${platforms.length} sudah berisi kunci`}
+        </p>
+        {loading && platforms.length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">Memuat platform…</p>
+        ) : (
+          <TabelData kolom={kolomPlatform} baris={platforms} onKlikBaris={setFormPlatform} testId="integration-platform-table"
+            kosong={<EmptyState title="Belum ada platform" description="Daftar platform belum tersedia dari server." />} />
+        )}
+      </section>
+
+      <section className="space-y-2" data-testid="alert-settings">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="flex-1 text-base font-semibold text-foreground">Peringatan marketing</p>
+          <Button variant="outline" onClick={triggerNow} data-testid="alert-trigger-now"><Zap />Jalankan evaluasi sekarang</Button>
+          <Button onClick={() => setFormAlert(true)} data-testid="alert-settings-edit"><Settings />Ubah pengaturan</Button>
         </div>
-      </div>
+        <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+          {alertSettings.enabled
+            ? <StatusBadge status="aktif" label="Aktif" tone="success" />
+            : <StatusBadge status="nonaktif" label="Nonaktif" tone="muted" />}
+          <span>
+            {PILIHAN_PERINGATAN(alertSettings).filter((i) => alertSettings[i.key]).map((i) => i.label).join(' · ') || 'Tidak ada jenis peringatan yang dipilih'}
+          </span>
+        </p>
+      </section>
 
-      {/* Platform Integration Cards */}
-      <h2 className="text-base font-semibold mb-3">🔗 Platform Connections</h2>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-        {Object.entries(meta).map(([platform, m]) => (
-          <PlatformCard
-            key={platform}
-            platform={platform}
-            meta={m}
-            config={configs[platform]}
-            onSave={handleSavePlatform}
-            onDisconnect={handleDisconnect}
-            onTest={handleTestPlatform}
-          />
-        ))}
-      </div>
+      <section className="space-y-2" data-testid="alert-history">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="flex-1 text-base font-semibold text-foreground">Riwayat evaluasi · {alertHistory.length} terakhir</p>
+          <TombolUnduh namaBerkas="riwayat-evaluasi-peringatan" namaLembar="Riwayat" baris={alertHistory} testId="alert-history-unduh"
+            kolom={[
+              { label: 'Waktu evaluasi', nilai: (r) => waktu(r.ran_at) },
+              { label: 'Peringatan dikirim', nilai: (r) => r.fired_count ?? 0 },
+              { label: 'Jenis', nilai: (r) => labelJenis(r.types) },
+            ]} />
+          <Button variant="outline" size="icon" onClick={fetchHistory} disabled={histLoading} title="Muat ulang riwayat" aria-label="Muat ulang riwayat">
+            <RefreshCw className={histLoading ? 'animate-spin' : ''} />
+          </Button>
+        </div>
+        <TabelData kolom={kolomRiwayat} baris={alertHistory} testId="alert-history-table"
+          kosong={!histLoading && <EmptyState title="Belum ada riwayat evaluasi" description="Riwayat muncul setelah evaluasi peringatan pertama berjalan." />} />
+      </section>
 
-      {/* Alert Engine Settings */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Bell size={14} className="text-primary" />Marketing Alert Engine
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-4 pt-2 space-y-4">
-            {/* Master switch */}
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium">Alert Engine Aktif</p>
-                <p className="text-xs text-muted-foreground">Jalankan evaluasi otomatis setiap 30 menit</p>
-              </div>
-              <Switch
-                checked={alertSettings.enabled || false}
-                onCheckedChange={v => setAlertSettings(s => ({...s, enabled: v}))}
-              />
-            </div>
-
-            <div className="space-y-3 pt-2 border-t">
-              {[
-                { key: 'alert_expiring_discount', label: 'Diskon Akan Habis',    desc: `${alertSettings.discount_expiry_days} hari sebelum expired` },
-                { key: 'alert_sla_breach',        label: 'SLA Komplain Breach',  desc: 'Komplain overdue / at risk' },
-                { key: 'alert_upcoming_launch',   label: 'Upcoming Launch',      desc: 'H-7, H-3, H-1 sebelum launch' },
-                { key: 'alert_content_today',     label: 'Konten Terjadwal Hari Ini', desc: 'Konten scheduled belum diposting' },
-              ].map(item => (
-                <div key={item.key} className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm">{item.label}</p>
-                    <p className="text-xs text-muted-foreground">{item.desc}</p>
-                  </div>
-                  <Switch
-                    checked={alertSettings[item.key] || false}
-                    onCheckedChange={v => setAlertSettings(s => ({...s, [item.key]: v}))}
-                  />
-                </div>
-              ))}
-            </div>
-
-            <div className="flex gap-2 pt-2 border-t">
-              <Button size="sm" onClick={saveAlertSettings} disabled={savingAlerts}>
-                {savingAlerts ? <Loader2 size={14} className="mr-1 animate-spin" /> : <Save size={14} className="mr-1" />}
-                Simpan Settings
-              </Button>
-              <Button size="sm" variant="outline" onClick={triggerNow}>
-                <Zap size={14} className="mr-1" />Trigger Sekarang
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Alert History */}
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center justify-between">
-              <div className="flex items-center gap-2"><Clock size={14} className="text-primary" />Riwayat Evaluasi</div>
-              <button onClick={fetchHistory} className="text-xs text-muted-foreground hover:text-primary">
-                {histLoading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-              </button>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-4 pt-2">
-            {histLoading ? (
-              <div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin text-muted-foreground" /></div>
-            ) : alertHistory.length === 0 ? (
-              <div className="text-center py-6 text-muted-foreground">
-                <Clock size={24} className="mx-auto mb-2 opacity-30" />
-                <p className="text-sm">Belum ada riwayat evaluasi</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {alertHistory.map(run => (
-                  <div key={run.id} className="flex items-center justify-between text-xs py-1.5 border-b last:border-0">
-                    <div>
-                      <span className="font-medium">{run.fired_count} alert</span>
-                      <span className="text-muted-foreground ml-1">({(run.types || []).join(', ')})</span>
-                    </div>
-                    <span className="text-muted-foreground">{run.ran_at ? new Date(run.ran_at).toLocaleString('id-ID', {dateStyle:'short', timeStyle:'short'}) : ''}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-    </div>
+      {formPlatform && (
+        <FormPlatform platform={formPlatform.key} meta={formPlatform.meta} config={configs[formPlatform.key]}
+          onClose={() => setFormPlatform(null)} onSave={handleSavePlatform} onDisconnect={handleDisconnect} onTest={handleTestPlatform} />
+      )}
+      {formAlert && <FormPeringatan awal={alertSettings} onClose={() => setFormAlert(false)} onSimpan={saveAlertSettings} />}
+    </PageLayout>
   );
 }
