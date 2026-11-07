@@ -10,7 +10,8 @@
  *
  * Tahap 9 (7 Nov 2026): tab "Retur" di menu Bahan (Portal Produksi & Maklon, disaring per portal lewat
  * `?business_type=`), dan tetap menu sendiri di Portal Gudang (tanpa saringan — gudang menerima semua).
- * Cetakan PageLayout: formulir retur dibuka di halaman (DetailPanel), popup hanya pilihan lokasi terima.
+ * Standar UI/UX v2 (8 Nov 2026): formulir retur = FormPopup panjang (dulu panel di halaman), terima = FormPopup pendek,
+ * tabel + unduh Excel/CSV, Setujui hijau / Tolak merah. Isi bahan per retur tetap di bawah barisnya (RowDetail).
  *
  * Berbeda dari "Retur Produksi (barang dari buyer)" (`prod-buyer-returns`) dan Retur Fisik marketplace.
  */
@@ -18,14 +19,16 @@ import { Fragment, useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, Loader2, PackageCheck, Plus, RefreshCw, Send, Undo2, XCircle, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
+import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
-import PageLayout, { DetailPanel, RowDetail, RowToggle } from './layout/PageLayout';
+import PageLayout, { RowDetail, RowToggle } from './layout/PageLayout';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
-import FormDialog, { Field } from './engine/FormDialog';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { apiGet, apiPost } from '../../lib/api';
 import { formatDateID } from '@/lib/format';
 import { portalBusinessType, portalQuery } from '@/lib/portalScope';
@@ -99,25 +102,39 @@ export default function RahazaMaterialReturnModule({ deepLinkParams, portalId })
       title="Retur material"
       subtitle="Bahan yang sudah keluar ke produksi atau CMT dikembalikan ke gudang, dengan jurnal balik pada HPP saat keluar."
       actions={<Button onClick={() => setCreating({ key: Date.now() })} data-testid="pmr-new"><Plus className="w-4 h-4" />Retur material</Button>}
-      filters={<FilterChips value={status} onChange={setStatus} testId="pmr-filter" ariaLabel="Penyaring status retur" hideWhenEmpty={false} options={chips} />}
-      tools={<Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="pmr-refresh">
-        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-      </Button>}
+      filters={<>
+        <FilterChips className="w-full sm:w-auto" value={status} onChange={setStatus} testId="pmr-filter" ariaLabel="Penyaring status retur" hideWhenEmpty={false} options={chips} />
+        {/* Alat di akhir baris penyaring (bukan slot tools): di HP 390 px Toolbar bersama memeras penyaring. */}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <TombolUnduh namaBerkas="retur-material" namaLembar="Retur material" baris={rows} testId="pmr-unduh"
+            kolom={[
+              { label: 'No. retur', nilai: (r) => r.ref_no },
+              { label: 'Tanggal', nilai: (r) => (r.created_at ? formatDateID(r.created_at) : '') },
+              { label: 'Diajukan oleh', nilai: (r) => r.submitted_by || '' },
+              { label: 'MI', nilai: (r) => r.mi_number || '' },
+              { label: 'Surat jalan / WO', nilai: (r) => r.vendor_shipment_number || r.work_order_code || '' },
+              { label: 'Baris bahan', nilai: (r) => (r.items || []).length },
+              { label: 'Status', nilai: (r) => (STATUS_META[r.status] || STATUS_META.draft)[0] },
+              { label: 'Jurnal', nilai: (r) => r.gl_je_number || r.gl_error || '' },
+              { label: 'Alasan', nilai: (r) => r.return_reason || r.notes || '' },
+            ]} />
+          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="pmr-refresh">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
+          </Button>
+        </div>
+      </>}
       summary={err ? <Notice tone="danger" icon={AlertTriangle} title="Gagal memuat retur" testId="pmr-error">{err}</Notice> : null}
-      detail={creating && (
-        <CreatePanel key={creating.key} preset={creating} businessType={businessType} onClose={() => setCreating(null)}
-          onSaved={() => { setCreating(null); load(); }} />
-      )}
       footer={rows.length > pageSize && (
         <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
       )}
     >
       <GlassCard className="p-0 overflow-hidden">
         {loading && !rows.length ? (
-          <div className="p-4 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin inline mr-2" />Memuat…</div>
+          <p className="py-10 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Memuat…</p>
         ) : rows.length === 0 ? (
           <EmptyState icon={Undo2} title="Belum ada retur material" description="Retur dibuat dari pengeluaran material atau surat jalan ke CMT yang bahannya sudah keluar." />
         ) : (
+          <div className="overflow-x-auto">
           <Table>
             <TableHeader><TableRow>
               <TableHead className="w-10" />
@@ -139,16 +156,16 @@ export default function RahazaMaterialReturnModule({ deepLinkParams, portalId })
                       <TableCell>{r.mi_number || '—'}<span className="block text-xs text-muted-foreground">{r.vendor_shipment_number || r.work_order_code || ''}</span></TableCell>
                       <TableCell className="text-right tabular-nums">{(r.items || []).length}</TableCell>
                       <TableCell><StatusBadge status={r.status} label={label} tone={tone} /></TableCell>
-                      <TableCell className="text-xs">{r.gl_je_number || (r.gl_error ? <span className="text-[hsl(var(--destructive))]">{r.gl_error}</span> : '—')}</TableCell>
+                      <TableCell className="text-sm">{r.gl_je_number || (r.gl_error ? <span className="text-[hsl(var(--danger-text))]">{r.gl_error}</span> : '—')}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1 flex-wrap">
                           {r.status === 'draft' && (
                             <Button size="sm" variant="outline" disabled={busy === r.id} onClick={() => act(r, 'submit', 'Diajukan')}><Send className="w-3.5 h-3.5" />Ajukan</Button>
                           )}
                           {r.status === 'submitted' && (<>
-                            <Button size="sm" variant="outline" disabled={busy === r.id} onClick={() => act(r, 'approve', 'Disetujui')} data-testid={`pmr-approve-${r.ref_no}`}>
+                            <Button size="sm" variant="success" disabled={busy === r.id} onClick={() => act(r, 'approve', 'Disetujui')} data-testid={`pmr-approve-${r.ref_no}`}>
                               <CheckCircle2 className="w-3.5 h-3.5" />Setujui</Button>
-                            <Button size="sm" variant="outline" disabled={busy === r.id} onClick={() => act(r, 'reject', 'Ditolak')}>
+                            <Button size="sm" variant="destructive" disabled={busy === r.id} onClick={() => act(r, 'reject', 'Ditolak')}>
                               <XCircle className="w-3.5 h-3.5" />Tolak</Button>
                           </>)}
                           {r.status === 'approved' && (
@@ -183,14 +200,19 @@ export default function RahazaMaterialReturnModule({ deepLinkParams, portalId })
               })}
             </TableBody>
           </Table>
+          </div>
         )}
       </GlassCard>
+      {creating && (
+        <CreatePanel key={creating.key} preset={creating} businessType={businessType} onClose={() => setCreating(null)}
+          onSaved={() => { setCreating(null); load(); }} />
+      )}
       {receiving && <ReceiveDialog doc={receiving} onClose={() => setReceiving(null)} onDone={() => { setReceiving(null); load(); }} />}
     </PageLayout>
   );
 }
 
-/* ── Formulir retur — di halaman ─────────────────────────────────────────── */
+/* ── Formulir retur — FormPopup panjang ──────────────────────────────────── */
 function CreatePanel({ preset, businessType, onClose, onSaved }) {
   const [q, setQ] = useState(preset?.vendor_shipment_number || '');
   const [sources, setSources] = useState([]);
@@ -242,20 +264,18 @@ function CreatePanel({ preset, businessType, onClose, onSaved }) {
   };
 
   return (
-    <DetailPanel title="Retur material ke gudang" onClose={onClose} testId="pmr-create-modal"
-      description="Bahan kondisi baik kembali ke stok di lokasi yang dipilih gudang saat menerima, dengan jurnal balik pada HPP saat keluar."
-      actions={<Button onClick={submit} disabled={busy || !src} data-testid="pmr-create-submit">
-        {busy && <Loader2 className="w-4 h-4 animate-spin" />}Ajukan retur
-      </Button>}>
-      <div className="grid gap-3 md:grid-cols-2">
-        <Field label="Cari asal retur">
-          <GlassInput value={q} onChange={(e) => setQ(e.target.value)} className="h-9" placeholder="No. MI / surat jalan / vendor"
+    <FormPopup open onClose={onClose} ukuran="panjang" judul="Retur material ke gudang" testId="pmr-create-modal"
+      keterangan="Bahan kondisi baik kembali ke stok di lokasi yang dipilih gudang saat menerima, dengan jurnal balik pada HPP saat keluar."
+      onSimpan={submit} menyimpan={busy} bisaSimpan={!!src} labelSimpan="Ajukan retur" galat={err}>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Isian label="Cari asal retur" htmlFor="pmr-source-search-in">
+          <Input id="pmr-source-search-in" value={q} onChange={(e) => setQ(e.target.value)} placeholder="No. MI / surat jalan / vendor"
             data-testid="pmr-source-search" />
-        </Field>
-        <Field label="MI / surat jalan asal *">
-          <SmartNativeSelect value={src?.material_issue_id || ''} className="w-full h-9" data-testid="pmr-source-select" aria-label="MI / surat jalan asal"
+        </Isian>
+        <Isian label="MI / surat jalan asal" wajib>
+          <SmartNativeSelect value={src?.material_issue_id || ''} className="w-full" data-testid="pmr-source-select" aria-label="MI / surat jalan asal"
             onChange={(e) => e.target.value && loadSource({ material_issue_id: e.target.value })}>
-            <option value="">— pilih MI / surat jalan asal —</option>
+            <option value="">Pilih MI / surat jalan asal</option>
             {sources.map((x) => (
               <option key={x.id} value={x.id}>
                 {[x.mi_number, x.vendor_shipment_number ? `SJ ${x.vendor_shipment_number}` : '', x.vendor_name,
@@ -263,11 +283,11 @@ function CreatePanel({ preset, businessType, onClose, onSaved }) {
               </option>
             ))}
           </SmartNativeSelect>
-        </Field>
+        </Isian>
       </div>
       {src && (
         <div className="overflow-x-auto">
-          <p className="text-xs text-muted-foreground mb-1">
+          <p className="mb-1 text-sm text-muted-foreground">
             MI {src.mi_number}{src.vendor_shipment_number ? ` · surat jalan ${src.vendor_shipment_number}` : ''}{src.vendor_name ? ` · ${src.vendor_name}` : ''}
           </p>
           <Table data-testid="pmr-source-lines">
@@ -283,12 +303,12 @@ function CreatePanel({ preset, businessType, onClose, onSaved }) {
                   <TableCell className="text-right tabular-nums">{fmtNum(l.qty_returned)}</TableCell>
                   <TableCell className="text-right tabular-nums font-medium">{fmtNum(l.returnable)}</TableCell>
                   <TableCell className="text-right">
-                    <GlassInput type="number" min="0" step="any" max={l.returnable} disabled={!(l.returnable > 0)} aria-label="Qty retur"
+                    <Input type="number" min="0" step="any" max={l.returnable} disabled={!(l.returnable > 0)} aria-label="Qty retur"
                       value={qty[l.material_id] ?? ''} onChange={(e) => setQty({ ...qty, [l.material_id]: e.target.value })}
-                      className="w-24 h-8 text-right ml-auto" data-testid={`pmr-qty-${l.material_code}`} />
+                      className="ml-auto h-8 w-24 text-right" data-testid={`pmr-qty-${l.material_code}`} />
                   </TableCell>
                   <TableCell>
-                    <SmartNativeSelect value={cond[l.material_id] || 'good'} className="h-8 w-56" aria-label="Kondisi"
+                    <SmartNativeSelect value={cond[l.material_id] || 'good'} className="h-8 w-56" searchable={false} aria-label="Kondisi"
                       onChange={(e) => setCond({ ...cond, [l.material_id]: e.target.value })}>
                       {CONDITIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                     </SmartNativeSelect>
@@ -299,12 +319,12 @@ function CreatePanel({ preset, businessType, onClose, onSaved }) {
           </Table>
         </div>
       )}
-      <Field label="Alasan retur">
-        <GlassInput value={reason} onChange={(e) => setReason(e.target.value)} className="h-9"
-          placeholder="mis. surat jalan salah / sisa produksi" data-testid="pmr-reason" />
-      </Field>
-      {err && <Notice tone="danger" icon={AlertTriangle} testId="pmr-create-error">{err}</Notice>}
-    </DetailPanel>
+      <Isian label="Alasan retur" htmlFor="pmr-reason-in">
+        <Input id="pmr-reason-in" value={reason} onChange={(e) => setReason(e.target.value)}
+          placeholder="Mis. surat jalan salah / sisa produksi" data-testid="pmr-reason" />
+      </Isian>
+      {err && <span className="sr-only" data-testid="pmr-create-error">{err}</span>}
+    </FormPopup>
   );
 }
 
@@ -328,18 +348,15 @@ function ReceiveDialog({ doc, onClose, onDone }) {
     } catch (e) { setErr(e.message); setBusy(false); }
   };
   return (
-    <FormDialog onClose={onClose} title={`Terima retur ${doc.ref_no}`} testId="pmr-receive-dialog"
-      footer={<>
-        <Button variant="outline" onClick={onClose}>Batal</Button>
-        <Button onClick={submit} disabled={busy} data-testid="pmr-receive-submit">{busy ? 'Memproses…' : 'Terima ke stok'}</Button>
-      </>}>
-      <Field label="Lokasi penerima (wajib)">
-        <SmartNativeSelect value={locId} onChange={(e) => setLocId(e.target.value)} className="w-full h-9" data-testid="pmr-receive-location" aria-label="Lokasi penerima">
-          <option value="">— lokasi penerima (wajib) —</option>
+    <FormPopup open onClose={onClose} ukuran="pendek" judul={`Terima retur ${doc.ref_no}`} testId="pmr-receive-dialog"
+      keterangan="Bahan kondisi baik masuk ke stok lokasi ini, jurnal balik dibuat otomatis."
+      onSimpan={submit} menyimpan={busy} labelSimpan="Terima ke stok" galat={err}>
+      <Isian label="Lokasi penerima" wajib>
+        <SmartNativeSelect value={locId} onChange={(e) => setLocId(e.target.value)} className="w-full" data-testid="pmr-receive-location" aria-label="Lokasi penerima">
+          <option value="">Pilih lokasi penerima (wajib)</option>
           {locs.map((l) => <option key={l.id} value={l.id}>{l.code ? `${l.code} · ` : ''}{l.name || l.code}</option>)}
         </SmartNativeSelect>
-      </Field>
-      {err && <Notice tone="danger" icon={AlertTriangle}>{err}</Notice>}
-    </FormDialog>
+      </Isian>
+    </FormPopup>
   );
 }
