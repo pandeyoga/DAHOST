@@ -1,5 +1,5 @@
 /**
- * SupplierScorecardModule — Penilaian Supplier (Portal Pengadaan)
+ * SupplierScorecardModule — Penilaian Supplier (Portal Pengadaan; juga Gudang › wh-supplier-scorecard)
  *
  * 2026-08-06 — DIPINDAH KE SSOT MASTER SUPPLIER.
  * Sebelumnya modul ini memanggil `/api/rahaza/grn-qc/supplier-scorecard` yang
@@ -14,45 +14,95 @@
  *     reject, inspeksi terbaru, rekap PO) termasuk riwayat ejaan nama lama.
  * Baris yang BELUM tertaut master ditandai jelas + diarahkan ke migrasi, bukan
  * disembunyikan, supaya data lama tidak "hilang diam-diam".
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, 4 StatTile berketerangan (dulu 6 kartu huruf kapital),
+ * tabel + unduh, detail = DetailPopup, kalkulator AQL = popup (dulu tab), warna token.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import {
-  Shield, ShieldCheck, ShieldAlert, ShieldX, Search, RefreshCw,
-  Award, Calendar, BarChart3, Target,
-  Calculator, Package, AlertCircle, CheckCircle2, XCircle,
-  ChevronRight, Activity, Users, Building2, Link2Off, Clock, FileText,
-} from 'lucide-react';
-import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
+import { Calculator, Link2Off, RefreshCw, Search } from 'lucide-react';
+import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { formatDateID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 
-const GRADE_STYLE = {
-  'A+': { bg: 'bg-emerald-500/15', border: 'border-emerald-400/40', text: 'text-emerald-600 dark:text-emerald-300', icon: ShieldCheck, label: 'Sangat Baik' },
-  'A':  { bg: 'bg-emerald-500/10', border: 'border-emerald-400/30', text: 'text-emerald-600 dark:text-emerald-300', icon: ShieldCheck, label: 'Baik' },
-  'B':  { bg: 'bg-blue-500/10',    border: 'border-blue-400/30',    text: 'text-blue-600 dark:text-blue-300',       icon: Shield,      label: 'Cukup' },
-  'C':  { bg: 'bg-amber-500/10',   border: 'border-amber-400/30',   text: 'text-amber-600 dark:text-amber-300',     icon: ShieldAlert, label: 'Di Bawah Target' },
-  'D':  { bg: 'bg-rose-500/10',    border: 'border-rose-400/30',    text: 'text-rose-600 dark:text-rose-300',       icon: ShieldX,     label: 'Kritis' },
-  '-':  { bg: 'bg-foreground/5',   border: 'border-foreground/15',  text: 'text-muted-foreground',                  icon: Shield,      label: 'Belum dinilai' },
+// Batas grade = `_grade()` di routes/procurement_suppliers.py (tingkat terima).
+const GRADE = {
+  'A+': { tone: 'success', label: 'Sangat baik' },
+  A: { tone: 'success', label: 'Baik' },
+  B: { tone: 'info', label: 'Cukup' },
+  C: { tone: 'warning', label: 'Di bawah target' },
+  D: { tone: 'danger', label: 'Kritis' },
+  '-': { tone: 'muted', label: 'Belum dinilai' },
 };
+const gradeOf = (g) => GRADE[g] || GRADE['-'];
 
-const SEVERITY_BADGE = {
-  critical: 'text-rose-600 dark:text-rose-300 border-rose-300/40 bg-rose-500/10',
-  major:    'text-amber-600 dark:text-amber-300 border-amber-300/40 bg-amber-500/10',
-  minor:    'text-blue-600 dark:text-blue-300 border-blue-300/40 bg-blue-500/10',
+const SEVERITY = {
+  critical: { label: 'Kritis', tone: 'danger' },
+  major: { label: 'Mayor', tone: 'warning' },
+  minor: { label: 'Minor', tone: 'info' },
+};
+const HASIL_INSPEKSI = {
+  accepted: { label: 'Diterima', tone: 'success' },
+  partial: { label: 'Sebagian', tone: 'warning' },
+  rejected: { label: 'Ditolak', tone: 'danger' },
 };
 
 const PO_STATUS_LABEL = {
-  draft: 'Draf', pending_approval: 'Menunggu Persetujuan', approved: 'Disetujui',
-  sent: 'Terkirim', partially_received: 'Diterima Sebagian', fully_received: 'Diterima Penuh',
+  draft: 'Draf', pending_approval: 'Menunggu persetujuan', approved: 'Disetujui',
+  sent: 'Terkirim', partially_received: 'Diterima sebagian', fully_received: 'Diterima penuh',
   completed: 'Selesai', cancelled: 'Dibatalkan', rejected: 'Ditolak',
 };
 
+const PERIODE = [
+  { v: 30, label: '30 hari terakhir' }, { v: 90, label: '90 hari terakhir' },
+  { v: 180, label: '180 hari terakhir' }, { v: 365, label: '1 tahun terakhir' },
+];
+const AQL_PILIHAN = [
+  { v: '0.65', label: '0,65% — kritis' }, { v: '1', label: '1,0% — mayor' },
+  { v: '2.5', label: '2,5% — standar (disarankan)' }, { v: '4', label: '4,0% — minor' },
+  { v: '6.5', label: '6,5% — kosmetik' },
+];
+
+const BULAN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+const labelBulan = (ym) => {
+  const [y, m] = String(ym || '').split('-').map(Number);
+  return y && m ? `${BULAN[m - 1]} ${y}` : (ym || '—');
+};
 const num = (n, max = 2) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: max });
 const rp = (n) => `Rp ${Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 })}`;
+const TEKS = {
+  success: 'text-[hsl(var(--success-text))]', warning: 'text-[hsl(var(--warning-text))]',
+  danger: 'text-[hsl(var(--danger-text))]',
+};
+const nadaTerima = (r) => (r >= 95 ? TEKS.success : r >= 85 ? TEKS.warning : TEKS.danger);
+const nadaCacat = (r) => (r <= 2 ? TEKS.success : r <= 5 ? TEKS.warning : TEKS.danger);
+
+function GradeBadge({ grade }) {
+  const g = gradeOf(grade);
+  return <StatusBadge status={`grade-${grade}`} tone={g.tone} label={grade === '-' ? g.label : `${grade} · ${g.label}`} />;
+}
+
+function Seksi({ judul, alat, children }) {
+  return (
+    <section className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-foreground">{judul}</h3>
+        {alat}
+      </div>
+      {children}
+    </section>
+  );
+}
 
 export default function SupplierScorecardModule({ token, onNavigate }) {
   const { toast } = useToast();
@@ -62,16 +112,17 @@ export default function SupplierScorecardModule({ token, onNavigate }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
-  const [activeTab, setActiveTab] = useState('scorecard');
   const [detailSupplier, setDetailSupplier] = useState(null);
   const [detailData, setDetailData] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
-  // AQL Tool state
+  // Kalkulator AQL (popup)
+  const [aqlOpen, setAqlOpen] = useState(false);
   const [aqlLot, setAqlLot] = useState(500);
-  const [aqlValue, setAqlValue] = useState(2.5);
+  const [aqlValue, setAqlValue] = useState('2.5');
   const [aqlResult, setAqlResult] = useState(null);
   const [aqlLoading, setAqlLoading] = useState(false);
+  const [aqlError, setAqlError] = useState('');
 
   const h = useMemo(() => ({
     Authorization: `Bearer ${token}`,
@@ -127,6 +178,7 @@ export default function SupplierScorecardModule({ token, onNavigate }) {
 
   const handleAqlCalc = async () => {
     setAqlLoading(true);
+    setAqlError('');
     try {
       const res = await fetch('/api/rahaza/grn-qc/aql/calculate', {
         method: 'POST', headers: h,
@@ -136,6 +188,7 @@ export default function SupplierScorecardModule({ token, onNavigate }) {
       if (!res.ok) throw new Error(data.detail || 'Perhitungan AQL gagal');
       setAqlResult(data);
     } catch (e) {
+      setAqlError(e.message);
       toast({ title: e.message, variant: 'destructive' });
     } finally {
       setAqlLoading(false);
@@ -149,9 +202,9 @@ export default function SupplierScorecardModule({ token, onNavigate }) {
       (s.supplier_name || '').toLowerCase().includes(q) ||
       (s.supplier_code || '').toLowerCase().includes(q));
   }, [scorecards, search]);
-  const { page, setPage, totalPages, total, paged } = useClientPagination(filteredScorecards, 10);
+  const { page, setPage, totalPages, total, paged } = useClientPagination(filteredScorecards, 25);
 
-  // KPIs
+  // Kartu angka — dihitung dari daftar yang SAMA dengan tabel (semua baris periode ini, bukan halaman).
   const kpi = useMemo(() => {
     const totalSup = scorecards.length;
     const aGrade = scorecards.filter(s => s.quality_grade === 'A+' || s.quality_grade === 'A').length;
@@ -159,560 +212,308 @@ export default function SupplierScorecardModule({ token, onNavigate }) {
     const totalGRNs = scorecards.reduce((a, s) => a + (s.total_grns || 0), 0);
     const totalRejected = scorecards.reduce((a, s) => a + (s.total_rejected || 0), 0);
     const totalReceived = scorecards.reduce((a, s) => a + (s.total_received || 0), 0);
-    const avgDefect = totalReceived > 0 ? (totalRejected / totalReceived * 100) : 0;
+    const avgDefect = totalReceived > 0 ? (totalRejected / totalReceived * 100) : null;
     const unlinked = summary?.unlinked ?? scorecards.filter(s => !s.linked).length;
     return { totalSup, aGrade, cdGrade, totalGRNs, avgDefect, unlinked };
   }, [scorecards, summary]);
+  const periodeLabel = (PERIODE.find((p) => p.v === periodDays) || {}).label || `${periodDays} hari`;
+
+  const kolom = [
+    { kunci: 'pemasok', label: 'Pemasok', hp: 'judul', isi: (s) => (
+      <div className="min-w-0">
+        <p className="truncate font-medium text-foreground">{s.supplier_name}</p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {s.supplier_code && <span className="font-mono text-xs text-muted-foreground">{s.supplier_code}</span>}
+          {!s.linked && <StatusBadge status="unlinked" tone="warning" label="Belum tertaut master" />}
+        </div>
+      </div>) },
+    { kunci: 'grade', label: 'Grade', isi: (s) => <GradeBadge grade={s.quality_grade} /> },
+    { kunci: 'terima', label: 'Tingkat terima', rata: 'kanan', isi: (s) => (
+      <span className={`tabular-nums font-semibold ${nadaTerima(s.accept_rate)}`}>{num(s.accept_rate)}%</span>) },
+    { kunci: 'cacat', label: 'Tingkat cacat', rata: 'kanan', isi: (s) => (
+      <span className={`tabular-nums ${nadaCacat(s.defect_rate)}`}>{num(s.defect_rate)}%</span>) },
+    { kunci: 'tepat', label: 'Tepat waktu', rata: 'kanan', isi: (s) => (s.on_time_rate == null
+      ? <span className="text-muted-foreground" title="Belum ada penerimaan yang bisa dibandingkan dengan tanggal terima PO">—</span>
+      : <span className="tabular-nums">{num(s.on_time_rate)}% <span className="text-xs text-muted-foreground">({s.on_time_samples})</span></span>) },
+    { kunci: 'inspeksi', label: 'Inspeksi', rata: 'kanan', isi: (s) => <span className="tabular-nums">{s.total_grns}</span> },
+    { kunci: 'diterima', label: 'Qty lolos', rata: 'kanan', isi: (s) => <span className="tabular-nums">{num(s.total_accepted)}</span> },
+    { kunci: 'ditolak', label: 'Qty ditolak', rata: 'kanan', isi: (s) => <span className="tabular-nums">{num(s.total_rejected)}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
+      <Button size="sm" variant="outline" onClick={() => openDetail(s)} disabled={!s.supplier_id}
+        title={s.supplier_id ? 'Lihat rincian penilaian' : 'Belum tertaut Master Supplier'}
+        data-testid={`scorecard-detail-${s.supplier_code || s.supplier_name}`}>
+        Rincian
+      </Button>) },
+  ];
+
+  const d = detailData;
+  const sc = d?.scorecard;
+  const poStatus = Object.entries(d?.po_by_status || {}).map(([st, v]) => ({ st, ...v }));
+  const tren = d?.monthly_trend || [];
+  const alasan = d?.top_reject_reasons || [];
+  const inspeksi = (d?.recent_inspections || []).slice(0, 8);
+  const namaBerkasDetail = `penilaian-${detailSupplier?.supplier_code || detailSupplier?.supplier_name || 'pemasok'}`;
 
   return (
-    <div className="space-y-5" data-testid="supplier-scorecard-page">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Award className="w-6 h-6 text-amber-500" />
-            Penilaian Supplier
-          </h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Performa supplier dari hasil inspeksi penerimaan barang — dikelompokkan per
-            <strong> Master Supplier</strong>, jadi perbedaan penulisan nama tidak memecah nilai.
-          </p>
+    <PageLayout testId="supplier-scorecard-page" title="Penilaian Supplier"
+      subtitle="Mutu pemasok dari hasil inspeksi penerimaan barang, dikelompokkan per Master Supplier."
+      actions={
+        <Button variant="outline" onClick={() => setAqlOpen(true)} data-testid="tab-aql">
+          <Calculator />Kalkulator AQL
+        </Button>
+      }
+      filters={<>
+        <SmartNativeSelect value={String(periodDays)} onChange={(e) => setPeriodDays(parseInt(e.target.value, 10))}
+          className="w-44" data-testid="period-select" aria-label="Periode">
+          {PERIODE.map((p) => <option key={p.v} value={String(p.v)}>{p.label}</option>)}
+        </SmartNativeSelect>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Cari nama atau kode pemasok" className="pl-8" value={search}
+            onChange={(e) => setSearch(e.target.value)} data-testid="scorecard-search" />
         </div>
-        <div className="flex items-center gap-2">
-          <Select value={String(periodDays)} onValueChange={v => setPeriodDays(parseInt(v, 10))}>
-            <SelectTrigger className="w-36 h-8 text-xs" data-testid="period-select">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="30">30 hari terakhir</SelectItem>
-              <SelectItem value="90">90 hari terakhir</SelectItem>
-              <SelectItem value="180">180 hari terakhir</SelectItem>
-              <SelectItem value="365">1 tahun terakhir</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button variant="ghost" onClick={fetchScorecards} className="gap-1.5 text-xs" data-testid="scorecard-refresh-btn">
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">Muat Ulang</span>
-          </Button>
-        </div>
-      </div>
-
-      {loadError && (
-        <div className="p-3 rounded-lg bg-red-50 dark:bg-red-400/10 border border-red-300 dark:border-red-400/30 text-red-700 dark:text-red-300 text-sm"
-             data-testid="scorecard-error">
-          {loadError}
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas={`penilaian-supplier-${periodDays}-hari`} namaLembar="Penilaian" baris={filteredScorecards}
+          testId="scorecard-unduh"
+          kolom={[
+            { label: 'Kode', nilai: (s) => s.supplier_code || '' },
+            { label: 'Pemasok', nilai: (s) => s.supplier_name },
+            { label: 'Tertaut master', nilai: (s) => (s.linked ? 'Ya' : 'Belum') },
+            { label: 'Grade', nilai: (s) => (s.quality_grade === '-' ? 'Belum dinilai' : s.quality_grade) },
+            { label: 'Tingkat terima (%)', nilai: (s) => Number(s.accept_rate || 0) },
+            { label: 'Tingkat cacat (%)', nilai: (s) => Number(s.defect_rate || 0) },
+            { label: 'Tepat waktu (%)', nilai: (s) => (s.on_time_rate == null ? '' : Number(s.on_time_rate)) },
+            { label: 'Penerimaan dibandingkan', nilai: (s) => s.on_time_samples || 0 },
+            { label: 'Inspeksi', nilai: (s) => s.total_grns || 0 },
+            { label: 'Qty diperiksa', nilai: (s) => Number(s.total_received || 0) },
+            { label: 'Qty lolos', nilai: (s) => Number(s.total_accepted || 0) },
+            { label: 'Qty ditolak', nilai: (s) => Number(s.total_rejected || 0) },
+            { label: 'Inspeksi terakhir', nilai: (s) => (s.last_inspection_at ? formatDateID(s.last_inspection_at) : '') },
+          ]} />
+        <Button variant="outline" size="icon" onClick={fetchScorecards} disabled={loading} title="Muat ulang"
+          aria-label="Muat ulang" data-testid="scorecard-refresh-btn">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={scorecards.length > 0 && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <StatTile label="Pemasok dinilai" value={kpi.totalSup} testId="kpi-total-suppliers"
+            sub={`${summary?.linked ?? kpi.totalSup - kpi.unlinked} tertaut master · ${kpi.unlinked} belum`} />
+          <StatTile label="Grade A dan A+" value={kpi.aGrade} accent={kpi.aGrade ? 'success' : 'default'}
+            sub="Tingkat terima ≥ 97%" />
+          <StatTile label="Grade C dan D" value={kpi.cdGrade} accent={kpi.cdGrade ? 'danger' : 'default'}
+            sub="Tingkat terima < 93% — perlu ditinjau" />
+          <StatTile label="Tingkat cacat gabungan"
+            value={kpi.avgDefect == null ? '—' : `${num(kpi.avgDefect)}%`}
+            accent={kpi.avgDefect == null ? 'muted' : kpi.avgDefect > 5 ? 'danger' : kpi.avgDefect > 2 ? 'warning' : 'success'}
+            sub={kpi.avgDefect == null ? 'Belum ada qty yang diperiksa'
+              : `Qty ditolak ÷ qty diperiksa, dari ${kpi.totalGRNs} inspeksi`} />
         </div>
       )}
-
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-        <GlassPanel className="p-3 text-center">
-          <div className="text-[10px] text-muted-foreground uppercase mb-1">Supplier Dinilai</div>
-          <div className="text-2xl font-bold text-foreground" data-testid="kpi-total-suppliers">{kpi.totalSup}</div>
-        </GlassPanel>
-        <GlassPanel className="p-3 text-center">
-          <div className="text-[10px] text-muted-foreground uppercase mb-1 flex items-center justify-center gap-0.5">
-            <ShieldCheck className="w-3 h-3 text-emerald-500" /> Grade A
-          </div>
-          <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{kpi.aGrade}</div>
-        </GlassPanel>
-        <GlassPanel className="p-3 text-center">
-          <div className="text-[10px] text-muted-foreground uppercase mb-1 flex items-center justify-center gap-0.5">
-            <ShieldX className="w-3 h-3 text-rose-500" /> Grade C/D
-          </div>
-          <div className="text-2xl font-bold text-rose-600 dark:text-rose-400">{kpi.cdGrade}</div>
-        </GlassPanel>
-        <GlassPanel className="p-3 text-center">
-          <div className="text-[10px] text-muted-foreground uppercase mb-1">Total Inspeksi</div>
-          <div className="text-2xl font-bold text-[hsl(var(--primary))]">{kpi.totalGRNs}</div>
-        </GlassPanel>
-        <GlassPanel className="p-3 text-center">
-          <div className="text-[10px] text-muted-foreground uppercase mb-1">Rata-rata Cacat</div>
-          <div className={`text-2xl font-bold ${kpi.avgDefect > 5 ? 'text-rose-500' : kpi.avgDefect > 2 ? 'text-amber-500' : 'text-emerald-600 dark:text-emerald-400'}`}>
-            {kpi.avgDefect.toFixed(2)}%
-          </div>
-        </GlassPanel>
-        <GlassPanel className="p-3 text-center">
-          <div className="text-[10px] text-muted-foreground uppercase mb-1 flex items-center justify-center gap-0.5">
-            <Link2Off className="w-3 h-3 text-amber-500" /> Tanpa Master
-          </div>
-          <div className={`text-2xl font-bold ${kpi.unlinked > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-foreground'}`}
-               data-testid="kpi-unlinked">{kpi.unlinked}</div>
-        </GlassPanel>
-      </div>
+      footer={filteredScorecards.length > 25 && (
+        <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />
+      )}>
+      {loadError && <Notice tone="danger" testId="scorecard-error" title="Penilaian gagal dimuat">{loadError}</Notice>}
 
       {kpi.unlinked > 0 && (
-        <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-400/10 border border-amber-300 dark:border-amber-400/30 text-sm flex items-start gap-2"
-             data-testid="scorecard-unlinked-hint">
-          <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-          <div className="text-amber-800 dark:text-amber-200">
-            <strong>{kpi.unlinked} nama supplier</strong> pada riwayat inspeksi belum tertaut Master Supplier,
-            sehingga nilainya berdiri sendiri.{' '}
-            {onNavigate && (
-              <button className="underline font-medium" onClick={() => onNavigate('proc-suppliers')}
-                      data-testid="scorecard-goto-migration">
-                Buka Master Supplier → Migrasi Data Lama
-              </button>
-            )}
-          </div>
-        </div>
+        <Notice tone="warning" icon={Link2Off} testId="scorecard-unlinked-hint"
+          title={`${kpi.unlinked} nama pemasok di riwayat inspeksi belum tertaut Master Supplier`}
+          action={onNavigate && (
+            <Button size="sm" variant="outline" onClick={() => onNavigate('proc-suppliers')}
+              data-testid="scorecard-goto-migration">
+              Buka Master Supplier
+            </Button>
+          )}>
+          Nilainya berdiri sendiri. Tautkan lewat Master Supplier › Migrasi data lama.
+        </Notice>
       )}
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="mb-4">
-          <TabsTrigger value="scorecard" data-testid="tab-scorecard">
-            <Award className="w-3.5 h-3.5 mr-1.5" /> Penilaian
-          </TabsTrigger>
-          <TabsTrigger value="aql" data-testid="tab-aql">
-            <Calculator className="w-3.5 h-3.5 mr-1.5" /> Alat Sampling AQL
-          </TabsTrigger>
-        </TabsList>
-
-        {/* ── SCORECARD TAB ── */}
-        <TabsContent value="scorecard">
-          <GlassCard className="p-0 overflow-hidden">
-            <div className="flex items-center gap-3 p-3 border-b border-[var(--glass-border)]">
-              <div className="relative flex-1 max-w-xs">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                <GlassInput
-                  placeholder="Cari nama atau kode supplier…"
-                  className="pl-8 h-8 text-sm"
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  data-testid="scorecard-search"
-                />
-              </div>
-              {summary && (
-                <div className="text-xs text-muted-foreground hidden sm:block">
-                  {summary.linked} tertaut master · rata-rata terima {num(summary.avg_accept_rate)}%
-                </div>
-              )}
-            </div>
-            {loading ? (
-              <div className="flex items-center justify-center h-48">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--primary))]" />
-              </div>
-            ) : filteredScorecards.length === 0 ? (
-              <div className="text-center py-16">
-                <Users className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
-                <p className="text-sm text-muted-foreground mb-1">
-                  {scorecards.length === 0 ? 'Belum ada inspeksi penerimaan pada periode ini.' : 'Tidak ada supplier yang cocok.'}
-                </p>
-                {scorecards.length === 0 && (
-                  <p className="text-xs text-muted-foreground/70">
-                    Nilai muncul otomatis setelah barang diterima &amp; diinspeksi di
-                    Portal Gudang → <strong>Penerimaan Barang</strong>.
-                  </p>
-                )}
-              </div>
-            ) : (
-              <>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-[11px] text-muted-foreground border-b border-[var(--glass-border)] bg-[var(--glass-bg)]">
-                      <th className="px-4 py-2.5 text-left font-medium">Supplier</th>
-                      <th className="px-4 py-2.5 text-center font-medium">Grade</th>
-                      <th className="px-4 py-2.5 text-right font-medium">Tingkat Terima</th>
-                      <th className="px-4 py-2.5 text-right font-medium">Tingkat Cacat</th>
-                      <th className="px-4 py-2.5 text-right font-medium">Tepat Waktu</th>
-                      <th className="px-4 py-2.5 text-right font-medium">Inspeksi</th>
-                      <th className="px-4 py-2.5 text-right font-medium">Diterima</th>
-                      <th className="px-4 py-2.5 text-right font-medium">Ditolak</th>
-                      <th className="px-4 py-2.5 text-center font-medium">Detail</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paged.map(s => {
-                      const grade = GRADE_STYLE[s.quality_grade] || GRADE_STYLE['-'];
-                      const GradeIcon = grade.icon;
-                      const key = s.supplier_id || `unlinked-${s.supplier_name}`;
-                      return (
-                        <tr key={key}
-                            className="border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg)]"
-                            data-testid={`scorecard-row-${s.supplier_code || s.supplier_name}`}>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2">
-                              <Building2 className="w-4 h-4 text-muted-foreground shrink-0" />
-                              <div className="min-w-0">
-                                <div className="font-medium text-foreground truncate">{s.supplier_name}</div>
-                                <div className="flex items-center gap-1.5 mt-0.5">
-                                  {s.supplier_code ? (
-                                    <span className="text-[10px] font-mono text-muted-foreground">{s.supplier_code}</span>
-                                  ) : null}
-                                  {!s.linked && (
-                                    <Badge variant="outline" className="text-[9px] px-1.5 py-0 text-amber-600 dark:text-amber-300 border-amber-400/40 bg-amber-500/10 gap-0.5">
-                                      <Link2Off className="w-2.5 h-2.5" /> belum tertaut master
-                                    </Badge>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <Badge variant="outline" className={`text-xs font-bold ${grade.bg} ${grade.border} ${grade.text} gap-1`}>
-                              <GradeIcon className="w-3 h-3" />
-                              {s.quality_grade}
-                            </Badge>
-                            <div className="text-[9px] text-muted-foreground mt-0.5">{grade.label}</div>
-                          </td>
-                          <td className={`px-4 py-3 text-right font-bold ${s.accept_rate >= 95 ? 'text-emerald-600 dark:text-emerald-400' : s.accept_rate >= 85 ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                            {num(s.accept_rate)}%
-                          </td>
-                          <td className={`px-4 py-3 text-right font-medium ${s.defect_rate <= 2 ? 'text-emerald-600 dark:text-emerald-400' : s.defect_rate <= 5 ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                            {num(s.defect_rate)}%
-                          </td>
-                          <td className="px-4 py-3 text-right text-foreground">
-                            {s.on_time_rate == null ? (
-                              <span className="text-muted-foreground text-xs">—</span>
-                            ) : (
-                              <span className={s.on_time_rate >= 90 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}>
-                                {num(s.on_time_rate)}%
-                                <span className="text-[10px] text-muted-foreground ml-1">({s.on_time_samples})</span>
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-right text-foreground font-mono">{s.total_grns}</td>
-                          <td className="px-4 py-3 text-right text-emerald-600 dark:text-emerald-300 font-mono">{num(s.total_accepted)}</td>
-                          <td className="px-4 py-3 text-right text-rose-600 dark:text-rose-300 font-mono">{num(s.total_rejected)}</td>
-                          <td className="px-4 py-3 text-center">
-                            <button
-                              onClick={() => openDetail(s)}
-                              className={`inline-flex items-center gap-0.5 text-xs ${s.supplier_id ? 'text-[hsl(var(--primary))] hover:brightness-110' : 'text-muted-foreground/60 cursor-not-allowed'}`}
-                              data-testid={`scorecard-detail-${s.supplier_code || s.supplier_name}`}
-                            >
-                              Detail <ChevronRight className="w-3 h-3" />
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-4" />
-              </>
-            )}
-          </GlassCard>
-        </TabsContent>
-
-        {/* ── AQL TAB ── */}
-        <TabsContent value="aql">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            {/* Input */}
-            <GlassCard className="p-5 lg:col-span-1">
-              <h3 className="text-base font-semibold text-foreground mb-1 flex items-center gap-2">
-                <Calculator className="w-4 h-4 text-[hsl(var(--primary))]" />
-                Kalkulator Sampling AQL
-              </h3>
-              <p className="text-xs text-muted-foreground mb-4">
-                Hitung ukuran sample dan batas terima/tolak berdasarkan{' '}
-                <strong>ANSI/ASQ Z1.4 General Inspection Level II</strong>.
-              </p>
-
-              <div className="space-y-3">
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Ukuran Lot (Total Qty Diterima)</label>
-                  <GlassInput
-                    type="number" min="1"
-                    value={aqlLot}
-                    onChange={e => setAqlLot(e.target.value)}
-                    placeholder="Contoh: 500"
-                    data-testid="aql-lot-input"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">AQL (Batas Mutu yang Diterima %)</label>
-                  <Select value={String(aqlValue)} onValueChange={v => setAqlValue(parseFloat(v))}>
-                    <SelectTrigger data-testid="aql-value-select">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="0.65">0.65% — Kritis</SelectItem>
-                      <SelectItem value="1.0">1.0% — Mayor</SelectItem>
-                      <SelectItem value="2.5">2.5% — Standar (disarankan)</SelectItem>
-                      <SelectItem value="4.0">4.0% — Minor</SelectItem>
-                      <SelectItem value="6.5">6.5% — Kosmetik</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button
-                  onClick={handleAqlCalc}
-                  disabled={aqlLoading || !aqlLot || parseInt(aqlLot, 10) <= 0}
-                  className="w-full gap-2"
-                  data-testid="aql-calc-btn"
-                >
-                  {aqlLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Calculator className="w-4 h-4" />}
-                  Hitung Rencana Sample
-                </Button>
-              </div>
-            </GlassCard>
-
-            {/* Result */}
-            <GlassCard className="p-5 lg:col-span-2">
-              <h3 className="text-base font-semibold text-foreground mb-4 flex items-center gap-2">
-                <Target className="w-4 h-4 text-[hsl(var(--primary))]" />
-                Hasil Rencana Sample
-              </h3>
-              {aqlResult ? (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div className="p-3 rounded-lg bg-[var(--glass-bg)] border border-[var(--glass-border)] text-center">
-                      <div className="text-[10px] text-muted-foreground uppercase">Ukuran Lot</div>
-                      <div className="text-2xl font-bold text-foreground mt-1">{Number(aqlResult.lot_size).toLocaleString('id-ID')}</div>
-                    </div>
-                    <div className="p-3 rounded-lg bg-[hsl(var(--primary)/0.10)] border border-[hsl(var(--primary)/0.30)] text-center">
-                      <div className="text-[10px] text-muted-foreground uppercase">Ukuran Sample</div>
-                      <div className="text-2xl font-bold text-[hsl(var(--primary))] mt-1">{aqlResult.sample_size}</div>
-                      <div className="text-[9px] text-muted-foreground mt-0.5">pcs untuk diperiksa</div>
-                    </div>
-                    <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-400/30 text-center">
-                      <div className="text-[10px] text-muted-foreground uppercase flex items-center justify-center gap-0.5">
-                        <CheckCircle2 className="w-2.5 h-2.5" /> Terima
-                      </div>
-                      <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">≤ {aqlResult.accept_limit}</div>
-                      <div className="text-[9px] text-muted-foreground mt-0.5">cacat → TERIMA</div>
-                    </div>
-                    <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-400/30 text-center">
-                      <div className="text-[10px] text-muted-foreground uppercase flex items-center justify-center gap-0.5">
-                        <XCircle className="w-2.5 h-2.5" /> Tolak
-                      </div>
-                      <div className="text-2xl font-bold text-rose-600 dark:text-rose-400 mt-1">≥ {aqlResult.reject_limit}</div>
-                      <div className="text-[9px] text-muted-foreground mt-0.5">cacat → TOLAK</div>
-                    </div>
-                  </div>
-
-                  <GlassPanel className="p-3 text-xs space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Kode Huruf:</span>
-                      <span className="font-mono font-bold text-foreground">{aqlResult.code_letter}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Level AQL:</span>
-                      <span className="font-bold text-foreground">{aqlResult.aql}%</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Level Inspeksi:</span>
-                      <span className="text-foreground">{aqlResult.inspection_level}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Standar:</span>
-                      <span className="text-foreground">{aqlResult.standard}</span>
-                    </div>
-                  </GlassPanel>
-
-                  <div className="text-xs text-muted-foreground p-3 rounded-lg bg-blue-500/5 border border-blue-400/20 flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-                    <div>
-                      <strong className="text-foreground">Cara pakai:</strong> Ambil acak{' '}
-                      <strong className="text-[hsl(var(--primary))]">{aqlResult.sample_size} pcs</strong> dari lot{' '}
-                      {Number(aqlResult.lot_size).toLocaleString('id-ID')} pcs, lalu periksa cacatnya. Bila ditemukan{' '}
-                      <strong className="text-emerald-600 dark:text-emerald-300">≤ {aqlResult.accept_limit}</strong> cacat → terima
-                      seluruh lot. Bila <strong className="text-rose-600 dark:text-rose-300">≥ {aqlResult.reject_limit}</strong>{' '}
-                      cacat → tolak seluruh lot.
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-center py-12">
-                  <Calculator className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
-                  <p className="text-sm text-muted-foreground">
-                    Masukkan ukuran lot lalu klik <strong>Hitung Rencana Sample</strong>.
-                  </p>
-                </div>
-              )}
-            </GlassCard>
+      <GlassCard className="p-0 overflow-hidden">
+        {loading ? (
+          <div className="space-y-2 p-4">
+            {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10" />)}
           </div>
-        </TabsContent>
-      </Tabs>
+        ) : (
+          <TabelData kolom={kolom} baris={paged} kunci={(s) => s.supplier_id || `unlinked-${s.supplier_name}`}
+            onKlikBaris={openDetail} testId="scorecard-table"
+            kosong={
+              <EmptyState
+                title={scorecards.length === 0 ? `Belum ada inspeksi penerimaan dalam ${periodeLabel}` : 'Tidak ada pemasok yang cocok'}
+                description={scorecards.length === 0
+                  ? 'Nilai muncul otomatis setelah barang diterima dan diinspeksi di Portal Gudang › Penerimaan Barang.'
+                  : 'Ubah kata pencarian.'} />
+            } />
+        )}
+      </GlassCard>
 
-      {/* Detail Modal */}
+      {/* Rincian satu pemasok */}
       {detailSupplier && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end md:items-center justify-center p-0 md:p-4"
-             onClick={() => setDetailSupplier(null)}>
-          <div
-            className="bg-[var(--card-surface)] border border-[var(--glass-border)] rounded-t-2xl md:rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
-            onClick={e => e.stopPropagation()}
-            data-testid="scorecard-detail-modal"
-          >
-            <div className="px-5 py-4 border-b border-[var(--glass-border)] flex items-start gap-3">
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-muted-foreground mb-1">Detail Penilaian Supplier (180 hari)</div>
-                <div className="text-lg font-bold text-foreground flex items-center gap-2 min-w-0">
-                  <Building2 className="w-5 h-5 text-[hsl(var(--primary))] shrink-0" />
-                  <span className="truncate">{detailSupplier.supplier_name}</span>
-                  {detailSupplier.supplier_code && (
-                    <span className="text-xs font-mono text-muted-foreground shrink-0">{detailSupplier.supplier_code}</span>
-                  )}
-                </div>
-              </div>
-              <button onClick={() => setDetailSupplier(null)} className="text-muted-foreground hover:text-foreground p-1"
-                      data-testid="scorecard-detail-close">
-                <XCircle className="w-5 h-5" />
-              </button>
-            </div>
+        <DetailPopup open onClose={() => setDetailSupplier(null)} testId="scorecard-detail-modal"
+          judul={detailSupplier.supplier_name}
+          keterangan={`Penilaian 180 hari terakhir${detailSupplier.supplier_code ? ` · ${detailSupplier.supplier_code}` : ''}`}
+          status={sc && <GradeBadge grade={sc.quality_grade} />}>
+          {detailLoading && (
+            <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-8" />)}</div>
+          )}
+          {!detailLoading && sc && (
+            <>
+              <dl className="divide-y divide-[var(--glass-border)]">
+                <BarisDetail label="Tingkat terima">
+                  <span className={`font-semibold tabular-nums ${nadaTerima(sc.accept_rate)}`}>{num(sc.accept_rate)}%</span>
+                </BarisDetail>
+                <BarisDetail label="Tingkat cacat">
+                  <span className={`tabular-nums ${nadaCacat(sc.defect_rate)}`}>{num(sc.defect_rate)}%</span>
+                </BarisDetail>
+                <BarisDetail label="Inspeksi">{sc.total_grns} inspeksi · qty diperiksa {num(sc.total_received)}</BarisDetail>
+                <BarisDetail label="Tepat waktu">
+                  {sc.on_time_rate == null ? '— (belum ada penerimaan yang bisa dibandingkan)'
+                    : `${num(sc.on_time_rate)}% dari ${sc.on_time_samples} penerimaan`}
+                </BarisDetail>
+              </dl>
 
-            <div className="flex-1 overflow-y-auto p-5 space-y-5">
-              {detailLoading && (
-                <div className="flex items-center justify-center h-32">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--primary))]" />
-                </div>
-              )}
-              {!detailLoading && detailData?.scorecard && (
-                <>
-                  {/* Summary cards */}
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                    <GlassPanel className="p-3 text-center">
-                      <div className="text-[10px] text-muted-foreground uppercase">Grade</div>
-                      <div className={`text-xl font-bold ${(GRADE_STYLE[detailData.scorecard.quality_grade] || GRADE_STYLE['-']).text}`}>
-                        {detailData.scorecard.quality_grade}
-                      </div>
-                    </GlassPanel>
-                    <GlassPanel className="p-3 text-center">
-                      <div className="text-[10px] text-muted-foreground uppercase">Tingkat Terima</div>
-                      <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400">{num(detailData.scorecard.accept_rate)}%</div>
-                    </GlassPanel>
-                    <GlassPanel className="p-3 text-center">
-                      <div className="text-[10px] text-muted-foreground uppercase">Tingkat Cacat</div>
-                      <div className="text-xl font-bold text-rose-600 dark:text-rose-400">{num(detailData.scorecard.defect_rate)}%</div>
-                    </GlassPanel>
-                    <GlassPanel className="p-3 text-center">
-                      <div className="text-[10px] text-muted-foreground uppercase">Inspeksi</div>
-                      <div className="text-xl font-bold text-foreground">{detailData.scorecard.total_grns}</div>
-                    </GlassPanel>
-                    <GlassPanel className="p-3 text-center">
-                      <div className="text-[10px] text-muted-foreground uppercase flex items-center justify-center gap-0.5">
-                        <Clock className="w-2.5 h-2.5" /> Tepat Waktu
-                      </div>
-                      <div className="text-xl font-bold text-foreground">
-                        {detailData.scorecard.on_time_rate == null ? '—' : `${num(detailData.scorecard.on_time_rate)}%`}
-                      </div>
-                    </GlassPanel>
+              {(d.name_variants_merged || []).length > 1 && (
+                <Seksi judul="Ejaan nama yang disatukan menjadi satu penilaian">
+                  <div className="flex flex-wrap gap-1.5" data-testid="scorecard-name-variants">
+                    {d.name_variants_merged.map((n) => <StatusBadge key={n} status="nama" tone="muted" label={n} />)}
                   </div>
-
-                  {/* Nama yang disatukan */}
-                  {(detailData.name_variants_merged || []).length > 1 && (
-                    <div className="p-3 rounded-lg bg-[hsl(var(--primary)/0.06)] border border-[hsl(var(--primary)/0.20)] text-xs"
-                         data-testid="scorecard-name-variants">
-                      <div className="font-medium text-foreground mb-1">Ejaan nama yang disatukan menjadi satu penilaian:</div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {detailData.name_variants_merged.map(n => (
-                          <span key={n} className="px-2 py-0.5 rounded-full bg-[var(--glass-bg)] border border-[var(--glass-border)] text-muted-foreground">
-                            {n}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* PO per status */}
-                  {Object.keys(detailData.po_by_status || {}).length > 0 && (
-                    <div>
-                      <h4 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5">
-                        <FileText className="w-4 h-4 text-[hsl(var(--primary))]" /> Purchase Order per Status
-                      </h4>
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                        {Object.entries(detailData.po_by_status).map(([st, v]) => (
-                          <div key={st} className="px-3 py-2 rounded-md bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-                            <div className="text-[10px] text-muted-foreground">{PO_STATUS_LABEL[st] || st}</div>
-                            <div className="text-sm font-semibold text-foreground">{v.count} PO</div>
-                            <div className="text-[11px] text-muted-foreground tabular-nums">{rp(v.value)}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Monthly trend */}
-                  {(detailData.monthly_trend || []).length > 0 && (
-                    <div>
-                      <h4 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5">
-                        <Activity className="w-4 h-4 text-[hsl(var(--primary))]" /> Tren Bulanan
-                      </h4>
-                      <div className="space-y-1.5">
-                        {detailData.monthly_trend.map(m => (
-                          <div key={m.month} className="flex items-center gap-3 text-xs px-3 py-2 rounded-md bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-                            <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                            <div className="font-mono text-foreground w-16">{m.month}</div>
-                            <div className="flex-1 flex items-center gap-2">
-                              <div className="flex-1 h-2 rounded-full bg-[hsl(var(--muted)/0.7)] overflow-hidden">
-                                <div
-                                  className={`h-full transition-all ${m.accept_rate >= 95 ? 'bg-emerald-500' : m.accept_rate >= 85 ? 'bg-amber-500' : 'bg-rose-500'}`}
-                                  style={{ width: `${Math.min(100, m.accept_rate)}%` }}
-                                />
-                              </div>
-                              <div className="w-14 text-right font-bold text-foreground">{num(m.accept_rate)}%</div>
-                            </div>
-                            <div className="text-muted-foreground w-20 text-right">{m.grns} inspeksi</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Top reject reasons */}
-                  {(detailData.top_reject_reasons || []).length > 0 && (
-                    <div>
-                      <h4 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5">
-                        <ShieldAlert className="w-4 h-4 text-amber-500" /> Alasan Penolakan Terbanyak
-                      </h4>
-                      <div className="space-y-1.5">
-                        {detailData.top_reject_reasons.map(r => (
-                          <div key={r.code} className="flex items-center gap-3 text-xs px-3 py-2 rounded-md bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-                            <Badge variant="outline" className={`text-[10px] ${SEVERITY_BADGE[r.severity] || ''}`}>
-                              {(r.severity || '').toUpperCase()}
-                            </Badge>
-                            <div className="flex-1 text-foreground">{r.label}</div>
-                            <div className="font-mono font-bold text-rose-600 dark:text-rose-300">{num(r.total_qty)}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Recent inspections */}
-                  {(detailData.recent_inspections || []).length > 0 && (
-                    <div>
-                      <h4 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5">
-                        <Package className="w-4 h-4 text-[hsl(var(--primary))]" /> Inspeksi Terbaru
-                      </h4>
-                      <div className="space-y-1">
-                        {detailData.recent_inspections.slice(0, 8).map(i => (
-                          <div key={i.id} className="flex items-center gap-2 text-xs px-3 py-2 rounded-md bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-                            <div className="font-mono text-[hsl(var(--primary))]">{i.inspection_no || '—'}</div>
-                            <div className="text-muted-foreground">·</div>
-                            <div className="flex-1 text-foreground truncate">
-                              {i.receipt_number || i.supplier_name_recorded || '—'}
-                              {i.legacy_unlinked && (
-                                <span className="ml-1.5 text-[10px] text-amber-600 dark:text-amber-400">(riwayat lama)</span>
-                              )}
-                            </div>
-                            <Badge variant="outline" className={`text-[10px] ${
-                              i.overall_result === 'accepted' ? 'text-emerald-600 dark:text-emerald-300 border-emerald-300/30' :
-                              i.overall_result === 'partial'  ? 'text-amber-600 dark:text-amber-300 border-amber-300/30' :
-                              'text-rose-600 dark:text-rose-300 border-rose-300/30'
-                            }`}>
-                              {(i.overall_result || '-').toUpperCase()}
-                            </Badge>
-                            <span className="font-mono text-muted-foreground">{num(i.defect_rate)}%</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
+                </Seksi>
               )}
-              {!detailLoading && detailData && !detailData.scorecard && (
-                <div className="text-center py-12">
-                  <BarChart3 className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
-                  <p className="text-sm text-muted-foreground">Tidak ada data inspeksi untuk supplier ini.</p>
-                </div>
+
+              {poStatus.length > 0 && (
+                <Seksi judul="Purchase order per status" alat={
+                  <TombolUnduh namaBerkas={`${namaBerkasDetail}-po`} namaLembar="PO per status" baris={poStatus}
+                    kolom={[
+                      { label: 'Status', nilai: (r) => PO_STATUS_LABEL[r.st] || r.st },
+                      { label: 'Jumlah PO', nilai: (r) => r.count },
+                      { label: 'Nilai (Rp)', nilai: (r) => Number(r.value || 0) },
+                    ]} />
+                }>
+                  <TabelData baris={poStatus} kunci={(r) => r.st} testId="scorecard-po-status"
+                    kolom={[
+                      { kunci: 'st', label: 'Status', hp: 'judul', isi: (r) => PO_STATUS_LABEL[r.st] || r.st },
+                      { kunci: 'n', label: 'Jumlah PO', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.count}</span> },
+                      { kunci: 'v', label: 'Nilai', rata: 'kanan', isi: (r) => <span className="tabular-nums">{rp(r.value)}</span> },
+                    ]} />
+                </Seksi>
               )}
-            </div>
-          </div>
-        </div>
+
+              {tren.length > 0 && (
+                <Seksi judul="Tren bulanan" alat={
+                  <TombolUnduh namaBerkas={`${namaBerkasDetail}-tren`} namaLembar="Tren bulanan" baris={tren}
+                    kolom={[
+                      { label: 'Bulan', nilai: (m) => labelBulan(m.month) },
+                      { label: 'Tingkat terima (%)', nilai: (m) => Number(m.accept_rate || 0) },
+                      { label: 'Inspeksi', nilai: (m) => m.grns },
+                    ]} />
+                }>
+                  <TabelData baris={tren} kunci={(m) => m.month} testId="scorecard-trend"
+                    kolom={[
+                      { kunci: 'bulan', label: 'Bulan', hp: 'judul', isi: (m) => labelBulan(m.month) },
+                      { kunci: 'terima', label: 'Tingkat terima', rata: 'kanan', isi: (m) => (
+                        <span className={`tabular-nums font-semibold ${nadaTerima(m.accept_rate)}`}>{num(m.accept_rate)}%</span>) },
+                      { kunci: 'n', label: 'Inspeksi', rata: 'kanan', isi: (m) => <span className="tabular-nums">{m.grns}</span> },
+                    ]} />
+                </Seksi>
+              )}
+
+              {alasan.length > 0 && (
+                <Seksi judul="Alasan penolakan terbanyak" alat={
+                  <TombolUnduh namaBerkas={`${namaBerkasDetail}-alasan-tolak`} namaLembar="Alasan tolak" baris={alasan}
+                    kolom={[
+                      { label: 'Alasan', nilai: (r) => r.label },
+                      { label: 'Tingkat', nilai: (r) => (SEVERITY[r.severity] || {}).label || r.severity || '' },
+                      { label: 'Qty ditolak', nilai: (r) => Number(r.total_qty || 0) },
+                    ]} />
+                }>
+                  <TabelData baris={alasan} kunci={(r) => r.code} testId="scorecard-reject-reasons"
+                    kolom={[
+                      { kunci: 'alasan', label: 'Alasan', hp: 'judul', isi: (r) => r.label },
+                      { kunci: 'tingkat', label: 'Tingkat', isi: (r) => {
+                        const s = SEVERITY[r.severity];
+                        return s ? <StatusBadge status={r.severity} tone={s.tone} label={s.label} /> : '—';
+                      } },
+                      { kunci: 'qty', label: 'Qty ditolak', rata: 'kanan', isi: (r) => <span className="tabular-nums">{num(r.total_qty)}</span> },
+                    ]} />
+                </Seksi>
+              )}
+
+              {inspeksi.length > 0 && (
+                <Seksi judul="Inspeksi terbaru" alat={
+                  <TombolUnduh namaBerkas={`${namaBerkasDetail}-inspeksi`} namaLembar="Inspeksi" baris={inspeksi}
+                    kolom={[
+                      { label: 'No. inspeksi', nilai: (i) => i.inspection_no || '' },
+                      { label: 'Penerimaan', nilai: (i) => i.receipt_number || i.supplier_name_recorded || '' },
+                      { label: 'Riwayat lama', nilai: (i) => (i.legacy_unlinked ? 'Ya' : '') },
+                      { label: 'Hasil', nilai: (i) => (HASIL_INSPEKSI[i.overall_result] || {}).label || i.overall_result || '' },
+                      { label: 'Tingkat cacat (%)', nilai: (i) => Number(i.defect_rate || 0) },
+                    ]} />
+                }>
+                  <TabelData baris={inspeksi} testId="scorecard-recent-inspections"
+                    kolom={[
+                      { kunci: 'no', label: 'No. inspeksi', hp: 'judul', isi: (i) => <span className="font-mono text-xs">{i.inspection_no || '—'}</span> },
+                      { kunci: 'gr', label: 'Penerimaan', hp: 'keterangan', isi: (i) => (
+                        <span>{i.receipt_number || i.supplier_name_recorded || '—'}
+                          {i.legacy_unlinked && <span className="ml-1.5 text-xs text-[hsl(var(--warning-text))]">(riwayat lama)</span>}
+                        </span>) },
+                      { kunci: 'hasil', label: 'Hasil', isi: (i) => {
+                        const r = HASIL_INSPEKSI[i.overall_result];
+                        return r ? <StatusBadge status={i.overall_result} tone={r.tone} label={r.label} /> : '—';
+                      } },
+                      { kunci: 'cacat', label: 'Cacat', rata: 'kanan', isi: (i) => <span className="tabular-nums">{num(i.defect_rate)}%</span> },
+                    ]} />
+                </Seksi>
+              )}
+            </>
+          )}
+          {!detailLoading && d && !sc && (
+            <EmptyState title="Belum ada data inspeksi untuk pemasok ini" description="Dalam 180 hari terakhir." />
+          )}
+        </DetailPopup>
       )}
-    </div>
+
+      {/* Kalkulator sampling AQL (dulu tab sendiri) */}
+      <FormPopup open={aqlOpen} onClose={() => setAqlOpen(false)} testId="aql-popup"
+        judul="Kalkulator sampling AQL"
+        keterangan="Ukuran sample dan batas terima/tolak menurut ANSI/ASQ Z1.4, inspeksi umum level II."
+        labelSimpan="Hitung rencana sample" onSimpan={handleAqlCalc} menyimpan={aqlLoading}
+        bisaSimpan={!!aqlLot && parseInt(aqlLot, 10) > 0} galat={aqlError}>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Ukuran lot (total qty diterima)" htmlFor="aql-lot" wajib>
+            <Input id="aql-lot" type="number" min="1" inputMode="numeric" value={aqlLot}
+              onChange={(e) => setAqlLot(e.target.value)} placeholder="Contoh: 500" data-testid="aql-lot-input" />
+          </Isian>
+          <Isian label="Batas mutu (AQL)" htmlFor="aql-value">
+            <SmartNativeSelect id="aql-value" value={aqlValue} onChange={(e) => setAqlValue(e.target.value)}
+              data-testid="aql-value-select">
+              {AQL_PILIHAN.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+        </div>
+        {aqlResult ? (
+          <div className="space-y-3" data-testid="aql-result">
+            <div className="grid grid-cols-2 gap-3">
+              <StatTile label="Ukuran sample" value={aqlResult.sample_size} accent="primary"
+                sub={`pcs diperiksa dari lot ${Number(aqlResult.lot_size).toLocaleString('id-ID')}`} />
+              <StatTile label="Kode huruf" value={aqlResult.code_letter} sub={`AQL ${num(aqlResult.aql)}%`} />
+              <StatTile label="Terima lot bila cacat" value={`≤ ${aqlResult.accept_limit}`} accent="success" />
+              <StatTile label="Tolak lot bila cacat" value={`≥ ${aqlResult.reject_limit}`} accent="danger" />
+            </div>
+            <dl className="divide-y divide-[var(--glass-border)]">
+              <BarisDetail label="Level inspeksi">{aqlResult.inspection_level}</BarisDetail>
+              <BarisDetail label="Standar">{aqlResult.standard}</BarisDetail>
+            </dl>
+            <Notice tone="info" title="Cara pakai">
+              Ambil acak {aqlResult.sample_size} pcs dari lot {Number(aqlResult.lot_size).toLocaleString('id-ID')} pcs,
+              lalu periksa cacatnya. Bila ditemukan ≤ {aqlResult.accept_limit} cacat, terima seluruh lot. Bila
+              ≥ {aqlResult.reject_limit} cacat, tolak seluruh lot.
+            </Notice>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">Isi ukuran lot, lalu tekan Hitung rencana sample.</p>
+        )}
+      </FormPopup>
+    </PageLayout>
   );
 }
 
