@@ -56,7 +56,7 @@ export default function PortalSayaDashboard({ user, headers, onNavigate }) {
   const kpi = data.kpi_score;
   const todos = data.todos || {};
   const reminders = data.upcoming_reminders || [];
-  const belumTerhubung = 'Akun belum terhubung ke data karyawan';
+  const belumTerhubung = 'Belum terhubung ke data karyawan';
 
   return (
     <PageLayout testId="portal-saya-dashboard" title="Dashboard"

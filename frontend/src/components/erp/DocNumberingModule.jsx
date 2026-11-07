@@ -6,7 +6,8 @@
  *
  * Standar UI/UX v2 (8 Nov 2026): 49 jenis dokumen = satu tabel (dulu 49 kartu berisi form) dengan penyaring
  * kelompok + unduh Excel/CSV; mengubah format/mode = FormPopup dengan pratinjau; setel nomor urut = FormPopup
- * pendek; kode internal jenis dokumen (`wh_fabric_rolls.roll_no`) tidak ditampilkan. Jalur simpan tidak berubah.
+ * pendek (tombolnya pindah ke popup Atur); kode internal jenis dokumen (`wh_fabric_rolls.roll_no`) tidak ditampilkan.
+ * Jalur simpan tidak berubah.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ListOrdered, Pencil, RefreshCw, RotateCcw, Search } from 'lucide-react';
@@ -167,15 +168,7 @@ export default function DocNumberingModule({ token }) {
     { kunci: 'mode', label: 'Mode', isi: (i) => <StatusBadge status={i.mode} label={labelMode(i).label} tone={labelMode(i).tone} /> },
     { kunci: 'terakhir', label: 'Nomor terakhir', rata: 'kanan', isi: (i) => <span className="tabular-nums">{i.nomor_terakhir ?? '—'}</span> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (i) => (
-      <div className="flex justify-end gap-1">
-        <Button size="sm" variant="outline" onClick={() => setEditKey(i.key)} data-testid={`docnum-edit-${i.key}`}><Pencil />Atur</Button>
-        {i.sequenced !== false && (
-          <Button size="icon-sm" variant="ghost" onClick={() => bukaSetelUrut(i)} title="Setel nomor urut" aria-label="Setel nomor urut"
-            data-testid={`docnum-counter-${i.key}`}>
-            <ListOrdered />
-          </Button>
-        )}
-      </div>) },
+      <Button size="sm" variant="outline" onClick={() => setEditKey(i.key)} data-testid={`docnum-edit-${i.key}`}><Pencil />Atur</Button>) },
   ];
 
   return (
@@ -224,12 +217,19 @@ export default function DocNumberingModule({ token }) {
         keterangan={item ? `${item.group} · perubahan hanya berlaku untuk dokumen baru.` : undefined}
         onSimpan={() => item && save(item)} menyimpan={!!item && busy === item.key}
         bisaSimpan={!!changed && !(pv && !pv.ok)} labelSimpan="Simpan format"
-        aksiKiri={item?.is_custom && (
-          <Button type="button" variant="outline" size="sm" onClick={() => reset(item)} disabled={busy === item.key}
-            data-testid={`docnum-reset-${item.key}`}>
-            <RotateCcw />Kembalikan bawaan
-          </Button>
-        )}>
+        aksiKiri={item && (<>
+          {item.sequenced !== false && (
+            <Button type="button" variant="outline" size="sm" onClick={() => bukaSetelUrut(item)} data-testid={`docnum-counter-${item.key}`}>
+              <ListOrdered />Setel nomor urut
+            </Button>
+          )}
+          {item.is_custom && (
+            <Button type="button" variant="outline" size="sm" onClick={() => reset(item)} disabled={busy === item.key}
+              data-testid={`docnum-reset-${item.key}`}>
+              <RotateCcw />Kembalikan bawaan
+            </Button>
+          )}
+        </>)}>
         {item && (<>
           <Isian label="Format" htmlFor="docnum-format" petunjuk={item.default_format ? `Bawaan: ${item.default_format}` : undefined}>
             <Input id="docnum-format" value={draft !== undefined ? draft : item.format}
