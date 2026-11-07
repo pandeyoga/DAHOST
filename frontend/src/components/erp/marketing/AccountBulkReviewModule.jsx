@@ -6,24 +6,25 @@
  * satu-satu lewat dialog = 9 kali buka-tutup. Layar ini menaruh semuanya dalam
  * SATU tabel yang bisa diisi langsung, lalu disimpan sekali.
  *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, penyaring pil, tabel isian standar, unduh Excel/CSV.
+ *
  * Aturan: tidak ada data yang dikarang. Kolom yang belum diisi tetap kosong dan
  * tandanya "perlu ditinjau" hanya hilang kalau owner sendiri yang mencentangnya.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import {
-  ClipboardCheck, RefreshCw, Save, Loader2, UserCheck, Wallet, AlertTriangle,
-  CheckCircle2, Store,
-} from 'lucide-react';
-import { GlassCard, GlassPanel, GlassInput, GlassTable } from '@/components/ui/glass';
+import { RefreshCw, Save, Loader2, CheckCircle2, Store } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { PageHeader, StatTile, EmptyState } from '../moduleAtoms';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import PageLayout from '../layout/PageLayout';
+import { StatTile, EmptyState, StatusBadge } from '../moduleAtoms';
 import { toast } from 'sonner';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
@@ -124,7 +125,7 @@ export default function AccountBulkReviewModule({ token }) {
       });
       return next;
     });
-    toast.info('Semua baris ditandai sudah ditinjau — tekan "Simpan Semua" untuk menyimpan');
+    toast.info('Semua baris ditandai sudah ditinjau — tekan "Simpan semua" untuk menyimpan');
   };
 
   const stats = useMemo(() => ({
@@ -134,171 +135,120 @@ export default function AccountBulkReviewModule({ token }) {
     noUser: accounts.filter(a => !a.username).length,
   }), [accounts]);
 
+  const PLATFORM = { shopee: 'Shopee', tiktok: 'TikTok Shop', tiktokshop: 'TikTok Shop', tokopedia: 'Tokopedia' };
+  const labelPlatform = (p) => PLATFORM[String(p || '').toLowerCase()] || p || '—';
+  const sudahDitinjau = (acc) => val(acc, 'needs_owner_review') === false
+    || (!('needs_owner_review' in (draft[acc.id] || {})) && !acc.needs_owner_review);
+
+  const kolom = [
+    { kunci: 'kode', label: 'Toko', hp: 'judul', isi: (acc) => (
+      <div data-testid={`bulk-row-${acc.account_code}`}>
+        <p className="font-medium text-foreground">{acc.account_code}</p>
+        <p className="text-xs text-muted-foreground">{labelPlatform(acc.platform)}</p>
+      </div>) },
+    { kunci: 'nama', label: 'Nama toko (final)', isi: (acc) => (
+      <Input className="min-w-[12rem]" value={val(acc, 'account_name')} aria-label={`Nama toko ${acc.account_code}`}
+        onChange={e => setVal(acc, 'account_name', e.target.value)} data-testid={`bulk-name-${acc.account_code}`} />) },
+    { kunci: 'username', label: 'Username platform', isi: (acc) => (
+      <Input className="min-w-[10rem]" placeholder="Username di platform" value={val(acc, 'username')}
+        aria-label={`Username ${acc.account_code}`}
+        onChange={e => setVal(acc, 'username', e.target.value)} data-testid={`bulk-username-${acc.account_code}`} />) },
+    { kunci: 'pic', label: 'PIC', isi: (acc) => (
+      <div className="min-w-[11rem]">
+        <Select value={val(acc, 'pic_user_id') || 'none'} onValueChange={v => setVal(acc, 'pic_user_id', v)}>
+          <SelectTrigger data-testid={`bulk-pic-${acc.account_code}`}><SelectValue placeholder="Pilih PIC…" /></SelectTrigger>
+          <SelectContent className="max-h-72">
+            <SelectItem value="none">Tidak ada PIC</SelectItem>
+            {users.map(u => (
+              <SelectItem key={u.id} value={u.id}>
+                {u.name || u.email}
+                <span className="text-muted-foreground text-xs ml-1">({u.role})</span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {acc.pic_user_name && !(draft[acc.id] || {}).pic_user_id && (
+          <p className="mt-1 text-xs text-muted-foreground">Sekarang: {acc.pic_user_name}</p>
+        )}
+      </div>) },
+    { kunci: 'cash', label: 'Rekening pencairan', isi: (acc) => (
+      <div data-testid={`bulk-cash-${acc.account_code}`}>
+        <p className="text-sm">{acc.coa_cash_code || '—'}</p>
+        <p className="text-xs text-muted-foreground">{coaName[acc.coa_cash_code] || 'Diatur di Portal Keuangan'}</p>
+      </div>) },
+    { kunci: 'rev', label: 'Akun pendapatan', isi: (acc) => (
+      <div>
+        <p className="text-sm">{acc.coa_revenue_code || '—'}</p>
+        <p className="max-w-[12rem] truncate text-xs text-muted-foreground" title={coaName[acc.coa_revenue_code] || ''}>
+          {coaName[acc.coa_revenue_code] || ''}
+        </p>
+      </div>) },
+    { kunci: 'tinjau', label: 'Sudah ditinjau', rata: 'tengah', isi: (acc) => (
+      <Checkbox checked={sudahDitinjau(acc)} onCheckedChange={v => setVal(acc, 'needs_owner_review', !v)}
+        aria-label={`Sudah ditinjau ${acc.account_code}`} data-testid={`bulk-reviewed-${acc.account_code}`} />) },
+  ];
+
   return (
-    <div className="space-y-5" data-testid="account-bulk-review-module">
-      <PageHeader
-        icon={ClipboardCheck}
-        eyebrow="Portal Marketing · Master Toko"
-        title="Koreksi Data Toko (Massal)"
-        subtitle="Isi nama final, username platform, PIC, dan rekening pencairan 9 toko dalam satu tabel — lalu tandai sudah ditinjau"
-        actions={
-          <div className="flex items-center gap-2">
-            <Button onClick={fetchAll} variant="outline" size="sm" data-testid="bulk-refresh-btn">
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat ulang
-            </Button>
-            <Button onClick={markAllReviewed} variant="outline" size="sm" data-testid="bulk-mark-all-btn">
-              <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Tandai Semua Ditinjau
-            </Button>
-            <Button onClick={saveAll} size="sm" disabled={saving || !dirtyIds.length}
-              data-testid="bulk-save-btn">
-              {saving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                : <Save className="w-3.5 h-3.5 mr-1.5" />}
-              Simpan Semua{dirtyIds.length ? ` (${dirtyIds.length})` : ''}
-            </Button>
-          </div>
-        }
-      />
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatTile label="Total Toko" value={stats.total} testId="bulk-stat-total" />
-        <StatTile label="Perlu Ditinjau" value={stats.review}
-          accent={stats.review ? 'warning' : 'success'} testId="bulk-stat-review" />
-        <StatTile label="Tanpa PIC" value={stats.noPic}
-          accent={stats.noPic ? 'warning' : 'success'} testId="bulk-stat-nopic" />
-        <StatTile label="Tanpa Username" value={stats.noUser}
-          accent={stats.noUser ? 'warning' : 'success'} testId="bulk-stat-nouser" />
-      </div>
-
-      <GlassPanel className="p-4">
-        <div className="flex flex-wrap items-center gap-3 text-sm">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <Checkbox checked={onlyReview} onCheckedChange={v => setOnlyReview(!!v)}
-              data-testid="bulk-filter-review" />
-            <span>Tampilkan hanya toko yang <b>perlu ditinjau</b></span>
-          </label>
-          <span className="text-muted-foreground">
-            Menampilkan <b className="text-foreground">{rows.length}</b> dari {accounts.length} toko
-          </span>
-          {dirtyIds.length > 0 && (
-            <Badge variant="outline" className="bg-amber-500/10 text-amber-500 border-amber-500/30">
-              <AlertTriangle size={11} className="mr-1" /> {dirtyIds.length} baris belum disimpan
-            </Badge>
-          )}
+    <PageLayout testId="account-bulk-review-module" title="Koreksi data toko"
+      subtitle="Isi nama final, username, PIC, dan rekening pencairan semua toko dalam satu tabel, lalu tandai sudah ditinjau."
+      actions={<>
+        <Button onClick={markAllReviewed} variant="outline" data-testid="bulk-mark-all-btn">
+          <CheckCircle2 />Tandai semua ditinjau
+        </Button>
+        <Button onClick={saveAll} variant="success" disabled={saving || !dirtyIds.length} data-testid="bulk-save-btn">
+          {saving ? <Loader2 className="animate-spin" /> : <Save />}
+          Simpan semua{dirtyIds.length ? ` (${dirtyIds.length})` : ''}
+        </Button>
+      </>}
+      filters={<>
+        <FilterChips value={onlyReview ? 'tinjau' : ''} onChange={(v) => setOnlyReview(v === 'tinjau')} hideWhenEmpty={false}
+          testId="bulk-filter-review"
+          options={[
+            { key: 'tinjau', label: 'Perlu ditinjau', count: stats.review },
+            { key: '', label: 'Semua toko', count: stats.total },
+          ]} />
+        {dirtyIds.length > 0 && <StatusBadge status="draf" label={`${dirtyIds.length} baris belum disimpan`} tone="warning" />}
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="koreksi-data-toko" namaLembar="Data toko" baris={rows} testId="bulk-unduh"
+          kolom={[
+            { label: 'Kode', nilai: (a) => a.account_code }, { label: 'Platform', nilai: (a) => labelPlatform(a.platform) },
+            { label: 'Nama toko', nilai: (a) => a.account_name || '' }, { label: 'Username', nilai: (a) => a.username || '' },
+            { label: 'PIC', nilai: (a) => a.pic_user_name || '' },
+            { label: 'Rekening pencairan', nilai: (a) => a.coa_cash_code || '' },
+            { label: 'Akun pendapatan', nilai: (a) => a.coa_revenue_code || '' },
+            { label: 'Sudah ditinjau', nilai: (a) => (a.needs_owner_review ? 'Belum' : 'Sudah') },
+          ]} />
+        <Button onClick={fetchAll} variant="outline" size="icon" disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="bulk-refresh-btn">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={(
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <StatTile label="Toko" value={stats.total} testId="bulk-stat-total" sub="Semua toko yang boleh Anda lihat" />
+          <StatTile label="Perlu ditinjau" value={stats.review} accent={stats.review ? 'warning' : 'default'}
+            testId="bulk-stat-review" sub="Data seed belum dikoreksi owner" />
+          <StatTile label="Tanpa PIC" value={stats.noPic} accent={stats.noPic ? 'warning' : 'default'}
+            testId="bulk-stat-nopic" sub="Belum ada penanggung jawab" />
+          <StatTile label="Tanpa username" value={stats.noUser} accent={stats.noUser ? 'warning' : 'default'}
+            testId="bulk-stat-nouser" sub="Username platform kosong" />
         </div>
-      </GlassPanel>
-
+      )}>
       {loading ? (
         <div className="space-y-2">{[1, 2, 3, 4, 5].map(i => <Skeleton key={i} className="h-14" />)}</div>
-      ) : rows.length === 0 ? (
-        <GlassCard className="p-4">
-          <EmptyState
-            icon={Store}
-            title={stats.review === 0 ? 'Semua toko sudah ditinjau' : 'Tidak ada toko pada filter ini'}
-            description={stats.review === 0
-              ? 'Data master toko sudah dikoreksi owner. Perubahan lanjutan bisa dilakukan di Kelola Akun.'
-              : 'Hilangkan centang filter untuk melihat seluruh toko.'}
-            testId="bulk-empty"
-          />
-        </GlassCard>
       ) : (
-        <GlassTable data-testid="bulk-review-table-wrap">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm" data-testid="bulk-review-table">
-              <thead>
-                <tr className="border-b border-[var(--glass-border)] bg-muted/40">
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Kode</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Platform</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider min-w-[210px]">Nama Toko (final)</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider min-w-[170px]">Username Platform</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider min-w-[190px]">PIC</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider min-w-[230px]">Rekening Pencairan</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Akun Pendapatan</th>
-                  <th className="px-3 py-2.5 text-center text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Sudah Ditinjau</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((acc, i) => {
-                  const reviewed = val(acc, 'needs_owner_review') === false
-                    || (!('needs_owner_review' in (draft[acc.id] || {})) && !acc.needs_owner_review);
-                  return (
-                    <tr key={acc.id}
-                      className={`border-b border-[var(--glass-border)] last:border-0 ${i % 2 ? 'bg-muted/10' : ''}`}
-                      data-testid={`bulk-row-${acc.account_code}`}>
-                      <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{acc.account_code}</td>
-                      <td className="px-3 py-2 text-xs">{acc.platform}</td>
-                      <td className="px-3 py-2">
-                        <GlassInput className="h-9" value={val(acc, 'account_name')}
-                          onChange={e => setVal(acc, 'account_name', e.target.value)}
-                          data-testid={`bulk-name-${acc.account_code}`} />
-                      </td>
-                      <td className="px-3 py-2">
-                        <GlassInput className="h-9" placeholder="username di platform"
-                          value={val(acc, 'username')}
-                          onChange={e => setVal(acc, 'username', e.target.value)}
-                          data-testid={`bulk-username-${acc.account_code}`} />
-                      </td>
-                      <td className="px-3 py-2">
-                        <Select value={val(acc, 'pic_user_id') || 'none'}
-                          onValueChange={v => setVal(acc, 'pic_user_id', v)}>
-                          <SelectTrigger className="h-9" data-testid={`bulk-pic-${acc.account_code}`}>
-                            <SelectValue placeholder="Pilih PIC..." />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-72">
-                            <SelectItem value="none">— Tidak ada PIC —</SelectItem>
-                            {users.map(u => (
-                              <SelectItem key={u.id} value={u.id}>
-                                {u.name || u.email}
-                                <span className="text-muted-foreground text-xs ml-1">({u.role})</span>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        {acc.pic_user_name && !(draft[acc.id] || {}).pic_user_id && (
-                          <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
-                            <UserCheck size={10} className="text-primary" />{acc.pic_user_name}
-                          </p>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="font-mono text-xs" data-testid={`bulk-cash-${acc.account_code}`}>{acc.coa_cash_code || '—'}</div>
-                        <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
-                          <Wallet size={10} className="text-primary" />
-                          {coaName[acc.coa_cash_code] || 'diatur di Portal Keuangan'}
-                        </p>
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="font-mono text-xs">{acc.coa_revenue_code || '—'}</div>
-                        <div className="text-[10px] text-muted-foreground max-w-[170px] truncate"
-                          title={coaName[acc.coa_revenue_code] || ''}>
-                          {coaName[acc.coa_revenue_code] || ''}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <Checkbox
-                          checked={reviewed}
-                          onCheckedChange={v => setVal(acc, 'needs_owner_review', !v)}
-                          data-testid={`bulk-reviewed-${acc.account_code}`}
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </GlassTable>
+        <TabelData kolom={kolom} baris={rows} testId="bulk-review-table"
+          kosong={<EmptyState icon={Store} testId="bulk-empty"
+            title={stats.review === 0 && onlyReview ? 'Semua toko sudah ditinjau' : 'Tidak ada toko pada saringan ini'}
+            description={stats.review === 0 && onlyReview
+              ? 'Data master toko sudah dikoreksi owner. Perubahan lanjutan bisa dilakukan di Kelola Akun, atau pilih "Semua toko".'
+              : 'Pilih "Semua toko" untuk melihat seluruh toko.'} />} />
       )}
-
-      <GlassPanel className="p-4 text-xs text-muted-foreground">
-        <p className="flex items-start gap-2">
-          <AlertTriangle size={13} className="text-amber-500 mt-0.5 shrink-0" />
-          <span>
-            Nama, username, PIC, dan rekening pencairan <b>tidak diisi otomatis oleh sistem</b> —
-            hanya owner yang tahu datanya. Akun pendapatan (kolom terakhir) sudah tertaut dari
-            bagan akun; ubah lewat <b>Kelola Akun</b> bila perlu.
-          </span>
-        </p>
-      </GlassPanel>
-    </div>
+      <p className="text-sm text-muted-foreground">
+        Nama, username, PIC, dan rekening pencairan tidak diisi otomatis oleh sistem — hanya owner yang tahu datanya.
+        Akun pendapatan sudah tertaut dari bagan akun; ubah lewat Kelola Akun bila perlu.
+      </p>
+    </PageLayout>
   );
 }
