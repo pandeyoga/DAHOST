@@ -95,6 +95,13 @@ a[href*="emergent.sh"][href*="utm_source=emergent-badge"] {
     --input: 222 20% 20%;
     --ring: 222 100% 65%;
     --success: 150 74% 55%;
+    --success-strong: 150 62% 30%;   /* latar tombol Simpan/Setujui: kontras teks putih ≥ 4.5 */
+    /* warna TEKS status (lencana, pesan galat) — tema gelap: terang di atas latar gelap */
+    --success-text: 150 74% 60%;
+    --warning-text: 38 90% 64%;
+    --info-text: 195 82% 64%;
+    --danger-text: 350 85% 70%;
+    --destructive-strong: 350 70% 44%;   /* latar tombol Hapus/Tolak: kontras teks putih ≥ 4.5 */
     --warning: 38 90% 62%;
     --info: 195 82% 58%;
 
@@ -178,6 +185,13 @@ a[href*="emergent.sh"][href*="utm_source=emergent-badge"] {
     --input: 232 24% 90%;
     --ring: 258 60% 58%;
     --success: 154 52% 46%;
+    --success-strong: 154 62% 28%;   /* latar tombol Simpan/Setujui: kontras teks putih ≥ 4.5 */
+    /* warna TEKS status (lencana, pesan galat) — tema terang: gelap supaya kontras ≥ 4.5 */
+    --success-text: 154 62% 25%;
+    --warning-text: 30 85% 29%;
+    --info-text: 200 85% 29%;
+    --danger-text: 0 70% 40%;
+    --destructive-strong: 0 70% 44%;   /* latar tombol Hapus/Tolak: kontras teks putih ≥ 4.5 */
     --warning: 35 72% 55%;
     --info: 195 82% 55%;
 
@@ -270,6 +284,13 @@ a[href*="emergent.sh"][href*="utm_source=emergent-badge"] {
     --input: 220 14% 83%;
     --ring: 207 90% 42%;
     --success: 140 62% 36%;           /* #23944A */
+    --success-strong: 140 62% 28%;   /* latar tombol Simpan/Setujui: kontras teks putih ≥ 4.5 */
+    /* warna TEKS status (lencana, pesan galat) — tema klasik */
+    --success-text: 140 62% 25%;
+    --warning-text: 32 90% 29%;
+    --info-text: 207 90% 33%;
+    --danger-text: 358 70% 40%;
+    --destructive-strong: 358 70% 44%;   /* latar tombol Hapus/Tolak: kontras teks putih ≥ 4.5 */
     --warning: 38 92% 46%;            /* #E39A0C */
     --info: 207 90% 42%;
 

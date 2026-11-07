@@ -19,10 +19,11 @@
  *
  * Urutan tetap: kepala → toolbar → ringkasan → detail → isi → kaki. Jarak antarbagian 16 px.
  */
-import { Children, useContext, useEffect, useRef } from 'react';
-import { ChevronDown, ChevronRight, X } from 'lucide-react';
+import { Children, useContext } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { GlassCard } from '@/components/ui/glass';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { CompactHubContext, HubActions, PageHeader } from '../moduleAtoms';
 import { toast } from 'sonner';
@@ -108,43 +109,50 @@ export default function PageLayout({
 }
 
 /**
- * DetailPanel — detail satu baris DI HALAMAN, lebar penuh, di atas tabel (PANDUAN_UI G13).
- * Pengganti popup/Sheet untuk daftar dan detail: isi tidak terpotong, tabel bisa memakai lebar penuh.
- * Esc atau tombol × menutup. Saat dibuka, halaman bergulir ke panel.
+ * DetailPanel — detail / form satu baris.
+ *
+ * Standar UI/UX v2 (keputusan owner 8 Nov 2026 #1–#2): detail dan form dibuka sebagai POPUP, tidak lagi sebagai
+ * panel di atas tabel (dulu G13 lama: panel jauh dari baris yang diklik, halaman melompat, tabel terdorong).
+ * Semua layar yang memakai DetailPanel ikut berubah tanpa diubah satu per satu. Lebar 64rem, isi bergulir,
+ * di HP penuh layar; × / Esc / klik di luar menutup (memanggil `onClose`).
+ * Tanpa `onClose` (panel yang memang bagian tetap halaman) → tetap tampil di halaman seperti dulu.
+ * Mode "Gabungan (lihat saja)" tetap berlaku: event klik di dalam popup mengalir ke ReadOnlyContent (React portal).
  */
 export function DetailPanel({ title, description, actions, onClose, children, testId = 'detail-panel', closeTestId }) {
-  const ref = useRef(null);
-  useEffect(() => { ref.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }); }, []);
-  useEffect(() => {
-    if (!onClose) return undefined;
-    // 2026-11-07 (audit form Tahap 5): Esc yang sudah dipakai lapisan Radix di atas panel (daftar pilihan
-    // SmartNativeSelect, dialog konfirmasi, popover) TIDAK ikut menutup panel. Radix memanggil
-    // preventDefault() saat menutup lapisannya; dulu Esc untuk menutup daftar akun di "Jurnal baru"
-    // ikut menutup seluruh panel dan isian yang sudah diketik hilang.
-    const onKey = (e) => { if (e.key === 'Escape' && !e.defaultPrevented) onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  if (!onClose) {
+    return (
+      <div data-testid={testId} data-detail-panel="">
+        <GlassCard className="p-4 space-y-3" role="region" aria-label={typeof title === 'string' ? title : 'Detail'}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-base font-semibold text-foreground leading-tight">{title}</p>
+              {description && <p className="text-sm text-muted-foreground mt-1">{description}</p>}
+            </div>
+            {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
+          </div>
+          {children}
+        </GlassCard>
+      </div>
+    );
+  }
   return (
-    <div ref={ref} data-testid={testId} data-detail-panel="">
-      <GlassCard className="p-4 space-y-3" role="region" aria-label={typeof title === 'string' ? title : 'Detail'}>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-base font-semibold text-foreground leading-tight">{title}</p>
-            {description && <p className="text-sm text-muted-foreground mt-1">{description}</p>}
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent data-testid={testId} data-detail-panel="" closeTestId={closeTestId || `${testId}-close`}
+        className={cn(
+          'flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-5xl',
+          'max-sm:left-0 max-sm:top-0 max-sm:h-[100dvh] max-sm:max-h-none max-sm:max-w-none',
+          'max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none',
+        )}>
+        <div className="flex flex-col gap-3 border-b border-[var(--glass-border)] px-5 py-4 pr-12 sm:flex-row sm:items-start">
+          <div className="min-w-0 flex-1">
+            <DialogTitle className="text-base font-semibold leading-tight">{title}</DialogTitle>
+            {description && <DialogDescription className="mt-1 text-sm text-muted-foreground">{description}</DialogDescription>}
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {actions}
-            {onClose && (
-              <Button variant="outline" size="icon" onClick={onClose} title="Tutup" aria-label="Tutup" data-testid={closeTestId || `${testId}-close`}>
-                <X className="w-4 h-4" />
-              </Button>
-            )}
-          </div>
+          {actions && <div className="flex flex-wrap items-center gap-2 sm:justify-end">{actions}</div>}
         </div>
-        {children}
-      </GlassCard>
-    </div>
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">{children}</div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
