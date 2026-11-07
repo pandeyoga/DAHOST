@@ -335,14 +335,14 @@ export default function PurchaseReturnModule({ token }) {
       <div className="text-sm">{r.supplier_name || '-'}
         <div className="text-xs text-muted-foreground">{r.gr_number}{r.po_number ? ` · ${r.po_number}` : ''}</div>
       </div>) },
-    { kunci: 'penyelesaian', label: 'Penyelesaian', isi: (r) => (
+    { kunci: 'penyelesaian', label: 'Penyelesaian', hp: false, isi: (r) => (
       <div className="text-sm">{settlementLabel(r.settlement)}{r.settlement === 'destroy' ? ` (${r.destroy_borne_by === 'da' ? 'DA' : 'pemasok'})` : ''}
         {r.debit_note_number && <div className="text-xs text-muted-foreground">ND {r.debit_note_number}</div>}
       </div>) },
     { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtNum(r.total_qty)}</span> },
     { kunci: 'nilai', label: 'Nilai (harga GR)', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtRp(r.total_amount)}</span> },
     { kunci: 'status', label: 'Status', isi: (r) => <StatusBadge status={r.status} /> },
-    { kunci: 'umur', label: 'Umur', rata: 'kanan', isi: (r) => (
+    { kunci: 'umur', label: 'Umur', hp: false, rata: 'kanan', isi: (r) => (
       <span className={`tabular-nums ${r.status === 'awaiting_settlement' && r.age_days >= 14 ? 'font-medium text-[hsl(var(--danger-text))]' : ''}`}>{r.age_days} hari</span>) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: aksiBaris },
   ];

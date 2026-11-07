@@ -609,7 +609,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
     { kunci: 'no', label: 'No. penerimaan', hp: 'judul', isi: (r) => (
       <span className="font-medium tabular-nums" data-testid={`receipt-row-${r.receipt_number}`}>{r.receipt_number}</span>) },
     { kunci: 'sumber', label: 'Supplier / sumber', hp: 'keterangan', isi: (r) => r.source_label },
-    { kunci: 'po', label: 'No. PO', isi: (r) => <span className="tabular-nums">{r.po_number || '—'}</span> },
+    { kunci: 'po', label: 'No. PO', hp: false, isi: (r) => <span className="tabular-nums">{r.po_number || '—'}</span> },
     { kunci: 'status', label: 'Status', isi: (r) => (
       <span className="inline-flex flex-wrap gap-1">
         <StatusGR status={r.status} />
@@ -619,16 +619,16 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
           </span>
         )}
       </span>) },
-    { kunci: 'item', label: 'Item', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.item_count}</span> },
-    { kunci: 'diharap', label: 'Qty diharap', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.expected_total.toLocaleString('id-ID')}</span> },
+    { kunci: 'item', label: 'Item', hp: false, rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.item_count}</span> },
+    { kunci: 'diharap', label: 'Qty diharap', hp: false, rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.expected_total.toLocaleString('id-ID')}</span> },
     { kunci: 'diterima', label: 'Qty diterima', rata: 'kanan', isi: (r) => <span className="font-medium tabular-nums">{r.received_total.toLocaleString('id-ID')}</span> },
     // Qty ditolak diberi warna hanya kalau memang > 0 — angka nol yang diwarnai merah membuat orang berhenti memperhatikan.
     { kunci: 'ditolak', label: 'Qty ditolak', rata: 'kanan', isi: (r) => (
       <span className={`tabular-nums ${r.rejected_total > 0 ? 'font-medium text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>
         {r.rejected_total.toLocaleString('id-ID')}
       </span>) },
-    { kunci: 'tanggal', label: 'Tanggal', isi: (r) => <span className="whitespace-nowrap">{fmtDate(r.created_at)}</span> },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+    { kunci: 'tanggal', label: 'Tanggal', hp: false, isi: (r) => <span className="whitespace-nowrap">{fmtDate(r.created_at)}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: false, isi: (r) => (
       <Button size="sm" variant="outline" onClick={() => openDetail(r)} data-testid={`receipt-detail-btn-${r.receipt_number}`}>
         <Eye />Detail
       </Button>) },

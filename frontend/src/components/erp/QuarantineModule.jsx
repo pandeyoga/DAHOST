@@ -426,12 +426,12 @@ export default function QuarantineModule({ token: tokenProp }) {
           <div className="text-xs text-muted-foreground">{[it.source?.number, it.source?.supplier_name].filter(Boolean).join(' · ')}</div>
         )}
       </div>) },
-    { kunci: 'alasan', label: 'Alasan', isi: (it) => ((it.reject_reasons || []).length === 0
+    { kunci: 'alasan', label: 'Alasan', hp: false, isi: (it) => ((it.reject_reasons || []).length === 0
       ? <span className="text-muted-foreground">-</span>
       : <div className="text-sm">{(it.reject_reasons || []).map((r, i) => <div key={i}>{alasan(r.code)}{r.qty ? ` · ${fmtNum(r.qty)}` : ''}</div>)}</div>) },
-    { kunci: 'qty', label: 'Qty ditolak', rata: 'kanan', isi: (it) => <span className="tabular-nums">{fmtNum(it.qty)} <span className="text-xs text-muted-foreground">{it.unit}</span></span> },
+    { kunci: 'qty', label: 'Qty ditolak', hp: false, rata: 'kanan', isi: (it) => <span className="tabular-nums">{fmtNum(it.qty)} <span className="text-xs text-muted-foreground">{it.unit}</span></span> },
     { kunci: 'sisa', label: 'Sisa', rata: 'kanan', isi: (it) => <span className="font-medium tabular-nums">{fmtNum(it.remaining_qty)}</span> },
-    { kunci: 'nilai', label: 'Nilai', rata: 'kanan', isi: (it) => (
+    { kunci: 'nilai', label: 'Nilai', hp: false, rata: 'kanan', isi: (it) => (
       <div className="text-sm">
         {Number(it.unit_cost || 0) > 0 ? <span className="tabular-nums">{fmtRp(it.value)}</span> :
           <span className="text-[hsl(var(--warning-text))]" title="Harga satuan material belum diisi — jurnal keuangan akan dilewati">harga belum diisi</span>}

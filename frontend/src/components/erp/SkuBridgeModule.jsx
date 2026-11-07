@@ -111,7 +111,7 @@ function ManualPickDialog({ row, onClose, onDone }) {
   const kolom = [
     { kunci: 'nama', label: 'Barang gudang', hp: 'judul', isi: (c) => <span className="font-medium">{c.label || '(tanpa nama)'}</span> },
     { kunci: 'sku', label: 'SKU', hp: 'keterangan', isi: (c) => <span className="tabular-nums">{c.sku || '—'}</span> },
-    { kunci: 'jenis', label: 'Jenis', isi: (c) => (c.kind === 'catalog_item' ? 'Item katalog jual' : 'Varian model internal') },
+    { kunci: 'jenis', label: 'Jenis', hp: false, isi: (c) => (c.kind === 'catalog_item' ? 'Item katalog jual' : 'Varian model internal') },
     { kunci: 'stok', label: 'Stok', rata: 'kanan', isi: (c) => (c.stock != null ? <span className="tabular-nums">{fmt(c.stock)}</span> : '—') },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (c) => (
       <Button size="sm" disabled={saving === c.target_id} onClick={() => pick(c)} data-testid={`manual-pick-${c.sku || c.target_id}`}>
@@ -260,7 +260,7 @@ function BulkPanel({ onDone }) {
     { kunci: 'aksi', label: 'Aksi', isi: (r) => (r.action
       ? <StatusBadge tone={ACTION_META[r.action]?.tone} label={ACTION_META[r.action]?.label || r.action} />
       : <span className="text-muted-foreground">—</span>) },
-    { kunci: 'pcs', label: 'Pcs', rata: 'kanan', isi: (r) => (r.pcs != null ? <span className="tabular-nums">{fmt(r.pcs)}</span> : '—') },
+    { kunci: 'pcs', label: 'Pcs', hp: false, rata: 'kanan', isi: (r) => (r.pcs != null ? <span className="tabular-nums">{fmt(r.pcs)}</span> : '—') },
     { kunci: 'alasan', label: 'Alasan disisakan', isi: (r) => <span className="text-sm text-muted-foreground">{r.reason || '—'}</span> },
   ];
 
@@ -357,9 +357,9 @@ function MappedPanel({ reloadKey, onChanged }) {
         <p className="truncate">{r.target_name || '—'}</p>
         <p className="hidden truncate text-xs text-muted-foreground md:block">{r.product_name_sample}</p>
       </div>) },
-    { kunci: 'fg', label: 'Kode FG', isi: (r) => <span className="tabular-nums">{r.fg_code || '—'}</span> },
+    { kunci: 'fg', label: 'Kode FG', hp: false, isi: (r) => <span className="tabular-nums">{r.fg_code || '—'}</span> },
     { kunci: 'pesanan', label: 'Pesanan', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmt(r.orders_using)}</span> },
-    { kunci: 'cara', label: 'Cara', isi: (r) => <StatusBadge tone="default" label={METHOD_LABEL[r.method || 'manual'] || r.method} /> },
+    { kunci: 'cara', label: 'Cara', hp: false, isi: (r) => <StatusBadge tone="default" label={METHOD_LABEL[r.method || 'manual'] || r.method} /> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
       <Button size="icon-sm" variant="ghost" onClick={() => unmap(r.platform_sku_id)} aria-label={`Lepas pemetaan ${r.platform_sku_id}`}
         title="Lepas pemetaan" data-testid={`unmap-${r.platform_sku_id}`}>
@@ -465,7 +465,7 @@ export default function SkuBridgeModule({ onNavigate }) {
         <p className="max-w-[12rem] truncate text-xs text-muted-foreground">{r.variation || '—'}</p>
       </div>) },
     { kunci: 'pcs', label: 'Pcs', rata: 'kanan', isi: (r) => <span className="font-medium tabular-nums">{fmt(r.pcs)}</span> },
-    { kunci: 'nilai', label: 'Nilai', rata: 'kanan', isi: (r) => <span className="tabular-nums">{rp(r.value)}</span> },
+    { kunci: 'nilai', label: 'Nilai', hp: false, rata: 'kanan', isi: (r) => <span className="tabular-nums">{rp(r.value)}</span> },
     { kunci: 'keadaan', label: 'Keadaan master', isi: (r) => {
       const meta = ACTION_META[r.recommended_action] || ACTION_META.create_master;
       return (

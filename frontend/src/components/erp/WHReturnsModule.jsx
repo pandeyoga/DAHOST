@@ -669,7 +669,7 @@ function ReturnsTable({ returns, loading, onView, onDelete, onQuickRestock, koso
   if (loading && !returns.length) return <p className="py-6 text-center text-sm text-muted-foreground">Memuat…</p>;
   const kolom = [
     { kunci: 'kode', label: 'Kode', hp: 'judul', isi: (r) => <span className="font-medium tabular-nums" data-testid={`ret-row-${r.id}`}>{r.return_code}</span> },
-    { kunci: 'asal', label: 'Asal', isi: (r) => <SourceBadge ret={r} /> },
+    { kunci: 'asal', label: 'Asal', hp: false, isi: (r) => <SourceBadge ret={r} /> },
     { kunci: 'order', label: 'No. order / resi', hp: 'keterangan', isi: (r) => r.order_number || r.resi_number || '-' },
     { kunci: 'barang', label: 'Barang (master)', isi: (r) => (
       <div className="min-w-0">
@@ -678,8 +678,8 @@ function ReturnsTable({ returns, loading, onView, onDelete, onQuickRestock, koso
       </div>) },
     { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.qty || 0}</span> },
     { kunci: 'status', label: 'Status', isi: (r) => <StatusRetur status={r.status} /> },
-    { kunci: 'stok', label: 'Efek stok', isi: (r) => <StockBadge ret={r} /> },
-    { kunci: 'tgl', label: 'Tanggal', isi: (r) => <span className="whitespace-nowrap">{fmtDateShort(r.created_at)}</span> },
+    { kunci: 'stok', label: 'Efek stok', hp: false, isi: (r) => <StockBadge ret={r} /> },
+    { kunci: 'tgl', label: 'Tanggal', hp: false, isi: (r) => <span className="whitespace-nowrap">{fmtDateShort(r.created_at)}</span> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => {
       // 2026-11-02 (K1) — hanya pekerjaan yang BELUM diputuskan
       const canQuick = !r.restocked && ['Pending', 'Received', 'Inspected'].includes(r.status) && (r.material_id || r.fg_material_id);

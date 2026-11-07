@@ -453,9 +453,9 @@ export default function WMSFabricRollsModule({ token }) {
     { kunci: 'no', label: 'No. roll', hp: 'judul', isi: (r) => <span className="font-medium tabular-nums" data-testid={`roll-row-${r.roll_no}`}>{r.roll_no}</span> },
     { kunci: 'material', label: 'Material', hp: 'keterangan', isi: (r) => (
       <span>{r.material_name}{r.material_code && <span className="ml-1 text-muted-foreground">({r.material_code})</span>}</span>) },
-    { kunci: 'warna', label: 'Warna / lot', isi: (r) => <span className="whitespace-nowrap">{r.color || '—'} / {r.color_lot || '—'}</span> },
-    { kunci: 'supplier', label: 'Supplier', isi: (r) => r.supplier_name || '—' },
-    { kunci: 'qc', label: 'QC', isi: (r) => <Lencana peta={QC_STATUS} nilai={r.qc_status} /> },
+    { kunci: 'warna', label: 'Warna / lot', hp: false, isi: (r) => <span className="whitespace-nowrap">{r.color || '—'} / {r.color_lot || '—'}</span> },
+    { kunci: 'supplier', label: 'Supplier', hp: false, isi: (r) => r.supplier_name || '—' },
+    { kunci: 'qc', label: 'QC', hp: false, isi: (r) => <Lencana peta={QC_STATUS} nilai={r.qc_status} /> },
     { kunci: 'stok', label: 'Status stok', isi: (r) => <Lencana peta={STOCK_STATUS} nilai={r.status} /> },
     { kunci: 'sisa', label: 'Sisa / total', rata: 'kanan', isi: (r) => (
       <span className="whitespace-nowrap tabular-nums" data-testid={`roll-qty-${r.roll_no}`}>
@@ -473,11 +473,11 @@ export default function WMSFabricRollsModule({ token }) {
   const kolomMissing = [
     { kunci: 'gr', label: 'No. penerimaan', hp: 'judul', isi: (m) => <span className="tabular-nums" data-testid={`missing-row-${m.material_code}`}>{m.receipt_number}</span> },
     { kunci: 'supplier', label: 'Supplier', hp: 'keterangan', isi: (m) => m.supplier_name || '-' },
-    { kunci: 'kode', label: 'Kode kain', isi: (m) => <span className="tabular-nums">{m.material_code}</span> },
+    { kunci: 'kode', label: 'Kode kain', hp: false, isi: (m) => <span className="tabular-nums">{m.material_code}</span> },
     { kunci: 'nama', label: 'Nama kain', isi: (m) => m.material_name },
     { kunci: 'qty', label: 'Qty diterima', rata: 'kanan', isi: (m) => <span className="whitespace-nowrap tabular-nums"><strong>{fmtQty(m.accepted_qty)}</strong> {m.unit}</span> },
-    { kunci: 'lokasi', label: 'Lokasi', isi: (m) => m.location_name || '-' },
-    { kunci: 'tgl', label: 'Tanggal', isi: (m) => <span className="whitespace-nowrap">{fmtTgl(m.created_at)}</span> },
+    { kunci: 'lokasi', label: 'Lokasi', hp: false, isi: (m) => m.location_name || '-' },
+    { kunci: 'tgl', label: 'Tanggal', hp: false, isi: (m) => <span className="whitespace-nowrap">{fmtTgl(m.created_at)}</span> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (m) => (
       <Button size="sm" onClick={() => openIssueRolls(m)} data-testid={`issue-rolls-btn-${m.material_code}`}>
         <Plus />Terbitkan roll

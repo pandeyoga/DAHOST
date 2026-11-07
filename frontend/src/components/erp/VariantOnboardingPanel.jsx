@@ -241,9 +241,9 @@ export function ProductOnboardingTab({ onDone }) {
     { kunci: 'kategori', label: 'Kategori', hp: 'keterangan', isi: (p) => p.proposed_category_name || '—' },
     { kunci: 'sku', label: 'SKU', rata: 'kanan', isi: (p) => <span className="tabular-nums">{fmt(p.sku_count)}</span> },
     { kunci: 'pcs', label: 'Pcs dipesan', rata: 'kanan', isi: (p) => <span className="tabular-nums">{fmt(p.pcs)}</span> },
-    { kunci: 'varian', label: 'Varian', rata: 'kanan', isi: (p) => <span className="tabular-nums">{fmt(p.identity_count)}</span> },
-    { kunci: 'nilai', label: 'Nilai pesanan', rata: 'kanan', isi: (p) => <span className="tabular-nums">{rp(p.value)}</span> },
-    { kunci: 'ket', label: 'Keterangan', isi: (p) => (
+    { kunci: 'varian', label: 'Varian', hp: false, rata: 'kanan', isi: (p) => <span className="tabular-nums">{fmt(p.identity_count)}</span> },
+    { kunci: 'nilai', label: 'Nilai pesanan', hp: false, rata: 'kanan', isi: (p) => <span className="tabular-nums">{rp(p.value)}</span> },
+    { kunci: 'ket', label: 'Keterangan', hp: false, isi: (p) => (
       <div className="flex flex-wrap gap-1">
         <StatusBadge tone="default" label={`${(p.colors || []).length} warna · ${(p.sizes || []).join(' · ') || '—'}`} />
         {(p.options || []).length > 1 ? <StatusBadge tone="primary" label={`${(p.options || []).length} opsi`} /> : null}
@@ -401,7 +401,7 @@ export function VariantOptionsTab() {
   const kolom = [
     { kunci: 'kode', label: 'Kode', hp: 'judul', isi: (r) => <span className="font-medium tabular-nums" data-testid={`option-row-${r.code}`}>{r.code}</span> },
     { kunci: 'nama', label: 'Nama', hp: 'keterangan', isi: (r) => r.name },
-    { kunci: 'ket', label: 'Keterangan', isi: (r) => <span className="text-sm text-muted-foreground md:block md:max-w-[26rem]">{r.notes || '—'}</span> },
+    { kunci: 'ket', label: 'Keterangan', hp: false, isi: (r) => <span className="text-sm text-muted-foreground md:block md:max-w-[26rem]">{r.notes || '—'}</span> },
     { kunci: 'dipakai', label: 'Dipakai varian', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmt(r.variant_count)}</span> },
     { kunci: 'status', label: 'Status', isi: (r) => (
       <span className="inline-flex flex-wrap gap-1">

@@ -218,7 +218,7 @@ export default function PutAwayModule({ token, onNavigate }) {
     { kunci: 'kategori', label: 'Kategori', hp: 'keterangan', isi: (it) => labels[it._cat] || it._cat },
     { kunci: 'belum', label: 'Belum dirak', rata: 'kanan', isi: (it) => (
       <span className="font-medium tabular-nums text-[hsl(var(--warning-text))]">{fmtNum(it.unshelved)} {it.unit}</span>) },
-    { kunci: 'sudah', label: 'Sudah dirak', rata: 'kanan', isi: (it) => (
+    { kunci: 'sudah', label: 'Sudah dirak', hp: false, rata: 'kanan', isi: (it) => (
       <span className="tabular-nums text-muted-foreground">{fmtNum(it.placed)} {it.unit}</span>) },
     { kunci: 'zona', label: 'Ada di', isi: (it) => (
       <span className="text-sm text-muted-foreground">
