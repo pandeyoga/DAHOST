@@ -283,9 +283,8 @@ export default function WMSBarcodeModule() {
 
           <TabelData kolom={kolomCetak} baris={cart} kunci={(r) => r.code} testId="barcode-cart-table"
             kosong={
-              <div className="py-6 text-center" data-testid="barcode-cart-empty">
-                <p className="text-sm text-foreground">Belum ada item dipilih</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">Pilih dari master, atau ambil otomatis dari PO produksi.</p>
+              <div data-testid="barcode-cart-empty">
+                <EmptyState className="py-6" title="Belum ada item dipilih" description="Pilih dari master, atau ambil otomatis dari PO produksi." />
               </div>
             } />
 
