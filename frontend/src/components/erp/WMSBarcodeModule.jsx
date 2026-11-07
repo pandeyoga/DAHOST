@@ -1,10 +1,18 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Barcode, Printer, Search, Trash2, RefreshCw, History, AlertTriangle,
-  Factory, Package, Shirt, Plus } from 'lucide-react';
-import { GlassCard, GlassPanel } from '@/components/ui/glass';
+import { Printer, Search, Trash2, RefreshCw, AlertTriangle, Plus } from 'lucide-react';
+import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Isian } from '@/components/ui/form-popup';
+import { formatDateTimeID } from '@/lib/format';
 import { apiGet, apiFetch } from '../../lib/api';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 
 // FASE H-3 (2026-08-16) — "Buat Barcode".
 // Kenapa layar ini ada: endpoint label bahan & barang jadi sudah lama tersedia
@@ -12,69 +20,25 @@ import { apiGet, apiFetch } from '../../lib/api';
 // bisa dicetak sama sekali. Nilai barcode SELALU kode master — tidak ada kotak
 // untuk mengetik kode bebas, karena label yang kodenya dikarang akan discan
 // menjadi item yang tidak ada di sistem (aturan F14).
+//
+// Standar UI/UX v2 (8 Nov 2026): PageLayout (kepala ikon besar dihapus), tombol jenis buatan → pil penyaring,
+// tiga `<table>` → TabelData (kartu ringkas di HP; dulu teks bertumpuk di 390 px) masing-masing dengan unduh
+// Excel/CSV, kotak pesan berwarna → Notice, checkbox/isian polos → komponen standar. Alur cetak tidak berubah.
 
 const MAX_LABELS = 500;
 
 const KINDS = [
-  { id: 'material', label: 'Bahan & Aksesoris', icon: Package },
-  { id: 'fg', label: 'Barang Jadi', icon: Shirt },
+  { key: 'material', label: 'Bahan & aksesoris' },
+  { key: 'fg', label: 'Barang jadi' },
 ];
-
-function KindTab({ kind, active, onClick }) {
-  const Icon = kind.icon;
-  return (
-    <button
-      onClick={() => onClick(kind.id)}
-      data-testid={`barcode-tab-${kind.id}`}
-      className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium border transition-colors ${
-        active
-          ? 'bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] border-transparent'
-          : 'bg-[var(--glass-bg)] text-muted-foreground border-[var(--glass-border)] hover:text-foreground'
-      }`}
-    >
-      <Icon className="w-4 h-4" /> {kind.label}
-    </button>
-  );
-}
-
-function CartRow({ row, onCopies, onRemove }) {
-  return (
-    <tr className={`border-t border-[var(--glass-border)] ${row.master_linked === false ? 'bg-[hsl(var(--destructive)/0.1)] ' : ''}`}
-      data-testid={`barcode-cart-row-${row.code}`}>
-      <td className="px-3 py-2 tabular-nums text-xs text-foreground">
-        {row.code}
-        {row.master_linked === false && (
-          <div className="text-[10px] text-[hsl(var(--destructive))] font-sans mt-0.5"
-            data-testid={`barcode-unlinked-${row.code}`}>
-            Belum ada di master Barang Jadi — labelnya tidak bisa dicetak.
-            {row.reason ? ` ${row.reason}` : ''}
-          </div>
-        )}
-      </td>
-      <td className="px-3 py-2 text-xs text-muted-foreground">{row.name}</td>
-      <td className="px-3 py-2 text-xs text-muted-foreground">
-        {[row.color, row.size].filter(Boolean).join(' · ') || '—'}
-      </td>
-      <td className="px-3 py-2 text-right">
-        <input type="number" min="1" max="200" value={row.copies}
-          onChange={e => onCopies(row.code, e.target.value)}
-          className="h-8 w-20 rounded-md border border-input bg-background px-2 text-right text-xs text-foreground"
-          data-testid={`barcode-copies-${row.code}`} />
-      </td>
-      <td className="px-3 py-2 text-right">
-        <button onClick={() => onRemove(row.code)} title="Hapus baris"
-          className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.1)] text-muted-foreground hover:text-[hsl(var(--destructive))]"
-          data-testid={`barcode-remove-${row.code}`}>
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
-      </td>
-    </tr>
-  );
-}
+const JENIS_USAHA = { internal: 'Produksi internal', maklon: 'Maklon', customer_po: 'Customer PO' };
+const jenisUsaha = (v) => JENIS_USAHA[v] || (v ? 'Lainnya' : '—');
+const angka = (n) => Number(n || 0).toLocaleString('id-ID');
 
 export default function WMSBarcodeModule() {
   const [kind, setKind] = useState('material');
   const [q, setQ] = useState('');
+  const [cari, setCari] = useState('');
   const [items, setItems] = useState([]);
   const [itemsMeta, setItemsMeta] = useState({ total: 0, returned: 0 });
   const [loadingItems, setLoadingItems] = useState(false);
@@ -93,6 +57,12 @@ export default function WMSBarcodeModule() {
   const [okMsg, setOkMsg] = useState('');
   const [history, setHistory] = useState([]);
 
+  // Ketikan pencarian diteruskan setelah jeda singkat (Enter langsung mencari).
+  useEffect(() => {
+    const t = setTimeout(() => setQ(cari.trim()), 300);
+    return () => clearTimeout(t);
+  }, [cari]);
+
   const loadItems = useCallback(async () => {
     setLoadingItems(true);
     try {
@@ -109,7 +79,8 @@ export default function WMSBarcodeModule() {
   useEffect(() => { loadItems(); }, [loadItems]);
   useEffect(() => { loadHistory(); }, [loadHistory]);
   useEffect(() => {
-    apiGet('/wms/barcode/production-options?limit=40').then(setPos).catch(() => setPos([]));
+    // 100 PO produksi terbaru (batas maksimum API; dulu 40 → PO lebih lama tidak bisa dipilih)
+    apiGet('/wms/barcode/production-options?limit=100').then(setPos).catch(() => setPos([]));
   }, []);
 
   const totalLabels = useMemo(
@@ -183,258 +154,207 @@ export default function WMSBarcodeModule() {
     } catch (e) { setError(e.message); } finally { setBusy(false); }
   };
 
-  return (
-    <div className="space-y-5" data-testid="wms-barcode-page">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Barcode className="w-6 h-6" /> Buat Barcode
-          </h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Cetak label barcode bahan/aksesoris & barang jadi. Kode barcode selalu diambil
-            dari master — supaya label yang tertempel bisa discan menjadi item yang benar.
+  const kolomMaster = [
+    { kunci: 'code', label: 'Kode', hp: 'judul', isi: (it) => <span className="tabular-nums">{it.code}</span> },
+    { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (it) => it.name },
+    { kunci: 'unit', label: 'Satuan', isi: (it) => <span className="text-muted-foreground">{it.unit}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (
+      <Button size="icon-sm" variant="outline" onClick={() => addItem(it)} title="Tambah ke daftar cetak"
+        aria-label={`Tambah ${it.code} ke daftar cetak`} data-testid={`barcode-add-${it.code}`}>
+        <Plus />
+      </Button>) },
+  ];
+  const kolomCetak = [
+    { kunci: 'code', label: 'Kode', hp: 'judul', isi: (r) => (
+      <div data-testid={`barcode-cart-row-${r.code}`}>
+        <span className="tabular-nums">{r.code}</span>
+        {r.master_linked === false && (
+          <p className="mt-0.5 text-xs text-[hsl(var(--danger-text))]" data-testid={`barcode-unlinked-${r.code}`}>
+            Belum ada di master barang jadi — labelnya tidak bisa dicetak.{r.reason ? ` ${r.reason}` : ''}
           </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {KINDS.map(k => (
-            <KindTab key={k.id} kind={k} active={kind === k.id} onClick={(id) => { setKind(id); setPoInfo(null); }} />
-          ))}
-        </div>
-      </div>
-
-      {/* Sumber otomatis: ikut produksi */}
-      <GlassCard className="p-4">
-        <div className="flex items-center gap-2 flex-wrap">
-          <Factory className="w-4 h-4 text-muted-foreground" />
-          <span className="text-sm text-foreground font-medium">Otomatis dari produksi</span>
-          <SmartNativeSelect value={poId} onChange={e => setPoId(e.target.value)}
-            className="h-9 px-3 text-sm min-w-[260px]" data-testid="barcode-po-select">
-            <option value="">— Pilih PO produksi —</option>
-            {pos.map(p => (
-              <option key={p.id} value={p.id}>
-                {p.po_number} · {p.business_type} · {p.total_qty} pcs
-              </option>
-            ))}
-          </SmartNativeSelect>
-          <Button onClick={loadFromPO} disabled={!poId || busy} data-testid="barcode-load-po-btn">
-            <Plus className="w-4 h-4 mr-1.5" /> Ambil artikel & jumlahnya
-          </Button>
-          <span className="text-xs text-muted-foreground">
-            Jumlah label mengikuti qty PO — tidak diketik ulang.
-          </span>
-        </div>
-        {poInfo && (
-          <div className="mt-3 text-xs text-muted-foreground" data-testid="barcode-po-info">
-            Sumber: <b className="text-foreground">{poInfo.po_number}</b> ({poInfo.business_type}) ·
-            {' '}{poInfo.rows?.length || 0} artikel · {poInfo.total_copies} label
-            {poInfo.unlinked_count > 0 && (
-              <span className="text-[hsl(var(--destructive))] ">
-                {' '}· {poInfo.unlinked_count} artikel belum ada di master
-              </span>
-            )}
-          </div>
         )}
-      </GlassCard>
+      </div>) },
+    { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (r) => r.name },
+    { kunci: 'varian', label: 'Varian', isi: (r) => [r.color, r.size].filter(Boolean).join(' · ') || '—' },
+    { kunci: 'copies', label: 'Lembar', rata: 'kanan', isi: (r) => (
+      <Input type="number" min="1" max="200" value={r.copies} onChange={e => setCopies(r.code, e.target.value)}
+        className="ml-auto h-8 w-20 text-right" aria-label={`Jumlah lembar ${r.code}`} data-testid={`barcode-copies-${r.code}`} />) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+      <Button variant="ghost" size="icon-sm" onClick={() => removeRow(r.code)} title="Hapus baris" aria-label={`Hapus ${r.code} dari daftar cetak`}
+        data-testid={`barcode-remove-${r.code}`}><Trash2 /></Button>) },
+  ];
+  const kolomRiwayat = [
+    { kunci: 'job', label: 'No. cetak', hp: 'judul', isi: (h) => <span className="tabular-nums" data-testid={`barcode-history-${h.job_number}`}>{h.job_number}</span> },
+    { kunci: 'kind', label: 'Jenis', isi: (h) => (h.kind === 'fg' ? (h.size === 'hangtag' ? 'Barang jadi · hangtag' : 'Barang jadi') : 'Bahan') },
+    { kunci: 'source', label: 'Sumber', isi: (h) => (h.source === 'produksi' ? 'Dari produksi' : 'Manual') },
+    { kunci: 'items', label: 'Item', rata: 'kanan', isi: (h) => <span className="tabular-nums">{angka(h.item_count)}</span> },
+    { kunci: 'labels', label: 'Lembar', rata: 'kanan', isi: (h) => <span className="tabular-nums font-medium">{angka(h.total_labels)}</span> },
+    { kunci: 'by', label: 'Oleh', isi: (h) => h.created_by_name || '—' },
+    { kunci: 'at', label: 'Waktu', hp: 'keterangan', isi: (h) => formatDateTimeID(h.created_at) },
+  ];
+  const jenisRiwayat = (h) => (h.kind === 'fg' ? (h.size === 'hangtag' ? 'Barang jadi · hangtag' : 'Barang jadi') : 'Bahan');
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* Pemilih dari master */}
-        <GlassCard className="p-4 space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-base font-semibold text-foreground">Pilih dari master</h2>
-            <span className="text-xs text-muted-foreground" data-testid="barcode-items-meta">
-              {itemsMeta.returned} dari {itemsMeta.total} item
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1">
-              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <input value={q} onChange={e => setQ(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') loadItems(); }}
-                placeholder="Cari kode atau nama item…"
-                className="h-9 w-full pl-8 pr-3 rounded-lg border border-input bg-background text-sm text-foreground"
-                data-testid="barcode-search-input" />
-            </div>
-            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={loadItems} disabled={loadingItems} data-testid="barcode-search-btn">
-              <RefreshCw className={`w-4 h-4 ${loadingItems ? 'animate-spin' : ''}`} />
+  return (
+    <PageLayout testId="wms-barcode-page" title="Buat barcode"
+      subtitle="Cetak label barcode bahan, aksesoris, dan barang jadi; kodenya selalu diambil dari master."
+      filters={<>
+        <FilterChips options={KINDS} value={kind} onChange={(id) => { setKind(id); setPoInfo(null); }} hideWhenEmpty={false}
+          className="w-full sm:w-auto" testId="barcode-tab" ariaLabel="Jenis barang" />
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={cari} onChange={e => setCari(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { if (cari.trim() === q) loadItems(); else setQ(cari.trim()); } }}
+            placeholder="Cari kode atau nama item" className="pl-8" data-testid="barcode-search-input" />
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={loadItems} disabled={loadingItems}
+            data-testid="barcode-search-btn">
+            <RefreshCw className={loadingItems ? 'animate-spin' : ''} />
+          </Button>
+        </div>
+      </>}
+      summary={
+        <GlassCard className="space-y-2 p-4">
+          <div className="flex flex-wrap items-end gap-2">
+            <Isian label="Otomatis dari PO produksi" className="w-full sm:w-80">
+              <SmartNativeSelect value={poId} onChange={e => setPoId(e.target.value)} className="w-full" data-testid="barcode-po-select">
+                <option value="">{pos.length ? 'Pilih PO produksi' : 'Belum ada PO produksi'}</option>
+                {pos.map(p => (
+                  <option key={p.id} value={p.id}>{`${p.po_number} · ${jenisUsaha(p.business_type)} · ${p.total_qty} pcs`}</option>
+                ))}
+              </SmartNativeSelect>
+            </Isian>
+            <Button variant="outline" onClick={loadFromPO} disabled={!poId || busy} data-testid="barcode-load-po-btn">
+              <Plus />Ambil artikel & jumlahnya
             </Button>
           </div>
-          <GlassPanel className="p-0 overflow-hidden max-h-[380px] overflow-y-auto">
-            <table className="w-full text-sm">
-              <tbody>
-                {items.length === 0 ? (
-                  <tr><td className="px-3 py-8 text-center text-sm text-muted-foreground"
-                    data-testid="barcode-items-empty">
-                    Tidak ada item yang cocok.
-                  </td></tr>
-                ) : items.map(it => (
-                  <tr key={it.id} className="border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)]">
-                    <td className="px-3 py-2">
-                      <div className="tabular-nums text-xs text-foreground">{it.code}</div>
-                      <div className="text-xs text-muted-foreground">{it.name}</div>
-                    </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">{it.unit}</td>
-                    <td className="px-3 py-2 text-right">
-                      <Button size="sm" variant="outline" onClick={() => addItem(it)}
-                        className="px-2"
-                        data-testid={`barcode-add-${it.code}`}>
-                        <Plus className="w-3.5 h-3.5" />
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </GlassPanel>
+          <p className="text-xs text-muted-foreground">Jumlah label mengikuti qty PO (100 PO terbaru) — tidak diketik ulang.</p>
+          {poInfo && (
+            <p className="text-sm text-muted-foreground" data-testid="barcode-po-info">
+              Sumber: <span className="font-medium text-foreground">{poInfo.po_number}</span> ({jenisUsaha(poInfo.business_type)}) ·
+              {' '}{poInfo.rows?.length || 0} artikel · {poInfo.total_copies} label
+              {poInfo.unlinked_count > 0 && (
+                <span className="text-[hsl(var(--danger-text))]"> · {poInfo.unlinked_count} artikel belum ada di master</span>
+              )}
+            </p>
+          )}
+        </GlassCard>
+      }>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {/* Pemilih dari master */}
+        <GlassCard className="min-w-0 space-y-3 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-base font-semibold text-foreground">Pilih dari master</p>
+              <p className="text-xs text-muted-foreground" data-testid="barcode-items-meta">
+                Menampilkan {angka(itemsMeta.returned)} dari {angka(itemsMeta.total)} item{itemsMeta.total > itemsMeta.returned ? ' — persempit dengan pencarian' : ''}
+              </p>
+            </div>
+            <TombolUnduh namaBerkas={`master-barcode-${kind}`} namaLembar="Master" baris={items} testId="barcode-items-unduh"
+              kolom={[
+                { label: 'Kode', nilai: (it) => it.code }, { label: 'Nama', nilai: (it) => it.name },
+                { label: 'Satuan', nilai: (it) => it.unit || '' }, { label: 'Warna', nilai: (it) => it.color || '' },
+                { label: 'Ukuran', nilai: (it) => it.size || '' },
+              ]} />
+          </div>
+          <div className="max-h-[28rem] overflow-y-auto">
+            <TabelData kolom={kolomMaster} baris={items} testId="barcode-items-table"
+              kosong={<p className="py-6 text-center text-sm text-muted-foreground" data-testid="barcode-items-empty">Tidak ada item yang cocok.</p>} />
+          </div>
         </GlassCard>
 
         {/* Daftar cetak */}
-        <GlassCard className="p-4 space-y-3">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <h2 className="text-base font-semibold text-foreground">Daftar cetak</h2>
-            <span className={`text-xs px-2 py-1 rounded-full border ${
-              overLimit ? 'bg-[hsl(var(--destructive)/0.1)]  border-[hsl(var(--destructive)/0.4)] text-[hsl(var(--destructive))] '
-                : 'bg-[var(--glass-bg)] border-[var(--glass-border)] text-muted-foreground'}`}
-              data-testid="barcode-total-labels">
-              {totalLabels} label · {cart.length} item
-            </span>
+        <GlassCard className="min-w-0 space-y-3 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-base font-semibold text-foreground">Daftar cetak</p>
+              <span data-testid="barcode-total-labels">
+                <StatusBadge status="total" tone={overLimit ? 'danger' : 'default'} label={`${angka(totalLabels)} label · ${cart.length} item`} />
+              </span>
+            </div>
+            <TombolUnduh namaBerkas="daftar-cetak-barcode" namaLembar="Daftar cetak" baris={cart} testId="barcode-cart-unduh"
+              kolom={[
+                { label: 'Kode', nilai: (r) => r.code }, { label: 'Nama', nilai: (r) => r.name },
+                { label: 'Varian', nilai: (r) => [r.color, r.size].filter(Boolean).join(' · ') },
+                { label: 'Lembar', nilai: (r) => Number(r.copies || 0) },
+                { label: 'Ada di master', nilai: (r) => (r.master_linked === false ? 'Tidak' : 'Ya') },
+              ]} />
           </div>
 
-          <GlassPanel className="p-0 overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-[var(--glass-bg)]">
-                <tr className="text-left text-xs text-muted-foreground">
-                  <th className="px-3 py-2">Kode</th>
-                  <th className="px-3 py-2">Nama</th>
-                  <th className="px-3 py-2">Varian</th>
-                  <th className="px-3 py-2 text-right">Lembar</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {cart.length === 0 ? (
-                  <tr><td colSpan={5} className="px-3 py-10 text-center" data-testid="barcode-cart-empty">
-                    <Barcode className="w-8 h-8 mx-auto text-foreground/20 mb-2" strokeWidth={1.5} />
-                    <div className="text-sm text-foreground/70">Belum ada item dipilih</div>
-                    <div className="text-[11px] text-muted-foreground mt-0.5">
-                      Pilih dari master di sebelah, atau ambil otomatis dari PO produksi.
-                    </div>
-                  </td></tr>
-                ) : cart.map(r => (
-                  <CartRow key={r.code} row={r} onCopies={setCopies} onRemove={removeRow} />
-                ))}
-              </tbody>
-            </table>
-          </GlassPanel>
+          <TabelData kolom={kolomCetak} baris={cart} kunci={(r) => r.code} testId="barcode-cart-table"
+            kosong={
+              <div className="py-6 text-center" data-testid="barcode-cart-empty">
+                <p className="text-sm text-foreground">Belum ada item dipilih</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">Pilih dari master, atau ambil otomatis dari PO produksi.</p>
+              </div>
+            } />
 
           {kind === 'fg' && (
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              Ukuran label:
+            <Isian label="Ukuran label">
               <SmartNativeSelect value={fgSize} onChange={e => setFgSize(e.target.value)} data-testid="barcode-fg-size"
-                className="w-28 h-8 px-2 rounded-lg border border-input bg-background text-xs text-foreground">
+                searchable={false} className="w-full" wrapperClassName="w-full sm:w-72">
                 <option value="standard">Label standar 100×70 mm</option>
                 <option value="hangtag">Hangtag kecil 70×40 mm</option>
               </SmartNativeSelect>
-            </label>
+            </Isian>
           )}
           {kind === 'material' && (
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              <input type="checkbox" checked={includeStock} onChange={e => setIncludeStock(e.target.checked)}
-                data-testid="barcode-include-stock" />
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+              <Checkbox checked={includeStock} onCheckedChange={(v) => setIncludeStock(!!v)} data-testid="barcode-include-stock" />
               Cetak stok & lokasi di label
             </label>
           )}
 
-          <input value={note} onChange={e => setNote(e.target.value)}
-            placeholder="Catatan cetak (opsional) — mis. 'label rak B, giliran pagi'"
-            className="h-9 w-full px-3 rounded-lg border border-input bg-background text-sm text-foreground"
-            data-testid="barcode-note-input" />
+          <Isian label="Catatan cetak" petunjuk="Opsional" htmlFor="barcode-note">
+            <Input id="barcode-note" value={note} onChange={e => setNote(e.target.value)}
+              placeholder="mis. label rak B, giliran pagi" data-testid="barcode-note-input" />
+          </Isian>
 
           {unlinked.length > 0 && (
-            <div className="flex items-start gap-2 text-xs bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.4)] rounded-lg px-3 py-2 text-[hsl(var(--destructive))] "
-              data-testid="barcode-unlinked-warning">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-              <div>
-                {unlinked.length} artikel PO belum punya varian di master Barang Jadi, jadi
-                labelnya TIDAK dicetak. Buat variannya dulu di Master Produk — mencetak barcode
-                dengan kode yang tidak dikenal sistem hanya memindahkan masalahnya ke rak.
-              </div>
-            </div>
+            <Notice tone="danger" icon={AlertTriangle} testId="barcode-unlinked-warning">
+              {unlinked.length} artikel PO belum punya varian di master barang jadi, jadi labelnya tidak dicetak. Buat variannya
+              dulu di Master Produk — mencetak barcode dengan kode yang tidak dikenal sistem hanya memindahkan masalahnya ke rak.
+            </Notice>
           )}
           {overLimit && (
-            <div className="text-xs bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.4)] rounded-lg px-3 py-2 text-[hsl(var(--destructive))] "
-              data-testid="barcode-limit-warning">
-              Total {totalLabels} label melebihi batas {MAX_LABELS} lembar per cetak.
-              Kurangi jumlahnya atau cetak beberapa kali.
-            </div>
+            <Notice tone="danger" testId="barcode-limit-warning">
+              Total {angka(totalLabels)} label melebihi batas {MAX_LABELS} lembar per cetak. Kurangi jumlahnya atau cetak beberapa kali.
+            </Notice>
           )}
-          {error && (
-            <div className="text-xs bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.4)] rounded-lg px-3 py-2 text-[hsl(var(--destructive))] "
-              data-testid="barcode-error">{error}</div>
-          )}
-          {okMsg && (
-            <div className="text-xs bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.4)] rounded-lg px-3 py-2 text-[hsl(var(--success))] "
-              data-testid="barcode-success">{okMsg}</div>
-          )}
+          {error && <Notice tone="danger" testId="barcode-error">{error}</Notice>}
+          {okMsg && <Notice tone="success" testId="barcode-success">{okMsg}</Notice>}
 
-          <div className="flex items-center justify-between gap-2">
-            <Button variant="outline" onClick={() => { setCart([]); setPoInfo(null); setOkMsg(''); setError(''); }} disabled={cart.length === 0} data-testid="barcode-clear-btn">Kosongkan</Button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Button variant="outline" onClick={() => { setCart([]); setPoInfo(null); setOkMsg(''); setError(''); }}
+              disabled={cart.length === 0} data-testid="barcode-clear-btn">Kosongkan</Button>
             <Button onClick={printPdf}
               disabled={busy || overLimit || cart.filter(r => r.master_linked !== false).length === 0}
               data-testid="barcode-print-btn">
-              <Printer className="w-4 h-4 mr-1.5" /> {busy ? 'Menyiapkan…' : 'Cetak PDF'}
+              <Printer />{busy ? 'Menyiapkan…' : 'Cetak PDF'}
             </Button>
           </div>
         </GlassCard>
       </div>
 
       {/* Riwayat cetak */}
-      <GlassCard className="p-0 overflow-hidden">
-        <div className="px-4 py-3 flex items-center gap-2 border-b border-[var(--glass-border)]">
-          <History className="w-4 h-4 text-muted-foreground" />
-          <h2 className="text-base font-semibold text-foreground">Riwayat cetak</h2>
-          <span className="text-xs text-muted-foreground">
-            Menjawab “kenapa ada dua label berkode sama di gudang”.
-          </span>
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-base font-semibold text-foreground">Riwayat cetak</p>
+            <p className="text-xs text-muted-foreground">15 cetakan terakhir — menjawab "kenapa ada dua label berkode sama di gudang".</p>
+          </div>
+          <TombolUnduh namaBerkas="riwayat-cetak-barcode" namaLembar="Riwayat cetak" baris={history} testId="barcode-history-unduh"
+            kolom={[
+              { label: 'No. cetak', nilai: (h) => h.job_number }, { label: 'Jenis', nilai: jenisRiwayat },
+              { label: 'Sumber', nilai: (h) => (h.source === 'produksi' ? 'Dari produksi' : 'Manual') },
+              { label: 'Item', nilai: (h) => Number(h.item_count || 0) }, { label: 'Lembar', nilai: (h) => Number(h.total_labels || 0) },
+              { label: 'Oleh', nilai: (h) => h.created_by_name || '' },
+              { label: 'Waktu', nilai: (h) => formatDateTimeID(h.created_at, { fallback: '' }) },
+            ]} />
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-[var(--glass-bg)]">
-              <tr className="text-left text-xs text-muted-foreground">
-                <th className="px-4 py-2">No. Cetak</th>
-                <th className="px-4 py-2">Jenis</th>
-                <th className="px-4 py-2">Sumber</th>
-                <th className="px-4 py-2 text-right">Item</th>
-                <th className="px-4 py-2 text-right">Lembar</th>
-                <th className="px-4 py-2">Oleh</th>
-                <th className="px-4 py-2">Waktu</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.length === 0 ? (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground"
-                  data-testid="barcode-history-empty">Belum ada riwayat cetak.</td></tr>
-              ) : history.map(h => (
-                <tr key={h.id} className="border-t border-[var(--glass-border)]"
-                  data-testid={`barcode-history-${h.job_number}`}>
-                  <td className="px-4 py-2 tabular-nums text-xs text-foreground">{h.job_number}</td>
-                  <td className="px-4 py-2 text-xs text-muted-foreground">
-                    {h.kind === 'fg' ? (h.size === 'hangtag' ? 'Barang Jadi · hangtag' : 'Barang Jadi') : 'Bahan'}
-                  </td>
-                  <td className="px-4 py-2 text-xs text-muted-foreground">
-                    {h.source === 'produksi' ? 'Dari produksi' : 'Manual'}
-                  </td>
-                  <td className="px-4 py-2 text-right text-xs text-foreground">{h.item_count}</td>
-                  <td className="px-4 py-2 text-right text-xs font-semibold text-foreground">{h.total_labels}</td>
-                  <td className="px-4 py-2 text-xs text-muted-foreground">{h.created_by_name || '—'}</td>
-                  <td className="px-4 py-2 text-xs text-muted-foreground">
-                    {h.created_at ? new Date(h.created_at).toLocaleString('id-ID') : '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </GlassCard>
-    </div>
+        <TabelData kolom={kolomRiwayat} baris={history} testId="barcode-history-table"
+          kosong={<div data-testid="barcode-history-empty"><EmptyState title="Belum ada riwayat cetak" /></div>} />
+      </div>
+    </PageLayout>
   );
 }
