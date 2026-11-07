@@ -6,6 +6,7 @@
  *   ukuran="panjang" banyak isian  → lebar 48rem, isi bergulir, kepala & kaki tetap terlihat
  * Di HP (< 640 px) keduanya penuh layar. Tutup: × , Esc, atau Batal.
  * Kaki: pesan galat (kiri) · Batal (garis) · Simpan (hijau, K3). Enter di isian = Simpan.
+ * Form penolakan/penghapusan: `warnaSimpan="destructive"` (tombol simpan merah, mis. "Tolak").
  */
 import { Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
@@ -16,7 +17,7 @@ const LEBAR = { pendek: 'sm:max-w-lg', panjang: 'sm:max-w-3xl' };
 
 export default function FormPopup({
   open, onClose, judul, keterangan, ukuran = 'pendek', children, onSimpan, labelSimpan = 'Simpan',
-  menyimpan = false, galat, bisaSimpan = true, aksiKiri, testId = 'form-popup',
+  menyimpan = false, galat, bisaSimpan = true, aksiKiri, testId = 'form-popup', warnaSimpan = 'success',
 }) {
   const kirim = (e) => {
     e.preventDefault();
@@ -47,7 +48,7 @@ export default function FormPopup({
             {aksiKiri}
             <Button type="button" variant="outline" onClick={onClose} disabled={menyimpan}
               data-testid={`${testId}-batal`}>Batal</Button>
-            <Button type="submit" variant="success" disabled={menyimpan || !bisaSimpan}
+            <Button type="submit" variant={warnaSimpan} disabled={menyimpan || !bisaSimpan}
               data-testid={`${testId}-simpan`}>
               {menyimpan && <Loader2 className="animate-spin" />}
               {menyimpan ? 'Menyimpan…' : labelSimpan}
