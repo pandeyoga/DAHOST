@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import Modal from './Modal';
 import NotificationPrefsDialog from './NotificationPrefsDialog';
+import { parseServerTime } from '@/lib/waktu';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const PAGE_SIZE = 30;
@@ -51,17 +52,9 @@ const CAT_TONE = {
 };
 
 // ── Waktu (dipakai juga oleh PortalSayaNotifikasi) ──────────────────────────
-// Server menyimpan UTC. Stempel lama/berkas lain bisa datang TANPA zona
-// ("2026-11-01T21:33:43.861000") — `new Date()` membacanya sebagai jam LOKAL,
-// jadi di WIB semuanya bergeser 7 jam. Tanpa zona = UTC.
-export function parseServerTime(iso) {
-  if (!iso) return null;
-  let s = String(iso).trim();
-  s = s.replace(/(\.\d{3})\d+/, '$1');            // mikrodetik Python → milidetik
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s += 'Z';
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
+// Server menyimpan UTC; stempel TANPA zona = UTC. Definisinya dipindah ke SSOT `@/lib/waktu`
+// (Tahap 7, 2026-11-07) supaya layar absen juga memakainya; ekspor lama tetap ada.
+export { parseServerTime };
 
 export function timeAgo(iso) {
   const t = parseServerTime(iso);

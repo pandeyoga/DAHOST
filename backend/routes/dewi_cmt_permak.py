@@ -409,16 +409,17 @@ async def permak_po_options(request: Request, business_type: Optional[str] = Non
     from core.maklon_ledger import CLOSED_PO_STATUSES
     db = get_db()
     q: dict = {"status": {"$nin": list(CLOSED_PO_STATUSES) + ["Cancelled", "cancelled"]}}
+    # Tahap 8 (desain §9): PO tanpa jenis = INTERNAL (dulu ikut maklon)
     if business_type == "internal":
-        q["business_type"] = "internal"
+        q["business_type"] = {"$ne": "maklon"}
     elif business_type == "maklon":
-        q["business_type"] = {"$ne": "internal"}
+        q["business_type"] = "maklon"
     rows = await db.production_pos.find(
         q, {"_id": 0, "id": 1, "po_number": 1, "status": 1, "business_type": 1, "customer_name": 1,
             "vendor_name": 1}).sort("created_at", -1).to_list(500)
     out = []
     for p in rows:
-        bt = p.get("business_type") or "maklon"
+        bt = "maklon" if str(p.get("business_type") or "").lower() == "maklon" else "internal"   # Tahap 8 §9
         out.append({"po_id": p["id"], "po_number": p.get("po_number") or "", "status": p.get("status") or "",
                     "business_type": bt, "business_type_label": BT_LABEL.get(bt, bt),
                     "customer_name": p.get("customer_name") or "", "vendor_name": p.get("vendor_name") or ""})

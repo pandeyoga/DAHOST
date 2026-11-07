@@ -281,6 +281,11 @@ MODULES: list[dict] = [
        {"view": ["fin.cash.view"], "manage": ["fin.cash.manage"], "approve": ["finance.approve"]}),
     _m("finance", "fin_bank_transfer", "Transfer Bank", ["fin-bank-transfer"], ["/api/finance/bank-transfers"], _ALL,
        {"view": ["fin.cash.view"], "manage": ["fin.cash.manage"], "approve": ["finance.approve"]}),
+    # Tahap 8 fase 2: transaksi antar CV (talangan, pinjaman, uang nyasar, pelunasan) + Laporan Saldo antar CV
+    _m("finance", "fin_intercompany", "Transaksi & Saldo antar CV", ["fin-antar-cv", "fin-saldo-antar-cv"],
+       ["/api/rahaza/intercompany"], _ALL,
+       {"view": ["fin.cash.view", "finance.view"], "manage": ["fin.cash.manage", "finance.manage"],
+        "approve": ["finance.approve"]}),
     _m("finance", "fin_bank_recon", "Rekonsiliasi Bank", ["fin-bank-recon"],
        ["/api/finance/bank-recon", "/api/rahaza/finance/bank-recon-adjustments"], _ALL,
        {"view": ["fin.cash.view"], "manage": ["fin.cash.manage"], "approve": ["finance.approve"]}),
@@ -512,6 +517,15 @@ SELF_SERVICE = (
     ("POST", r"/api/rahaza/attendance/selfie/clock-(in|out)"),
     ("POST", r"/api/rahaza/attendance/sessions/(start|end)"),
     ("POST", r"/api/rahaza/attendance/permits/[^/]+/cancel"),
+    # 2026-11-07 (Tahap 7): "Ajukan koreksi absen" di Portal Saya › Absen Saya dulu ditolak gerbang ("tidak
+    # diberi akses Portal SDM") untuk 9 peran staf. Handler: resolve_employee_for / pemohon-atau-HR.
+    ("POST", r"/api/rahaza/attendance/corrections"),
+    ("POST", r"/api/rahaza/attendance/corrections/[^/]+/cancel"),
+    # Tahap 7 (keputusan owner): tombol Batalkan lembur & kasbon yang masih menunggu, jadwal shift sendiri.
+    # Handler: milik sendiri saja (HR/Keuangan boleh semua) + klaim atomik status menunggu (409 bila sudah diputus).
+    ("DELETE", r"/api/rahaza/overtime/[^/]+"),
+    ("POST", r"/api/dewi/kasbon/requests/[^/]+/cancel"),
+    ("GET", r"/api/rahaza/attendance/my-schedule"),
     ("POST", r"/api/rahaza/leaves/(request|upload-document)"),
     ("POST", r"/api/rahaza/leaves/[^/]+/cancel"),
     ("POST", r"/api/rahaza/overtime"),

@@ -11,6 +11,7 @@ import uuid
 import os
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, HTTPException
+from pymongo.errors import DuplicateKeyError
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
 from dotenv import load_dotenv
@@ -49,6 +50,10 @@ FACE_MATCH_DISABLED = {"status": "disabled", "match": None, "confidence": 0,
                        "reason": "Verifikasi wajah AI dimatikan (keputusan owner); identitas dicek HR."}
 
 
+MSG_ALREADY_IN = "Karyawan sudah clock-in hari ini."
+MSG_ALREADY_OUT = "Sudah clock-out hari ini."
+
+
 def _uid(): return str(uuid.uuid4())
 def _now(): return datetime.now(timezone.utc)
 def _today_iso(): return today_wib().isoformat()
@@ -78,7 +83,7 @@ async def selfie_clock_in(request: Request):
     today = _today_iso()
     existing = await db.rahaza_attendance_events.find_one({"employee_id": emp_id, "date": today})
     if existing and existing.get("clock_in"):
-        raise HTTPException(400, "Karyawan sudah clock-in hari ini.")
+        raise HTTPException(400, MSG_ALREADY_IN)
 
     # ── KEBIJAKAN WAJIB (FASE 16) ─────────────────────────────────────────
     # Keputusan user 2026-07-26: selfie + lokasi WAJIB. Penegakan ada di SSOT
@@ -126,8 +131,14 @@ async def selfie_clock_in(request: Request):
         "updated_by": user["id"], "updated_by_name": user.get("name", ""), "updated_at": now,
     }
 
+    # 2026-11-07 (Tahap 7): absen masuk ganda BERSAMAAN (tombol ditekan dua kali / dua HP). Dulu yang kalah
+    # balapan mendapat 500 (indeks unik employee_id+date) atau menimpa jam masuk pertama. Sekarang tulis
+    # bersyarat "belum ada jam masuk"; yang kalah mendapat pesan yang sama dengan absen masuk dobel.
     if existing:
-        await db.rahaza_attendance_events.update_one({"id": existing["id"]}, {"$set": doc_fields})
+        res = await db.rahaza_attendance_events.update_one(
+            {"id": existing["id"], "clock_in": {"$in": [None, ""]}}, {"$set": doc_fields})
+        if not res.matched_count:
+            raise HTTPException(400, MSG_ALREADY_IN)
         out = await db.rahaza_attendance_events.find_one({"id": existing["id"]}, {"_id": 0})
     else:
         doc_fields.update({
@@ -136,7 +147,10 @@ async def selfie_clock_in(request: Request):
             "hours_worked": 0, "overtime_hours": 0, "notes": "",
             "created_by": user["id"], "created_by_name": user.get("name", ""), "created_at": now,
         })
-        await db.rahaza_attendance_events.insert_one(doc_fields)
+        try:
+            await db.rahaza_attendance_events.insert_one(dict(doc_fields))
+        except DuplicateKeyError:
+            raise HTTPException(400, MSG_ALREADY_IN)
         out = doc_fields
 
     await log_activity(user["id"], user.get("name", ""), "selfie-clock-in", "attendance", emp_id)
@@ -220,7 +234,8 @@ async def selfie_clock_out(request: Request):
     from routes.rahaza_attendance_sessions import recompute_session_totals
     totals = recompute_session_totals({**existing, "hours_worked": max(0.0, hours)})
 
-    await db.rahaza_attendance_events.update_one({"id": existing["id"]}, {"$set": {
+    # 2026-11-07 (Tahap 7): absen pulang ganda bersamaan tidak menimpa jam pulang pertama.
+    res = await db.rahaza_attendance_events.update_one({"id": existing["id"], "clock_out": {"$in": [None, ""]}}, {"$set": {
         "clock_out": now,
         "clock_out_geo": {"lat": lat, "lng": lng, "status": geo.get("status"), "distance_m": geo.get("distance_m"),
                           "accuracy_m": geo.get("accuracy_m"), "age_s": geo.get("age_s")},
@@ -230,6 +245,8 @@ async def selfie_clock_out(request: Request):
         "source": "selfie_geo_ai",
         "updated_by": user["id"], "updated_by_name": user.get("name", ""), "updated_at": now,
     }})
+    if not res.matched_count:
+        raise HTTPException(400, MSG_ALREADY_OUT)
     out = await db.rahaza_attendance_events.find_one({"id": existing["id"]}, {"_id": 0})
     await log_activity(user["id"], user.get("name", ""), "selfie-clock-out", "attendance", emp_id)
     return {"ok": True, "attendance": serialize_doc(out), "geo": geo, "hours_worked": hours}

@@ -23,6 +23,7 @@ from database import get_db
 from auth import require_auth, serialize_doc, log_activity
 from routes.rahaza_posting import _create_posted_je, _find_existing_je
 from routes.rahaza_posting_profiles import get_mapping
+from core.entities import DA, SMU, entity_of_po_id
 from core.authz import only
 from core.roles import FINANCE_ROLES
 import uuid
@@ -125,6 +126,7 @@ async def post_maklon_ar_invoice(db, po: dict, user: dict) -> dict:
         source_ref=source_ref,
         lines_raw=lines,
         user=user,
+        entity=SMU,   # Tahap 8: semua jurnal Portal Maklon = buku CV Sukma
     )
     # Save result to AR Invoice
     if result.get('ok'):
@@ -173,6 +175,7 @@ async def post_maklon_payment(db, invoice: dict, payment: dict, user: dict) -> d
         'invoice_number': invoice.get('invoice_number'),
         'customer_name': invoice.get('client_name'),
         'gl_ar_account_code': ar_doc.get('gl_ar_account_code') or invoice.get('gl_ar_account_code'),
+        'entity': SMU,   # Tahap 8: pembayaran klien maklon = buku CV Sukma
     }
     if not pseudo['gl_ar_account_code']:
         mapping = await get_mapping(db, 'maklon_ar_invoice') or {}
@@ -242,7 +245,7 @@ async def post_maklon_revenue(db, *, ar_code: str, rev_code: str, amount: float,
              {'account_code': rev_code, side[1]: amount, side[0]: 0, 'description': memo}]
     if tax > 0:
         lines.append({'account_code': tax_code, side[1]: tax, side[0]: 0, 'description': f'PPN keluaran — {memo}'})
-    return await _create_posted_je(db, je_date=je_date, memo=memo, source_module=SRC_MAKLON_REVENUE,
+    return await _create_posted_je(db, je_date=je_date, memo=memo, source_module=SRC_MAKLON_REVENUE, entity=SMU,
                                    source_ref=source_ref, lines_raw=lines, user=user)
 
 
@@ -267,7 +270,7 @@ async def post_maklon_client_payment(db, *, cash_code: str, ar_code: str, adv_co
     if adv_portion > 0:
         lines.append({'account_code': adv_code, 'debit': 0, 'credit': adv_portion,
                       'description': f'Uang muka — {memo}'})
-    return await _create_posted_je(db, je_date=je_date, memo=memo, source_module=SRC_MAKLON_PAYMENT,
+    return await _create_posted_je(db, je_date=je_date, memo=memo, source_module=SRC_MAKLON_PAYMENT, entity=SMU,
                                    source_ref=source_ref, lines_raw=lines, user=user)
 
 
@@ -282,14 +285,24 @@ async def post_maklon_advance_apply(db, *, ar_code: str, adv_code: str, amount: 
     dr, cr = (adv_code, ar_code) if amt > 0 else (ar_code, adv_code)
     lines = [{'account_code': dr, 'debit': abs(amt), 'credit': 0, 'description': memo},
              {'account_code': cr, 'debit': 0, 'credit': abs(amt), 'description': memo}]
-    return await _create_posted_je(db, je_date=je_date, memo=memo, source_module=SRC_MAKLON_ADVANCE_APPLY,
+    return await _create_posted_je(db, je_date=je_date, memo=memo, source_module=SRC_MAKLON_ADVANCE_APPLY, entity=SMU,
                                    source_ref=source_ref, lines_raw=lines, user=user)
 
 
 async def post_maklon_reclass(db, *, lines: list, je_date, memo: str, source_ref: str, user: dict) -> dict:
     """Jurnal penyesuaian reklasifikasi (migrasi Tahap 2) — jurnal lama TIDAK diubah."""
-    return await _create_posted_je(db, je_date=je_date, memo=memo, source_module=SRC_MAKLON_RECLASS,
+    return await _create_posted_je(db, je_date=je_date, memo=memo, source_module=SRC_MAKLON_RECLASS, entity=SMU,
                                    source_ref=source_ref, lines_raw=lines, user=user)
+
+
+async def cmt_bill_entity(db, cmt_payment: dict) -> str:
+    """CV tagihan CMT (Tahap 8): PO maklon → CV Sukma; PO internal / tanpa jenis / alur job → DA."""
+    if cmt_payment.get('entity') in (DA, SMU):
+        return cmt_payment['entity']
+    po_id = cmt_payment.get('po_id')
+    if po_id:
+        return await entity_of_po_id(db, po_id)
+    return DA   # CMT-flow (job_ids) atau tanpa PO: DA menjahitkan produk DA sendiri
 
 
 async def _cmt_expense_account(db, cmt_payment: dict, mapping: dict) -> tuple:
@@ -309,14 +322,9 @@ async def _cmt_expense_account(db, cmt_payment: dict, mapping: dict) -> tuple:
     / `debit_cmt_expense_maklon`), dan tetap jatuh ke `debit_cmt_expense` lama bila
     profil kustom pengguna hanya punya kunci itu.
     """
-    domain = 'maklon'
-    po_id = cmt_payment.get('po_id')
-    if po_id:
-        po = await db.production_pos.find_one({'id': po_id}, {'_id': 0, 'business_type': 1})
-        if (po or {}).get('business_type') == 'internal':
-            domain = 'internal'
-    elif cmt_payment.get('job_ids'):
-        domain = 'internal'   # CMT-flow: DA menjahitkan produk DA sendiri
+    # Tahap 8 (desain §9): PO TANPA jenis = INTERNAL, sama dengan seluruh aplikasi. Dulu bawaannya
+    # 'maklon' sehingga upah jahit PO internal lama (tanpa business_type) jatuh ke biaya maklon.
+    domain = 'maklon' if await cmt_bill_entity(db, cmt_payment) == SMU else 'internal'
     if domain == 'internal':
         # C-03: absorption — upah jahit produk DA sendiri → WIP (1-1403), keluar ke FG saat job selesai
         code = mapping.get('debit_cmt_wip_internal') or mapping.get('debit_cmt_expense_internal') or mapping.get('debit_cmt_expense')
@@ -334,9 +342,19 @@ async def post_cmt_ap_invoice(db, cmt_payment: dict, user: dict) -> dict:
     """
     payment_id = cmt_payment.get('id')
     source_ref = f'cmt_ap:{payment_id}'
-    existing = await _find_existing_je(db, 'cmt_ap_invoice', source_ref)
+    # Tahap 8 fase 2: tagihan PO INTERNAL ke tim jahit CV Sukma = hutang DA berlabel "antar CV" + piutang Sukma
+    # otomatis (core.intercompany). PO MAKLON ke tim Sukma tidak punya tagihan CMT sama sekali.
+    from core import intercompany as ic
+    bill_ent = await cmt_bill_entity(db, cmt_payment)
+    own_team = await ic.bill_vendor_owner(db, cmt_payment) == SMU
+    existing = await _find_existing_je(db, 'cmt_ap_invoice', source_ref, entity=bill_ent)
     if existing:
-        return {'ok': True, 'je_id': existing['id'], 'je_number': existing.get('je_number'), 'already_posted': True}
+        out = {'ok': True, 'je_id': existing['id'], 'je_number': existing.get('je_number'), 'already_posted': True}
+        if own_team and bill_ent == DA:
+            out['intercompany'] = await ic.post_sewing_mirror(db, cmt_payment, user)
+        return out
+    if own_team and bill_ent == SMU:
+        return {'ok': False, 'error': f'{ic.OWN_TEAM_MSG}: PO maklon yang dijahit tim CV Sukma tidak punya tagihan CMT.'}
 
     mapping = await get_mapping(db, 'cmt_ap_invoice')
     if not mapping:
@@ -411,6 +429,8 @@ async def post_cmt_ap_invoice(db, cmt_payment: dict, user: dict) -> dict:
         source_ref=source_ref,
         lines_raw=lines,
         user=user,
+        entity=bill_ent,   # Tahap 8: PO maklon → SMU, internal → DA
+        labels=ic.ic_labels(SMU, ic.KIND_SEWING, payment_id) if own_team else None,
     )
     if result.get('ok'):
         await db.dewi_cmt_payments.update_one(
@@ -423,6 +443,9 @@ async def post_cmt_ap_invoice(db, cmt_payment: dict, user: dict) -> dict:
                 'post_error': None,
             }}
         )
+        if own_team:
+            fresh = await db.dewi_cmt_payments.find_one({'id': payment_id}, {'_id': 0}) or cmt_payment
+            result['intercompany'] = await ic.post_sewing_mirror(db, fresh, user)
     else:
         await db.dewi_cmt_payments.update_one(
             {'id': payment_id},
@@ -530,6 +553,7 @@ async def record_advance_payment(po_id: str, payload: AdvancePaymentIn, user: di
         source_ref=f'dp:{po_id}:{dp_id}',
         lines_raw=lines,
         user=user,
+        entity=SMU,
     )
 
     # Update PO advance payment
@@ -589,6 +613,9 @@ class CmtPayIn(BaseModel):
     payment_date: Optional[str] = None
     reference_no: Optional[str] = None
     notes: Optional[str] = None
+    # Tahap 8 fase 2: tagihan tim jahit CV Sukma (antar CV) — rekening CV Sukma yang MENERIMA uangnya;
+    # penerimaan di buku Sukma dibuat otomatis dengan nilai yang sama.
+    counter_cash_account_id: Optional[str] = None
 
 
 def _cmt_amount(p: dict) -> float:
@@ -654,6 +681,26 @@ async def _pay_cmt_payment_locked(db, payment_id: str, payload: CmtPayIn, user: 
             raise HTTPException(400, f"AP CMT belum bisa diposting ke GL: {ap.get('error')}")
         payment = await db.dewi_cmt_payments.find_one({'id': payment_id}, {'_id': 0})
     pay_date = payload.payment_date or today_wib().isoformat()
+    # Tahap 8 fase 2: tagihan tim jahit CV Sukma = pembayaran ANTAR CV (dua buku sekaligus, atomik).
+    from core import intercompany as ic
+    if await ic.sewing_bill_is_ic(db, payment):
+        if not await ic.find_sewing_ar(db, payment_id):
+            mir = await ic.post_sewing_mirror(db, payment, user)
+            if not mir.get('ok'):
+                raise HTTPException(400, f"Piutang pasangan di CV Sukma belum bisa dibuat: {mir.get('error')}")
+        try:
+            res = await ic.settle(db, kind=ic.KIND_CMT, doc=payment, amount=amount, cash_account_id=acc['id'],
+                                  counter_cash_account_id=payload.counter_cash_account_id, pay_date=pay_date,
+                                  user=user, notes=payload.notes or '', reference_no=payload.reference_no or '')
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        await log_activity(user.get('id', ''), user.get('name', ''), 'pay_cmt', 'dewi_cmt_payments',
+                           f"Bayar {payment.get('payment_code')} Rp {amount:,.0f} via {acc.get('name')} (antar CV, "
+                           f"pasangan {res['mirror'].get('je_number') or '-'})")
+        d = await db.dewi_cmt_disbursements.find_one({'id': res['origin']['payment_id']}, {'_id': 0}) or {}
+        fresh = await db.dewi_cmt_payments.find_one({'id': payment_id}, {'_id': 0}) or {}
+        return serialize_doc({**d, 'payment_status': fresh.get('status'),
+                              'outstanding_amount': fresh.get('outstanding_amount'), 'intercompany': res})
     did = _uid()
     await db.rahaza_cash_movements.insert_one({
         'id': did, 'account_id': acc['id'], 'account_name': acc.get('name'), 'direction': 'out', 'amount': round(amount),
@@ -663,7 +710,8 @@ async def _pay_cmt_payment_locked(db, payment_id: str, payload: CmtPayIn, user: 
     })
     from routes.rahaza_posting import post_ap_payment
     pseudo = {'id': payment_id, 'invoice_number': payment.get('payment_code'), 'vendor_name': payment.get('cmt_name'),
-              'gl_ap_account_code': payment.get('gl_ap_account_code')}
+              'gl_ap_account_code': payment.get('gl_ap_account_code'),
+              'entity': await cmt_bill_entity(db, payment)}   # Tahap 8
     gl = await post_ap_payment(db, pseudo, amount, acc['id'], pay_date, user, movement_id=did)
     paid_after = round(paid_before + amount, 2)
     status = 'paid' if paid_after >= total - 0.01 else 'partial_paid'
@@ -731,11 +779,15 @@ async def resolve_cmt_variance(payment_id: str, payload: CmtVarianceResolveIn, u
         memo = f"Potong lebih tagih CMT {p.get('payment_code', '')} — {payload.notes.strip()}"
         je = await _create_posted_je(
             db, je_date=today_wib(), memo=memo, source_module='cmt_ap_invoice',
-            source_ref=f'cmt_ap_adj:{payment_id}', user=user,
+            source_ref=f'cmt_ap_adj:{payment_id}', user=user, entity=await cmt_bill_entity(db, p),
             lines_raw=[{'account_code': ap_code, 'debit': over, 'credit': 0, 'description': memo},
                        {'account_code': exp_code, 'debit': 0, 'credit': over, 'description': memo}])
         if not je.get('ok'):
             raise HTTPException(400, f"Jurnal penyesuaian gagal: {je.get('error')}")
+        # Tahap 8 fase 2: tagihan tim jahit CV Sukma — piutang pasangan di buku Sukma ikut dipotong.
+        from core import intercompany as ic
+        if await ic.find_sewing_ar(db, payment_id):
+            await ic.adjust_sewing_mirror(db, p, over, user, f'icsew_adj:{payment_id}', memo)
         new_net = round(net - over, 2)
         upd.update({'net_amount': new_net, 'total_amount': new_net, 'adjusted_amount': over,
                     'outstanding_amount': round(new_net - float(p.get('paid_amount') or 0), 2)})
@@ -776,6 +828,9 @@ async def _void_cmt_disbursement_locked(db, payment_id: str, did: str, user: dic
     v = await _void_je_by_source(db, 'ap_payment', f"appay:{did}:{int(round(float(d['amount'])))}", user, 'Pembayaran CMT dibatalkan')
     if not v.get('ok'):
         raise HTTPException(400, f"Jurnal tidak bisa di-void: {v.get('error')}")
+    # Tahap 8 fase 2: pembayaran antar CV — penerimaan pasangan di buku CV Sukma ikut dibatalkan.
+    from core import intercompany as ic
+    await ic.void_pair_of(db, d, user)
     mv = await db.rahaza_cash_movements.find_one({'id': did}, {'_id': 0})
     if mv:
         await db.rahaza_cash_movements.delete_one({'id': did})

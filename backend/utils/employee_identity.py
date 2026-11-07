@@ -73,6 +73,38 @@ def is_hr(user: dict) -> bool:
     return "*" in perms or "hr.manage" in perms
 
 
+def can_view_all_employees(user: dict) -> bool:
+    """Boleh membaca data SDM karyawan LAIN (absensi, cuti, saldo)? — 2026-11-07 (Tahap 7, Portal Saya).
+
+    Dulu daftar/grid absensi, detail cuti, dan saldo cuti hanya `require_auth`: akun staf (mis. tim packing)
+    membaca lokasi GPS, foto selfie, dan alasan/surat sakit seluruh karyawan lewat API. Sekarang: HR/atasan
+    (`is_hr`), peran SDM (`core.roles.HR_ROLES`), atau akun yang diberi Portal SDM oleh owner. Selain itu
+    hanya data milik sendiri — pola yang sama dengan daftar lembur, kasbon, dan izin keluar."""
+    if is_hr(user):
+        return True
+    from core.roles import HR_ROLES as CORE_HR_ROLES
+    if (user.get("role") or "").lower() in CORE_HR_ROLES:
+        return True
+    from routes.shared import check_portal_access
+    return bool(check_portal_access(user, "hr"))
+
+
+async def employee_user_ids(db, employee_id: Optional[str]) -> list:
+    """Akun login AKTIF milik karyawan (`users.employee_id` ATAU `rahaza_employees.user_id`) — penerima
+    kabar keputusan (cuti, lembur, koreksi absen, selfie). Dulu sebagian pengirim hanya melihat
+    `users.employee_id`, sehingga karyawan yang ditautkan dari sisi data karyawan tidak pernah dikabari."""
+    if not employee_id:
+        return []
+    from utils.notif_recipients import active_user_filter
+    ids = [r["id"] for r in await db.users.find(active_user_filter({"employee_id": employee_id}),
+                                                {"_id": 0, "id": 1}).to_list(5) if r.get("id")]
+    emp = await db.rahaza_employees.find_one({"id": employee_id}, {"_id": 0, "user_id": 1})
+    uid = (emp or {}).get("user_id")
+    if uid and uid not in ids and await db.users.find_one(active_user_filter({"id": uid}), {"_id": 0, "id": 1}):
+        ids.append(uid)
+    return ids
+
+
 async def resolve_my_employee(db, user: dict) -> Optional[dict]:
     """Karyawan milik user yang login. `None` bila belum ditautkan.
 

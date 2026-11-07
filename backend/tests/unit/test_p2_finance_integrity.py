@@ -341,7 +341,7 @@ def je_sink(monkeypatch, db):
     calls = []
 
     async def fake_create(db_, je_date, memo, source_module, source_ref, lines_raw, user,
-                          status="posted", allow_closed_period=False):
+                          status="posted", allow_closed_period=False, **_kw):
         lines = [dict(ln) for ln in lines_raw if float(ln.get("debit") or 0) or float(ln.get("credit") or 0)]
         jid = f"je-{len(calls) + 1}"
         doc = {"id": jid, "je_number": f"JE-{len(calls) + 1:04d}", "date": je_date.isoformat(), "memo": memo,
@@ -682,7 +682,7 @@ def imp_db(db, monkeypatch):
     async def noop(*_a, **_k):
         return None
 
-    async def gen(db_, d):
+    async def gen(db_, d, *_a, **_k):
         n["i"] += 1
         return f"JE-{n['i']:04d}"
     monkeypatch.setattr(rj, "_validate_lines", validate)

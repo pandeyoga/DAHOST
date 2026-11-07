@@ -20,6 +20,7 @@ from fastapi import APIRouter, Request
 from auth import require_auth, serialize_doc
 from database import get_db
 from utils.waktu import today_wib
+from core.entities import DA, ALL, entity_from_request, entity_match, entity_short
 from core.platform_balance import SETTLEMENTS  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
 
 router = APIRouter(prefix="/api/finance", tags=["finance-home"])
@@ -34,12 +35,14 @@ def _month_bounds(d: date) -> tuple[str, str]:
     return start.isoformat(), (nxt - timedelta(days=1)).isoformat()
 
 
-async def _store_balances(db) -> dict:
+async def _store_balances(db, entity: str = DA) -> dict:
+    if entity not in (DA, ALL):
+        return {"total": 0.0, "stores": []}   # Tahap 8: semua toko milik CV Dewi Aditya
     names = {a["code"]: a.get("name") or a["code"] async for a in db.rahaza_coa_accounts.find(
         {"code": {"$regex": f"^{STORE_PREFIX}"}}, {"_id": 0, "code": 1, "name": 1})}
     rows = []
     async for r in db.rahaza_journal_lines.aggregate([
-            {"$match": {"account_code": {"$regex": f"^{STORE_PREFIX}-"}}},
+            {"$match": {"account_code": {"$regex": f"^{STORE_PREFIX}-"}, **entity_match(entity)}},
             {"$group": {"_id": "$account_code", "d": {"$sum": "$debit"}, "c": {"$sum": "$credit"}}}]):
         bal = round(float(r.get("d") or 0) - float(r.get("c") or 0), 2)
         if abs(bal) >= 0.5:
@@ -49,11 +52,11 @@ async def _store_balances(db) -> dict:
     return {"total": round(sum(r["balance"] for r in rows), 2), "stores": rows}
 
 
-async def _receivables(db, today: date) -> dict:
+async def _receivables(db, today: date, entity: str = DA) -> dict:
     t, soon_to = today.isoformat(), (today + timedelta(days=7)).isoformat()
     total = overdue = due7 = 0.0
     n_open = n_overdue = n_due7 = 0
-    async for inv in db.rahaza_ar_invoices.find({"status": {"$in": list(AR_OPEN)}},
+    async for inv in db.rahaza_ar_invoices.find({"status": {"$in": list(AR_OPEN)}, **entity_match(entity)},
                                                 {"_id": 0, "balance": 1, "due_date": 1}):
         bal = float(inv.get("balance") or 0)
         if bal <= 0.5:
@@ -71,9 +74,9 @@ async def _receivables(db, today: date) -> dict:
             "due_7d": round(due7, 2), "due_7d_count": n_due7}
 
 
-async def _payables(db, today: date) -> dict:
+async def _payables(db, today: date, entity: str = DA) -> dict:
     from core.payables import aging, open_payable_rows
-    ag = aging(await open_payable_rows(db), today)
+    ag = aging(await open_payable_rows(db, entity=entity), today)
     t, soon_to = today.isoformat(), (today + timedelta(days=7)).isoformat()
     det = ag["details"]
     over = [r for r in det if r["days_overdue"] > 0]
@@ -83,21 +86,23 @@ async def _payables(db, today: date) -> dict:
             "unposted_cmt": ag["unposted_total"], "unposted_cmt_count": len(ag["unposted"])}
 
 
-async def _profit(db, today: date) -> dict:
+async def _profit(db, today: date, entity: str = DA) -> dict:
     from routes.rahaza_fin_reports import compute_profit_loss
     m_from, _ = _month_bounds(today)
     last = today.replace(day=1) - timedelta(days=1)
     l_from, l_to = _month_bounds(last)
-    cur = (await compute_profit_loss(db, m_from, today.isoformat()))["totals"]
-    prev = (await compute_profit_loss(db, l_from, l_to))["totals"]
+    cur = (await compute_profit_loss(db, m_from, today.isoformat(), entity))["totals"]
+    prev = (await compute_profit_loss(db, l_from, l_to, entity))["totals"]
     pick = ("revenue", "gross_profit", "expense", "net_income")
     return {"this_month": {k: cur.get(k, 0) for k in pick}, "last_month": {k: prev.get(k, 0) for k in pick},
             "this_month_from": m_from, "last_month_from": l_from, "last_month_to": l_to}
 
 
-async def _marketplace(db, today: date) -> dict:
+async def _marketplace(db, today: date, entity: str = DA) -> dict:
     ym = today.strftime("%Y-%m")
     s = {}
+    if entity not in (DA, ALL):   # Tahap 8: semua toko marketplace milik CV Dewi Aditya
+        return {"month": ym, "count": 0, "gross_sales": 0.0, "deductions": 0.0, "net_payout": 0.0, "deduction_pct": 0.0}
     async for r in db[SETTLEMENTS].aggregate([
             {"$match": {"settlement_date": {"$regex": f"^{ym}"}}},
             {"$group": {"_id": None, "n": {"$sum": 1}, "gross": {"$sum": "$gross_sales"},
@@ -110,7 +115,7 @@ async def _marketplace(db, today: date) -> dict:
             "deduction_pct": round(ded / gross * 100, 1) if gross else 0.0}
 
 
-async def _todo(db, today: date, ar: dict, ap: dict) -> list[dict]:
+async def _todo(db, today: date, ar: dict, ap: dict, entity: str = DA) -> list[dict]:
     """Pekerjaan tertunda — hanya yang > 0, urut dari yang paling mendesak."""
     t = today.isoformat()
     last_month_end = (today.replace(day=1) - timedelta(days=1))
@@ -130,7 +135,7 @@ async def _todo(db, today: date, ar: dict, ap: dict) -> list[dict]:
         "warning")
     add("cmt_unposted", ap["unposted_cmt_count"], "tagihan CMT belum dijurnal", "fin-ap-hub", "bills",
         ap["unposted_cmt"], "warning")
-    add("settle_unverified", await db[SETTLEMENTS].count_documents({"math_verified": False}),
+    add("settle_unverified", await db[SETTLEMENTS].count_documents({"math_verified": False}) if entity in (DA, ALL) else 0,
         "laporan dana marketplace masih ada selisih hitungan", "fin-marketplace-settlement", "settlements",
         level="warning")
     add("kasbon", await db.dewi_kasbon_requests.count_documents({"status": "hr_approved"}),
@@ -142,17 +147,18 @@ async def _todo(db, today: date, ar: dict, ap: dict) -> list[dict]:
         "penyelesaian perjalanan dinas siap diposting", "fin-settlement-queue", level="info")
     add("edit_req", await db.invoice_edit_requests.count_documents({"status": "Pending"}),
         "permintaan perubahan faktur menunggu persetujuan", "fin-approval", level="info")
-    add("je_draft", await db.rahaza_journal_entries.count_documents({"status": "draft"}),
+    add("je_draft", await db.rahaza_journal_entries.count_documents({"status": "draft", **entity_match(entity)}),
         "jurnal masih draf", "fin-journal-hub", "list", level="info")
     # rekonsiliasi bank bulan lalu: rekening bank aktif yang belum punya sesi disetujui
-    banks = [a async for a in db.rahaza_cash_accounts.find({"type": "bank", "active": {"$ne": False}},
+    banks = [a async for a in db.rahaza_cash_accounts.find({"type": "bank", "active": {"$ne": False}, **entity_match(entity)},
                                                           {"_id": 0, "id": 1})]
     if banks:
         done = set(await db.bank_recon_sessions.distinct(
             "cash_account_id", {"period": last_period, "status": "approved"}))
         add("recon", len([b for b in banks if b["id"] not in done]),
             f"rekening bank belum direkonsiliasi untuk {last_period}", "fin-bank-recon", level="info")
-    add("period", await db.rahaza_periods.count_documents({"status": "open", "period_code": {"$lte": last_period}}),
+    add("period", await db.rahaza_periods.count_documents({"status": "open", "period_code": {"$lte": last_period},
+                                                           **entity_match(entity)}),
         f"periode sampai {last_period} belum ditutup", "fin-acctg-adjust-hub", "periods", level="info")
     order = {"danger": 0, "warning": 1, "info": 2}
     items.sort(key=lambda x: order.get(x["level"], 3))
@@ -164,18 +170,20 @@ async def finance_home(request: Request):
     await require_auth(request)
     db = get_db()
     from core.cash_position import cash_position
+    ent = entity_from_request(request, allow_all=True)   # Tahap 8: DA | SMU | ALL (gabungan)
     today = today_wib()
     m_from, _ = _month_bounds(today)
-    cash = await cash_position(db, m_from, today.isoformat())
-    ar = await _receivables(db, today)
-    ap = await _payables(db, today)
+    cash = await cash_position(db, m_from, today.isoformat(), entity=ent)
+    ar = await _receivables(db, today, ent)
+    ap = await _payables(db, today, ent)
     return serialize_doc({
         "today": today.isoformat(),
+        "entity": ent, "entity_label": entity_short(ent),
         "cash": cash,
-        "stores": await _store_balances(db),
+        "stores": await _store_balances(db, ent),
         "receivables": ar,
         "payables": ap,
-        "profit": await _profit(db, today),
-        "marketplace": await _marketplace(db, today),
-        "todo": await _todo(db, today, ar, ap),
+        "profit": await _profit(db, today, ent),
+        "marketplace": await _marketplace(db, today, ent),
+        "todo": await _todo(db, today, ar, ap, ent),
     })

@@ -194,6 +194,7 @@ export default function RahazaARInvoicesModule({ token }) {
                         data-testid={`ar-row-${inv.invoice_number}`}>
                         <td className="px-4 py-2 whitespace-nowrap">
                           <div className="text-xs font-semibold text-foreground">{inv.invoice_number}</div>
+                          {inv.intercompany && <StatusBadge status="antar-cv" label="Antar CV" tone="info" testId={`ar-ic-${inv.invoice_number}`} />}
                           <div className="text-[10px] text-muted-foreground">
                             {inv.schedule_mode === 'v2'
                               ? `PO ${inv.linked_maklon_po_number || '—'} · nilai PO ${fmt(inv.scheduled_total)} · tertagih ${fmt(inv.billed_total)}`
@@ -297,7 +298,14 @@ function PaymentModal({ invoice, accounts, accountsLoaded, onClose, onPay }) {
   const [account_id, setAccount] = useState('');
   const [date, setDate] = useState(todayWIB);
   const [notes, setNotes] = useState('');
+  // Tahap 8 fase 2: piutang ANTAR CV — rekening CV lain yang MEMBAYAR ikut dipilih; pembayarannya di buku CV lain
+  // (tagihan CMT / hutang pemasok) dibuat otomatis dengan nilai yang sama.
+  const isIc = !!invoice.intercompany;
+  const otherCv = invoice.entity === 'SMU' ? 'DA' : 'SMU';
+  const { accounts: counterAccounts, loaded: counterLoaded } = usePaymentCashAccounts(null, otherCv);
+  const [counter_id, setCounter] = useState('');
   const problem = !account_id ? 'Pilih rekening penerima.'
+    : isIc && !counter_id ? `Pilih rekening ${otherCv === 'SMU' ? 'CV Sukma' : 'CV Dewi Aditya'} yang membayar.`
     : !(Number(amount) > 0) ? 'Jumlah harus lebih dari 0.'
       : Number(amount) > balance + 0.5 ? `Jumlah melebihi ${isSchedule ? 'sisa nilai PO' : 'sisa tagihan'} (${fmt(balance)}).`
         : '';
@@ -311,13 +319,19 @@ function PaymentModal({ invoice, accounts, accountsLoaded, onClose, onPay }) {
       <div className="space-y-3">
         <div><label className="text-xs text-muted-foreground" htmlFor="ar-pay-amount">Jumlah diterima</label><MoneyInput glass id="ar-pay-amount" value={amount} onChange={e => setAmount(Number(e.target.value))} data-testid="ar-pay-amount" /></div>
         <div><label className="text-xs text-muted-foreground">Masuk ke rekening</label><CashAccountSelect accounts={accounts} loaded={accountsLoaded} value={account_id} onChange={setAccount} testId="ar-pay-account" /></div>
+        {isIc && (
+          <div data-testid="ar-pay-counter">
+            <label className="text-xs text-muted-foreground">Dibayar dari rekening {otherCv === 'SMU' ? 'CV Sukma' : 'CV Dewi Aditya'} (antar CV, pasangan otomatis)</label>
+            <CashAccountSelect accounts={counterAccounts} loaded={counterLoaded} value={counter_id} onChange={setCounter} testId="ar-pay-counter-account" />
+          </div>
+        )}
         <div><label className="text-xs text-muted-foreground" htmlFor="ar-pay-date">Tanggal</label><GlassInput id="ar-pay-date" type="date" value={date} onChange={e => setDate(e.target.value)} /></div>
         <div><label className="text-xs text-muted-foreground" htmlFor="ar-pay-notes">Catatan</label><GlassInput id="ar-pay-notes" value={notes} onChange={e => setNotes(e.target.value)} placeholder="opsional, mis. no. referensi transfer" /></div>
       </div>
       {problem && account_id && <div className="text-xs text-[hsl(var(--destructive))] border border-[hsl(var(--destructive)/0.3)] rounded-lg px-3 py-2 mt-3" data-testid="ar-pay-error">{problem}</div>}
       <div className="flex gap-2 mt-4 justify-end">
         <Button variant="outline" onClick={onClose}>Batal</Button>
-        <Button onClick={() => onPay({ amount, account_id, date, notes })} disabled={!!problem} data-testid="ar-pay-submit"><DollarSign className="w-4 h-4" />Simpan</Button>
+        <Button onClick={() => onPay({ amount, account_id, date, notes, ...(isIc ? { counter_cash_account_id: counter_id } : {}) })} disabled={!!problem} data-testid="ar-pay-submit"><DollarSign className="w-4 h-4" />Simpan</Button>
       </div>
     </Modal>
   );

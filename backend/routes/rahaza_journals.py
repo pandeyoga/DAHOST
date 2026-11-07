@@ -22,6 +22,8 @@ from datetime import datetime, timezone, date
 from typing import Optional
 from core.roles import FINANCE_ROLES  # FIN-02
 from utils.waktu import today_wib
+from core import entities as ent_mod
+from core.entities import DA, entity_from_request, entity_match
 
 router = APIRouter(prefix="/api/rahaza/journals", tags=["rahaza-journals"],
                    dependencies=[Depends(require_portal_dep("finance"))])  # RBAC: portal finance (BUG-RBAC-1)
@@ -46,14 +48,19 @@ async def _require_fin(request: Request):
     raise HTTPException(403, "Forbidden: butuh permission finance.")
 
 
-async def _gen_je_number(db, d: date, requested: str = "") -> str:
+async def _gen_je_number(db, d: date, requested: str = "", entity: str = DA) -> str:
     """Nomor jurnal lewat SATU PINTU kebijakan penomoran (SESI #19).
 
-    `d` tidak lagi dipakai untuk menyusun awalan (format tanggalnya diambil dari
-    setelan owner, kalender WIB — lihat `utils.counters.render_format`), tetapi tetap
-    ada di tanda tangan supaya pemanggil lama tidak perlu diubah.
+    Mode MANUAL / nomor diketik → `issue_number` (pola & keunikan diperiksa di sana).
+    Mode OTOMATIS → Tahap 8: nomor ber-awalan CV (`JE-DA-…`, `JE-SMU-…`) lewat generator yang sama
+    dengan jurnal otomatis (`routes.rahaza_posting.gen_je_number`), format owner tetap dihormati.
     """
-    return await issue_number(db, JE_DOCNUM_KEY, requested=requested)
+    from core.doc_number_policy import policy
+    pol = await policy(db, JE_DOCNUM_KEY)
+    if requested or pol.get("mode") == "manual":
+        return await issue_number(db, JE_DOCNUM_KEY, requested=requested)
+    from routes.rahaza_posting import gen_je_number
+    return await gen_je_number(db, d, entity)
 
 
 async def _validate_lines(db, lines: list) -> tuple[float, float]:
@@ -121,10 +128,11 @@ async def revalidate_draft_lines(db, je: dict) -> tuple[list, float, float]:
     return lines, total_d, total_c
 
 
-async def _check_period_open(db, d: date):
-    """H-08: satu aturan periode dgn mesin posting (masa depan >31 hari / periode belum dibuka / closed / locked)."""
+async def _check_period_open(db, d: date, entity: str = DA):
+    """H-08: satu aturan periode dgn mesin posting (masa depan >31 hari / periode belum dibuka / closed / locked).
+    Tahap 8: periode milik CV jurnal."""
     from routes.rahaza_posting import _ensure_period_open
-    err = await _ensure_period_open(db, d, {"source_module": "manual_journal"})
+    err = await _ensure_period_open(db, d, {"source_module": "manual_journal"}, entity=entity)
     if err:
         raise HTTPException(423 if "sudah" in err else 400, err)
 
@@ -142,16 +150,20 @@ async def create_journal(request: Request):
         raise HTTPException(400, "Format tanggal harus YYYY-MM-DD.")
     memo = (body.get("memo") or "").strip()
     lines = body.get("lines") or []
+    # Tahap 8: CV jurnal dari layar (query/body/header X-CV); Gabungan ditolak (hanya untuk dilihat).
+    entity = entity_from_request(request, body)
     total_d, total_c = await _validate_lines(db, lines)
+    await ent_mod.validate_manual_lines(db, lines, entity)
     post_now = bool(body.get("post", False))
     if post_now:
-        await _check_period_open(db, je_date)
+        await _check_period_open(db, je_date, entity)
 
-    je_number = await _gen_je_number(db, je_date, (body.get("je_number") or "").strip())
+    je_number = await _gen_je_number(db, je_date, (body.get("je_number") or "").strip(), entity)
     je_id = _uid()
     doc = {
         "id": je_id,
         "je_number": je_number,
+        "entity": entity,
         "date": je_date.isoformat(),
         "memo": memo,
         "source_module": body.get("source_module") or "manual",
@@ -197,7 +209,7 @@ async def create_journal(request: Request):
             if diketik:
                 raise HTTPException(
                     409, f"Nomor jurnal '{doc['je_number']}' sudah dipakai dokumen lain.")
-            doc["je_number"] = await _gen_je_number(db, je_date)
+            doc["je_number"] = await _gen_je_number(db, je_date, "", entity)
     else:
         raise HTTPException(409, "Nomor jurnal bentrok berulang — silakan coba lagi.")
     je_number = doc["je_number"]
@@ -218,6 +230,7 @@ async def _mirror_lines(db, je_doc: dict):
             "id": _uid(),
             "je_id": je_doc["id"],
             "je_number": je_doc["je_number"],
+            "entity": ent_mod.entity_of_value(je_doc.get("entity")),   # Tahap 8
             "date": je_doc["date"],
             "period_code": je_doc["date"][:7],
             "account_code": ln["account_code"],
@@ -251,15 +264,18 @@ async def list_journals(
     page_size: int = Query(25, ge=1, le=200),
     q: Optional[str] = None,
     account_code: Optional[str] = None,
+    entity: Optional[str] = None,
 ):
     """Daftar jurnal. Tanpa `page` → daftar biasa (perilaku lama, maks 500).
+    Tahap 8: hanya buku CV terpilih (`entity`/header X-CV; ALL = gabungan, bawaan DA).
 
     2026-11-04 (audit Keuangan): dengan `page` → paginasi server {items, total, status_counts}. Dulu
     layar Jurnal merender semua jurnal sekaligus (±24 layar untuk 4 bulan) dan dua daftar (Jurnal Umum
     dan Daftar Jurnal) sama-sama dipotong diam-diam di 500 baris."""
     await require_auth(request)
     db = get_db()
-    flt: dict = {}
+    ent = entity_from_request(request, allow_all=True)
+    flt: dict = dict(entity_match(ent))
     if from_date and to_date:
         flt["date"] = {"$gte": from_date, "$lte": to_date}
     elif from_date:
@@ -272,7 +288,8 @@ async def list_journals(
         rx = {"$regex": re.escape(q.strip()), "$options": "i"}
         flt["$or"] = [{"je_number": rx}, {"memo": rx}, {"source_ref": rx}]
     if account_code:
-        line_q = {"account_code": account_code.strip(), **({"date": flt["date"]} if "date" in flt else {})}
+        line_q = {"account_code": account_code.strip(), **({"date": flt["date"]} if "date" in flt else {}),
+                  **entity_match(ent)}
         flt["id"] = {"$in": list(set(await db.rahaza_journal_lines.distinct("je_id", line_q)))}
     with_status = {**flt, **({"status": status} if status else {})}
     if page is None:
@@ -289,6 +306,27 @@ async def list_journals(
         {"$match": flt}, {"$group": {"_id": "$status", "n": {"$sum": 1}}}]).to_list(20)
     return {"items": serialize_doc(rows), "total": total, "page": page, "page_size": page_size,
             "status_counts": {str(c["_id"] or "draft"): c["n"] for c in counts}}
+
+
+@router.get("/entity-warnings")
+async def entity_warnings(request: Request, limit: int = Query(200, ge=1, le=1000)):
+    """Tahap 8 — laporan cek Keuangan: jurnal OTOMATIS yang akun/rekeningnya tidak cocok dengan CV jurnal.
+
+    Jurnal otomatis tidak pernah diblokir karena CV; ketidakcocokan ditandai `entity_warning` di kepala
+    jurnal (mis. pembayaran faktur DA ke rekening CV Sukma). Daftar ini menunjukkan mana yang perlu
+    dikoreksi lewat jurnal manual / transaksi antar CV (fase 2). Saring per CV lewat `entity`/header."""
+    await require_auth(request)
+    db = get_db()
+    ent = entity_from_request(request, allow_all=True)
+    q = {"entity_warning": {"$exists": True, "$nin": [None, ""]}, "status": {"$ne": "voided"}, **entity_match(ent)}
+    total = await db.rahaza_journal_entries.count_documents(q)
+    rows = await db.rahaza_journal_entries.find(
+        q, {"_id": 0, "id": 1, "je_number": 1, "date": 1, "memo": 1, "entity": 1, "source_module": 1,
+            "source_ref": 1, "status": 1, "total_debit": 1, "entity_warning": 1}).sort("date", -1).limit(limit).to_list(limit)
+    for r in rows:
+        r["entity"] = ent_mod.entity_of_value(r.get("entity"))
+        r["entity_label"] = ent_mod.entity_short(r["entity"])
+    return {"entity": ent, "total": total, "items": serialize_doc(rows)}
 
 
 @router.get("/{je_id}")
@@ -312,8 +350,12 @@ async def post_journal(je_id: str, request: Request):
     if je["status"] != "draft":
         raise HTTPException(400, f"Hanya draft yang bisa di-post. Status sekarang: {je['status']}")
     je_date = date.fromisoformat(je["date"])
-    await _check_period_open(db, je_date)
+    je_entity = ent_mod.entity_of_value(je.get("entity"))
+    await _check_period_open(db, je_date, je_entity)
     lines, total_d, total_c = await revalidate_draft_lines(db, je)
+    if (je.get("source_module") or "manual") in ("manual", "manual_journal", "general", "adjustment"):
+        # Tahap 8: draft MANUAL diperiksa lagi terhadap CV-nya (akun bisa diubah "berlaku untuk"-nya).
+        await ent_mod.validate_manual_lines(db, lines, je_entity)
     je["lines"] = lines
     # FIN-17: atomik — hanya satu permintaan yang mengubah draft→posted; baris disalin hanya bila menang
     res = await db.rahaza_journal_entries.update_one(
@@ -376,7 +418,7 @@ async def void_journal(je_id: str, request: Request):
             raise HTTPException(400, "Alasan wajib diisi untuk void paksa jurnal otomatis.")
     # period check for posted journals (cannot void in locked period)
     if je["status"] == "posted":
-        await _check_period_open(db, date.fromisoformat(je["date"]))
+        await _check_period_open(db, date.fromisoformat(je["date"]), ent_mod.entity_of_value(je.get("entity")))
     await db.rahaza_journal_entries.update_one(
         {"id": je_id},
         {"$set": {

@@ -216,6 +216,7 @@ export default function DAReceiveFromCMTModule() {
       parts.push(`${fmtNum(led.short_resolved)} pcs selisih lama tertutup (kirim ulang)`);
     }
     if (res?.ap_mature?.payment_code) parts.push(`Tagihan CMT ${res.ap_mature.payment_code}`);
+    if (res?.ap_mature?.own_team) parts.push(res.ap_mature.message || 'Dijahit tim sendiri — tanpa tagihan CMT');
     return parts.join(' · ');
   };
 
@@ -791,6 +792,10 @@ export default function DAReceiveFromCMTModule() {
                               <strong> selisih kirim (belum sampai)</strong>: dokumen deklarasi vendor dikoreksi ke qty
                               yang benar-benar sampai, vendor diberi notifikasi, dan sisa kirim vendor terbuka kembali.
                             </p>
+                          )}
+                          {/* Tahap 8 fase 2: PO maklon yang dijahit tim CV Sukma sendiri tidak punya tagihan CMT */}
+                          {r.cmt_bill_note && (
+                            <p className="text-xs font-medium mt-2" data-testid={`cmt-receipt-bill-note-${r.receipt_code}`}>{r.cmt_bill_note}</p>
                           )}
                           {!editable && (
                             <p className="text-[11px] text-muted-foreground mt-2">

@@ -84,6 +84,9 @@ const FinanceARHub            = lazyRetry(() => import('./hubs/FinanceARHub'));
 const FinanceAPHub            = lazyRetry(() => import('./hubs/FinanceAPHub'));
 const FinancePnLHub           = lazyRetry(() => import('./hubs/FinancePnLHub'));
 const FinanceBalanceSheetHub  = lazyRetry(() => import('./hubs/FinanceBalanceSheetHub'));
+// Tahap 8 fase 2: Transaksi & Saldo antar CV (CV Dewi Aditya ↔ CV Sukma)
+const IntercompanyTransactionsModule = lazyRetry(() => import('./finance/IntercompanyTransactionsModule'));
+const IntercompanyBalanceModule      = lazyRetry(() => import('./finance/IntercompanyBalanceModule'));
 const FinanceCashFlowHub      = lazyRetry(() => import('./hubs/FinanceCashFlowHub'));
 const FinanceLedgerHub        = lazyRetry(() => import('./hubs/FinanceLedgerHub'));
 const FinanceAssetsHub        = lazyRetry(() => import('./hubs/FinanceAssetsHub'));
@@ -615,6 +618,8 @@ export const MODULE_REGISTRY = {
   'fin-petty-cash':     makeRedirect('fin-cash'),
   'fin-marketplace-settlement': FinanceMarketplaceHub,  // 2026-11-04: 3 tab (saldo · dana dilepas · penarikan)
   'fin-bank-transfer':  BankTransferModule, // Transfer Bank Antar Rekening (Phase 6C)
+  'fin-antar-cv':       IntercompanyTransactionsModule, // Tahap 8 fase 2: talangan/pinjaman/uang nyasar/pelunasan
+  'fin-saldo-antar-cv': IntercompanyBalanceModule,      // Tahap 8 fase 2: Laporan Saldo antar CV
   // Sprint 1.3: Master Karyawan exposed in HR portal
   'hr-employees':         HREmployeeModule,
   // Sprint 42: Smart Auto-Attendance

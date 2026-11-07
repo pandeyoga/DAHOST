@@ -22,6 +22,63 @@ PROD_ADMIN_ROLES = [
 # (owner/admin_produksi/supervisor_produksi) kena 403 "Forbidden" saat simpan PO.
 PROD_VENDOR_ROLES = ['vendor', 'cmt_vendor']
 
+# 2026-11-07 (Tahap 8, permintaan owner): "di Portal Produksi & Maklon hanya superadmin yang bisa membuat
+# draf PO". Layar dulu memakai aturannya sendiri (`production_po.create` — kunci yang tidak ada di katalog —
+# atau `po.create` = PO PEMBELIAN), server memakai PROD_ADMIN_ROLES. Sekarang SATU aturan untuk tombol dan
+# server: peran bawaan di bawah ATAU izin granular yang dicentang owner di Peran & Hak Akses
+# (`mod.prod_po.<aksi>` = "PO Produksi Internal", `mod.mak_po.<aksi>` = "PO Maklon & Detail PO" —
+# kunci yang SUDAH ada di data/module_catalog.py, tidak dibuat kunci kedua).
+# Hapus PO = hapus beruntun (job, kiriman, progres) → bawaannya tetap sempit: superadmin/admin/owner, peran
+# lain hanya bila owner mencentang izin Hapus.
+PO_ROLE_DEFAULTS = {
+    'create': PROD_ADMIN_ROLES,
+    'edit': PROD_ADMIN_ROLES,
+    'delete': ['admin', 'owner'],
+}
+PO_ACTIONS = tuple(PO_ROLE_DEFAULTS)
+
+
+def po_module_id(business_type) -> str:
+    return 'mak_po' if (business_type or '') == 'maklon' else 'prod_po'
+
+
+def po_perm_key(business_type, action: str) -> str:
+    from data.module_catalog import perm_key
+    return perm_key(po_module_id(business_type), action)
+
+
+def can_po_action(user: dict, action: str, business_type) -> bool:
+    """Boleh membuat/mengubah/menghapus PO jenis ini? (peran bawaan ATAU izin granular modulnya)."""
+    from auth import check_role
+    return check_role(user, PO_ROLE_DEFAULTS[action], po_perm_key(business_type, action))
+
+
+def assert_po_action(user: dict, action: str, business_type) -> None:
+    if not can_po_action(user, action, business_type):
+        jenis = 'maklon' if (business_type or '') == 'maklon' else 'produksi internal'
+        verb = {'create': 'membuat', 'edit': 'mengubah', 'delete': 'menghapus'}[action]
+        raise HTTPException(403, f"Akses ditolak: peran Anda tidak boleh {verb} PO {jenis}. Minta owner "
+                                 f"mencentang izin di Peran & Hak Akses ({po_perm_key(business_type, action)}).")
+
+
+async def po_action_flags(user: dict, business_type) -> dict:
+    """{can_create, can_edit, can_delete} untuk pengguna ini — aturan handler DAN gerbang modul
+    (`middleware.module_permission_gate`, aktif bila portal peran sudah diatur granular)."""
+    from middleware.module_permission_gate import evaluate
+    payload = {'id': user.get('id'), 'role': user.get('role')}
+    probes = {'create': ('POST', '/api/production-pos'), 'edit': ('PUT', '/api/production-pos/_'),
+              'delete': ('DELETE', '/api/production-pos/_')}
+    out = {}
+    for action, (method, path) in probes.items():
+        ok = can_po_action(user, action, business_type)
+        if ok:
+            try:
+                ok = not await evaluate(method, path, payload)
+            except Exception:  # noqa: BLE001 — gerbang gagal dievaluasi = jangan menyembunyikan tombol
+                ok = True
+        out[f'can_{action}'] = bool(ok)
+    return out
+
 
 def is_vendor(user: dict) -> bool:
     return (user.get('role') or '') in PROD_VENDOR_ROLES

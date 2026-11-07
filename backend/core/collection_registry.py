@@ -52,6 +52,7 @@ REGISTRY: dict[str, str] = {
     "rahaza_fingerprint_imports": "hr",
     "rahaza_fingerprint_profiles": "hr",
     "rahaza_inventory_revaluations": "inventory",
+    "rahaza_intercompany_txns": "finance",   # Tahap 8 fase 2: Transaksi antar CV (dua jurnal berlabel)
     "rahaza_model_costing": "produksi",
     "rahaza_period_alerts": "finance",
     "rahaza_purchase_returns": "pengadaan",
@@ -652,7 +653,7 @@ rahaza_downtime_events rahaza_employee_data_changes rahaza_employee_loan_repayme
 rahaza_expense_claims
 rahaza_expenses rahaza_fg_inventory rahaza_fg_issues rahaza_fg_movements rahaza_fg_reservations
 rahaza_fingerprint_imports rahaza_goods_receipts rahaza_grn_inspections rahaza_hpp_snapshots
-rahaza_inventory_revaluations rahaza_job_applications rahaza_journal_entries rahaza_journal_lines
+rahaza_intercompany_txns rahaza_inventory_revaluations rahaza_job_applications rahaza_journal_entries rahaza_journal_lines
 rahaza_leave_requests rahaza_machine_downtime rahaza_maintenance_logs rahaza_maklon_quotes
 rahaza_material_issues rahaza_material_movements rahaza_material_reservations rahaza_material_stock
 rahaza_orders rahaza_overtime_requests rahaza_payroll_runs rahaza_payslips rahaza_petty_cash_txns

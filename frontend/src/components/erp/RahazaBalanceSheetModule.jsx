@@ -4,6 +4,7 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { StatTile, EmptyState } from './moduleAtoms';
 import PageLayout from './layout/PageLayout';
+import IntercompanyNotes from './finance/IntercompanyNotes';
 import { Skeleton } from '@/components/ui/skeleton';
 import { todayWIB } from '@/lib/waktu';
 import { formatDateID } from '@/lib/format';
@@ -71,6 +72,8 @@ export default function RahazaBalanceSheetModule({ token }) {
       </>}
       summary={<>
         {error && <p className="text-sm text-[hsl(var(--destructive))]" data-testid="bs-error">{error}</p>}
+        {/* Tahap 8 fase 3: Gabungan = setelah eliminasi antar CV; selisih yang belum tereliminasi tampil di sini */}
+        <IntercompanyNotes data={data} testId="bs-ic-notes" />
         {data && (
           <p className={`flex items-center gap-1.5 text-sm ${data.balanced ? 'text-muted-foreground' : 'text-[hsl(var(--destructive))] font-medium'}`} data-testid="bs-balanced">
             {data.balanced

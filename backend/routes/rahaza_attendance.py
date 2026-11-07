@@ -26,6 +26,8 @@ from core.roles import HR_ROLES
 HR_ATTENDANCE_WRITE_ROLES = ['admin', *HR_ROLES]
 MSG_HR_ATTENDANCE_ONLY = ("Input absensi manual hanya untuk HR dan manajemen. "
                           "Absen mandiri lewat Portal Saya › Absen Saya.")
+MSG_HR_ATTENDANCE_VIEW = ("Absensi semua karyawan hanya untuk HR dan atasan. "
+                          "Absensi Anda sendiri ada di Portal Saya › Absen Saya.")
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -258,8 +260,16 @@ async def list_attendance(
     skip: int = 0,
     limit: int = 50,
 ):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
+    # 2026-11-07 (Tahap 7): selain HR/atasan hanya absensi milik sendiri (dulu semua karyawan, termasuk
+    # lokasi GPS & foto selfie, bisa dibaca akun staf mana pun).
+    from utils.employee_identity import can_view_all_employees, resolve_my_employee
+    if not can_view_all_employees(user):
+        mine = await resolve_my_employee(db, user)
+        if not mine or (employee_id and employee_id != mine["id"]):
+            return {"total": 0, "skip": skip, "limit": limit, "has_more": False, "items": []}
+        employee_id = mine["id"]
     q = {}
     if date:
         q["date"] = date
@@ -289,7 +299,11 @@ async def list_attendance(
 
 @router.get("/attendance/grid")
 async def attendance_grid(request: Request, date: Optional[str] = None):
-    await require_auth(request)
+    user = await require_auth(request)
+    # 2026-11-07 (Tahap 7): grid absensi SEMUA karyawan hanya untuk HR/atasan (layar Portal SDM).
+    from utils.employee_identity import can_view_all_employees
+    if not can_view_all_employees(user):
+        raise HTTPException(403, MSG_HR_ATTENDANCE_VIEW)
     db = get_db()
     d = date or _today_iso()
     emps = await db.rahaza_employees.find({"active": True}, {"_id": 0}).sort("employee_code", 1).to_list(500)
@@ -574,10 +588,12 @@ async def attendance_summary(request: Request, from_: Optional[str] = None, to: 
 
 @router.get("/attendance/my-today")
 async def my_today(request: Request, employee_id: Optional[str] = None):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
-    if not employee_id:
-        raise HTTPException(400, "employee_id wajib.")
+    # 2026-11-07 (Tahap 7): dulu `employee_id` dari klien tanpa cek pemilik. Kosong → karyawan sendiri;
+    # karyawan lain hanya HR/atasan (SSOT resolve_employee_for).
+    from utils.employee_identity import resolve_employee_for
+    employee_id = (await resolve_employee_for(db, user, employee_id))["id"]
     d = _today_iso()
     rec = await db.rahaza_attendance_events.find_one({"employee_id": employee_id, "date": d}, {"_id": 0})
     if not rec:

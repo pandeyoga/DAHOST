@@ -119,6 +119,65 @@ async def get_my_attendance_status(request: Request, employee_id: Optional[str] 
     })
 
 
+@router.get("/attendance/my-schedule")
+async def get_my_schedule(request: Request, days: int = 8, employee_id: Optional[str] = None):
+    """Jadwal kerja karyawan: hari ini + 7 hari ke depan (Portal Saya › Absen Saya) — 2026-11-07 (Tahap 7).
+
+    SATU sumber dengan perhitungan terlambat: shift per hari = `core.attendance_rules.resolve_day_shift`
+    (Jadwal Shift terbit → penugasan shift → shift utama karyawan). Hari libur = Kalender Produksi `type=holiday`
+    (libur nasional / cuti bersama / libur perusahaan), hari libur mingguan = `core.workdays` (kerja 6 hari bawaan),
+    cuti/izin/sakit disetujui = absensi bertanda `leave_request_id`. Karyawan lain hanya untuk HR/atasan."""
+    user = await require_auth(request)
+    db = get_db()
+    from datetime import timedelta
+    from core import national_holidays as nh
+    from core import workdays
+    from core.attendance_rules import STATUS_LABELS, resolve_day_shift
+    from utils.employee_identity import resolve_employee_for
+    emp = await resolve_employee_for(db, user, employee_id)
+    n = max(1, min(int(days or 8), 31))
+    start = today_wib()
+    end = start + timedelta(days=n - 1)
+    cal = await workdays.get_work_calendar(db)
+    hol = {str(h.get("date"))[:10]: h for h in await db.rahaza_production_calendar.find(
+        {"date": {"$gte": start.isoformat(), "$lte": end.isoformat()}, "type": "holiday"},
+        {"_id": 0, "date": 1, "name": 1, "kind": 1}).to_list(100)}
+    leave = {str(r.get("date"))[:10]: r for r in await db.rahaza_attendance_events.find(
+        {"employee_id": emp["id"], "date": {"$gte": start.isoformat(), "$lte": end.isoformat()},
+         "leave_request_id": {"$nin": [None, ""]}},
+        {"_id": 0, "date": 1, "status": 1, "leave_kind": 1, "half_day": 1, "leave_type_name": 1}).to_list(100)}
+    rows = []
+    for i in range(n):
+        d = start + timedelta(days=i)
+        iso = d.isoformat()
+        shift = await resolve_day_shift(db, emp, iso)
+        h, lv = hol.get(iso), leave.get(iso)
+        note = ""
+        if h:
+            kind, label, note = "libur", nh.KIND_LABEL.get(h.get("kind"), "Hari libur"), h.get("name") or ""
+        elif d.weekday() in cal["off_weekdays"]:
+            kind, label = "libur", "Libur mingguan"
+        else:
+            kind, label = "kerja", ""
+        # Shift tetap ditampilkan di hari libur bila HR MENJADWALKANNYA di Jadwal Shift (masuk saat libur).
+        if kind == "libur" and not (shift and shift.get("source") == "jadwal"):
+            shift = None
+        if lv:
+            lk = (lv.get("leave_kind") or lv.get("status") or "cuti").lower()
+            label = STATUS_LABELS.get(lk, "Cuti") + (" setengah hari" if lv.get("half_day") else "")
+            note = lv.get("leave_type_name") or ""
+            kind = "cuti" if not lv.get("half_day") else kind
+            if kind == "cuti":
+                shift = None
+        rows.append({
+            "date": iso, "weekday": d.weekday(), "today": i == 0, "kind": kind, "label": label, "note": note,
+            "shift": ({"code": shift.get("code"), "name": shift.get("name"), "start_time": shift.get("start_time"),
+                       "end_time": shift.get("end_time"), "source": shift.get("source")} if shift else None),
+        })
+    return {"employee_id": emp["id"], "from": start.isoformat(), "to": end.isoformat(),
+            "work_days_per_week": cal["work_days_per_week"], "days": rows}
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 5) OFFICE CONFIG — Face threshold + Geofence + kebijakan WAJIB (FASE 16)
 # ═══════════════════════════════════════════════════════════════════════════════

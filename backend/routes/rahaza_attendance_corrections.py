@@ -248,7 +248,9 @@ async def decide_correction(db, corr_id: str, user: dict, *, approve: bool, note
                                                                 {"$set": {"status": "rejected", **decided}})
         if not res.matched_count:   # 2026-11-06 (pola P9)
             raise HTTPException(409, "Pengajuan koreksi ini baru saja diputuskan orang lain — muat ulang halaman.")
-        return {**doc, "status": "rejected", **decided}
+        out = {**doc, "status": "rejected", **decided}
+        await notify_correction_decision(db, out, approved=False)
+        return out
 
     # 2026-11-06 (pola P9): klaim atomik pending → deciding SEBELUM absensi ditulis. Dulu Setuju ganda /
     # setuju-tolak bersamaan sama-sama lolos: absensi ditulis dua kali (atau sisipan kedua gagal di
@@ -258,11 +260,41 @@ async def decide_correction(db, corr_id: str, user: dict, *, approve: bool, note
     if not claim.matched_count:
         raise HTTPException(409, "Pengajuan koreksi ini baru saja diputuskan orang lain — muat ulang halaman.")
     try:
-        return await _approve_correction_claimed(db, corr_id, doc, user, decided)
+        out = await _approve_correction_claimed(db, corr_id, doc, user, decided)
     except BaseException:
         await db.rahaza_attendance_corrections.update_one({"id": corr_id, "status": "deciding"},
                                                           {"$set": {"status": "pending"}})
         raise
+    await notify_correction_decision(db, out, approved=True)
+    return out
+
+
+async def notify_correction_decision(db, doc: dict, *, approved: bool) -> None:
+    """Kabar keputusan koreksi absen ke karyawan (tautan Portal Saya › Absen Saya) — 2026-11-07 (Tahap 7).
+    Dulu koreksi diputus tanpa kabar apa pun (cuti, lembur, kasbon, izin keluar sudah mengabari). Tidak raise."""
+    from routes.rahaza_payroll_shared import notify_requester
+    from utils.employee_identity import employee_user_ids
+    try:
+        uids = await employee_user_ids(db, doc.get("employee_id"))
+    except Exception:  # noqa: BLE001 — kabar tidak boleh menggagalkan keputusan
+        uids = []
+    if not uids and doc.get("created_by"):
+        uids = [doc["created_by"]]
+    day = doc.get("date")
+    if approved:
+        later = doc.get("apply_mode") == "penyesuaian_payroll"
+        title = f"Koreksi absen {day} disetujui"
+        body = (f"Koreksi absen tanggal {day} disetujui HR. "
+                + ("Tanggal ini sudah digaji final — selisihnya dibayar di penggajian berikutnya."
+                   if later else "Absensi Anda sudah diperbarui."))
+    else:
+        title = f"Koreksi absen {day} ditolak"
+        body = f"Koreksi absen tanggal {day} ditolak HR. Alasan: {doc.get('decision_note') or '-'}."
+    for uid in uids:
+        await notify_requester(
+            db, user_id=uid, subtype="attendance_correction_approved" if approved else "attendance_correction_rejected",
+            severity="success" if approved else "warning", title=title, body=body, link_module="portal-absen",
+            source_type="attendance_correction", source_id=doc.get("id"))
 
 
 async def _approve_correction_claimed(db, corr_id: str, doc: dict, user: dict, decided: dict) -> dict:

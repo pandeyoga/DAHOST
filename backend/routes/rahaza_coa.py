@@ -434,9 +434,17 @@ async def _attach_usage(db, rows: list, full: bool) -> list:
 
 @router.get("/accounts")
 async def list_accounts(request: Request, active_only: bool = True, search: str = "", type: str = "",
-                        with_usage: bool = False, with_control: bool = False):
+                        with_usage: bool = False, with_control: bool = False, entity: str = ""):
+    """Tahap 8: setiap baris membawa `entities` ("berlaku untuk": DA/SMU). `?entity=DA|SMU` (HANYA query
+    eksplisit — pemilih akun di layar Keuangan) menyaring akun yang berlaku untuk CV itu; layar Bagan Akun
+    tanpa query tetap melihat semua akun."""
     await require_auth(request)
     db = get_db()
+    from core.entities import ALL, account_entities, normalize_entity
+    try:
+        only_ent = normalize_entity(entity, allow_all=True) if entity else None
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     q = {}
     if active_only:
         q["active"] = True
@@ -448,6 +456,10 @@ async def list_accounts(request: Request, active_only: bool = True, search: str 
             {"name": {"$regex": re.escape(search), "$options": "i"}},
         ]
     rows = await db.rahaza_coa_accounts.find(q, {"_id": 0}).sort("code", 1).to_list(5000)
+    for r in rows:
+        r["entities"] = account_entities(r)
+    if only_ent and only_ent != ALL:
+        rows = [r for r in rows if only_ent in r["entities"]]
     if with_usage:
         rows = await _attach_usage(db, rows, full=not q)
     if with_control:
@@ -504,6 +516,9 @@ async def coa_tree(request: Request, active_only: bool = True, with_usage: bool 
     db = get_db()
     q = {"active": True} if active_only else {}
     rows = await db.rahaza_coa_accounts.find(q, {"_id": 0}).sort("code", 1).to_list(5000)
+    from core.entities import account_entities
+    for r in rows:
+        r["entities"] = account_entities(r)   # Tahap 8: "berlaku untuk"
     if with_usage:
         rows = await _attach_usage(db, rows, full=not q)
     return serialize_doc(build_tree(rows))
@@ -553,12 +568,22 @@ async def create_account(request: Request):
             check_parent(code, acc_type, parent_code, {parent_code: pdoc} if pdoc else {})
     except CoaRuleError as e:
         raise HTTPException(e.status, str(e))
+    # Tahap 8: "berlaku untuk" — isian layar, atau ikut induk (tanpa induk → aturan kode).
+    from core.entities import inherited_entities, normalize_entities
+    if body.get("entities"):
+        try:
+            entities = normalize_entities(body.get("entities"))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    else:
+        entities = await inherited_entities(db, parent_code, code)
 
     doc = {
         "id": _uid(),
         "code": code,
         "name": name,
         "type": acc_type,
+        "entities": entities,
         "parent_code": parent_code,
         "is_group": bool(body.get("is_group", False)),
         "normal_balance": _normal_balance_for(acc_type, flags),
@@ -661,6 +686,19 @@ async def update_account(aid: str, request: Request):
         update = plan_account_update(acc, body, bindings, await accounts_by_code(db))
     except CoaRuleError as e:
         raise HTTPException(e.status, str(e))
+    if "entities" in body:
+        # Tahap 8: "berlaku untuk". Akun GL rekening kas/bank mengikuti pemilik rekening (ubah di Kas & Bank).
+        from core.entities import entity_short, normalize_entities, entity_of_value
+        try:
+            ents = normalize_entities(body.get("entities"))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        cash = await db.rahaza_cash_accounts.find_one({"gl_account_code": acc["code"]}, {"_id": 0, "entity": 1, "name": 1})
+        if cash and ents != [entity_of_value(cash.get("entity"))]:
+            raise HTTPException(400, f"Akun {acc['code']} adalah akun rekening {cash.get('name') or ''} milik "
+                                     f"{entity_short(entity_of_value(cash.get('entity')))}. Ubah pemilik rekening di "
+                                     f"Kas & Bank; akun ini otomatis mengikuti.")
+        update["entities"] = ents
     if "cash_flow_group" in body:
         update["cash_flow_group"] = _cf_group(body["cash_flow_group"], {**acc, **update})
     update["updated_at"] = _now()

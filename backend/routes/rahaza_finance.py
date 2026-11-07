@@ -27,6 +27,9 @@ from utils.waktu import today_wib
 logger = logging.getLogger(__name__)
 
 from core.roles import FINANCE_ROLES  # FIN-02
+from core import entities as ent_mod
+from core.entities import (DA, SMU, ALL, entity_from_request, explicit_entity, entity_match, entity_of_doc,
+                           matches_entity, validate_cash_account_owner, validate_manual_lines)
 from routes.rahaza_posting import (
     post_ar_invoice,
     post_ar_payment,
@@ -177,6 +180,16 @@ async def _check_debit_account(db, code: str, allowed_types: tuple, doc_label: s
                                  f"mendebit {allowed_label}.")
 
 
+async def _validate_mapping_for_entity(db, event: str, roles: tuple, ent: str, what: str, extra: tuple = ()):
+    """Tahap 8: dokumen MANUAL (faktur, pengeluaran) ditolak bila akun yang akan dijurnal tidak berlaku
+    untuk CV-nya. Akun diambil dari Profil Posting (+ akun pilihan pengguna di `extra`)."""
+    from routes.rahaza_posting_profiles import get_mapping
+    mapping = await get_mapping(db, event) or {}
+    codes = [c for c in [*(mapping.get(r) for r in roles), *extra] if c]
+    if codes:
+        await validate_manual_lines(db, [{"account_code": c} for c in codes], ent, what=what)
+
+
 async def _reject_unknown_cash_account(db, account_id):
     """Pembayaran hutang/piutang: `account_id` yang dikirim harus rekening kas/bank yang ada & aktif.
 
@@ -288,12 +301,16 @@ async def delete_cost_center(cid: str, request: Request):
 async def list_ar(request: Request, status: Optional[str] = None, customer_id: Optional[str] = None):
     await require_auth(request)
     db = get_db()
+    ent = entity_from_request(request, allow_all=True)   # Tahap 8
     q = {}
     if status:
         q["status"] = status
     if customer_id:
         q["customer_id"] = customer_id
-    rows = await db.rahaza_ar_invoices.find(q, {"_id": 0}).sort("issue_date", -1).to_list(500)
+    rows = await db.rahaza_ar_invoices.find(q, {"_id": 0}).sort("issue_date", -1).to_list(2000)
+    rows = [r for r in rows if matches_entity(entity_of_doc(r), ent)][:500]
+    for r in rows:
+        r["entity"] = entity_of_doc(r)
     # enrich customer
     cids = list({r.get("customer_id") for r in rows if r.get("customer_id")})
     cs = await db.rahaza_customers.find({"id": {"$in": cids}}, {"_id": 0}).to_list(500) if cids else []
@@ -357,6 +374,11 @@ async def _reject_marketplace_ar(db, inv: dict):
                                  f"lewat pencairan (Portal Keuangan → Saldo & Pencairan Marketplace).")
 
 
+# Tahap 8 fase 2: dokumen antar CV lahir & dijurnal otomatis dari sumbernya (tagihan CMT tim Sukma, nota aksesoris).
+IC_DOC_MSG = ("Dokumen antar CV dibuat dan dijurnal otomatis dari tagihan CMT / nota aksesoris — statusnya "
+              "tidak diubah di sini. Pembayarannya dicatat seperti biasa (pasangan di CV lain otomatis).")
+
+
 @router.post("/ar-invoices")
 async def create_ar(request: Request):
     user = await _require_fin(request)
@@ -369,10 +391,14 @@ async def create_ar(request: Request):
     if not customer:
         raise HTTPException(404, "Customer tidak ditemukan.")
     await _reject_marketplace_ar(db, {"sales_channel": body.get("sales_channel")})  # 2026-11-02 (D2)
+    ent = entity_from_request(request, body)   # Tahap 8: CV faktur (Gabungan ditolak)
+    if ent != DA and (body.get("sales_channel") or "").strip():
+        raise HTTPException(400, "Faktur ber-channel toko hanya untuk CV Dewi Aditya (semua toko milik DA).")
+    await _validate_mapping_for_entity(db, "ar_invoice", ("debit_ar", "credit_revenue"), ent, "Faktur penjualan")
     items = body.get("items") or []
     subtotal, norm_items = _norm_invoice_items(items, unit_default="pcs")
     from core.tax_status import faktur_fields, get_tax_profile, wants_output_tax
-    tax_profile = await get_tax_profile(db)
+    tax_profile = await get_tax_profile(db, ent)   # Tahap 8: status pajak CV faktur
     apply_tax = wants_output_tax(tax_profile, body.get("tax_pct"), body.get("kena_ppn"))
     discount_amount = round(_to_num(body.get("discount_amount"), "discount_amount"))  # Phase 9C
     _validate_tax_discount(0, discount_amount, subtotal)
@@ -398,6 +424,7 @@ async def create_ar(request: Request):
         "total_amount": total, "amount_paid": 0, "amount_due": total,  # skema kanonik (H-01)
         "status": "draft", "notes": body.get("notes") or "",
         "sales_channel": (body.get("sales_channel") or "").strip() or None,
+        "entity": ent,
         "created_at": _now(), "updated_at": _now(),
         "created_by": user["id"], "created_by_name": user.get("name", ""),
     }
@@ -418,6 +445,8 @@ async def change_ar_status(iid: str, request: Request):
         raise HTTPException(404, "Invoice tidak ditemukan.")
     if _is_maklon_schedule(inv):
         raise HTTPException(400, MAKLON_SCHEDULE_MSG)
+    if inv.get("intercompany"):
+        raise HTTPException(400, IC_DOC_MSG)   # Tahap 8 fase 2
     old_status = inv.get("status")
     if new_status == "sent":
         new_status = "issued"   # kanonik (H-01)
@@ -509,6 +538,12 @@ async def record_ar_payment(iid: str, request: Request):
         raise HTTPException(404, "Invoice tidak ditemukan.")
     account_id = body.get("account_id")
     await _reject_unknown_cash_account(db, account_id)  # sebelum piutang berkurang
+    await validate_cash_account_owner(db, account_id, entity_of_doc(inv), what="Pembayaran piutang")  # Tahap 8
+    # Tahap 8 fase 2: piutang ANTAR CV (tagihan jasa jahit / nota aksesoris) — pembayaran di buku CV lain
+    # (tagihan CMT / hutang pemasok) dibuat otomatis, nilai sama, dua buku sekaligus.
+    ic_out = await _settle_intercompany(db, "ar", inv, amount, account_id, body, user)
+    if ic_out is not None:
+        return ic_out
     if _is_maklon_schedule(inv):
         # 2026-11-06 (Tahap 2): pembayaran klien maklon — tutup piutang yang sudah jatuh, sisanya uang
         # muka (otomatis dipakai saat barang dikirim). Satu mesin dengan layar Piutang klien maklon.
@@ -581,6 +616,27 @@ async def record_ar_payment(iid: str, request: Request):
     out["_posting_result"] = posting_result
     out["_movement_id"] = movement_id
     out["_payment_id"] = payment_id
+    return serialize_doc(out)
+
+
+async def _settle_intercompany(db, kind: str, inv: dict, amount: float, account_id, body: dict, user: dict):
+    """Tahap 8 fase 2: dokumen berlabel antar CV dibayar lewat `core.intercompany.settle` (sisi ini + pasangan di
+    buku CV lain, atomik). None = bukan dokumen antar CV (alur biasa berjalan)."""
+    from core import intercompany as ic
+    if not inv.get("intercompany") or not await ic.is_ic_payable(db, kind, inv):
+        return None
+    try:
+        res = await ic.settle(db, kind=kind, doc=inv, amount=amount, cash_account_id=account_id,
+                              counter_cash_account_id=body.get("counter_cash_account_id"), pay_date=body.get("date"),
+                              user=user, notes=body.get("notes") or "")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    coll = "rahaza_ar_invoices" if kind == "ar" else "rahaza_ap_invoices"
+    out = await db[coll].find_one({"id": inv["id"]}, {"_id": 0})
+    out["_posting_result"] = {"ok": True, "je_number": res["origin"]["je_number"]}
+    out["_movement_id"] = res["origin"]["movement_id"]
+    out["_payment_id"] = res["origin"]["payment_id"]
+    out["_intercompany"] = res
     return serialize_doc(out)
 
 
@@ -795,6 +851,10 @@ async def ar_aging(request: Request, source: Optional[str] = None):
     await require_auth(request)
     db = get_db()
     from routes.rahaza_ar_canonical import compute_ar_aging
+    ent = entity_from_request(request, allow_all=True)
+    if not source and ent != ALL:
+        # Tahap 8 fase 1: piutang maklon = buku CV Sukma, piutang lain = buku CV Dewi Aditya
+        source = "maklon" if ent == SMU else "internal"
     res = await compute_ar_aging(db, source=source or None)
     return {"buckets": {k: round(v) for k, v in res["buckets"].items()}, "total": round(res["total"]),
             "count": res["count"], "details": serialize_doc(res["rows"]), "data_quality": res["data_quality"]}
@@ -805,11 +865,14 @@ async def ar_aging(request: Request, source: Optional[str] = None):
 async def list_ap(request: Request, status: Optional[str] = None, limit: int = Query(500, ge=1, le=5000)):
     await require_auth(request)
     db = get_db()
-    q = {}
+    ent = entity_from_request(request, allow_all=True)   # Tahap 8
+    q = dict(entity_match(ent))
     if status:
         q["status"] = status
     # 2026-11-04: `limit` (dulu tetap 500 → faktur lama hilang diam-diam dari daftar Tagihan)
     rows = await db.rahaza_ap_invoices.find(q, {"_id": 0}).sort("issue_date", -1).limit(limit).to_list(limit)
+    for r in rows:
+        r["entity"] = entity_of_doc(r)
     return serialize_doc(rows)
 
 
@@ -833,8 +896,11 @@ async def create_ap(request: Request):
     gl_debit_code = str(body.get("gl_debit_code") or "").strip()
     if gl_debit_code:
         await _check_debit_account(db, gl_debit_code, AP_DEBIT_TYPES, "faktur supplier", "akun beban, HPP, atau aset")
+    ent = entity_from_request(request, body)   # Tahap 8: CV faktur (Gabungan ditolak)
+    await _validate_mapping_for_entity(db, "ap_invoice", ("credit_ap",) + (() if gl_debit_code else ("debit_expense_default",)),
+                                       ent, "Faktur pemasok", extra=(gl_debit_code,) if gl_debit_code else ())
     from core.tax_status import get_tax_profile, input_tax_treatment
-    treatment = input_tax_treatment(await get_tax_profile(db))  # non-PKP → PPN = bagian harga beli
+    treatment = input_tax_treatment(await get_tax_profile(db, ent))  # non-PKP → PPN = bagian harga beli
     invoice_number = await _gen_number(db, "rahaza_ap_invoices", "AP")
     doc = {
         "id": _uid(), "invoice_number": invoice_number,
@@ -848,6 +914,7 @@ async def create_ap(request: Request):
         "status": "draft", "notes": body.get("notes") or "",
         "cost_center_id": body.get("cost_center_id") or None,
         "gl_debit_code": gl_debit_code or None,
+        "entity": ent,
         "created_at": _now(), "updated_at": _now(),
         "created_by": user["id"], "created_by_name": user.get("name", ""),
     }
@@ -887,6 +954,12 @@ async def record_ap_payment(iid: str, request: Request):
         raise HTTPException(400, "Invoice masih draft — approve/kirim (send) invoice terlebih dahulu sebelum mencatat pembayaran.")
     account_id = body.get("account_id")
     await _reject_unknown_cash_account(db, account_id)  # sebelum hutang berkurang
+    await validate_cash_account_owner(db, account_id, entity_of_doc(inv), what="Pembayaran hutang")  # Tahap 8
+    if inv.get("intercompany") and discount > 0:
+        raise HTTPException(400, "Hutang antar CV tidak memakai potongan pembayaran.")
+    ic_out = await _settle_intercompany(db, "ap", inv, amount, account_id, body, user)   # Tahap 8 fase 2
+    if ic_out is not None:
+        return ic_out
     # ── R10 concurrency hardening (TOCTOU-safe): atomic conditional payment (CC3).
     updated = await db.rahaza_ap_invoices.find_one_and_update(
         {
@@ -982,6 +1055,8 @@ async def change_ap_status(iid: str, request: Request):
     inv = await db.rahaza_ap_invoices.find_one({"id": iid}, {"_id": 0})
     if not inv:
         raise HTTPException(404, "Invoice tidak ditemukan.")
+    if inv.get("intercompany"):
+        raise HTTPException(400, IC_DOC_MSG)   # Tahap 8 fase 2
     old_status = inv.get("status")
     # 2026-11-02 (audit No.44a): batal faktur yang sudah dibayar mem-void jurnal faktur tetapi jurnal
     # pembayaran tetap → hutang 2-1100 bersaldo debit tanpa dokumen. Aturan sama dengan faktur maklon.
@@ -1095,7 +1170,9 @@ async def ap_aging(request: Request):
     await require_auth(request)
     db = get_db()
     from core.payables import aging, open_payable_rows
-    out = aging(await open_payable_rows(db), today_wib())
+    ent = entity_from_request(request, allow_all=True)   # Tahap 8
+    out = aging(await open_payable_rows(db, entity=ent), today_wib())
+    out["entity"] = ent
     return serialize_doc(out)
 
 
@@ -1114,10 +1191,17 @@ async def _decorate_cash_balances(db, rows: list) -> list:
 
 @router.get("/cash-accounts")
 async def list_cash_accounts(request: Request, active_only: bool = True):
+    """Tahap 8: hanya rekening milik CV terpilih (`entity`/header X-CV; ALL = semua). Setiap baris membawa
+    `entity` (pemilik; dokumen lama = DA)."""
     await require_auth(request)
     db = get_db()
+    ent = entity_from_request(request, allow_all=True)
     q = {"active": True} if active_only else {}
-    return serialize_doc(await _cash_accounts_with_gl(db, q))
+    q.update(entity_match(ent))
+    rows = await _cash_accounts_with_gl(db, q)
+    for r in rows:
+        r["entity"] = ent_mod.entity_of_value(r.get("entity"))
+    return serialize_doc(rows)
 
 
 @router.get("/cash-accounts/gl-candidates")
@@ -1184,8 +1268,10 @@ async def create_cash_account(request: Request):
             raise HTTPException(400, f"Akun GL '{gl_code}' bukan akun kas/bank postable di Bagan Akun.")
         if await db.rahaza_cash_accounts.find_one({"gl_account_code": gl_code}, {"_id": 0}):
             raise HTTPException(409, f"Akun GL '{gl_code}' sudah tertaut ke rekening lain — pilih akun lain atau pakai rekening yang ada.")
+    owner = entity_from_request(request, body)   # Tahap 8: pemilik rekening (bawaan = CV terpilih)
     doc = {
         "id": _uid(), "code": code, "name": name,
+        "entity": owner,
         "gl_account_code": gl_code or None,
         "type": body.get("type") or "cash",  # cash | bank
         "bank_name": body.get("bank_name") or "",
@@ -1210,11 +1296,20 @@ async def create_cash_account(request: Request):
                   "mutasi kas rekening ini tidak punya akun Buku Besar: %s",
                   doc.get("name") or doc.get("id"), doc.get("account_number"), e)
     out = await db.rahaza_cash_accounts.find_one({"id": doc["id"]}, {"_id": 0})
+    await _sync_cash_gl_entities(db, out)   # Tahap 8: akun GL rekening berlaku untuk pemiliknya saja
     # Iter 121 (B-06): saldo awal ikut ke GL supaya kartu kas (dibaca dari GL) = mutasi
     out["_opening_post"] = await post_cash_opening_balance(db, out, user)
     out = await db.rahaza_cash_accounts.find_one({"id": doc["id"]}, {"_id": 0}) | {"_opening_post": out["_opening_post"]}
     await _decorate_cash_balances(db, [out])
     return serialize_doc(out)
+
+
+async def _sync_cash_gl_entities(db, acc: Optional[dict]):
+    """Akun GL rekening kas/bank "berlaku untuk" = pemilik rekening (aturan migrasi Tahap 8)."""
+    if acc and acc.get("gl_account_code"):
+        await db.rahaza_coa_accounts.update_one(
+            {"code": acc["gl_account_code"]},
+            {"$set": {"entities": [ent_mod.entity_of_value(acc.get("entity"))], "updated_at": _now()}})
 
 
 @router.put("/cash-accounts/{aid}")
@@ -1226,8 +1321,16 @@ async def update_cash_account(aid: str, request: Request):
     body.pop("id", None)
     body.pop("created_at", None)
     body.pop("balance", None)
+    if "entity" in body:
+        # Tahap 8: pemilik rekening hanya DA | SMU (Gabungan/teks lain ditolak 400)
+        try:
+            body["entity"] = ent_mod.normalize_entity(body.get("entity"), default=DA)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
     body["updated_at"] = _now()
     await db.rahaza_cash_accounts.update_one({"id": aid}, {"$set": body})
+    if "entity" in body:
+        await _sync_cash_gl_entities(db, await db.rahaza_cash_accounts.find_one({"id": aid}, {"_id": 0}))
     return {"status": "ok"}
 
 
@@ -1264,7 +1367,7 @@ async def list_expenses(request: Request, from_: Optional[str] = None, to: Optio
     # 2026-11-04 (audit Keuangan): layar memilih periode + limit; bila hasil = limit layar memberi peringatan.
     await require_auth(request)
     db = get_db()
-    q = {}
+    q = dict(entity_match(entity_from_request(request, allow_all=True)))   # Tahap 8
     if cost_center_id:
         q["cost_center_id"] = cost_center_id
     if from_ or to:
@@ -1300,8 +1403,14 @@ async def create_expense(request: Request):
     if gl_debit_code:
         await _check_debit_account(db, gl_debit_code, EXPENSE_DEBIT_TYPES, "pengeluaran", "akun beban atau HPP")
     await _reject_unknown_cash_account(db, body.get("account_id"))
+    # Tahap 8: CV pengeluaran = CV yang dikirim layar, atau pemilik rekening yang dipakai.
+    ent = explicit_entity(request, body) or await ent_mod.cash_account_entity(db, account_id=body.get("account_id")) or DA
+    await validate_cash_account_owner(db, body.get("account_id"), ent, what="Pengeluaran")
+    await _validate_mapping_for_entity(db, "expense", () if gl_debit_code else ("debit_expense_default",), ent,
+                                       "Pengeluaran", extra=(gl_debit_code,) if gl_debit_code else ())
     doc = {
         "id": _uid(),
+        "entity": ent,
         "date": body.get("date") or _today_iso(),
         "category": body.get("category") or "operasional",
         "description": body.get("description") or "",

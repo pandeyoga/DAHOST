@@ -157,6 +157,21 @@ export function yearStartWIB(now = new Date()) {
   return `${thisYearWIB(now)}-01-01`;
 }
 
+/**
+ * Instan dari server → Date. Server menyimpan UTC; stempel dari Mongo sering datang TANPA zona
+ * ("2026-11-01T21:33:43.861000") dan `new Date()` membacanya sebagai jam LOKAL perangkat — di HP WIB
+ * jam absen 03.04 tampil 20.04. Tanpa zona = UTC. Mikrodetik Python dipangkas ke milidetik.
+ * (Dipindah dari NotificationBell.jsx, Tahap 7 2026-11-07 — satu tempat untuk semua layar.)
+ */
+export function parseServerTime(iso) {
+  if (!iso) return null;
+  let s = String(iso).trim();
+  s = s.replace(/(\.\d{3})\d+/, '$1');
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s += 'Z';
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 /** Periode bulan lalu penuh (WIB): { from: 'YYYY-MM-01', to: 'YYYY-MM-<akhir>' }. */
 export function lastMonthPeriodWIB(now = new Date()) {
   const ym = addMonthsYM(thisMonthWIB(now), -1);
@@ -167,7 +182,7 @@ const waktu = {
   WIB_TZ, wibDateParts, todayWIB, thisMonthWIB, thisYearWIB, toWIBDate, nowWIBLocalInput,
   toWIBLocalInput, fromWIBLocalInput,
   addDaysISO, addMonthsYM, monthEndISO, daysBetweenISO,
-  daysAgoWIB, daysAheadWIB, monthStartWIB, monthEndWIB, yearStartWIB, lastMonthPeriodWIB,
+  daysAgoWIB, daysAheadWIB, monthStartWIB, monthEndWIB, yearStartWIB, lastMonthPeriodWIB, parseServerTime,
 };
 
 export default waktu;

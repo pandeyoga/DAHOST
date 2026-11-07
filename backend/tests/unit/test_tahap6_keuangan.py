@@ -208,7 +208,7 @@ def asset_db(db, monkeypatch):
     jes = []
 
     async def fake_je(db_, je_date, memo, source_module, source_ref, lines, user, status="posted",
-                      allow_closed_period=False):
+                      allow_closed_period=False, **_kw):
         jes.append({"memo": memo, "source_module": source_module, "source_ref": source_ref,
                     "lines": {(ln["account_code"], ln["debit"], ln["credit"]) for ln in lines}})
         return {"ok": True, "je_id": f"je-{len(jes)}", "je_number": f"JE-{len(jes):04d}"}
@@ -309,7 +309,7 @@ def test_ku4_daftar_akun_with_control_menandai_meski_tersaring(db):
 
 
 def test_ku4_jurnal_manual_ke_akun_kontrol_tetap_tersimpan(db, monkeypatch):
-    async def gen(_db, _d, requested=""):
+    async def gen(_db, _d, requested="", *_a, **_k):
         return "JE-U-0001"
     monkeypatch.setattr(rj, "_gen_je_number", gen)
     monkeypatch.setattr(rj, "_check_period_open", _noop)

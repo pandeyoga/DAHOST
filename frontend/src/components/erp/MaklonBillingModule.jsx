@@ -26,6 +26,7 @@ import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import Modal from './Modal';
 import { formatDateID, formatRupiah } from '@/lib/format';
 import { todayWIB } from '@/lib/waktu';
+import { filterCashAccountsByCv } from './SdmCashAccountSelect';
 
 const fmt = formatRupiah;
 const STATUS = {
@@ -338,7 +339,8 @@ function PaymentForm({ receivable, headers, token, onClose, onDone }) {
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     fetch('/api/rahaza/payment-cash-accounts', { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => (r.ok ? r.json() : [])).then((d) => setAccounts(Array.isArray(d) ? d : []))
+      // Tahap 8: uang klien maklon masuk ke rekening CV Sukma (buku SMU) — rekening CV lain disembunyikan.
+      .then((r) => (r.ok ? r.json() : [])).then((d) => setAccounts(filterCashAccountsByCv(Array.isArray(d) ? d : [], 'SMU')))
       .catch(() => setAccounts([])).finally(() => setLoaded(true));
   }, [token]);
   const limit = Number(receivable.outstanding_total || 0);

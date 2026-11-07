@@ -85,7 +85,9 @@ def _base_db():
                            ("1-1201", "Bank BCA", "ASSET", False), ("2-1110", "Hutang CMT", "LIABILITY", False),
                            ("5-4200", "Biaya CMT Maklon", "COGS", False))]
     db.dewi_maklon_clients.docs = [{"id": "cl1", "code": "KOH-01", "name": "PT Klien Satu", "status": "active"}]
-    db.rahaza_cash_accounts.docs = [{"id": "kas1", "name": "BCA", "gl_account_code": "1-1201", "active": True}]
+    # Tahap 8: penerimaan klien maklon masuk rekening milik CV Sukma
+    db.rahaza_cash_accounts.docs = [{"id": "kas1", "name": "BCA", "gl_account_code": "1-1201", "active": True,
+                                     "entity": "SMU"}]
     db.production_pos.docs = [{"id": "po1", "po_number": "PO-MKL-1", "business_type": "maklon", "status": "Draft",
                                "buyer_id": "cl1", "customer_name": "PT Klien Satu", "vendor_id": "v1",
                                "vendor_name": "CMT A"}]
@@ -251,7 +253,8 @@ def test_pendapatan_dibukukan_per_kiriman(env):
 
 def test_ppn_bila_pkp(env):
     db, jes = env["db"], env["jes"]
-    db.company_settings.docs = [{"type": "general", "tax_profile": {"pkp": True, "pkp_since": "2026-01-01"}}]
+    # Tahap 8: PPN keluaran maklon mengikuti status pajak CV Sukma (profil `cv_profile` SMU), bukan DA
+    db.company_settings.docs = [{"type": "cv_profile", "entity": "SMU", "tax_profile": {"pkp": True, "pkp_since": "2026-01-01"}}]
     _confirm(db)
     _dispatch(db, "sj1", 1, "pi-s", 10)
     run(bridge.sync_po_to_maklon_finance(db, "po1", USER))

@@ -331,7 +331,11 @@ async def _post_petty_cash_txn(db, txn: dict, user: dict) -> dict:
     else:
         return {'ok': False, 'error': f'Tipe transaksi tidak dikenal: {txn_type}'}
 
-    result = await _create_posted_je(db, je_date, memo, event_type, source_ref, lines, user)
+    # Tahap 8: CV kas kecil = field transaksi, atau pemilik rekening kas yang dipakai (bawaan DA).
+    from core import entities as ent_mod
+    pc_entity = (txn.get('entity') or await ent_mod.cash_account_entity(db, gl_code=petty_cash_code)
+                 or ent_mod.DA)
+    result = await _create_posted_je(db, je_date, memo, event_type, source_ref, lines, user, entity=pc_entity)
     # Persist result on txn
     if result.get('ok'):
         upd = {'gl_posted': True, 'gl_je_id': result.get('je_id'), 'gl_je_number': result.get('je_number'), 'gl_error': None}

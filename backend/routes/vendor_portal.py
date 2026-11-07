@@ -88,6 +88,9 @@ class PartnerIn(BaseModel):
     # capacity_pcs = kapasitas jahit maksimum (pcs) yang bisa ditangani vendor pada satu waktu.
     capacity_pcs:  int | None = Field(default=None, ge=0)
     capacity_note: str | None = None
+    # Tahap 8 fase 2: pemilik penjahit — None/'' = vendor luar, 'SMU' = "Tim jahit CV Sukma" (core.intercompany).
+    # Tidak dikirim (None) = tidak diubah; '' = kembalikan ke vendor luar.
+    owner_entity: str | None = None
 
 class VendorAccountIn(BaseModel):
     email:      str
@@ -130,6 +133,15 @@ class VendorJobUpdate(BaseModel):
     process:    str | None = None
     status:     str | None = None   # open | in_progress | done | cancelled
     notes:      str | None = None
+
+
+def _owner_entity_or_400(value):
+    """Tahap 8 fase 2: "Tim jahit CV Sukma" (SMU) atau vendor luar (None)."""
+    from core.intercompany import normalize_owner
+    try:
+        return normalize_owner(value)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 # ── Startup index ──────────────────────────────────────────────────────────────
@@ -181,6 +193,7 @@ async def create_partner(payload: PartnerIn, request: Request):
         'is_active':     True,
         'capacity_pcs':  int(payload.capacity_pcs) if payload.capacity_pcs is not None else 0,
         'capacity_note': payload.capacity_note or '',
+        'owner_entity':  _owner_entity_or_400(payload.owner_entity),
         'created_at':    _now(),
         'created_by':    user['id'],
     }
@@ -219,6 +232,8 @@ async def update_partner(partner_id: str, payload: PartnerIn, request: Request):
         update['capacity_pcs'] = int(payload.capacity_pcs)
     if payload.capacity_note is not None:
         update['capacity_note'] = payload.capacity_note
+    if payload.owner_entity is not None:
+        update['owner_entity'] = _owner_entity_or_400(payload.owner_entity)   # Tahap 8 fase 2
     await db.vendor_partners.update_one({'id': partner_id}, {'$set': update})
     await log_activity(user['id'], user.get('name',''), f"update_vendor_partner:{update['name']}", 'vendor_portal', partner_id)
     return {'ok': True}

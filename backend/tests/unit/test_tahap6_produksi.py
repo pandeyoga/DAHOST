@@ -236,7 +236,9 @@ def _ship_env(monkeypatch, *, po_vendor=None, business_type="internal", status="
     if po_vendor is not None:
         po.update({"vendor_id": po_vendor, "vendor_name": "x"})
     db.production_pos.docs = [po]
-    db.po_items.docs = [{"id": "i1", "po_id": "p1", "qty": 10, "product_name": "Kaos Uji", "sku": "S1"}]
+    # Tahap 8 (K12): penjahit yang dipilih saat kirim butuh upah jahit di baris PO — baris uji diberi upah.
+    db.po_items.docs = [{"id": "i1", "po_id": "p1", "qty": 10, "product_name": "Kaos Uji", "sku": "S1",
+                         "cmt_price_snapshot": 9000}]
     calls = {"released": [], "sync": []}
 
     async def number(*_a, **_k):

@@ -1175,7 +1175,8 @@ async def list_payment_cash_accounts(db) -> list:
     rows = await db.rahaza_cash_accounts.find({"active": True}, {"_id": 0}).sort("code", 1).to_list(500)
     return [{"id": r.get("id"), "code": r.get("code"), "name": r.get("name") or postable[r["gl_account_code"]].get("name"),
              "gl_account_code": r.get("gl_account_code"), "type": r.get("type") or "",
-             "bank_name": r.get("bank_name") or "", "account_number": r.get("account_number") or ""}
+             "bank_name": r.get("bank_name") or "", "account_number": r.get("account_number") or "",
+             "entity": r.get("entity") or "DA"}   # Tahap 8: pemilik rekening (layar menyaring per CV)
             for r in rows if r.get("gl_account_code") in postable]
 
 

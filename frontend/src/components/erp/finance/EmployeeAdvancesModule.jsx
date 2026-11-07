@@ -47,7 +47,7 @@ function useAdvanceRefs(open) {
       get(`${API}/api/rahaza/employees?active_only=true&limit=1000`),
       get(`${API}/api/hr/expenses/master-categories`),
       get(`${API}/api/hr/expenses/gl-mappings?is_active=true`),
-      get(`${API}/api/rahaza/coa/accounts?active_only=true&type=EXPENSE`),
+      get(`${API}/api/rahaza/coa/accounts?active_only=true&type=EXPENSE&entity=DA`),  // Tahap 8: uang muka staf DA
     ]).then(([emps, cats, maps, accs]) => {
       if (off) return;
       const list = (x) => (Array.isArray(x) ? x : (x?.items || x?.employees || []));
@@ -80,7 +80,7 @@ function ExpenseAccountPicker({ category, value, onChange, refs, testId }) {
 
 function NewAdvanceDialog({ open, onClose, onDone }) {
   const refs = useAdvanceRefs(open);
-  const { accounts, loaded } = usePaymentCashAccounts();
+  const { accounts, loaded } = usePaymentCashAccounts(undefined, 'DA');  // Tahap 8: uang muka staf DA
   const [f, setF] = useState({});
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -160,7 +160,7 @@ function NewAdvanceDialog({ open, onClose, onDone }) {
 function SettleDialog({ advance, onClose, onDone }) {
   const open = !!advance;
   const refs = useAdvanceRefs(open);
-  const { accounts, loaded } = usePaymentCashAccounts();
+  const { accounts, loaded } = usePaymentCashAccounts(undefined, 'DA');  // Tahap 8: uang muka staf DA
   const [items, setItems] = useState([]);
   const [returned, setReturned] = useState('');
   const [returnAcc, setReturnAcc] = useState('');

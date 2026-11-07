@@ -86,7 +86,9 @@ function ConfirmDialog({ open, title, message, confirmLabel = 'Hapus', busy, onC
 function PartnersTab({ token, showToast }) {
   const [list,    setList]    = useState([]);
   const [loading, setLoading] = useState(true);
-  const emptyForm = { name:'', code:'', contact_name:'', contact_phone:'', address:'', capacity_pcs:'', capacity_note:'' };
+  // Tahap 8 fase 2: owner_entity '' = vendor luar, 'SMU' = tim jahit CV Sukma (tagihan PO internal = antar CV,
+  // PO maklon tanpa tagihan CMT).
+  const emptyForm = { name:'', code:'', contact_name:'', contact_phone:'', address:'', capacity_pcs:'', capacity_note:'', owner_entity:'' };
   const [form,    setForm]    = useState(emptyForm);
   const [editId,  setEditId]  = useState(null);      // null = create mode
   const [saving,  setSaving]  = useState(false);
@@ -108,7 +110,7 @@ function PartnersTab({ token, showToast }) {
   function openCreate() { setEditId(null); setForm(emptyForm); setShowForm(true); }
   function openEdit(p) {
     setEditId(p.id);
-    setForm({ name:p.name||'', code:p.code||'', contact_name:p.contact_name||'', contact_phone:p.contact_phone||'', address:p.address||'', capacity_pcs:(p.capacity_pcs ?? '')===0?0:(p.capacity_pcs || ''), capacity_note:p.capacity_note||'' });
+    setForm({ name:p.name||'', code:p.code||'', contact_name:p.contact_name||'', contact_phone:p.contact_phone||'', address:p.address||'', capacity_pcs:(p.capacity_pcs ?? '')===0?0:(p.capacity_pcs || ''), capacity_note:p.capacity_note||'', owner_entity:p.owner_entity||'' });
     setShowForm(true);
   }
 
@@ -203,6 +205,15 @@ function PartnersTab({ token, showToast }) {
                 data-testid="partner-capacity_note" className={INPUT_CLS} placeholder="mis. 2 lini jahit, kuat hoodie" />
             </div>
           </div>
+          <div className="space-y-1">
+            <label className="text-[11px] text-muted-foreground uppercase font-semibold">Pemilik penjahit</label>
+            <SmartNativeSelect value={form.owner_entity} onChange={e=>setForm(p=>({...p,owner_entity:e.target.value}))}
+              className="w-full h-9" data-testid="partner-owner_entity" aria-label="Pemilik penjahit">
+              <option value="">Vendor CMT luar</option>
+              <option value="SMU">Tim jahit CV Sukma</option>
+            </SmartNativeSelect>
+            <p className="text-[10px] text-muted-foreground">Tim jahit CV Sukma: jahitan PO internal ditagih CV Sukma ke CV Dewi Aditya (antar CV); PO maklon tanpa tagihan CMT.</p>
+          </div>
           <div className="flex gap-2">
             <Button type="submit" size="sm" disabled={saving} data-testid="partner-save">
               {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : (editId ? 'Simpan Perubahan' : 'Simpan')}
@@ -225,6 +236,7 @@ function PartnersTab({ token, showToast }) {
                     <div className="flex items-center gap-2">
                       <span className="font-semibold text-sm text-foreground">{p.name}</span>
                       {p.code && <span className="text-[11px] text-primary/70 tabular-nums bg-primary/10 px-1.5 rounded">{p.code}</span>}
+                      {p.owner_entity === 'SMU' && <span className="text-[11px] text-[hsl(var(--primary))]" data-testid={`partner-owner-${p.id}`}>Tim jahit CV Sukma</span>}
                     </div>
                     <p className="text-xs text-muted-foreground">{p.contact_name || '—'} · {p.contact_phone || '—'}</p>
                     <p className="text-xs text-muted-foreground/70">{p.job_count || 0} job · {p.account_count || 0} akun{(p.capacity_pcs > 0) ? ` · Kapasitas ${Number(p.capacity_pcs).toLocaleString('id-ID')} pcs` : ' · Kapasitas belum diisi'}</p>

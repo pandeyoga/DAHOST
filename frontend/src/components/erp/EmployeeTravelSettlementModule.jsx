@@ -321,7 +321,7 @@ function SettlementDetail({ stl, token, onClose, onRefresh, role }) {
   const isFinance  = isFinanceRole(role); // FIN-02
   // 2026-11-02: rekening kas/bank untuk baris selisih dipilih pengguna & DIKIRIM saat posting
   // (`bank_account_id`), bawaan = rekening yang tercatat di settlement bila masih aktif.
-  const { accounts: cashAccounts, loaded: cashLoaded } = usePaymentCashAccounts(token);
+  const { accounts: cashAccounts, loaded: cashLoaded } = usePaymentCashAccounts(token, 'DA');  // Tahap 8: dinas staf DA
   const [bankAccountId, setBankAccountId] = useState('');
   useEffect(() => {
     if (bankAccountId || !cashAccounts.length) return;

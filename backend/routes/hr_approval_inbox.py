@@ -526,6 +526,12 @@ async def approve_request(req_type: str, req_id: str, payload: Optional[ActionPa
         adj = await db.rahaza_salary_adjustments.find_one({'id': req_id})
         if not adj:
             raise HTTPException(404, 'Salary adjustment tidak ditemukan')
+        # 2026-11-07 (Tahap 7): HR/atasan tidak boleh menyetujui penyesuaian gaji DIRINYA SENDIRI (sejalan K25).
+        # Dulu jalur ini tanpa pemeriksaan pemisahan tugas sama sekali.
+        from utils.employee_identity import resolve_my_employee
+        mine = await resolve_my_employee(db, user)
+        if mine and mine.get('id') == adj.get('employee_id'):
+            raise HTTPException(403, 'Pemisahan tugas: penyesuaian gaji Anda sendiri harus disetujui orang lain.')
         cur_status = adj.get('status')
         role = (user.get('role') or '').lower()
         # Manager → moves to pending_hr; HR/admin → moves to approved

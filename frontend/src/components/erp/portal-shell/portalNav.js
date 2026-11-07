@@ -527,6 +527,14 @@ export const PORTAL_NAV = {
             ],
           },
           {
+            // Tahap 8 fase 2 (dua CV): hutang/piutang antar CV Dewi Aditya ↔ CV Sukma
+            label: 'Antar CV',
+            items: [
+              { id: 'fin-antar-cv',       label: 'Transaksi antar CV', icon: ArrowRightLeft },
+              { id: 'fin-saldo-antar-cv', label: 'Saldo antar CV',     icon: Scale },
+            ],
+          },
+          {
             label: 'Biaya & Karyawan',
             items: [
               { id: 'fin-expenses',         label: 'Pengeluaran & Klaim', icon: Receipt },

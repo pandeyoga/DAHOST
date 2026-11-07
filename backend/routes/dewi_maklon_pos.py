@@ -739,7 +739,7 @@ async def _confirm_maklon_po_claimed(db, po_id: str, po: dict, user: dict):
     ar_doc = {
         'id': ar_invoice_id,
         'invoice_number': ar_invoice_number,
-        'source_module': 'maklon_po',
+        'source_module': 'maklon_po', 'entity': 'SMU',   # Tahap 8: piutang maklon = buku CV Sukma
         'linked_maklon_po_id': po_id,
         'linked_maklon_po_number': po['po_number'],
         'customer_id': po['client_id'],

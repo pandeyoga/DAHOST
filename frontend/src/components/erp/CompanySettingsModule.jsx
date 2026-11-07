@@ -4,6 +4,11 @@ import { Settings, Save, Upload, Building2, FileText, RefreshCw, CheckCircle, Im
 import { toast } from 'sonner';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { resetTaxProfileCache } from '../../lib/taxProfile';
+import FilterChips from '@/components/ui/filter-chips';
+import { CV_DA, CV_SMU, cvLabel } from '@/lib/entitas';
+
+// Tahap 8 (dua CV): satu profil per CV — nama, alamat, NPWP, logo, kop PDF, dan status PKP masing-masing.
+const CV_CHOICES = [{ key: CV_DA, label: cvLabel(CV_DA) }, { key: CV_SMU, label: cvLabel(CV_SMU) }];
 
 export default function CompanySettingsModule({ token, userRole }) {
   const [settings, setSettings] = useState({
@@ -19,16 +24,17 @@ export default function CompanySettingsModule({ token, userRole }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [cv, setCv] = useState(CV_DA);
 
   const canEdit = ['superadmin', 'admin'].includes(userRole);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchSettings(); }, []);
+  useEffect(() => { fetchSettings(); }, [cv]);
 
   const fetchSettings = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/company-settings', { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`/api/company-settings?entity=${cv}`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       if (data && !data.error) {
         setSettings({
@@ -66,10 +72,10 @@ export default function CompanySettingsModule({ token, userRole }) {
     setSaving(true);
     setSaved(false);
     try {
-      const res = await fetch('/api/company-settings', {
+      const res = await fetch(`/api/company-settings?entity=${cv}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ...settings, tax_profile: tax }),
+        body: JSON.stringify({ ...settings, tax_profile: tax, entity: cv }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -109,7 +115,7 @@ export default function CompanySettingsModule({ token, userRole }) {
       // 2026-11-06 (pola P1/P6): /api/upload membaca entity_type/entity_id dari query dan membalas
       // `storage_path` (bukan url/filepath/filename) — dulu logo tidak pernah terisi dan penolakan
       // server diam saja. Logo dipasang lewat /api/uploads/<path> (tanpa token, aman untuk <img>).
-      const res = await fetch('/api/upload?entity_type=company_logo&entity_id=general', {
+      const res = await fetch(`/api/upload?entity_type=company_logo&entity_id=${cv === CV_DA ? 'general' : cv.toLowerCase()}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
@@ -141,6 +147,14 @@ export default function CompanySettingsModule({ token, userRole }) {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Pengaturan Perusahaan</h1>
           <p className="text-muted-foreground text-sm mt-1">Kelola informasi perusahaan untuk header PDF dan dokumen resmi</p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted-foreground">Profil CV</span>
+            <FilterChips options={CV_CHOICES} value={cv} onChange={(k) => setCv(k || CV_DA)} hideWhenEmpty={false}
+              testId="company-cv-switch" ariaLabel="Pilih profil CV" />
+          </div>
+          <p className="text-xs text-muted-foreground mt-1" data-testid="company-cv-note">
+            {cv === CV_SMU ? 'Dipakai untuk dokumen maklon (invoice, surat jalan, kwitansi klien) dan buku CV Sukma.' : 'Dipakai untuk dokumen CV Dewi Aditya (toko, penjualan, pembelian, gaji).'}
+          </p>
         </div>
         {saved && (
           <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2 text-sm text-emerald-700">

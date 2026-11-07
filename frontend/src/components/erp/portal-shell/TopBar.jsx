@@ -20,9 +20,39 @@ import {
 import { NotificationBell } from '../NotificationBell';
 import { ScanLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { useCv } from '@/lib/entitas';
 import GlobalSearch from './GlobalSearch';
 import AccountMenu from './AccountMenu';
 import { PORTAL_LABEL, formatSectionLabel } from './portalNav';
+
+/**
+ * Tahap 8 (dua CV, keputusan owner K1): pilihan buku di kepala Portal Keuangan —
+ * "CV Dewi Aditya" / "CV Sukma" / "Gabungan (lihat saja)". Hanya tampil di dalam CvProvider
+ * (Portal Keuangan); pilihan disimpan per peramban dan dikirim ke backend lewat header X-CV.
+ */
+function CvPicker() {
+  const ctx = useCv();
+  if (!ctx) return null;
+  // shrink-0: tanpa pembungkus ini kotak pilihan menyusut di baris kepala dan tertimpa kotak cari.
+  return (
+    <div className="shrink-0 w-28 sm:w-48">
+      <SmartNativeSelect
+        value={ctx.cv}
+        onChange={(e) => ctx.setCv(e.target.value)}
+        data-testid="cv-picker"
+        aria-label="Pilih buku CV"
+        title="Buku CV yang sedang dibuka"
+        searchable={false}
+        className="h-9 w-full text-xs sm:text-sm"
+      >
+        {ctx.options.map((o) => (
+          <option key={o.code} value={o.code}>{o.label}</option>
+        ))}
+      </SmartNativeSelect>
+    </div>
+  );
+}
 
 export default function TopBar({
   portal,
@@ -125,6 +155,9 @@ export default function TopBar({
 
         {/* Spacer */}
         <div className="flex-1" />
+
+        {/* Tahap 8: pilihan buku CV (hanya Portal Keuangan) */}
+        <CvPicker />
 
         {/* Global Search */}
         <GlobalSearch token={token} onResultSelect={onModuleChange} />

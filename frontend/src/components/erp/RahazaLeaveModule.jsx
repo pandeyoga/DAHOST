@@ -743,9 +743,17 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
                   </a>
                 ) : <p className="text-muted-foreground">Tidak ada lampiran</p>}
               </div>
-              <p className="text-xs text-muted-foreground">
-                Sisa saldo jenis ini: {approveModal.balance?.remaining} dari {approveModal.balance?.allocated} hari
-              </p>
+              {(approveModal.balance_by_year || []).length > 1 ? (
+                <p className="text-xs text-muted-foreground" data-testid="approve-balance-by-year">
+                  {/* Tahap 7: cuti lintas tahun memakai saldo masing-masing tahun */}
+                  Saldo per tahun: {approveModal.balance_by_year.map((b) => (
+                    `${b.year} dipakai ${b.days} hari (sisa ${b.remaining} dari ${b.allocated})`)).join(' · ')}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Sisa saldo jenis ini: {approveModal.balance?.remaining} dari {approveModal.balance?.allocated} hari
+                </p>
+              )}
               {approveModal.final_step ? (
                 <div className="space-y-1">
                   <Label className="text-xs">Keputusan pembayaran</Label>

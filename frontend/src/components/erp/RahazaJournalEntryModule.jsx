@@ -19,6 +19,7 @@ import { formatRupiah } from '@/lib/format';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB } from '@/lib/waktu';
+import { cvAccountParam, useCv } from '@/lib/entitas';
 
 const fmt = formatRupiah;
 
@@ -243,6 +244,8 @@ const STATUS_TABS = [
  * bawah); klik nomor jurnal membuka baris-barisnya DI BAWAH barisnya (dulu kartu detail di atas tabel).
  */
 export default function RahazaJournalEntryModule({ token }) {
+  // Tahap 8: pemilih akun hanya menampilkan akun yang berlaku untuk CV terpilih
+  const coaCv = cvAccountParam(useCv()?.cv);
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
   const [counts, setCounts] = useState({});
@@ -285,7 +288,7 @@ export default function RahazaJournalEntryModule({ token }) {
   useEffect(() => { fetchData(); }, [fetchData]);
   useEffect(() => {
     // with_control (KU4): server menandai akun kontrol piutang/hutang untuk peringatan di baris jurnal baru
-    fetch('/api/rahaza/coa/accounts?with_control=true', { headers }).then(r => (r.ok ? r.json() : [])).then(a => setAccounts(Array.isArray(a) ? a : []));
+    fetch(`/api/rahaza/coa/accounts?with_control=true${coaCv ? `&${coaCv}` : ''}`, { headers }).then(r => (r.ok ? r.json() : [])).then(a => setAccounts(Array.isArray(a) ? a : []));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 

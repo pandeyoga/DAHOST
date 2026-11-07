@@ -43,12 +43,19 @@ BUDGET_STATUSES = ["draft", "approved", "locked"]
 
 # ─── BUDGET HEADER ──────────────────────────────────────────────────────────
 
+def _budget_entity_match(budget: dict) -> dict:
+    """Realisasi anggaran = baris jurnal buku CV anggaran itu (Tahap 8; anggaran lama = DA)."""
+    from core.entities import entity_match, entity_of_value
+    return entity_match(entity_of_value((budget or {}).get("entity")))
+
+
 @router.get("/budgets")
 async def list_budgets(request: Request, year: Optional[int] = None, status: Optional[str] = None,
                        cost_center_id: Optional[str] = None):
     await require_auth(request)
     db = get_db()
-    q = {}
+    from core.entities import entity_from_request, entity_match
+    q = dict(entity_match(entity_from_request(request, allow_all=True)))   # Tahap 8: anggaran per CV
     if year:
         q["year"] = year
     if status:
@@ -75,8 +82,10 @@ async def create_budget(request: Request):
     year = int(body.get("year") or today_wib().year)
     if not name:
         raise HTTPException(400, "Nama budget wajib diisi")
+    from core.entities import entity_from_request
     doc = {
         "id": _uid(),
+        "entity": entity_from_request(request, body),   # Tahap 8: CV anggaran (Gabungan ditolak)
         "name": name,
         "year": year,
         "period_type": body.get("period_type", "monthly"),  # monthly | quarterly | annual
@@ -361,7 +370,8 @@ async def budget_variance(bid: str, request: Request):
         type_by_id = {a["id"]: a.get("type") or "" for a in accs}
         if code_to_id:
             agg = await db.rahaza_journal_lines.aggregate([
-                {"$match": {"account_code": {"$in": list(code_to_id)}, "period_code": {"$in": months}}},
+                {"$match": {"account_code": {"$in": list(code_to_id)}, "period_code": {"$in": months},
+                            **_budget_entity_match(budget)}},
                 {"$group": {"_id": {"code": "$account_code", "period": "$period_code"},
                             "debit": {"$sum": {"$ifNull": ["$debit", 0]}}, "credit": {"$sum": {"$ifNull": ["$credit", 0]}}}},
             ]).to_list(length=100000)

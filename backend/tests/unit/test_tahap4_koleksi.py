@@ -277,7 +277,7 @@ class TestAutoAkunPemasok:
         async def _mapping(_db, event):
             return {"debit_ar": "1-1305", "credit_revenue_maklon": "4-1500"}
 
-        async def _post(db_, je_date, memo, source_module, source_ref, lines_raw, user):
+        async def _post(db_, je_date, memo, source_module, source_ref, lines_raw, user, **_kw):
             lines_seen["lines"] = lines_raw
             return {"ok": True, "je_id": "je1", "je_number": "JE-1"}
         monkeypatch.setattr(mf, "get_mapping", _mapping)

@@ -16,6 +16,7 @@ import { MoneyInput } from '@/components/ui/money-input';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 import CashAccountSelect, { usePaymentCashAccounts } from './SdmCashAccountSelect';
 import { todayWIB, thisMonthWIB } from '../../lib/waktu';
+import { cvAccountParam, useCv } from '@/lib/entitas';
 
 // 2026-11-02 (K18): form wajib memilih jenis perolehan. Pembelian baru → sumber dana → jurnal
 // perolehan otomatis ke akun kategori; Aset lama → akumulasi per go-live, tanpa jurnal perolehan.
@@ -66,6 +67,7 @@ const fmtRp = formatRupiah;
  */
 export default function FixedAssetsModule({ token }) {
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const coaCv = cvAccountParam(useCv()?.cv);  // Tahap 8: akun aset/beban CV terpilih saja
   const [assets, setAssets] = useState([]);
   const [summary, setSummary] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -162,7 +164,7 @@ export default function FixedAssetsModule({ token }) {
 
   const fetchCoa = async () => {
     // K18: hanya akun aktif & bukan header (dulu seluruh COA termasuk nonaktif/grup)
-    const r = await fetch('/api/rahaza/coa/accounts', { headers });
+    const r = await fetch(`/api/rahaza/coa/accounts${coaCv ? `?${coaCv}` : ''}`, { headers });
     if (r.ok) setCoa((await r.json()).filter(a => a.active !== false && !a.is_group));
   };
 

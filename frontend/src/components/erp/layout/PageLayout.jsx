@@ -25,8 +25,51 @@ import { Button } from '@/components/ui/button';
 import { GlassCard } from '@/components/ui/glass';
 import { cn } from '@/lib/utils';
 import { CompactHubContext, HubActions, PageHeader } from '../moduleAtoms';
+import { toast } from 'sonner';
+import { READONLY_HINT, useCv } from '@/lib/entitas';
 
 const filled = (node) => Children.toArray(node).length > 0;
+
+/**
+ * Tahap 8 (dua CV): di Portal Keuangan dengan pilihan "Gabungan (lihat saja)", tombol halaman
+ * (tambah/ubah) dinonaktifkan + kalimat petunjuk. `fieldset disabled` menonaktifkan semua tombol di
+ * dalamnya tanpa mengubah tata letak (`contents`). Alat (muat ulang, unduh) tidak ikut — tetap aktif.
+ * Backend juga menolak penulisan dengan CV Gabungan (pengaman kedua).
+ */
+function ReadOnlyActions({ children }) {
+  return (
+    <>
+      <span className="text-xs text-muted-foreground" data-testid="cv-readonly-hint">{READONLY_HINT}</span>
+      <fieldset disabled className="contents" data-testid="cv-readonly-actions" title={READONLY_HINT}>
+        {children}
+      </fieldset>
+    </>
+  );
+}
+
+/**
+ * Tahap 8 fase 3: tombol TULIS di baris tabel / panel detail (Bayar, Ubah, Hapus, Batalkan, Jurnalkan…) juga
+ * tidak berlaku di mode Gabungan. Klik ditahan di tingkat cetakan (tanpa mengubah tiap layar) dan diberi petunjuk;
+ * tombol baca (Rincian, Lihat, Buka, Unduh, PDF) tetap jalan. Backend tetap menolak tulis Gabungan (pengaman kedua).
+ */
+const READONLY_WRITE_RX = /^(tambah|ubah|edit|hapus|simpan|bayar|batalkan|batal\b|jurnalkan|posting|terbitkan|setujui|tolak|catat|buat|kirim|void|potong|coba lagi|selesaikan|tutup buku|buka periode|impor|unggah|terima|lunasi|nonaktifkan|aktifkan)/i;
+
+export function readOnlyBlocked(label) {
+  return READONLY_WRITE_RX.test(String(label || '').trim());
+}
+
+function ReadOnlyContent({ children }) {
+  const onClickCapture = (e) => {
+    const btn = e.target?.closest?.('button, [role="button"], a[role="menuitem"]');
+    if (!btn || btn.closest('[data-cv-allow]')) return;
+    const label = btn.getAttribute('aria-label') || btn.textContent || btn.getAttribute('title') || '';
+    if (!readOnlyBlocked(label)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    toast.info(READONLY_HINT);
+  };
+  return <div className="contents" onClickCapture={onClickCapture} data-testid="cv-readonly-content">{children}</div>;
+}
 
 /** Baris toolbar: penyaring di kiri, alat di kanan (satu baris, 36 px). Dipakai lewat PageLayout. */
 export function Toolbar({ filters, tools, className, testId = 'page-toolbar' }) {
@@ -49,15 +92,16 @@ export default function PageLayout({
   title, subtitle, actions, filters, tools, summary, detail, footer, children, className, testId, headerTestId,
 }) {
   const hasFilters = filled(filters);
+  const cvCtx = useCv();
+  const pageActions = cvCtx?.readOnly && filled(actions) ? <ReadOnlyActions>{actions}</ReadOnlyActions> : actions;
   // Tanpa penyaring, alat (muat ulang, unduh) ikut kepala/baris tab: [Ikon] [Kedua] [Utama].
-  const headerActions = !hasFilters && filled(tools) ? <>{tools}{actions}</> : actions;
+  const headerActions = !hasFilters && filled(tools) ? <>{tools}{pageActions}</> : pageActions;
   return (
     <div className={cn('space-y-4 min-w-0', className)} data-testid={testId} data-page-layout="">
       <PageHeader title={title} subtitle={subtitle} testId={headerTestId} actions={filled(headerActions) ? headerActions : null} />
       {hasFilters && <Toolbar filters={filters} tools={tools} />}
       {summary}
-      {detail}
-      {children}
+      {cvCtx?.readOnly ? <ReadOnlyContent>{detail}{children}</ReadOnlyContent> : <>{detail}{children}</>}
       {footer}
     </div>
   );

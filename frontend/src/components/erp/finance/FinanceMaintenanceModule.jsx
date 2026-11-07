@@ -134,6 +134,46 @@ function WipFgBackfill() {
   );
 }
 
+/**
+ * Tahap 8 (dua CV) — cek jurnal otomatis yang akun/rekeningnya tidak cocok dengan CV jurnal.
+ * Jurnal otomatis tidak pernah ditolak karena CV; ketidakcocokan hanya ditandai di jurnalnya
+ * (GET /api/rahaza/journals/entity-warnings) dan diperbaiki Keuangan lewat jurnal manual.
+ */
+function EntityWarnings() {
+  const [busy, setBusy] = useState(false);
+  const [data, setData] = useState(null);
+  const run = async () => {
+    setBusy(true);
+    try {
+      const r = await fetch(`${API}/api/rahaza/journals/entity-warnings?entity=ALL&limit=50`, { headers: authH() });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+      setData(d);
+    } catch (e) { toast.error(e.message); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="space-y-2">
+      <Button size="sm" variant="outline" onClick={run} disabled={busy} data-testid="maint-cv-check-run">
+        {busy ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Eye className="w-3.5 h-3.5 mr-1.5" />}Periksa
+      </Button>
+      {data && (
+        <div className="text-xs space-y-1" data-testid="maint-cv-check-result">
+          <p className="text-muted-foreground">
+            {data.total ? `${data.total} jurnal otomatis perlu diperiksa (${(data.items || []).length} terbaru ditampilkan).`
+              : 'Semua jurnal otomatis cocok dengan CV-nya.'}
+          </p>
+          {(data.items || []).map((it) => (
+            <p key={it.id} className="text-foreground">
+              <span className="font-mono">{it.je_number}</span> · {it.entity_label} · {it.date} — {it.entity_warning}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function FinanceMaintenanceModule({ onNavigate }) {
   return (
     <div className="space-y-4" data-testid="finance-maintenance">
@@ -163,6 +203,11 @@ export default function FinanceMaintenanceModule({ onNavigate }) {
           testId="maint-claims-seed">
           <OneShot label="Pasang bawaan" path="/api/hr/expenses/gl-mappings/seed-default" testId="maint-claims-seed-run"
             describe={(d) => d.message || 'Selesai'} />
+        </Task>
+        <Task icon={Eye} title="Cek CV jurnal otomatis"
+          desc="Jurnal otomatis yang akun atau rekeningnya milik CV lain (mis. bayar faktur CV Dewi Aditya ke rekening CV Sukma). Jurnalnya tetap tersimpan; perbaiki lewat jurnal manual."
+          testId="maint-cv-check">
+          <EntityWarnings />
         </Task>
         <Task icon={Boxes} title="Jurnal WIP → Barang Jadi yang tertinggal"
           desc="Terima FG dari CMT (PO internal) yang sudah lolos QC tetapi belum berjurnal Persediaan Barang Jadi / WIP."

@@ -403,15 +403,21 @@ async def reset(db, doc_key: str) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 # PROFIL PERUSAHAAN (satu pembaca)
 # ═══════════════════════════════════════════════════════════════════════════════
-async def company_profile(db) -> dict:
+async def company_profile(db, entity: str = "DA") -> dict:
     """Profil perusahaan ternormalisasi dari `company_settings` (tahan drift skema).
 
     Dipindah ke sini dari `utils/pdf_common.py` supaya kop surat punya SATU pembaca
     (pdf_common kini meneruskan ke fungsi ini).
+
+    Tahap 8 (dua CV): `entity` memilih profil CV. DA = dokumen lama (`type: general`). CV lain = profilnya
+    sendiri, TANPA cadangan nama DA: kop CV Sukma tidak boleh pernah tercetak "CV. Dewi Aditya".
     """
-    doc = await db.company_settings.find_one({"type": "general"}, {"_id": 0})
-    if not doc:
+    from core.entities import DA, DEFAULT_PROFILE_NAMES, company_settings_doc, entity_of_value
+    ent = entity_of_value(entity)
+    doc = await company_settings_doc(db, ent)
+    if not doc and ent == DA:
         doc = await db.company_settings.find_one({}, {"_id": 0}) or {}
+    fallback_name = "CV. Dewi Aditya" if ent == DA else DEFAULT_PROFILE_NAMES.get(ent, ent)
 
     def pick(*keys, default=""):
         for k in keys:
@@ -421,7 +427,8 @@ async def company_profile(db) -> dict:
         return default
 
     return {
-        "company_name": pick("company_name", default="CV. Dewi Aditya"),
+        "entity": ent,
+        "company_name": pick("company_name", default=fallback_name),
         "address": pick("company_address", "address"),
         "phone": pick("company_phone", "phone"),
         "email": pick("company_email", "email"),
@@ -440,12 +447,15 @@ def effective_header_text(hdr: dict, profile: dict) -> dict:
     hdr = hdr or {}
     profile = profile or {}
     use_p = hdr.get("use_company_profile", True)
+    # Tahap 8: kop CV selain DA memakai identitas PROFIL CV itu (isian identitas di template global
+    # adalah identitas DA) dan tidak pernah jatuh ke nama DA.
+    other_cv = (profile.get("entity") or "DA") != "DA"
 
     def val(key, *pkeys):
-        v = str(hdr.get(key) or "").strip()
+        v = "" if other_cv else str(hdr.get(key) or "").strip()
         if v:
             return v
-        if use_p:
+        if use_p or other_cv:
             for pk in pkeys:
                 pv = str(profile.get(pk) or "").strip()
                 if pv:
@@ -453,7 +463,7 @@ def effective_header_text(hdr: dict, profile: dict) -> dict:
         return ""
 
     return {
-        "company_name": val("company_name", "company_name") or "CV. Dewi Aditya",
+        "company_name": val("company_name", "company_name") or ("" if other_cv else "CV. Dewi Aditya"),
         "address": val("address", "address"),
         "phone": val("phone", "phone"),
         "email": val("email", "email"),
@@ -595,7 +605,12 @@ def header_flowables(hdr: dict, profile: dict, title: str, *, subtitle: str = ""
         lines.append(Paragraph(_esc(txt["extra_line"]), s_line))
 
     out = []
-    logo = _logo_flowable(hdr.get("logo_data"), hdr.get("logo_height_mm")) \
+    # Tahap 8: logo template = logo DA. Kop CV lain hanya memakai logo profilnya sendiri (data URI) atau tanpa logo.
+    logo_src = hdr.get("logo_data")
+    if ((profile or {}).get("entity") or "DA") != "DA":
+        _pl = str((profile or {}).get("logo_url") or "")
+        logo_src = _pl if _pl.startswith("data:") else None
+    logo = _logo_flowable(logo_src, hdr.get("logo_height_mm")) \
         if hdr.get("layout") != "text-only" else None
 
     if logo is None:

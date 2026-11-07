@@ -49,6 +49,13 @@ CONFIG_CHOICES = {
 
 def choice_error(key: str, value) -> Optional[str]:
     """Pesan galat bila `value` bukan salah satu pilihan setelan `key` (None = sah)."""
+    if key == 'intercompany_accessory_margin_pct':   # Tahap 8 fase 2: persen 0–100
+        from core.intercompany import parse_margin
+        try:
+            parse_margin(value)
+        except ValueError as e:
+            return str(e)
+        return None
     choices = CONFIG_CHOICES.get(key)
     if not choices:
         return None
@@ -101,6 +108,18 @@ DEFAULT_CONFIGS = [
         'label': 'Payment Terms Default',
         'description': 'Termin pembayaran bawaan invoice maklon (jatuh tempo setelah tagihan terbit).',
         'data_type': 'string',
+        'is_secret': False,
+    },
+    # Tahap 8 fase 2 (keputusan owner K5): aksesoris DA untuk PO maklon dijual ke CV Sukma seharga HPP + margin ini.
+    # Hanya admin/owner/superadmin yang bisa mengubah (SYSTEM_CONFIG_ROLES, sama dengan setelan sistem lain).
+    {
+        'key': 'intercompany_accessory_margin_pct',
+        'value': 0.0,
+        'category': 'maklon',
+        'label': 'Margin Aksesoris ke CV Sukma (%)',
+        'description': ('Aksesoris/bahan CV Dewi Aditya yang dipakai pesanan maklon dijual ke CV Sukma seharga harga '
+                        'pokok (rata-rata) ditambah margin ini. 0 = seharga pokok. Berlaku untuk nota aksesoris berikutnya.'),
+        'data_type': 'number',
         'is_secret': False,
     },
     {

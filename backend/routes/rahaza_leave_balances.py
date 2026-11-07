@@ -67,6 +67,36 @@ async def balance_snapshot(db, employee_id: str, leave_type_id: str, year: int,
     return {"allocated": allocated, "used": used, "remaining": allocated - used, "exists": bool(doc)}
 
 
+async def employee_balance_rows(db, employee_id: str, year: int) -> list:
+    """Saldo per jenis cuti untuk SATU karyawan — angka yang SAMA dengan pemeriksaan saldo saat HR menyetujui
+    (`balance_snapshot`), tanpa menulis apa pun. Dipakai Portal Saya (kartu saldo & dashboard).
+
+    2026-11-07 (Tahap 7): dulu Portal Saya hanya membaca dokumen saldo yang SUDAH ada → sebelum pengajuan
+    pertama disetujui kartu saldo kosong, padahal HR melihat jatah 12 hari. Jenis tak dibayar (mis. izin
+    pribadi) tidak punya jatah: `remaining` = None (dulu tampil minus, mis. −1,5)."""
+    from utils.leave_types import is_unpaid
+    types = await db.rahaza_leave_types.find({}, {"_id": 0}).to_list(500)
+    docs = {d.get("leave_type_id"): d for d in await db.rahaza_leave_balances.find(
+        {"employee_id": employee_id, "year": year}, {"_id": 0}).to_list(500)}
+    rows = []
+    for lt in types:
+        doc = docs.get(lt.get("id"))
+        if not lt.get("active") and not (doc and float(doc.get("used") or 0) > 0):
+            continue
+        snap = await balance_snapshot(db, employee_id, lt["id"], year, lt=lt)
+        unpaid = is_unpaid(lt)
+        rows.append({
+            **(doc or {}), "employee_id": employee_id, "leave_type_id": lt["id"], "year": year,
+            "leave_type_name": lt.get("name") or lt.get("code") or "", "leave_type_code": lt.get("code") or "",
+            "leave_type_color": lt.get("color", "#6366f1"),
+            "request_type": (lt.get("request_type") or "cuti").lower(), "unpaid": unpaid,
+            "allocated": 0.0 if unpaid else snap["allocated"], "quota": 0.0 if unpaid else snap["allocated"],
+            "used": snap["used"], "remaining": None if unpaid else snap["remaining"],
+        })
+    rows.sort(key=lambda r: (r["unpaid"], r["request_type"] != "cuti", r["leave_type_name"]))
+    return rows
+
+
 async def get_or_create_balance(db, employee_id: str, leave_type_id: str, year: int) -> dict:
     """Ensure balance record exists for (employee, leave_type, year)."""
     existing = await db.rahaza_leave_balances.find_one(
@@ -95,27 +125,29 @@ async def get_or_create_balance(db, employee_id: str, leave_type_id: str, year: 
 
 
 async def consume_balance(db, employee_id: str, leave_type_id: str, year: int, days: float):
-    """Deduct from balance when leave approved. Returns updated doc."""
+    """Deduct from balance when leave approved.
+
+    2026-11-07 (Tahap 7): `$inc` atomik — dulu baca-lalu-tulis (`used = lama + hari`), dua persetujuan
+    bersamaan untuk karyawan yang sama saling menimpa sehingga satu potongan saldo hilang."""
     doc = await get_or_create_balance(db, employee_id, leave_type_id, year)
-    new_used = (doc.get("used", 0) or 0) + days
     await db.rahaza_leave_balances.update_one(
         {"id": doc["id"]},
-        {"$set": {"used": new_used, "updated_at": _now()}}
+        {"$inc": {"used": float(days)}, "$set": {"updated_at": _now()}}
     )
 
 
 async def restore_balance(db, employee_id: str, leave_type_id: str, year: int, days: float):
-    """Restore balance (e.g., when leave is cancelled after approval)."""
+    """Restore balance (e.g., when leave is cancelled after approval). Atomik; terpakai tidak pernah < 0."""
     doc = await db.rahaza_leave_balances.find_one(
         {"employee_id": employee_id, "leave_type_id": leave_type_id, "year": year},
         {"_id": 0},
     )
     if doc:
-        new_used = max(0, (doc.get("used", 0) or 0) - days)
-        await db.rahaza_leave_balances.update_one(
-            {"id": doc["id"]},
-            {"$set": {"used": new_used, "updated_at": _now()}}
-        )
+        res = await db.rahaza_leave_balances.update_one(
+            {"id": doc["id"], "used": {"$gte": float(days)}},
+            {"$inc": {"used": -float(days)}, "$set": {"updated_at": _now()}})
+        if not getattr(res, "matched_count", 0):
+            await db.rahaza_leave_balances.update_one({"id": doc["id"]}, {"$set": {"used": 0, "updated_at": _now()}})
 
 
 # ─── Endpoints ───────────────────────────────────────────────────────────────
@@ -127,8 +159,15 @@ async def list_balances(
     year: Optional[int] = None,
     leave_type_id: Optional[str] = None,
 ):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
+    # 2026-11-07 (Tahap 7): selain HR/atasan hanya saldo milik sendiri (Portal Saya memakai /my).
+    from utils.employee_identity import can_view_all_employees, resolve_my_employee
+    if not can_view_all_employees(user):
+        mine = await resolve_my_employee(db, user)
+        if not mine or (employee_id and employee_id != mine["id"]):
+            return {"ok": True, "balances": []}
+        employee_id = mine["id"]
     filt = {}
     if employee_id:
         filt["employee_id"] = employee_id

@@ -31,14 +31,18 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
+import { parseServerTime } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const TZ = 'Asia/Jakarta';
 
+// Tahap 7 (2026-11-07): jam dari server datang TANPA zona ("2026-11-06T20:04:45" = UTC). `new Date()` membacanya
+// sebagai jam lokal HP, sehingga di HP WIB absen 03.04 tampil 20.04 (dan ikut terisi di formulir koreksi).
 const fmtTime = (v, seconds = false) => {
-  if (!v) return '--:--';
+  const d = v instanceof Date ? v : parseServerTime(v);
+  if (!d) return '--:--';
   try {
-    return new Date(v).toLocaleTimeString('id-ID', {
+    return d.toLocaleTimeString('id-ID', {
       hour: '2-digit', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}), timeZone: TZ,
     });
   } catch { return '--:--'; }
@@ -50,6 +54,7 @@ const fmtDay = (iso) => {
     });
   } catch { return iso; }
 };
+const shiftText = (sh) => `${sh.code || sh.name || 'Shift'} ${sh.start_time || ''}${sh.end_time ? `–${sh.end_time}` : ''}`;
 const fmtDur = (mins) => {
   const m = Math.max(0, Math.round(Number(mins) || 0));
   return m < 60 ? `${m} mnt` : `${Math.floor(m / 60)} j ${m % 60} mnt`;
@@ -100,6 +105,7 @@ export default function PortalSayaAbsen({ token, headers: headersProp }) {
   const [tick, setTick] = useState(Date.now());
   const [history, setHistory] = useState([]);
   const [corrections, setCorrections] = useState([]);
+  const [schedule, setSchedule] = useState([]);
   const [izinOpen, setIzinOpen] = useState(false);
   const [izinReason, setIzinReason] = useState('');
   const [camOpen, setCamOpen] = useState(false);
@@ -114,17 +120,21 @@ export default function PortalSayaAbsen({ token, headers: headersProp }) {
 
   const load = useCallback(async () => {
     try {
-      const [s, o, h, c] = await Promise.all([
+      const [s, o, h, c, sc] = await Promise.all([
         axios.get(`${API}/api/rahaza/attendance/my-status`, { headers }),
         axios.get(`${API}/api/rahaza/attendance/office-location`, { headers }).catch(() => ({ data: null })),
         axios.get(`${API}/api/rahaza/self/attendance`, { headers, params: { from: daysAgoIso(30), to: todayIso() } })
           .catch(() => ({ data: { records: [] } })),
         axios.get(`${API}/api/rahaza/attendance/corrections/my`, { headers }).catch(() => ({ data: { items: [] } })),
+        // Tahap 7: jadwal hari ini + 7 hari (sumber sama dengan hitungan terlambat)
+        axios.get(`${API}/api/rahaza/attendance/my-schedule`, { headers, params: { days: 8 } })
+          .catch(() => ({ data: { days: [] } })),
       ]);
       setStatus(s.data || {});
       setOffice(o.data || null);
       setHistory(h.data?.records || []);
       setCorrections(c.data?.items || []);
+      setSchedule(sc.data?.days || []);
       if (s.data?.server_time) setClockOffset(new Date(s.data.server_time).getTime() - Date.now());
     } catch (e) {
       toast.error(e.response?.data?.detail || 'Gagal memuat status kehadiran');
@@ -474,6 +484,52 @@ export default function PortalSayaAbsen({ token, headers: headersProp }) {
           Keluar {fmtTime(active.out_at)}{active.reason ? ` · "${active.reason}"` : ''}
         </Notice>
       )}
+
+      {/* Jadwal kerja hari ini + 7 hari (Tahap 7) */}
+      <GlassCard className="p-4 space-y-3" data-testid="absen-schedule">
+        <div>
+          <p className="text-base font-semibold">Jadwal kerja 8 hari</p>
+          <p className="text-xs text-muted-foreground">
+            Dari Jadwal Shift HR. Jam masuk shift ini yang dipakai untuk menghitung terlambat.
+          </p>
+        </div>
+        {schedule.length === 0 ? (
+          <EmptyState icon={CalendarClock} title="Jadwal belum tersedia"
+            description="Hubungi HR bila shift Anda belum diatur." className="py-6" />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Hari</TableHead>
+                <TableHead>Shift</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {schedule.map((d) => (
+                <TableRow key={d.date} data-testid={`absen-schedule-${d.date}`}>
+                  <TableCell className="whitespace-nowrap">
+                    {fmtDay(d.date)}{d.today ? ' · hari ini' : ''}
+                  </TableCell>
+                  <TableCell className="whitespace-normal">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {d.shift && (
+                        <span className="tabular-nums">{shiftText(d.shift)}</span>
+                      )}
+                      {d.label && (
+                        <StatusBadge status={d.kind} label={d.label} tone={d.kind === 'libur' ? 'muted' : 'info'} />
+                      )}
+                      {!d.shift && !d.label && (
+                        <span className="text-muted-foreground">Shift belum diatur HR</span>
+                      )}
+                    </div>
+                    {d.note && <p className="text-xs text-muted-foreground">{d.note}</p>}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </GlassCard>
 
       {/* Riwayat 30 hari + koreksi */}
       <GlassCard className="p-4 space-y-3" data-testid="absen-history">

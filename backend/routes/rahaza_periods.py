@@ -4,8 +4,11 @@ Fiscal Periods (month-based). status: open | closed | locked.
 Closed = no new posting; Locked = no open/close anymore (final audit lock, admin only).
 
 Collection: rahaza_periods
-  id, period_code (YYYY-MM), period_label, year, month,
+  id, entity (DA|SMU, Tahap 8), period_code (YYYY-MM), period_label, year, month,
   status, closed_at, closed_by, locked_at, locked_by
+
+Tahap 8 (dua CV): periode dikunci per (CV, kode periode). CV dibaca dari query/body/header X-CV
+(core.entities.entity_from_request); dokumen lama tanpa entity = DA.
 """
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
@@ -14,6 +17,8 @@ import uuid
 from datetime import datetime, timezone, date
 from core.roles import FINANCE_ROLES  # FIN-02
 from utils.waktu import today_wib
+from core import entities as ent_mod
+from core.entities import entity_from_request, entity_match
 
 router = APIRouter(prefix="/api/rahaza/periods", tags=["rahaza-periods"])
 
@@ -58,10 +63,14 @@ def period_not_ended_error(period_code: str, today: date, action: str) -> str | 
 async def list_periods(request: Request, year: int = 0):
     await require_auth(request)
     db = get_db()
-    q = {}
+    ent = entity_from_request(request, allow_all=True)
+    q = dict(entity_match(ent))
     if year:
         q["year"] = year
-    rows = await db.rahaza_periods.find(q, {"_id": 0}).sort("period_code", -1).to_list(500)
+    rows = await db.rahaza_periods.find(q, {"_id": 0}).sort("period_code", -1).to_list(1000)
+    for r in rows:
+        r["entity"] = ent_mod.entity_of_value(r.get("entity"))
+        r["entity_label"] = ent_mod.entity_short(r["entity"])
     return serialize_doc(rows)
 
 
@@ -75,14 +84,15 @@ async def ensure_year(request: Request):
     except Exception:
         body = {}
     year = int((body or {}).get("year") or today_wib().year)
+    ent = entity_from_request(request, body if isinstance(body, dict) else None)
     from routes.rahaza_posting import ensure_year_periods
-    created = await ensure_year_periods(db, year)
+    created = await ensure_year_periods(db, year, ent)
     # Iter 114: peringatan "periode belum dibuka" utk tahun ini otomatis selesai
     await db.rahaza_period_alerts.update_many(
-        {"year": year, "status": "open"},
+        {"year": year, "status": "open", **entity_match(ent)},
         {"$set": {"status": "resolved", "resolved_at": _now(), "resolved_by": user.get("name", ""), "resolved_via": "ensure-year"}})
-    await log_activity(user["id"], user.get("name", ""), "ensure_periods", "periods", f"year={year} created={created}")
-    return {"ok": True, "year": year, "created": created}
+    await log_activity(user["id"], user.get("name", ""), "ensure_periods", "periods", f"{ent} year={year} created={created}")
+    return {"ok": True, "year": year, "created": created, "entity": ent}
 
 
 @router.get("/policy")
@@ -117,11 +127,25 @@ async def resolve_period_alert(alert_id: str, request: Request):
     return {"ok": True}
 
 
+def _per_key(per: dict) -> dict:
+    """Kunci SATU dokumen periode (bukan period_code saja: DA dan CV Sukma punya kode yang sama)."""
+    return {"_id": per["_id"]} if "_id" in per else {"id": per.get("id")}
+
+
+async def _period_entity(request: Request) -> str:
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 (tanpa body)
+        body = None
+    return entity_from_request(request, body if isinstance(body, dict) else None)
+
+
 @router.post("/{period_code}/close")
 async def close_period(period_code: str, request: Request):
     user = await _require_fin_mgr(request)
     db = get_db()
-    per = await db.rahaza_periods.find_one({"period_code": period_code})
+    ent = await _period_entity(request)
+    per = await db.rahaza_periods.find_one({"period_code": period_code, **entity_match(ent)})
     if not per:
         raise HTTPException(404, "Periode tidak ditemukan.")
     if per["status"] in ("closed", "locked"):
@@ -131,22 +155,24 @@ async def close_period(period_code: str, request: Request):
     if err:
         raise HTTPException(400, err)
     # check draft journals in this period: warn but allow
-    drafts = await db.rahaza_journal_entries.count_documents({"date": {"$regex": f"^{period_code}"}, "status": "draft"})
+    drafts = await db.rahaza_journal_entries.count_documents({"date": {"$regex": f"^{period_code}"}, "status": "draft",
+                                                              **entity_match(ent)})
     res = await db.rahaza_periods.update_one(
-        {"period_code": period_code, "status": per["status"]},   # 2026-11-06 (pola P9)
+        {**_per_key(per), "status": per["status"]},   # 2026-11-06 (pola P9); Tahap 8: dokumen CV ini
         {"$set": {"status": "closed", "closed_at": _now(), "closed_by": user["id"], "closed_by_name": user.get("name", "")}},
     )
     if not res.matched_count:
         raise HTTPException(409, "Status periode ini baru saja diubah pengguna lain — muat ulang halaman.")
-    await log_activity(user["id"], user.get("name", ""), "close_period", "periods", period_code)
-    return {"ok": True, "period_code": period_code, "status": "closed", "draft_journals_left": drafts}
+    await log_activity(user["id"], user.get("name", ""), "close_period", "periods", f"{ent} {period_code}")
+    return {"ok": True, "period_code": period_code, "entity": ent, "status": "closed", "draft_journals_left": drafts}
 
 
 @router.post("/{period_code}/reopen")
 async def reopen_period(period_code: str, request: Request):
     user = await _require_fin_mgr(request)
     db = get_db()
-    per = await db.rahaza_periods.find_one({"period_code": period_code})
+    ent = await _period_entity(request)
+    per = await db.rahaza_periods.find_one({"period_code": period_code, **entity_match(ent)})
     if not per:
         raise HTTPException(404, "Periode tidak ditemukan.")
     if per["status"] == "locked":
@@ -156,13 +182,13 @@ async def reopen_period(period_code: str, request: Request):
     # 2026-11-06 (pola P9): hanya dari 'closed' — dulu "buka" yang membaca status lama bisa membuka lagi
     # periode yang baru saja DIKUNCI (kunci final audit jebol).
     res = await db.rahaza_periods.update_one(
-        {"period_code": period_code, "status": "closed"},
+        {**_per_key(per), "status": "closed"},
         {"$set": {"status": "open", "closed_at": None, "closed_by": None}},
     )
     if not res.matched_count:
         raise HTTPException(409, "Status periode ini baru saja diubah pengguna lain — muat ulang halaman.")
-    await log_activity(user["id"], user.get("name", ""), "reopen_period", "periods", period_code)
-    return {"ok": True, "period_code": period_code, "status": "open"}
+    await log_activity(user["id"], user.get("name", ""), "reopen_period", "periods", f"{ent} {period_code}")
+    return {"ok": True, "period_code": period_code, "entity": ent, "status": "open"}
 
 
 @router.post("/{period_code}/lock")
@@ -172,7 +198,8 @@ async def lock_period(period_code: str, request: Request):
     if (user.get("role") or "").lower() not in ("superadmin", "admin", "owner"):
         raise HTTPException(403, "Hanya admin/superadmin yang boleh lock periode.")
     db = get_db()
-    per = await db.rahaza_periods.find_one({"period_code": period_code})
+    ent = await _period_entity(request)
+    per = await db.rahaza_periods.find_one({"period_code": period_code, **entity_match(ent)})
     if not per:
         raise HTTPException(404, "Periode tidak ditemukan.")
     if per["status"] == "locked":
@@ -186,10 +213,10 @@ async def lock_period(period_code: str, request: Request):
     if err:
         raise HTTPException(400, err)
     res = await db.rahaza_periods.update_one(
-        {"period_code": period_code, "status": "closed"},   # 2026-11-06 (pola P9)
+        {**_per_key(per), "status": "closed"},   # 2026-11-06 (pola P9); Tahap 8: dokumen CV ini
         {"$set": {"status": "locked", "locked_at": _now(), "locked_by": user["id"], "locked_by_name": user.get("name", "")}},
     )
     if not res.matched_count:
         raise HTTPException(409, "Status periode ini baru saja diubah pengguna lain — muat ulang halaman.")
-    await log_activity(user["id"], user.get("name", ""), "lock_period", "periods", period_code)
-    return {"ok": True, "period_code": period_code, "status": "locked"}
+    await log_activity(user["id"], user.get("name", ""), "lock_period", "periods", f"{ent} {period_code}")
+    return {"ok": True, "period_code": period_code, "entity": ent, "status": "locked"}

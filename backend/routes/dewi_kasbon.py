@@ -62,8 +62,12 @@ def _is_privileged(user: dict) -> bool:
 
 
 async def _own_employee_ids(db, user: dict) -> set:
-    """Id karyawan milik akun login (users.employee_id / rahaza_employees.user_id)."""
+    """Id karyawan milik akun login (users.employee_id / rahaza_employees.user_id / SSOT resolve_my_employee)."""
     ids = {x for x in (user.get("employee_id"),) if x}
+    from utils.employee_identity import resolve_my_employee
+    mine = await resolve_my_employee(db, user)
+    if mine and mine.get("id"):
+        ids.add(mine["id"])
     if user.get("id"):
         emp = await db.rahaza_employees.find_one({"user_id": user["id"]}, {"_id": 0, "id": 1})
         if emp and emp.get("id"):
@@ -288,22 +292,31 @@ async def submit_kasbon_request(
     installment_amount = math.ceil(amount / installment_count)
 
     # Get employee info
-    employee_id = body.get("employee_id") or user.get("employee_id") or user.get("id")
-    _self_ids = {user.get("employee_id"), user.get("id")}
-    if employee_id not in _self_ids and (user.get("role") or "").lower() not in {r.lower() for r in _HR_OR_FIN} | {"superadmin", "admin"}:
-        raise HTTPException(403, "Kasbon hanya bisa diajukan untuk diri sendiri; pengajuan atas nama karyawan lain hanya oleh HR/Keuangan.")  # FIN-03
-    emp = await db.rahaza_employees.find_one(
-        {"$or": [{"id": employee_id}, {"employee_id": employee_id}]}, {"_id": 0}
-    )
-    if not emp:
-        # Try lookup by email
-        emp = await db.rahaza_employees.find_one({"email": user.get("email")}, {"_id": 0})
+    # 2026-11-07 (Tahap 7): identitas pemohon lewat SSOT `resolve_my_employee` (users.employee_id →
+    # rahaza_employees.user_id → email). Dulu `users.employee_id` dari TOKEN lalu email: karyawan yang ditautkan
+    # dari sisi data karyawan tercatat dengan id AKUN (bukan id karyawan) → potongan gaji tidak pernah menemukan
+    # kasbonnya. Akun tanpa data karyawan kini mendapat pesan jelas (bukan kasbon yatim).
+    from utils.employee_identity import resolve_my_employee
+    mine = await resolve_my_employee(db, user)
+    requested = body.get("employee_id")
+    if requested and requested not in {(mine or {}).get("id"), user.get("employee_id"), user.get("id")}:
+        if (user.get("role") or "").lower() not in {r.lower() for r in _HR_OR_FIN} | {"superadmin", "admin"}:
+            raise HTTPException(403, "Kasbon hanya bisa diajukan untuk diri sendiri; pengajuan atas nama karyawan lain hanya oleh HR/Keuangan.")  # FIN-03
+        emp = await db.rahaza_employees.find_one(
+            {"$or": [{"id": requested}, {"employee_id": requested}]}, {"_id": 0})
+        if not emp:
+            raise HTTPException(404, "Karyawan tidak ditemukan.")
+    else:
+        emp = mine
+        if not emp:
+            raise HTTPException(404, "Akun Anda belum ditautkan ke data karyawan. Minta Admin HR menautkan "
+                                     "lewat menu Data Karyawan → Tautkan Akun.")
 
-    emp_name = (emp or {}).get("name") or body.get("employee_name") or user.get("name", "")
-    emp_code = (emp or {}).get("employee_code") or (emp or {}).get("code") or ""
-    department = (emp or {}).get("department") or body.get("department") or ""
-    emp_email = (emp or {}).get("email") or user.get("email", "")
-    actual_emp_id = (emp or {}).get("id") or (emp or {}).get("employee_id") or employee_id
+    emp_name = emp.get("name") or user.get("name", "")
+    emp_code = emp.get("employee_code") or emp.get("code") or ""
+    department = emp.get("department") or body.get("department") or ""
+    emp_email = emp.get("email") or user.get("email", "")
+    actual_emp_id = emp.get("id") or emp.get("employee_id")
 
     # 2026-11-02 (K25): batas kasbon (% gaji pokok, maks cicilan) dari Pengaturan Payroll.
     limit = await kasbon_limit_check(db, actual_emp_id, amount, installment_count)
@@ -426,14 +439,15 @@ async def my_kasbon_requests(
     user=Depends(require_auth),
     status: Optional[str] = None,
 ):
-    emp = await db.rahaza_employees.find_one({"email": user.get("email")}, {"_id": 0})
-    emp_id = (emp or {}).get("id") or (emp or {}).get("employee_id") or user.get("employee_id")
+    # 2026-11-07 (Tahap 7): karyawan milik akun lewat SSOT (`_own_employee_ids` → resolve_my_employee). Dulu
+    # dicocokkan email dulu: akun yang emailnya sama dengan data karyawan LAIN melihat kasbon orang itu.
+    own = sorted(await _own_employee_ids(db, user))
 
     filt = {}
-    if emp_id:
-        filt["employee_id"] = emp_id
+    if own:
+        filt["employee_id"] = {"$in": own}
     else:
-        filt["submitted_by"] = user.get("email", "")
+        filt["submitted_by"] = user.get("email", "") or "-"
 
     if status:
         filt["status"] = status
@@ -594,6 +608,19 @@ async def finance_disburse(
     )
     await db.dewi_kasbon_requests.update_one({"id": req_id}, {"$set": _gl_flags(gl_result)})
     await close_kasbon_notifs(db, req_id)   # 2026-11-02 (K30): pencairan selesai
+    # 2026-11-07 (Tahap 7, keputusan owner): karyawan diberi tahu uangnya cair dan mulai kapan dipotong gaji.
+    label = doc.get("type_label") or "Kasbon"
+    nominal = f"Rp {amount_val:,.0f}".replace(",", ".")
+    from utils.waktu import periode_label
+    periode = periode_label(deduction_start_period)
+    await notify_requester(
+        db, user_id=await _kasbon_requester_user_id(db, doc), subtype="kasbon_disbursed", severity="success",
+        title=f"{label} dicairkan {nominal}, dipotong mulai periode {periode}",
+        body=(f"{label} {doc.get('request_number', '')} sebesar {nominal} dicairkan tanggal {disbursement_date}. "
+              f"Potongan gaji mulai periode {periode}"
+              + (f" ({doc.get('installment_count')} kali cicilan)." if int(doc.get("installment_count") or 1) > 1
+                 else ".")),
+        link_module="portal-kasbon", source_type="kasbon", source_id=req_id, source_ref=doc.get("request_number"))
     # T-10: kegagalan posting GL TIDAK boleh tampil sebagai "berhasil" di layar.
     return {"ok": bool(gl_result.get("ok")), "request": _ser(updated), "gl": gl_result,
             "message": None if gl_result.get("ok") else
@@ -713,8 +740,13 @@ async def cancel_kasbon(
     doc = await db.dewi_kasbon_requests.find_one({"id": req_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Kasbon tidak ditemukan")
+    # 2026-11-07 (Tahap 7): dulu TANPA cek pemilik — akun staf mana pun bisa membatalkan kasbon orang lain
+    # yang masih menunggu review (cukup tahu id-nya). Sekarang pemohon sendiri atau HR/Keuangan.
+    if not _is_privileged(user) and not _owns(doc, await _own_employee_ids(db, user), user):
+        raise HTTPException(403, "Anda hanya boleh membatalkan kasbon milik sendiri.")
     if doc.get("status") not in ("submitted",):
-        raise HTTPException(400, "Hanya bisa batalkan saat status 'submitted'")
+        # Tahap 7: istilah program diganti kalimat; 409 = sudah diputus (sama dengan kalah balapan di bawah)
+        raise HTTPException(409, "Kasbon ini sudah diproses HR/Keuangan sehingga tidak bisa dibatalkan.")
 
     # 2026-11-06 (pola P9): batal hanya bila MASIH 'submitted' — dulu bisa menimpa kasbon yang baru saja
     # disetujui HR / dicairkan Keuangan di sela baca & tulis.

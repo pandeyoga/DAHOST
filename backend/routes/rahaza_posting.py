@@ -27,6 +27,8 @@ from pymongo.errors import DuplicateKeyError
 
 from routes.rahaza_posting_profiles import get_mapping
 from utils.waktu import today_wib, wib_date_str, wib_date_of
+from core import entities as ent_mod
+from core.entities import DA, entity_match, entity_of_doc, entity_for_posting
 
 log = logging.getLogger(__name__)
 
@@ -41,10 +43,14 @@ POSTING_FUTURE_DAYS = 31          # jurnal maksimal 31 hari ke depan
 PERIOD_AUTO_CREATE_YEARS = 1      # tahun ini ±1 dibuka otomatis; di luar itu Finance harus ensure-year
 
 
-async def ensure_year_periods(db, year: int) -> int:
-    """Buat 12 periode bulanan tahun `year` (idempoten). Return jumlah yang dibuat."""
+async def ensure_year_periods(db, year: int, entity: str = DA) -> int:
+    """Buat 12 periode bulanan tahun `year` untuk satu CV (idempoten). Return jumlah yang dibuat.
+
+    Tahap 8: periode dikunci per (CV, kode periode) — tutup buku DA tidak menutup buku CV Sukma."""
+    entity = ent_mod.entity_of_value(entity)
     codes = [f"{year}-{m:02d}" for m in range(1, 13)]
-    existing = {d["period_code"] async for d in db.rahaza_periods.find({"period_code": {"$in": codes}}, {"_id": 0, "period_code": 1})}
+    existing = {d["period_code"] async for d in db.rahaza_periods.find(
+        {"period_code": {"$in": codes}, **entity_match(entity)}, {"_id": 0, "period_code": 1})}
     created = 0
     for m in range(1, 13):
         code = f"{year}-{m:02d}"
@@ -52,7 +58,7 @@ async def ensure_year_periods(db, year: int) -> int:
             continue
         end = (date(year + 1, 1, 1) if m == 12 else date(year, m + 1, 1))
         doc = {
-            "id": _uid(), "period_code": code, "period_label": date(year, m, 1).strftime("%B %Y"),
+            "id": _uid(), "entity": entity, "period_code": code, "period_label": date(year, m, 1).strftime("%B %Y"),
             "year": year, "month": m, "start_date": date(year, m, 1).isoformat(),
             "end_date": (end - timedelta(days=1)).isoformat(),
             "status": "open", "closed_at": None, "closed_by": None, "locked_at": None, "locked_by": None,
@@ -69,7 +75,8 @@ async def ensure_year_periods(db, year: int) -> int:
 async def _record_period_alert(db, d: date, message: str, context: Optional[dict]):
     """Peringatan utk Finance: jurnal ditolak karena periode belum dibuka (dedupe per tahun+sumber, status open)."""
     ctx = context or {}
-    key = {"year": d.year, "source_module": ctx.get("source_module") or "manual", "status": "open"}
+    key = {"year": d.year, "source_module": ctx.get("source_module") or "manual", "status": "open",
+           **({"entity": ctx["entity"]} if ctx.get("entity") and ctx.get("entity") != DA else {})}
     await db.rahaza_period_alerts.update_one(
         key,
         {"$setOnInsert": {"id": _uid(), **key, "created_at": _now()},
@@ -81,34 +88,43 @@ async def _record_period_alert(db, d: date, message: str, context: Optional[dict
     )
 
 
-async def _ensure_period_open(db, d: date, context: Optional[dict] = None) -> Optional[str]:
+async def find_period(db, period_code: str, entity: str = DA, projection: Optional[dict] = None):
+    """Dokumen periode satu CV (DA juga mencakup dokumen lama tanpa `entity`)."""
+    return await db.rahaza_periods.find_one(
+        {"period_code": period_code, **entity_match(ent_mod.entity_of_value(entity))}, projection)
+
+
+async def _ensure_period_open(db, d: date, context: Optional[dict] = None, entity: str = DA) -> Optional[str]:
     """Return None if OK, else error message string (graceful, no raise).
     Aturan H-08: (1) tanggal > hari ini + POSTING_FUTURE_DAYS ditolak; (2) periode closed/locked ditolak;
     (3) periode belum terdaftar: tahun ini ±PERIOD_AUTO_CREATE_YEARS dibuka otomatis, selain itu ditolak
-    (+ peringatan `rahaza_period_alerts` utk Finance)."""
+    (+ peringatan `rahaza_period_alerts` utk Finance).
+    Tahap 8: periode dibaca per CV (`entity`); bawaan DA = perilaku lama."""
+    entity = ent_mod.entity_of_value(entity)
     ym = d.strftime("%Y-%m")
     today = today_wib()
+    label = "" if entity == DA else f" ({ent_mod.entity_short(entity)})"
     if (d - today).days > POSTING_FUTURE_DAYS:
         return f"Tanggal jurnal {d.isoformat()} terlalu jauh di masa depan (maks {POSTING_FUTURE_DAYS} hari). Posting ditolak."
-    per = await db.rahaza_periods.find_one({"period_code": ym})
+    per = await find_period(db, ym, entity)
     if per is None:
         if abs(d.year - today.year) > PERIOD_AUTO_CREATE_YEARS:
-            msg = (f"Periode {ym} belum dibuka. Finance harus membuka periode tahun {d.year} "
+            msg = (f"Periode {ym}{label} belum dibuka. Finance harus membuka periode tahun {d.year} "
                    f"lewat Periode Fiskal (ensure-year) sebelum posting.")
             try:
-                await _record_period_alert(db, d, msg, context)
+                await _record_period_alert(db, d, msg, {**(context or {}), "entity": entity})
             except Exception:
                 pass
             return msg
-        await ensure_year_periods(db, d.year)
+        await ensure_year_periods(db, d.year, entity)
         return None
     if per.get("status") in ("closed", "locked"):
-        return f"Periode {ym} sudah {per['status']}. Posting ditolak."
+        return f"Periode {ym}{label} sudah {per['status']}. Posting ditolak."
     return None
 
 
-async def _period_is_closed(db, d: date) -> bool:
-    per = await db.rahaza_periods.find_one({"period_code": d.strftime("%Y-%m")}, {"_id": 0, "status": 1})
+async def _period_is_closed(db, d: date, entity: str = DA) -> bool:
+    per = await find_period(db, d.strftime("%Y-%m"), entity, {"_id": 0, "status": 1})
     return bool(per and per.get("status") in ("closed", "locked"))
 
 
@@ -118,16 +134,46 @@ async def _get_account(db, code: str):
     return await db.rahaza_coa_accounts.find_one({"code": code, "active": True}, {"_id": 0})
 
 
-async def _gen_je_number(db, d: date) -> str:
-    # RC-5 fix: atomic race-safe numbering (was count_documents()+1)
-    from utils.counters import gen_prefixed_number
-    return await gen_prefixed_number(
-        db, "rahaza_journal_entries", "je_number", f"JE-{d.strftime('%Y%m%d')}-", 4)
+# Tahap 8: nomor jurnal per CV. Format milik owner (`doc_number_configs` rahaza_journal_entries.je_number)
+# tetap dihormati; kode CV DISISIPKAN otomatis bila formatnya belum memuat {CV}. Nomor lama tidak diubah.
+JE_NUMBER_KEY = "rahaza_journal_entries.je_number"
+_JE_NUMBER_RENDERED_KEY = "rahaza_journal_entries.je_number#cv"   # kunci tanpa konfigurasi: awalan sudah final
 
 
-async def _find_existing_je(db, source_module: str, source_ref: str):
+def je_prefix_with_entity(prefix: str, entity: str) -> str:
+    """Sisipkan kode CV ke awalan nomor jurnal: 'JE-20261107-' → 'JE-DA-20261107-'."""
+    ent = ent_mod.entity_of_value(entity)
+    if f"-{ent}-" in prefix or prefix.startswith(f"{ent}-"):
+        return prefix
+    if prefix.startswith("JE-"):
+        return f"JE-{ent}-{prefix[3:]}"
+    return f"{ent}-{prefix}"
+
+
+async def gen_je_number(db, d: date, entity: str = DA) -> str:
+    """Nomor jurnal otomatis berawalan CV, mis. JE-DA-20261107-0001 / JE-SMU-20261107-0001.
+    Urutan per CV terpisah (pencacah per awalan, race-safe)."""
+    from utils.counters import gen_prefixed_number, resolve_format
+    ent = ent_mod.entity_of_value(entity)
+    prefix, width = await resolve_format(db, "rahaza_journal_entries", "je_number",
+                                         f"JE-{ent}-{d.strftime('%Y%m%d')}-", 4, ctx={"CV": ent},
+                                         config_key=JE_NUMBER_KEY)
+    return await gen_prefixed_number(db, "rahaza_journal_entries", "je_number",
+                                     je_prefix_with_entity(prefix, ent), width,
+                                     config_key=_JE_NUMBER_RENDERED_KEY)
+
+
+async def _gen_je_number(db, d: date, entity: str = DA) -> str:
+    # RC-5 fix: atomic race-safe numbering (was count_documents()+1); Tahap 8: per CV
+    return await gen_je_number(db, d, entity)
+
+
+async def _find_existing_je(db, source_module: str, source_ref: str, entity: Optional[str] = None):
+    """JE aktif untuk satu sumber. `entity=None` = CV mana pun (perilaku lama); dengan `entity` hanya buku
+    CV itu. Kunci idempotensi Tahap 8 = (modul, ref, CV) supaya fase 2 bisa membuat pasangan di buku lain."""
     return await db.rahaza_journal_entries.find_one(
-        {"source_module": source_module, "source_ref": source_ref, "status": {"$ne": "voided"}},
+        {"source_module": source_module, "source_ref": source_ref, "status": {"$ne": "voided"},
+         **(entity_match(entity) if entity else {})},
         {"_id": 0},
     )
 
@@ -142,8 +188,19 @@ async def _create_posted_je(
     user: dict,
     status: str = "posted",
     allow_closed_period: bool = False,
+    entity: Optional[str] = None,
+    labels: Optional[dict] = None,
 ) -> dict:
     """Create a JE + mirror lines. Validates balance + account existence.
+
+    `labels` — Tahap 8 fase 2: label transaksi antar CV (`core.intercompany.ic_labels`: `intercompany`,
+    `counterparty_entity`, `ic_kind`, `ic_pair_id`) ditulis ke kepala jurnal DAN setiap baris cermin. Baris boleh
+    membawa `ic_kind` sendiri (mis. bagian margin aksesoris) — menimpa label kepala untuk baris itu.
+
+    `entity` — Tahap 8: CV pemilik jurnal (DA | SMU). Pemanggil yang tahu CV-nya WAJIB meneruskannya;
+    bila kosong, CV diturunkan dari modul sumber (`core.entities.entity_for_source_module`: modul maklon →
+    SMU, lainnya → DA). Jurnal otomatis TIDAK PERNAH diblokir karena akun/rekening tidak cocok dengan CV:
+    ketidakcocokan dicatat di log dan di kepala jurnal (`entity_warning`) untuk laporan cek Keuangan.
 
     `status` — F9 (sesi #12): laporan **pencairan marketplace** dibukukan sebagai
     **DRAFT** dulu, bukan langsung `posted`. Alasannya bukan birokrasi: angka
@@ -156,10 +213,19 @@ async def _create_posted_je(
     Nilai bawaan tetap `posted` supaya seluruh pemanggil lama tidak berubah
     perilakunya.
     Returns dict {ok, je_id, je_number, error?}."""
+    # Tahap 8: CV jurnal — eksplisit dari pemanggil, atau turunan modul sumber. Nilai tidak sah → DA (dicatat).
+    try:
+        ent = ent_mod.normalize_entity(entity) if entity else None
+    except ValueError:
+        log.warning("CV jurnal tidak sah %r (%s %s) — dipakai DA", entity, source_module, source_ref)
+        ent = None
+    if ent is None:
+        ent = ent_mod.entity_for_source_module(source_module)
     # Normalize + validate lines
     total_d = 0.0
     total_c = 0.0
     norm = []
+    accs_seen = {}
     for i, ln in enumerate(lines_raw):
         code = (ln.get("account_code") or "").strip()
         if not code:
@@ -167,6 +233,7 @@ async def _create_posted_je(
         acc = await _get_account(db, code)
         if not acc:
             return {"ok": False, "error": f"Baris #{i+1}: akun '{code}' tidak ditemukan/aktif."}
+        accs_seen[code] = acc
         if acc.get("is_group"):
             return {"ok": False, "error": f"Baris #{i+1}: akun '{code}' adalah header (non-postable)."}
         d_amt = float(ln.get("debit") or 0)
@@ -188,6 +255,7 @@ async def _create_posted_je(
             "credit": round(c_amt, 2),
             "description": (ln.get("description") or "").strip(),
             "cost_center_id": ln.get("cost_center_id") or None,
+            **({"ic_kind": ln["ic_kind"]} if labels and ln.get("ic_kind") else {}),
         })
         total_d += d_amt
         total_c += c_amt
@@ -198,15 +266,26 @@ async def _create_posted_je(
 
     # Period guard (M-09: jurnal penutup tahun sengaja bertanggal 31 Des periode yang sudah closed)
     err = await _ensure_period_open(db, je_date, {"source_module": source_module, "source_ref": source_ref, "memo": memo,
-                                                  "actor_name": (user or {}).get("name")})
-    if err and not (allow_closed_period and await _period_is_closed(db, je_date)):
+                                                  "actor_name": (user or {}).get("name")}, entity=ent)
+    if err and not (allow_closed_period and await _period_is_closed(db, je_date, ent)):
         return {"ok": False, "error": err}
 
-    je_number = await _gen_je_number(db, je_date)
+    # Tahap 8: jurnal otomatis tidak diblokir — ketidakcocokan akun/rekening dengan CV hanya DITANDAI.
+    entity_warning = None
+    try:
+        problems = await ent_mod.entity_line_problems(db, norm, ent, accounts=accs_seen)
+        if problems:
+            entity_warning = ent_mod.warning_text(problems)
+            log.warning("[entitas] %s %s (%s): %s", source_module, source_ref, ent, entity_warning)
+    except Exception:  # noqa: BLE001 — penanda tidak boleh mematahkan posting
+        log.exception("[entitas] cek CV jurnal %s %s gagal", source_module, source_ref)
+
+    je_number = await _gen_je_number(db, je_date, ent)
     je_id = _uid()
     je_doc = {
         "id": je_id,
         "je_number": je_number,
+        "entity": ent,
         "date": je_date.isoformat(),
         "memo": memo,
         "source_module": source_module,
@@ -224,6 +303,11 @@ async def _create_posted_je(
         "voided_at": None,
         "voided_by": None,
     }
+    if entity_warning:
+        je_doc["entity_warning"] = entity_warning
+    lab = {k: v for k, v in (labels or {}).items() if v is not None}
+    if lab:
+        je_doc.update(lab)
     # mirror lines for fast GL/TB — FASE 4 (T-09.2): cermin ditulis DULU, kepala TERAKHIR.
     # Kegagalan di tengah menyisakan baris yatim (terdeteksi INV-JL-1) — bukan kepala
     # `posted` tanpa cermin yang membuat buku besar diam-diam kurang.
@@ -231,6 +315,7 @@ async def _create_posted_je(
         "id": _uid(),
         "je_id": je_id,
         "je_number": je_number,
+        "entity": ent,
         "date": je_doc["date"],
         "period_code": je_doc["date"][:7],
         "account_code": ln["account_code"],
@@ -243,6 +328,8 @@ async def _create_posted_je(
         "source_module": source_module,
         "source_ref": source_ref,
         "created_at": _now(),
+        **lab,
+        **({"ic_kind": ln["ic_kind"]} if ln.get("ic_kind") else {}),
     } for ln in norm]
     # Mirror lines untuk GL/TB cepat — HANYA untuk jurnal yang benar-benar
     # `posted`. Untuk DRAFT, cermin ini sengaja TIDAK dibuat; kalau dibuat, dua
@@ -260,21 +347,25 @@ async def _create_posted_je(
         # cermin milik JE yang kalah dibuang supaya tidak menggandakan saldo.
         if status == "posted" and rows:
             await db.rahaza_journal_lines.delete_many({"je_id": je_id})
-        existing = await _find_existing_je(db, source_module, source_ref)
+        existing = await _find_existing_je(db, source_module, source_ref, entity=ent)
         if existing:
             return {"ok": True, "je_id": existing["id"], "je_number": existing.get("je_number"),
-                    "already_posted": True}
+                    "already_posted": True, "entity": ent_mod.entity_of_value(existing.get("entity"))}
         raise
 
-    return {"ok": True, "je_id": je_id, "je_number": je_number}
+    out = {"ok": True, "je_id": je_id, "je_number": je_number, "entity": ent}
+    if entity_warning:
+        out["entity_warning"] = entity_warning
+    return out
 
 
-async def _void_je_by_source(db, source_module: str, source_ref: str, user: dict, reason: str = ""):
-    je = await _find_existing_je(db, source_module, source_ref)
+async def _void_je_by_source(db, source_module: str, source_ref: str, user: dict, reason: str = "",
+                             entity: Optional[str] = None):
+    je = await _find_existing_je(db, source_module, source_ref, entity=entity)
     if not je:
         return {"ok": True, "voided": False, "reason": "JE not found"}
     je_date = date.fromisoformat(je["date"])
-    err = await _ensure_period_open(db, je_date)
+    err = await _ensure_period_open(db, je_date, entity=ent_mod.entity_of_value(je.get("entity")))
     if err:
         return {"ok": False, "error": err}
     await db.rahaza_journal_entries.update_one(
@@ -399,6 +490,15 @@ async def _ap_account_for_invoice(db, invoice: dict, control_code: str) -> str:
     return code or control_code
 
 
+def _ic_doc_posting(invoice: dict) -> dict:
+    """Faktur/tagihan berlabel antar CV tidak pernah dijurnal ulang lewat profil AR/AP biasa (jurnalnya lahir dari
+    tagihan CMT tim Sukma / nota aksesoris di `core.intercompany`)."""
+    if invoice.get("gl_je_id"):
+        return {"ok": True, "je_id": invoice["gl_je_id"], "je_number": invoice.get("gl_je_number"), "already_posted": True}
+    return {"ok": False, "error": "Dokumen antar CV dijurnal otomatis dari sumbernya (tagihan CMT / nota aksesoris) — "
+                                  "jalankan ulang posting sumbernya."}
+
+
 # ───────────────────────── AR POSTING ─────────────────────────────────────────
 async def post_ar_invoice(db, invoice: dict, user: dict) -> dict:
     """Post AR Invoice (issuance). Dr AR / Cr Revenue (+ Cr Tax if tax_pct > 0).
@@ -406,6 +506,8 @@ async def post_ar_invoice(db, invoice: dict, user: dict) -> dict:
     Idempotent via source_ref = invoice.id."""
     inv_id = invoice.get("id")
     source_ref = f"ar:{inv_id}"
+    if invoice.get("intercompany"):
+        return _ic_doc_posting(invoice)   # Tahap 8 fase 2: dijurnal oleh core.intercompany
     existing = await _find_existing_je(db, "ar_invoice", source_ref)
     if existing:
         return {"ok": True, "je_id": existing["id"], "je_number": existing["je_number"], "already_posted": True}
@@ -479,14 +581,15 @@ async def post_ar_invoice(db, invoice: dict, user: dict) -> dict:
     if tax > 0 and tax_code:
         lines.append({"account_code": tax_code, "debit": 0, "credit": tax, "description": f"{desc} - PPN"})
 
-    result = await _create_posted_je(db, je_date, memo, "ar_invoice", source_ref, lines, user)
+    result = await _create_posted_je(db, je_date, memo, "ar_invoice", source_ref, lines, user,
+                                     entity=entity_of_doc(invoice))   # Tahap 8: CV faktur
     await _save_source_posting_result(db, "rahaza_ar_invoices", inv_id, result)
     if result.get("ok"):
         await db.rahaza_ar_invoices.update_one({"id": inv_id}, {"$set": {"gl_ar_account_code": ar_code}})
     return result
 
 
-async def post_ar_payment(db, invoice: dict, amount: float, cash_account_id: Optional[str], payment_date: str, user: dict, movement_id: Optional[str] = None) -> dict:
+async def post_ar_payment(db, invoice: dict, amount: float, cash_account_id: Optional[str], payment_date: str, user: dict, movement_id: Optional[str] = None, labels: Optional[dict] = None) -> dict:
     """Post AR receipt (1 payment). Dr Cash / Cr AR. idempotent via source_ref = movement_id or fallback."""
     inv_id = invoice.get("id")
     if not movement_id:
@@ -524,7 +627,9 @@ async def post_ar_payment(db, invoice: dict, amount: float, cash_account_id: Opt
         {"account_code": cash_code, "debit": amount, "credit": 0, "description": desc},
         {"account_code": ar_code, "debit": 0, "credit": amount, "description": desc},
     ]
-    result = await _create_posted_je(db, je_date, memo, "ar_payment", source_ref, lines, user)
+    result = await _create_posted_je(db, je_date, memo, "ar_payment", source_ref, lines, user,
+                                     entity=await entity_for_posting(db, invoice, cash_account_id=cash_account_id),
+                                     labels=labels)   # Tahap 8 fase 2: label antar CV
     if movement_id:
         await _save_source_posting_result(db, "rahaza_cash_movements", movement_id, result)
     return result
@@ -564,6 +669,7 @@ async def post_cash_opening_balance(db, acc: dict, user: dict) -> dict:
         {"account_code": equity_code, "debit": 0, "credit": opening, "description": desc},
     ]
     result = await _create_posted_je(db, je_date, desc, "cash_opening_balance", source_ref, lines, user,
+                                     entity=ent_mod.entity_of_value(acc.get("entity")),
                                      allow_closed_period=True)
     await db.rahaza_cash_accounts.update_one({"id": acc_id}, {"$set": {
         "opening_je_id": result.get("je_id"), "opening_je_number": result.get("je_number"),
@@ -1036,7 +1142,8 @@ async def post_credit_note(db, credit_note: dict, user: dict) -> dict:
     if tax > 0:
         lines.append({"account_code": tax_code, "debit": tax, "credit": 0, "description": f"{desc} - PPN Keluaran dibalik"})
 
-    result = await _create_posted_je(db, je_date, memo, "credit_note", source_ref, lines, user)
+    result = await _create_posted_je(db, je_date, memo, "credit_note", source_ref, lines, user,
+                                     entity=entity_of_doc(credit_note))
     await _save_source_posting_result(db, "rahaza_credit_notes", cn_id, result, prefix="gl")
     return result
 
@@ -1048,6 +1155,8 @@ async def post_ap_invoice(db, invoice: dict, user: dict) -> dict:
     Idempotent via source_ref."""
     inv_id = invoice.get("id")
     source_ref = f"ap:{inv_id}"
+    if invoice.get("intercompany"):
+        return _ic_doc_posting(invoice)   # Tahap 8 fase 2: dijurnal oleh core.intercompany
     existing = await _find_existing_je(db, "ap_invoice", source_ref)
     if existing:
         return {"ok": True, "je_id": existing["id"], "je_number": existing["je_number"], "already_posted": True}
@@ -1141,7 +1250,8 @@ async def post_ap_invoice(db, invoice: dict, user: dict) -> dict:
                 return result
             lines.append({"account_code": tax_code, "debit": tax, "credit": 0, "description": f"{desc} - PPN Masukan"})
 
-    result = await _create_posted_je(db, je_date, memo, "ap_invoice", source_ref, lines, user)
+    result = await _create_posted_je(db, je_date, memo, "ap_invoice", source_ref, lines, user,
+                                     entity=entity_of_doc(invoice))
     await _save_source_posting_result(db, "rahaza_ap_invoices", inv_id, result)
     if result.get("ok"):
         await db.rahaza_ap_invoices.update_one({"id": inv_id}, {"$set": {"gl_ap_account_code": ap_code}})
@@ -1214,7 +1324,8 @@ async def _post_ap_invoice_from_gr(db, invoice: dict, user: dict, *, mapping: di
     if tax > 0 and not capitalize:
         lines.append({"account_code": tax_code, "debit": tax, "credit": 0, "description": f"{desc} - PPN Masukan"})
 
-    result = await _create_posted_je(db, je_date, memo, "ap_invoice", source_ref, lines, user)
+    result = await _create_posted_je(db, je_date, memo, "ap_invoice", source_ref, lines, user,
+                                     entity=entity_of_doc(invoice))
     if material_diffs:
         if result.get("ok") and not result.get("already_posted"):
             await db.rahaza_ap_invoices.update_one({"id": inv_id}, {"$set": {"hpp_adjustment": {
@@ -1271,7 +1382,7 @@ async def post_inventory_value_gap(db, *, material_id: str, amount: float, sourc
     return await _create_posted_je(db, today_wib(), desc, "inventory_value_gap", source_ref, lines, user or {})
 
 
-async def post_ap_payment(db, invoice: dict, amount: float, cash_account_id: Optional[str], payment_date: str, user: dict, movement_id: Optional[str] = None, discount_taken: float = 0) -> dict:
+async def post_ap_payment(db, invoice: dict, amount: float, cash_account_id: Optional[str], payment_date: str, user: dict, movement_id: Optional[str] = None, discount_taken: float = 0, labels: Optional[dict] = None) -> dict:
     """
     Post AP disbursement. Dr AP / Cr Cash (+ Cr Purchase Discount if early payment).
     
@@ -1333,7 +1444,9 @@ async def post_ap_payment(db, invoice: dict, amount: float, cash_account_id: Opt
         lines.append({"account_code": ap_code, "debit": amount, "credit": 0, "description": desc})
         lines.append({"account_code": cash_code, "debit": 0, "credit": amount, "description": desc})
     
-    result = await _create_posted_je(db, je_date, memo, "ap_payment", source_ref, lines, user)
+    result = await _create_posted_je(db, je_date, memo, "ap_payment", source_ref, lines, user,
+                                     entity=await entity_for_posting(db, invoice, cash_account_id=cash_account_id),
+                                     labels=labels)   # Tahap 8 fase 2: label antar CV
     if movement_id:
         await _save_source_posting_result(db, "rahaza_cash_movements", movement_id, result)
     return result
@@ -1379,7 +1492,8 @@ async def post_expense(db, expense: dict, user: dict) -> dict:
         {"account_code": exp_code, "debit": amount, "credit": 0, "description": memo, "cost_center_id": expense.get("cost_center_id")},
         {"account_code": cash_code, "debit": 0, "credit": amount, "description": memo},
     ]
-    result = await _create_posted_je(db, je_date, memo, "expense", source_ref, lines, user)
+    result = await _create_posted_je(db, je_date, memo, "expense", source_ref, lines, user,
+                                     entity=await entity_for_posting(db, expense, cash_account_id=expense.get("account_id")))
     await _save_source_posting_result(db, "rahaza_expenses", exp_id, result)
     return result
 
@@ -1602,14 +1716,15 @@ async def reverse_journal_entry(db, je: dict, user: dict, reason: str, *, source
         d = date.fromisoformat(str(je.get("date"))[:10])
     except ValueError:
         d = None
-    if d is None or await _period_is_closed(db, d):
+    je_entity = ent_mod.entity_of_value(je.get("entity"))   # Tahap 8: pembalik di buku CV yang sama
+    if d is None or await _period_is_closed(db, d, je_entity):
         d = today_wib()
     lines = [{"account_code": ln.get("account_code"), "debit": float(ln.get("credit") or 0),
               "credit": float(ln.get("debit") or 0), "cost_center_id": ln.get("cost_center_id"),
               "description": f"Pembalik {je.get('je_number')}: {ln.get('description') or ''}".strip()}
              for ln in (je.get("lines") or [])]
     memo = f"PEMBALIK {je.get('je_number')} — {reason}".strip()
-    res = await _create_posted_je(db, d, memo, source_module, ref, lines, user)
+    res = await _create_posted_je(db, d, memo, source_module, ref, lines, user, entity=je_entity)
     if res.get("ok"):
         await db.rahaza_journal_entries.update_one({"id": je["id"]}, {"$set": {
             "reversed_by_je_id": res["je_id"], "reversed_by_je_number": res["je_number"],
@@ -1795,6 +1910,15 @@ async def post_inventory_receive(db, movement: dict, user: dict) -> dict:
     return result
 
 
+async def _ic_mirror_missing(db, da_je: dict, source_ref: str) -> bool:
+    """Tahap 8 fase 2: jurnal DA nota aksesoris antar CV sudah ada tetapi pasangannya di CV Sukma belum (mis. periode
+    Sukma tertutup saat itu) → posting ulang hanya melengkapi pasangan (core.intercompany idempoten)."""
+    if not (da_je or {}).get("intercompany"):
+        return False
+    from core.intercompany import SRC_ACCESSORY_AP
+    return not await _find_existing_je(db, SRC_ACCESSORY_AP, f"icacc:{source_ref}", entity=ent_mod.SMU)
+
+
 async def post_inventory_issue(db, mi: dict, user: dict) -> dict:
     """Material Issue confirmed → Dr WIP / Cr Persediaan per jenis (bahan 1-1401 · aksesoris 1-1402).
 
@@ -1803,8 +1927,8 @@ async def post_inventory_issue(db, mi: dict, user: dict) -> dict:
     jadi maklon di luar neraca DA, jadi WIP-nya tidak akan pernah dipindah ke 1-1404."""
     mi_id = mi.get("id")
     source_ref = f"mi:{mi_id}"
-    existing = await _find_existing_je(db, "inventory_issue", source_ref)
-    if existing:
+    existing = await _find_existing_je(db, "inventory_issue", source_ref, entity=DA)
+    if existing and not await _ic_mirror_missing(db, existing, source_ref):
         return {"ok": True, "je_id": existing["id"], "je_number": existing["je_number"], "already_posted": True}
 
     mapping = await get_mapping(db, "inventory_issue")
@@ -1871,9 +1995,22 @@ async def post_inventory_issue(db, mi: dict, user: dict) -> dict:
     if credits:
         big = max(credits, key=credits.get)
         credits[big] = round(credits[big] + total - sum(credits.values()), 2)
+    if maklon:
+        # Tahap 8 fase 2 (keputusan owner K5): bahan/aksesoris DA untuk PO MAKLON = DA MENJUAL ke CV Sukma seharga
+        # HPP (+ margin setelan, bawaan 0%). Buku DA: Dr piutang CV Sukma / Cr persediaan [/ Cr 4-9300 margin];
+        # buku Sukma: Dr biaya bahan maklon / Cr hutang ke CV DA — plus nota di dua buku (core.intercompany).
+        from core import intercompany as ic
+        mats_desc = [{"material_id": it.get("material_id"), "qty": float(it.get("qty_issued") or it.get("qty_required") or 0),
+                      "unit_cost": dict(applied).get(it.get("material_id"), 0.0)} for it in items_mi if it.get("material_id")]
+        result = await ic.post_accessory_sale(
+            db, source_ref=source_ref, je_date=je_date, credits=credits, memo=memo, user=user,
+            po_id=mi.get("production_po_id"), po_number=mi.get("po_number_snapshot") or "", lines_desc=mats_desc,
+            cost_debit_code=wip_code)
+        await _save_source_posting_result(db, "rahaza_material_issues", mi_id, result)
+        return result
     lines = [{"account_code": wip_code, "debit": total, "credit": 0, "description": memo}]
     lines += [{"account_code": c, "debit": 0, "credit": v, "description": memo} for c, v in credits.items()]
-    result = await _create_posted_je(db, je_date, memo, "inventory_issue", source_ref, lines, user)
+    result = await _create_posted_je(db, je_date, memo, "inventory_issue", source_ref, lines, user, entity=DA)
     await _save_source_posting_result(db, "rahaza_material_issues", mi_id, result)
     return result
 
@@ -1892,8 +2029,8 @@ async def post_accessory_issue(db, mv: dict, user: dict) -> dict:
     """
     mv_id = mv.get("id")
     source_ref = f"accmv:{mv_id}"
-    existing = await _find_existing_je(db, "inventory_issue", source_ref)
-    if existing:
+    existing = await _find_existing_je(db, "inventory_issue", source_ref, entity=DA)
+    if existing and not await _ic_mirror_missing(db, existing, source_ref):
         return {"ok": True, "je_id": existing["id"], "je_number": existing["je_number"],
                 "already_posted": True}
 
@@ -1939,11 +2076,23 @@ async def post_accessory_issue(db, mv: dict, user: dict) -> dict:
         memo += f" · PO {mv['po_number']}"
     elif mv.get("divisi"):
         memo += f" · {mv['divisi']}"
+    if target == "maklon":
+        # Tahap 8 fase 2 (K5): aksesoris DA untuk PO maklon = nota aksesoris antar CV (lihat post_inventory_issue).
+        from core import intercompany as ic
+        result = await ic.post_accessory_sale(
+            db, source_ref=source_ref, je_date=je_date, credits={inv_code: total}, memo=memo, user=user,
+            po_id=mv.get("po_id"), po_number=mv.get("po_number") or "",
+            lines_desc=[{"material_id": mv.get("material_id"), "name": mv.get("material_name"), "qty": qty,
+                         "unit_cost": unit_cost}], cost_debit_code=wip_code)
+        if result.get("ok"):
+            result["amount"] = total
+        await _save_source_posting_result(db, "rahaza_material_movements", mv_id, result)
+        return result
     lines = [
         {"account_code": wip_code, "debit": total, "credit": 0, "description": memo},
         {"account_code": inv_code, "debit": 0, "credit": total, "description": memo},
     ]
-    result = await _create_posted_je(db, je_date, memo, "inventory_issue", source_ref, lines, user)
+    result = await _create_posted_je(db, je_date, memo, "inventory_issue", source_ref, lines, user, entity=DA)
     result["amount"] = total
     await _save_source_posting_result(db, "rahaza_material_movements", mv_id, result)
     return result
@@ -2095,6 +2244,16 @@ async def post_material_return(db, ret: dict, lines_in: list, user: dict) -> dic
     if not debit_by:
         return {"ok": True, "skipped": True, "reason": "nilai retur 0 (HPP keluar 0) — tidak ada jurnal"}
     memo = f"Retur Material {ret.get('ref_no') or rid} ← MI {ret.get('mi_number') or '-'}"
+    # Tahap 8 fase 2: retur bahan yang dulu DIJUAL ke CV Sukma (nota aksesoris antar CV, MI maklon) = BALIKAN nota
+    # di dua buku (DA: Dr persediaan [+ margin] / Cr piutang CV Sukma; Sukma: Dr hutang ke DA / Cr biaya bahan).
+    mi_ref = f"mi:{ret.get('material_issue_id')}" if ret.get("material_issue_id") else None
+    if mi_ref and any(ln.get("cost_target") == "maklon" for ln in lines_in):
+        from core import intercompany as ic
+        nota, _ap = await ic.find_accessory_docs(db, mi_ref)
+        if nota:
+            return await ic.reverse_accessory_sale(db, source_ref=source_ref, mi_ref=mi_ref,
+                                                   je_date=_je_date_of(ret.get("received_at")), debits=debit_by,
+                                                   memo=memo, user=user)
     lines = [{"account_code": c, "debit": round(v, 2), "credit": 0, "description": memo} for c, v in debit_by.items()]
     lines += [{"account_code": c, "debit": 0, "credit": round(v, 2), "description": memo} for c, v in credit_by.items()]
     return await _create_posted_je(db, _je_date_of(ret.get("received_at")), memo, "inventory_issue_return",
@@ -2347,7 +2506,8 @@ async def post_asset_acquisition(db, asset: dict, user: dict) -> dict:
         {"account_code": credit_code, "debit": 0, "credit": total_cost, "description": desc},
     ]
 
-    result = await _create_posted_je(db, je_date, memo, "asset_acquisition", source_ref, lines, user)
+    result = await _create_posted_je(db, je_date, memo, "asset_acquisition", source_ref, lines, user,
+                                     entity=entity_of_doc(asset))
     await _save_source_posting_result(db, "rahaza_fixed_assets", asset_id, result, prefix="gl")
     return result
 
@@ -2431,7 +2591,8 @@ async def post_depreciation(db, schedule: dict, asset: dict, user: dict) -> dict
         {"account_code": credit_code, "debit": 0, "credit": depr_amount, "description": desc},
     ]
 
-    result = await _create_posted_je(db, je_date, memo, "depreciation", source_ref, lines, user)
+    result = await _create_posted_je(db, je_date, memo, "depreciation", source_ref, lines, user,
+                                     entity=entity_of_doc(asset))
     return result
 
 
@@ -2488,7 +2649,8 @@ async def post_accrual_expense(db, accrual: dict, user: dict) -> dict:
         {"account_code": accrued_account, "debit": 0, "credit": amount, "description": desc},
     ]
 
-    result = await _create_posted_je(db, je_date, memo, "accrual", source_ref, lines, user)
+    result = await _create_posted_je(db, je_date, memo, "accrual", source_ref, lines, user,
+                                     entity=entity_of_doc(accrual))
     return result
 
 
@@ -2550,7 +2712,8 @@ async def post_accrual_reversal(db, accrual: dict, user: dict) -> dict:
         {"account_code": expense_account, "debit": 0, "credit": amount, "description": desc},
     ]
 
-    result = await _create_posted_je(db, je_date, memo, "accrual_reversal", source_ref, lines, user)
+    result = await _create_posted_je(db, je_date, memo, "accrual_reversal", source_ref, lines, user,
+                                     entity=entity_of_doc(accrual))
     return result
 
 
@@ -2596,7 +2759,8 @@ async def post_bad_debt_writeoff(db, ar_invoice: dict, user: dict) -> dict:
         {"account_code": credit_code, "debit": 0, "credit": write_off_amount, "description": desc},
     ]
 
-    result = await _create_posted_je(db, je_date, memo, "bad_debt_writeoff", source_ref, lines, user)
+    result = await _create_posted_je(db, je_date, memo, "bad_debt_writeoff", source_ref, lines, user,
+                                     entity=entity_of_doc(ar_invoice))
     
     # Update AR invoice with GL info
     if result.get("ok"):
@@ -2696,7 +2860,8 @@ async def post_bank_recon_adjustment(db, adjustment: dict, user: dict) -> dict:
         {"account_code": credit_code, "debit": 0, "credit": amount, "description": desc},
     ]
 
-    result = await _create_posted_je(db, je_date, memo, "bank_recon_adjustment", source_ref, lines, user)
+    result = await _create_posted_je(db, je_date, memo, "bank_recon_adjustment", source_ref, lines, user,
+                                     entity=await entity_for_posting(db, adjustment, cash_gl_code=bank_account_code))
     return result
 
 
@@ -2797,7 +2962,8 @@ async def post_asset_disposal(db, asset: dict, user: dict) -> dict:
     # Cr. Fixed Asset (original cost, always)
     lines.append({"account_code": credit_asset_code, "debit": 0, "credit": original_cost, "description": desc})
 
-    result = await _create_posted_je(db, je_date, memo, "asset_disposal", source_ref, lines, user)
+    result = await _create_posted_je(db, je_date, memo, "asset_disposal", source_ref, lines, user,
+                                     entity=entity_of_doc(asset))
     
     # Update asset with GL info
     if result.get("ok"):
@@ -2909,6 +3075,35 @@ async def post_employee_loan_repayment_payroll(db, loan: dict, repayment_amount:
 # Reuse mapping existing — TIDAK menambah profile/engine baru.
 # ═══════════════════════════════════════════════════════════════════════════════
 
+async def job_sewing_rate(db, job: dict) -> float:
+    """Upah jahit per pcs untuk satu job (2026-11-08).
+
+    SSOT tarif jahit = `po_items.cmt_price_snapshot` (per item PO). Dulu fungsi ini membaca
+    `production_jobs.cmt_price_snapshot` yang TIDAK ditulis jalur mana pun → upah jahit selalu 0 di
+    cadangan "MI + jahit". Item job (`po_item_id` di job atau `production_job_items`) dipetakan ke
+    item PO; banyak item = rata-rata tertimbang qty item. Nilai di job hanya cadangan (data lama)."""
+    pairs = []
+    if job.get("po_item_id"):
+        pairs.append((job["po_item_id"], 1.0))
+    elif job.get("id"):
+        async for ji in db.production_job_items.find(
+                {"job_id": job["id"]}, {"_id": 0, "po_item_id": 1, "available_qty": 1, "shipment_qty": 1,
+                                         "ordered_qty": 1, "qty": 1}):
+            if ji.get("po_item_id"):
+                q = float(ji.get("available_qty") or ji.get("shipment_qty") or ji.get("ordered_qty")
+                          or ji.get("qty") or 0) or 1.0
+                pairs.append((ji["po_item_id"], q))
+    if pairs:
+        ids = sorted({pid for pid, _ in pairs})
+        rates = {pi["id"]: float(pi.get("cmt_price_snapshot") or 0) async for pi in db.po_items.find(
+            {"id": {"$in": ids}}, {"_id": 0, "id": 1, "cmt_price_snapshot": 1})}
+        priced = [(rates[pid], q) for pid, q in pairs if rates.get(pid, 0) > 0]
+        den = sum(q for _, q in priced)
+        if den > 0:
+            return round(sum(r * q for r, q in priced) / den, 4)
+    return float(job.get("cmt_price_snapshot") or 0)
+
+
 async def post_wip_to_fg_on_job_complete(db, job: dict, user: dict) -> dict:
     """AD-3: job internal Completed → Dr FG / Cr WIP.
     Nilai = Σ MI issued (job_id) yang sudah diposting; fallback HPP snapshot job."""
@@ -2950,7 +3145,7 @@ async def post_wip_to_fg_on_job_complete(db, job: dict, user: dict) -> dict:
             if je:
                 total_wip += float(je.get("total_debit") or 0)
         qty_good = float(job.get("qty_good") or job.get("qty_accepted") or job.get("qty_completed") or 0)
-        rate = float(job.get("cmt_price_snapshot") or 0)
+        rate = await job_sewing_rate(db, job)
         if total_wip > 0 and qty_good > 0 and rate > 0:
             total_wip += qty_good * rate
             basis = "material_issues+sewing"

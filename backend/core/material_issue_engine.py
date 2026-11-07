@@ -550,6 +550,8 @@ def maklon_da_need(bom_lines: list, pcs_total: float, issued_by_mat: dict) -> tu
 async def issue_for_maklon_shipment(db, shipment: dict, ship_items: list, user: dict) -> dict | None:
     """MI OTOMATIS aksesoris DA untuk satu surat jalan material MAKLON. None = tidak ada yang di-MI
     (BOM maklon tanpa aksesoris DA, atau kebutuhan sudah tertutup MI lain). Idempoten per surat jalan."""
+    # Tahap 8 fase 2 (TODO): jurnal pengeluaran ini masih di buku DA (stok milik DA). Fase 2 menambah pasangan
+    # antar CV (DA menjual aksesoris ke CV Sukma dengan margin yang bisa diatur, bawaan 0%).
     from core import bom_uom
     from core import uom as uom_core
     from routes.rahaza_inventory_shared import _gen_mi_number, _now, _uid

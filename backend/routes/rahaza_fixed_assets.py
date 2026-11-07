@@ -168,7 +168,8 @@ async def list_fixed_assets(request: Request, category: Optional[str] = None,
                              status: Optional[str] = None, search: Optional[str] = None):
     await require_auth(request)
     db = get_db()
-    q = {}
+    from core.entities import entity_from_request, entity_match
+    q = dict(entity_match(entity_from_request(request, allow_all=True)))   # Tahap 8
     if category:
         q["category"] = category
     if status:
@@ -401,8 +402,10 @@ async def register_fixed_asset(db, body: dict, user: dict, *, code: Optional[str
         code = await issue_number(db, "rahaza_fixed_assets.code", requested=(body.get("code") or "").strip())
     if await db.rahaza_fixed_assets.find_one({"code": code}):
         raise HTTPException(409, f"Kode aset '{code}' sudah digunakan")
+    from core.entities import entity_of_value
     doc = {
         "id":                     _uid(),
+        "entity":                 entity_of_value(body.get("entity")),   # Tahap 8: CV pemilik aset (bawaan DA)
         "code":                   code,
         "name":                   name,
         "category":               cat,
@@ -499,6 +502,9 @@ async def create_fixed_asset(request: Request):
     db = get_db()
     body = await request.json()
     body.pop("_system_gr", None)  # penanda internal jalur GR, tidak boleh dari klien
+    from core.entities import entity_from_request, validate_cash_account_owner
+    body["entity"] = entity_from_request(request, body)   # Tahap 8: CV terpilih (Gabungan ditolak)
+    await validate_cash_account_owner(db, body.get("cash_account_id"), body["entity"], what="Aset")
     return serialize_doc(await register_fixed_asset(db, body, user))
 
 

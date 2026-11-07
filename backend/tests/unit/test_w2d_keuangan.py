@@ -133,7 +133,7 @@ def je_sink(monkeypatch):
     calls = []
 
     async def fake_create(db_, je_date, memo, source_module, source_ref, lines_raw, user,
-                          status="posted", allow_closed_period=False):
+                          status="posted", allow_closed_period=False, **_kw):
         lines = [dict(ln) for ln in lines_raw if float(ln.get("debit") or 0) or float(ln.get("credit") or 0)]
         jid = f"je-{len(calls) + 1}"
         doc = {"id": jid, "je_number": f"JE-{len(calls) + 1:04d}", "date": je_date.isoformat(), "memo": memo,

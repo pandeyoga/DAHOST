@@ -78,7 +78,7 @@ function DisburseModal({ req, onClose, onDone }) {
   // 2026-11-02 (P5 butir 7): tanggal bawaan WIB; rekening sumber WAJIB dipilih dari rekening kas/bank
   // aktif (dulu tidak ada pilihan → jurnal selalu Cr 1-1201 bertanggal hari ini).
   const today = todayWIB();
-  const { accounts, loaded } = usePaymentCashAccounts();
+  const { accounts, loaded } = usePaymentCashAccounts(undefined, 'DA');  // Tahap 8: kasbon = uang staf DA
   const [form, setForm] = useState({ disbursement_date: today, deduction_start_period: today.slice(0, 7), finance_notes: '', cash_account_id: '' });
   const [saving, setSaving] = useState(false);
 
@@ -161,7 +161,7 @@ function RepayModal({ req, onClose, onDone }) {
   // melewati potongannya (gaji dibayar penuh, uang kasbon hilang). Potongan gaji kini HANYA tercatat
   // otomatis saat run payroll difinalisasi; form ini khusus pembayaran uang nyata ke rekening yang dipilih.
   const today = todayWIB();
-  const { accounts, loaded } = usePaymentCashAccounts();
+  const { accounts, loaded } = usePaymentCashAccounts(undefined, 'DA');  // Tahap 8: kasbon = uang staf DA
   const suggested = req.type === 'kasbon' ? req.outstanding_balance : req.installment_amount;
   const [form, setForm] = useState({ amount: String(suggested || ''), method: 'manual', date: today, notes: '', cash_account_id: '' });
   const [saving, setSaving] = useState(false);

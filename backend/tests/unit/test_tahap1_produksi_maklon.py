@@ -508,4 +508,5 @@ def test_label_harga_formulir_po_bahasa_indonesia():
         pytest.skip("frontend tidak tersedia")
     src = fe.read_text(encoding="utf-8")
     assert "Selling Price (Rp)" not in src and "CMT Price (Rp)" not in src
-    assert "Harga jasa ke klien (Rp)" in src and "Upah CMT (Rp)" in src
+    # Tahap 8 (K12, 7 Nov 2026): label upah diseragamkan untuk PO internal & maklon → "Upah jahit per pcs (Rp)"
+    assert "Harga jasa ke klien (Rp)" in src and "Upah jahit per pcs (Rp)" in src

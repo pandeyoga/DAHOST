@@ -16,9 +16,15 @@ from core.fin_statements import (
     compute_cash_flow_by_account, xlsx_profit_loss_monthly, xlsx_balance_sheet_monthly, xlsx_worksheet, xlsx_cash_flow,
 )
 from utils.waktu import today_wib
+from core.entities import entity_from_request, entity_match
 
 router = APIRouter(prefix="/api/rahaza/finance/reports", tags=["rahaza-fin-reports"],
                    dependencies=[Depends(require_portal_dep("finance"))])  # FIN-04: laporan keuangan hanya portal keuangan
+
+
+def _ent(request: Request) -> str:
+    """Tahap 8: buku yang dilaporkan — DA | SMU | ALL (gabungan SETELAH eliminasi antar CV, fase 3). Bawaan DA."""
+    return entity_from_request(request, allow_all=True)
 
 
 @router.get("/trial-balance")
@@ -39,7 +45,7 @@ async def trial_balance(
     today = today_wib().isoformat()
     if not to_date:
         to_date = as_of or today
-    return await compute_trial_balance(db, from_date, to_date, show_zero)
+    return await compute_trial_balance(db, from_date, to_date, show_zero, _ent(request))
 
 
 @router.get("/worksheet")
@@ -51,21 +57,21 @@ async def worksheet(
 ):
     """Neraca lajur: saldo awal · mutasi · saldo akhir · kolom Laba Rugi · kolom Neraca + baris laba bersih penyeimbang."""
     await require_auth(request)
-    return await compute_worksheet(get_db(), from_date, to_date or today_wib().isoformat(), show_zero)
+    return await compute_worksheet(get_db(), from_date, to_date or today_wib().isoformat(), show_zero, _ent(request))
 
 
 @router.get("/profit-loss-monthly")
 async def profit_loss_monthly(request: Request, year: int = Query(..., ge=2000, le=2100)):
     """Laba rugi 12 kolom bulan (Jan–Des) + total + akumulasi, ala sheet Laba-12."""
     await require_auth(request)
-    return await compute_profit_loss_monthly(get_db(), year)
+    return await compute_profit_loss_monthly(get_db(), year, _ent(request))
 
 
 @router.get("/balance-sheet-monthly")
 async def balance_sheet_monthly(request: Request, year: int = Query(..., ge=2000, le=2100)):
     """Neraca per akhir tiap bulan (12 kolom), ala sheet Neraca-12."""
     await require_auth(request)
-    return await compute_balance_sheet_monthly(get_db(), year)
+    return await compute_balance_sheet_monthly(get_db(), year, _ent(request))
 
 
 @router.get("/export-xlsx")
@@ -80,20 +86,22 @@ async def export_xlsx(
     """Ekspor Excel memakai perhitungan yang SAMA dengan layar (core.fin_statements)."""
     await require_auth(request)
     db = get_db()
+    ent = _ent(request)
+    sfx = "" if ent == "DA" else f"-{ent.lower()}"
     today = today_wib().isoformat()
     if report in ("profit-loss-monthly", "balance-sheet-monthly"):
         y = year or int(today[:4])
         if report == "profit-loss-monthly":
-            data, fname = xlsx_profit_loss_monthly(await compute_profit_loss_monthly(db, y)), f"laba-rugi-12-bulan-{y}.xlsx"
+            data, fname = xlsx_profit_loss_monthly(await compute_profit_loss_monthly(db, y, ent)), f"laba-rugi-12-bulan-{y}{sfx}.xlsx"
         else:
-            data, fname = xlsx_balance_sheet_monthly(await compute_balance_sheet_monthly(db, y)), f"neraca-12-bulan-{y}.xlsx"
+            data, fname = xlsx_balance_sheet_monthly(await compute_balance_sheet_monthly(db, y, ent)), f"neraca-12-bulan-{y}{sfx}.xlsx"
     elif report == "worksheet":
         to_ = to_date or today
-        data, fname = xlsx_worksheet(await compute_worksheet(db, from_date, to_, show_zero)), f"neraca-lajur-{from_date or 'awal'}-{to_}.xlsx"
+        data, fname = xlsx_worksheet(await compute_worksheet(db, from_date, to_, show_zero, ent)), f"neraca-lajur-{from_date or 'awal'}-{to_}{sfx}.xlsx"
     else:
         to_ = to_date or today
         from_ = from_date or f"{today[:4]}-01-01"
-        data, fname = xlsx_cash_flow(await _cash_flow_data(db, from_, to_)), f"arus-kas-{from_}-{to_}.xlsx"
+        data, fname = xlsx_cash_flow(await _cash_flow_data(db, from_, to_, ent)), f"arus-kas-{from_}-{to_}{sfx}.xlsx"
     return StreamingResponse(io.BytesIO(data), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                              headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
@@ -114,18 +122,20 @@ async def general_ledger(
     acc = await db.rahaza_coa_accounts.find_one({"code": account_code}, {"_id": 0})
     if not acc:
         raise HTTPException(404, f"Akun '{account_code}' tidak ditemukan.")
+    ent = _ent(request)
+    em = entity_match(ent)
 
     # opening balance
     opening_net = 0.0
     if from_date:
         pipe_op = [
-            {"$match": {"account_code": account_code, "date": {"$lt": from_date}}},
+            {"$match": {"account_code": account_code, "date": {"$lt": from_date}, **em}},
             {"$group": {"_id": None, "debit": {"$sum": "$debit"}, "credit": {"$sum": "$credit"}}},
         ]
         async for r in db.rahaza_journal_lines.aggregate(pipe_op):
             opening_net = (r.get("debit", 0) or 0) - (r.get("credit", 0) or 0)
 
-    q = {"account_code": account_code}
+    q = {"account_code": account_code, **em}
     if from_date and to_date:
         q["date"] = {"$gte": from_date, "$lte": to_date}
     elif to_date:
@@ -149,6 +159,7 @@ async def general_ledger(
             "je_id": r.get("je_id"),   # 2026-11-04: layar membuka isi jurnal di bawah barisnya (PANDUAN_UI G13)
             "description": r.get("description") or "",
             "source": r.get("source_module"),
+            "entity": r.get("entity") or "DA",
             "debit": r.get("debit", 0),
             "credit": r.get("credit", 0),
             "balance": round(balance, 2),
@@ -156,7 +167,7 @@ async def general_ledger(
     end_balance = lines[-1]["balance"] if lines else (opening_net if acc["normal_balance"] == "DEBIT" else -opening_net)
     return {
         "account": {"code": acc["code"], "name": acc["name"], "type": acc["type"], "normal_balance": acc["normal_balance"]},
-        "meta": {"from": from_date, "to": to_date},
+        "meta": {"from": from_date, "to": to_date, "entity": ent},
         "opening_balance": round((opening_net if acc["normal_balance"] == "DEBIT" else -opening_net), 2),
         "lines": lines,
         "end_balance": round(end_balance, 2),
@@ -214,10 +225,10 @@ async def profit_loss(
         to_date = today
     if not from_date:
         from_date = f"{today[:4]}-01-01"
-    return await compute_profit_loss(db, from_date, to_date)
+    return await compute_profit_loss(db, from_date, to_date, _ent(request))
 
 
-async def compute_profit_loss(db, from_date: Optional[str], to_date: Optional[str]) -> dict:
+async def compute_profit_loss(db, from_date: Optional[str], to_date: Optional[str], entity: Optional[str] = "DA") -> dict:
     """SATU rumus Laba/Rugi buku besar (2026-11-02, K20/K33): dipakai layar L/R, kartu
     "Laba kotor (buku besar)" di Rekap Keuangan, dan laba bersih Laporan Eksekutif supaya
     ketiganya tidak pernah beda angka. `from_date`/`to_date` None = tanpa batas sisi itu."""
@@ -226,10 +237,18 @@ async def compute_profit_loss(db, from_date: Optional[str], to_date: Optional[st
         rng["$gte"] = from_date
     if to_date:
         rng["$lte"] = to_date
-    match = {"source_module": {"$ne": "year_end_close"}}  # M-09: jurnal penutup bukan L/R
+    match = {"source_module": {"$ne": "year_end_close"}, **entity_match(entity)}  # M-09: jurnal penutup bukan L/R
     if rng:
         match["date"] = rng
     per_acc = await _aggregate_by_account(db, match)
+    # Tahap 8 fase 3: Gabungan = dua buku SETELAH eliminasi laba rugi antar CV (margin aksesoris persis; jasa jahit
+    # yang tidak bisa dicocokkan ditampilkan sebagai catatan selisih, bukan disembunyikan).
+    ic_block = None
+    from core import intercompany as ic
+    if ic.is_all(entity):
+        c = await ic.consolidation(db, from_date=from_date, to_date=to_date, include_bs=False)
+        per_acc = ic.apply_elimination(per_acc, c["lines"])
+        ic_block = ic.ic_report_block(c)
 
     # Get all leaf accounts for types of interest
     type_groups = {
@@ -287,7 +306,8 @@ async def compute_profit_loss(db, from_date: Optional[str], to_date: Optional[st
     net_income = round(operating_income + total_other_income - total_other_expense, 2)
 
     return {
-        "meta": {"from": from_date, "to": to_date},
+        "meta": {"from": from_date, "to": to_date, "entity": entity or "DA"},
+        **({"intercompany": ic_block} if ic_block else {}),
         "groups": {
             "revenue": {"label": type_groups["REVENUE"]["label"], "accounts": type_groups["REVENUE"]["accounts"], "total": round(total_revenue, 2)},
             "cogs": {"label": type_groups["COGS"]["label"], "accounts": type_groups["COGS"]["accounts"], "total": round(total_cogs, 2)},
@@ -327,8 +347,16 @@ async def balance_sheet(
         as_of = today
 
     # aggregate all posted lines up to as_of
-    match = {"date": {"$lte": as_of}}
+    ent = _ent(request)
+    match = {"date": {"$lte": as_of}, **entity_match(ent)}
     per_acc = await _aggregate_by_account(db, match)
+    # Tahap 8 fase 3: Gabungan — saldo hutang/piutang antar CV dieliminasi (nilai sama di dua sisi → tetap seimbang)
+    ic_block = None
+    from core import intercompany as ic
+    if ic.is_all(ent):
+        c = await ic.consolidation(db, from_date=None, to_date=as_of)
+        per_acc = ic.apply_elimination(per_acc, c["lines"])
+        ic_block = ic.ic_report_block(c)
 
     # get leaf accounts for Balance Sheet types + revenue/expense for net income calc
     # C-04: akun NONAKTIF yang punya saldo tetap ikut (kalau tidak, neraca tak seimbang);
@@ -408,7 +436,8 @@ async def balance_sheet(
                        for code, v in per_acc.items() if code not in known]
 
     return {
-        "meta": {"as_of": as_of},
+        "meta": {"as_of": as_of, "entity": ent},
+        **({"intercompany": ic_block} if ic_block else {}),
         "assets": {"accounts": assets, "total": round(total_assets, 2)},
         "liabilities": {"accounts": liabilities, "total": round(total_liabilities, 2)},
         "equity": {"accounts": equity, "total": round(total_equity, 2)},
@@ -444,7 +473,8 @@ async def journal_list(
     """
     await require_auth(request)
     db = get_db()
-    q = {}
+    ent = _ent(request)
+    q = dict(entity_match(ent))
     if from_date and to_date:
         q["date"] = {"$gte": from_date, "$lte": to_date}
     elif from_date:
@@ -459,7 +489,7 @@ async def journal_list(
     if account_code:
         # find JE ids that have line with account_code
         line_rows = await db.rahaza_journal_lines.find(
-            {"account_code": account_code, **({"date": q["date"]} if "date" in q else {})},
+            {"account_code": account_code, **({"date": q["date"]} if "date" in q else {}), **entity_match(ent)},
             {"_id": 0, "je_id": 1},
         ).to_list(100000)
         je_ids = list({r["je_id"] for r in line_rows})
@@ -498,7 +528,7 @@ async def cash_flow(
     await require_auth(request)
     db = get_db()
     today = today_wib().isoformat()
-    return await _cash_flow_data(db, from_date or f"{today[:4]}-01-01", to_date or today)
+    return await _cash_flow_data(db, from_date or f"{today[:4]}-01-01", to_date or today, _ent(request))
 
 
 @router.get("/cash-mutations")
@@ -525,7 +555,7 @@ async def cash_mutations(
         raise HTTPException(400, "Rekening belum tertaut akun GL — tekan 'Sinkron Bagan Akun & GL' dulu.")
     from routes.rahaza_posting import cash_mutations_from_gl
     out = await cash_mutations_from_gl(db, code, from_date, to_date, account_id=(acc or {}).get("id"),
-                                       page=page, page_size=page_size)
+                                       page=page, page_size=page_size)   # rekening = milik satu CV: semua barisnya
     out["account"] = {"id": (acc or {}).get("id"), "code": (acc or {}).get("code") or code,
                       "name": (acc or {}).get("name")}
     return serialize_doc(out)
@@ -544,7 +574,7 @@ def _bucket(cat: str) -> str:
     return "operating"  # default: ar_payment, ap_payment, expense, payroll, …
 
 
-async def _cash_flow_data(db, from_date: str, to_date: str) -> dict:
+async def _cash_flow_data(db, from_date: str, to_date: str, entity: Optional[str] = "DA") -> dict:
     """2026-11-02 (K19): tampilan "Per Kategori" DITURUNKAN DARI GL — baris buku besar akun kas/bank
     (`core.fin_statements.cash_account_codes`, sama dengan tampilan Per Akun), kategori dari
     `source_module` jurnal (routes.rahaza_posting.cash_category). Dulu Σ `rahaza_cash_movements`:
@@ -557,7 +587,7 @@ async def _cash_flow_data(db, from_date: str, to_date: str) -> dict:
     activities = {"operating": {}, "investing": {}, "financing": {}}
     if codes:
         pipe = [{"$match": {"account_code": {"$in": codes}, "date": {"$gte": from_date, "$lte": to_date},
-                            "source_module": {"$ne": "opening_balance"}}},
+                            "source_module": {"$ne": "opening_balance"}, **entity_match(entity)}},
                 {"$group": {"_id": {"$ifNull": ["$source_module", "other"]}, "debit": {"$sum": "$debit"},
                             "credit": {"$sum": "$credit"}, "count": {"$sum": 1}}}]
         async for r in db.rahaza_journal_lines.aggregate(pipe):
@@ -585,17 +615,18 @@ async def _cash_flow_data(db, from_date: str, to_date: str) -> dict:
     opening_cash = 0.0
     if codes:
         async for r in db.rahaza_journal_lines.aggregate([
-            {"$match": {"account_code": {"$in": codes},
+            {"$match": {"account_code": {"$in": codes}, **entity_match(entity),
                         "$or": [{"date": {"$lt": from_date}}, {"source_module": "opening_balance", "date": {"$lte": to_date}}]}},
                 {"$group": {"_id": None, "d": {"$sum": "$debit"}, "c": {"$sum": "$credit"}}}]):
             opening_cash = round(float(r.get("d") or 0) - float(r.get("c") or 0), 2)
     closing_cash = round(opening_cash + net_change, 2)
-    cash_accs = await cash_accounts_with_gl(db, {})
+    cash_accs = await cash_accounts_with_gl(db, entity_match(entity))
 
-    by_account = await compute_cash_flow_by_account(db, from_date, to_date)
+    by_account = await compute_cash_flow_by_account(db, from_date, to_date, entity)
 
     return {
-        "meta": {"from": from_date, "to": to_date, "method": "direct", "category_source": "gl_source_module"},
+        "meta": {"from": from_date, "to": to_date, "method": "direct", "category_source": "gl_source_module",
+                 "entity": entity or "DA"},
         "activities": {
             "operating": {"label": "Aktivitas Operasi", **operating},
             "investing": {"label": "Aktivitas Investasi", **investing},

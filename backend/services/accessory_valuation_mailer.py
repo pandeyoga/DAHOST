@@ -153,7 +153,8 @@ async def build_report_context(db, month: str | None) -> dict:
             "value": float(r.get("value") or round(abs(qty) * unit_cost, 2)),
             "je_number": r.get("gl_je_number") or "",
         })
-    cs = await db.company_settings.find_one({}, {"_id": 0, "company_name": 1}) or {}
+    from core.entities import company_settings_doc  # Tahap 8: profil DA
+    cs = await company_settings_doc(db, "DA", {"_id": 0, "company_name": 1})
     return {
         "company": cs.get("company_name") or "CV. Dewi Aditya",
         "summary": summary,

@@ -112,8 +112,15 @@ async def summary(
     date_to: Optional[str] = None,
 ):
     """Total approved overtime hours in period (used by payroll)."""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
+    # 2026-11-07 (Tahap 7): selain HR/atasan hanya lembur milik sendiri (sama dengan daftar lembur).
+    from utils.employee_identity import can_view_all_employees, resolve_my_employee
+    if not can_view_all_employees(user):
+        mine = await resolve_my_employee(db, user)
+        if not mine or (employee_id and employee_id != mine["id"]):
+            return {"ok": True, "by_employee": {}, "total_records": 0}
+        employee_id = mine["id"]
     filt = {"status": "approved"}
     if employee_id:
         filt["employee_id"] = employee_id
@@ -292,12 +299,8 @@ async def notify_overtime_decision(db, ot: dict, *, approved: bool, reason: str 
     await close_overtime_notifs(db, ot.get("id"))   # 2026-11-02 (K30): Perlu Tindakan HR selesai
     try:
         from routes.rahaza_notifications import publish_notification
-        from utils.notif_recipients import active_user_filter
-        uids = []
-        if ot.get("employee_id"):
-            rows = await db.users.find(active_user_filter({"employee_id": ot["employee_id"]}),
-                                       {"_id": 0, "id": 1}).to_list(5)
-            uids = [r["id"] for r in rows if r.get("id")]
+        from utils.employee_identity import employee_user_ids
+        uids = await employee_user_ids(db, ot.get("employee_id"))   # dua arah tautan (Tahap 7)
         if not uids and ot.get("submitted_by"):
             uids = [ot["submitted_by"]]
         if not uids:
@@ -417,11 +420,15 @@ async def cancel_request(ot_id: str, request: Request):
         raise HTTPException(404, "Overtime request tidak ditemukan.")
 
     # Employee can cancel own pending; admin can cancel anything
+    # 2026-11-07 (Tahap 7): tombol Batalkan di Portal Saya — milik sendiri = diajukan akun ini ATAU karyawan yang
+    # tertaut ke akun ini (SSOT identitas); hanya yang masih menunggu (klaim atomik di bawah → 409 bila diputus).
     if user.get("role") not in ("superadmin", "admin", "owner", "hr", "manager"):
-        if doc.get("submitted_by") != user["id"]:
-            raise HTTPException(403, "Hanya bisa cancel request sendiri.")
+        from utils.employee_identity import resolve_my_employee
+        mine = await resolve_my_employee(db, user)
+        if doc.get("submitted_by") != user["id"] and not (mine and mine.get("id") == doc.get("employee_id")):
+            raise HTTPException(403, "Anda hanya bisa membatalkan pengajuan lembur milik sendiri.")
         if doc.get("status") != "pending":
-            raise HTTPException(400, "Hanya pending yang bisa di-cancel.")
+            raise HTTPException(409, "Pengajuan lembur ini sudah diputuskan HR sehingga tidak bisa dibatalkan.")
 
     # 2026-11-06 (pola P9): status lama di filter — pembatalan karyawan tidak menimpa keputusan atasan
     # yang baru saja masuk di sela baca & tulis.

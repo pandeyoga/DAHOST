@@ -646,13 +646,32 @@ def test_16_maklon_shipment_issues_only_da_accessories_cumulatively(monkeypatch,
     d.dewi_maklon_bom.docs[0]["materials"] = d.dewi_maklon_bom.docs[0]["materials"][:1]   # hanya kain klien
     d.vendor_shipments.docs.append({"id": "SJ4", "po_id": "PO-M"})
     assert run(mie.issue_for_maklon_shipment(d, {"id": "SJ4", "po_id": "PO-M"}, [{"qty_sent": 5}], USER)) is None
-    # jurnal MI maklon: Dr biaya proyek maklon (5-4100) / Cr persediaan aksesoris (1-1402)
+    # jurnal MI maklon — Tahap 8 fase 2 (keputusan owner K5): aksesoris DA untuk PO maklon DIJUAL ke CV Sukma.
+    # Buku DA: Dr piutang CV Sukma / Cr persediaan aksesoris (1-1402); buku CV Sukma: Dr biaya proyek maklon
+    # (5-4100) / Cr hutang ke CV Dewi Aditya.
+    from core import intercompany as icm
+    import utils.counters as counters
+
+    async def ic_accounts(db_, user=None, create=True):
+        return {"DA": {"ar": "1-1301-SMU", "ap": None}, "SMU": {"ar": "1-1305-DA", "revenue": "4-1500-DA", "ap": "2-1100-DA"},
+                "records": {"da_customer": {"id": "c", "name": "CV Sukma"}, "smu_supplier": {"id": "s", "name": "CV DA"},
+                            "smu_client": {}}, "vendor": None}
+
+    async def nothing(*a, **k):
+        return None
+
+    async def number(db_, coll, field, prefix, width=4, **kw):
+        return f"{prefix}001"
+    monkeypatch.setattr(icm, "ic_accounts", ic_accounts)
+    monkeypatch.setattr(icm, "precheck_period", nothing)
+    monkeypatch.setattr(counters, "gen_prefixed_number", number)
     db = _inv_db()
     m2 = {"id": "MIM", "mi_number": "MI-M", "cost_target": "maklon", "po_number_snapshot": "PO-M",
           "items": [{"material_id": "ACC1", "qty_issued": 10}]}
     db.rahaza_material_issues.docs.append(dict(m2))
     run(rp.post_inventory_issue(db, m2, USER))
-    assert posting.lines() == [("5-4100", 20000.0, 0), ("1-1402", 0, 20000.0)]
+    assert posting.lines(-2) == [("1-1301-SMU", 20000.0, 0), ("1-1402", 0, 20000.0)]
+    assert posting.lines() == [("5-4100", 20000.0, 0), ("2-1100-DA", 0, 20000.0)]
     src = open(os.path.join(BACKEND, "routes", "vendor_shipment.py"), encoding="utf-8").read()
     assert "issue_for_maklon_shipment" in src and "shipment_business_type != 'maklon'" not in src
 

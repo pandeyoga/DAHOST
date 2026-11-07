@@ -107,6 +107,12 @@ async def update_user(uid: str, request: Request):
         raise HTTPException(400, ROLE_REQUIRED_MSG)
     if body.get('password'):
         body['password'] = hash_password(body['password'])
+    if 'allowed_entities' in body:   # Tahap 8 fase 3: akses CV keuangan per pengguna (kosong = kedua CV)
+        from core.entities import normalize_allowed
+        try:
+            body['allowed_entities'] = normalize_allowed(body.get('allowed_entities'))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
     await _sync_role_link(db, body)
     await db.users.update_one({'id': uid}, {'$set': {**body, 'updated_at': now()}})
     bump_rbac_cache()
@@ -160,10 +166,43 @@ async def delete_activity_log(log_id: str, request: Request):
 
 
 # ─── COMPANY SETTINGS ────────────────────────────────────────────────────────
+@router.get("/entities")
+async def list_entities(request: Request):
+    """Tahap 8: pilihan CV (satu sumber: core.entities) untuk pemilih CV di layar."""
+    user = await require_auth(request)
+    from core.entities import DEFAULT_ENTITY, allowed_of_user, entity_options_for
+    # Tahap 8 fase 3: hanya CV yang diizinkan untuk pengguna ini (`users.allowed_entities`; kosong = kedua CV)
+    db = get_db()
+    u = await db.users.find_one({"id": (user or {}).get("id")}, {"_id": 0, "allowed_entities": 1})
+    allowed = allowed_of_user(u)
+    return {"entities": entity_options_for(allowed), "allowed": allowed,
+            "default": DEFAULT_ENTITY if DEFAULT_ENTITY in allowed else allowed[0]}
+
+
+async def _cv_profile_settings(db, ent: str) -> dict:
+    """Profil CV selain DA (Tahap 8): dibuat sekali bila belum ada (nama bawaan, NPWP kosong, non-PKP)."""
+    from core.entities import DEFAULT_PROFILE_NAMES, profile_query
+    q = profile_query(ent)
+    doc = await db.company_settings.find_one(q, {'_id': 0})
+    if not doc:
+        doc = {'id': new_id(), **q, 'company_name': DEFAULT_PROFILE_NAMES.get(ent, ent),
+               'company_address': '', 'company_phone': '', 'company_email': '', 'company_website': '',
+               'company_logo_url': '', 'npwp': '', 'pdf_header_line1': '', 'pdf_header_line2': '',
+               'pdf_footer_text': '', 'tax_profile': {'pkp': False, 'pkp_since': ''},
+               'created_at': now(), 'updated_at': now()}
+        await db.company_settings.insert_one(dict(doc))
+        doc.pop('_id', None)
+    return doc
+
+
 @router.get("/company-settings")
 async def get_company_settings(request: Request):
     await require_auth(request)
     db = get_db()
+    from core.entities import DA, entity_from_request
+    ent = entity_from_request(request)   # Tahap 8: profil per CV (bawaan DA = perilaku lama)
+    if ent != DA:
+        return serialize_doc({**await _cv_profile_settings(db, ent), 'entity': ent})
     settings = await db.company_settings.find_one({'type': 'general'}, {'_id': 0})
     if not settings:
         # Drift-safe: pakai doc lama (tanpa type) bila ada — JANGAN buat doc kedua.
@@ -189,7 +228,7 @@ async def get_company_settings(request: Request):
                 'pdf_footer_text': '', 'created_at': now(), 'updated_at': now()
             }
             await db.company_settings.insert_one(settings)
-    return serialize_doc(settings)
+    return serialize_doc({**settings, 'entity': DA})
 
 @router.post("/company-settings")
 async def save_company_settings(request: Request):
@@ -198,7 +237,12 @@ async def save_company_settings(request: Request):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()
-    existing = await db.company_settings.find_one({'type': 'general'}) or {}
+    from core.entities import DA, entity_from_request, profile_query
+    ent = entity_from_request(request, body)   # Tahap 8: profil CV yang disimpan
+    pq = profile_query(ent)
+    if ent != DA:
+        await _cv_profile_settings(db, ent)
+    existing = await db.company_settings.find_one(pq) or {}
     # 2026-11-03: hanya kolom yang DIKIRIM yang ditimpa. Dulu setiap kolom yang tidak ada di form
     # (mis. `npwp`, `company_tagline` — form Pengaturan Perusahaan tidak punya isiannya) diset '' → NPWP hilang
     # setiap kali Simpan.
@@ -223,13 +267,13 @@ async def save_company_settings(request: Request):
     if push:
         update['$push'] = {'tax_profile_history': push}
     if existing:
-        await db.company_settings.update_one({'type': 'general'}, update)
+        await db.company_settings.update_one(pq, update)
     else:
-        doc = {'id': new_id(), 'type': 'general', **data, 'created_at': now()}
+        doc = {'id': new_id(), **pq, **data, 'created_at': now()}
         if push:
             doc['tax_profile_history'] = [push]
         await db.company_settings.insert_one(doc)
-    return serialize_doc(await db.company_settings.find_one({'type': 'general'}, {'_id': 0}))
+    return serialize_doc({**(await db.company_settings.find_one(pq, {'_id': 0}) or {}), 'entity': ent})
 
 
 @router.get("/tax-profile")
@@ -237,7 +281,8 @@ async def get_tax_profile_endpoint(request: Request):
     """Status pajak perusahaan untuk form transaksi (semua staf internal). Ubah lewat Pengaturan Perusahaan."""
     await require_auth(request)
     from core.tax_status import get_tax_profile
-    return await get_tax_profile(get_db())
+    from core.entities import entity_from_request
+    return await get_tax_profile(get_db(), entity_from_request(request))
 
 
 # ─── RBAC ────────────────────────────────────────────────────────────────────

@@ -110,6 +110,16 @@ async def leave_period_info(db, from_date: str, to_date: str, half_day: bool = F
     }
 
 
+def days_per_year(days: list, half_day: bool = False) -> dict:
+    """{tahun: hari kerja} — pemakaian saldo dipecah per tahun (cuti melewati akhir tahun). Urut naik."""
+    out: dict = {}
+    w = 0.5 if half_day else 1.0
+    for d in days or []:
+        y = int(str(d)[:4])
+        out[y] = out.get(y, 0.0) + w
+    return dict(sorted(out.items()))
+
+
 # ── Pemisahan tugas ─────────────────────────────────────────────────────────
 async def ensure_not_own_leave(db, leave: dict, user: dict) -> None:
     """Penyetuju tidak boleh memutus cuti/izin miliknya sendiri (sejalan K25)."""
@@ -255,13 +265,25 @@ async def approve_leave_request(db, leave_id: str, user: dict, *, pay_decision: 
 
     if level_required > 1 and current == 1:
         # Tingkat 1 (atasan) selesai → menunggu HR. Saldo & absensi baru disentuh di persetujuan akhir.
-        await db.rahaza_leave_requests.update_one(
-            {"id": leave_id, "status": {"$in": list(PENDING_STATUSES)}},
+        res = await db.rahaza_leave_requests.update_one(
+            {"id": leave_id, "status": "pending_approval"},
             {"$set": {"approval_step_1": step, "status": "pending_hr_approval",
                       "current_approval_level": 2, "updated_at": now}})
+        if getattr(res, "matched_count", 1) == 0:
+            # 2026-11-07 (Tahap 7): ditolak/disetujui/dibatalkan orang lain di sela baca & tulis — dulu tetap
+            # "berhasil" dan HR dikabari "persetujuan HR dibutuhkan" untuk pengajuan yang sudah ditolak.
+            raise HTTPException(409, "Pengajuan ini baru saja diputuskan orang lain. Muat ulang halaman.")
         fresh = await db.rahaza_leave_requests.find_one({"id": leave_id}, {"_id": 0})
         await _notify_hr_step2(db, fresh or leave)
         return {"final": False, "leave": fresh}
+
+    if level_required > 1 and current >= 2:
+        # 2026-11-07 (Tahap 7, keputusan owner): tingkat 2 diputus orang yang BERBEDA dari penyetuju tingkat 1
+        # (dulu satu akun HR/manajer bisa menyetujui kedua tingkat sendirian). Tanpa pengecualian superadmin.
+        step1 = leave.get("approval_step_1") or {}
+        if step1.get("approver_id") and step1.get("approver_id") == user.get("id"):
+            raise HTTPException(409, "Persetujuan tingkat 2 harus oleh orang lain: Anda sudah menyetujui tingkat 1 "
+                                     "pengajuan ini.")
 
     lt = await db.rahaza_leave_types.find_one({"id": leave.get("leave_type_id")}, {"_id": 0})
     kind = leave_kind(leave, lt)
@@ -281,13 +303,24 @@ async def approve_leave_request(db, leave_id: str, user: dict, *, pay_decision: 
     # Saldo = jatah hari kerja DIBAYAR. Jenis tak dibayar (mis. LWOP) tetap dicatat pemakaiannya;
     # keputusan "tidak dibayar" untuk jenis yang dibayar tidak memakai jatah.
     deduct = type_unpaid or decision == "paid"
-    year = date.fromisoformat(str(leave["from_date"])[:10]).year
+    # 2026-11-07 (Tahap 7, keputusan owner): cuti yang melewati akhir tahun memakai saldo MASING-MASING tahun
+    # (hari kerja Desember dari saldo tahun itu, Januari dari saldo tahun berikutnya). Dulu semua dipotong dari
+    # saldo tahun tanggal mulai.
+    per_year = days_per_year(info["days"], half)
     from routes.rahaza_leave_balances import balance_snapshot, consume_balance
     if decision == "paid" and not type_unpaid:
-        bal = await balance_snapshot(db, leave["employee_id"], leave["leave_type_id"], year, lt=lt)
-        if bal["remaining"] < duration:
-            raise HTTPException(400, f"Sisa cuti tidak cukup. Sisa: {bal['remaining']:g} hari, "
-                                     f"diminta: {duration:g} hari. Pilih 'tidak dibayar' bila tetap disetujui.")
+        short = []
+        for y, need in per_year.items():
+            bal = await balance_snapshot(db, leave["employee_id"], leave["leave_type_id"], y, lt=lt)
+            if bal["remaining"] < need:
+                short.append((y, bal["remaining"], need))
+        if short and len(per_year) == 1:
+            _, rem, need = short[0]
+            raise HTTPException(400, f"Sisa cuti tidak cukup. Sisa: {rem:g} hari, "
+                                     f"diminta: {need:g} hari. Pilih 'tidak dibayar' bila tetap disetujui.")
+        if short:
+            txt = "; ".join(f"tahun {y}: sisa {rem:g} hari, diminta {need:g} hari" for y, rem, need in short)
+            raise HTTPException(400, f"Sisa cuti tidak cukup ({txt}). Pilih 'tidak dibayar' bila tetap disetujui.")
 
     res = await db.rahaza_leave_requests.update_one(
         {"id": leave_id, "status": {"$in": list(PENDING_STATUSES)}},
@@ -297,12 +330,14 @@ async def approve_leave_request(db, leave_id: str, user: dict, *, pay_decision: 
                   "pay_decision_by": user.get("id"), "pay_decision_by_name": user.get("name", ""),
                   "leave_days": info["days"], "duration_working_days": duration, "duration_days": duration,
                   "balance_deducted_days": duration if deduct else 0,
+                  "balance_deducted_by_year": ({str(y): v for y, v in per_year.items()} if deduct else {}),
                   "approved_at": now, "approved_by": user.get("id"), "approved_by_name": user.get("name", ""),
                   "approval_note": notes or "", "approved_via": via, "updated_at": now}})
     if getattr(res, "matched_count", 1) == 0:
         raise HTTPException(409, "Pengajuan ini baru saja diputuskan orang lain. Muat ulang halaman.")
     if deduct:
-        await consume_balance(db, leave["employee_id"], leave["leave_type_id"], year, duration)
+        for y, v in per_year.items():
+            await consume_balance(db, leave["employee_id"], leave["leave_type_id"], y, v)
     written = await write_leave_days(db, {**leave, "leave_kind": kind}, info["days"], kind=kind,
                                      paid=decision == "paid", half_day=half, lt=lt, user=user)
     await db.rahaza_leave_requests.update_one({"id": leave_id}, {"$set": {"attendance_written": written}})
@@ -311,8 +346,13 @@ async def approve_leave_request(db, leave_id: str, user: dict, *, pay_decision: 
     fresh = await db.rahaza_leave_requests.find_one({"id": leave_id}, {"_id": 0})
     saldo_txt = ""
     if deduct:
-        bal_after = await balance_snapshot(db, leave["employee_id"], leave["leave_type_id"], year, lt=lt)
-        saldo_txt = f" Sisa saldo {(lt or {}).get('name', 'cuti')}: {bal_after['remaining']:g} hari."
+        parts = []
+        for y in per_year:
+            bal_after = await balance_snapshot(db, leave["employee_id"], leave["leave_type_id"], y, lt=lt)
+            parts.append((y, bal_after["remaining"]))
+        name = (lt or {}).get("name", "cuti")
+        saldo_txt = (f" Sisa saldo {name}: {parts[0][1]:g} hari." if len(parts) == 1 else
+                     f" Sisa saldo {name}: " + ", ".join(f"{y} {r:g} hari" for y, r in parts) + ".")
     from routes.rahaza_leave import notify_leave_decision
     await notify_leave_decision(db, fresh or leave, approved=True, saldo_txt=saldo_txt)
     return {"final": True, "leave": fresh, "attendance": written}
@@ -358,15 +398,30 @@ async def cancel_approved_leave(db, leave: dict, user: dict, reason: str, *, is_
         {"_id": 0, "date": 1}).to_list(400)
     await _ensure_days_unlocked(db, leave["employee_id"], sorted({str(r.get("date"))[:10] for r in rows}))
 
-    restored_days = (float(leave["balance_deducted_days"]) if leave.get("balance_deducted_days") is not None
-                     else float(leave.get("duration_days") or 0))   # pengajuan lama: dipotong duration_days
-    if restored_days:
-        from routes.rahaza_leave_balances import restore_balance
-        await restore_balance(db, leave["employee_id"], leave["leave_type_id"], d_from.year, restored_days)
-    restored = await restore_leave_days(db, leave, user)
-    now = _now()
-    await db.rahaza_leave_requests.update_one({"id": leave["id"]}, {"$set": {
-        "status": "cancelled", "cancelled_at": now, "cancelled_by": user.get("id"),
-        "cancelled_by_name": user.get("name", ""), "cancel_reason": reason,
-        "cancel_restored": restored, "balance_restored_days": restored_days, "updated_at": now}})
+    # 2026-11-07 (Tahap 7): klaim atomik (pola P9). Dulu tombol Batalkan ditekan dua kali / dua layar
+    # bersamaan sama-sama lolos pemeriksaan status → saldo cuti dikembalikan DUA kali (terbukti: cuti 3 hari
+    # dibatalkan ganda, saldo terpakai 5 → 0, seharusnya 2).
+    from core import doc_lock
+    token = await doc_lock.claim(
+        db, "rahaza_leave_requests", leave["id"], field="cancel_lock", extra={"status": "approved"}, actor=user,
+        not_found="Pengajuan cuti tidak ditemukan.",
+        busy="Pengajuan ini baru saja dibatalkan/diproses pengguna lain. Muat ulang halaman.")
+    try:
+        restored_days = (float(leave["balance_deducted_days"]) if leave.get("balance_deducted_days") is not None
+                         else float(leave.get("duration_days") or 0))   # pengajuan lama: dipotong duration_days
+        if restored_days:
+            from routes.rahaza_leave_balances import restore_balance
+            # Tahap 7: dikembalikan ke saldo tahun yang dipotong (cuti lintas tahun); data lama → tahun mulai.
+            by_year = leave.get("balance_deducted_by_year") or {str(d_from.year): restored_days}
+            for y, v in by_year.items():
+                if float(v or 0):
+                    await restore_balance(db, leave["employee_id"], leave["leave_type_id"], int(y), float(v))
+        restored = await restore_leave_days(db, leave, user)
+        now = _now()
+        await db.rahaza_leave_requests.update_one({"id": leave["id"], "cancel_lock": token}, {"$set": {
+            "status": "cancelled", "cancelled_at": now, "cancelled_by": user.get("id"),
+            "cancelled_by_name": user.get("name", ""), "cancel_reason": reason,
+            "cancel_restored": restored, "balance_restored_days": restored_days, "updated_at": now}})
+    finally:
+        await doc_lock.release(db, "rahaza_leave_requests", leave["id"], token, field="cancel_lock")
     return await db.rahaza_leave_requests.find_one({"id": leave["id"]}, {"_id": 0})

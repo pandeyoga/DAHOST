@@ -51,6 +51,7 @@ import {
 } from './portal-shell/portalNav';
 import TopBar from './portal-shell/TopBar';
 import Sidebar from './portal-shell/Sidebar';
+import { CvProvider, CvKeyed } from '@/lib/entitas';
 
 // Re-export for backward compatibility (some legacy code imports findModuleLabel from PortalShell)
 export function findModuleLabel(portal, moduleId) {
@@ -157,11 +158,14 @@ export default function PortalShell({
         <ErrorBoundary level="portal">{children}</ErrorBoundary>
         {/* FASE 5: FAB + wizard + quick-input panel engine lama diarsip */}
       </ProductionUIProvider>
+    ) : portal === 'finance' ? (
+      // Tahap 8: isi dipasang ulang saat CV berganti → semua layar keuangan memuat ulang bukunya
+      <CvKeyed><ErrorBoundary level="portal">{children}</ErrorBoundary></CvKeyed>
     ) : (
       <ErrorBoundary level="portal">{children}</ErrorBoundary>
     );
 
-  return (
+  const shell = (
     <div className="flex flex-col h-screen" data-testid={`portal-shell-${portal}`}>
       {/* TOP BAR */}
       <TopBar
@@ -263,4 +267,7 @@ export default function PortalShell({
       </Suspense>
     </div>
   );
+  // Tahap 8 (dua CV): Portal Keuangan memegang pilihan CV (DA / Sukma / Gabungan) untuk TopBar dan
+  // semua layarnya; CvProvider menyetel header X-CV selama portal terbuka dan menghapusnya saat ditutup.
+  return portal === 'finance' ? <CvProvider>{shell}</CvProvider> : shell;
 }

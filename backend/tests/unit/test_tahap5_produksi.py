@@ -82,11 +82,11 @@ def test_permak_po_options_internal_dan_maklon(monkeypatch):
     by = {o["po_number"]: o for o in out}
     assert by["PO-INT-1"]["business_type_label"] == "Internal"
     assert by["PO-MKL-1"]["business_type_label"] == "Maklon"
-    assert by["PO-LAMA"]["business_type"] == "maklon"                  # tanpa jenis = maklon (aturan lama)
+    assert by["PO-LAMA"]["business_type"] == "internal"                # Tahap 8 §9: tanpa jenis = internal
     only_int = run(pmk.permak_po_options(FakeRequest(), business_type="internal"))
-    assert [o["po_number"] for o in only_int] == ["PO-INT-1"]
+    assert {o["po_number"] for o in only_int} == {"PO-INT-1", "PO-LAMA"}
     only_mkl = run(pmk.permak_po_options(FakeRequest(), business_type="maklon"))
-    assert {o["po_number"] for o in only_mkl} == {"PO-MKL-1", "PO-LAMA"}
+    assert {o["po_number"] for o in only_mkl} == {"PO-MKL-1"}
 
 
 def test_permak_po_items_dari_ssot_progres(monkeypatch):

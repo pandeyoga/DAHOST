@@ -31,7 +31,8 @@ export default function UserManagementModule({ token }) {
   const [editData, setEditData] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   // 2026-11-07 (Tahap 6, SY3): tanpa peran bawaan — dulu 'admin' terpilih otomatis. Peran wajib dipilih.
-  const EMPTY_FORM = { name: '', email: '', password: '', role: '', status: 'active', vendor_id: '', buyer_id: '', customer_name: '' };
+  // Tahap 8 fase 3: cv_access '' = kedua CV (bawaan), 'DA' / 'SMU' = hanya CV itu di Portal Keuangan
+  const EMPTY_FORM = { name: '', email: '', password: '', role: '', status: 'active', vendor_id: '', buyer_id: '', customer_name: '', cv_access: '' };
   const [form, setForm] = useState(EMPTY_FORM);
   const [showLinkModal, setShowLinkModal] = useState(null); // user to link
   const [linkEmployeeId, setLinkEmployeeId] = useState('');
@@ -112,7 +113,8 @@ export default function UserManagementModule({ token }) {
   const openEdit = (row) => {
     setEditData(row);
     setForm({ name: row.name, email: row.email, password: '', role: row.role, status: row.status, 
-              vendor_id: row.vendor_id || '', buyer_id: row.buyer_id || '', customer_name: row.customer_name || '' });
+              vendor_id: row.vendor_id || '', buyer_id: row.buyer_id || '', customer_name: row.customer_name || '',
+              cv_access: Array.isArray(row.allowed_entities) && row.allowed_entities.length === 1 ? row.allowed_entities[0] : '' });
     setShowModal(true);
   };
 
@@ -127,8 +129,9 @@ export default function UserManagementModule({ token }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!String(form.role || '').trim()) { toast.error('Peran wajib dipilih'); return; }
-    const payload = { ...form };
+    const { cv_access: cvAccess, ...payload } = form;
     if (editData && !payload.password) delete payload.password;
+    if (editData) payload.allowed_entities = cvAccess ? [cvAccess] : null;
     // Set customer_name from buyer if buyer role
     if (payload.role === 'buyer' && payload.buyer_id) {
       const buyer = buyersList.find(b => b.id === payload.buyer_id);
@@ -292,6 +295,17 @@ export default function UserManagementModule({ token }) {
                     value={form.status} onChange={e => setForm({...form, status: e.target.value})} data-testid="user-status">
                     <option value="active">Aktif</option>
                     <option value="inactive">Nonaktif</option>
+                  </SmartNativeSelect>
+                </div>
+              )}
+              {editData && (
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-1">Akses CV keuangan</label>
+                  <SmartNativeSelect className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    value={form.cv_access} onChange={e => setForm({...form, cv_access: e.target.value})} data-testid="user-cv-access">
+                    <option value="">Kedua CV (bawaan)</option>
+                    <option value="DA">Hanya CV Dewi Aditya</option>
+                    <option value="SMU">Hanya CV Sukma</option>
                   </SmartNativeSelect>
                 </div>
               )}

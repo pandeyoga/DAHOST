@@ -450,7 +450,7 @@ async def get_rahaza_report(report_type: str, request: Request):
                 rows.append({
                     "tanggal": _as_iso_date(p.get("po_date") or p.get("created_at")),
                     "no_po": p.get("po_number", ""),
-                    "domain": "Internal" if (p.get("business_type") == "internal") else "Maklon",
+                    "domain": "Maklon" if str(p.get("business_type") or "").lower() == "maklon" else "Internal",
                     "pelanggan": p.get("customer_name", "") or "-",
                     "vendor": p.get("vendor_name", "") or "-",
                     "sku": it.get("sku", "") or "-",
