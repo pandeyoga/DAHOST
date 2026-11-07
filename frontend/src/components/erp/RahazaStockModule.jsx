@@ -304,15 +304,15 @@ export default function RahazaStockModule({ token }) {
             {['bahan', 'aksesoris'].map(t => (
               <StatTile key={t} testId={`stock-summary-${t}`} label={`${CAT_LABEL[t]} · baris stok`}
                 value={fmtNum(cat(t).row_count, 0)}
-                sub="Baris barang × lokasi. Qty tidak dijumlah karena satuannya berbeda." />
+                sub="Barang × lokasi; qty beda satuan." />
             ))}
             <StatTile testId="stock-summary-fg" label="Produk jadi · baris stok" value={fmtNum(cat('fg').row_count, 0)}
-              sub={`Total ${fmtNum(cat('fg').total_qty, 0)} pcs di semua lokasi.`}
+              sub={`Total ${fmtNum(cat('fg').total_qty, 0)} pcs.`}
               subTone={Number(cat('fg').total_qty || 0) < 0 ? 'danger' : undefined} />
             {/* U8 — dulu juga kotak berisi deretan 43 pil kode barang; rinciannya ada di Alert & Reorder (tabel + unduh). */}
             <StatTile testId="stock-summary-low" label="Di bawah ambang stok" value={fmtNum(reorderAlerts.length, 0)}
               accent={reorderAlerts.length > 0 ? 'warning' : 'default'}
-              hint="Lihat rinciannya di Alert & Reorder"
+              hint="Rincian di Alert & Reorder"
               onClick={() => {
                 if (window.location.hash === '#warehouse-smart') window.location.hash = '';
                 window.location.hash = '#warehouse-smart';

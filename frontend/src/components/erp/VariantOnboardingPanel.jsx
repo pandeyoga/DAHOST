@@ -266,10 +266,10 @@ export function ProductOnboardingTab({ onDone }) {
       <BarisAlat
         kiri={(
           <p className="text-sm" data-testid="onb-stats">
-            <span data-testid="onb-stat-products"><b className="tabular-nums">{fmt(data?.total_products)}</b> produk belum dikenal</span>
-            {' · '}<span data-testid="onb-stat-skus"><b className="tabular-nums">{fmt(data?.total_skus)}</b> SKU</span>
-            {' · '}<b className="tabular-nums">{fmt(data?.pcs_total)}</b> pcs
-            {' · '}<span data-testid="onb-stat-collisions" className={data?.collisions_total ? 'font-medium text-[hsl(var(--danger-text))]' : ''}>
+            <span className="whitespace-nowrap" data-testid="onb-stat-products"><b className="tabular-nums">{fmt(data?.total_products)}</b> produk belum dikenal</span>
+            {' · '}<span className="whitespace-nowrap" data-testid="onb-stat-skus"><b className="tabular-nums">{fmt(data?.total_skus)}</b> SKU</span>
+            {' · '}<span className="whitespace-nowrap"><b className="tabular-nums">{fmt(data?.pcs_total)}</b> pcs</span>
+            {' · '}<span data-testid="onb-stat-collisions" className={`whitespace-nowrap ${data?.collisions_total ? 'font-medium text-[hsl(var(--danger-text))]' : ''}`}>
               {fmt(data?.collisions_total)} tabrakan identitas
             </span>
           </p>
