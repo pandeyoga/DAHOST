@@ -9,113 +9,72 @@
  * Terukur pada data hidup: **0 dari 601** baris pesanan marketing menunjuk
  * master gudang, dan **83 SKU platform** tidak dikenal master. Penyebabnya dua
  * semesta identitas — marketing memakai `platform_sku_id` (angka milik
- * TikTok/Shopee), gudang memakai UUID + kode FG. Jembatannya ada di kode, tetapi
- * pintunya hanya di dalam sesi impor ⇒ begitu sesi dihapus, SKU itu mustahil
- * dipetakan.
+ * TikTok/Shopee), gudang memakai UUID + kode FG.
  *
- * Layar ini memberi pintu yang berdiri sendiri, dengan tiga aksi yang mengikuti
- * keadaan master (bukan satu tombol "cocokkan" yang menebak):
+ * Tiga aksi yang mengikuti keadaan master (bukan satu tombol "cocokkan" yang menebak):
  *   · **Tautkan**            — varian (model+warna+ukuran) SUDAH ada di master.
  *   · **Buat Varian**        — modelnya ada, warna/ukuran ini belum.
  *   · **Buat Master**        — belum ada yang mirip; model + varian baru dibuat.
  *
  * Backend: `/api/sku-bridge/*` (core/sku_bridge.py). Semua penulisan tautan
  * lewat SSOT itu; layar ini tidak pernah menulis dokumen sendiri.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (dulu kepala besar 3 baris + ikon, 5 kartu KPI berwarna,
+ * kartu kemajuan dengan angka 30 px, tab bar di dalam kartu); bagian dipilih lewat pil; 4 StatTile berketerangan
+ * (disembunyikan bila belum ada pesanan); semua tabel TabelData + unduhan Excel/CSV; buat master = FormPopup,
+ * pilih barang manual = popup daftar pilihan; Dipakai juga di Portal Toko (props sama: `onNavigate`).
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
-  Link2, Search, RefreshCw, Loader2, AlertTriangle, CheckCircle2, Plus,
-  Wand2, Trash2, PackageSearch, Store, ArrowRight, Info, Eye, Layers,
-  ShoppingBag, Boxes, Sparkles, ShieldCheck, Download,
+  Link2, Search, RefreshCw, Loader2, CheckCircle2, Plus,
+  Wand2, Trash2, Eye, Sparkles, ArrowRight,
 } from 'lucide-react';
-import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
-} from '@/components/ui/dialog';
+import { Checkbox } from '@/components/ui/checkbox';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup from '@/components/ui/detail-popup';
 import { toast } from 'sonner';
 import { apiGet, apiPost, apiDelete } from '@/lib/api';
-import { downloadCsv } from '@/lib/csv';
 import { ColorSelect, SizeSelect, ModelSelect } from './masters/MasterSelects';
-// Sesi #28 — onboarding PER PRODUK + master Opsi (dimensi ke-3). Jembatan #20
-// benar tetapi 0 dari 601 baris pesanan pernah tertaut: 83 SKU dari 8 produk
-// nyata tidak punya master, dan mesin identitas lama menabrakkan 65 di antaranya.
+// Sesi #28 — onboarding PER PRODUK + master Opsi (dimensi ke-3).
 import { ProductOnboardingTab, VariantOptionsTab } from './VariantOnboardingPanel';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 
 const fmt = (v) => Number(v || 0).toLocaleString('id-ID');
 const rp = (v) => `Rp ${fmt(Math.round(Number(v || 0)))}`;
 
 const ACTION_META = {
-  map: {
-    label: 'Tautkan', tone: 'text-[hsl(var(--success))] ',
-    chip: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.4)]',
-    icon: Link2, hint: 'Varian sudah ada di master — cukup ditautkan',
-  },
-  create_variant: {
-    label: 'Buat Varian', tone: 'text-[hsl(var(--primary))] ',
-    chip: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.4)]',
-    icon: Plus, hint: 'Model sudah ada, warna/ukuran ini belum',
-  },
-  create_master: {
-    label: 'Buat Master', tone: 'text-[hsl(var(--warning))] ',
-    chip: 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.4)]',
-    icon: Sparkles, hint: 'Belum ada master yang mirip — buat model + varian baru',
-  },
+  map: { label: 'Tautkan', tone: 'success', icon: Link2, hint: 'Varian sudah ada di master — cukup ditautkan' },
+  create_variant: { label: 'Buat varian', tone: 'primary', icon: Plus, hint: 'Model sudah ada, warna/ukuran ini belum' },
+  create_master: { label: 'Buat master', tone: 'warning', icon: Sparkles, hint: 'Belum ada master yang mirip — buat model + varian baru' },
 };
+const METHOD_LABEL = { manual: 'Manual', auto: 'Otomatis', create_master: 'Buat master', product_onboarding: 'Produk baru (per produk)' };
 
-/* ─── Kartu KPI ────────────────────────────────────────────────────────────── */
-function Kpi({ icon: Icon, label, value, sub, tone = 'text-foreground', testId }) {
+/** Baris alat satu bagian: kiri penyaring/teks, kanan alat (turun ke baris sendiri di HP). */
+function BarisAlat({ kiri, kanan }) {
   return (
-    <GlassCard className="p-4" data-testid={testId}>
-      <div className="flex items-center justify-between mb-2">
-        <Icon className={`w-5 h-5 ${tone}`} />
-      </div>
-      <div className={`text-2xl font-bold ${tone}`}>{value}</div>
-      <div className="text-xs text-muted-foreground mt-0.5">{label}</div>
-      {sub ? <div className="text-[11px] text-muted-foreground/70 mt-1">{sub}</div> : null}
-    </GlassCard>
+    <div className="flex flex-wrap items-center gap-2">
+      {kiri}
+      <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{kanan}</div>
+    </div>
+  );
+}
+function KotakCari({ value, onChange, placeholder, testId }) {
+  return (
+    <div className="relative w-full sm:w-64">
+      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      <Input value={value} onChange={(e) => onChange(e.target.value)} className="pl-8" placeholder={placeholder} data-testid={testId} />
+    </div>
   );
 }
 
-/* ─── Bar kemajuan tautan ──────────────────────────────────────────────────── */
-function LinkageBar({ health }) {
-  const pct = Number(health?.lines_linked_pct || 0);
-  const tone = pct >= 90 ? 'bg-[hsl(var(--success))]' : pct >= 50 ? 'bg-[hsl(var(--warning))]' : 'bg-[hsl(var(--destructive))]';
-  return (
-    <GlassCard className="p-5" hover={false} data-testid="linkage-progress">
-      <div className="flex items-end justify-between mb-2">
-        <div>
-          <div className="text-sm font-semibold">Kesiapan barang untuk dikirim gudang</div>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {fmt(health?.lines_linked)} dari {fmt(health?.lines)} baris pesanan sudah menunjuk
-            barang gudang. Baris yang belum tertaut TIDAK bisa dialokasikan.
-          </p>
-        </div>
-        <div className="text-right">
-          <div className="text-3xl font-bold tabular-nums">{pct}%</div>
-          <div className="text-[11px] text-muted-foreground">tertaut</div>
-        </div>
-      </div>
-      <div className="h-2.5 w-full rounded-full bg-foreground/10 overflow-hidden">
-        <div className={`h-full ${tone} rounded-full transition-[width] duration-500`}
-             style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
-      </div>
-      <div className="flex flex-wrap gap-x-6 gap-y-1 mt-3 text-xs text-muted-foreground">
-        <span>Pesanan siap dikerjakan: <b className="text-[hsl(var(--success))] ">{fmt(health?.orders_ready)}</b></span>
-        <span>Sebagian tertaut: <b className="text-[hsl(var(--warning))] ">{fmt(health?.orders_partial)}</b></span>
-        <span>Belum bisa dikerjakan: <b className="text-[hsl(var(--destructive))] ">{fmt(health?.orders_blocked)}</b></span>
-        <span>Pemetaan aktif: <b>{fmt(health?.bridge_mappings)}</b></span>
-      </div>
-    </GlassCard>
-  );
-}
-
-/* ─── Dialog: pilih sasaran manual ─────────────────────────────────────────── */
+/* ─── Popup: pilih sasaran manual (daftar pilihan, satu klik = tautkan) ───── */
 function ManualPickDialog({ row, onClose, onDone }) {
   const [q, setQ] = useState('');
   const [rows, setRows] = useState([]);
@@ -149,67 +108,37 @@ function ManualPickDialog({ row, onClose, onDone }) {
     } catch (e) { toast.error(e.message); } finally { setSaving(''); }
   };
 
+  const kolom = [
+    { kunci: 'nama', label: 'Barang gudang', hp: 'judul', isi: (c) => <span className="font-medium">{c.label || '(tanpa nama)'}</span> },
+    { kunci: 'sku', label: 'SKU', hp: 'keterangan', isi: (c) => <span className="tabular-nums">{c.sku || '—'}</span> },
+    { kunci: 'jenis', label: 'Jenis', isi: (c) => (c.kind === 'catalog_item' ? 'Item katalog jual' : 'Varian model internal') },
+    { kunci: 'stok', label: 'Stok', rata: 'kanan', isi: (c) => (c.stock != null ? <span className="tabular-nums">{fmt(c.stock)}</span> : '—') },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (c) => (
+      <Button size="sm" disabled={saving === c.target_id} onClick={() => pick(c)} data-testid={`manual-pick-${c.sku || c.target_id}`}>
+        {saving === c.target_id ? <Loader2 className="animate-spin" /> : <Link2 />}Tautkan
+      </Button>) },
+  ];
+
   return (
-    <DialogContent className="max-w-3xl" data-testid="manual-pick-dialog">
-      <DialogHeader>
-        <DialogTitle>Pilih barang gudang untuk SKU ini</DialogTitle>
-        <DialogDescription>
-          {row.product_name || '(tanpa nama)'} · variasi <b>{row.variation || '—'}</b> ·
-          {' '}{fmt(row.pcs)} pcs di {fmt(row.orders)} pesanan
-        </DialogDescription>
-      </DialogHeader>
-      <div className="relative">
-        <Search className="w-4 h-4 absolute left-3 top-3 text-muted-foreground" />
-        <Input value={q} onChange={(e) => setQ(e.target.value)} className="pl-9"
-               placeholder="Cari nama produk / SKU master…" data-testid="manual-pick-search" />
-      </div>
-      <div className="max-h-[46vh] overflow-auto rounded-lg border border-foreground/10 divide-y divide-foreground/5">
-        {loading ? (
-          <div className="p-8 text-center text-muted-foreground">
-            <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Mencari…
-          </div>
-        ) : rows.length === 0 ? (
-          <div className="p-8 text-center text-muted-foreground/70">
-            <PackageSearch className="w-10 h-10 mx-auto opacity-20 mb-2" />
-            Tidak ada master yang cocok. Pakai tombol <b>Buat Master</b> di daftar utama.
-          </div>
-        ) : rows.map((c) => (
-          <div key={`${c.kind}-${c.target_id}`}
-               className="flex items-center justify-between gap-3 p-3 hover:bg-foreground/5">
-            <div className="min-w-0">
-              <div className="text-sm font-medium truncate">{c.label || '(tanpa nama)'}</div>
-              <div className="text-xs text-muted-foreground">
-                <span className="tabular-nums">{c.sku || '—'}</span>
-                {' · '}
-                {c.kind === 'catalog_item' ? 'item katalog jual' : 'varian model internal'}
-                {c.stock != null ? ` · stok ${fmt(c.stock)}` : ''}
-              </div>
-            </div>
-            <Button size="sm" disabled={saving === c.target_id} onClick={() => pick(c)}
-                    data-testid={`manual-pick-${c.sku || c.target_id}`}>
-              {saving === c.target_id
-                ? <Loader2 className="w-4 h-4 animate-spin" />
-                : <><Link2 className="w-4 h-4 mr-1.5" />Tautkan</>}
-            </Button>
-          </div>
-        ))}
-      </div>
-      <DialogFooter>
-        <Button variant="outline" onClick={onClose}>Tutup</Button>
-      </DialogFooter>
-    </DialogContent>
+    <DetailPopup open onClose={onClose} testId="manual-pick-dialog" judul="Pilih barang gudang untuk SKU ini"
+      keterangan={`${row.product_name || '(tanpa nama)'} · variasi ${row.variation || '—'} · ${fmt(row.pcs)} pcs di ${fmt(row.orders)} pesanan`}>
+      <KotakCari value={q} onChange={setQ} placeholder="Cari nama produk / SKU master" testId="manual-pick-search" />
+      {loading && rows.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Mencari…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={rows} kunci={(c) => `${c.kind}-${c.target_id}`} testId="manual-pick-table"
+          kosong={<EmptyState title="Tidak ada master yang cocok" description='Ubah kata pencarian, atau pakai tombol "Buat master" di daftar utama.' />} />
+      )}
+    </DetailPopup>
   );
 }
 
-/* ─── Dialog: buat master / varian dari SKU ────────────────────────────────── */
+/* ─── Popup form: buat master / varian dari SKU ────────────────────────────── */
 function CreateMasterDialog({ row, onClose, onDone }) {
   const mm = row.model_match || {};
   const suggestedModelId = row.recommended_action === 'create_variant' ? (mm.model_id || '') : '';
   // Nama model TIDAK diketik: kalau produknya sudah ada, model dipilih dari master;
-  // kalau benar-benar baru, namanya DITURUNKAN server dari judul platform (lihat
-  // `core.sku_bridge.clean_product_name`) dan hanya ditampilkan. Mengetik nama di
-  // sini adalah cara paling pasti melahirkan model kembar — persis cacat yang
-  // dijaga gate INV-F14.
+  // kalau benar-benar baru, namanya DITURUNKAN server dari judul platform dan hanya ditampilkan (gate INV-F14).
   const [form, setForm] = useState({
     model_id: suggestedModelId,
     color_name: row.parsed?.color || '',
@@ -252,89 +181,54 @@ function CreateMasterDialog({ row, onClose, onDone }) {
   };
 
   return (
-    <DialogContent className="max-w-2xl" data-testid="create-master-dialog">
-      <DialogHeader>
-        <DialogTitle>
-          {useExistingModel ? 'Buat varian baru & tautkan' : 'Buat master produk & tautkan'}
-        </DialogTitle>
-        <DialogDescription>
-          Rantai yang dibuat: {useExistingModel ? '' : 'model → '}varian → master FG →
-          item katalog toko → pemetaan SKU → seluruh pesanan lama ikut tertaut.
-        </DialogDescription>
-      </DialogHeader>
-
-      <div className="rounded-lg border border-foreground/10 bg-foreground/[0.03] p-3 text-xs space-y-1">
-        <div className="text-muted-foreground">Judul dari platform</div>
-        <div className="font-medium">{row.product_name || '(tanpa nama)'}</div>
-        <div className="text-muted-foreground">
-          Variasi: <b>{row.variation || '—'}</b> · SKU platform:{' '}
-          <span className="tabular-nums">{row.platform_sku_id}</span> ·{' '}
-          {fmt(row.pcs)} pcs di {fmt(row.orders)} pesanan
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div className="col-span-2">
-          <ModelSelect
-            value={form.model_id}
-            onChange={(v) => setForm({ ...form, model_id: v })}
-            label="Model produk di master"
-            hint={useExistingModel
-              ? 'Hanya variannya yang dibuat — model tidak digandakan.'
-              : 'Biarkan kosong untuk membuat model BARU; namanya diambil dari judul platform (lihat pratinjau) dan bisa diubah nanti di Master Produk.'}
-            testId="cm-model-select" />
-        </div>
-        <ColorSelect value={form.color_name}
-                     onChange={(v) => setForm({ ...form, color_name: v })}
-                     hint="Terbaca dari variasi platform bila cocok dengan master."
-                     testId="cm-color-select" />
-        <SizeSelect value={form.size_code}
-                    onChange={(v) => setForm({ ...form, size_code: v })}
-                    hint="Kosong ⇒ dipakai ALLSIZE."
-                    testId="cm-size-select" />
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="create-master-dialog"
+      judul={useExistingModel ? 'Buat varian baru & tautkan' : 'Buat master produk & tautkan'}
+      keterangan={`Rantai yang dibuat: ${useExistingModel ? '' : 'model → '}varian → master FG → item katalog toko → pemetaan SKU → pesanan lama ikut tertaut.`}
+      onSimpan={submit} menyimpan={busy} labelSimpan="Buat & tautkan"
+      aksiKiri={(
+        <Button type="button" variant="outline" onClick={preview} disabled={busy} data-testid="cm-preview">
+          <Eye />Pratinjau ulang
+        </Button>
+      )}>
+      <p className="text-sm text-muted-foreground">
+        Judul dari platform: <span className="font-medium text-foreground">{row.product_name || '(tanpa nama)'}</span>
+        {' '}· variasi <b>{row.variation || '—'}</b> · SKU platform <span className="tabular-nums">{row.platform_sku_id}</span>
+        {' '}· {fmt(row.pcs)} pcs di {fmt(row.orders)} pesanan
+      </p>
+      <Isian label="Model produk di master"
+        petunjuk={useExistingModel
+          ? 'Hanya variannya yang dibuat — model tidak digandakan.'
+          : 'Kosong = buat model BARU; namanya diambil dari judul platform (lihat pratinjau) dan bisa diubah nanti di Master Produk.'}>
+        <ModelSelect value={form.model_id} onChange={(v) => setForm({ ...form, model_id: v })} label={null} testId="cm-model-select" />
+      </Isian>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Warna" petunjuk="Terbaca dari variasi platform bila cocok dengan master.">
+          <ColorSelect value={form.color_name} onChange={(v) => setForm({ ...form, color_name: v })} label={null} testId="cm-color-select" />
+        </Isian>
+        <Isian label="Ukuran" petunjuk="Kosong = dipakai ALLSIZE.">
+          <SizeSelect value={form.size_code} onChange={(v) => setForm({ ...form, size_code: v })} label={null} testId="cm-size-select" />
+        </Isian>
         {!useExistingModel && (
           <>
-            <div>
-              <Label className="text-xs">Harga jual resmi (opsional)</Label>
-              <MoneyInput value={form.retail_price}
-                     onChange={(e) => setForm({ ...form, retail_price: e.target.value })}
-                     placeholder="0" data-testid="cm-price" />
-            </div>
-            <div>
-              <Label className="text-xs">HPP (opsional)</Label>
-              <MoneyInput value={form.hpp}
-                     onChange={(e) => setForm({ ...form, hpp: e.target.value })}
-                     placeholder="0" data-testid="cm-hpp" />
-            </div>
+            <Isian label="Harga jual resmi (opsional)" htmlFor="cm-harga">
+              <MoneyInput id="cm-harga" value={form.retail_price} onChange={(e) => setForm({ ...form, retail_price: e.target.value })}
+                placeholder="0" data-testid="cm-price" />
+            </Isian>
+            <Isian label="HPP (opsional)" htmlFor="cm-hpp">
+              <MoneyInput id="cm-hpp" value={form.hpp} onChange={(e) => setForm({ ...form, hpp: e.target.value })}
+                placeholder="0" data-testid="cm-hpp" />
+            </Isian>
           </>
         )}
       </div>
-
       {plan?.plan && (
-        <div className="rounded-lg border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary))]/[0.06] p-3 text-xs"
-             data-testid="cm-plan">
-          <div className="flex items-center gap-1.5 font-semibold text-[hsl(var(--primary))] mb-1">
-            <Eye className="w-3.5 h-3.5" />Pratinjau
-          </div>
-          <div>{plan.message}</div>
-        </div>
+        <Notice tone="info" icon={Eye} testId="cm-plan" title="Pratinjau">{plan.message}</Notice>
       )}
-
-      <DialogFooter>
-        <Button variant="outline" onClick={onClose}>Batal</Button>
-        <Button variant="outline" onClick={preview} disabled={busy} data-testid="cm-preview">
-          <Eye className="w-4 h-4 mr-1.5" />Pratinjau ulang
-        </Button>
-        <Button onClick={submit} disabled={busy} data-testid="cm-submit">
-          {busy ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-1.5" />}
-          Buat &amp; Tautkan
-        </Button>
-      </DialogFooter>
-    </DialogContent>
+    </FormPopup>
   );
 }
 
-/* ─── Tab: penyelesaian massal ─────────────────────────────────────────────── */
+/* ─── Bagian: penyelesaian massal ──────────────────────────────────────────── */
 function BulkPanel({ onDone }) {
   const [actions, setActions] = useState({ map: true, create_variant: true, create_master: false });
   const [res, setRes] = useState(null);
@@ -356,105 +250,83 @@ function BulkPanel({ onDone }) {
     { key: 'create_variant', title: 'Buat varian di model yang cocok', desc: 'Model dikenali, hanya warna/ukuran ini yang belum ada.' },
     { key: 'create_master', title: 'Buat model produk BARU', desc: 'Menambah master produk baru. Pilih sadar — periksa pratinjaunya.' },
   ];
+  const hasil = res ? [
+    ...(res.applied || []).map((a) => ({ ...a, _kelompok: 'Akan dikerjakan' })),
+    ...(res.skipped || []).map((s) => ({ ...s, _kelompok: 'Disisakan untuk Anda' })),
+  ] : [];
+  const kolomHasil = [
+    { kunci: 'kelompok', label: 'Kelompok', hp: 'keterangan', isi: (r) => r._kelompok },
+    { kunci: 'barang', label: 'SKU / barang', hp: 'judul', isi: (r) => <span className="font-medium">{r.will_create || r.target_sku || r.product_name || r.platform_sku_id}</span> },
+    { kunci: 'aksi', label: 'Aksi', isi: (r) => (r.action
+      ? <StatusBadge tone={ACTION_META[r.action]?.tone} label={ACTION_META[r.action]?.label || r.action} />
+      : <span className="text-muted-foreground">—</span>) },
+    { kunci: 'pcs', label: 'Pcs', rata: 'kanan', isi: (r) => (r.pcs != null ? <span className="tabular-nums">{fmt(r.pcs)}</span> : '—') },
+    { kunci: 'alasan', label: 'Alasan disisakan', isi: (r) => <span className="text-sm text-muted-foreground">{r.reason || '—'}</span> },
+  ];
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-lg border border-foreground/10 bg-foreground/[0.03] p-4 text-xs text-muted-foreground">
-        <div className="flex items-center gap-1.5 font-semibold text-foreground mb-1">
-          <Info className="w-3.5 h-3.5" />Cara kerjanya
-        </div>
-        Mesin memeriksa setiap SKU yang belum dikenal, lalu mengerjakan aksi yang sesuai
-        keadaan masternya. Yang keyakinannya kurang <b>tidak</b> dikerjakan otomatis — ia
-        dikembalikan ke daftar supaya Anda yang memutuskan. Jalankan <b>Pratinjau</b> dulu:
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">
+        Mesin memeriksa setiap SKU yang belum dikenal lalu mengerjakan aksi yang sesuai keadaan masternya. Yang keyakinannya
+        kurang tidak dikerjakan otomatis — dikembalikan ke daftar supaya Anda yang memutuskan. Jalankan <b>Pratinjau</b> dulu:
         pratinjau tidak menulis apa pun.
-      </div>
-
-      <div className="grid md:grid-cols-3 gap-3">
+      </p>
+      <fieldset className="space-y-2">
+        <legend className="sr-only">Jenis aksi yang dikerjakan</legend>
         {boxes.map((b) => (
-          <button key={b.key} type="button" onClick={() => setActions({ ...actions, [b.key]: !actions[b.key] })}
-                  data-testid={`bulk-toggle-${b.key}`}
-                  className={`text-left rounded-lg border p-3 transition-[background-color,border-color] ${
-                    actions[b.key]
-                      ? 'border-primary/50 bg-primary/[0.08]'
-                      : 'border-foreground/10 bg-foreground/[0.02] hover:bg-foreground/[0.05]'}`}>
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <span className={`w-4 h-4 rounded border flex items-center justify-center ${
-                actions[b.key] ? 'bg-primary border-primary' : 'border-foreground/30'}`}>
-                {actions[b.key] && <CheckCircle2 className="w-3 h-3 text-primary-foreground" />}
-              </span>
-              {b.title}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1.5">{b.desc}</p>
-          </button>
+          <label key={b.key} htmlFor={`bulk-${b.key}`} className="flex cursor-pointer items-start gap-3 text-sm">
+            <Checkbox id={`bulk-${b.key}`} checked={!!actions[b.key]} className="mt-0.5"
+              onCheckedChange={(v) => setActions({ ...actions, [b.key]: v === true })} data-testid={`bulk-toggle-${b.key}`} />
+            <span>
+              <span className="font-medium text-foreground">{b.title}</span>
+              <span className="block text-xs text-muted-foreground">{b.desc}</span>
+            </span>
+          </label>
         ))}
-      </div>
-
-      <div className="flex gap-2">
-        <Button variant="outline" onClick={() => run(false)} disabled={busy} data-testid="bulk-preview">
-          {busy ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Eye className="w-4 h-4 mr-1.5" />}
-          Pratinjau
-        </Button>
-        <Button onClick={() => run(true)} disabled={busy || !res} data-testid="bulk-apply">
-          <Wand2 className="w-4 h-4 mr-1.5" />Terapkan
-        </Button>
-        {!res && <span className="text-xs text-muted-foreground self-center">Pratinjau dulu sebelum menerapkan.</span>}
-      </div>
+      </fieldset>
+      <BarisAlat
+        kiri={(
+          <>
+            <Button variant="outline" onClick={() => run(false)} disabled={busy} data-testid="bulk-preview">
+              {busy ? <Loader2 className="animate-spin" /> : <Eye />}Pratinjau
+            </Button>
+            <Button onClick={() => run(true)} disabled={busy || !res} data-testid="bulk-apply">
+              <Wand2 />Terapkan
+            </Button>
+            {!res && <span className="text-sm text-muted-foreground">Pratinjau dulu sebelum menerapkan.</span>}
+          </>
+        )}
+        kanan={res ? (
+          <TombolUnduh namaBerkas="sku-selesaikan-massal" namaLembar="Hasil" baris={hasil} testId="bulk-unduh"
+            kolom={[
+              { label: 'Kelompok', nilai: (r) => r._kelompok },
+              { label: 'SKU platform', nilai: (r) => r.platform_sku_id || '' },
+              { label: 'SKU / barang', nilai: (r) => r.will_create || r.target_sku || r.product_name || '' },
+              { label: 'Aksi', nilai: (r) => ACTION_META[r.action]?.label || r.action || '' },
+              { label: 'Pcs', nilai: (r) => (r.pcs != null ? Number(r.pcs) : '') },
+              { label: 'Alasan disisakan', nilai: (r) => r.reason || '' },
+            ]} />
+        ) : null} />
 
       {res && (
         <div className="space-y-3" data-testid="bulk-result">
-          <div className="rounded-lg border border-[hsl(var(--success)/0.3)] bg-[hsl(var(--success))]/[0.07] p-3 text-sm">
-            <b>{res.message}</b>
+          <Notice tone="success" icon={CheckCircle2} title={res.message}>
+            Akan dikerjakan {fmt(res.applied_count)} · disisakan untuk Anda {fmt(res.skipped_count)}
             {!res.dry_run && (
-              <div className="text-xs text-muted-foreground mt-1">
-                Model baru: {fmt(res.created_models)} · Varian baru: {fmt(res.created_variants)} ·
-                {' '}Pesanan tertaut: {fmt(res.orders_updated)}
-              </div>
+              <span className="mt-0.5 block">
+                Model baru {fmt(res.created_models)} · varian baru {fmt(res.created_variants)} · pesanan tertaut {fmt(res.orders_updated)}
+              </span>
             )}
-          </div>
-          <div className="grid lg:grid-cols-2 gap-3">
-            <div className="rounded-lg border border-foreground/10 overflow-hidden">
-              <div className="px-3 py-2 text-xs font-semibold bg-foreground/[0.04]">
-                Akan dikerjakan ({fmt(res.applied_count)})
-              </div>
-              <div className="max-h-72 overflow-auto divide-y divide-foreground/5">
-                {(res.applied || []).map((a, i) => (
-                  <div key={i} className="px-3 py-2 text-xs">
-                    <Badge variant="outline" className={ACTION_META[a.action]?.chip}>
-                      {ACTION_META[a.action]?.label || a.action}
-                    </Badge>
-                    <span className="ml-2">{a.will_create || a.target_sku}</span>
-                    <span className="text-muted-foreground"> · {fmt(a.pcs)} pcs</span>
-                  </div>
-                ))}
-                {!(res.applied || []).length && (
-                  <div className="px-3 py-6 text-center text-xs text-muted-foreground">Tidak ada.</div>
-                )}
-              </div>
-            </div>
-            <div className="rounded-lg border border-foreground/10 overflow-hidden">
-              <div className="px-3 py-2 text-xs font-semibold bg-foreground/[0.04]">
-                Disisakan untuk Anda ({fmt(res.skipped_count)})
-              </div>
-              <div className="max-h-72 overflow-auto divide-y divide-foreground/5">
-                {(res.skipped || []).map((s, i) => (
-                  <div key={i} className="px-3 py-2 text-xs">
-                    <div className="font-medium truncate">{s.product_name || s.platform_sku_id}</div>
-                    <div className="text-muted-foreground">{s.reason}</div>
-                  </div>
-                ))}
-                {!(res.skipped || []).length && (
-                  <div className="px-3 py-6 text-center text-xs text-muted-foreground">Tidak ada.</div>
-                )}
-              </div>
-            </div>
-          </div>
+          </Notice>
+          <TabelData kolom={kolomHasil} baris={hasil} kunci={(r) => `${r._kelompok}-${r.platform_sku_id || r.target_sku || r.will_create}`}
+            testId="bulk-result-table" kosong={<EmptyState title="Tidak ada SKU yang perlu dikerjakan" />} />
         </div>
       )}
     </div>
   );
 }
 
-/* ─── Tab: pemetaan yang sudah ada ─────────────────────────────────────────── */
+/* ─── Bagian: pemetaan yang sudah ada ──────────────────────────────────────── */
 function MappedPanel({ reloadKey, onChanged }) {
   const [rows, setRows] = useState([]);
   const [q, setQ] = useState('');
@@ -478,62 +350,44 @@ function MappedPanel({ reloadKey, onChanged }) {
     } catch (e) { toast.error(e.message); }
   };
 
+  const kolom = [
+    { kunci: 'psku', label: 'SKU platform', hp: 'keterangan', isi: (r) => <span className="tabular-nums">{r.platform_sku_id}</span> },
+    { kunci: 'barang', label: 'Barang gudang', hp: 'judul', isi: (r) => (
+      <div className="min-w-0 md:max-w-[22rem]">
+        <p className="truncate">{r.target_name || '—'}</p>
+        <p className="hidden truncate text-xs text-muted-foreground md:block">{r.product_name_sample}</p>
+      </div>) },
+    { kunci: 'fg', label: 'Kode FG', isi: (r) => <span className="tabular-nums">{r.fg_code || '—'}</span> },
+    { kunci: 'pesanan', label: 'Pesanan', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmt(r.orders_using)}</span> },
+    { kunci: 'cara', label: 'Cara', isi: (r) => <StatusBadge tone="default" label={METHOD_LABEL[r.method || 'manual'] || r.method} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+      <Button size="icon-sm" variant="ghost" onClick={() => unmap(r.platform_sku_id)} aria-label={`Lepas pemetaan ${r.platform_sku_id}`}
+        title="Lepas pemetaan" data-testid={`unmap-${r.platform_sku_id}`}>
+        <Trash2 className="text-[hsl(var(--danger-text))]" />
+      </Button>) },
+  ];
+
   return (
     <div className="space-y-3">
-      <div className="relative max-w-md">
-        <Search className="w-4 h-4 absolute left-3 top-3 text-muted-foreground" />
-        <Input value={q} onChange={(e) => setQ(e.target.value)} className="pl-9"
-               placeholder="Cari SKU platform / nama master…" data-testid="mapped-search" />
-      </div>
-      {loading ? (
-        <div className="py-12 text-center text-muted-foreground">
-          <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Memuat…
-        </div>
-      ) : rows.length === 0 ? (
-        <div className="py-12 text-center text-muted-foreground/70" data-testid="mapped-empty">
-          <Link2 className="w-10 h-10 mx-auto opacity-20 mb-2" />
-          Belum ada pemetaan. Tautkan SKU di tab <b>Belum Tertaut</b>.
-        </div>
+      <BarisAlat
+        kiri={<KotakCari value={q} onChange={setQ} placeholder="Cari SKU platform / nama master" testId="mapped-search" />}
+        kanan={(
+          <TombolUnduh namaBerkas="sku-sudah-dipetakan" namaLembar="Pemetaan" baris={rows} testId="mapped-unduh"
+            kolom={[
+              { label: 'SKU platform', nilai: (r) => r.platform_sku_id },
+              { label: 'Barang gudang', nilai: (r) => r.target_name || '' },
+              { label: 'Judul platform', nilai: (r) => r.product_name_sample || '' },
+              { label: 'Kode FG', nilai: (r) => r.fg_code || '' },
+              { label: 'Pesanan', nilai: (r) => Number(r.orders_using || 0) },
+              { label: 'Cara', nilai: (r) => METHOD_LABEL[r.method || 'manual'] || r.method || '' },
+            ]} />
+        )} />
+      {loading && rows.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat…</p>
       ) : (
-        <div className="rounded-lg border border-foreground/10 overflow-hidden" data-testid="mapped-table">
-          <table className="w-full text-sm">
-            <thead className="bg-foreground/[0.04] text-xs text-muted-foreground">
-              <tr>
-                <th className="text-left px-3 py-2 font-medium">SKU Platform</th>
-                <th className="text-left px-3 py-2 font-medium">Barang Gudang</th>
-                <th className="text-left px-3 py-2 font-medium">Kode FG</th>
-                <th className="text-right px-3 py-2 font-medium">Pesanan</th>
-                <th className="text-left px-3 py-2 font-medium">Cara</th>
-                <th className="px-3 py-2" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-foreground/5">
-              {rows.map((r) => (
-                <tr key={r.platform_sku_id} className="hover:bg-foreground/[0.03]">
-                  <td className="px-3 py-2 tabular-nums text-xs">{r.platform_sku_id}</td>
-                  <td className="px-3 py-2">
-                    <div className="truncate max-w-[22rem]">{r.target_name || '—'}</div>
-                    <div className="text-[11px] text-muted-foreground truncate max-w-[22rem]">
-                      {r.product_name_sample}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 tabular-nums text-xs">{r.fg_code || '—'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{fmt(r.orders_using)}</td>
-                  <td className="px-3 py-2">
-                    <Badge variant="outline" className="text-[10px]">{r.method || 'manual'}</Badge>
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <Button size="sm" variant="ghost" onClick={() => unmap(r.platform_sku_id)}
-                            data-testid={`unmap-${r.platform_sku_id}`}
-                            className="text-[hsl(var(--destructive))] ">
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <TabelData kolom={kolom} baris={rows} kunci={(r) => r.platform_sku_id} testId="mapped-table"
+          kosong={<EmptyState icon={Link2} testId="mapped-empty" title="Belum ada pemetaan"
+            description='Tautkan SKU di bagian "Belum tertaut".' />} />
       )}
     </div>
   );
@@ -567,7 +421,7 @@ export default function SkuBridgeModule({ onNavigate }) {
 
   useEffect(() => { loadHealth(); }, [loadHealth, reloadKey]);
   useEffect(() => {
-    if (tab !== 'unmapped') return;
+    if (tab !== 'unmapped') return undefined;
     const t = setTimeout(loadUnmapped, 250);
     return () => clearTimeout(t);
   }, [loadUnmapped, tab, reloadKey]);
@@ -594,210 +448,162 @@ export default function SkuBridgeModule({ onNavigate }) {
     } catch (e) { toast.error(e.message); } finally { setBusyRow(''); }
   };
 
-  const kpis = useMemo(() => ([
-    { icon: ShoppingBag, label: 'Pesanan marketing', value: fmt(health?.orders), tone: 'text-foreground', testId: 'kpi-orders' },
-    { icon: CheckCircle2, label: 'Siap dikerjakan gudang', value: fmt(health?.orders_ready), tone: 'text-[hsl(var(--success))] ', testId: 'kpi-ready' },
-    { icon: AlertTriangle, label: 'Belum bisa dikerjakan', value: fmt(health?.orders_blocked), tone: 'text-[hsl(var(--destructive))] ', testId: 'kpi-blocked' },
-    { icon: PackageSearch, label: 'SKU belum dikenal', value: fmt(health?.unmapped_sku_count), tone: 'text-[hsl(var(--warning))] ', testId: 'kpi-unmapped' },
-    { icon: Link2, label: 'Pemetaan aktif', value: fmt(health?.bridge_mappings), tone: 'text-[hsl(var(--primary))] ', testId: 'kpi-mappings' },
-  ]), [health]);
+  // Kesiapan: persen baris pesanan yang sudah menunjuk barang gudang (core/sku_bridge.health).
+  // Tanpa baris pesanan, persen tidak bisa dihitung → "—" (dulu "0%").
+  const adaPesanan = Number(health?.orders || 0) > 0;
+  const pct = Number(health?.lines_linked_pct || 0);
+
+  const kolomUnmapped = [
+    { kunci: 'barang', label: 'Barang dipesan pembeli', hp: 'judul', isi: (r) => (
+      <div className="min-w-0 md:max-w-[24rem]">
+        <p className="truncate font-medium">{r.product_name || '(tanpa nama)'}</p>
+        <p className="text-xs text-muted-foreground">{r.account_name || '—'} · <span className="tabular-nums">{r.platform_sku_id}</span></p>
+      </div>) },
+    { kunci: 'varian', label: 'Warna / ukuran', hp: 'keterangan', isi: (r) => (
+      <div>
+        <span className="text-sm">{r.parsed?.color || 'warna?'} / {r.parsed?.size || 'ukuran?'}</span>
+        <p className="max-w-[12rem] truncate text-xs text-muted-foreground">{r.variation || '—'}</p>
+      </div>) },
+    { kunci: 'pcs', label: 'Pcs', rata: 'kanan', isi: (r) => <span className="font-medium tabular-nums">{fmt(r.pcs)}</span> },
+    { kunci: 'nilai', label: 'Nilai', rata: 'kanan', isi: (r) => <span className="tabular-nums">{rp(r.value)}</span> },
+    { kunci: 'keadaan', label: 'Keadaan master', isi: (r) => {
+      const meta = ACTION_META[r.recommended_action] || ACTION_META.create_master;
+      return (
+        <div className="md:max-w-[18rem]">
+          <StatusBadge tone={meta.tone} label={meta.label} />
+          <p className="mt-1 text-xs text-muted-foreground">{r.action_reason || meta.hint}</p>
+        </div>
+      );
+    } },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => {
+      const meta = ACTION_META[r.recommended_action] || ACTION_META.create_master;
+      const Icon = meta.icon;
+      return (
+        <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
+          <Button size="sm" onClick={() => quickAction(r)} disabled={busyRow === r.platform_sku_id} data-testid={`act-${r.platform_sku_id}`}>
+            {busyRow === r.platform_sku_id ? <Loader2 className="animate-spin" /> : <Icon />}{meta.label}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setManualRow(r)} data-testid={`manual-${r.platform_sku_id}`}>
+            Pilih manual
+          </Button>
+        </div>
+      );
+    } },
+  ];
+
+  const BAGIAN = [
+    { key: 'onboarding', label: 'Produk belum dikenal' },
+    { key: 'unmapped', label: 'Belum tertaut', count: total || undefined },
+    { key: 'mapped', label: 'Sudah dipetakan' },
+    { key: 'bulk', label: 'Selesaikan massal' },
+    { key: 'options', label: 'Opsi varian' },
+  ];
 
   return (
-    <div className="space-y-5" data-testid="sku-bridge-module">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold flex items-center gap-2">
-            <Link2 className="w-6 h-6 text-primary" />Jembatan SKU
-          </h2>
-          <p className="text-sm text-muted-foreground mt-1 max-w-3xl">
-            Menyamakan identitas barang antara <b>Marketing</b> (SKU milik TikTok/Shopee) dan
-            {' '}<b>Gudang</b> (kode FG + master produk). Selama SKU belum tertaut, tim gudang
-            tidak bisa mengalokasikan barang untuk pesanan itu.
-          </p>
+    <PageLayout testId="sku-bridge-module" title="Jembatan SKU"
+      subtitle="Samakan SKU marketplace dengan barang gudang supaya pesanan bisa dialokasikan."
+      filters={<>
+        <FilterChips className="w-full sm:w-auto" options={BAGIAN} value={tab} onChange={setTab} hideWhenEmpty={false} testId="tab" />
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <Button variant="outline" size="icon" onClick={refreshAll} title="Muat ulang" aria-label="Muat ulang" data-testid="refresh-bridge">
+            <RefreshCw className={loading && tab === 'unmapped' ? 'animate-spin' : ''} />
+          </Button>
         </div>
-        <Button variant="outline" size="sm" onClick={refreshAll} className="border-foreground/10"
-                data-testid="refresh-bridge">
-          <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />Muat ulang
-        </Button>
-      </div>
-
-      {/* KPI */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        {kpis.map((k) => <Kpi key={k.label} {...k} />)}
-      </div>
-
-      <LinkageBar health={health} />
-
-      {/* Pintu lanjutan */}
-      {onNavigate && (
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" className="border-foreground/10"
-                  onClick={() => onNavigate('fulfillment')} data-testid="goto-fulfillment">
-            <Boxes className="w-4 h-4 mr-1.5" />Antrean Gudang<ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+      </>}
+      summary={health ? (adaPesanan ? (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <StatTile label="Pesanan marketing" value={fmt(health.orders)} testId="kpi-orders"
+              sub={`${fmt(health.lines)} baris pesanan · ${fmt(health.bridge_mappings)} pemetaan aktif`} />
+            <StatTile label="Siap dikerjakan gudang" value={fmt(health.orders_ready)} accent="success" testId="kpi-ready"
+              sub={`Semua barisnya tertaut · ${fmt(health.orders_partial)} pesanan baru sebagian`} />
+            <StatTile label="Belum bisa dikerjakan" value={fmt(health.orders_blocked)} accent="danger" testId="kpi-blocked"
+              sub="Tidak satu pun barisnya tertaut ke barang gudang" />
+            <StatTile label="SKU belum dikenal" value={fmt(health.unmapped_sku_count)} accent="warning" testId="kpi-unmapped"
+              sub="SKU platform di pesanan yang belum punya pasangan master" />
+          </div>
+          <div data-testid="linkage-progress">
+            <p className="text-sm">
+              Kesiapan: <b className="tabular-nums">{fmt(health.lines_linked)}</b> dari <b className="tabular-nums">{fmt(health.lines)}</b> baris
+              pesanan sudah menunjuk barang gudang (<b className="tabular-nums">{String(pct).replace('.', ',')}%</b>). Baris yang belum tertaut tidak bisa dialokasikan.
+            </p>
+            <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-foreground/10" role="progressbar"
+              aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Persen baris pesanan tertaut">
+              <div className={`h-full rounded-full ${pct >= 90 ? 'bg-[hsl(var(--success))]' : pct >= 50 ? 'bg-[hsl(var(--warning))]' : 'bg-[hsl(var(--destructive))]'}`}
+                style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
+            </div>
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground" data-testid="linkage-progress">
+          Kesiapan: — · belum ada pesanan marketing, jadi persen baris yang tertaut belum bisa dihitung.
+          {Number(health.bridge_mappings || 0) > 0 ? ` ${fmt(health.bridge_mappings)} pemetaan aktif.` : ''}
+        </p>
+      )) : null}
+      footer={onNavigate ? (
+        <p className="flex flex-wrap items-center gap-x-1 text-sm text-muted-foreground">
+          Lanjut ke:
+          <Button variant="link" size="sm" className="h-auto px-1" onClick={() => onNavigate('fulfillment')} data-testid="goto-fulfillment">
+            Antrean gudang<ArrowRight />
           </Button>
-          <Button variant="outline" size="sm" className="border-foreground/10"
-                  onClick={() => onNavigate('sync-audit')} data-testid="goto-sync-audit">
-            <ShieldCheck className="w-4 h-4 mr-1.5" />Kesehatan Sinkronisasi<ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+          <Button variant="link" size="sm" className="h-auto px-1" onClick={() => onNavigate('sync-audit')} data-testid="goto-sync-audit">
+            Kesehatan sinkronisasi<ArrowRight />
           </Button>
-          <Button variant="outline" size="sm" className="border-foreground/10"
-                  onClick={() => onNavigate('marketing-catalog')} data-testid="goto-catalog">
-            <Layers className="w-4 h-4 mr-1.5" />Manajemen Katalog<ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+          <Button variant="link" size="sm" className="h-auto px-1" onClick={() => onNavigate('marketing-catalog')} data-testid="goto-catalog">
+            Manajemen katalog<ArrowRight />
           </Button>
+        </p>
+      ) : null}>
+      {tab === 'unmapped' && (
+        <div className="space-y-3">
+          <BarisAlat
+            kiri={(
+              <>
+                <KotakCari value={q} onChange={setQ} placeholder="Cari nama produk / SKU platform" testId="unmapped-search" />
+                {total > rows.length && <span className="text-sm text-muted-foreground">Menampilkan {fmt(rows.length)} dari {fmt(total)} SKU</span>}
+              </>
+            )}
+            kanan={(
+              // Daftar ini dipakai untuk membagi pekerjaan ke staf & dibawa ke rapat (kontrak INV-F10 A-3).
+              <TombolUnduh namaBerkas="sku-belum-tertaut" namaLembar="SKU belum tertaut" baris={rows} testId="unmapped-export"
+                kolom={[
+                  { label: 'SKU platform', nilai: (r) => r.platform_sku_id },
+                  { label: 'Toko', nilai: (r) => r.account_name || '' },
+                  { label: 'Nama produk', nilai: (r) => r.product_name || '' },
+                  { label: 'Variasi', nilai: (r) => r.variation || '' },
+                  { label: 'Warna', nilai: (r) => r.parsed?.color || '' },
+                  { label: 'Ukuran', nilai: (r) => r.parsed?.size || '' },
+                  { label: 'Pcs', nilai: (r) => Number(r.pcs || 0) },
+                  { label: 'Pesanan', nilai: (r) => Number(r.orders || 0) },
+                  { label: 'Nilai (Rp)', nilai: (r) => Number(r.value || 0) },
+                  { label: 'Aksi disarankan', nilai: (r) => ACTION_META[r.recommended_action]?.label || r.recommended_action || '' },
+                  { label: 'Model terdekat', nilai: (r) => r.model_match?.model_name || '' },
+                  { label: 'Alasan', nilai: (r) => r.action_reason || '' },
+                ]} />
+            )} />
+          {loading && rows.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">Memeriksa pesanan &amp; master…</p>
+          ) : (
+            <TabelData kolom={kolomUnmapped} baris={rows} kunci={(r) => r.platform_sku_id} testId="unmapped-table"
+              kosong={<EmptyState icon={CheckCircle2} testId="unmapped-empty" title="Semua SKU marketing sudah dikenal gudang"
+                description="Tidak ada barang yang menggantung tanpa identitas." />} />
+          )}
         </div>
       )}
 
-      <GlassCard className="p-5" hover={false}>
-        <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="bg-foreground/5 mb-4">
-            <TabsTrigger value="onboarding" data-testid="tab-onboarding">
-              Onboarding Produk
-            </TabsTrigger>
-            <TabsTrigger value="unmapped" data-testid="tab-unmapped">
-              Belum Tertaut {total ? `(${fmt(total)})` : ''}
-            </TabsTrigger>
-            <TabsTrigger value="mapped" data-testid="tab-mapped">Sudah Dipetakan</TabsTrigger>
-            <TabsTrigger value="bulk" data-testid="tab-bulk">Selesaikan Massal</TabsTrigger>
-            <TabsTrigger value="options" data-testid="tab-options">Opsi Varian</TabsTrigger>
-          </TabsList>
-        </Tabs>
-
-        {tab === 'unmapped' && (
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative max-w-md flex-1 min-w-[16rem]">
-                <Search className="w-4 h-4 absolute left-3 top-3 text-muted-foreground" />
-                <Input value={q} onChange={(e) => setQ(e.target.value)} className="pl-9"
-                       placeholder="Cari nama produk / SKU platform…" data-testid="unmapped-search" />
-              </div>
-              {/* Daftar ini dipakai untuk membagi pekerjaan ke staf & dibawa ke rapat —
-                  jadi ia harus bisa keluar dari layar (kontrak INV-F10 A-3). */}
-              <Button variant="outline" size="sm" className="border-foreground/10"
-                      data-testid="unmapped-export"
-                      onClick={() => {
-                        const n = downloadCsv(
-                          'sku-belum-tertaut',
-                          ['SKU Platform', 'Toko', 'Nama Produk', 'Variasi', 'Warna',
-                           'Ukuran', 'Pcs', 'Pesanan', 'Nilai', 'Aksi Disarankan',
-                           'Model Terdekat', 'Alasan'],
-                          rows.map((r) => [
-                            r.platform_sku_id, r.account_name, r.product_name, r.variation,
-                            r.parsed?.color || '', r.parsed?.size || '', r.pcs, r.orders,
-                            r.value, ACTION_META[r.recommended_action]?.label || r.recommended_action,
-                            r.model_match?.model_name || '', r.action_reason || '',
-                          ]));
-                        toast.success(`${n} baris diunduh`);
-                      }}>
-                <Download className="w-4 h-4 mr-1.5" />Unduh CSV
-              </Button>
-            </div>
-
-            {loading ? (
-              <div className="py-14 text-center text-muted-foreground">
-                <Loader2 className="w-7 h-7 animate-spin mx-auto mb-3" />
-                Memeriksa pesanan &amp; master…
-              </div>
-            ) : rows.length === 0 ? (
-              <div className="py-14 text-center" data-testid="unmapped-empty">
-                <CheckCircle2 className="w-12 h-12 mx-auto text-[hsl(var(--success)/0.5)] mb-3" />
-                <p className="font-medium">Semua SKU marketing sudah dikenal gudang.</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Tidak ada barang yang menggantung tanpa identitas.
-                </p>
-              </div>
-            ) : (
-              <div className="rounded-lg border border-foreground/10 overflow-hidden" data-testid="unmapped-table">
-                <table className="w-full text-sm">
-                  <thead className="bg-foreground/[0.04] text-xs text-muted-foreground">
-                    <tr>
-                      <th className="text-left px-3 py-2 font-medium">Barang dipesan pembeli</th>
-                      <th className="text-left px-3 py-2 font-medium">Warna / Ukuran</th>
-                      <th className="text-right px-3 py-2 font-medium">Pcs</th>
-                      <th className="text-right px-3 py-2 font-medium">Nilai</th>
-                      <th className="text-left px-3 py-2 font-medium">Keadaan master</th>
-                      <th className="px-3 py-2" />
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-foreground/5">
-                    {rows.map((r) => {
-                      const meta = ACTION_META[r.recommended_action] || ACTION_META.create_master;
-                      const Icon = meta.icon;
-                      return (
-                        <tr key={r.platform_sku_id} className="hover:bg-foreground/[0.03] align-top">
-                          <td className="px-3 py-2.5">
-                            <div className="font-medium truncate max-w-[26rem]">
-                              {r.product_name || '(tanpa nama)'}
-                            </div>
-                            <div className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
-                              <Store className="w-3 h-3" />{r.account_name || '—'}
-                              <span className="tabular-nums ml-1">{r.platform_sku_id}</span>
-                            </div>
-                          </td>
-                          <td className="px-3 py-2.5">
-                            <div className="flex flex-wrap gap-1">
-                              <Badge variant="outline" className="text-[10px]">
-                                {r.parsed?.color || 'warna?'}
-                              </Badge>
-                              <Badge variant="outline" className="text-[10px]">
-                                {r.parsed?.size || 'ukuran?'}
-                              </Badge>
-                            </div>
-                            <div className="text-[11px] text-muted-foreground mt-1 truncate max-w-[12rem]">
-                              {r.variation || '—'}
-                            </div>
-                          </td>
-                          <td className="px-3 py-2.5 text-right tabular-nums font-medium">{fmt(r.pcs)}</td>
-                          <td className="px-3 py-2.5 text-right tabular-nums text-xs">{rp(r.value)}</td>
-                          <td className="px-3 py-2.5">
-                            <Badge variant="outline" className={`${meta.chip} text-[10px]`}>
-                              <Icon className="w-3 h-3 mr-1" />{meta.label}
-                            </Badge>
-                            <div className="text-[11px] text-muted-foreground mt-1 max-w-[18rem]">
-                              {r.action_reason || meta.hint}
-                            </div>
-                          </td>
-                          <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                            <Button size="sm" onClick={() => quickAction(r)}
-                                    disabled={busyRow === r.platform_sku_id}
-                                    data-testid={`act-${r.platform_sku_id}`}>
-                              {busyRow === r.platform_sku_id
-                                ? <Loader2 className="w-4 h-4 animate-spin" />
-                                : <><Icon className="w-4 h-4 mr-1.5" />{meta.label}</>}
-                            </Button>
-                            <Button size="sm" variant="ghost" className="ml-1"
-                                    onClick={() => setManualRow(r)}
-                                    data-testid={`manual-${r.platform_sku_id}`}>
-                              Pilih manual
-                            </Button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
-        {tab === 'mapped' && <MappedPanel reloadKey={reloadKey} onChanged={refreshAll} />}
-        {tab === 'bulk' && <BulkPanel onDone={refreshAll} />}
-        {tab === 'onboarding' && <ProductOnboardingTab onDone={refreshAll} />}
-        {tab === 'options' && <VariantOptionsTab />}
-      </GlassCard>
+      {tab === 'mapped' && <MappedPanel reloadKey={reloadKey} onChanged={refreshAll} />}
+      {tab === 'bulk' && <BulkPanel onDone={refreshAll} />}
+      {tab === 'onboarding' && <ProductOnboardingTab onDone={refreshAll} />}
+      {tab === 'options' && <VariantOptionsTab />}
 
       {manualRow && (
-        <Dialog open onOpenChange={() => setManualRow(null)}>
-          <ManualPickDialog row={manualRow} onClose={() => setManualRow(null)}
-                            onDone={() => { setManualRow(null); refreshAll(); }} />
-        </Dialog>
+        <ManualPickDialog row={manualRow} onClose={() => setManualRow(null)}
+          onDone={() => { setManualRow(null); refreshAll(); }} />
       )}
       {createRow && (
-        <Dialog open onOpenChange={() => setCreateRow(null)}>
-          <CreateMasterDialog row={createRow} onClose={() => setCreateRow(null)}
-                              onDone={() => { setCreateRow(null); refreshAll(); }} />
-        </Dialog>
+        <CreateMasterDialog row={createRow} onClose={() => setCreateRow(null)}
+          onDone={() => { setCreateRow(null); refreshAll(); }} />
       )}
-    </div>
+    </PageLayout>
   );
 }
