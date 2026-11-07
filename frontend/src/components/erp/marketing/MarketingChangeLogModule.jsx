@@ -176,24 +176,24 @@ export default function MarketingChangeLogModule({ token, scope = 'marketing' })
       subtitle="Siapa mengubah target, anggaran, kunci periode, dan kewenangan toko (hanya baca)."
       filters={(
         <>
-          <div className="relative w-full sm:w-64">
+          <div className="relative w-full sm:w-56">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input className="h-9 pl-8" placeholder="Cari alasan, pelaku, jenis" aria-label="Cari"
               value={q} onChange={(e) => setQ(e.target.value)} data-testid="changelog-search" />
           </div>
           <MarketingAccountSelect token={token} value={accountId} onChange={setAccountId} required={false} includeAll
-            allLabel="Semua toko" label="" className="w-48" testId="changelog-account-select" />
-          <SmartNativeSelect className="h-9 w-44" value={entity} onChange={(e) => setEntity(e.target.value)}
+            allLabel="Semua toko" label="" className="w-44" testId="changelog-account-select" />
+          <SmartNativeSelect className="h-9 w-40" value={entity} onChange={(e) => setEntity(e.target.value)}
             aria-label="Yang diubah" data-testid="changelog-entity-select">
             <option value="">Semua jenis</option>
             {filters.entities.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
           </SmartNativeSelect>
-          <SmartNativeSelect className="h-9 w-40" value={action} onChange={(e) => setAction(e.target.value)}
+          <SmartNativeSelect className="h-9 w-36" value={action} onChange={(e) => setAction(e.target.value)}
             aria-label="Aksi" data-testid="changelog-action-select">
             <option value="">Semua aksi</option>
             {filters.actions.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
           </SmartNativeSelect>
-          <SmartNativeSelect className="h-9 w-48" value={actorId} onChange={(e) => setActorId(e.target.value)}
+          <SmartNativeSelect className="h-9 w-44" value={actorId} onChange={(e) => setActorId(e.target.value)}
             aria-label="Pelaku" data-testid="changelog-actor-select">
             <option value="">Semua orang</option>
             {filters.actors.map((a) => (
@@ -263,9 +263,8 @@ export default function MarketingChangeLogModule({ token, scope = 'marketing' })
                   <TableHead>Waktu</TableHead>
                   <TableHead>Toko</TableHead>
                   <TableHead>Perubahan</TableHead>
-                  <TableHead className="min-w-[240px]">Nilai lama → baru</TableHead>
+                  <TableHead className="min-w-[220px]">Nilai lama → baru</TableHead>
                   <TableHead className="hidden md:table-cell">Pelaku</TableHead>
-                  <TableHead className="hidden lg:table-cell">Alasan</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -286,6 +285,9 @@ export default function MarketingChangeLogModule({ token, scope = 'marketing' })
                       </div>
                       <div className="text-xs text-muted-foreground">{r.entity_label}</div>
                       <div className="text-xs text-muted-foreground md:hidden">oleh {r.actor_name}</div>
+                      <div className="mt-0.5 max-w-[260px] whitespace-normal text-xs text-muted-foreground">
+                        Alasan: {r.reason ? <span className="text-foreground">{r.reason}</span> : <span className="italic">tidak diisi</span>}
+                      </div>
                     </TableCell>
                     <TableCell className="whitespace-normal">
                       {r.changes?.length ? (
@@ -304,9 +306,6 @@ export default function MarketingChangeLogModule({ token, scope = 'marketing' })
                     <TableCell className="hidden whitespace-nowrap md:table-cell">
                       {r.actor_name}
                       {r.actor_role ? <div className="text-xs text-muted-foreground">{peran(r.actor_role)}</div> : null}
-                    </TableCell>
-                    <TableCell className="hidden max-w-[240px] whitespace-normal lg:table-cell">
-                      {r.reason ? r.reason : <span className="italic text-muted-foreground">tidak diisi</span>}
                     </TableCell>
                   </TableRow>
                 ))}

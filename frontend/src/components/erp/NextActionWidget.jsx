@@ -169,9 +169,9 @@ export function NextActionWidget({
           const Icon = meta.icon;
           const isExpanded = expanded === a.id;
           return (
-            <li key={a.id} className="flex flex-wrap items-start gap-3 px-4 py-3 sm:flex-nowrap" data-testid={`nae-card-${a.id}`}>
+            <li key={a.id} className="flex flex-wrap items-start gap-3 px-4 py-3" data-testid={`nae-card-${a.id}`}>
               <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', meta.iconColor)} aria-hidden="true" />
-              <div className="min-w-0 flex-1">
+              <div className="min-w-[12rem] flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium text-foreground">{a.title}</span>
                   <StatusBadge status={a.severity} label={meta.label} tone={meta.tone} />
@@ -190,7 +190,7 @@ export function NextActionWidget({
                   <p className="mt-1 border-l-2 border-[var(--glass-border)] pl-2 text-sm text-muted-foreground">{a.why}</p>
                 )}
               </div>
-              <div className="ml-7 flex items-center gap-1 sm:ml-0">
+              <div className="ml-7 flex items-center gap-1 sm:ml-auto">
                 <Button size="sm" variant="outline" onClick={() => handleCTA(a)} data-testid={`nae-cta-${a.id}`}>
                   {a.cta_label || 'Buka'}<ArrowRight />
                 </Button>
