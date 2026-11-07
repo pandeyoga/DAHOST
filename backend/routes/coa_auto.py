@@ -288,6 +288,10 @@ async def ensure_subledger_account(
             "created_by": (user or {}).get("id") or "system",
             "created_by_name": (user or {}).get("name") or "system",
         }
+        # Tahap 8: akun sub-ledger "berlaku untuk" ikut induknya (akun rekening bank lalu disamakan dengan
+        # pemilik rekening oleh `rahaza_finance._sync_cash_gl_entities`).
+        from core.entities import account_entities
+        doc["entities"] = account_entities(parent_acc)
         await db.rahaza_coa_accounts.insert_one(dict(doc))
         doc.pop("_id", None)
         try:

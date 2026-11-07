@@ -51,6 +51,32 @@ def _fmt_d(s):
         return str(s or "-")
 
 
+RECEIPT_PREFIX = {"ar": "KW", "ap": "BP"}   # KW = kwitansi penerimaan, BP = bukti pembayaran
+
+
+def receipt_prefix(kind: str, entity: str, pay_date) -> str:
+    """Tahap 8 fase 3: seri kwitansi PER CV — kwitansi klien maklon di seri CV Sukma (KW-SMU-…), kwitansi CV Dewi
+    Aditya di seri DA (KW-DA-…); urutan per CV per bulan."""
+    from core.entities import entity_of_value
+    ym = str(pay_date or "")[:7].replace("-", "") or "000000"
+    return f"{RECEIPT_PREFIX.get(kind, 'KW')}-{entity_of_value(entity)}-{ym}-"
+
+
+async def ensure_receipt_number(db, kind: str, pay: dict, entity: str) -> str:
+    """Nomor kwitansi tetap (dibuat sekali saat pertama dicetak, disimpan di dokumen pembayaran)."""
+    if pay.get("receipt_number"):
+        return pay["receipt_number"]
+    from utils.counters import gen_prefixed_number
+    number = await gen_prefixed_number(db, KIND[kind]["payments"], "receipt_number",
+                                       receipt_prefix(kind, entity, pay.get("date")), 4)
+    res = await db[KIND[kind]["payments"]].update_one(
+        {"id": pay["id"], "receipt_number": {"$exists": False}}, {"$set": {"receipt_number": number, "receipt_entity": entity}})
+    if not getattr(res, "matched_count", 1):
+        fresh = await db[KIND[kind]["payments"]].find_one({"id": pay["id"]}, {"_id": 0, "receipt_number": 1})
+        number = (fresh or {}).get("receipt_number") or number
+    return number
+
+
 def build_receipt_pdf(*, kind: str, pay: dict, inv: dict, account: dict, template: dict, profile: dict, printed_by: str) -> bytes:
     from reportlab.lib import colors
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -66,7 +92,8 @@ def build_receipt_pdf(*, kind: str, pay: dict, inv: dict, account: dict, templat
     muted = ParagraphStyle("muted", parent=body, fontSize=8.5, leading=11, textColor=colors.HexColor("#64748b"))
     big = ParagraphStyle("big", parent=body, fontSize=15, leading=19, textColor=colors.HexColor("#0f172a"))
     avail = CONTENT_W_PORTRAIT
-    receipt_no = f"KW-{kind.upper()}-{str(pay.get('date') or '').replace('-', '')}-{str(pay.get('id') or '')[:6].upper()}"
+    receipt_no = pay.get("receipt_number") or \
+        f"KW-{kind.upper()}-{str(pay.get('date') or '').replace('-', '')}-{str(pay.get('id') or '')[:6].upper()}"
     remaining = float(inv.get("balance") or 0)
 
     elems = header_flowables(template.get("header"), profile, k["title"], avail=avail,
@@ -120,7 +147,11 @@ async def payment_receipt_pdf(kind: str, iid: str, pid: str, request: Request):
     account = await db.rahaza_cash_accounts.find_one({"id": pay.get("account_id")}, {"_id": 0}) if pay.get("account_id") else None
     from core import pdf_template
     template = await pdf_template.resolve(db, "sales-note")
-    profile = await pdf_template.company_profile(db)
+    # Tahap 8: kwitansi mengikuti CV faktur — pembayaran klien maklon = CV Sukma, lainnya = CV Dewi Aditya.
+    from core.entities import entity_of_doc
+    ent = entity_of_doc({**inv, **({"source": pay["source"]} if pay.get("source") else {})})
+    profile = await pdf_template.company_profile(db, ent)
+    pay["receipt_number"] = await ensure_receipt_number(db, kind, pay, ent)   # Tahap 8 fase 3: seri per CV
     pdf = build_receipt_pdf(kind=kind, pay=pay, inv=inv, account=account, template=template, profile=profile,
                             printed_by=user.get("name") or "")
     fname = f"Kwitansi_{inv.get('invoice_number', iid)}_{str(pid)[:6]}.pdf"

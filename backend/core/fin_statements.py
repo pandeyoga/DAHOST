@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import calendar
 import io
-from datetime import date
+from datetime import date, timedelta
 
 import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -42,6 +42,18 @@ async def ensure_cash_flow_groups(db) -> int:
         await db.rahaza_coa_accounts.update_one({"id": acc["id"]}, {"$set": {"cash_flow_group": default_cash_flow_group(acc)}})
         n += 1
     return n
+
+
+def _em(entity) -> dict:
+    """Saringan buku CV untuk baris jurnal (Tahap 8). None/ALL = gabungan (tanpa saringan)."""
+    from core.entities import entity_match
+    return entity_match(entity)
+
+
+def _meta_entity(entity) -> dict:
+    from core.entities import ALL, entity_short
+    e = entity or "DA"
+    return {"entity": e, "entity_label": entity_short(e) if e != ALL else "Gabungan (setelah eliminasi antar CV)"}
 
 
 async def cash_account_codes(db) -> set:
@@ -79,13 +91,27 @@ async def _sum_by_account(db, match: dict) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════
 # NERACA SALDO (inti) + NERACA LAJUR
 # ═══════════════════════════════════════════════════════════════════════════
-async def compute_trial_balance(db, from_date: str | None, to_date: str, show_zero: bool = False) -> dict:
-    match_period = {"date": {"$lte": to_date}}
+async def compute_trial_balance(db, from_date: str | None, to_date: str, show_zero: bool = False,
+                                entity: str | None = "DA") -> dict:
+    """`entity` (Tahap 8): DA | SMU = satu buku; ALL = gabungan dua buku SETELAH eliminasi antar CV (fase 3:
+    saldo awal dieliminasi per hari sebelum `from_date`, saldo akhir per `to_date`, selisihnya di kolom mutasi)."""
+    match_period = {"date": {"$lte": to_date}, **_em(entity)}
     if from_date:
         match_period["date"]["$gte"] = from_date
     accounts = await db.rahaza_coa_accounts.find({}, {"_id": 0}).sort("code", 1).to_list(5000)
     period_rows = await _sum_by_account(db, match_period)
-    opening_rows = await _sum_by_account(db, {"date": {"$lt": from_date}}) if from_date else {}
+    opening_rows = await _sum_by_account(db, {"date": {"$lt": from_date}, **_em(entity)}) if from_date else {}
+    ic_block = None
+    from core import intercompany as ic
+    if ic.is_all(entity):
+        prev = (date.fromisoformat(from_date) - timedelta(days=1)).isoformat() if from_date else None
+        open_net = await ic.elimination_net(db, prev)
+        end_c = await ic.consolidation(db, from_date=None, to_date=to_date)
+        end_net = ic.net_of(end_c["lines"])
+        opening_rows = ic.apply_elimination(opening_rows, {c: ic.split_net(v) for c, v in open_net.items()})
+        delta = {c: end_net.get(c, 0.0) - open_net.get(c, 0.0) for c in set(end_net) | set(open_net)}
+        period_rows = ic.apply_elimination(period_rows, {c: ic.split_net(v) for c, v in delta.items()})
+        ic_block = ic.ic_report_block(end_c)
 
     rows, totals = [], {k: 0.0 for k in ("opening_debit", "opening_credit", "period_debit", "period_credit", "end_debit", "end_credit")}
     for acc in accounts:
@@ -111,14 +137,18 @@ async def compute_trial_balance(db, from_date: str | None, to_date: str, show_ze
         for k in totals:
             totals[k] += row[k]
     totals = {k: round(v, 2) for k, v in totals.items()}
-    return {"meta": {"from": from_date, "to": to_date}, "rows": rows, "totals": totals,
-            "balanced": totals["end_debit"] == totals["end_credit"]}
+    out = {"meta": {"from": from_date, "to": to_date, **_meta_entity(entity)}, "rows": rows, "totals": totals,
+           "balanced": totals["end_debit"] == totals["end_credit"]}
+    if ic_block:
+        out["intercompany"] = ic_block
+    return out
 
 
-async def compute_worksheet(db, from_date: str | None, to_date: str, show_zero: bool = False) -> dict:
+async def compute_worksheet(db, from_date: str | None, to_date: str, show_zero: bool = False,
+                            entity: str | None = "DA") -> dict:
     """Neraca lajur ala sheet N-Lajur: saldo awal · mutasi · saldo akhir · kolom L/R · kolom Neraca.
     Laba bersih = Σ kredit L/R − Σ debit L/R, ditambahkan sebagai baris penyeimbang (debit L/R + kredit Neraca)."""
-    tb = await compute_trial_balance(db, from_date, to_date, show_zero)
+    tb = await compute_trial_balance(db, from_date, to_date, show_zero, entity)
     rows = []
     t = {k: 0.0 for k in ("pl_debit", "pl_credit", "bs_debit", "bs_credit")}
     for r in tb["rows"]:
@@ -138,7 +168,8 @@ async def compute_worksheet(db, from_date: str | None, to_date: str, show_zero: 
     return {"meta": tb["meta"], "rows": rows,
             "totals": {**tb["totals"], **{k: round(v, 2) for k, v in t.items()}},
             "balancing": balancing, "grand_totals": grand,
-            "balanced": tb["balanced"] and grand["pl_debit"] == grand["pl_credit"] and grand["bs_debit"] == grand["bs_credit"]}
+            "balanced": tb["balanced"] and grand["pl_debit"] == grand["pl_credit"] and grand["bs_debit"] == grand["bs_credit"],
+            **({"intercompany": tb["intercompany"]} if tb.get("intercompany") else {})}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -152,14 +183,24 @@ def _month_end(year: int, m: int) -> str:
     return date(year, m, calendar.monthrange(year, m)[1]).isoformat()
 
 
-async def compute_profit_loss_monthly(db, year: int) -> dict:
+async def compute_profit_loss_monthly(db, year: int, entity: str | None = "DA") -> dict:
     months = _months(year)
-    pipe = [{"$match": {"date": {"$gte": f"{year}-01-01", "$lte": f"{year}-12-31"}, **_NOT_PL}},
+    pipe = [{"$match": {"date": {"$gte": f"{year}-01-01", "$lte": f"{year}-12-31"}, **_NOT_PL, **_em(entity)}},
             {"$group": {"_id": {"a": "$account_code", "m": {"$substr": ["$date", 0, 7]}},
                         "debit": {"$sum": "$debit"}, "credit": {"$sum": "$credit"}}}]
     cell = {}
     async for r in db.rahaza_journal_lines.aggregate(pipe):
         cell[(r["_id"]["a"], r["_id"]["m"])] = (float(r["debit"] or 0), float(r["credit"] or 0))
+    ic_block = None
+    from core import intercompany as ic
+    if ic.is_all(entity):   # Tahap 8 fase 3: eliminasi laba rugi antar CV per bulan
+        for mi, m in enumerate(months, start=1):
+            el = await ic.pl_elimination(db, f"{m}-01", _month_end(year, mi))
+            for code, v in el["lines"].items():
+                d0, c0 = cell.get((code, m), (0.0, 0.0))
+                cell[(code, m)] = (d0 + float(v["debit"]), c0 + float(v["credit"]))
+        ic_block = ic.ic_report_block(await ic.consolidation(db, from_date=f"{year}-01-01", to_date=f"{year}-12-31",
+                                                             include_bs=False))
     accounts = await db.rahaza_coa_accounts.find({"type": {"$in": list(PL_TYPES)}, "is_group": False}, {"_id": 0}).sort("code", 1).to_list(5000)
     groups = {k: {"label": lbl, "accounts": [], "months": [0.0] * 12, "total": 0.0} for k, lbl in (
         ("revenue", "Pendapatan"), ("cogs", "Harga Pokok Penjualan (HPP)"), ("expense", "Beban Operasional"),
@@ -187,20 +228,35 @@ async def compute_profit_loss_monthly(db, year: int) -> dict:
         run = round(run + v, 2)
         cum.append(run)
     lines = {"gross_profit": gross, "operating_income": operating, "net_income": net, "net_income_cumulative": cum}
-    return {"meta": {"year": year, "months": months, "month_labels": MONTH_ID}, "groups": groups,
-            "lines": {k: {"months": v, "total": round(sum(v), 2) if k != "net_income_cumulative" else cum[-1]} for k, v in lines.items()}}
+    return {"meta": {"year": year, "months": months, "month_labels": MONTH_ID, **_meta_entity(entity)}, "groups": groups,
+            "lines": {k: {"months": v, "total": round(sum(v), 2) if k != "net_income_cumulative" else cum[-1]} for k, v in lines.items()},
+            **({"intercompany": ic_block} if ic_block else {})}
 
 
-async def compute_balance_sheet_monthly(db, year: int) -> dict:
+async def compute_balance_sheet_monthly(db, year: int, entity: str | None = "DA") -> dict:
     """Saldo akun neraca per AKHIR tiap bulan (kumulatif seluruh histori ≤ akhir bulan), termasuk
     Laba/Rugi Tahun Berjalan komputasi supaya Aset = Liabilitas + Ekuitas tiap kolom (sama dgn /balance-sheet)."""
     months = _months(year)
-    pipe = [{"$match": {"date": {"$lte": f"{year}-12-31"}}},
+    pipe = [{"$match": {"date": {"$lte": f"{year}-12-31"}, **_em(entity)}},
             {"$group": {"_id": {"a": "$account_code", "m": {"$cond": [{"$lt": ["$date", f"{year}-01-01"]}, "open", {"$substr": ["$date", 0, 7]}]}},
                         "debit": {"$sum": "$debit"}, "credit": {"$sum": "$credit"}}}]
     per_acc: dict = {}
     async for r in db.rahaza_journal_lines.aggregate(pipe):
         per_acc.setdefault(r["_id"]["a"], {})[r["_id"]["m"]] = float(r["debit"] or 0) - float(r["credit"] or 0)
+    ic_block = None
+    from core import intercompany as ic
+    if ic.is_all(entity):   # Tahap 8 fase 3: eliminasi kumulatif per akhir bulan (selisih bulan ke bulan)
+        prev = await ic.elimination_net(db, f"{year - 1}-12-31")
+        for code, v in prev.items():
+            b = per_acc.setdefault(code, {})
+            b["open"] = b.get("open", 0.0) + v
+        for mi, m in enumerate(months, start=1):
+            cur = await ic.elimination_net(db, _month_end(year, mi))
+            for code in set(cur) | set(prev):
+                b = per_acc.setdefault(code, {})
+                b[m] = b.get(m, 0.0) + cur.get(code, 0.0) - prev.get(code, 0.0)
+            prev = cur
+        ic_block = ic.ic_report_block(await ic.consolidation(db, from_date=None, to_date=f"{year}-12-31"))
     accounts = await db.rahaza_coa_accounts.find({"is_group": False}, {"_id": 0}).sort("code", 1).to_list(5000)
     from routes.rahaza_fin_reports import (
         _bs_type,
@@ -233,25 +289,27 @@ async def compute_balance_sheet_monthly(db, year: int) -> dict:
         sections["equity"]["months"] = [round(a + b, 2) for a, b in zip(sections["equity"]["months"], earnings)]
     liab_eq = [round(a + b, 2) for a, b in zip(sections["liabilities"]["months"], sections["equity"]["months"])]
     diff = [round(a - b, 2) for a, b in zip(sections["assets"]["months"], liab_eq)]
-    return {"meta": {"year": year, "months": months, "month_labels": MONTH_ID, "as_of": [_month_end(year, m) for m in range(1, 13)]},
+    return {"meta": {"year": year, "months": months, "month_labels": MONTH_ID, "as_of": [_month_end(year, m) for m in range(1, 13)],
+                     **_meta_entity(entity)},
             "sections": sections, "totals": {"liab_plus_equity": liab_eq, "current_earnings": earnings, "diff": diff},
-            "balanced": not any(diff)}
+            "balanced": not any(diff), **({"intercompany": ic_block} if ic_block else {})}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # ARUS KAS PER AKUN (tag OPR/INV/PND akun lawan, dari buku besar)
 # ═══════════════════════════════════════════════════════════════════════════
-async def compute_cash_flow_by_account(db, from_date: str, to_date: str) -> dict:
+async def compute_cash_flow_by_account(db, from_date: str, to_date: str, entity: str | None = "DA") -> dict:
     cash_codes = await cash_account_codes(db)
     if not cash_codes:
         return {"cash_account_codes": [], "groups": {}, "totals": {}, "note": "Belum ada akun kas/bank di bagan akun."}
     codes = sorted(cash_codes)
     # Jurnal saldo awal (opening_balance) = KAS AWAL, bukan arus kas periode (ala sheet Arus-K)
-    in_period = {"date": {"$gte": from_date, "$lte": to_date}, "source_module": {"$ne": "opening_balance"}}
+    in_period = {"date": {"$gte": from_date, "$lte": to_date}, "source_module": {"$ne": "opening_balance"}, **_em(entity)}
     je_ids = await db.rahaza_journal_lines.distinct("je_id", {"account_code": {"$in": codes}, **in_period})
     opening_cash = 0.0
     async for r in db.rahaza_journal_lines.aggregate([
-        {"$match": {"account_code": {"$in": codes}, "$or": [{"date": {"$lt": from_date}}, {"source_module": "opening_balance", "date": {"$lte": to_date}}]}},
+        {"$match": {"account_code": {"$in": codes}, **_em(entity),
+                    "$or": [{"date": {"$lt": from_date}}, {"source_module": "opening_balance", "date": {"$lte": to_date}}]}},
         {"$group": {"_id": None, "d": {"$sum": "$debit"}, "c": {"$sum": "$credit"}}}]):
         opening_cash = round(float(r["d"] or 0) - float(r["c"] or 0), 2)
     accounts = {a["code"]: a async for a in db.rahaza_coa_accounts.find({}, {"_id": 0, "code": 1, "name": 1, "type": 1, "cash_flow_group": 1, "flags": 1})}

@@ -39,6 +39,8 @@ from pydantic import BaseModel, Field
 
 from auth import check_role, log_activity, require_auth
 from core import fg_cost_layers as fcl
+from core import product_costing as pc
+from core import sewing_rate as sr
 from database import get_db
 
 logger = logging.getLogger(__name__)
@@ -84,51 +86,18 @@ class RatesIn(BaseModel):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# USULAN TARIF — dari data nyata, bukan tebakan
+# USULAN TARIF — K12 (7 Nov 2026): SATU pintu dengan form PO (`core.sewing_rate.suggest_rates`)
 # ══════════════════════════════════════════════════════════════════════════════
-async def _suggestions(db, items: list[dict]) -> dict:
-    """{po_item_id: {rate, source, note}} dari SPK sebelumnya / master partner."""
-    out: dict = {}
-    skus = [i.get("sku") for i in items if i.get("sku")]
-    models = [i.get("model_id") for i in items if i.get("model_id")]
-    prev_by_sku: dict = {}
-    prev_by_model: dict = {}
-    if skus or models:
-        q = {"cmt_price_snapshot": {"$gt": 0}}
-        ors = []
-        if skus:
-            ors.append({"sku": {"$in": skus}})
-        if models:
-            ors.append({"model_id": {"$in": models}})
-        if ors:
-            q["$or"] = ors
-        rows = await db.po_items.find(q, {"_id": 0, "sku": 1, "model_id": 1, "po_number": 1,
-                                          "cmt_price_snapshot": 1, "created_at": 1}
-                                      ).sort("created_at", -1).to_list(500)
-        for r in rows:
-            if r.get("sku") and r["sku"] not in prev_by_sku:
-                prev_by_sku[r["sku"]] = r
-            if r.get("model_id") and r["model_id"] not in prev_by_model:
-                prev_by_model[r["model_id"]] = r
-    partners = await db.dewi_cmt_partners.find(
-        {"rate_per_pcs": {"$gt": 0}, "status": {"$ne": "inactive"}},
-        {"_id": 0, "name": 1, "rate_per_pcs": 1}).sort("rate_per_pcs", 1).to_list(50)
-    partner_rate = _f(partners[0].get("rate_per_pcs")) if partners else 0.0
-    for it in items:
-        hit = prev_by_sku.get(it.get("sku")) or prev_by_model.get(it.get("model_id"))
-        if hit:
-            out[it["id"]] = {
-                "rate": round(_f(hit.get("cmt_price_snapshot")), 2),
-                "source": "spk_sebelumnya",
-                "note": f"Tarif SPK {hit.get('po_number') or '—'} untuk SKU/model yang sama",
-            }
-        elif partner_rate > 0:
-            out[it["id"]] = {"rate": round(partner_rate, 2), "source": "master_partner_cmt",
-                             "note": f"Tarif termurah master partner CMT ({partners[0].get('name')})"}
-        else:
-            out[it["id"]] = {"rate": 0.0, "source": "none",
-                             "note": "Belum ada tarif nyata — isi manual"}
-    return out
+# Dulu layar ini punya hitungan usulan sendiri (SPK sebelumnya SKU/model mana pun, lalu tarif TERMURAH master
+# partner CMT — penjahit mana pun). Sekarang usulan = tarif terakhir model yang sama DENGAN penjahit PO ini,
+# lalu tarif bawaan model/katalog — angka yang sama dengan yang ditawarkan form PO.
+async def _suggestions(db, items: list[dict], po: dict | None = None) -> dict:
+    """{po_item_id: {rate, source, note}} — usulan untuk baris SPK ini (penjahit & jenis PO-nya)."""
+    po = po or {}
+    lines = [{"key": it["id"], "model_id": it.get("model_id"), "catalog_item_id": it.get("catalog_item_id"),
+              "sku": it.get("sku")} for it in items]
+    return await sr.suggest_rates(db, lines, vendor_id=po.get("vendor_id") or None,
+                                  business_type=pc.po_business_type(po), exclude_po_id=po.get("id"))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -159,8 +128,10 @@ async def list_pos(request: Request,
         total = sum(_f(i.get("cmt_price_snapshot")) * int(_f(i.get("qty"))) for i in its)
         row = {
             "po_id": p["id"], "po_number": p.get("po_number"),
-            "business_type": p.get("business_type") or ("internal" if not p.get("vendor_id") else "maklon"),
-            "vendor_name": p.get("vendor_name") or "Produksi Internal",
+            # 2026-11-07: PO tanpa jenis = internal di mana pun (dulu di sini "maklon" bila ber-vendor)
+            "business_type": pc.po_business_type(p),
+            "vendor_id": p.get("vendor_id") or "",
+            "vendor_name": p.get("vendor_name") or "Belum ada penjahit",
             "customer_name": p.get("customer_name") or "",
             "status": p.get("status"), "po_date": p.get("po_date"),
             "item_count": len(its), "qty_total": qty,
@@ -189,7 +160,7 @@ async def get_po_sewing(po_id: str, request: Request):
     items = await db.po_items.find({"po_id": po_id}, {"_id": 0}).to_list(2000)
     if not items:
         raise HTTPException(400, "SPK ini belum punya item")
-    sug = await _suggestions(db, items)
+    sug = await _suggestions(db, items, po)
 
     # ── SSOT: apakah item SPK ini benar-benar menunjuk MASTER? (sesi #34) ──────
     # Diukur pada data nyata: 7 dari 7 baris `po_items` memakai SKU yang TIDAK ADA
@@ -210,7 +181,6 @@ async def get_po_sewing(po_id: str, request: Request):
         rate = _f(it.get("cmt_price_snapshot"))
         # 2026-11-02 (butir 10, F1b): pratinjau HPP memakai BOM WARNA varian SPK (sama dengan
         # lapisan biaya) — dulu BOM warna lain: 47.175 vs lapisan nyata 106.396,10.
-        from core import product_costing as pc
         with pc.bom_color_scope(pc.color_of(it)):
             cost = await fcl.compute_batch_unit_cost(db, po_item=it, qty=max(1, qty))
         sku_ok = bool(it.get("sku")) and it.get("sku") in master_codes
@@ -251,8 +221,9 @@ async def get_po_sewing(po_id: str, request: Request):
     return {
         "ok": True,
         "po": {"id": po["id"], "po_number": po.get("po_number"), "status": po.get("status"),
-               "vendor_name": po.get("vendor_name") or "Produksi Internal",
-               "business_type": po.get("business_type") or "",
+               "vendor_id": po.get("vendor_id") or "",
+               "vendor_name": po.get("vendor_name") or "Belum ada penjahit",
+               "business_type": pc.po_business_type(po),
                "customer_name": po.get("customer_name") or "",
                "notes": po.get("notes") or "",
                "rate_locked": bool(lock), "rate_lock": lock},
@@ -271,20 +242,9 @@ async def get_po_sewing(po_id: str, request: Request):
 # 2026-11-06 (Tahap 2): tarif jahit SPK boleh diubah SAMPAI tagihan CMT (`dewi_cmt_payments`) untuk
 # SPK itu terbentuk; sesudahnya dikunci — tagihan, lapisan HPP FG, dan HPP per potong membaca angka
 # yang sama, jadi mengubahnya diam-diam membuat ketiganya berselisih.
-CMT_BILL_VOID_STATUSES = ("cancelled", "void", "voided", "rejected", "batal")
-
-
-async def cmt_rate_lock(db, po_id: str) -> dict | None:
-    """Tagihan CMT aktif pertama untuk SPK ini (None = tarif masih boleh diubah)."""
-    bill = await db.dewi_cmt_payments.find_one(
-        {"po_id": po_id, "status": {"$nin": list(CMT_BILL_VOID_STATUSES)}},
-        {"_id": 0, "id": 1, "payment_number": 1, "invoice_number": 1, "status": 1})
-    if not bill:
-        return None
-    ref = bill.get("payment_number") or bill.get("invoice_number") or bill.get("id")
-    return {"bill_id": bill.get("id"), "bill_ref": ref, "status": bill.get("status"),
-            "message": (f"Tarif jahit SPK ini terkunci karena tagihan CMT {ref} sudah dibuat. "
-                        "Ubah lewat koreksi tagihan CMT di Keuangan.")}
+# K12 (7 Nov 2026): penjaga ini dipindah ke `core.sewing_rate` supaya form PO memakai penjaga YANG SAMA.
+CMT_BILL_VOID_STATUSES = sr.CMT_BILL_VOID_STATUSES
+cmt_rate_lock = sr.rate_lock
 
 
 @router.put("/pos/{po_id}")

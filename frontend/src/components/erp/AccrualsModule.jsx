@@ -13,6 +13,7 @@ import { formatRupiah } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { monthOptions } from './finance/PeriodPicker';
+import { cvAccountParam, useCv } from '@/lib/entitas';
 
 // 24 bulan terakhir, terbaru di atas
 const MONTH_OPTIONS = monthOptions(24);
@@ -255,10 +256,11 @@ export default function AccrualsModule({ token }) {
 function AccrualEditor({ value, headers, saving, onClose, onSave }) {
   const [s, setS] = useState(value);
   const [accounts, setAccounts] = useState([]);
+  const coaCv = cvAccountParam(useCv()?.cv);  // Tahap 8: akun CV terpilih saja
   const upd = (k, v) => setS(x => ({ ...x, [k]: v }));
   // Akun dipilih dari Bagan Akun (dulu kotak "Account ID (COA)" yang harus diisi UUID)
   useEffect(() => {
-    fetch('/api/rahaza/coa/accounts', { headers })
+    fetch(`/api/rahaza/coa/accounts${coaCv ? `?${coaCv}` : ''}`, { headers })
       .then(r => (r.ok ? r.json() : []))
       .then(d => setAccounts((Array.isArray(d) ? d : d.items || []).filter(a => a.active !== false && !a.is_group)))
       .catch(() => setAccounts([]));

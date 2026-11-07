@@ -14,6 +14,7 @@ import { MoneyInput } from '@/components/ui/money-input';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import Modal from './Modal';
 import { toast } from 'sonner';
+import { CV_DA, CV_SMU, cvLabel, ownerLabel, useCv } from '@/lib/entitas';
 
 const fmt = formatRupiah;
 
@@ -51,6 +52,9 @@ export default function RahazaCashAccountsModule({ token }) {
   const [mutPage, setMutPage] = useState(1);
   const [openJe, setOpenJe] = useState(null);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  // Tahap 8 (dua CV): daftar disaring backend per CV terpilih (header X-CV); rekening baru = milik CV terpilih.
+  const cvCtx = useCv();
+  const defaultOwner = cvCtx && (cvCtx.cv === CV_DA || cvCtx.cv === CV_SMU) ? cvCtx.cv : CV_DA;
 
   const fetchAccounts = useCallback(async () => {
     setLoading(true);
@@ -165,7 +169,7 @@ export default function RahazaCashAccountsModule({ token }) {
       testId="rahaza-cash-page"
       title="Rekening & Mutasi"
       subtitle="Saldo dan mutasi tiap rekening dari buku besar. Kas Kecil termasuk di sini."
-      actions={<Button onClick={() => setEditing({ code: '', name: '', type: 'cash', opening_balance: 0 })} data-testid="ca-add"><Plus className="w-4 h-4" />Rekening baru</Button>}
+      actions={<Button onClick={() => setEditing({ code: '', name: '', type: 'cash', opening_balance: 0, entity: defaultOwner })} data-testid="ca-add"><Plus className="w-4 h-4" />Rekening baru</Button>}
       tools={<Button variant="outline" size="icon" onClick={fetchAccounts} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>}
       summary={<>
         <p className="text-sm text-muted-foreground" data-testid="ca-total-gl">Total saldo <b className="text-foreground tabular-nums">{fmt(total)}</b> · {shown.length} rekening</p>
@@ -185,13 +189,13 @@ export default function RahazaCashAccountsModule({ token }) {
           <div className="overflow-x-auto">
             <table className="w-full" data-testid="ca-table">
               <thead>
-                <tr><th className="text-left">Rekening</th><th className="text-left">No. rekening</th><th className="text-right">Saldo</th><th className="text-right">Mutasi</th><th className="w-24" /></tr>
+                <tr><th className="text-left">Rekening</th><th className="text-left">No. rekening</th><th className="text-left">Milik</th><th className="text-right">Saldo</th><th className="text-right">Mutasi</th><th className="w-24" /></tr>
               </thead>
               <tbody>
                 {groups.map((g) => (
                   <Fragment key={g.name}>
                     <tr className="bg-[hsl(var(--muted))]/50">
-                      <td colSpan={2} className="font-semibold text-foreground">{g.name}</td>
+                      <td colSpan={3} className="font-semibold text-foreground">{g.name}</td>
                       <td className="text-right font-semibold tabular-nums">{formatNumber(g.total)}</td>
                       <td colSpan={2} />
                     </tr>
@@ -205,6 +209,7 @@ export default function RahazaCashAccountsModule({ token }) {
                           {a.balance_source === 'gl' && a.balance_diff !== 0 && <span className="ml-2 text-xs text-[hsl(var(--warning))]" data-testid={`ca-diff-${a.code}`}>selisih {formatNumber(a.balance_diff)}</span>}
                         </td>
                         <td className="text-muted-foreground">{a.account_number || '—'}</td>
+                        <td className="text-muted-foreground whitespace-nowrap" data-testid={`ca-owner-${a.code}`}>{ownerLabel(a.entity)}</td>
                         <td className={`text-right tabular-nums ${Number(a.balance) < 0 ? 'text-[hsl(var(--destructive))]' : 'text-foreground'}`} data-testid={`ca-balance-${a.code}`}>{formatNumber(a.balance)}</td>
                         <td className="text-right">
                           <Button variant="link" size="sm" className="h-auto p-0" onClick={() => toggleAccount(a)}>
@@ -249,7 +254,7 @@ function CAEditor({ value, onClose, onSave, headers }) {
     const o = glOptions.find(x => x.code === code);
     setS(x => ({ ...x, gl_account_code: code, code: o ? code : x.code, name: o && !x.name ? o.name : x.name, type: o ? (code.startsWith('1-11') ? 'cash' : 'bank') : x.type }));
   };
-  // 2026-11-07 (audit form Tahap 5): Dialog aplikasi (dulu lapisan buatan sendiri + <h2> + 2 <select> polos);
+  // 2026-11-07 (audit form Tahap 5): Dialog aplikasi (dulu lapisan buatan sendiri + <h2> + 2 pilihan polos);
   // kode & nama wajib disebut sebelum simpan (dulu baru ditolak server "code & name wajib").
   const missing = !String(s.code || '').trim() ? 'Isi kode rekening.' : !String(s.name || '').trim() ? 'Isi nama rekening.' : '';
   const lbl = 'text-xs text-muted-foreground';
@@ -269,6 +274,12 @@ function CAEditor({ value, onClose, onSave, headers }) {
         )}
         <div><label className={lbl} htmlFor="ca-code">Kode *</label><GlassInput id="ca-code" value={s.code} onChange={e => upd('code', e.target.value.toUpperCase())} disabled={!!s.id} data-testid="ca-code" /></div>
         <div><label className={lbl} htmlFor="ca-name">Nama *</label><GlassInput id="ca-name" value={s.name} onChange={e => upd('name', e.target.value)} data-testid="ca-name" /></div>
+        <div><label className={lbl}>Milik CV</label>
+          <SmartNativeSelect value={s.entity || CV_DA} onChange={e => upd('entity', e.target.value)} searchable={false} className="w-full h-9" data-testid="ca-entity">
+            <option value={CV_DA}>{cvLabel(CV_DA)}</option><option value={CV_SMU}>{cvLabel(CV_SMU)}</option>
+          </SmartNativeSelect>
+          <p className="text-[11px] text-muted-foreground mt-1">Rekening hanya bisa dipakai transaksi buku CV pemiliknya.</p>
+        </div>
         <div><label className={lbl}>Jenis</label>
           <SmartNativeSelect value={s.type} onChange={e => upd('type', e.target.value)} searchable={false} className="w-full h-9" data-testid="ca-type">
             <option value="cash">Kas</option><option value="bank">Bank</option>

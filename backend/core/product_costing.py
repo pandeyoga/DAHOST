@@ -489,9 +489,11 @@ def _as_dt(v):
 
 
 def po_business_type(po: dict | None) -> str:
-    """Jenis usaha SPK — aturan yang sama dengan layar Biaya Jahit SPK."""
-    p = po or {}
-    return p.get("business_type") or ("internal" if not p.get("vendor_id") else "maklon")
+    """Jenis usaha SPK — aturan yang sama dengan layar Biaya Jahit SPK dan form PO.
+
+    2026-11-07 (K12): PO tanpa jenis = INTERNAL (sama dengan production_pos & desain dua CV §9). Dulu PO tanpa
+    jenis yang ber-vendor dianggap maklon — padahal PO internal kini boleh punya vendor (penjahit)."""
+    return (po or {}).get("business_type") or "internal"
 
 
 def pick_cmt_rate_rows(rows: list, pos: dict, *, business_type: str = "internal", now=None,

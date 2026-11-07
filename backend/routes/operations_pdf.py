@@ -485,6 +485,19 @@ async def _resolve_production_guide(db, ref_id: str) -> dict:
     raise HTTPException(404, 'Data acuan panduan tidak ditemukan (shipment/pekerjaan/artikel)')
 
 
+async def _profile_for_pos(db, po_ids, profile: dict) -> dict:
+    """Tahap 8 (desain §6): dokumen OPERASIONAL (seri nomor tetap satu) memakai kop mengikuti JENIS PO — PO maklon
+    = kop CV Sukma, PO internal / tanpa jenis = kop CV Dewi Aditya (``profile`` bawaan)."""
+    from core.entities import SMU, is_maklon_po
+    ids = [p for p in (po_ids or []) if p]
+    if not ids:
+        return profile
+    async for po in db.production_pos.find({'id': {'$in': ids}}, {'_id': 0, 'business_type': 1}):
+        if is_maklon_po(po):
+            return await get_company_profile(db, SMU)
+    return profile
+
+
 @router.get("/export-pdf")
 async def export_pdf(request: Request):
     user = await require_auth(request)
@@ -532,6 +545,7 @@ async def export_pdf(request: Request):
             if not items:
                 raise HTTPException(404, 'No items in this PO')
             accessories = await db.po_accessories.find({'po_id': po_id}, {'_id': 0}).to_list(500)
+            profile = await _profile_for_pos(db, [po_id], profile)   # Tahap 8: kop ikut jenis PO
             # production_pos berisi Internal & Maklon → bedakan via business_type.
             is_internal = (po.get('business_type') != 'maklon')
             scope_label = 'INTERNAL' if is_internal else 'MAKLON'
@@ -624,6 +638,8 @@ async def export_pdf(request: Request):
                 raise HTTPException(404, 'Shipment not found')
             items = await db.vendor_shipment_items.find({'shipment_id': sid}, {'_id': 0}).to_list(500)
             doc_settings = await get_doc_settings(db, 'vendor-shipment')
+            # Tahap 8: SJ ke penjahit (termasuk permak / komponen kurang) — kop ikut jenis PO
+            profile = await _profile_for_pos(db, [ship.get('po_id')] + [i.get('po_id') for i in items], profile)
             elements = []
             _pdf_header_branded(elements, profile, doc_settings, 'SURAT JALAN — PENGIRIMAN MATERIAL KE VENDOR', info_pairs=[
                 ('No Surat Jalan', ship.get('delivery_note_number') or ship.get('shipment_number', '')),
@@ -693,6 +709,7 @@ async def export_pdf(request: Request):
             dn = await cdn.ensure_number(db, receipt, actor=user)
             rows_src = await cdn.build_lines(db, rid)
             doc_settings = await get_doc_settings(db, 'cmt-delivery-note')
+            profile = await _profile_for_pos(db, [receipt.get('po_id')], profile)   # Tahap 8: penerimaan CMT
             qc_done = str(receipt.get('status') or '').lower() in ('completed_qc', 'approved', 'done')
             elements = []
             _pdf_header_branded(
@@ -890,6 +907,7 @@ async def export_pdf(request: Request):
                 if first_si:
                     po_id = first_si.get('po_id', '')
             po = await db.production_pos.find_one({'id': po_id}, {'_id': 0}) if po_id else None
+            profile = await _profile_for_pos(db, [po_id], profile)   # Tahap 8: kop ikut jenis PO
             # Get invoice if linked — FORENSIC_12 GAP-01: legacy `invoices` dropped.
             # Read from rahaza_ap_invoices (SSOT for AP invoices).
             invoice = await db.rahaza_ap_invoices.find_one({'po_id': po_id}, {'_id': 0}) if po_id else None
@@ -1011,8 +1029,12 @@ async def export_pdf(request: Request):
             _d_po_meta = {}
             if _d_po_ids:
                 async for _p in db.production_pos.find(
-                        {'id': {'$in': _d_po_ids}}, {'_id': 0, 'id': 1, 'po_number': 1}):
+                        {'id': {'$in': _d_po_ids}}, {'_id': 0, 'id': 1, 'po_number': 1, 'business_type': 1}):
                     _d_po_meta[_p['id']] = _p
+            # Tahap 8: surat jalan ke buyer untuk PO MAKLON = dokumen CV Sukma (kop & NPWP Sukma)
+            from core.entities import SMU, is_maklon_po
+            if _d_po_meta and any(is_maklon_po(_p) for _p in _d_po_meta.values()):
+                profile = await get_company_profile(db, SMU)
             _d_po_numbers = [(_d_po_meta.get(p) or {}).get('po_number', '') for p in _d_po_ids]
             _d_po_numbers = [n for n in _d_po_numbers if n] or (
                 [bs.get('po_number', '')] if bs.get('po_number') else [])
@@ -1215,6 +1237,10 @@ async def export_pdf(request: Request):
                 raise HTTPException(404, 'Production return not found')
             items = await db.production_return_items.find({'return_id': rid}, {'_id': 0}).to_list(500)
             elements = []
+            # Tahap 8: retur/permak produksi — nama perusahaan di kop ikut jenis PO
+            _rp = await _profile_for_pos(db, [ret.get('reference_po_id') or ret.get('po_id')]
+                                         + [i.get('po_id') for i in items], profile)
+            company_name = _rp.get('company_name') or company_name
             _pdf_header(elements, company_name, 'Surat Retur Produksi', info_pairs=[
                 ('Return No', ret.get('return_number', '')), ('PO Number', ret.get('reference_po_number', '')),
                 ('Customer', ret.get('customer_name', '')), ('Status', ret.get('status', '')),
@@ -1254,6 +1280,8 @@ async def export_pdf(request: Request):
                 raise HTTPException(404, 'Material request not found')
             elements = []
             req_type = req.get('request_type', 'ADDITIONAL')
+            # Tahap 8: permohonan material / komponen kurang — nama perusahaan di kop ikut jenis PO
+            company_name = (await _profile_for_pos(db, [req.get('po_id')], profile)).get('company_name') or company_name
             _pdf_header(elements, company_name, f'Surat Permohonan Material ({req_type})', info_pairs=[
                 ('Request No', req.get('request_number', '')), ('PO Number', req.get('po_number', '')),
                 ('Vendor', req.get('vendor_name', '')), ('Status', req.get('status', '')),

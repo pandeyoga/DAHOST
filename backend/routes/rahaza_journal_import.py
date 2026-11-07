@@ -35,8 +35,11 @@ async def template(request: Request):
 @router.post("/preview")
 async def preview(request: Request, file: UploadFile = File(...)):
     await _require_fin(request)
-    res = await ji.parse_workbook(get_db(), await _read(file))
+    from core.entities import entity_from_request
+    ent = entity_from_request(request)   # Tahap 8: buku CV tujuan impor
+    res = await ji.parse_workbook(get_db(), await _read(file), ent)
     res["filename"] = file.filename
+    res["entity"] = ent
     return res
 
 
@@ -44,13 +47,15 @@ async def preview(request: Request, file: UploadFile = File(...)):
 async def apply(request: Request, file: UploadFile = File(...)):
     user = await _require_fin(request)
     db = get_db()
-    res = await ji.parse_workbook(db, await _read(file))
+    from core.entities import entity_from_request
+    ent = entity_from_request(request)   # Tahap 8: buku CV tujuan impor (Gabungan ditolak)
+    res = await ji.parse_workbook(db, await _read(file), ent)
     if not res["ok"]:
         raise HTTPException(400, {"message": "Berkas belum lolos pemeriksaan — perbaiki dulu.", "errors": res["errors"]})
     if not res["journals"]:
         return {"ok": True, "posted_count": 0, "failed_count": 0, "posted": [], "failed": [],
                 "skipped_existing": res["skipped_existing"], "message": "Tidak ada jurnal baru (semua baris sudah pernah diimpor)."}
-    out = await ji.post_journals(db, user, res["journals"], file.filename or "upload")
+    out = await ji.post_journals(db, user, res["journals"], file.filename or "upload", ent)
     await log_activity(user["id"], user.get("name", ""), "import_journals", "journal",
                        f"{file.filename}: {out['posted_count']} terposting, {out['failed_count']} gagal")
     return {"ok": out["failed_count"] == 0, "skipped_existing": res["skipped_existing"], **out}

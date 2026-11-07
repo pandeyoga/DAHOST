@@ -49,11 +49,18 @@ def normalize_profile(raw: Optional[dict]) -> dict:
     }
 
 
-async def get_tax_profile(db) -> dict:
+async def get_tax_profile(db, entity: str = "DA") -> dict:
+    """Status pajak SATU CV (Tahap 8): DA = dokumen lama `company_settings{type:'general'}`;
+    CV Sukma = profil CV-nya (bawaan non-PKP, NPWP kosong). PPN keluaran maklon memakai CV Sukma."""
+    from core.entities import DA, company_settings_doc, entity_of_value
+    ent = entity_of_value(entity)
     proj = {"_id": 0, "tax_profile": 1, "npwp": 1}
-    doc = await db.company_settings.find_one({"type": "general"}, proj) or await db.company_settings.find_one({}, proj) or {}
+    doc = await company_settings_doc(db, ent, proj)
+    if not doc and ent == DA:
+        doc = await db.company_settings.find_one({}, proj) or {}
     prof = normalize_profile(doc.get("tax_profile"))
     prof["npwp"] = doc.get("npwp") or ""
+    prof["entity"] = ent
     return prof
 
 

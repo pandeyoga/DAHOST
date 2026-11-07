@@ -58,8 +58,9 @@ async def _domain_map(db, payments: list) -> dict:
         pos = await db.production_pos.find(
             {'id': {'$in': po_ids}}, {'_id': 0, 'id': 1, 'business_type': 1}
         ).to_list(None)
-        bt_by_po = {p['id']: ('internal' if p.get('business_type') == 'internal' else 'maklon')
-                    for p in pos}
+        # Tahap 8 (desain §9): PO tanpa jenis = internal (dulu dianggap maklon).
+        from core.entities import po_business_type
+        bt_by_po = {p['id']: po_business_type(p) for p in pos}
     out = {}
     for p in payments:
         if p.get('po_id'):
@@ -347,7 +348,18 @@ async def list_cmt_ap_schedules(request: Request):
     rows = await db.dewi_cmt_ap_schedules.find(q, {'_id': 0}).sort('updated_at', -1).to_list(2000)
     tot = {k: round(sum(float(r.get(k) or 0) for r in rows), 2)
            for k in ('scheduled_amount', 'matured_amount', 'paid_amount', 'blocked_amount', 'payable_amount')}
-    return {'items': serialize_doc(rows), 'total': len(rows), 'totals': tot}
+    # Tahap 8 fase 2: PO maklon yang dijahit tim CV Sukma sendiri — tidak punya jadwal hutang/tagihan CMT.
+    from core import intercompany as ic
+    own = []
+    team = await ic.own_team_vendor(db)
+    if team:
+        pq = {'business_type': 'maklon', 'vendor_id': team['id'], 'status': {'$nin': ['Draft', 'Cancelled']}}
+        if sp.get('po_id'):
+            pq['id'] = sp['po_id']
+        async for po in db.production_pos.find(pq, {'_id': 0, 'id': 1, 'po_number': 1}).sort('created_at', -1).limit(200):
+            own.append({'po_id': po['id'], 'po_number': po.get('po_number'), 'vendor_name': team.get('name'),
+                        'message': ic.OWN_TEAM_MSG})
+    return {'items': serialize_doc(rows), 'total': len(rows), 'totals': tot, 'own_team_pos': own}
 
 
 @router.get("/{payment_id}")

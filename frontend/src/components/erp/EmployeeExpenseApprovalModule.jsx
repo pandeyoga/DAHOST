@@ -74,7 +74,7 @@ function ActionPanel({ item, token, onClose, onRefresh }) {
   const [loading, setLoading] = useState(false);
   // 2026-11-02 (P5 butir 7): rekening sumber + tanggal bayar (WIB) dikirim ke backend; dulu "Bayar"
   // hanya mengirim {payment_method:'transfer'} sehingga jurnal selalu dari 1-1201 bertanggal hari ini.
-  const { accounts, loaded: accLoaded } = usePaymentCashAccounts(token);
+  const { accounts, loaded: accLoaded } = usePaymentCashAccounts(token, 'DA');  // Tahap 8: klaim staf DA
   const [payAccount, setPayAccount] = useState('');
   const [payDate, setPayDate] = useState(todayWIB());
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };

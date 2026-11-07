@@ -19,6 +19,8 @@ import DocNumberField, { useDocNumberPolicy, docNumberPayload } from '../docnum/
 import { GlassCard, GlassInput, GlassPanel } from '@/components/ui/glass';
 import FilterChips from '@/components/ui/filter-chips';
 import { Notice } from '../moduleAtoms';
+import { Button } from '@/components/ui/button';
+import { formatRupiah } from '@/lib/format';
 
 const TABS = [
   { id: 'shipments', label: 'Daftar Shipment', icon: Truck },
@@ -54,7 +56,7 @@ export default function VendorShipmentModule({ userRole, hasPerm = () => false, 
         options={TABS.map(tab => ({ key: tab.id, label: tab.label, icon: tab.icon }))} />
 
       {/* Tab Content */}
-      {activeTab === 'shipments' && <ShipmentList userRole={userRole} hasPerm={hasPerm} businessType={businessType} />}
+      {activeTab === 'shipments' && <ShipmentList userRole={userRole} hasPerm={hasPerm} businessType={businessType} onNavigate={onNavigate} />}
       {activeTab === 'additional' && <MaterialRequestList userRole={userRole} requestType="ADDITIONAL" />}
       {activeTab === 'replacement' && <MaterialRequestList userRole={userRole} requestType="REPLACEMENT" />}
     </div>
@@ -62,7 +64,8 @@ export default function VendorShipmentModule({ userRole, hasPerm = () => false, 
 }
 
 // ─── SHIPMENT LIST ─────────────────────────────────────────────────────────────
-function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) {
+// 2026-11-07: `onNavigate` diteruskan — dulu dipakai di sini (tautan Retur Material) padahal tidak pernah diterima.
+function ShipmentList({ userRole, hasPerm = () => false, businessType = null, onNavigate }) {
   const [shipments, setShipments] = useState([]);
   const [vendors, setVendors] = useState([]);
   const [pos, setPOs] = useState([]);
@@ -190,7 +193,10 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
         size: poItem.size, color: poItem.color, sku: poItem.sku,
         serial_number: poItem.serial_number || '',
         qty_sent: initialQty,
-        remaining_qty_to_vendor: remaining
+        remaining_qty_to_vendor: remaining,
+        // K12: upah jahit baris PO; penjahit dipilih di surat jalan ini bila PO belum ber-vendor
+        cmt_price_snapshot: Number(poItem.cmt_price_snapshot) || 0,
+        po_without_vendor: !!(selectedPO && selectedPO.id === poItem.po_id && !selectedPO.vendor_id),
       }]
     }));
   };
@@ -265,6 +271,13 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
         toast.error(`Qty item "${item.product_name}" (${item.qty_sent}) melebihi sisa ke vendor (${remaining}). Kurangi qty atau gunakan permintaan ADDITIONAL.`);
         return;
       }
+    }
+    // K12 (7 Nov 2026): penjahit baru dipilih saat kirim → baris yang dikirim wajib sudah punya upah jahit.
+    // Upah diisi di form PO (satu sumber), bukan di surat jalan; server menolak dengan pesan yang sama.
+    if (shipNoRate.length) {
+      toast.error(`Upah jahit per pcs belum diisi untuk ${shipNoRate.map(i => i.sku || i.product_name).slice(0, 4).join(', ')}. `
+        + 'Isi dulu di form PO (tautan "Isi upah di form PO"), lalu buat surat jalan lagi.');
+      return;
     }
     // FASE H-1: tolak di layar bila stok material kurang — pesannya menyebut
     // materialnya, bukan "gagal menyimpan". Mode sementara "stok boleh minus"
@@ -423,6 +436,15 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
       sub: p.customer_name
     }));
   const selectedPoNoVendor = !!(selectedPO && !selectedPO.vendor_id);
+  // K12: baris PO tanpa upah jahit — penjahit dipilih di sini, jadi upahnya harus ada dulu di form PO
+  const poNoRate = selectedPoNoVendor ? poItems.filter(pi => !(Number(pi.cmt_price_snapshot) > 0)) : [];
+  const shipNoRate = (form.items || []).filter(i => i.po_without_vendor && !(Number(i.cmt_price_snapshot) > 0));
+  const openPoRates = () => {
+    if (!selectedPO || !onNavigate) return;
+    setShowModal(false);
+    onNavigate(selectedPO.business_type === 'maklon' ? 'maklon-pos-engine' : 'prod-pos-internal',
+      { edit_po_id: selectedPO.id, vendor_id: form.vendor_id });
+  };
 
   // Separate parent shipments (no parent_shipment_id) from child shipments
   const parentShipments = shipments.filter(s => !s.parent_shipment_id);
@@ -671,6 +693,24 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
                   PO {selectedPO.po_number} belum punya vendor — vendor pengiriman ini akan dicatat sebagai vendor PO.
                 </p>
               )}
+              {selectedPoNoVendor && poNoRate.length > 0 && (
+                <Notice tone="warning" icon={AlertTriangle} className="mt-2" testId="vship-po-no-rate"
+                  title={`Upah jahit belum diisi untuk ${poNoRate.length} baris PO ${selectedPO.po_number}`}
+                  action={onNavigate ? (
+                    <Button type="button" variant="link" size="sm" onClick={openPoRates} data-testid="vship-po-no-rate-link">
+                      Isi upah di form PO
+                    </Button>
+                  ) : null}>
+                  Penjahit dipilih saat kirim, jadi upah jahit per pcs untuk penjahit ini diisi dulu di form PO
+                  ({poNoRate.slice(0, 4).map(pi => pi.sku || pi.product_name).join(', ')}{poNoRate.length > 4 ? ` +${poNoRate.length - 4} lagi` : ''}).
+                  Baris yang sudah berupah boleh dikirim.
+                </Notice>
+              )}
+              {selectedPoNoVendor && poItems.length > 0 && poNoRate.length === 0 && (
+                <p className="text-xs text-muted-foreground mt-1" data-testid="vship-po-rate-ok">
+                  Upah jahit semua baris PO sudah diisi ({poItems.slice(0, 3).map(pi => `${pi.sku || pi.product_name} ${formatRupiah(Number(pi.cmt_price_snapshot) || 0)}`).join(', ')}{poItems.length > 3 ? ' …' : ''}).
+                </p>
+              )}
             </div>
 
             {poItems.length > 0 && (
@@ -901,7 +941,7 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
               <textarea rows="2" className="w-full border border-border rounded-lg px-3 py-2 text-sm" value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} />
             </div>
             <div className="flex gap-3">
-              <button type="submit" className="flex-1 bg-[hsl(var(--primary))] text-white py-2 rounded-lg text-sm font-medium hover:bg-[hsl(var(--primary)/0.9)]">Buat Shipment</button>
+              <button type="submit" disabled={shipNoRate.length > 0} data-testid="vship-submit" className="flex-1 bg-[hsl(var(--primary))] text-white py-2 rounded-lg text-sm font-medium hover:bg-[hsl(var(--primary)/0.9)] disabled:opacity-50">Buat Shipment</button>
               <button type="button" onClick={() => setShowModal(false)} className="flex-1 border border-border py-2 rounded-lg text-sm hover:bg-muted/60">Batal</button>
             </div>
           </form>

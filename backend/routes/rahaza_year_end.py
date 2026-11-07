@@ -14,6 +14,8 @@ from database import get_db
 from routes.rahaza_fin_reports import _aggregate_by_account, _bs_type
 from routes.rahaza_periods import _require_fin_mgr
 from routes.rahaza_posting import _create_posted_je, _find_existing_je, _get_account
+from core import entities as ent_mod
+from core.entities import DA, entity_from_request, entity_match
 
 router = APIRouter(prefix="/api/rahaza/year-end", tags=["rahaza-year-end"])
 SOURCE_MODULE = "year_end_close"
@@ -30,11 +32,15 @@ def year_end_allowed(year: int, today: date) -> bool:
     return today > date(year, 12, 31)
 
 
-async def _preview(db, year: int) -> dict:
-    periods = await db.rahaza_periods.find({"year": year}, {"_id": 0, "period_code": 1, "status": 1}).to_list(12)
+async def _preview(db, year: int, entity: str = DA) -> dict:
+    """Tahap 8: tutup tahun PER CV (periode, saldo L/R, dan jurnal penutup milik buku CV itu)."""
+    entity = ent_mod.entity_of_value(entity)
+    periods = await db.rahaza_periods.find({"year": year, **entity_match(entity)},
+                                           {"_id": 0, "period_code": 1, "status": 1}).to_list(24)
     by_code = {p["period_code"]: p["status"] for p in periods}
     open_periods = [f"{year}-{m:02d}" for m in range(1, 13) if by_code.get(f"{year}-{m:02d}") not in ("closed", "locked")]
-    match = {"date": {"$gte": f"{year}-01-01", "$lte": f"{year}-12-31"}, "source_module": {"$ne": SOURCE_MODULE}}
+    match = {"date": {"$gte": f"{year}-01-01", "$lte": f"{year}-12-31"}, "source_module": {"$ne": SOURCE_MODULE},
+             **entity_match(entity)}
     per_acc = await _aggregate_by_account(db, match)
     accounts = await db.rahaza_coa_accounts.find({"is_group": False}, {"_id": 0, "code": 1, "name": 1, "type": 1}).to_list(5000)
     lines, net = [], 0.0
@@ -51,12 +57,12 @@ async def _preview(db, year: int) -> dict:
         net += bal
         lines.append({"account_code": acc["code"], "account_name": acc["name"], "type": t,
                       "debit": max(0, bal), "credit": -bal if bal < 0 else 0})
-    existing = await _find_existing_je(db, SOURCE_MODULE, f"yearend:{year}")
+    existing = await _find_existing_je(db, SOURCE_MODULE, f"yearend:{year}", entity=entity)
     # 2026-11-02 (S2-H butir 7): akun Laba Ditahan dari peran Profil Posting (bawaan = konstanta)
     from routes.rahaza_posting_profiles import role_code
     re_code = await role_code(db, "year_end_close", "credit_retained_earnings", RETAINED_EARNINGS)
     re_acc = await _get_account(db, re_code)
-    return {"year": year, "open_periods": open_periods, "net_income": round(net, 2), "lines": lines,
+    return {"year": year, "entity": entity, "open_periods": open_periods, "net_income": round(net, 2), "lines": lines,
             "retained_earnings_account": re_code, "retained_earnings_ok": bool(re_acc),
             "already_closed": bool(existing),
             "existing_je": {"id": existing["id"], "je_number": existing.get("je_number")} if existing else None,
@@ -67,14 +73,15 @@ async def _preview(db, year: int) -> dict:
 async def list_closings(request: Request):
     await require_auth(request)
     db = get_db()
-    rows = await db.rahaza_year_end_closings.find({}, {"_id": 0}).sort("year", -1).to_list(50)
+    ent = entity_from_request(request, allow_all=True)
+    rows = await db.rahaza_year_end_closings.find(entity_match(ent), {"_id": 0}).sort("year", -1).to_list(100)
     return {"closings": serialize_doc(rows)}
 
 
 @router.get("/preview")
 async def preview_year_end(request: Request, year: int):
     await require_auth(request)
-    return await _preview(get_db(), year)
+    return await _preview(get_db(), year, entity_from_request(request))
 
 
 @router.post("/close")
@@ -83,6 +90,7 @@ async def close_year(request: Request):
     db = get_db()
     body = await request.json()
     year = int((body or {}).get("year") or 0)
+    entity = entity_from_request(request, body if isinstance(body, dict) else None)
     if year < 2000:
         raise HTTPException(400, "Tahun tidak valid.")
     # 2026-11-02 (audit No.34): tutup tahun hanya SETELAH 31 Desember tahun itu (WIB). Dulu tahun
@@ -92,7 +100,7 @@ async def close_year(request: Request):
     if not year_end_allowed(year, today_wib()):
         raise HTTPException(400, f"Tahun {year} belum berakhir. Tutup tahun hanya boleh setelah "
                                  f"31 Desember {year} (hari ini {today_wib().isoformat()} WIB).")
-    pv = await _preview(db, year)
+    pv = await _preview(db, year, entity)
     if pv["already_closed"]:
         raise HTTPException(400, f"Tahun {year} sudah ditutup (JE {pv['existing_je']['je_number']}).")
     if pv["open_periods"]:
@@ -107,13 +115,14 @@ async def close_year(request: Request):
     lines.append({"account_code": pv["retained_earnings_account"], "debit": -net if net < 0 else 0, "credit": max(0, net),
                   "description": f"Laba (rugi) bersih {year} → Laba Ditahan"})
     res = await _create_posted_je(db, date(year, 12, 31), f"Jurnal Penutup Tahun {year} — laba bersih {net:,.0f} ke Laba Ditahan",
-                                  SOURCE_MODULE, f"yearend:{year}", lines, user, allow_closed_period=True)
+                                  SOURCE_MODULE, f"yearend:{year}", lines, user, allow_closed_period=True,
+                                  entity=entity)
     if not res.get("ok"):
         raise HTTPException(400, res.get("error") or "Gagal membuat jurnal penutup.")
-    doc = {"id": str(uuid.uuid4()), "year": year, "je_id": res["je_id"], "je_number": res["je_number"], "net_income": net,
+    doc = {"id": str(uuid.uuid4()), "year": year, "entity": entity, "je_id": res["je_id"], "je_number": res["je_number"], "net_income": net,
            "lines_count": len(pv["lines"]), "closed_at": _now(), "closed_by": user.get("name", ""), "status": "closed"}
     await db.rahaza_year_end_closings.insert_one(doc)
-    await log_activity(user["id"], user.get("name", ""), "year_end_close", "periods", f"year={year} je={res['je_number']} net={net}")
+    await log_activity(user["id"], user.get("name", ""), "year_end_close", "periods", f"{entity} year={year} je={res['je_number']} net={net}")
     return serialize_doc(doc)
 
 
@@ -121,16 +130,22 @@ async def close_year(request: Request):
 async def reverse_year_end(year: int, request: Request):
     user = await _require_fin_mgr(request)
     db = get_db()
-    je = await _find_existing_je(db, SOURCE_MODULE, f"yearend:{year}")
+    try:
+        _body = await request.json()
+    except Exception:  # noqa: BLE001 (tanpa body)
+        _body = None
+    entity = entity_from_request(request, _body if isinstance(_body, dict) else None)
+    je = await _find_existing_je(db, SOURCE_MODULE, f"yearend:{year}", entity=entity)
     if not je:
         raise HTTPException(404, f"Tahun {year} belum ditutup.")
-    _per = await db.rahaza_periods.find_one({"period_code": str(je.get("date", ""))[:7]}, {"_id": 0, "status": 1})
+    _per = await db.rahaza_periods.find_one({"period_code": str(je.get("date", ""))[:7], **entity_match(entity)},
+                                            {"_id": 0, "status": 1})
     if _per and _per.get("status") == "locked":  # FIN-20d
         raise HTTPException(409, f"Periode {str(je.get('date',''))[:7]} terkunci; buka kunci periode dahulu sebelum membatalkan tutup tahun.")
     await db.rahaza_journal_entries.update_one({"id": je["id"]}, {"$set": {
         "status": "voided", "voided_at": _now(), "voided_by": user.get("id"), "void_reason": "Pembatalan tutup tahun", "updated_at": _now()}})
     await db.rahaza_journal_lines.delete_many({"je_id": je["id"]})
-    await db.rahaza_year_end_closings.update_one({"year": year, "status": "closed"}, {"$set": {
+    await db.rahaza_year_end_closings.update_one({"year": year, "status": "closed", **entity_match(entity)}, {"$set": {
         "status": "reversed", "reversed_at": _now(), "reversed_by": user.get("name", "")}})
     await log_activity(user["id"], user.get("name", ""), "year_end_reverse", "periods", f"year={year} je={je.get('je_number')}")
     return {"ok": True, "year": year, "voided_je": je.get("je_number")}

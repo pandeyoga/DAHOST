@@ -312,6 +312,21 @@ async def mature_ap_from_cmt_receipt(db, receipt_id: str, user: dict) -> dict:
     if not lines:
         return {'ok': False, 'error': 'cmt_receipt tanpa lines — tidak bisa mature AP'}
 
+    # Tahap 8 fase 2 (keputusan owner K7, desain §2): PO MAKLON yang dijahit tim CV Sukma sendiri TIDAK punya
+    # tagihan CMT (biaya tim lewat jurnal manual gaji Sukma). PO internal + tim Sukma tetap ditagih (antar CV).
+    from core import intercompany as ic
+    from core.entities import SMU, is_maklon_po
+    _po = await db.production_pos.find_one({'id': receipt.get('po_id')}, {'_id': 0, 'business_type': 1, 'vendor_id': 1}) \
+        if receipt.get('po_id') else None
+    _vid = receipt.get('cmt_vendor_id') or ''
+    if not _vid and receipt.get('related_shipment_id'):
+        _ship = await db.buyer_shipments.find_one({'id': receipt['related_shipment_id']}, {'_id': 0, 'vendor_id': 1})
+        _vid = (_ship or {}).get('vendor_id', '')
+    if is_maklon_po(_po) and await ic.vendor_owner(db, _vid or (_po or {}).get('vendor_id')) == SMU:
+        await db.cmt_receipts.update_one({'id': receipt_id}, {'$set': {
+            'cmt_bill_note': ic.OWN_TEAM_MSG, 'own_team_no_bill': True, 'updated_at': now()}})
+        return {'ok': True, 'skipped': True, 'own_team': True, 'message': ic.OWN_TEAM_MSG}
+
     # Resolve cmt_rate per line via po_item_id → cmt_price_snapshot.
     # Fallback: 0 → variance (Finance manual review).
     po_item_ids = list({ln.get('po_item_id') for ln in lines if ln.get('po_item_id')})
@@ -592,7 +607,8 @@ async def compute_po_fulfillment(db, po_id: str) -> dict:
     # PO INTERNAL: "terpenuhi" = sudah MASUK FG. 2026-11-02 (K17 butir 7): masuk FG =
     # LOLOS QC (bukan produced — dulu produksi job anak rework ikut, 11 untuk lolos 10).
     po_doc = await db.production_pos.find_one({'id': po_id}, {'_id': 0, 'business_type': 1})
-    is_internal = (po_doc or {}).get('business_type') == 'internal'
+    from core.entities import is_maklon_po
+    is_internal = not is_maklon_po(po_doc)   # Tahap 8 (desain §9): tanpa jenis = internal
     produced_by_item = {poi: q['produced_main'] for poi, q in qmap.items()}
     total_produced = sum(produced_by_item.values())
     fulfilled_by_item = {

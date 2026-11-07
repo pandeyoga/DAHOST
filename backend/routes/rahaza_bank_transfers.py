@@ -8,13 +8,14 @@ Transfer dana internal antar rekening bank dengan auto-posting GL:
 Collection: rahaza_bank_transfers
 Prefix: /api/finance/bank-transfers
 """
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime, timezone, date
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
 from routes.rahaza_posting import _create_posted_je, _find_existing_je, get_mapping
+from core import entities as ent_mod
 import logging
 import uuid
 from utils.waktu import today_wib
@@ -72,7 +73,8 @@ async def _post_bank_transfer(db, transfer: dict, user: dict) -> dict:
          'description': f"Kirim ke {transfer.get('to_account_name', to_code)}"},
     ]
 
-    result = await _create_posted_je(db, je_date, memo, 'bank_transfer', source_ref, lines, user)
+    result = await _create_posted_je(db, je_date, memo, 'bank_transfer', source_ref, lines, user,
+                                     entity=await _transfer_entity(db, transfer))   # Tahap 8
     # Persist result
     if result.get('ok'):
         upd = {'gl_posted': True, 'gl_je_id': result.get('je_id'), 'gl_je_number': result.get('je_number'), 'gl_error': None}
@@ -80,6 +82,30 @@ async def _post_bank_transfer(db, transfer: dict, user: dict) -> dict:
         upd = {'gl_posted': False, 'gl_je_id': None, 'gl_error': result.get('error')}
     await db.rahaza_bank_transfers.update_one({'id': tf_id}, {'$set': upd})
     return result
+
+
+async def _transfer_entity(db, transfer: dict) -> str:
+    """CV transfer: field dokumen, atau pemilik rekening sumber (dokumen lama)."""
+    if transfer.get('entity'):
+        return ent_mod.entity_of_value(transfer['entity'])
+    return (await ent_mod.cash_account_entity(db, gl_code=transfer.get('from_account_code'))) or ent_mod.DA
+
+
+async def _owners_or_reject(db, from_code: str, to_code: str, chosen) -> str:
+    """Tahap 8: transfer hanya antar rekening SATU CV. Rekening beda CV DITOLAK dan diarahkan ke menu
+    Keuangan › Transaksi antar CV (fase 2: pinjaman / pelunasan) — di sana dua jurnal berlabel dibuat sekaligus
+    dengan hutang/piutang antar CV, bukan satu jurnal transfer yang menyeberang buku."""
+    src = await ent_mod.cash_account_entity(db, gl_code=from_code) or ent_mod.DA
+    dst = await ent_mod.cash_account_entity(db, gl_code=to_code) or ent_mod.DA
+    if src != dst:
+        raise HTTPException(400, f"Transfer ditolak: rekening sumber milik {ent_mod.entity_short(src)}, rekening "
+                                 f"tujuan milik {ent_mod.entity_short(dst)}. Catat pemindahan uang antar CV di menu Keuangan › "
+                                 f"Transaksi antar CV (jenis Pinjaman atau Pelunasan) — jurnal di dua buku dibuat "
+                                 f"otomatis.")
+    if chosen and chosen != src:
+        raise HTTPException(400, f"Transfer ditolak: kedua rekening milik {ent_mod.entity_short(src)}, bukan "
+                                 f"{ent_mod.entity_short(chosen)}. Ganti pilihan CV atau rekeningnya.")
+    return src
 
 
 # ── Pydantic Models ─────────────────────────────────────────────────────────
@@ -106,9 +132,10 @@ async def list_transfers(
     skip: int = Query(0, ge=0),
     status: Optional[str] = Query(None),
     user: dict = Depends(require_auth),
+    request: Request = None,
 ):
     db = get_db()
-    q = {}
+    q = dict(ent_mod.entity_match(ent_mod.entity_from_request(request, allow_all=True)))   # Tahap 8
     if status:
         q['status'] = status
     total = await db.rahaza_bank_transfers.count_documents(q)
@@ -117,7 +144,7 @@ async def list_transfers(
 
 
 @router.post('')
-async def create_transfer(body: TransferCreate, user: dict = Depends(require_auth)):
+async def create_transfer(body: TransferCreate, user: dict = Depends(require_auth), request: Request = None):
     if user.get('role') not in FINANCE_ROLES:
         raise HTTPException(403, 'Hanya Finance/Admin yang bisa membuat transfer bank.')
     if body.from_account_code == body.to_account_code:
@@ -132,6 +159,8 @@ async def create_transfer(body: TransferCreate, user: dict = Depends(require_aut
         if not await is_bank_code(db, (_code or '').strip()):
             raise HTTPException(400, f"Akun {_label} '{_code}' bukan rekening kas/bank aktif. Transfer bank "
                                      f"hanya antar rekening kas/bank milik sendiri (daftar Kas & Bank).")
+    entity = await _owners_or_reject(db, (body.from_account_code or '').strip(), (body.to_account_code or '').strip(),
+                                     ent_mod.explicit_entity(request))   # Tahap 8
     now = _now()
     tf_id = _uid()
     # Nomor referensi — SATU PINTU kebijakan penomoran (SESI #27, batch-3 Fase G).
@@ -144,6 +173,7 @@ async def create_transfer(body: TransferCreate, user: dict = Depends(require_aut
 
     doc = {
         'id': tf_id,
+        'entity': entity,
         'ref_number': ref_number,
         'from_account_code': body.from_account_code,
         'from_account_name': body.from_account_name or body.from_account_code,
@@ -238,7 +268,8 @@ async def void_transfer(tf_id: str, user: dict = Depends(require_auth)):
         {'account_code': to_code,   'debit': 0, 'credit': round(amount, 2),
          'description': f"Reversal: {memo}"},
     ]
-    result = await _create_posted_je(db, je_date, memo, 'bank_transfer', void_ref, lines, user)
+    result = await _create_posted_je(db, je_date, memo, 'bank_transfer', void_ref, lines, user,
+                                     entity=await _transfer_entity(db, original))   # Tahap 8
     if result.get('ok'):
         await db.rahaza_bank_transfers.update_one(
             {'id': tf_id},

@@ -71,7 +71,9 @@ async def list_accruals(request: Request,
         q["status"] = status
     if recurring_only is not None:
         q["is_recurring"] = recurring_only
-    
+    from core.entities import entity_from_request, entity_match
+    q.update(entity_match(entity_from_request(request, allow_all=True)))   # Tahap 8: per CV
+
     rows = await db.rahaza_accruals.find(q, {"_id": 0}).sort("period", -1).to_list(500)
     return serialize_doc(rows)
 
@@ -97,9 +99,15 @@ async def create_accrual(request: Request):
         datetime.strptime(period, "%Y-%m")
     except ValueError:
         raise HTTPException(400, "Invalid period format. Use YYYY-MM")
-    
+    from core.entities import entity_from_request, validate_manual_lines
+    entity = entity_from_request(request, body)   # Tahap 8: CV akrual (Gabungan ditolak)
+    _acc_codes = [c for c in (body.get("expense_account"), body.get("accrued_account")) if c]
+    if _acc_codes:
+        await validate_manual_lines(db, [{"account_code": c} for c in _acc_codes], entity, what="Akrual")
+
     doc = {
         "id": _uid(),
+        "entity": entity,
         "period": period,
         "accrual_type": accrual_type,
         "description": body.get("description", ""),

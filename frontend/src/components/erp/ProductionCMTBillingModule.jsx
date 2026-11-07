@@ -25,7 +25,7 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
-import { apiGet, apiPost } from '../../lib/api';
+import { apiFetch, apiGet, apiPost } from '../../lib/api';
 import StaffEntryBadge from './engine/StaffEntryBadge';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { MoneyInput } from '@/components/ui/money-input';
@@ -194,7 +194,17 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
     >
       <GlassCard className="p-0 overflow-hidden">
         {view === 'schedules' ? (
-          <ScheduleTable items={schedules.items || []} loading={loading} />
+          <>
+            {/* Tahap 8 fase 2: PO maklon yang dijahit tim CV Sukma sendiri — tanpa tagihan & jadwal hutang CMT */}
+            {(schedules.own_team_pos || []).length > 0 && (
+              <div className="px-4 pt-3 text-sm space-y-1" data-testid="cmt-own-team-pos">
+                {schedules.own_team_pos.map((o) => (
+                  <p key={o.po_id}><b>{o.po_number}</b> · {o.vendor_name}: {o.message}</p>
+                ))}
+              </div>
+            )}
+            <ScheduleTable items={schedules.items || []} loading={loading} />
+          </>
         ) : loading && !rows.length ? (
           <div className="p-4 text-sm text-muted-foreground"><RefreshCw className="w-4 h-4 animate-spin inline mr-2" />Memuat tagihan…</div>
         ) : paged.length === 0 ? (
@@ -226,6 +236,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
                   </TableCell>
                   <TableCell>
                     <span className="block">{r.cmt_name || '—'}</span>
+                    {r.intercompany && <StatusBadge status="antar-cv" label="Antar CV" tone="info" testId={`cmt-billing-ic-${r.payment_code}`} />}
                     <StaffEntryBadge source={r.progress_entry_source} by={r.staff_entered_by} qty={r.staff_entered_progress_qty}
                       compact testId={`cmt-billing-entry-badge-${r.payment_code}`} />
                   </TableCell>
@@ -305,9 +316,30 @@ function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
   const bill = detail.bill || {};
   const [cashAccounts, setCashAccounts] = useState([]);
   const [disbursements, setDisbursements] = useState([]);
-  const [payForm, setPayForm] = useState({ cash_account_id: '', amount: '', payment_date: todayWIB(), reference_no: '' });
+  const [payForm, setPayForm] = useState({ cash_account_id: '', counter_cash_account_id: '', amount: '', payment_date: todayWIB(), reference_no: '' });
   const [busy, setBusy] = useState(false);
-  useEffect(() => { apiGet('/rahaza/cash-accounts').then((d) => setCashAccounts(Array.isArray(d) ? d : [])).catch(() => {}); }, []);
+  // Tahap 8 (dua CV): tagihan CMT PO maklon dibayar dari rekening CV Sukma, PO internal dari rekening CV Dewi Aditya.
+  const billCv = bill.business_type === 'maklon' ? 'SMU' : 'DA';
+  // Tahap 8 fase 2: tagihan tim jahit CV Sukma = pembayaran ANTAR CV — rekening CV Sukma yang menerima ikut dipilih;
+  // penerimaan di buku CV Sukma dibuat otomatis dengan nilai yang sama.
+  const isIc = !!bill.intercompany;
+  const [counterAccounts, setCounterAccounts] = useState([]);
+  useEffect(() => {
+    apiGet(`/rahaza/cash-accounts?entity=${billCv}`).then((d) => setCashAccounts(Array.isArray(d) ? d : [])).catch(() => {});
+  }, [billCv]);
+  useEffect(() => {
+    if (!isIc) { setCounterAccounts([]); return; }
+    apiGet('/rahaza/cash-accounts?entity=SMU').then((d) => setCounterAccounts(Array.isArray(d) ? d : [])).catch(() => {});
+  }, [isIc]);
+  const openIcPdf = async () => {
+    try {
+      const r = await apiFetch(`/rahaza/intercompany/documents/${bill.ic_ar_invoice_id}/pdf`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const url = URL.createObjectURL(await r.blob());
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) { toast.error(`PDF gagal dibuka: ${e.message}`); }
+  };
   useEffect(() => {
     if (!bill.id) { setDisbursements([]); return; }
     apiGet(`/dewi/maklon/finance/cmt-payments/${bill.id}/disbursements`).then((d) => setDisbursements(Array.isArray(d) ? d : [])).catch(() => {});
@@ -321,13 +353,16 @@ function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
 
   const pay = async () => {
     if (!payForm.cash_account_id) { toast.error('Pilih rekening kas/bank'); return; }
+    if (isIc && !payForm.counter_cash_account_id) { toast.error('Pilih rekening CV Sukma yang menerima'); return; }
     setBusy(true);
     try {
       const r = await apiPost(`/dewi/maklon/finance/cmt-payments/${bill.id}/pay`, {
         cash_account_id: payForm.cash_account_id, amount: payForm.amount ? Number(payForm.amount) : null,
         payment_date: payForm.payment_date, reference_no: payForm.reference_no,
+        ...(isIc ? { counter_cash_account_id: payForm.counter_cash_account_id } : {}),
       });
       if (r?.post_error) toast.warning(`Pembayaran dicatat, jurnal gagal: ${r.post_error}`);
+      else if (r?.intercompany) toast.success(`Pembayaran antar CV dicatat · ${r?.gl_je_number || '-'} (CV Dewi Aditya) + ${r.intercompany.mirror?.je_number || '-'} (CV Sukma)`);
       else toast.success(`Pembayaran dicatat · ${r?.gl_je_number || '-'}`);
       setPayForm((f) => ({ ...f, amount: '', reference_no: '' }));
       await onChanged();
@@ -371,6 +406,14 @@ function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
           <Landmark className="w-4 h-4" />Jurnalkan
         </Button>
       )}>
+      {isIc && (
+        <Notice tone="info" icon={Landmark} testId="cmt-bill-ic"
+          title="Tagihan antar CV — tim jahit CV Sukma"
+          action={bill.ic_ar_invoice_id && <Button size="sm" variant="outline" onClick={openIcPdf} data-testid="cmt-bill-ic-pdf">Tagihan jasa jahit (PDF)</Button>}>
+          Hutang CV Dewi Aditya ke CV Sukma. Piutang pasangannya di buku CV Sukma: {bill.ic_ar_invoice_number || 'belum dibuat'}.
+          Pembayaran di sini otomatis dicatat sebagai penerimaan di rekening CV Sukma yang dipilih.
+        </Notice>
+      )}
       <p className="text-sm" data-testid="cmt-bill-payable">
         Bisa dibayar <b className="tabular-nums">{fmtRp(payable)}</b> dari <span className="tabular-nums">{fmtRp(bill.amount)}</span>
         {' '}(dibayar {fmtRp(bill.paid_amount)}{blocked > 0 ? `, tertahan ${fmtRp(blocked)}` : ''})
@@ -433,6 +476,13 @@ function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
             <option value="">— Rekening kas/bank —</option>
             {cashAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}{a.gl_account_code ? ` · ${a.gl_account_code}` : ''}</option>)}
           </SmartNativeSelect>
+          {isIc && (
+            <SmartNativeSelect value={payForm.counter_cash_account_id} onChange={(e) => setPayForm((f) => ({ ...f, counter_cash_account_id: e.target.value }))}
+              className="h-9 w-64" aria-label="Rekening CV Sukma penerima" data-testid="cmt-pay-counter-account">
+              <option value="">— Rekening CV Sukma penerima —</option>
+              {counterAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}{a.gl_account_code ? ` · ${a.gl_account_code}` : ''}</option>)}
+            </SmartNativeSelect>
+          )}
           <MoneyInput glass placeholder={`maks. ${fmtNum(payable)}`} value={payForm.amount} onChange={(e) => setPayForm((f) => ({ ...f, amount: e.target.value }))}
             className="h-9 w-40" data-testid="cmt-pay-amount" />
           <GlassInput type="date" value={payForm.payment_date} onChange={(e) => setPayForm((f) => ({ ...f, payment_date: e.target.value }))} className="h-9 w-40" data-testid="cmt-pay-date" />

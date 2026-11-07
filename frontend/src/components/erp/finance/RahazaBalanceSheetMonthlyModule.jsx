@@ -7,6 +7,7 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { toast } from 'sonner';
 import { StatTile, EmptyState } from '../moduleAtoms';
 import PageLayout from '../layout/PageLayout';
+import IntercompanyNotes from './IntercompanyNotes';
 import StatementTable from './StatementTable';
 import { fmt, authHeaders, downloadXlsx, yearOptions } from './reportShared';
 
@@ -83,6 +84,7 @@ export default function RahazaBalanceSheetMonthlyModule({ token }) {
         <Button variant="outline" onClick={exportXlsx} disabled={!data} data-testid="bs12-export"><Download className="w-4 h-4" />Unduh Excel</Button>
       </>}
       summary={hasData && <>
+        <IntercompanyNotes data={data} testId="bs12-ic-notes" />
         <p className={`flex items-center gap-1.5 text-sm ${data.balanced ? 'text-muted-foreground' : 'text-[hsl(var(--destructive))] font-medium'}`} data-testid="bs12-balanced">
           {data.balanced
             ? <><CheckCircle2 className="w-4 h-4 text-[hsl(var(--success))]" /> Semua kolom seimbang: aset = liabilitas + ekuitas</>

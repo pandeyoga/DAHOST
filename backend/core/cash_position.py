@@ -13,12 +13,16 @@ from __future__ import annotations
 INTERNAL_MODULES = ("bank_transfer", "opening_balance")
 
 
-async def cash_position(db, from_date: str | None = None, to_date: str | None = None) -> dict:
+async def cash_position(db, from_date: str | None = None, to_date: str | None = None,
+                        entity: str | None = None) -> dict:
+    """`entity` (Tahap 8): DA | SMU = buku satu CV; None/ALL = semua (perilaku lama)."""
+    from core.entities import entity_match
     from core.fin_statements import cash_account_codes
     codes = sorted(await cash_account_codes(db))
     if not codes:
         return {"balance": 0.0, "cash_in": 0.0, "cash_out": 0.0, "net": 0.0, "accounts": 0}
-    bal_match: dict = {"account_code": {"$in": codes}}
+    em = entity_match(entity)
+    bal_match: dict = {"account_code": {"$in": codes}, **em}
     if to_date:
         bal_match["date"] = {"$lte": to_date}
     balance = 0.0
@@ -32,7 +36,7 @@ async def cash_position(db, from_date: str | None = None, to_date: str | None = 
         if to_date:
             rng["$lte"] = to_date
         async for r in db.rahaza_journal_lines.aggregate([
-                {"$match": {"account_code": {"$in": codes}, "date": rng,
+                {"$match": {"account_code": {"$in": codes}, "date": rng, **em,
                             "source_module": {"$nin": list(INTERNAL_MODULES)}}},
                 {"$group": {"_id": None, "d": {"$sum": "$debit"}, "c": {"$sum": "$credit"}}}]):
             flow_in, flow_out = float(r.get("d") or 0), float(r.get("c") or 0)

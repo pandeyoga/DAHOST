@@ -231,6 +231,20 @@ export default function PortalSayaCuti({ user, headers }) {
     }
   };
 
+  // Tahap 7: tarik pengajuan lembur yang masih menunggu (409 bila HR baru saja memutusnya).
+  const cancelOT = async (id) => {
+    if (!(await confirmDialog({ title: 'Batalkan pengajuan lembur ini?', confirmLabel: 'Batalkan pengajuan',
+      cancelLabel: 'Kembali', danger: true }))) return;
+    try {
+      await axios.delete(`${API}/api/rahaza/overtime/${id}`, { headers });
+      toast({ title: 'Pengajuan lembur dibatalkan' });
+      loadData();
+    } catch (e) {
+      toast({ title: e.response?.data?.detail || 'Gagal membatalkan', variant: 'destructive' });
+      loadData();
+    }
+  };
+
   const submitOT = async () => {
     if (!otForm.date || !(Number(otForm.hours) > 0) || !otForm.reason.trim())
       return toast({ title: 'Isi tanggal, jumlah jam, dan alasan', variant: 'destructive' });
@@ -282,8 +296,11 @@ export default function PortalSayaCuti({ user, headers }) {
           {balances.filter(b => b.remaining > 0 || b.used > 0).map(b => (
             <Card key={b.leave_type_id} className="p-3">
               <p className="text-[10px] text-muted-foreground truncate">{b.leave_type_name}</p>
-              <p className="text-lg font-bold tabular-nums">{b.remaining}</p>
-              <p className="text-[10px] text-muted-foreground">sisa dari {b.quota} hari</p>
+              {/* Tahap 7: jenis tak dibayar tidak punya jatah — tampilkan pemakaian, bukan "sisa" minus */}
+              <p className="text-lg font-bold tabular-nums">{b.unpaid ? b.used : b.remaining}</p>
+              <p className="text-[10px] text-muted-foreground">
+                {b.unpaid ? 'hari terpakai · tidak dibayar' : `sisa dari ${b.quota} hari`}
+              </p>
             </Card>
           ))}
         </div>
@@ -522,6 +539,10 @@ export default function PortalSayaCuti({ user, headers }) {
                       <p className="text-xs text-muted-foreground">{ot.reason}</p>
                     </div>
                     <StatusBadge status={ot.status || 'pending_approval'} />
+                    {ot.status === 'pending' && (
+                      <Button size="sm" variant="outline" onClick={() => cancelOT(ot.id)}
+                        data-testid={`ot-cancel-${ot.id}`}>Batalkan</Button>
+                    )}
                   </div>
                 </Card>
               ))}

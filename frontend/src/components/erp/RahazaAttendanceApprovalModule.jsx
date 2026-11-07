@@ -19,10 +19,12 @@ import PageLayout, { DetailPanel } from './layout/PageLayout';
 import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import { withFileAuth } from '@/lib/fileUrl';
+import { parseServerTime } from '@/lib/waktu';
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 const TZ = 'Asia/Jakarta';
-const fmtTime = (ts) => { if (!ts) return '-'; try { return new Date(ts).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: TZ }); } catch { return '-'; } };
+// Tahap 7 (2026-11-07): jam server tanpa zona = UTC (dulu di browser WIB tampil mundur 7 jam: 03.04 → 20.04).
+const fmtTime = (ts) => { const d = parseServerTime(ts); if (!d) return '-'; try { return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: TZ }); } catch { return '-'; } };
 const fmtDate = (d) => { try { return new Date(`${d}T00:00:00+07:00`).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', timeZone: TZ }); } catch { return d; } };
 
 const APPROVAL = {

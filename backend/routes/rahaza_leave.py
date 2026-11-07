@@ -118,6 +118,16 @@ async def _ensure_own_or_hr(db, user: dict, employee_id: str, message: str):
         raise HTTPException(403, message)
 
 
+async def _ensure_can_view(db, user: dict, employee_id: str):
+    """Baca data cuti: milik sendiri, atau HR/atasan (2026-11-07, Tahap 7 — dulu cukup login)."""
+    from utils.employee_identity import can_view_all_employees, resolve_my_employee
+    if can_view_all_employees(user):
+        return
+    mine = await resolve_my_employee(db, user)
+    if not mine or mine.get("id") != employee_id:
+        raise HTTPException(403, "Anda hanya bisa melihat data cuti milik sendiri.")
+
+
 # ── LEAVE TYPES (Master) ───────────────────────────────────────────────────────
 
 @router.get("/leave-types")
@@ -302,8 +312,16 @@ async def list_leaves(
     skip: int = 0,
     limit: int = 30,
 ):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
+    # 2026-11-07 (Tahap 7): selain HR/atasan hanya pengajuan milik sendiri — dulu alasan & surat sakit semua
+    # karyawan terbaca akun staf mana pun.
+    from utils.employee_identity import can_view_all_employees, resolve_my_employee
+    if not can_view_all_employees(user):
+        mine = await resolve_my_employee(db, user)
+        if not mine or (employee_id and employee_id != mine["id"]):
+            return {"total": 0, "skip": skip, "limit": limit, "has_more": False, "items": []}
+        employee_id = mine["id"]
     q = {}
     if status:
         if status not in LEAVE_STATUSES:
@@ -358,9 +376,10 @@ async def list_leaves(
 @router.get("/leaves/balance")
 async def get_leave_balance(request: Request, employee_id: str, year: Optional[int] = None):
     """Get leave balance for employee (per year, per leave type)."""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
-    
+    await _ensure_can_view(db, user, employee_id)
+
     if not year:
         year = wib_year()
     
@@ -407,12 +426,13 @@ async def get_leave_balance(request: Request, employee_id: str, year: Optional[i
 
 @router.get("/leaves/{leave_id}")
 async def get_leave(leave_id: str, request: Request):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     leave = await db.rahaza_leave_requests.find_one({"id": leave_id}, {"_id": 0})
     if not leave:
         raise HTTPException(404, "Leave request tidak ditemukan.")
-    
+    await _ensure_can_view(db, user, leave.get("employee_id"))
+
     # Enrich
     if leave.get("employee_id"):
         emp = await db.rahaza_employees.find_one({"id": leave["employee_id"]}, {"_id": 0})
@@ -448,6 +468,10 @@ async def create_leave_request(db, user: dict, body: dict) -> dict:
     is_half_day    = bool(body.get("is_half_day", False) or body.get("half_day", False))
     half_day_period= body.get("half_day_period") or "AM"  # AM | PM
     request_type   = (body.get("leave_kind") or body.get("request_type") or "").strip().lower()
+    if not employee_id:
+        # 2026-11-07 (Tahap 7): tanpa employee_id = untuk diri sendiri (SSOT identitas, bukan isian klien).
+        from utils.employee_identity import require_my_employee
+        employee_id = (await require_my_employee(db, user))["id"]
 
     if not (employee_id and leave_type_id and from_date and to_date):
         raise HTTPException(400, "employee_id, leave_type_id, from_date, to_date wajib diisi.")
@@ -640,6 +664,12 @@ async def leave_approval_preview(leave_id: str, request: Request):
                                                                                  "employee_code": 1})
     year = date.fromisoformat(str(leave["from_date"])[:10]).year
     bal = await balance_snapshot(db, leave["employee_id"], leave["leave_type_id"], year, lt=lt)
+    # Tahap 7: cuti lintas tahun memakai saldo masing-masing tahun → tampilkan per tahun.
+    from core.leave_engine import days_per_year
+    balance_by_year = []
+    for y, need in days_per_year(info["days"], is_half_day(leave)).items():
+        b = bal if y == year else await balance_snapshot(db, leave["employee_id"], leave["leave_type_id"], y, lt=lt)
+        balance_by_year.append({"year": y, "days": need, "remaining": b["remaining"], "allocated": b["allocated"]})
     level_required = int(leave.get("approval_level_required") or 1)
     current = int(leave.get("current_approval_level") or 1)
     return serialize_doc({
@@ -648,7 +678,7 @@ async def leave_approval_preview(leave_id: str, request: Request):
         "reason": leave.get("reason") or "", "attachment_url": leave.get("attachment_url") or "",
         "attachment_filename": leave.get("attachment_filename") or "",
         "days": info["days"], "working_days": info["working_days"], "calendar_days": info["calendar_days"],
-        "balance": bal, "type_unpaid": _lt_is_unpaid(lt),
+        "balance": bal, "balance_by_year": balance_by_year, "type_unpaid": _lt_is_unpaid(lt),
         "suggestion": suggest_pay_decision(leave, lt),
         "final_step": not (level_required > 1 and current == 1),
     })
@@ -680,13 +710,9 @@ async def approve_leave(leave_id: str, request: Request):
 # mengirim `leave_approved`. Helper ini satu pintu untuk kabar keputusan; juga
 # boleh dipanggil jalur lain yang memutus cuti (mis. routes/hr_approval_inbox.py).
 async def leave_requester_user_ids(db, leave: dict) -> list:
-    """User pemohon: akun yang tertaut ke karyawan cuti; cadangan = pengaju."""
-    from utils.notif_recipients import active_user_filter
-    ids = []
-    if leave.get("employee_id"):
-        rows = await db.users.find(active_user_filter({"employee_id": leave["employee_id"]}),
-                                   {"_id": 0, "id": 1}).to_list(5)
-        ids = [r["id"] for r in rows if r.get("id")]
+    """User pemohon: akun yang tertaut ke karyawan cuti (dua arah tautan, Tahap 7); cadangan = pengaju."""
+    from utils.employee_identity import employee_user_ids
+    ids = await employee_user_ids(db, leave.get("employee_id"))
     if not ids:
         fallback = leave.get("submitted_by") or leave.get("created_by")
         if fallback:
@@ -803,11 +829,14 @@ async def _cancel_pending_leave(db, leave: dict, user: dict, cancel_reason: str)
     """Tarik pengajuan yang belum diputuskan: status 'cancelled', tanpa sentuh saldo/absensi."""
     leave_id = leave["id"]
     now = _now()
-    await db.rahaza_leave_requests.update_one(
+    res = await db.rahaza_leave_requests.update_one(
         {"id": leave_id, "status": {"$in": list(PENDING_LEAVE_STATUSES)}},
         {"$set": {"status": "cancelled", "cancelled_at": now, "cancelled_by": user["id"],
                   "cancelled_by_name": user.get("name", ""), "cancel_reason": cancel_reason,
                   "updated_at": now}})
+    if not getattr(res, "matched_count", 1):
+        # 2026-11-07 (Tahap 7): HR baru saja memutusnya (disetujui/ditolak) — jangan laporkan "dibatalkan".
+        raise HTTPException(409, "Pengajuan ini baru saja diputuskan HR. Muat ulang halaman lalu periksa statusnya.")
     try:  # antrean persetujuan & "Perlu Tindakan" atasan/HR ikut ditutup
         await db.approval_requests.update_many(
             {"type": "leave", "ref_id": leave_id, "status": "pending"},

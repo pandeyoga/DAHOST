@@ -414,6 +414,12 @@ async def create_vendor_shipment_internal(db, body: dict, user: dict, *, opening
                 raise HTTPException(400, f"Item PO '{po_item_doc.get('product_name','')}' sudah fully shipped ke vendor (ordered={ordered}, dikirim={already_sent}). Tidak bisa membuat NORMAL shipment lagi.")
             if qty_sent_now > remaining:
                 raise HTTPException(400, f"Qty dikirim ({qty_sent_now}) melebihi sisa qty ke vendor ({remaining}) untuk item '{po_item_doc.get('product_name','')}'. Kurangi qty atau gunakan permintaan ADDITIONAL.")
+    # K12 (7 Nov 2026): penjahit yang baru dipilih SAAT KIRIM (PO belum ber-vendor) wajib punya upah jahit per
+    # pcs di baris PO yang dikirim — upah itulah dasar tagihan CMT (qty lolos QC × upah). Upah TIDAK diketik
+    # di surat jalan (satu sumber: form PO / menu Biaya Jahit, field `po_items.cmt_price_snapshot`); kiriman
+    # ditolak dengan nama PO-nya dan layar Kirim Material menautkan ke form PO.
+    if not opening and not is_vendor(user):
+        await assert_rates_for_vendorless_pos(db, _po_ids_seen, items_data)
     shipment_business_type = 'internal'
     if shipment_po_id:
         _po_bt = await db.production_pos.find_one({'id': shipment_po_id}, {'_id': 0, 'business_type': 1})
@@ -590,6 +596,30 @@ async def create_vendor_shipment_internal(db, body: dict, user: dict, *, opening
             'negative_stock_lines': material_issue.get('negative_stock_lines') or [],
         }
     return result
+
+
+async def assert_rates_for_vendorless_pos(db, po_ids, items_data: list) -> None:
+    """400 bila PO tanpa vendor (penjahit dipilih di surat jalan ini) punya baris kiriman tanpa upah jahit."""
+    from core import sewing_rate as sr
+    pids = sorted(p for p in (po_ids or []) if p)
+    if not pids:
+        return
+    vendorless = {p['id']: p async for p in db.production_pos.find(
+        {'id': {'$in': pids}, **_NO_VENDOR}, {'_id': 0, 'id': 1, 'po_number': 1})}
+    if not vendorless:
+        return
+    line_ids = [i.get('po_item_id') for i in items_data or [] if i.get('po_item_id')]
+    lines = await db.po_items.find({'id': {'$in': line_ids}, 'po_id': {'$in': sorted(vendorless)}},
+                                   {'_id': 0, 'po_id': 1, 'sku': 1, 'product_name': 1, 'size': 1, 'qty': 1,
+                                    'cmt_price_snapshot': 1}).to_list(2000) if line_ids else []
+    for pid in sorted(vendorless):
+        miss = sr.missing_rate_lines([ln for ln in lines if ln.get('po_id') == pid])
+        if miss:
+            raise HTTPException(
+                400, f"Upah jahit per pcs belum diisi untuk {', '.join(miss[:6])}"
+                     f"{f' (+{len(miss) - 6} lagi)' if len(miss) > 6 else ''} di PO {vendorless[pid].get('po_number')}. "
+                     "Penjahit dipilih saat kirim, jadi isi dulu upahnya di form PO (Ubah PO → Upah jahit per pcs), "
+                     "lalu buat surat jalan lagi.")
 
 
 _NO_VENDOR ={'vendor_id': {'$in': [None, '']}}

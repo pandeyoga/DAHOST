@@ -17,6 +17,7 @@ import { formatRupiah, formatPercent } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
 import { thisYearWIB } from '@/lib/waktu';
 import { DepartmentSelect } from './hr/hrPickers';
+import { cvAccountParam, useCv } from '@/lib/entitas';
 
 const STATUS_MAP = {
   draft:    { label: 'Draf',      tone: 'muted' },
@@ -47,6 +48,7 @@ const fmtRp = formatRupiah;
  */
 export default function BudgetModule({ token }) {
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const coaCv = cvAccountParam(useCv()?.cv);  // Tahap 8: akun CV terpilih saja
   const [panelView, setPanelView] = useState('items'); // 'items' | 'variance'
   const [budgets, setBudgets] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -97,7 +99,7 @@ export default function BudgetModule({ token }) {
   const fetchMeta = async () => {
     const [ccRes, coaRes] = await Promise.all([
       fetch('/api/rahaza/cost-centers', { headers }),
-      fetch('/api/rahaza/coa/accounts?active_only=false', { headers }),
+      fetch(`/api/rahaza/coa/accounts?active_only=false${coaCv ? `&${coaCv}` : ''}`, { headers }),
     ]);
     if (ccRes.ok) setCostCenters(await ccRes.json());
     // 2026-11-07 (audit form Tahap 5): item anggaran hanya ke akun AKTIF dan BUKAN grup — realisasi dibaca dari

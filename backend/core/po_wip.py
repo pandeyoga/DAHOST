@@ -127,7 +127,8 @@ async def po_wip_position(db, po_id: str) -> dict:
         return {"ok": False, "error": "PO produksi tidak ditemukan."}
     mapping = await _mapping(db)
     wip_code = mapping.get("credit_wip")
-    bt = po.get("business_type") or ("internal" if not po.get("vendor_id") else "maklon")
+    from core.entities import po_business_type
+    bt = po_business_type(po)   # Tahap 8 (desain §9): tanpa jenis = internal (dulu: ber-vendor = maklon)
     out = {"ok": True, "po_id": po_id, "po_number": po.get("po_number"), "status": po.get("status"),
            "business_type": bt, "wip_account": wip_code, "groups": [], "residual": 0.0,
            "closed": po.get("status") in CLOSED_STATUSES,

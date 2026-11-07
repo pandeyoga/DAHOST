@@ -13,6 +13,7 @@ import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
 import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB } from '@/lib/waktu';
 import CashAccountSelect, { usePaymentCashAccounts } from './SdmCashAccountSelect';
+import { cvAccountParam, useCv } from '@/lib/entitas';
 
 const fmt = formatRupiah;
 
@@ -31,6 +32,7 @@ export default function RahazaExpensesModule({ token, onNavigate }) {
   const [creating, setCreating] = useState(false);
   const [loading, setLoading] = useState(true);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const coaCv = cvAccountParam(useCv()?.cv);  // Tahap 8: akun beban milik CV terpilih saja
   // 2026-11-04: periode dipilih (dulu 500 pengeluaran terbaru diam-diam, tanpa tanda terpotong)
   const [period, setPeriod] = useState(() => periodFromPreset('3m'));
 
@@ -40,7 +42,7 @@ export default function RahazaExpensesModule({ token, onNavigate }) {
       const [e, c, a] = await Promise.all([
         fetch(`/api/rahaza/expenses?from_=${period.from}&to=${period.to}&limit=${EXP_LIMIT}`, { headers }).then(r => r.json()),
         fetch('/api/rahaza/cost-centers', { headers }).then(r => r.json()),
-        fetch('/api/rahaza/coa/accounts', { headers }).then(r => (r.ok ? r.json() : [])),
+        fetch(`/api/rahaza/coa/accounts${coaCv ? `?${coaCv}` : ''}`, { headers }).then(r => (r.ok ? r.json() : [])),
       ]);
       setRows(Array.isArray(e) ? e : []); setCenters(Array.isArray(c) ? c : []); setCoa(Array.isArray(a) ? a : []);
     } finally { setLoading(false); }

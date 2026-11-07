@@ -286,6 +286,12 @@ function PayInvoiceModal({ token, inv, onClose, onPaid }) {
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
+  // Tahap 8 fase 2: hutang ANTAR CV (tagihan tim jahit CV Sukma / nota aksesoris CV Dewi Aditya) — rekening CV lain yang
+  // MENERIMA uangnya ikut dipilih; penerimaan di buku CV lain dibuat otomatis dengan nilai yang sama.
+  const isIc = !!inv.intercompany;
+  const otherCv = isCmtBill ? 'SMU' : (inv.entity === 'SMU' ? 'DA' : 'SMU');
+  const { accounts: counterAccounts, loaded: counterLoaded } = usePaymentCashAccounts(token, otherCv);
+  const [counterId, setCounterId] = useState('');
 
   const cash = Number(amount || 0);
   const disc = Number(discount || 0);
@@ -293,6 +299,8 @@ function PayInvoiceModal({ token, inv, onClose, onPaid }) {
   const left = balance - reduced;
   const problem = isCmtBill && balance <= 0 ? 'Belum ada yang bisa dibayar — seluruh sisa tagihan tertahan selisih; selesaikan dulu di Tagihan Vendor CMT.'
     : !accountId ? 'Pilih rekening pembayaran.'
+    : isIc && !counterId ? `Pilih rekening ${otherCv === 'SMU' ? 'CV Sukma' : 'CV Dewi Aditya'} yang menerima.`
+    : isIc && disc > 0 ? 'Hutang antar CV tidak memakai potongan pembayaran.'
     : cash <= 0 ? 'Jumlah dibayar harus lebih dari 0.'
       : left < -0.5 ? (isCmtBill
         ? `Melebihi yang bisa dibayar (${fmtRp(balance)}).`
@@ -308,9 +316,11 @@ function PayInvoiceModal({ token, inv, onClose, onPaid }) {
       const out = isCmt
         ? await apiPost(token, `/api/dewi/maklon/finance/cmt-payments/${inv.id}/pay`, {
           cash_account_id: accountId, amount: cash, payment_date: date, notes: notes || undefined,
+          ...(isIc ? { counter_cash_account_id: counterId } : {}),
         })
         : await apiPost(token, `/api/rahaza/ap-invoices/${inv.id}/payment`, {
           amount: cash, discount_amount: disc, account_id: accountId, date, notes: notes || undefined,
+          ...(isIc ? { counter_cash_account_id: counterId } : {}),
         });
       const posting = isCmt
         ? { ok: !out?.post_error, je_number: out?.gl_je_number, error: out?.post_error }
@@ -350,6 +360,13 @@ function PayInvoiceModal({ token, inv, onClose, onPaid }) {
             <CashAccountSelect accounts={accounts} loaded={loaded} value={accountId} onChange={setAccountId}
                                testId="ap-pay-account" />
           </div>
+          {isIc && (
+            <div data-testid="ap-pay-counter">
+              <label className="block text-xs font-medium mb-1">Diterima di rekening {otherCv === 'SMU' ? 'CV Sukma' : 'CV Dewi Aditya'} (antar CV)</label>
+              <CashAccountSelect accounts={counterAccounts} loaded={counterLoaded} value={counterId} onChange={setCounterId}
+                                 testId="ap-pay-counter-account" />
+            </div>
+          )}
           <div>
             <label className="block text-xs font-medium mb-1" htmlFor="ap-pay-date">Tanggal bayar</label>
             <GlassInput id="ap-pay-date" type="date" value={date} onChange={(e) => setDate(e.target.value)}
@@ -531,6 +548,8 @@ const cmtToRow = (p) => ({
   payable_amount: p.payable_amount, blocked_amount: p.blocked_amount,
   // tagihan CMT lahir 'draft' lalu langsung dijurnal; draft = jurnalnya gagal → hutang nyata yang belum dijurnal
   status: (p.status || '').toLowerCase() === 'draft' ? 'unposted' : (p.status || '').toLowerCase(), gl_posted: p.gl_posted,
+  // Tahap 8 fase 2: tagihan tim jahit CV Sukma = hutang antar CV (bayar → penerimaan CV Sukma otomatis)
+  intercompany: !!p.intercompany, entity: 'DA',
 });
 
 /**
@@ -757,7 +776,7 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
                           : i.invoice_number}
                       </td>
                       {financeMode && <td className="py-3 text-xs whitespace-nowrap">{KIND_LABEL[i.kind] || i.kind}</td>}
-                      <td className="py-3 text-xs">{i.vendor_name}</td>
+                      <td className="py-3 text-xs">{i.vendor_name}{i.intercompany && <span className="block text-[11px] text-[hsl(var(--primary))]" data-testid={`ap-ic-${i.invoice_number}`}>Antar CV</span>}</td>
                       <td className="py-3 text-[11px] text-muted-foreground">
                         {(i.po_numbers || []).join(', ') || (i.gr_numbers || []).join(', ') || '—'}
                       </td>

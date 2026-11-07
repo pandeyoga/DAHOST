@@ -35,7 +35,7 @@ with open(os.path.join(BACKEND, "server.py"), encoding="utf-8") as _f:
 
 # Nama di server.py yang dipakai ekspresi `dependencies=` router-router di bawah.
 _GUARD_NAMES = {"_DENY_EXTERNAL", "_DENY_EXTERNAL_AND_MKT", "_DENY_MKT", "_on_paths", "_DASHBOARD_GUARD",
-                "_REPORTS_GUARD", "_PAYSLIPS_GUARD"}
+                "_REPORTS_GUARD", "_PAYSLIPS_GUARD", "_KASBON_GUARD"}
 _IMPORT_MODULES = {"fastapi", "core.authz", "routes.shared"}
 
 
@@ -101,6 +101,12 @@ ROUTER_OF = {
     "/api/rahaza/payslips/{pid}": "rahaza_payroll_payslips_router",
     "/api/rahaza/payslips/{pid}/pdf": "rahaza_payroll_payslips_router",
     "/api/rahaza/payroll-runs/{run_id}/pdf": "rahaza_payroll_payslips_router",
+    # Tahap 7 (2026-11-07): kasbon milik sendiri juga untuk peran marketing
+    "/api/dewi/kasbon/requests": "dewi_kasbon_router",
+    "/api/dewi/kasbon/my-requests": "dewi_kasbon_router",
+    "/api/dewi/kasbon/requests/{req_id}": "dewi_kasbon_router",
+    "/api/dewi/kasbon/stats": "dewi_kasbon_router",
+    "/api/dewi/kasbon/employee/{emp_id}/deductions": "dewi_kasbon_router",
 }
 
 # `roles.portals` peran nyata di seed go-live; peran lain memakai PORTAL_ACCESS bawaan.
@@ -291,3 +297,22 @@ def test_dependency_terpasang_di_app_asli_bila_server_bisa_diimpor():
         route = by_path[(path, (method,))]
         names = [getattr(d.dependency, "__name__", "") for d in route.dependencies]
         assert names == [getattr(d, "__name__", "") for d in _router_deps(router_name)], path
+
+
+# ── Tahap 7 (keputusan owner 2026-11-07): Kasbon Portal Saya untuk peran marketing ─────────────
+@pytest.mark.parametrize("role", ["pic_toko", "marketing_kol", "cs_staff"])
+@pytest.mark.parametrize("path", ["/api/dewi/kasbon/requests", "/api/dewi/kasbon/my-requests",
+                                  "/api/dewi/kasbon/requests/{req_id}"])
+def test_kasbon_sendiri_lolos_untuk_peran_marketing(call, role, path):
+    assert call(role, path) == 200
+
+
+@pytest.mark.parametrize("role", ["pic_toko", "marketing_kol", "cs_staff"])
+@pytest.mark.parametrize("path", ["/api/dewi/kasbon/stats", "/api/dewi/kasbon/employee/{emp_id}/deductions"])
+def test_kasbon_selain_milik_sendiri_tetap_ditolak_untuk_peran_marketing(call, role, path):
+    assert call(role, path) == 403
+
+
+@pytest.mark.parametrize("role", ["cmt_vendor", "vendor", "buyer", "klien_maklon"])
+def test_kasbon_tetap_ditolak_untuk_peran_eksternal(call, role):
+    assert call(role, "/api/dewi/kasbon/my-requests") == 403

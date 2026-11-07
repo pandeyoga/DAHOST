@@ -141,3 +141,19 @@ def wib_stamp(dt: datetime | None = None) -> str:
     kemarin.
     """
     return (to_wib(dt) or now_wib()).strftime("%Y%m%d_%H%M%S")
+
+
+# Nama bulan Indonesia — 2026-11-07 (Tahap 7). Pemakai baru memakai ini (beberapa ekspor lama punya salinan sendiri).
+BULAN_ID = ("Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober",
+            "November", "Desember")
+
+
+def periode_label(ym) -> str:
+    """'2026-11' / '2026-11-30' → 'November 2026'. Nilai tak terbaca dikembalikan apa adanya."""
+    try:
+        y, m = str(ym)[:7].split("-")
+        if not 1 <= int(m) <= 12:
+            raise ValueError(m)
+        return f"{BULAN_ID[int(m) - 1]} {int(y)}"
+    except (ValueError, IndexError):
+        return str(ym or "-")

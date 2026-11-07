@@ -141,24 +141,19 @@ async def get_dashboard(request: Request):
     # --- Leave balance ---
     leave_balance = []
     if emp_id:
-        bals = await db.rahaza_leave_balances.find(
-            {"employee_id": emp_id, "year": today_wib().year}, {"_id": 0}
-        ).to_list(20)
-        lt_ids = [b.get("leave_type_id") for b in bals]
-        lts = await db.rahaza_leave_types.find({"id": {"$in": lt_ids}}, {"_id": 0}).to_list(500) if lt_ids else []
-        lt_map = {lt["id"]: lt for lt in lts}
-        for b in bals:
-            lt = lt_map.get(b.get("leave_type_id"), {})
-            # Tahap 1 (2026-11-06): jatah tersimpan di `allocated` (bukan `quota`). Dulu dibaca
-            # `quota` = 0 sehingga "Sisa Cuti" di dashboard = 0 − terpakai (minus).
-            allocated = b.get("allocated", 0) or 0
-            used = b.get("used", 0) or 0
+        # Tahap 1 (2026-11-06): jatah = `allocated` (dulu `quota` = 0 → sisa minus). Tahap 7 (2026-11-07): helper
+        # yang sama dengan kartu saldo Portal Saya & pemeriksaan saldo persetujuan HR; jenis cuti tahunan lebih
+        # dulu (kartu "Sisa Cuti" = baris pertama), jenis tak dibayar tidak punya sisa → tidak ditampilkan.
+        from routes.rahaza_leave_balances import employee_balance_rows
+        for b in await employee_balance_rows(db, emp_id, today_wib().year):
+            if b["unpaid"]:
+                continue
             leave_balance.append({
-                "type_name": lt.get("name", "Cuti"),
-                "code": lt.get("code", ""),
-                "quota": allocated,
-                "used": used,
-                "remaining": allocated - used,
+                "type_name": b["leave_type_name"] or "Cuti",
+                "code": b["leave_type_code"],
+                "quota": b["quota"],
+                "used": b["used"],
+                "remaining": b["remaining"],
             })
 
     # --- Last payslip ---

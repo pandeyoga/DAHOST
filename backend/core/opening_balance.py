@@ -108,11 +108,14 @@ def _num(v) -> float:
     return float(v)
 
 
-async def existing_opening(db) -> dict | None:
-    je = await db.rahaza_journal_entries.find_one({"source_module": SOURCE_MODULE, "status": {"$ne": "voided"}},
+async def existing_opening(db, entity: str | None = None) -> dict | None:
+    """Jurnal saldo awal aktif. Tahap 8: SATU per buku CV (`entity`); None = buku mana pun."""
+    from core.entities import entity_match
+    je = await db.rahaza_journal_entries.find_one({"source_module": SOURCE_MODULE, "status": {"$ne": "voided"},
+                                                   **(entity_match(entity) if entity else {})},
                                                   {"_id": 0, "id": 1, "je_number": 1, "date": 1, "memo": 1, "status": 1,
                                                    "total_debit": 1, "total_credit": 1, "posted_at": 1, "flags": 1, "source_ref": 1,
-                                                   "created_by_name": 1})
+                                                   "created_by_name": 1, "entity": 1})
     return je
 
 
@@ -196,9 +199,12 @@ async def parse_workbook(db, data: bytes, balance_to_retained: bool = False) -> 
             "totals": {"debit": round(td, 2), "credit": round(tc, 2), "diff": diff, "lines": len(lines)}}
 
 
-async def post_opening(db, user: dict, ob_date: str, lines: list, source_ref: str) -> dict:
-    """Posting SATU jurnal pembuka terkunci lewat mesin jurnal yang sama dengan Jurnal Umum."""
+async def post_opening(db, user: dict, ob_date: str, lines: list, source_ref: str, entity: str = "DA") -> dict:
+    """Posting SATU jurnal pembuka terkunci lewat mesin jurnal yang sama dengan Jurnal Umum.
+    Tahap 8: saldo awal per buku CV (`entity`); akun harus berlaku untuk CV itu."""
     from fastapi import HTTPException
+
+    from core.entities import entity_short, validate_manual_lines
 
     from routes.rahaza_journals import (
         _check_period_open,
@@ -210,14 +216,17 @@ async def post_opening(db, user: dict, ob_date: str, lines: list, source_ref: st
         d = date.fromisoformat(ob_date)
     except ValueError:
         raise HTTPException(400, "Tanggal saldo awal harus YYYY-MM-DD.")
-    if await existing_opening(db):
-        raise HTTPException(409, "Sudah ada jurnal saldo awal (opening_balance) yang aktif — void dulu bila ingin mengulang.")
+    if await existing_opening(db, entity):
+        raise HTTPException(409, f"Sudah ada jurnal saldo awal (opening_balance) {entity_short(entity)} yang aktif — "
+                                 f"void dulu bila ingin mengulang.")
     if len(lines) < 2:
         raise HTTPException(400, "Semua saldo 0 — tidak ada jurnal pembuka yang perlu dibuat.")
     total_d, total_c = await _validate_lines(db, lines)
-    await _check_period_open(db, d)
+    await validate_manual_lines(db, lines, entity, what="Saldo awal")
+    await _check_period_open(db, d, entity)
     now = datetime.now(timezone.utc)
-    doc = {"id": str(uuid4()), "je_number": await _gen_je_number(db, d), "date": d.isoformat(),
+    doc = {"id": str(uuid4()), "je_number": await _gen_je_number(db, d, "", entity), "entity": entity,
+           "date": d.isoformat(),
            "memo": f"Saldo Awal Go-Live per {d.isoformat()} ({source_ref})", "source_module": SOURCE_MODULE, "source_ref": source_ref,
            "status": "posted", "total_debit": total_d, "total_credit": total_c, "created_at": now, "updated_at": now,
            "created_by": user["id"], "created_by_name": user.get("name", ""), "posted_at": now, "posted_by": user["id"],

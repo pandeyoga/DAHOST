@@ -99,6 +99,15 @@ async def decide_selfie(db, event_id: str, user: dict, *, approve: bool, notes: 
     ev = await db.rahaza_attendance_events.find_one({"id": event_id}, {"_id": 0})
     if not ev:
         raise HTTPException(404, "Record absen tidak ditemukan.")
+    # 2026-11-07 (Tahap 7): hanya selfie yang MASIH menunggu (layar Approval Absen hanya menampilkan tombol
+    # untuk yang menunggu). Dulu Kotak Masuk bisa "menolak" selfie yang sudah disetujui/ditolak.
+    if ev.get("approval_status") != "pending":
+        raise HTTPException(409, f"Absen ini sudah diputuskan ({ev.get('approval_status') or '-'}). Muat ulang halaman.")
+    # Pemisahan tugas (sejalan K25 & koreksi absen): HR tidak memutus selfie absennya sendiri.
+    from utils.employee_identity import resolve_my_employee
+    mine = await resolve_my_employee(db, user)
+    if mine and mine.get("id") == ev.get("employee_id"):
+        raise HTTPException(403, "Pemisahan tugas: absen selfie milik Anda sendiri harus diperiksa HR lain.")
     await ensure_not_locked(db, ev.get("employee_id"), ev.get("date"))
     now = _now()
     upd = {
@@ -111,10 +120,33 @@ async def decide_selfie(db, event_id: str, user: dict, *, approve: bool, notes: 
     }
     if not ev.get("leave_request_id"):
         upd["status"] = "hadir" if approve else "alpa"
-    await db.rahaza_attendance_events.update_one({"id": event_id}, {"$set": upd})
+    # klaim atomik (pola P9): setuju/tolak bersamaan → yang kalah 409, bukan saling menimpa
+    res = await db.rahaza_attendance_events.update_one({"id": event_id, "approval_status": "pending"}, {"$set": upd})
+    if not res.matched_count:
+        raise HTTPException(409, "Absen ini baru saja diputuskan pengguna lain. Muat ulang halaman.")
     await write_attendance_audit(db, before=ev, after={**ev, **upd}, user=user, source="persetujuan_selfie",
                                  note=notes or "")
+    if not approve:
+        # Penolakan menjadikan hari itu ALPA (dipotong gaji) — karyawan wajib tahu supaya bisa mengajukan koreksi.
+        await notify_selfie_rejected(db, {**ev, **upd}, notes or "")
     return {**ev, **upd}
+
+
+async def notify_selfie_rejected(db, ev: dict, reason: str) -> None:
+    """Kabar ke karyawan: absen selfie ditolak HR (tautan Portal Saya › Absen Saya). Tidak pernah raise."""
+    from routes.rahaza_payroll_shared import notify_requester
+    from utils.employee_identity import employee_user_ids
+    try:
+        uids = await employee_user_ids(db, ev.get("employee_id"))
+    except Exception:  # noqa: BLE001 — kabar tidak boleh menggagalkan keputusan
+        uids = []
+    for uid in uids:
+        await notify_requester(
+            db, user_id=uid, subtype="attendance_selfie_rejected", severity="warning",
+            title=f"Absen {ev.get('date')} ditolak HR",
+            body=(f"Absen selfie tanggal {ev.get('date')} ditolak HR sehingga tercatat alpa. "
+                  f"Alasan: {reason or '-'}. Bila Anda hadir, ajukan koreksi absen di Absen Saya."),
+            link_module="portal-absen", source_type="attendance", source_id=ev.get("id"))
 
 
 @router.post("/attendance/approvals/{event_id}/approve")

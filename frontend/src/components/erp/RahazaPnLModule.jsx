@@ -4,6 +4,7 @@ import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { StatTile, EmptyState } from './moduleAtoms';
 import PageLayout from './layout/PageLayout';
+import IntercompanyNotes from './finance/IntercompanyNotes';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateID } from '@/lib/format';
 import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
@@ -86,6 +87,8 @@ export default function RahazaPnLModule({ token }) {
       </>}
       summary={<>
         {error && <p className="text-sm text-[hsl(var(--destructive))]" data-testid="pnl-error">{error}</p>}
+        {/* Tahap 8 fase 3: Gabungan = setelah eliminasi antar CV; selisih yang belum tereliminasi tampil di sini */}
+        <IntercompanyNotes data={data} testId="pnl-ic-notes" />
         {data && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <StatTile label="Pendapatan" value={fmt(t.revenue)} testId="pnl-kpi-revenue" />

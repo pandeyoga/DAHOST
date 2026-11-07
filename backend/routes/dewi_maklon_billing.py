@@ -254,7 +254,8 @@ async def get_invoice_pdf(invoice_id: str, user: dict = Depends(require_auth)):
     if not inv:
         raise HTTPException(404, 'Invoice tidak ditemukan')
     cl = await db.dewi_maklon_clients.find_one({'id': inv.get('client_id')}) or {}
-    co = await db.company_settings.find_one({}) or {}
+    from core.entities import SMU, company_settings_doc
+    co = await company_settings_doc(db, SMU)   # Tahap 8: invoice maklon atas nama CV Sukma
     # SESI #19 — kop/kolom/tanda tangan/footer invoice mengikuti TEMPLATE PDF pemilik
     # (layar "PDF & Kop Surat"). Tanpa ini invoice tetap memakai kop tanam kode
     # tanpa logo/NPWP sementara dokumen lain sudah mengikuti setelan.
@@ -262,7 +263,7 @@ async def get_invoice_pdf(invoice_id: str, user: dict = Depends(require_auth)):
     _ds = await get_doc_settings(db, 'invoice-maklon')
     pdf = build_invoice_pdf(invoice=inv, client=cl, company=co,
                             template=(_ds or {}).get('_template'),
-                            profile=await get_company_profile(db))
+                            profile=await get_company_profile(db, SMU))
     return Response(
         content=pdf,
         media_type='application/pdf',
@@ -301,7 +302,7 @@ async def generate_invoice(payload: InvoiceGenerateIn, user: dict = Depends(requ
     # Resolve configs
     prefix = await get_config_value(db, 'maklon_invoice_prefix', 'INV-MKL')
     from core.tax_status import faktur_fields, get_tax_profile, output_tax, wants_output_tax
-    tax_profile = await get_tax_profile(db)
+    tax_profile = await get_tax_profile(db, "SMU")   # Tahap 8: PPN keluaran maklon = status pajak CV Sukma
     apply_tax = wants_output_tax(tax_profile, payload.tax_pct, payload.kena_ppn)
     tinfo = output_tax(tax_profile, 0, apply=apply_tax)   # nilai dihitung ulang di _recalc_invoice
     tax_pct = tinfo['tax_pct']
@@ -407,7 +408,7 @@ async def update_invoice(invoice_id: str, payload: InvoiceUpdateIn, user: dict =
     if {'tax_pct', 'kena_ppn', 'faktur_number', 'faktur_date'} & set(update):
         # 2026-11-03 (saklar PKP): ubah PPN hanya lewat SSOT — non-PKP menolak PPN > 0.
         from core.tax_status import faktur_fields, get_tax_profile, output_tax, wants_output_tax
-        tax_profile = await get_tax_profile(db)
+        tax_profile = await get_tax_profile(db, "SMU")   # Tahap 8: CV Sukma
         if 'tax_pct' in update or 'kena_ppn' in update:
             apply_tax = wants_output_tax(tax_profile, update.pop('tax_pct', None), update.pop('kena_ppn', None))
             tinfo = output_tax(tax_profile, 0, apply=apply_tax)
@@ -1118,9 +1119,10 @@ async def receivable_invoice_pdf(ar_id: str, shipment_id: Optional[str] = None,
     inv = invoice_doc_for(ar, shipment_id, dispatch_seq)
     fname = inv.pop('_filename')
     cl = await db.dewi_maklon_clients.find_one({'id': ar.get('customer_id')}, {'_id': 0}) or {'name': ar.get('customer_name')}
-    co = await db.company_settings.find_one({}, {'_id': 0}) or {}
+    from core.entities import SMU, company_settings_doc
+    co = await company_settings_doc(db, SMU)   # Tahap 8: faktur piutang maklon atas nama CV Sukma
     _ds = await get_doc_settings(db, 'invoice-maklon')
     pdf = build_invoice_pdf(invoice=inv, client=cl, company=co, template=(_ds or {}).get('_template'),
-                            profile=await get_company_profile(db))
+                            profile=await get_company_profile(db, SMU))
     return Response(content=pdf, media_type='application/pdf',
                     headers={'Content-Disposition': f'inline; filename="{fname}"'})

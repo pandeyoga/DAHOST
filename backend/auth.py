@@ -209,11 +209,13 @@ async def _load_live_user(user_id):
     if hit and hit[0] > nowts:
         return hit[1]
     u = await get_db().users.find_one({'id': user_id}, {'_id': 0, 'role': 1, 'role_id': 1, 'status': 1,
-                                                       'active': 1, 'is_active': 1})
+                                                       'active': 1, 'is_active': 1, 'allowed_entities': 1})
     live = None
     if u:
         blocked = u.get('is_active') is False or (u.get('status') not in (None, 'active') and not u.get('active', True))
-        live = {'role': u.get('role'), 'role_id': u.get('role_id'), 'blocked': blocked}
+        # Tahap 8 fase 3: akses CV keuangan per pengguna (None = kedua CV) — dibaca middleware.cv_readonly_guard
+        live = {'role': u.get('role'), 'role_id': u.get('role_id'), 'blocked': blocked,
+                'allowed_entities': u.get('allowed_entities')}
     _rbac_cache[key] = (nowts + _RBAC_TTL_SECONDS, live)
     return live
 

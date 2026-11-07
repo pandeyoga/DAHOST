@@ -240,7 +240,9 @@ DOC_NUMBER_REGISTRY = [
      "default_format": "JE-{YYYY}{MM}{DD}-{SEQ:4}", "tokens": [], "default_mode": "auto",
      "catatan": "Mode MANUAL berlaku untuk Jurnal Umum yang diketik orang di layar Keuangan. "
                 "Jurnal yang lahir otomatis dari posting dokumen lain (penjualan, penggajian, "
-                "penerimaan barang) tetap bernomor otomatis — tidak ada yang mengetiknya."},
+                "penerimaan barang) tetap bernomor otomatis — tidak ada yang mengetiknya. "
+                "Sejak Tahap 8 (dua CV) kode CV disisipkan otomatis sesudah 'JE-' "
+                "(JE-DA-… / JE-SMU-…) dan tiap CV punya urutan sendiri; nomor lama tidak diubah."},
     {"key": "rahaza_ar_invoices.invoice_number", "label": "Invoice Piutang (AR)", "group": "Keuangan",
      "policy_enforced": True,
      "default_format": "AR-{YYYY}{MM}{DD}-{SEQ:3}", "tokens": []},

@@ -12,8 +12,10 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from database import get_db
 from auth import require_auth, check_role, log_activity, serialize_doc
-from routes.production_rbac import (PROD_ADMIN_ROLES, deny_klien, resolve_vendor_doc, resolve_buyer_name)
+from routes.production_rbac import (PROD_ADMIN_ROLES, assert_po_action, deny_klien, po_action_flags,
+                                    resolve_vendor_doc, resolve_buyer_name)
 from cascade_delete import cascade_delete_po
+from core import sewing_rate as sr
 from core.helpers import new_id, now, parse_date
 from core.pagination import LEGACY_DEFAULT_CAP, _paginate_params, _paginated_envelope, _sort_params
 from core.enrichment import enrich_with_product_photos
@@ -236,6 +238,19 @@ async def get_pos(request: Request):
         return _paginated_envelope(result, total, page, per_page)
     return result
 
+@router.get("/production-pos/permissions")
+async def po_permissions(request: Request):
+    """Hak pengguna yang login atas PO jenis ini → {can_create, can_edit, can_delete}.
+
+    2026-11-07 (Tahap 8): tombol Buat/Ubah/Hapus di layar PO Produksi Internal & PO Maklon membaca flag ini —
+    aturan yang SAMA dengan server (production_rbac.can_po_action + gerbang modul), bukan aturan layar sendiri.
+    Didaftarkan SEBELUM `/production-pos/{po_id}` supaya 'permissions' tidak terbaca sebagai id PO."""
+    user = await require_auth(request)
+    deny_klien(user)
+    bt = 'maklon' if request.query_params.get('business_type') == 'maklon' else 'internal'
+    return {'business_type': bt, **(await po_action_flags(user, bt))}
+
+
 @router.get("/production-pos/{po_id}")
 async def get_po(po_id: str, request: Request):
     user = await require_auth(request)
@@ -254,15 +269,36 @@ async def get_po(po_id: str, request: Request):
     # FE dapat merender tombol aksi dinamis dari daftar transisi valid
     result['allowed_next'] = PO_STATUS_TRANSITIONS.get(po.get('status', 'Draft'), [])
     result['can_close'] = po.get('status') in PO_CLOSABLE_STATUSES
+    # K12 (7 Nov 2026): form PO mengunci kotak upah jahit bila tagihan CMT PO ini sudah dibuat
+    result['rate_lock'] = await sr.rate_lock(db, po_id)
     return result
+
+
+@router.post("/production-pos/rate-suggest")
+async def po_rate_suggest(request: Request):
+    """Usulan upah jahit per pcs untuk baris form PO (K12) — pintu yang SAMA dengan menu Biaya Jahit.
+
+    Body: {vendor_id?, business_type, exclude_po_id?, lines: [{key, model_id?, catalog_item_id?, sku?}]}.
+    Hanya membaca (kata 'suggest' → gerbang modul memperlakukannya sebagai Lihat)."""
+    user = await require_auth(request)
+    deny_klien(user)
+    db = get_db()
+    body = await request.json()
+    lines = [ln for ln in (body.get('lines') or []) if isinstance(ln, dict)][:200]
+    bt = 'maklon' if body.get('business_type') == 'maklon' else 'internal'
+    items = await sr.suggest_rates(db, lines, vendor_id=body.get('vendor_id') or None, business_type=bt,
+                                   exclude_po_id=body.get('exclude_po_id') or None)
+    return {'business_type': bt, 'vendor_id': body.get('vendor_id') or '', 'items': items}
+
 
 @router.post("/production-pos")
 async def create_po(request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()
+    # 2026-11-07 (Tahap 8): satu aturan dengan tombol "Buat PO" — peran bawaan atau izin Tambah modul PO
+    assert_po_action(user, 'create', body.get('business_type') or 'internal')
     assert_maklon_buyer(body)
     result = await create_po_internal(db, body, user)
     return JSONResponse(result, status_code=201)
@@ -336,6 +372,13 @@ async def create_po_internal(db, body: dict, user: dict, *,
         _miss = missing_harga_jasa(body.get('items') or [])
         if _miss:
             raise HTTPException(400, harga_jasa_message(_miss))
+    # K12 (7 Nov 2026): upah jahit per pcs diisi di form PO untuk PO internal DAN maklon (dulu PO internal
+    # selalu 0 sampai diisi di menu Biaya Jahit). Angka ≥ 0, diperiksa SEBELUM apa pun ditulis.
+    try:
+        _rates = [sr.parse_rate(it.get('cmt_price_snapshot'), f"baris {n + 1} ({sr.line_label(it)})")
+                  for n, it in enumerate(body.get('items') or [])]
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     # Resolve buyer name from buyer_id if provided (buyers ATAU dewi_maklon_clients)
     customer_name = body.get('customer_name', '')
     buyer_id = body.get('buyer_id')
@@ -402,9 +445,11 @@ async def create_po_internal(db, body: dict, user: dict, *,
             'qty_ordered': int(item.get('qty', 0) or 0),
             'serial_number': item.get('serial_number', ''),
             'selling_price_snapshot': float(item.get('selling_price_snapshot', 0) or (product or {}).get('selling_price', 0) or 0),
-            'cmt_price_snapshot': float(item.get('cmt_price_snapshot', 0) or (product or {}).get('cmt_price', 0) or 0),
+            'cmt_price_snapshot': _rates[idx] or float((product or {}).get('cmt_price', 0) or 0),
             'created_at': now()
         }
+        if _rates[idx] > 0:     # jejak siapa & kapan — sama dengan isian di menu Biaya Jahit
+            po_item.update({'cmt_price_set_by': user.get('name', ''), 'cmt_price_set_at': now()})
         await db.po_items.insert_one(po_item)
         inserted_items.append(po_item)
     # ── Fase 3 (ACC-1): auto-explode aksesoris dari BOM utk PO internal ──
@@ -698,10 +743,11 @@ async def update_po(po_id: str, request: Request):
     """
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
     db = get_db()
     existing = await db.production_pos.find_one({'id': po_id})
     if not existing: raise HTTPException(404, 'PO not found')
+    # 2026-11-07 (Tahap 8): satu aturan dengan tombol Ubah — peran bawaan atau izin Ubah modul PO
+    assert_po_action(user, 'edit', existing.get('business_type') or 'internal')
     # 2026-11-06 (Tahap 2): PO yang sudah ditutup TERKUNCI untuk semua peran (dulu superadmin
     # boleh mengubah PO Closed, dan PO 'Closed Short'/'Completed' bebas diubah siapa pun).
     from core.po_lock import assert_po_open
@@ -748,6 +794,28 @@ async def update_po(po_id: str, request: Request):
         _miss = missing_harga_jasa(_probe)
         if _miss:
             raise HTTPException(400, harga_jasa_message(_miss))
+
+    # K12 (7 Nov 2026): upah jahit per pcs — angka ≥ 0, dan TIDAK boleh diubah setelah tagihan CMT PO ini
+    # terbentuk (penjaga yang sama dengan menu Biaya Jahit: core.sewing_rate.rate_lock). Diperiksa sebelum
+    # apa pun ditulis supaya penolakan tidak meninggalkan perubahan setengah jalan.
+    rate_changed_ids = set()
+    if items_payload is not None:
+        _old_rate = {i['id']: i.get('cmt_price_snapshot') for i in await db.po_items.find(
+            {'po_id': po_id}, {'_id': 0, 'id': 1, 'cmt_price_snapshot': 1}).to_list(2000)}
+        for n, raw in enumerate(items_payload):
+            if 'cmt_price_snapshot' not in raw:
+                continue
+            try:
+                raw['cmt_price_snapshot'] = sr.parse_rate(raw.get('cmt_price_snapshot'),
+                                                          f"baris {n + 1} ({sr.line_label(raw)})")
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            if raw.get('id') in _old_rate and sr.rate_changed(_old_rate[raw['id']], raw['cmt_price_snapshot']):
+                rate_changed_ids.add(raw['id'])
+        if rate_changed_ids:
+            _lock = await sr.rate_lock(db, po_id)
+            if _lock:
+                raise HTTPException(409, _lock['message'])
 
     await db.production_pos.update_one({'id': po_id}, {'$set': {**body, 'updated_at': now()}})
 
@@ -833,6 +901,9 @@ async def update_po(po_id: str, request: Request):
                     'cmt_price_snapshot': (float(raw.get('cmt_price_snapshot') or 0)
                                            if 'cmt_price_snapshot' in raw
                                            else float(old.get('cmt_price_snapshot') or 0)),
+                    # K12: jejak perubahan upah jahit (sama dengan menu Biaya Jahit)
+                    **({'cmt_price_set_by': user.get('name', ''), 'cmt_price_set_at': now()}
+                       if item_id in rate_changed_ids else {}),
                     'updated_at': now(),
                 }})
             else:
@@ -850,11 +921,14 @@ async def update_po(po_id: str, request: Request):
                     'buyer_ref_code': raw.get('buyer_ref_code', ''),
                     'size': size_new, 'color': color_new, 'color_code': (rv or {}).get('color_code') or raw.get('color_code', ''), 'sku': sku_new,
                     'qty': qty_new,
+                    'qty_ordered': qty_new,     # 2026-11-07: sama dengan jalur buat PO (dulu baris baru tanpa ini)
                     'serial_number': raw.get('serial_number', ''),
                     'selling_price_snapshot': float(raw.get('selling_price_snapshot', 0) or (product or {}).get('selling_price', 0) or 0),
                     'cmt_price_snapshot': float(raw.get('cmt_price_snapshot', 0) or (product or {}).get('cmt_price', 0) or 0),
                     'created_at': now(),
                 }
+                if new_item['cmt_price_snapshot'] > 0:
+                    new_item.update({'cmt_price_set_by': user.get('name', ''), 'cmt_price_set_at': now()})
                 await db.po_items.insert_one(new_item)
 
         # 2) delete po_items not present in payload (only if no references)
@@ -928,10 +1002,12 @@ async def update_po(po_id: str, request: Request):
 async def delete_po(po_id: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if (user.get('role') or '').lower() != 'superadmin': raise HTTPException(403, 'Forbidden')
     db = get_db()
     doc = await db.production_pos.find_one({'id': po_id})
     if not doc: raise HTTPException(404, 'Not found')
+    # 2026-11-07 (Tahap 8): dulu hanya superadmin (layar menampilkan tombolnya juga untuk admin → 403).
+    # Sekarang satu aturan dengan tombol Hapus: superadmin/admin/owner atau izin Hapus modul PO.
+    assert_po_action(user, 'delete', doc.get('business_type') or 'internal')
     # 2026-11-06 (Tahap 2): membatalkan PO maklon yang sudah dikonfirmasi — sebelum ada jurnal,
     # jadwal piutang & hutang CMT di-VOID (dokumen tetap sebagai jejak); sudah ada pendapatan /
     # pembayaran / tagihan CMT ⇒ ditolak (pakai tutup kurang).
@@ -1035,9 +1111,21 @@ async def update_po_item(item_id: str, request: Request):
     body = await request.json()
     body.pop('_id', None); body.pop('id', None)
     # 2026-11-06 (Tahap 2): baris PO yang sudah ditutup ikut terkunci
-    _cur = await db.po_items.find_one({'id': item_id}, {'_id': 0, 'po_id': 1})
+    _cur = await db.po_items.find_one({'id': item_id}, {'_id': 0, 'po_id': 1, 'cmt_price_snapshot': 1,
+                                                        'sku': 1, 'product_name': 1, 'size': 1})
     from core.po_lock import assert_po_open
     await assert_po_open(db, (_cur or {}).get('po_id'), 'perubahan baris PO')
+    # K12 (7 Nov 2026): jalur ini juga bisa mengubah upah jahit — aturan sama dengan form PO & Biaya Jahit
+    if 'cmt_price_snapshot' in body:
+        try:
+            body['cmt_price_snapshot'] = sr.parse_rate(body.get('cmt_price_snapshot'), sr.line_label(_cur or {}))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        if _cur and sr.rate_changed(_cur.get('cmt_price_snapshot'), body['cmt_price_snapshot']):
+            _lock = await sr.rate_lock(db, _cur.get('po_id'))
+            if _lock:
+                raise HTTPException(409, _lock['message'])
+            body.update({'cmt_price_set_by': user.get('name', ''), 'cmt_price_set_at': now()})
     await db.po_items.update_one({'id': item_id}, {'$set': {**body, 'updated_at': now()}})
     return serialize_doc(await db.po_items.find_one({'id': item_id}, {'_id': 0}))
 

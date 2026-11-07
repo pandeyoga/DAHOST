@@ -10,6 +10,7 @@ import { StatTile, EmptyState } from './moduleAtoms';
 import PageLayout, { RowDetail } from './layout/PageLayout';
 import JournalLinesInline from './finance/JournalLinesInline';
 import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
+import { cvAccountParam, useCv } from '@/lib/entitas';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
 
@@ -29,9 +30,10 @@ export default function RahazaGeneralLedgerModule({ token }) {
   const [period, setPeriod] = useState(() => periodFromPreset('month'));
   const { from, to } = period;
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const coaCv = cvAccountParam(useCv()?.cv);  // Tahap 8: daftar akun buku CV terpilih (Gabungan = semua)
 
   useEffect(() => {
-    fetch('/api/rahaza/coa/accounts', { headers })
+    fetch(`/api/rahaza/coa/accounts${coaCv ? `?${coaCv}` : ''}`, { headers })
       .then(r => r.ok ? r.json() : [])
       .then(list => { setAccounts(list.filter(a => !a.is_group)); if (list.length > 0) setCode(list.find(a => !a.is_group)?.code || ''); });
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -29,9 +29,9 @@ def _now():
     return datetime.now(timezone.utc)
 
 
-async def get_company_profile(db) -> dict:
+async def get_company_profile(db, entity: str = "DA") -> dict:
     """Profil perusahaan ternormalisasi (satu pembaca: core.pdf_template)."""
-    return await _tpl.company_profile(db)
+    return await _tpl.company_profile(db, entity)
 
 
 async def get_doc_settings(db, doc_type: str) -> dict:

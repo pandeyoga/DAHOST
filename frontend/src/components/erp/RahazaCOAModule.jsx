@@ -74,6 +74,23 @@ const flagLabels = (flags) => Object.entries(flags || {})
   .filter(([k, v]) => v && !HIDDEN_FLAGS.has(k))
   .map(([k, v]) => (k === 'is_sales' && flags.channel ? `Penjualan toko (${flags.channel})` : flagLabel(k, v)));
 
+// Tahap 8 (dua CV, keputusan K10): satu daftar induk; tiap akun berlaku untuk CV Dewi Aditya, CV Sukma, atau keduanya.
+// Pemilih akun di layar keuangan hanya menampilkan akun CV terpilih (`?entity=`).
+const ENTITY_CHOICES = [
+  { key: 'BOTH', label: 'Keduanya' },
+  { key: 'DA', label: 'CV Dewi Aditya' },
+  { key: 'SMU', label: 'CV Sukma' },
+];
+export const entitiesKey = (list) => {
+  const s = new Set(Array.isArray(list) ? list : []);
+  if (s.has('DA') && s.has('SMU')) return 'BOTH';
+  if (s.has('DA')) return 'DA';
+  if (s.has('SMU')) return 'SMU';
+  return '';
+};
+export const entitiesLabel = (list) => (ENTITY_CHOICES.find((c) => c.key === entitiesKey(list)) || {}).label || '—';
+const entitiesFromKey = (k) => (k === 'BOTH' ? ['DA', 'SMU'] : k ? [k] : null);
+
 const FILTERS = [
   { key: 'aktif', label: 'Semua aktif' },
   { key: 'sistem', label: 'Terhubung sistem' },
@@ -162,6 +179,7 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
     code: initial?.code || '', name: initial?.name || '', type: initial?.type || 'EXPENSE',
     parent_code: initial?.parent_code || '', is_group: !!initial?.is_group, active: initial?.active !== false,
     cash_flow_group: initial?.cash_flow_group || '', flags: { ...(initial?.flags || {}) },
+    entities_key: entitiesKey(initial?.entities),
   }));
   const [usage, setUsage] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -234,6 +252,8 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
       code, name: form.name.trim(), type: form.type, parent_code: form.parent_code || null,
       is_group: form.is_group, cash_flow_group: form.cash_flow_group || '', flags,
       ...(isNew ? {} : { active: form.active }),
+      // kosong pada akun baru = ikut induk (diisi server)
+      ...(entitiesFromKey(form.entities_key) ? { entities: entitiesFromKey(form.entities_key) } : {}),
     };
     try {
       const out = await api(isNew ? 'POST' : 'PUT', isNew ? '/api/rahaza/coa/accounts' : `/api/rahaza/coa/accounts/${initial.id}`, body);
@@ -297,6 +317,14 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
               Kontra
             </label>
           </div>
+          <Field label="Berlaku untuk" htmlFor="coa-entities" hint="Akun hanya bisa dipilih di buku CV yang disebut di sini.">
+            <SmartNativeSelect id="coa-entities" value={form.entities_key || ''} onChange={(e) => set('entities_key', e.target.value)}
+              searchable={false} className="h-9 text-sm" data-testid="coa-input-entities">
+              {isNew && <option value="">Ikut akun induk (otomatis)</option>}
+              {!isNew && !form.entities_key && <option value="">Belum diatur (mengikuti aturan kode)</option>}
+              {ENTITY_CHOICES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </SmartNativeSelect>
+          </Field>
           <Field label="Kelompok arus kas" htmlFor="coa-cfg" hint="Dipakai Laporan Arus Kas “Per Akun”.">
             <SmartNativeSelect id="coa-cfg" value={form.cash_flow_group || ''} onChange={(e) => set('cash_flow_group', e.target.value)}
               searchable={false} className="h-9 text-sm" data-testid="coa-input-cfgroup">
@@ -635,6 +663,7 @@ function AccountCards({ list, q, onEdit, onDelete, onReactivate, onUsage }) {
             </div>
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               <TypeBadge type={a.type} />
+              <span className="text-[10px] text-muted-foreground" data-testid={`coa-entities-card-${a.code}`}>{entitiesLabel(a.entities)}</span>
               <span className="text-[10px] text-muted-foreground">{NB_LABELS[a.normal_balance] || a.normal_balance}</span>
               {a.is_group && <span className="text-[10px] text-muted-foreground">grup</span>}
               {a.active === false && <span className="text-[10px] px-1.5 rounded border border-foreground/20">nonaktif</span>}
@@ -650,6 +679,7 @@ function AccountCards({ list, q, onEdit, onDelete, onReactivate, onUsage }) {
               <th className="py-2 px-2 font-medium">Kode</th>
               <th className="py-2 px-2 font-medium">Nama</th>
               <th className="py-2 px-2 font-medium">Tipe</th>
+              <th className="py-2 px-2 font-medium">Berlaku untuk</th>
               <th className="py-2 px-2 font-medium">Induk</th>
               <th className="py-2 px-2 font-medium">Saldo normal</th>
               <th className="py-2 px-2 font-medium">Penanda</th>
@@ -665,6 +695,7 @@ function AccountCards({ list, q, onEdit, onDelete, onReactivate, onUsage }) {
                   <td className="py-1.5 px-2 font-mono text-xs whitespace-nowrap">{a.code}</td>
                   <td className="py-1.5 px-2 min-w-[12rem]">{a.name}{a.is_group && <span className="text-[10px] text-muted-foreground ml-1">(grup)</span>}{a.active === false && <span className="text-[10px] text-muted-foreground ml-1">(nonaktif)</span>}</td>
                   <td className="py-1.5 px-2"><TypeBadge type={a.type} /></td>
+                  <td className="py-1.5 px-2 text-xs whitespace-nowrap" data-testid={`coa-entities-${a.code}`}>{entitiesLabel(a.entities)}</td>
                   <td className="py-1.5 px-2 font-mono text-xs text-muted-foreground">{a.parent_code || '—'}</td>
                   <td className="py-1.5 px-2 text-xs">{NB_LABELS[a.normal_balance] || a.normal_balance}{a.flags?.is_contra ? ' · kontra' : ''}</td>
                   <td className="py-1.5 px-2 text-[11px] text-muted-foreground" title={fl.join(', ')}>{fl.slice(0, 2).join(', ')}{fl.length > 2 ? ` +${fl.length - 2}` : ''}{!fl.length && '—'}</td>
@@ -732,7 +763,7 @@ export default function RahazaCOAModule({ token, onNavigate }) {
     if (!passFilter(a, filter)) return false;
     if (typeFilter && a.type !== typeFilter) return false;
     if (!ql) return true;
-    const hay = [a.code, a.name, TYPE_LABELS[a.type], ...flagLabels(a.flags), ...((a.usage && a.usage.labels) || [])];
+    const hay = [a.code, a.name, TYPE_LABELS[a.type], entitiesLabel(a.entities), ...flagLabels(a.flags), ...((a.usage && a.usage.labels) || [])];
     return hay.some((s) => (s || '').toLowerCase().includes(ql));
   }).map((a) => a.code)), [accounts, filter, typeFilter, ql]);
   // pencarian/filter TETAP dalam pohon: tampilkan yang cocok + leluhurnya

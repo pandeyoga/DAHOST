@@ -7,6 +7,7 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { toast } from 'sonner';
 import { StatTile, EmptyState } from '../moduleAtoms';
 import PageLayout from '../layout/PageLayout';
+import IntercompanyNotes from './IntercompanyNotes';
 import StatementTable from './StatementTable';
 import { fmt, authHeaders, downloadXlsx, yearOptions } from './reportShared';
 
@@ -87,14 +88,15 @@ export default function RahazaPnLMonthlyModule({ token }) {
         <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="pnl12-refresh"><RefreshCw className="w-4 h-4" /></Button>
         <Button variant="outline" onClick={exportXlsx} disabled={!data} data-testid="pnl12-export"><Download className="w-4 h-4" />Unduh Excel</Button>
       </>}
-      summary={hasData && (
+      summary={hasData && (<>
+        <IntercompanyNotes data={data} testId="pnl12-ic-notes" />
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatTile label={`Pendapatan ${year}`} value={fmt(data?.groups?.revenue?.total)} testId="pnl12-kpi-rev" />
           <StatTile label="Laba kotor" value={fmt(L.gross_profit?.total)} accent={Number(L.gross_profit?.total) < 0 ? 'danger' : 'default'} testId="pnl12-kpi-gross" />
           <StatTile label="Beban operasional" value={fmt(data?.groups?.expense?.total)} testId="pnl12-kpi-exp" />
           <StatTile label={net >= 0 ? 'Laba bersih' : 'Rugi bersih'} value={fmt(net)} accent={net < 0 ? 'danger' : 'default'} testId="pnl12-kpi-net" />
         </div>
-      )}
+      </>)}
     >
       {loading ? (
         <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>

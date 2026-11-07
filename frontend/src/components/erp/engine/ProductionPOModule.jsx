@@ -1,6 +1,6 @@
 
 import { useState, useEffect, useRef } from 'react';
-import { Plus, Eye, Pencil, Trash2, X, XCircle, Zap, AlertTriangle, Loader2, Layers } from 'lucide-react';
+import { Plus, Eye, Pencil, Trash2, X, Zap, AlertTriangle, Loader2, Layers, Lock } from 'lucide-react';
 import DataTable from './DataTable';
 import Modal from './Modal';
 import StatusBadge from './StatusBadge';
@@ -22,9 +22,13 @@ import { Button } from '@/components/ui/button';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Notice, StatTile } from '../moduleAtoms';
+import PageLayout from '../layout/PageLayout';
 
 const STATUS_OPTIONS = ['Draft', 'Confirmed', 'Distributed', 'In Production', 'Completed', 'Closed'];
+// PO yang sudah ditutup terkunci untuk semua peran (Tahap 2) — tombol Ubah/Tutup tidak ditawarkan.
+const CLOSED_PO = ['Closed', 'Completed', 'Closed Short'];
 // 2026-11-06 (Tahap 2): tombol Tutup PO memakai pemeriksaan qty PER UKURAN yang sama dengan menu Tutup PO.
 // Kosong = semua ukuran terpenuhi; ada ukuran kurang ⇒ server meminta salah satu alasan tutup kurang.
 const CLOSE_REASONS = ['', 'deadline_expired', 'buyer_material_shortage', 'cmt_quality_reject_final', 'mutual_agreement'];
@@ -43,15 +47,47 @@ const CLOSE_REASON_LABELS = {
   Other: 'Lainnya',
 };
 
-export default function ProductionPOModule({ userRole, hasPerm = () => false, businessType, onNavigate }) {
-  // FASE 5 DA: businessType 'internal' | 'maklon' | undefined (semua)
-  const isInternal = businessType === 'internal';
+// ── K12 (7 Nov 2026): SATU bentuk form untuk PO internal & PO maklon ───────────────────────────────────
+// Urutan bagian sama: kepala → baris → aksesoris → total. Bedanya hanya yang memang beda bisnis: buyer,
+// artikel katalog & harga jasa ke klien (maklon); tujuan barang jadi & cek HPP (internal). Upah jahit per pcs
+// tampil di SETIAP baris kedua jenis — angka yang sama dengan menu Biaya Jahit (`po_items.cmt_price_snapshot`).
+let lineSeq = 0;
+const newLineKey = () => { lineSeq += 1; return `baris-${Date.now().toString(36)}-${lineSeq}`; };
+const isBlank = (v) => v === '' || v === null || v === undefined;
+const rupiah = (v) => formatRupiah(Number(v) || 0);
+const stripUi = (it) => Object.fromEntries(Object.entries(it).filter(([k]) => !k.startsWith('__')));
+const USED_DEEP_LINKS = new WeakSet();
+
+function Field({ label, required, hint, children, className = '', testId }) {
+  return (
+    <div className={`min-w-0 ${className}`} data-testid={testId}>
+      <label className="block text-xs font-medium text-muted-foreground mb-1">
+        {label}{required && <span className="text-[hsl(var(--destructive))]"> *</span>}
+      </label>
+      {children}
+      {hint && <p className="text-[11px] text-muted-foreground mt-1">{hint}</p>}
+    </div>
+  );
+}
+
+function SectionTitle({ children, aside, testId }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2" data-testid={testId}>
+      <p className="text-sm font-semibold text-foreground">{children}</p>
+      {aside}
+    </div>
+  );
+}
+
+export default function ProductionPOModule({ userRole, businessType, onNavigate, deepLinkParams }) {
+  // FASE 5 DA: businessType 'internal' | 'maklon' (menu PO Produksi Internal / PO Maklon)
+  const isInternal = businessType !== 'maklon';
+  const bizKey = isInternal ? 'internal' : 'maklon';
   const [pos, setPOs] = useState([]);
   // [FASE 4 CLEANUP] Legacy `products`/`product_variants` state removed — dead code.
   // Maklon now uses buyer-catalog (`catalog_item_id`); Internal uses `rahaza_models` + `rahaza_variant_id`.
   const [catalogItems, setCatalogItems] = useState([]);  // maklon: dewi_maklon_buyer_catalog (master produk maklon, per buyer)
   const [models, setModels] = useState([]);   // internal: rahaza_models (D3 FK)
-  const [sizes, setSizes] = useState([]);     // internal: rahaza_sizes
   const [vendors, setVendors] = useState([]);
   const [buyers, setBuyers] = useState([]);
   const [accessories, setAccessories] = useState([]);
@@ -126,15 +162,28 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
     }, 450);
   };
 
-  const isSuperAdmin = userRole === 'superadmin';
-  const canEdit = ['superadmin', 'admin'].includes(userRole) || hasPerm('po.edit');
-  const canCreate = userRole === 'superadmin' || hasPerm('production_po.create') || hasPerm('po.create');
-  const canDelete = ['superadmin', 'admin'].includes(userRole) || hasPerm('po.delete');
+  // 2026-11-07 (Tahap 8): tombol Buat/Ubah/Hapus memakai hak dari SERVER (aturan yang sama dengan simpan):
+  // peran produksi/maklon bawaan atau izin Tambah/Ubah/Hapus modul PO di Peran & Hak Akses. Dulu layar
+  // mencari kunci `production_po.create`/`po.create` (= PO pembelian) sehingga hanya superadmin yang melihat
+  // tombol Buat PO, padahal server mengizinkan admin produksi/maklon.
+  const [poPerms, setPoPerms] = useState({ can_create: false, can_edit: false, can_delete: false });
+  useEffect(() => {
+    let alive = true;
+    apiGet(`/production-pos/permissions?business_type=${bizKey}`)
+      .then(p => { if (alive && p) setPoPerms(p); })
+      .catch(() => { if (alive) setPoPerms({ can_create: false, can_edit: false, can_delete: false }); });
+    return () => { alive = false; };
+  }, [bizKey]);
+  const canEdit = !!poPerms.can_edit;
+  const canCreate = !!poPerms.can_create;
+  const canDelete = !!poPerms.can_delete;
+  const formRef = useRef(form);
+  formRef.current = form;
 
   useEffect(() => {
     fetchAccessories();
     fetchVendors();  // vendor/CMT dibutuhkan di Internal & Maklon (kirim material ke vendor)
-    if (isInternal) { fetchModels(); fetchSizes(); }
+    if (isInternal) { fetchModels(); }
     else { fetchBuyers(); }
   }, [isInternal]);
 
@@ -235,13 +284,6 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
     } catch (e) { setModels([]); }
   };
 
-  const fetchSizes = async () => {
-    try {
-      const data = await apiGet('/rahaza/sizes?active=true&limit=100');
-      const rows = Array.isArray(data) ? data : (data?.items || []);
-      setSizes(rows);
-    } catch (e) { setSizes([]); }
-  };
 
   // Fase 2: ambil daftar varian ber-SKU untuk sebuah model (di-cache per model_id)
   const fetchRahazaVariants = async (modelId) => {
@@ -277,11 +319,78 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
     setShowModal(true);
   };
 
+  // Satu bentuk baris untuk kedua jenis PO. Kunci `__…` hanya untuk layar (tidak dikirim ke server):
+  // __key = identitas baris, __sug = usulan upah + asalnya, __typed = upah diketik/dimuat (bukan usulan).
+  const blankLine = () => (isInternal
+    ? { __key: newLineKey(), model_id: '', rahaza_variant_id: '', size_id: '', product_name: '', size: '', color: '', sku: '', qty: '', serial_number: '', cmt_price_snapshot: '' }
+    : { __key: newLineKey(), catalog_item_id: '', product_id: '', product_name: '', variant_id: '', maklon_variant_id: '', buyer_ref_code: '', size: '', color: '', color_code: '', sku: '', qty: '', serial_number: '', selling_price_snapshot: '', cmt_price_snapshot: '' });
+
   const addItem = () => {
     setFormError(null);
-    setForm(f => ({ ...f, items: [...f.items, isInternal
-      ? { model_id: '', rahaza_variant_id: '', size_id: '', product_name: '', size: '', color: '', sku: '', qty: '', serial_number: '' }
-      : { catalog_item_id: '', product_id: '', product_name: '', variant_id: '', size: '', color: '', sku: '', qty: '', serial_number: '', selling_price_snapshot: '', cmt_price_snapshot: '' }] }));
+    setForm(f => ({ ...f, items: [...f.items, blankLine()] }));
+  };
+
+  // ── Upah jahit per pcs: usulan dari server (pintu yang sama dengan menu Biaya Jahit) ───────────────────
+  const rateLocked = !!editData?.rate_lock;
+  const fetchRateSuggestions = async (lines, vendorId, excludePoId) => {
+    const payload = (lines || []).filter(l => l.model_id || l.catalog_item_id || l.sku)
+      .map(l => ({ key: l.__key, model_id: l.model_id || '', catalog_item_id: l.catalog_item_id || '', sku: l.sku || '' }));
+    if (!payload.length) return {};
+    try {
+      const res = await apiPost('/production-pos/rate-suggest', {
+        vendor_id: vendorId || '', business_type: bizKey,
+        exclude_po_id: excludePoId === undefined ? (editData?.id || '') : excludePoId, lines: payload });
+      return res?.items || {};
+    } catch { return {}; }
+  };
+
+  // Pasang usulan ke baris: kotak upah yang KOSONG (atau berisi usulan lama, belum diketik) diisi usulan;
+  // upah yang diketik pengguna tidak pernah diganti diam-diam.
+  const applySuggestions = (sug, { fill = true } = {}) => {
+    setForm(f => ({ ...f, items: f.items.map(l => {
+      const s = sug[l.__key];
+      if (!s) return l;
+      const replaceable = isBlank(l.cmt_price_snapshot) || !l.__typed;
+      return { ...l, __sug: s,
+        ...(fill && !rateLocked && replaceable && Number(s.rate) > 0 ? { cmt_price_snapshot: s.rate, __typed: false } : {}) };
+    }) }));
+  };
+
+  const suggestForLines = async (lines, opts = {}) => {
+    const sug = await fetchRateSuggestions(lines, opts.vendorId ?? formRef.current.vendor_id, opts.excludePoId);
+    applySuggestions(sug, opts);
+    return sug;
+  };
+
+  // Penjahit diganti → usulan dihitung ulang untuk penjahit baru. Kotak kosong langsung diisi; kotak yang sudah
+  // berisi angka lain hanya diganti bila pengguna setuju (confirmDialog).
+  const changeVendor = async (vendorId, { lines, excludePoId } = {}) => {
+    setForm(f => ({ ...f, vendor_id: vendorId }));
+    const cur = (lines || formRef.current.items).filter(l => l.model_id || l.catalog_item_id);
+    if (!cur.length || rateLocked) return;
+    const sug = await fetchRateSuggestions(cur, vendorId, excludePoId);
+    const differ = cur.filter(l => {
+      const s = sug[l.__key];
+      return s && Number(s.rate) > 0 && !isBlank(l.cmt_price_snapshot) && Number(l.cmt_price_snapshot) !== Number(s.rate);
+    });
+    setForm(f => ({ ...f, items: f.items.map(l => {
+      const s = sug[l.__key];
+      if (!s) return l;
+      return { ...l, __sug: s, ...(isBlank(l.cmt_price_snapshot) && Number(s.rate) > 0 ? { cmt_price_snapshot: s.rate, __typed: false } : {}) };
+    }) }));
+    if (!differ.length) return;
+    const vName = vendors.find(v => v.id === vendorId)?.garment_name || 'penjahit baru';
+    const ok = await confirmDialog({
+      title: `Pakai upah jahit ${vName}?`,
+      body: `${differ.length} baris sudah berisi upah lain: `
+        + differ.slice(0, 4).map(l => `${l.sku || l.product_name || 'baris'} ${rupiah(l.cmt_price_snapshot)} → ${rupiah(sug[l.__key].rate)}`).join('; ')
+        + (differ.length > 4 ? ` (+${differ.length - 4} lagi)` : '') + '. Pilih "Biarkan" untuk tetap memakai angka yang sekarang.',
+      confirmLabel: 'Pakai tarif baru', cancelLabel: 'Biarkan',
+    });
+    if (!ok) return;
+    const keys = new Set(differ.map(l => l.__key));
+    setForm(f => ({ ...f, items: f.items.map(l => (keys.has(l.__key) && sug[l.__key]
+      ? { ...l, cmt_price_snapshot: sug[l.__key].rate, __typed: false } : l)) }));
   };
 
   const addAccessoryItem = () => {
@@ -314,8 +423,13 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
   const updateItem = async (idx, field, value) => {
     // pesan error validasi dibersihkan begitu baris yang ditandai disentuh lagi
     setFormError(prev => (prev && (prev.itemIdx === idx || prev.itemIdx === null) ? null : prev));
-    const newItems = [...form.items];
+    const newItems = [...formRef.current.items];
     newItems[idx] = { ...newItems[idx], [field]: value };
+    // upah yang diketik pengguna tidak lagi diganti usulan
+    if (field === 'cmt_price_snapshot') newItems[idx].__typed = !isBlank(value);
+    // produk baris diganti → upah lama milik produk lain: dikosongkan lalu diisi usulan produk baru
+    const productChanged = field === 'model_id' || field === 'catalog_item_id';
+    if (productChanged) { newItems[idx].cmt_price_snapshot = ''; newItems[idx].__typed = false; newItems[idx].__sug = null; }
     if (field === 'model_id') {
       const model = models.find(m => m.id === value);
       newItems[idx].product_name = model?.name || '';
@@ -339,16 +453,9 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
         newItems[idx].size_id = ''; newItems[idx].size = ''; newItems[idx].color = ''; newItems[idx].sku = '';
       }
     }
-    if (field === 'size_id') {
-      const sz = sizes.find(s => s.id === value);
-      newItems[idx].size = sz?.code || sz?.name || '';
-      const model = models.find(m => m.id === newItems[idx].model_id);
-      if (model?.code) newItems[idx].sku = `${model.code}-${newItems[idx].size}`;
-    }
     if (field === 'catalog_item_id') {
       const cat = catalogItems.find(c => c.id === value);
       newItems[idx].product_name = cat?.product_name || '';
-      newItems[idx].cmt_price_snapshot = cat?.default_cmt_price ?? '';
       newItems[idx].selling_price_snapshot = cat?.default_selling_price ?? '';
       newItems[idx].buyer_ref_code = cat?.buyer_ref_code || '';
       // reset variant-derived fields
@@ -377,6 +484,10 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
     // [FASE 4 CLEANUP] Removed dead `product_id`/`variant_id` handlers (legacy products/
     // product_variants). No picker renders them; Maklon uses `catalog_item_id`.
     setForm(f => ({ ...f, items: newItems }));
+    // K12: usulan upah jahit begitu produk/varian baris diketahui (model + penjahit yang sama)
+    if ((productChanged && value) || field === 'rahaza_variant_id' || field === 'maklon_variant_sku') {
+      suggestForLines([newItems[idx]]);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -384,48 +495,36 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
     const fail = (text, itemIdx = null) => { setFormError({ text, itemIdx }); return false; };
     setFormError(null);
     if (!isInternal && !editData && !form.buyer_id) { fail('Pilih buyer (klien maklon) dulu — artikel katalog selalu milik satu buyer.'); return; }
-    if (form.items.length === 0) { fail('Tambahkan minimal 1 item produk.'); return; }
-    // Validasi Maklon: artikel yg punya varian master data WAJIB pilih varian (SKU), bukan custom.
-    if (!isInternal) {
-      for (let i = 0; i < form.items.length; i++) {
-        const it = form.items[i];
-        if (!it.catalog_item_id) { fail(`Item #${i + 1}: pilih Produk (Katalog Buyer) terlebih dahulu.`, i); return; }
-        const cat = catalogItems.find(c => c.id === it.catalog_item_id);
-        const vars = (cat?.variants || []).filter(v => v.active !== false);
-        if (vars.length > 0 && !vars.some(v => v.sku === it.sku)) {
-          fail(`Item #${i + 1}: pilih Varian (Warna · Size · SKU) dari master data terlebih dahulu.`, i);
-          return;
-        }
-        if (!it.qty || Number(it.qty) <= 0) { fail(`Item #${i + 1}: qty harus lebih dari 0.`, i); return; }
+    if (form.items.length === 0) { fail('Tambahkan minimal 1 baris produk.'); return; }
+    // Satu urutan pemeriksaan & satu bunyi pesan untuk kedua jenis PO. Varian wajib dari master data:
+    // internal → rantai stok FG per warna; maklon → bila artikel katalog punya varian ber-SKU.
+    for (let i = 0; i < form.items.length; i++) {
+      const it = form.items[i];
+      const n = i + 1;
+      if (isInternal ? !it.model_id : !it.catalog_item_id) {
+        fail(`Baris #${n}: pilih ${isInternal ? 'model produk' : 'artikel katalog buyer'} dulu.`, i); return;
+      }
+      const cat = isInternal ? null : catalogItems.find(c => c.id === it.catalog_item_id);
+      const vars = (cat?.variants || []).filter(v => v.active !== false);
+      const variantMissing = isInternal ? !it.rahaza_variant_id : (vars.length > 0 && !vars.some(v => v.sku === it.sku));
+      if (variantMissing) { fail(`Baris #${n}: pilih varian (warna · ukuran · SKU) dari master data.`, i); return; }
+      if (!it.qty || Number(it.qty) <= 0) { fail(`Baris #${n}: qty harus lebih dari 0.`, i); return; }
+      if (!isBlank(it.cmt_price_snapshot) && !(Number(it.cmt_price_snapshot) >= 0)) {
+        fail(`Baris #${n}: upah jahit per pcs harus angka 0 atau lebih.`, i); return;
       }
     }
-    // Validasi Internal (SSOT): tiap item WAJIB pilih Model + Varian (Warna · Size). Varian
-    // membawa rahaza_variant_id → rantai FG per-warna (Produksi→Gudang→Toko) aktif & stok terlacak.
-    if (isInternal) {
-      for (let i = 0; i < form.items.length; i++) {
-        const it = form.items[i];
-        if (!it.model_id) { fail(`Item #${i + 1}: pilih Model produk.`, i); return; }
-        if (!it.rahaza_variant_id) {
-          fail(`Item #${i + 1}: pilih Varian (Warna · Size · SKU) dari master data terlebih dahulu. Warna wajib agar stok Finished Goods terlacak per varian.`, i);
-          return;
-        }
-        if (!it.qty || Number(it.qty) <= 0) { fail(`Item #${i + 1}: qty harus lebih dari 0.`, i); return; }
-      }
-    }
-    // Phase 8.6 — Send items + po_accessories together in the body (PUT supports delta update)
-    const itemsPayload = form.items.map(it => (isInternal
-      ? { ...it, qty: Number(it.qty) }
-      : {
-          ...it,
-          qty: Number(it.qty),
-          selling_price_snapshot: Number(it.selling_price_snapshot) || 0,
-          cmt_price_snapshot: Number(it.cmt_price_snapshot) || 0,
-        }));
+    // Phase 8.6 — Send items + po_accessories together in the body (PUT supports delta update).
+    // K12: upah jahit per pcs dikirim untuk KEDUA jenis PO; harga jasa ke klien hanya maklon.
+    const itemsPayload = form.items.map(it => ({
+      ...stripUi(it),
+      qty: Number(it.qty),
+      cmt_price_snapshot: isBlank(it.cmt_price_snapshot) ? 0 : Number(it.cmt_price_snapshot),
+      ...(isInternal ? {} : { selling_price_snapshot: Number(it.selling_price_snapshot) || 0 }),
+    }));
     const accPayload = (form.po_accessories || [])
       .filter(a => a.accessory_name || a.accessory_id)
       .map(a => ({ ...a, qty_needed: Number(a.qty_needed) || 0 }));
-    const payload = { ...form, items: itemsPayload, po_accessories: accPayload };
-    if (businessType) payload.business_type = businessType;
+    const payload = { ...form, items: itemsPayload, po_accessories: accPayload, business_type: bizKey };
     // FASE G (2026-08-16) — mode OTOMATIS: nomor JANGAN dikirim. Backend menolak
     // nomor ketikan saat mode otomatis (dan menyebut nomor yang akan dipakai),
     // supaya tidak ada nomor yang "lolos" tanpa mengikuti pola.
@@ -493,7 +592,9 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
     } finally { setAccReqCreating(false); }
   };
 
-  const openEdit = async (row) => {
+  // `opts.vendorId` (dari Kirim Material CMT): penjahit dipilih saat kirim tetapi upahnya belum ada — form
+  // dibuka dengan penjahit itu terisi dan usulan upahnya langsung ditawarkan (satu tempat mengetik upah).
+  const openEdit = async (row, opts = {}) => {
     // Phase 8.6 — Load full PO detail (items + po_accessories) so user can edit everything.
     try {
       const [poData, statsData] = await Promise.all([
@@ -508,8 +609,9 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
 
       const mappedItems = (poData.items || []).map(it => {
         const st = statsById[it.id] || {};
-        const sent_to_vendor = st.total_shipped || 0; // actually this is buyer; we also need vendor sent
+        const rate = Number(it.cmt_price_snapshot) > 0 ? it.cmt_price_snapshot : '';
         return {
+          __key: newLineKey(),
           id: it.id,
           catalog_item_id: it.catalog_item_id || '',
           product_id: it.product_id || '',
@@ -526,8 +628,9 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
           sku: it.sku || '',
           qty: it.qty || '',
           serial_number: it.serial_number || '',
-          selling_price_snapshot: it.selling_price_snapshot || '',
-          cmt_price_snapshot: it.cmt_price_snapshot || '',
+          ...(isInternal ? {} : { selling_price_snapshot: it.selling_price_snapshot || '' }),
+          cmt_price_snapshot: rate,
+          __typed: rate !== '',
           // guardrail hints
           __has_shipments: (st.total_shipped || 0) > 0 || (st.total_produced || 0) > 0,
           __min_qty: Math.max(st.total_shipped || 0, st.total_produced || 0),
@@ -550,6 +653,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
         const modelIds = [...new Set(mappedItems.map(m => m.model_id).filter(Boolean))];
         modelIds.forEach(mid => fetchRahazaVariants(mid));
       }
+      setFormError(null);
       setForm({
         po_number: poData.po_number || '',
         customer_name: poData.customer_name || '',
@@ -558,7 +662,6 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
         po_date: toWIBDate(poData.po_date),
         deadline: toWIBDate(poData.deadline),
         delivery_deadline: toWIBDate(poData.delivery_deadline),
-        status: poData.status || 'Draft',
         notes: poData.notes || '',
         items: mappedItems,
         po_accessories: (poData.po_accessories || []).map(a => ({
@@ -572,10 +675,29 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
         })),
       });
       setShowModal(true);
+      if (opts.vendorId && !poData.vendor_id && !poData.rate_lock) {
+        // penjahit dari Kirim Material: kotak upah yang kosong diisi usulan penjahit itu
+        await changeVendor(opts.vendorId, { lines: mappedItems, excludePoId: poData.id });
+      } else {
+        // PO lama: upah tersimpan TIDAK diubah — usulan hanya tampil sebagai keterangan di bawah kotaknya
+        const sug = await fetchRateSuggestions(mappedItems, poData.vendor_id, poData.id);
+        applySuggestions(sug, { fill: false });
+      }
     } catch (err) {
       toast.error('Gagal memuat detail PO: ' + (err.message || err));
     }
   };
+
+  // Tautan dari Kirim Material CMT / Biaya Jahit: { edit_po_id, vendor_id } → buka form ubah PO itu SEKALI.
+  // Objek parameter yang sudah dipakai dicatat (USED_DEEP_LINKS) supaya kembali ke menu ini lewat sidebar —
+  // parameter tautan lama masih tersimpan di App — tidak membuka form itu lagi.
+  useEffect(() => {
+    const pid = deepLinkParams?.edit_po_id;
+    if (!pid || USED_DEEP_LINKS.has(deepLinkParams)) return;
+    USED_DEEP_LINKS.add(deepLinkParams);
+    openEdit({ id: pid }, { vendorId: deepLinkParams?.vendor_id || '' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkParams]);
 
   const transitionStatus = async (poId, nextStatus) => {
     // FASE 5 DA: transisi status HANYA dari allowed_next backend (state machine)
@@ -675,25 +797,23 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
             className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]"
             title="BOM & kebutuhan material (Detail 360°)"><Layers className="w-4 h-4" /></button>
         )}
-        {canEdit && (
+        {canEdit && !CLOSED_PO.includes(row.status) && (
           <>
-            <button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))]" title="Edit"><Pencil className="w-4 h-4" /></button>
-            {!['Closed', 'Completed'].includes(row.status) && (
-              <>
-                <button
-                  onClick={() => setQuickCompletePO(row)}
-                  data-testid={`quick-complete-btn-${row.id}`}
-                  className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]"
-                  title="Quick Complete — selesaikan semua flow produksi sekaligus"
-                >
-                  <Zap className="w-4 h-4" />
-                </button>
-                <button onClick={() => { setCloseTargetPO(row); setCloseForm({ close_reason: CLOSE_REASONS[0], close_notes: '' }); setShowCloseModal(true); }}
-                  className="p-1.5 rounded hover:bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] text-xs" title="Tutup PO">Close</button>
-              </>
-            )}
-            <button onClick={() => setConfirmDelete(row)} className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))]" title="Hapus"><Trash2 className="w-4 h-4" /></button>
+            <button onClick={() => openEdit(row)} data-testid={`po-edit-btn-${row.id}`} className="p-1.5 rounded hover:bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))]" title="Ubah PO" aria-label="Ubah PO"><Pencil className="w-4 h-4" /></button>
+            <button
+              onClick={() => setQuickCompletePO(row)}
+              data-testid={`quick-complete-btn-${row.id}`}
+              className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]"
+              title="Selesaikan cepat — semua alur produksi sekaligus"
+            >
+              <Zap className="w-4 h-4" />
+            </button>
+            <button onClick={() => { setCloseTargetPO(row); setCloseForm({ close_reason: CLOSE_REASONS[0], close_notes: '' }); setShowCloseModal(true); }}
+              className="p-1.5 rounded hover:bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] text-xs" title="Tutup PO">Tutup</button>
           </>
+        )}
+        {canDelete && (
+          <button onClick={() => setConfirmDelete(row)} data-testid={`po-delete-btn-${row.id}`} className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))]" title="Hapus PO" aria-label="Hapus PO"><Trash2 className="w-4 h-4" /></button>
         )}
       </div>
     )}
@@ -738,21 +858,33 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
     );
   };
 
+  const totals = form.items.reduce((t, it) => {
+    const q = Number(it.qty) || 0;
+    t.qty += q;
+    t.rate += q * (Number(it.cmt_price_snapshot) || 0);
+    t.selling += q * (Number(it.selling_price_snapshot) || 0);
+    if (!(Number(it.cmt_price_snapshot) > 0)) t.noRate += 1;
+    return t;
+  }, { qty: 0, rate: 0, selling: 0, noRate: 0 });
+  const autoNumber = numPolicy?.mode === 'auto' && !editData;
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-start justify-between">
-        <div><h1 className="text-2xl font-bold text-foreground">{isInternal ? 'PO Produksi Internal' : businessType === 'maklon' ? 'PO Maklon' : 'Production PO'}</h1><p className="text-muted-foreground text-sm mt-1">{isInternal ? 'Pesanan produksi untuk gudang sendiri — Model & Varian (Warna · Size · SKU) wajib dipilih' : businessType === 'maklon' ? 'Pesanan jasa maklon per klien — Artikel dari Katalog Buyer + Varian (Warna · Size · SKU)' : 'Kelola pesanan produksi multi-item dengan varian produk'}</p></div>
-        {isSuperAdmin && <span className="flex items-center gap-1.5 px-2.5 py-1 bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] rounded-lg text-xs font-medium"><span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--primary))]"></span>Mode Superadmin</span>}
-      </div>
-
-      <FilterChips
-        value={filterStatus}
-        onChange={setFilterStatus}
-        testId="po-filter"
-        ariaLabel="Penyaring status PO"
-        options={['', ...STATUS_OPTIONS].map(s => ({ key: s, label: s || 'Semua' }))}
-      />
-
+    <PageLayout
+      title={isInternal ? 'PO Produksi Internal' : 'PO Maklon'}
+      subtitle={isInternal
+        ? 'Pesanan produksi untuk stok sendiri: model, varian, qty, dan upah jahit per baris.'
+        : 'Pesanan jasa maklon per klien: artikel katalog, varian, qty, harga jasa, dan upah jahit.'}
+      actions={canCreate ? <Button onClick={openCreate} data-testid="create-po-btn"><Plus className="w-4 h-4" /> Buat PO</Button> : null}
+      filters={(
+        <FilterChips
+          value={filterStatus}
+          onChange={setFilterStatus}
+          testId="po-filter"
+          ariaLabel="Penyaring status PO"
+          options={['', ...STATUS_OPTIONS].map(s => ({ key: s, label: s || 'Semua' }))}
+        />
+      )}
+    >
       <DataTable
         columns={columns}
         searchKeys={['po_number', 'customer_name']}
@@ -774,448 +906,383 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
             <ImportExportPanel importType={null} exportType="production-pos" exportFilters={{ status: filterStatus }} />
             <ImportExportToolbar collectionKey="po_berjalan" label="PO berjalan saat cutoff"
               importLabel="Impor PO berjalan" size="default" onImported={() => refetchPOs()} />
-            {canCreate && (
-              <Button onClick={openCreate} data-testid="create-po-btn"><Plus className="w-4 h-4" /> Buat PO</Button>
-            )}
           </div>
         }
       />
 
-      {/* Create PO Modal */}
+      {/* Form PO — K12 (7 Nov 2026): SATU bentuk untuk PO internal & maklon.
+          Urutan bagian: kepala → baris → aksesoris → total. */}
       {showModal && (
-        <Modal title={editData ? `Edit PO: ${editData.po_number}` : (isInternal ? 'Buat PO Produksi Internal' : businessType === 'maklon' ? 'Buat PO Maklon' : 'Buat Production PO')} onClose={() => { setShowModal(false); setFormError(null); }} size="xl">
-          <form onSubmit={handleSubmit} className="space-y-4">
+        <Modal title={editData ? `Ubah PO ${editData.po_number}` : (isInternal ? 'Buat PO produksi internal' : 'Buat PO maklon')} onClose={() => { setShowModal(false); setFormError(null); }} size="xl">
+          <form onSubmit={handleSubmit} className="space-y-4" data-testid="po-form" data-business-type={bizKey}>
             {formError && (
               <Notice tone="danger" icon={AlertTriangle} testId="po-form-error"
                 action={<Button type="button" size="icon-sm" variant="ghost" onClick={() => setFormError(null)} className="text-[hsl(var(--destructive))]" title="Tutup pesan" aria-label="Tutup pesan"><X className="w-3.5 h-3.5" /></Button>}>
                 {formError.text}
               </Notice>
             )}
-            {editData && editData.status === 'Closed' && (
-              <Notice tone="warning" icon={AlertTriangle}>
-                PO ini berstatus <strong>Closed</strong>. Anda mengedit sebagai Superadmin.
-              </Notice>
+            {rateLocked && (
+              <Notice tone="warning" icon={Lock} testId="po-rate-locked">{editData.rate_lock.message}</Notice>
             )}
             {editData && (
-              <div className="bg-muted/40 rounded-xl p-3">
-                <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Status Workflow</p>
-                <POWorkflowIndicator status={editData.status} />
-                <p className="text-[11px] text-muted-foreground mt-2">
-                  🛡️ Guardrails aktif: item yang sudah memiliki shipment tidak dapat diubah SKU/Size/Color-nya, dan qty-nya tidak dapat lebih rendah dari total yang sudah dikirim/shipped.
-                </p>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <StatusBadge status={editData.status} />
+                <span>Status diubah lewat tombol aksi di detail PO. Baris yang sudah dikirim/diproduksi tidak bisa
+                  diganti produknya, dan qty-nya tidak bisa di bawah jumlah yang sudah dikirim.</span>
               </div>
             )}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-foreground/90 mb-1">
-                  Nomor PO {numPolicy?.mode === 'auto' && !editData ? '' : '*'}
-                  <span className="text-xs text-muted-foreground/70">
-                    {numPolicy?.mode === 'auto' && !editData ? ' (otomatis)' : ' (manual)'}
-                  </span>
-                </label>
-                {numPolicy?.mode === 'auto' && !editData ? (
-                  <>
-                    <input readOnly disabled data-testid="po-number-auto"
-                      className="w-full border border-border rounded-lg px-3 py-2 text-sm tabular-nums bg-muted/50 text-muted-foreground"
-                      value={numPolicy.nomor_berikutnya || numPolicy.contoh || 'dibuat otomatis'} />
-                    <p className="text-[11px] text-muted-foreground mt-1">
-                      Dibuat sistem saat disimpan (pola {numPolicy.format}). Ubah ke manual di
-                      Administrasi Sistem → Penomoran Dokumen.
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <input required data-testid="po-number-input"
-                      className="w-full border border-border rounded-lg px-3 py-2 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
-                      value={form.po_number} onChange={e => setForm({...form, po_number: e.target.value})}
-                      placeholder={numPolicy?.contoh || 'PO-2025-001'} />
-                    {numPolicy?.format && !editData && (
-                      <p className="text-[11px] text-muted-foreground mt-1">
-                        Wajib mengikuti pola <b className="tabular-nums">{numPolicy.format}</b> —
-                        contoh {numPolicy.contoh}.
-                      </p>
-                    )}
-                  </>
-                )}
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-foreground/90 mb-1">{isInternal ? 'Pelanggan / tujuan barang jadi' : 'Pembeli / pelanggan *'}</label>
-                {isInternal ? (
-                  <input data-testid="po-customer-input" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
-                    value={form.customer_name} onChange={e => setForm({...form, customer_name: e.target.value})}
-                    placeholder="Gudang FG Sendiri" />
-                ) : (<>
-                <SearchableSelect
-                  options={buyers.map(b => ({ value: b.id, label: b.buyer_name, sub: b.buyer_code }))}
-                  value={form.buyer_id}
-                  onChange={val => {
-                    const buyer = buyers.find(b => b.id === val);
-                    setForm(f => ({...f, buyer_id: val, customer_name: buyer?.buyer_name || '',
-                      items: f.items.map(it => ({ ...it, catalog_item_id: '', product_name: '', sku: '', size: '', color: '', cmt_price_snapshot: '', selling_price_snapshot: '' })) }));
-                    fetchCatalog(val);
-                  }}
-                  placeholder="— Pilih Buyer —"
-                  data-testid="po-buyer-select"
-                />
-                {/* 2026-11-07 (Tahap 6, PR7): kotak "Atau ketik nama pelanggan" dihapus — artikel katalog selalu
-                    milik satu buyer, jadi PO maklon tanpa buyer terpilih tidak bisa diisi. */}
-                </>)}
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground/90 mb-1">
-                Vendor / CMT{' '}
-                <span className="text-xs text-muted-foreground/70">
-                  {isInternal ? '(tujuan kirim material — opsional)' : 'opsional'}
-                </span>
-              </label>
-              <SearchableSelect
-                options={vendors.map(v => ({ value: v.id, label: v.garment_name, sub: v.garment_code }))}
-                value={form.vendor_id}
-                onChange={val => setForm({...form, vendor_id: val})}
-                placeholder="— Pilih Vendor/CMT —"
-                data-testid="po-vendor-select"
-              />
-            </div>
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-foreground/90 mb-1">Tanggal PO</label>
-                <GlassInput type="date" value={form.po_date} onChange={e => setForm({...form, po_date: e.target.value})} />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-foreground/90 mb-1">Tenggat produksi</label>
-                <GlassInput type="date" value={form.deadline} onChange={e => setForm({...form, deadline: e.target.value})} />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-foreground/90 mb-1">Tenggat pengiriman</label>
-                <GlassInput type="date" value={form.delivery_deadline} onChange={e => setForm({...form, delivery_deadline: e.target.value})} />
-              </div>
-            </div>
 
-            {/* PO Items */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="block text-sm font-semibold text-foreground/90">Item Produk *</label>
-                <button type="button" onClick={addItem} className="flex items-center gap-1 text-xs text-[hsl(var(--primary))] hover:text-[hsl(var(--primary))] font-medium">
-                  <Plus className="w-3.5 h-3.5" /> Tambah Item
-                </button>
+            {/* 1 · Kepala */}
+            <section className="space-y-2" data-testid="po-form-header">
+              <SectionTitle>Kepala PO</SectionTitle>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field label="Jenis PO">
+                  <div className="h-9 flex items-center gap-2 text-sm" data-testid="po-form-type">
+                    <BizBadge type={bizKey} size="xs" />
+                    <span className="text-foreground/80">{isInternal ? 'Produksi untuk stok sendiri' : 'Jasa jahit untuk klien maklon'}</span>
+                  </div>
+                </Field>
+                <Field label="Nomor PO" required={!autoNumber}
+                  hint={autoNumber
+                    ? `Dibuat sistem saat disimpan (pola ${numPolicy.format}). Ubah ke manual di Administrasi Sistem → Penomoran Dokumen.`
+                    : (numPolicy?.format && !editData ? `Wajib mengikuti pola ${numPolicy.format} — contoh ${numPolicy.contoh}.` : null)}>
+                  {autoNumber ? (
+                    <GlassInput readOnly disabled data-testid="po-number-auto" className="tabular-nums"
+                      value={numPolicy.nomor_berikutnya || numPolicy.contoh || 'dibuat otomatis'} />
+                  ) : (
+                    <GlassInput required data-testid="po-number-input" className="tabular-nums"
+                      value={form.po_number} onChange={e => setForm({ ...form, po_number: e.target.value })}
+                      placeholder={numPolicy?.contoh || 'PO-2026-001'} />
+                  )}
+                </Field>
+                {isInternal ? (
+                  <Field label="Tujuan barang jadi">
+                    <GlassInput data-testid="po-customer-input" value={form.customer_name}
+                      onChange={e => setForm({ ...form, customer_name: e.target.value })} placeholder="Gudang FG Sendiri" />
+                  </Field>
+                ) : (
+                  <Field label="Buyer (klien maklon)" required>
+                    <SearchableSelect
+                      options={buyers.map(b => ({ value: b.id, label: b.buyer_name, sub: b.buyer_code }))}
+                      value={form.buyer_id}
+                      onChange={val => {
+                        const buyer = buyers.find(b => b.id === val);
+                        setForm(f => ({ ...f, buyer_id: val, customer_name: buyer?.buyer_name || '',
+                          items: f.items.map(it => ({ ...it, catalog_item_id: '', product_name: '', sku: '', size: '', color: '', maklon_variant_id: '', cmt_price_snapshot: '', selling_price_snapshot: '', __typed: false, __sug: null })) }));
+                        fetchCatalog(val);
+                      }}
+                      placeholder="Pilih buyer"
+                      disabled={!!editData && editData.status !== 'Draft'}
+                      data-testid="po-buyer-select"
+                    />
+                  </Field>
+                )}
+                <Field label="Penjahit (CMT)" hint="Boleh diisi belakangan — saat Kirim Material CMT. Upah jahit diusulkan per penjahit.">
+                  <SearchableSelect
+                    options={vendors.map(v => ({ value: v.id, label: v.garment_name, sub: v.garment_code }))}
+                    value={form.vendor_id}
+                    onChange={val => { if (val !== form.vendor_id) changeVendor(val); }}
+                    placeholder="Pilih penjahit"
+                    data-testid="po-vendor-select"
+                  />
+                </Field>
+                <Field label="Tanggal PO">
+                  <GlassInput type="date" value={form.po_date} onChange={e => setForm({ ...form, po_date: e.target.value })} data-testid="po-date" />
+                </Field>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Tenggat produksi">
+                    <GlassInput type="date" value={form.deadline} onChange={e => setForm({ ...form, deadline: e.target.value })} data-testid="po-deadline" />
+                  </Field>
+                  <Field label="Tenggat kirim">
+                    <GlassInput type="date" value={form.delivery_deadline} onChange={e => setForm({ ...form, delivery_deadline: e.target.value })} data-testid="po-delivery-deadline" />
+                  </Field>
+                </div>
               </div>
-              {form.items.length === 0 && <p className="text-sm text-muted-foreground/70 italic text-center py-4 border border-dashed border-border rounded-lg">Klik "Tambah Item" untuk menambahkan produk ke PO</p>}
-              <div className="space-y-3">
-                {form.items.map((item, idx) => {
-                  const hasShipments = !!item.__has_shipments;
-                  const minQty = item.__min_qty || 0;
-                  const maklonCat = !isInternal ? catalogItems.find(c => c.id === item.catalog_item_id) : null;
-                  const maklonVariants = (maklonCat?.variants || []).filter(v => v.active !== false);
-                  const maklonHasVariants = maklonVariants.length > 0;
-                  const variantLocked = !isInternal && maklonHasVariants; // Size/Warna/SKU auto dari varian master data
-                  const autoLocked = isInternal || variantLocked;
-                  return (
-                  <GlassCard key={idx} className={`p-3 ${formError?.itemIdx === idx ? 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.5)] ring-1 ring-[hsl(var(--destructive)/0.35)]' : hasShipments ? 'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.4)]' : ''}`} data-testid={`po-item-row-${idx}`}>
-                    <div className="flex items-center justify-between mb-2">
+            </section>
+
+            {/* 2 · Baris produk */}
+            <section className="space-y-2" data-testid="po-form-lines">
+              <SectionTitle aside={(
+                <Button type="button" variant="outline" size="sm" onClick={addItem} data-testid="po-add-line">
+                  <Plus className="w-3.5 h-3.5" /> Tambah item
+                </Button>
+              )}>Baris produk <span className="text-[hsl(var(--destructive))]">*</span></SectionTitle>
+              {form.items.length === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-3 border border-dashed border-border rounded-lg">
+                  Klik "Tambah item" untuk menambahkan produk ke PO.
+                </p>
+              )}
+              {form.items.map((item, idx) => {
+                const hasShipments = !!item.__has_shipments;
+                const minQty = item.__min_qty || 0;
+                const maklonCat = !isInternal ? catalogItems.find(c => c.id === item.catalog_item_id) : null;
+                const maklonVariants = (maklonCat?.variants || []).filter(v => v.active !== false);
+                // Ukuran/warna/SKU diketik hanya untuk artikel maklon tanpa varian ber-SKU; selain itu ikut varian
+                // (dulu ditampilkan lagi sebagai kotak terkunci + "SKU terpilih" → SKU tampil 3 kali).
+                const manualVariant = !isInternal && !!item.catalog_item_id && maklonVariants.length === 0;
+                const qty = Number(item.qty) || 0;
+                const rate = Number(item.cmt_price_snapshot) || 0;
+                const sug = item.__sug;
+                const sugDiffers = sug && Number(sug.rate) > 0 && Number(sug.rate) !== rate;
+                return (
+                  <GlassCard key={item.__key || idx} className={`p-3 space-y-2 ${formError?.itemIdx === idx ? 'ring-1 ring-[hsl(var(--destructive)/0.6)]' : hasShipments ? 'ring-1 ring-[hsl(var(--warning)/0.5)]' : ''}`} data-testid={`po-item-row-${idx}`}>
+                    <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-semibold text-muted-foreground">
-                        Item #{idx + 1}
-                        {hasShipments && (
-                          <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] uppercase tracking-wide">
-                            🔒 sudah shipped (qty min: {minQty})
-                          </span>
-                        )}
+                        Baris #{idx + 1}
+                        {hasShipments && <span className="ml-2 text-[hsl(var(--warning))]">sudah dikirim — qty minimal {minQty}</span>}
                       </span>
                       {hasShipments ? (
-                        <span className="text-xs text-muted-foreground/70" title="Tidak dapat dihapus karena sudah ada shipment/return">Tidak dapat dihapus</span>
+                        <span className="text-xs text-muted-foreground" title="Tidak dapat dihapus karena sudah ada kiriman/produksi">Tidak dapat dihapus</span>
                       ) : (
-                        <button type="button" onClick={() => removeItem(idx)} className="text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]"><X className="w-4 h-4" /></button>
+                        <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeItem(idx)} className="text-[hsl(var(--destructive))]"
+                          title="Hapus baris" aria-label="Hapus baris" data-testid={`po-item-${idx}-remove`}><X className="w-4 h-4" /></Button>
                       )}
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {isInternal ? (<>
-                      <div>
-                        <label className="block text-xs text-muted-foreground mb-1">Model (RnD) *</label>
-                        <SearchableSelect
-                          options={models
-                            // 2026-11-07: model non-aktif tidak ditawarkan (server mengirim semua model) — kecuali
-                            // yang sudah tersimpan di baris ini supaya PO lama tetap terbaca.
-                            .filter(m => m.active !== false || m.id === item.model_id)
-                            .map(m => ({ value: m.id, label: m.name, sub: m.code }))}
-                          value={item.model_id}
-                          onChange={val => updateItem(idx, 'model_id', val)}
-                          placeholder="Pilih Model"
-                          required
-                          disabled={hasShipments}
-                          data-testid={`po-item-${idx}-model`}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-muted-foreground mb-1">Varian (Warna · Size · SKU) *</label>
-                        <SearchableSelect
-                          options={(rahazaVariants[item.model_id] || []).map(v => ({
-                            value: v.id,
-                            label: `${v.color_name || '-'} · ${v.size_code || '-'} · ${v.sku}`,
-                          }))}
-                          value={item.rahaza_variant_id}
-                          onChange={val => updateItem(idx, 'rahaza_variant_id', val)}
-                          placeholder={item.model_id ? 'Pilih Varian ber-SKU' : 'Pilih Model dulu'}
-                          required
-                          disabled={!item.model_id || hasShipments}
-                          data-testid={`po-item-${idx}-variant`}
-                        />
-                        {item.rahaza_variant_id && item.sku && (
-                          <p className="text-[11px] text-[hsl(var(--success))] font-medium mt-1" data-testid={`po-item-${idx}-sku-ok`}>
-                            SKU terpilih: <span className="tabular-nums">{item.sku}</span>
-                          </p>
-                        )}
-                        {item.model_id && (rahazaVariants[item.model_id] || []).length === 0 && (
-                          <Notice tone="warning" className="mt-1 px-3 py-2 text-xs">Belum ada varian. Buat di Master Produk → tab Varian.</Notice>
-                        )}
-                      </div>
-                      </>) : (<>
-                      <div>
-                        <label className="block text-xs text-muted-foreground mb-1">Produk (Katalog Buyer) *</label>
-                        <SearchableSelect
-                          options={catalogItems.map(c => ({ value: c.id, label: c.product_name, sub: c.artikel_code }))}
-                          value={item.catalog_item_id}
-                          onChange={val => updateItem(idx, 'catalog_item_id', val)}
-                          placeholder={form.buyer_id ? 'Pilih dari Katalog Buyer' : 'Pilih Buyer dulu'}
-                          required
-                          disabled={!form.buyer_id || hasShipments}
-                          data-testid={`po-item-${idx}-catalog`}
-                        />
-                        {(() => { const c = catalogItems.find(c => c.id === item.catalog_item_id); return c && ((c.color_options||[]).length || (c.size_options||[]).length) ? (
-                          <p className="text-[10px] text-muted-foreground/70 mt-1">Warna: {(c.color_options||[]).join(', ') || '-'} • Size: {(c.size_options||[]).join(', ') || '-'}</p>
-                        ) : null; })()}
-                      </div>
-                      <div>
-                        <label className="block text-xs text-muted-foreground mb-1">Artikel Buyer <span className="text-[10px] text-muted-foreground/60">(bisa custom)</span></label>
-                        <input className="w-full border border-border rounded px-2 py-1.5 text-xs tabular-nums disabled:bg-muted disabled:text-muted-foreground" value={item.buyer_ref_code || ''} onChange={e => updateItem(idx, 'buyer_ref_code', e.target.value)} placeholder="kode artikel buyer" disabled={hasShipments} />
-                      </div>
-                      </>)}
-                    </div>
-                    {/* Selektor Varian dari master data (Maklon) — relasi ke Katalog Buyer */}
-                    {!isInternal && item.catalog_item_id && (
-                      <div className="mt-2">
-                        <label className="block text-xs text-muted-foreground mb-1">
-                          Varian (Warna · Size · SKU){maklonHasVariants && <span className="text-[hsl(var(--destructive))]"> *</span>}
-                        </label>
-                        {maklonHasVariants ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {isInternal ? (
+                        <Field label="Model produk" required>
                           <SearchableSelect
-                            options={maklonVariants.map(v => ({
-                              value: v.sku,
-                              label: `${v.color || '-'} · ${v.size || '-'} · ${v.sku}`,
-                            }))}
-                            value={item.sku}
-                            onChange={val => updateItem(idx, 'maklon_variant_sku', val)}
-                            placeholder="Pilih varian dari master data"
+                            options={models
+                              // 2026-11-07: model non-aktif tidak ditawarkan (server mengirim semua model) — kecuali
+                              // yang sudah tersimpan di baris ini supaya PO lama tetap terbaca.
+                              .filter(m => m.active !== false || m.id === item.model_id)
+                              .map(m => ({ value: m.id, label: m.name, sub: m.code }))}
+                            value={item.model_id}
+                            onChange={val => updateItem(idx, 'model_id', val)}
+                            placeholder="Pilih model"
                             required
                             disabled={hasShipments}
+                            data-testid={`po-item-${idx}-model`}
+                          />
+                        </Field>
+                      ) : (
+                        <Field label="Artikel katalog buyer" required
+                          hint={maklonCat && ((maklonCat.color_options || []).length || (maklonCat.size_options || []).length)
+                            ? `Warna: ${(maklonCat.color_options || []).join(', ') || '-'} · Ukuran: ${(maklonCat.size_options || []).join(', ') || '-'}` : null}>
+                          <SearchableSelect
+                            options={catalogItems.map(c => ({ value: c.id, label: c.product_name, sub: c.artikel_code }))}
+                            value={item.catalog_item_id}
+                            onChange={val => updateItem(idx, 'catalog_item_id', val)}
+                            placeholder={form.buyer_id ? 'Pilih artikel katalog buyer' : 'Pilih buyer dulu'}
+                            required
+                            disabled={!form.buyer_id || hasShipments}
+                            data-testid={`po-item-${idx}-catalog`}
+                          />
+                        </Field>
+                      )}
+                      {/* Varian: label warna · ukuran, SKU satu kali (baris kedua pilihan). */}
+                      {isInternal ? (
+                        <Field label="Varian (warna · ukuran · SKU)" required>
+                          <SearchableSelect
+                            options={(rahazaVariants[item.model_id] || []).map(v => ({
+                              value: v.id, label: `${v.color_name || '-'} · ${v.size_code || '-'}`, sub: v.sku,
+                            }))}
+                            value={item.rahaza_variant_id}
+                            onChange={val => updateItem(idx, 'rahaza_variant_id', val)}
+                            placeholder={item.model_id ? 'Pilih varian' : 'Pilih model dulu'}
+                            required
+                            disabled={!item.model_id || hasShipments}
                             data-testid={`po-item-${idx}-variant`}
                           />
-                        ) : (
-                          <p className="text-[10px] text-[hsl(var(--warning))] mt-1">Artikel ini belum punya varian ber-SKU. Isi Size/Warna/SKU manual, atau generate varian di Katalog Buyer → tab Varian.</p>
-                        )}
-                        {maklonHasVariants && item.sku && maklonVariants.some(v => v.sku === item.sku) && (
-                          <p className="text-[11px] text-[hsl(var(--success))] font-medium mt-1" data-testid={`po-item-${idx}-sku-ok`}>
-                            SKU terpilih: <span className="tabular-nums">{item.sku}</span>
-                          </p>
-                        )}
+                          {item.model_id && (rahazaVariants[item.model_id] || []).length === 0 && (
+                            <p className="text-[11px] text-[hsl(var(--warning))] mt-1">Model ini belum punya varian — buat di Master Produk → tab Varian.</p>
+                          )}
+                        </Field>
+                      ) : (
+                        <Field label="Varian (warna · ukuran · SKU)" required={maklonVariants.length > 0}>
+                          {maklonVariants.length > 0 || !item.catalog_item_id ? (
+                            <SearchableSelect
+                              options={maklonVariants.map(v => ({ value: v.sku, label: `${v.color || '-'} · ${v.size || '-'}`, sub: v.sku }))}
+                              value={item.sku}
+                              onChange={val => updateItem(idx, 'maklon_variant_sku', val)}
+                              placeholder={item.catalog_item_id ? 'Pilih varian' : 'Pilih artikel dulu'}
+                              required
+                              disabled={!item.catalog_item_id || hasShipments}
+                              data-testid={`po-item-${idx}-variant`}
+                            />
+                          ) : (
+                            <p className="text-[11px] text-[hsl(var(--warning))] h-9 flex items-center">Artikel ini belum punya varian ber-SKU — isi ukuran, warna, dan SKU di bawah.</p>
+                          )}
+                        </Field>
+                      )}
+                    </div>
+                    {!isInternal && (
+                      <Field label="Kode artikel buyer (boleh beda per varian)">
+                        <GlassInput className="tabular-nums" value={item.buyer_ref_code || ''} onChange={e => updateItem(idx, 'buyer_ref_code', e.target.value)}
+                          placeholder="kode artikel buyer" disabled={hasShipments} data-testid={`po-item-${idx}-buyer-ref`} />
+                      </Field>
+                    )}
+                    {manualVariant && (
+                      <div className="grid grid-cols-3 gap-2">
+                        <Field label="Ukuran"><GlassInput value={item.size} onChange={e => updateItem(idx, 'size', e.target.value)} placeholder="M" disabled={hasShipments} /></Field>
+                        <Field label="Warna"><GlassInput value={item.color} onChange={e => updateItem(idx, 'color', e.target.value)} placeholder="Hitam" disabled={hasShipments} /></Field>
+                        <Field label="SKU"><GlassInput className="tabular-nums" value={item.sku} onChange={e => updateItem(idx, 'sku', e.target.value)} placeholder="ART-HTM-M" disabled={hasShipments} /></Field>
                       </div>
                     )}
-                    <div className="grid grid-cols-4 gap-2 mt-2">
-                      <div>
-                        <label className="block text-xs text-muted-foreground mb-1">Ukuran{autoLocked && <span className="text-[10px] ml-1 text-muted-foreground/60">(auto)</span>}</label>
-                        <input className="w-full border border-border rounded px-2 py-1.5 text-xs disabled:bg-muted disabled:text-muted-foreground" value={item.size} onChange={e => updateItem(idx, 'size', e.target.value)} placeholder="M" disabled={hasShipments || autoLocked} />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-muted-foreground mb-1">Warna{autoLocked && <span className="text-[10px] ml-1 text-muted-foreground/60">(auto)</span>}</label>
-                        <input className="w-full border border-border rounded px-2 py-1.5 text-xs disabled:bg-muted disabled:text-muted-foreground" value={item.color} onChange={e => updateItem(idx, 'color', e.target.value)} placeholder="Hitam" disabled={hasShipments || autoLocked} />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-muted-foreground mb-1">SKU{autoLocked && <span className="text-[10px] ml-1 text-muted-foreground/60">(auto)</span>}</label>
-                        <input className="w-full border border-border rounded px-2 py-1.5 text-xs tabular-nums disabled:bg-muted disabled:text-muted-foreground" value={item.sku} onChange={e => updateItem(idx, 'sku', e.target.value)} placeholder="PRD-BLK-M" disabled={hasShipments || autoLocked} />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-muted-foreground mb-1">Qty *{hasShipments && <span className="text-[hsl(var(--warning))] ml-1">(min {minQty})</span>}</label>
-                        <input required type="number" min={hasShipments ? minQty : 1} className="w-full border border-border rounded px-2 py-1.5 text-xs" value={item.qty} onChange={e => updateItem(idx, 'qty', e.target.value)} placeholder="100" data-testid={`po-item-${idx}-qty`} />
-                      </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      <Field label={hasShipments ? `Qty (min ${minQty})` : 'Qty'} required>
+                        <GlassInput required type="number" min={hasShipments ? minQty : 1} value={item.qty}
+                          onChange={e => updateItem(idx, 'qty', e.target.value)} placeholder="100" data-testid={`po-item-${idx}-qty`} />
+                      </Field>
+                      <Field label="No. seri / batch" required>
+                        <GlassInput required className="tabular-nums" value={item.serial_number || ''}
+                          onChange={e => handleSerialChange(idx, e.target.value)} placeholder="SN-2026-001" data-testid={`po-item-serial-${idx}`} />
+                      </Field>
+                      <Field label="Upah jahit per pcs (Rp)" className="col-span-2 sm:col-span-1">
+                        <MoneyInput glass value={item.cmt_price_snapshot} disabled={rateLocked}
+                          onChange={e => updateItem(idx, 'cmt_price_snapshot', e.target.value)}
+                          placeholder="0" data-testid={`po-item-${idx}-rate`} />
+                      </Field>
+                      {!isInternal && (
+                        <Field label="Harga jasa ke klien (Rp)" className="col-span-2 sm:col-span-1">
+                          <MoneyInput glass value={item.selling_price_snapshot}
+                            onChange={e => updateItem(idx, 'selling_price_snapshot', e.target.value)}
+                            placeholder="85.000" data-testid={`po-item-${idx}-selling`} />
+                        </Field>
+                      )}
                     </div>
-                    <div className="grid grid-cols-3 gap-2 mt-2">
-                      <div className="col-span-1">
-                        <label className="block text-xs text-muted-foreground mb-1">No. Seri / Batch <span className="text-[hsl(var(--warning))] font-semibold">*</span></label>
-                        <input required className="w-full border border-[hsl(var(--warning)/0.35)] rounded px-2 py-1.5 text-xs tabular-nums bg-[hsl(var(--warning)/0.1)] focus:outline-none focus:ring-1 focus:ring-[hsl(var(--warning)/0.35)]" value={item.serial_number || ''} onChange={e => handleSerialChange(idx, e.target.value)} placeholder="SN-2025-001" data-testid={`po-item-serial-${idx}`} />
-                        {(() => {
-                          const cur = (item.serial_number || '').trim().toUpperCase().replace(/\s+/g, ' ');
-                          if (!cur) return null;
-                          const inFormDup = form.items.some((o, j) => j !== idx && (o.serial_number || '').trim().toUpperCase().replace(/\s+/g, ' ') === cur);
-                          const chk = serialChecks[idx];
-                          if (chk?.loading) {
-                            return <p className="text-[10px] text-muted-foreground mt-1 inline-flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Mengecek seri…</p>;
-                          }
-                          const dbUsages = (chk && chk.usages) || [];
-                          const dbDup = dbUsages.length > 0;
-                          if (inFormDup || dbDup) {
-                            return (
-                              <p className="text-[10px] text-[hsl(var(--destructive))] mt-1 flex items-start gap-1 font-medium" data-testid={`po-item-serial-warn-${idx}`}>
-                                <AlertTriangle size={11} className="mt-px flex-shrink-0" />
-                                <span>
-                                  Seri dobel!{inFormDup ? ' Sama dgn item lain di PO ini.' : ''}
-                                  {dbDup ? ` Sudah dipakai di ${dbUsages[0].po_number}${dbUsages.length > 1 ? ` +${dbUsages.length - 1} lagi` : ''}.` : ''}
-                                  <span className="text-muted-foreground font-normal"> (boleh lanjut — hanya peringatan)</span>
-                                </span>
-                              </p>
-                            );
-                          }
-                          if (chk && !chk.loading && dbUsages.length === 0) {
-                            return <p className="text-[10px] text-[hsl(var(--success))] mt-1">Seri unik ✓</p>;
-                          }
-                          return null;
-                        })()}
-                      </div>
-                      {!isInternal && (<>
-                      <div>
-                        <label className="block text-xs text-muted-foreground mb-1">Harga jasa ke klien (Rp)</label>
-                        <MoneyInput unstyled className="w-full border border-border rounded px-2 py-1.5 text-xs" value={item.selling_price_snapshot} onChange={e => updateItem(idx, 'selling_price_snapshot', e.target.value)} placeholder="85.000" data-testid={`po-item-${idx}-selling`} />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-muted-foreground mb-1">Upah CMT (Rp)</label>
-                        <MoneyInput unstyled className="w-full border border-border rounded px-2 py-1.5 text-xs" value={item.cmt_price_snapshot} onChange={e => updateItem(idx, 'cmt_price_snapshot', e.target.value)} placeholder="35.000" data-testid={`po-item-${idx}-rate`} />
-                      </div>
-                      </>)}
+                    {(() => {
+                      const cur = (item.serial_number || '').trim().toUpperCase().replace(/\s+/g, ' ');
+                      if (!cur) return null;
+                      const inFormDup = form.items.some((o, j) => j !== idx && (o.serial_number || '').trim().toUpperCase().replace(/\s+/g, ' ') === cur);
+                      const chk = serialChecks[idx];
+                      if (chk?.loading) {
+                        return <p className="text-[11px] text-muted-foreground inline-flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Mengecek nomor seri…</p>;
+                      }
+                      const dbUsages = (chk && chk.usages) || [];
+                      if (inFormDup || dbUsages.length > 0) {
+                        return (
+                          <p className="text-[11px] text-[hsl(var(--destructive))] flex items-start gap-1" data-testid={`po-item-serial-warn-${idx}`}>
+                            <AlertTriangle size={11} className="mt-px flex-shrink-0" />
+                            <span>
+                              Nomor seri dobel.{inFormDup ? ' Sama dengan baris lain di PO ini.' : ''}
+                              {dbUsages.length > 0 ? ` Sudah dipakai di ${dbUsages[0].po_number}${dbUsages.length > 1 ? ` +${dbUsages.length - 1} lagi` : ''}.` : ''}
+                              <span className="text-muted-foreground"> Boleh lanjut — hanya peringatan.</span>
+                            </span>
+                          </p>
+                        );
+                      }
+                      return chk && !chk.loading ? <p className="text-[11px] text-[hsl(var(--success))]">Nomor seri unik.</p> : null;
+                    })()}
+                    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px]">
+                      <span className="text-muted-foreground" data-testid={`po-item-${idx}-rate-hint`} data-source={sug?.source || ''}>
+                        {sug ? (
+                          <>
+                            {sugDiffers ? `Usulan ${rupiah(sug.rate)} — ` : (Number(sug.rate) > 0 ? 'Usulan: ' : '')}{sug.note}
+                            {sugDiffers && !rateLocked && (
+                              <Button type="button" variant="link" size="sm" className="h-auto p-0 ml-1 text-[11px]"
+                                onClick={() => updateItem(idx, 'cmt_price_snapshot', sug.rate)} data-testid={`po-item-${idx}-rate-use`}>Pakai usulan</Button>
+                            )}
+                          </>
+                        ) : (isInternal
+                          ? (item.model_id ? 'Mencari usulan upah…' : 'Pilih model untuk melihat usulan upah.')
+                          : (item.catalog_item_id ? 'Mencari usulan upah…' : 'Pilih artikel untuk melihat usulan upah.'))}
+                      </span>
+                      <span className="tabular-nums text-foreground/80" data-testid={`po-item-${idx}-rate-total`}>
+                        Upah jahit baris: <b>{rupiah(rate * qty)}</b>
+                        {!isInternal && <> · Nilai jasa: <b>{rupiah((Number(item.selling_price_snapshot) || 0) * qty)}</b></>}
+                      </span>
                     </div>
                   </GlassCard>
-                  );
-                })}
-              </div>
-            </div>
+                );
+              })}
+            </section>
 
-            {form.items.length > 0 && (
-              <div className="bg-[hsl(var(--primary)/0.1)] rounded-lg p-3 text-sm">
-                <div className="flex justify-between text-[hsl(var(--primary))]">
-                  <span>Total Item: <strong>{form.items.length}</strong></span>
-                  <span>Total Qty: <strong>{form.items.reduce((s, i) => s + (Number(i.qty) || 0), 0).toLocaleString('id-ID')} pcs</strong></span>
-                </div>
-              </div>
-            )}
-
-            {/* ── Aksesoris dari BOM Katalog (otomatis, read-only) ─────────── */}
-            {!isInternal && (
-              <div data-testid="po-bom-accessories-panel">
-                <div className="flex items-center justify-between mb-2">
-                  <label className="block text-sm font-semibold text-foreground/90">
-                    Aksesoris dari BOM Katalog{' '}
-                    <span className="text-xs font-normal text-muted-foreground">(otomatis · tidak perlu diketik)</span>
-                  </label>
-                  {bomAcc.loading && (
-                    <span className="text-xs text-muted-foreground flex items-center gap-1">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> menghitung…
-                    </span>
-                  )}
-                </div>
-                {bomAcc.rows.length === 0 ? (
-                  <p className="text-xs text-muted-foreground/70 italic text-center py-2 border border-dashed border-border rounded-lg"
-                    data-testid="po-bom-acc-empty">
+            {/* 3 · Aksesoris — bagian yang sama untuk kedua jenis: dari BOM (otomatis) + tambahan di luar BOM */}
+            <section className="space-y-2" data-testid="po-form-accessories">
+              <SectionTitle aside={(
+                <Button type="button" variant="outline" size="sm" onClick={addAccessoryItem} data-testid="po-add-accessory">
+                  <Plus className="w-3.5 h-3.5" /> Tambah aksesoris
+                </Button>
+              )}>Aksesoris</SectionTitle>
+              <div data-testid="po-bom-accessories-panel" className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+                  Dari BOM (otomatis, tidak perlu diketik)
+                  {bomAcc.loading && <span className="inline-flex items-center gap-1"><Loader2 className="w-3.5 h-3.5 animate-spin" /> menghitung…</span>}
+                </p>
+                {isInternal ? (
+                  <p className="text-xs text-muted-foreground border border-dashed border-border rounded-lg px-3 py-2" data-testid="po-bom-acc-internal">
+                    Dihitung dari BOM aktif tiap model × qty saat PO disimpan, lalu tampil di detail PO beserta posisi stoknya.
+                  </p>
+                ) : bomAcc.rows.length === 0 ? (
+                  <p className="text-xs text-muted-foreground border border-dashed border-border rounded-lg px-3 py-2" data-testid="po-bom-acc-empty">
                     {bomAcc.loading
                       ? 'Menghitung kebutuhan aksesoris dari BOM…'
-                      : 'Pilih artikel Katalog Buyer + isi qty — aksesoris muncul otomatis bila artikel itu punya BOM Template aktif.'}
+                      : 'Pilih artikel katalog dan isi qty — aksesoris muncul otomatis bila artikel itu punya template BOM aktif.'}
                   </p>
                 ) : (
-                  <div className="rounded-lg border border-[hsl(var(--success)/0.35)] overflow-hidden">
+                  <div className="rounded-lg border border-border overflow-x-auto">
                     <table className="w-full text-xs">
-                      <thead className="bg-[hsl(var(--success)/0.1)]">
+                      <thead className="bg-muted/40">
                         <tr>
-                          <th className="text-left px-3 py-1.5 text-[hsl(var(--success))]">Aksesoris</th>
-                          <th className="text-left px-3 py-1.5 text-[hsl(var(--success))]">Kode</th>
-                          <th className="text-right px-3 py-1.5 text-[hsl(var(--success))]">Kebutuhan</th>
+                          <th className="text-left px-3 py-1.5 text-muted-foreground">Aksesoris</th>
+                          <th className="text-left px-3 py-1.5 text-muted-foreground">Kode</th>
+                          <th className="text-right px-3 py-1.5 text-muted-foreground">Kebutuhan</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-[hsl(var(--success)/0.35)] bg-card">
+                      <tbody className="divide-y divide-border">
                         {bomAcc.rows.map((r, i) => (
                           <tr key={`${r.accessory_name}-${i}`} data-testid={`po-bom-acc-row-${i}`}>
                             <td className="px-3 py-1.5 text-foreground/90">
                               {r.accessory_name}
-                              {r.unlinked && (
-                                <span className="ml-1.5 px-1.5 py-0.5 rounded bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] text-[10px] font-bold">
-                                  belum tertaut master
-                                </span>
-                              )}
+                              {r.unlinked && <span className="ml-1.5 text-[hsl(var(--destructive))] text-[10px] font-semibold">belum tertaut master</span>}
                             </td>
                             <td className="px-3 py-1.5 tabular-nums text-muted-foreground">{r.accessory_code || '-'}</td>
-                            <td className="px-3 py-1.5 text-right font-bold text-[hsl(var(--success))]">
-                              {Number(r.qty_needed || 0).toLocaleString('id-ID')} {r.unit || 'pcs'}
-                            </td>
+                            <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{Number(r.qty_needed || 0).toLocaleString('id-ID')} {r.unit || 'pcs'}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
-                    <p className="px-3 py-1.5 bg-[hsl(var(--success)/0.6)] text-[11px] text-[hsl(var(--success))]">
-                      Untuk {Number(bomAcc.total_pcs || 0).toLocaleString('id-ID')} pcs. Baris ini ditulis
-                      sistem saat PO disimpan — jangan ditambahkan lagi di bawah (nanti dobel).
+                    <p className="px-3 py-1.5 text-[11px] text-muted-foreground">
+                      Untuk {Number(bomAcc.total_pcs || 0).toLocaleString('id-ID')} pcs. Ditulis sistem saat PO disimpan — jangan ditambahkan lagi di bawah.
                     </p>
                   </div>
                 )}
                 {(bomAcc.warnings || []).length > 0 && (
-                  <Notice tone="warning" icon={AlertTriangle} className="mt-2" testId="po-bom-acc-warning">
-                    <div className="space-y-0.5">
-                      {bomAcc.warnings.map((w, i) => (
-                        <p key={i} className="text-[11px]">{w}</p>
-                      ))}
-                    </div>
+                  <Notice tone="warning" icon={AlertTriangle} testId="po-bom-acc-warning">
+                    <div className="space-y-0.5">{bomAcc.warnings.map((w, i) => <p key={i} className="text-[11px]">{w}</p>)}</div>
                   </Notice>
                 )}
               </div>
-            )}
-
-            {/* PO Accessories Add-on */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="block text-sm font-semibold text-foreground/90">
-                  Aksesoris (Add-on){!isInternal && (
-                    <span className="text-xs font-normal text-muted-foreground"> — hanya yang DI LUAR BOM</span>
-                  )}
-                </label>
-                <button type="button" onClick={addAccessoryItem} className="flex items-center gap-1 text-xs text-[hsl(var(--success))] hover:text-[hsl(var(--success))] font-medium">
-                  <Plus className="w-3.5 h-3.5" /> Tambah Aksesoris
-                </button>
-              </div>
-              {(form.po_accessories || []).length === 0 && <p className="text-xs text-muted-foreground/70 italic text-center py-2 border border-dashed border-border rounded-lg">Opsional — Klik "Tambah Aksesoris" untuk menambahkan</p>}
-              <div className="space-y-2">
-                {(form.po_accessories || []).map((acc, idx) => (
-                  <div key={idx} className="flex items-center gap-2 border border-[hsl(var(--success)/0.35)] rounded-lg p-2 bg-[hsl(var(--success)/0.5)]">
-                    <div className="flex-1">
-                      <SearchableSelect
-                        options={accessories.map(a => ({ value: a.id, label: a.accessory_name || a.name, sub: a.accessory_code || a.code || a.category || '' }))}
-                        value={acc.accessory_id}
-                        onChange={val => updateAccessoryItem(idx, 'accessory_id', val)}
-                        placeholder="Pilih Aksesoris"
-                      />
-                    </div>
-                    <input type="number" min="0" step="any" className="w-24 border border-border rounded px-2 py-1.5 text-xs" 
-                      value={acc.qty_needed} onChange={e => updateAccessoryItem(idx, 'qty_needed', e.target.value)} placeholder="Qty" />
-                    <span className="text-xs text-muted-foreground w-10">{acc.unit || 'pcs'}</span>
-                    <input className="w-32 border border-border rounded px-2 py-1.5 text-xs" 
-                      value={acc.notes || ''} onChange={e => updateAccessoryItem(idx, 'notes', e.target.value)} placeholder="Catatan" />
-                    <button type="button" onClick={() => removeAccessoryItem(idx)} className="text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]"><X className="w-4 h-4" /></button>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-foreground/90 mb-1">Catatan</label>
-              <textarea rows="2" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]" value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} />
-            </div>
-            {editData && (
-              <div>
-                <label className="block text-sm font-medium text-foreground/90 mb-1">Status</label>
-                {/* FASE 5 DA: status TIDAK bisa diubah manual — transisi hanya via tombol aksi
-                    allowed_next di Detail PO (state machine backend). */}
-                <div className="flex items-center gap-2">
-                  <StatusBadge status={editData.status} />
-                  <span className="text-xs text-muted-foreground">ubah status via tombol aksi di Detail PO</span>
+              <p className="text-xs font-medium text-muted-foreground">Tambahan di luar BOM (opsional)</p>
+              {(form.po_accessories || []).length === 0 && (
+                <p className="text-xs text-muted-foreground border border-dashed border-border rounded-lg px-3 py-2">Klik "Tambah aksesoris" bila perlu aksesoris di luar BOM.</p>
+              )}
+              {(form.po_accessories || []).map((acc, idx) => (
+                <div key={acc.id || idx} className="grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_7rem_3rem_9rem_auto] items-center gap-2" data-testid={`po-acc-row-${idx}`}>
+                  <SearchableSelect
+                    options={accessories.map(a => ({ value: a.id, label: a.accessory_name || a.name, sub: a.accessory_code || a.code || a.category || '' }))}
+                    value={acc.accessory_id}
+                    onChange={val => updateAccessoryItem(idx, 'accessory_id', val)}
+                    placeholder="Pilih aksesoris"
+                  />
+                  <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeAccessoryItem(idx)} className="text-[hsl(var(--destructive))] sm:order-last"
+                    title="Hapus aksesoris" aria-label="Hapus aksesoris"><X className="w-4 h-4" /></Button>
+                  <GlassInput type="number" min="0" step="any" value={acc.qty_needed} onChange={e => updateAccessoryItem(idx, 'qty_needed', e.target.value)} placeholder="Qty" />
+                  <span className="text-xs text-muted-foreground">{acc.unit || 'pcs'}</span>
+                  <GlassInput className="col-span-2 sm:col-span-1" value={acc.notes || ''} onChange={e => updateAccessoryItem(idx, 'notes', e.target.value)} placeholder="Catatan" />
                 </div>
+              ))}
+            </section>
+
+            {/* 4 · Total — blok yang sama untuk kedua jenis; nilai jasa ke klien hanya maklon */}
+            <section className="space-y-2" data-testid="po-form-totals">
+              <SectionTitle>Total</SectionTitle>
+              <div className={`grid grid-cols-2 ${isInternal ? 'sm:grid-cols-3' : 'sm:grid-cols-4'} gap-2`}>
+                <StatTile label="Baris" value={form.items.length.toLocaleString('id-ID')} testId="po-total-lines" />
+                <StatTile label="Total qty" value={`${totals.qty.toLocaleString('id-ID')} pcs`} testId="po-total-qty" />
+                <StatTile label="Total upah jahit" value={rupiah(totals.rate)} testId="po-total-rate"
+                  sub={totals.noRate ? `${totals.noRate} baris belum berupah` : 'semua baris berupah'} subTone={totals.noRate ? 'warning' : undefined} />
+                {!isInternal && <StatTile label="Total harga jasa" value={rupiah(totals.selling)} testId="po-total-selling" />}
               </div>
-            )}
+            </section>
+
+            <Field label="Catatan">
+              <textarea rows="2" className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-transparent focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} data-testid="po-notes" />
+            </Field>
             <div className="flex gap-3">
-              <button type="submit" className="flex-1 bg-[hsl(var(--primary))] text-white py-2 rounded-lg text-sm font-medium hover:bg-[hsl(var(--primary)/0.9)]">{editData ? 'Simpan Perubahan' : 'Buat PO'}</button>
-              <button type="button" onClick={() => setShowModal(false)} className="flex-1 border border-border py-2 rounded-lg text-sm hover:bg-muted/60">Batal</button>
+              <Button type="button" variant="outline" onClick={() => setShowModal(false)} className="flex-1">Batal</Button>
+              <Button type="submit" className="flex-1" data-testid="po-submit">{editData ? 'Simpan perubahan' : 'Buat PO'}</Button>
             </div>
           </form>
         </Modal>
@@ -1259,7 +1326,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                     <li key={i.po_item_id} data-testid={`po-cost-issue-${i.sku}`}><span className="tabular-nums">{i.sku || i.product_name}</span>: {i.issues.join('; ')} — bahan {fmt(i.material_cost)}/pcs · jahit {fmt(i.sewing_cost)}/pcs</li>
                   ))}
                 </ul>
-                <p className="text-[11px] text-[hsl(var(--warning))] mt-1.5">Isi upah jahit di layar <b>Biaya Jahit SPK</b> dan harga bahan di master material/BOM sebelum barang jadi diterima dari CMT.</p>
+                <p className="text-[11px] text-[hsl(var(--warning))] mt-1.5">Isi upah jahit per pcs di form PO (tombol Ubah) — angkanya sama dengan menu <b>Biaya Jahit</b> — dan harga bahan di master material/BOM sebelum barang jadi diterima dari CMT.</p>
               </div>
             )}
             {isInternal && costCheck && costCheck.ok && (
@@ -1275,14 +1342,14 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                   className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] text-white rounded-lg text-sm font-bold hover:from-[hsl(var(--primary)/0.1)] hover:to-[hsl(var(--primary)/0.1)] shadow-md hover:shadow-lg transition-all"
                 >
                   <Zap className="w-4 h-4" />
-                  Quick Complete
+                  Selesaikan cepat
                 </button>
               )}
               <button
                 onClick={() => setSppPickerOpen(true)}
                 data-testid="spp-export-pdf-btn"
                 className="flex items-center gap-2 px-4 py-2 bg-[hsl(var(--destructive))] text-white rounded-lg text-sm hover:bg-[hsl(var(--destructive)/0.9)] font-medium">
-                📄 Export PDF (SPP) — pilih kolom
+                Unduh PDF (SPP) — pilih kolom
               </button>
             </div>
             {/* FASE 5 DA: Aksi status dinamis dari allowed_next backend */}
@@ -1310,14 +1377,14 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
               <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wide">Status Workflow</p>
               <POWorkflowIndicator status={detailData.status} />
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               {[{l:'No. PO',v:<span className="font-bold text-[hsl(var(--primary))]">{detailData.po_number}</span>},
-                {l:'Customer',v:detailData.customer_name},
-                {l:'Vendor',v:detailData.vendor_name||'-'},
+                {l:isInternal ? 'Tujuan barang jadi' : 'Buyer',v:detailData.customer_name},
+                {l:'Penjahit (CMT)',v:detailData.vendor_name||'Belum dipilih'},
                 {l:'Status',v:<StatusBadge status={detailData.status} />},
                 {l:'Tgl. PO',v:fmtDate(detailData.po_date)},
-                {l:'Deadline Produksi',v:fmtDate(detailData.deadline)},
-                {l:'Deadline Kirim',v:fmtDate(detailData.delivery_deadline)},
+                {l:'Tenggat produksi',v:fmtDate(detailData.deadline)},
+                {l:'Tenggat kirim',v:fmtDate(detailData.delivery_deadline)},
                 {l:'Dibuat',v:detailData.created_by}
               ].map(it => <div key={it.l} className="bg-muted/40 rounded-lg p-3"><p className="text-xs text-muted-foreground">{it.l}</p><div className="font-medium text-sm mt-0.5">{it.v}</div></div>)}
             </div>
@@ -1330,40 +1397,44 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
             )}
             {detailData.items?.length > 0 && (
               <div className="space-y-3">
-                <h4 className="font-semibold text-foreground/90">Item PO ({detailData.items.length})</h4>
+                <p className="text-sm font-semibold text-foreground">Baris produk ({detailData.items.length})</p>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
+                    {/* K12: kolom sama untuk kedua jenis PO; harga jasa & margin hanya maklon */}
                     <thead><tr className="bg-muted">
                       <th className="text-left px-3 py-2 text-xs text-muted-foreground">Produk</th>
                       <th className="text-left px-3 py-2 text-xs text-muted-foreground">SKU</th>
-                      <th className="text-left px-3 py-2 text-xs text-muted-foreground">No. Seri/Batch</th>
-                      <th className="text-left px-3 py-2 text-xs text-muted-foreground">Size/Warna</th>
+                      <th className="text-left px-3 py-2 text-xs text-muted-foreground">No. seri</th>
+                      <th className="text-left px-3 py-2 text-xs text-muted-foreground">Ukuran / warna</th>
                       <th className="text-right px-3 py-2 text-xs text-muted-foreground">Qty</th>
-                      <th className="text-right px-3 py-2 text-xs text-muted-foreground">Selling Price</th>
-                      <th className="text-right px-3 py-2 text-xs text-muted-foreground">CMT Price</th>
-                      <th className="text-right px-3 py-2 text-xs text-muted-foreground">Margin/pcs</th>
+                      <th className="text-right px-3 py-2 text-xs text-muted-foreground">Upah jahit / pcs</th>
+                      <th className="text-right px-3 py-2 text-xs text-muted-foreground">Total upah</th>
+                      {!isInternal && <th className="text-right px-3 py-2 text-xs text-muted-foreground">Harga jasa / pcs</th>}
+                      {!isInternal && <th className="text-right px-3 py-2 text-xs text-muted-foreground">Margin / pcs</th>}
                     </tr></thead>
                     <tbody>{detailData.items.map(it => {
                       const marginPcs = (it.selling_price_snapshot || 0) - (it.cmt_price_snapshot || 0);
                       return (
-                        <tr key={it.id} className="border-t border-border/60">
+                        <tr key={it.id} className="border-t border-border/60" data-testid={`po-detail-line-${it.sku || it.id}`}>
                           <td className="px-3 py-2">{it.product_name}</td>
                           <td className="px-3 py-2 tabular-nums text-xs">{it.sku || '-'}</td>
-                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--warning))] font-medium">{it.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
-                          <td className="px-3 py-2 text-xs">{it.size} / {it.color}</td>
-                          <td className="px-3 py-2 text-right font-bold">{it.qty?.toLocaleString('id-ID')}</td>
-                          <td className="px-3 py-2 text-right text-[hsl(var(--success))]">{fmt(it.selling_price_snapshot)}</td>
-                          <td className="px-3 py-2 text-right text-[hsl(var(--warning))]">{fmt(it.cmt_price_snapshot)}</td>
-                          <td className={`px-3 py-2 text-right font-medium ${isInternal ? 'text-muted-foreground' : marginPcs >= 0 ? 'text-[hsl(var(--primary))]' : 'text-[hsl(var(--destructive))]'}`}>{isInternal ? '—' : fmt(marginPcs)}</td>
+                          <td className="px-3 py-2 tabular-nums text-xs">{it.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
+                          <td className="px-3 py-2 text-xs">{it.size || '-'} / {it.color || '-'}</td>
+                          <td className="px-3 py-2 text-right tabular-nums font-semibold">{(it.qty || 0).toLocaleString('id-ID')}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{fmt(it.cmt_price_snapshot)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{fmt((it.qty || 0) * (it.cmt_price_snapshot || 0))}</td>
+                          {!isInternal && <td className="px-3 py-2 text-right tabular-nums">{fmt(it.selling_price_snapshot)}</td>}
+                          {!isInternal && <td className={`px-3 py-2 text-right tabular-nums ${marginPcs < 0 ? 'text-[hsl(var(--destructive))]' : ''}`}>{fmt(marginPcs)}</td>}
                         </tr>
                       );
                     })}</tbody>
-                    <tfoot><tr className="bg-muted/40 font-bold border-t-2 border-border">
-                      <td className="px-3 py-2" colSpan={3}>Total</td>
-                      <td className="px-3 py-2 text-right">{detailData.items.reduce((s,i)=>s+(i.qty||0),0).toLocaleString('id-ID')} pcs</td>
-                      <td className="px-3 py-2 text-right text-[hsl(var(--success))]">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.selling_price_snapshot||0),0))}</td>
-                      <td className="px-3 py-2 text-right text-[hsl(var(--warning))]">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.cmt_price_snapshot||0),0))}</td>
-                      <td className="px-3 py-2 text-right text-[hsl(var(--primary))]">{isInternal ? '—' : fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*((i.selling_price_snapshot||0)-(i.cmt_price_snapshot||0)),0))}</td>
+                    <tfoot><tr className="bg-muted/40 font-semibold border-t-2 border-border">
+                      <td className="px-3 py-2" colSpan={4}>Total</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{detailData.items.reduce((s,i)=>s+(i.qty||0),0).toLocaleString('id-ID')} pcs</td>
+                      <td className="px-3 py-2" />
+                      <td className="px-3 py-2 text-right tabular-nums" data-testid="po-detail-total-rate">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.cmt_price_snapshot||0),0))}</td>
+                      {!isInternal && <td className="px-3 py-2 text-right tabular-nums">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.selling_price_snapshot||0),0))}</td>}
+                      {!isInternal && <td className="px-3 py-2 text-right tabular-nums">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*((i.selling_price_snapshot||0)-(i.cmt_price_snapshot||0)),0))}</td>}
                     </tr></tfoot>
                   </table>
                 </div>
@@ -1372,10 +1443,10 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                     = 0 − CMT selalu negatif (−150.000) dan menyesatkan. Tampilkan HPP batch
                     nyata (bahan BOM warna varian + jahit SPK) dari /cost-check. */}
                 {isInternal && (
-                  <div className="grid grid-cols-3 gap-3" data-testid="po-internal-hpp">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3" data-testid="po-internal-hpp">
                     <StatTile label="Bahan (BOM warna varian)" accent="warning" sub="Harga bahan × qty"
                       value={fmt((costCheck?.items || []).reduce((s, i) => s + (i.material_cost || 0) * (Number(i.qty) || 0), 0))} />
-                    <StatTile label="Biaya jahit CMT (SPK)" accent="warning" sub="Tarif jahit × qty"
+                    <StatTile label="Upah jahit" accent="warning" sub="Upah jahit per pcs × qty"
                       value={fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.cmt_price_snapshot||0),0))} />
                     <StatTile label="Estimasi HPP batch" accent="primary" sub="PO internal = stok sendiri; margin lahir saat barang terjual"
                       value={<span data-testid="po-internal-hpp-batch">{costCheck ? fmt(costCheck.estimated_batch_value) : '…'}</span>} />
@@ -1388,9 +1459,9 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                   const grossMargin = totalSales - totalCMT;
                   const marginPct = totalSales > 0 ? Math.round((grossMargin / totalSales) * 100) : 0;
                   return (
-                    <div className="grid grid-cols-3 gap-3">
-                      <StatTile label="Total nilai penjualan" accent="success" sub="Harga jual × qty" value={fmt(totalSales)} />
-                      <StatTile label="Total biaya vendor (CMT)" accent="warning" sub="Harga CMT × qty" value={fmt(totalCMT)} />
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <StatTile label="Total harga jasa" accent="success" sub="Harga jasa ke klien × qty" value={fmt(totalSales)} />
+                      <StatTile label="Total upah jahit" accent="warning" sub="Upah jahit per pcs × qty" value={fmt(totalCMT)} />
                       <StatTile label="Perkiraan laba kotor" accent={grossMargin >= 0 ? 'primary' : 'danger'}
                         sub={`${marginPct}% dari nilai penjualan`} value={fmt(grossMargin)} />
                     </div>
@@ -1568,7 +1639,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
           }}
         />
       )}
-    </div>
+    </PageLayout>
   );
 }
 

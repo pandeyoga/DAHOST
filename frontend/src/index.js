@@ -4,8 +4,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import "@/index.css";
 import App from "@/App";
 import { installRbacDeniedGuard } from "@/lib/rbacDeniedGuard";
+import { installCvHeader } from "@/lib/entitas";
 
 installRbacDeniedGuard();
+// Tahap 8: header X-CV (pilihan CV Portal Keuangan) — hanya terkirim selama Portal Keuangan terbuka.
+installCvHeader();
 
 const queryClient = new QueryClient({
   defaultOptions: {

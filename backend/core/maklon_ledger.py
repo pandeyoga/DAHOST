@@ -216,7 +216,7 @@ async def _create_ar_doc(db, po: dict, user: dict, accounts: dict) -> dict:
     client = await db.dewi_maklon_clients.find_one({'id': po.get('buyer_id')}, {'_id': 0, 'code': 1}) or {}
     doc = {
         'id': _uid(), 'invoice_number': await _next_ar_invoice_number(db),
-        'source_module': 'maklon_po', 'schedule_mode': SCHEDULE_MODE,
+        'source_module': 'maklon_po', 'entity': 'SMU', 'schedule_mode': SCHEDULE_MODE,   # Tahap 8
         'linked_maklon_po_id': po['id'], 'linked_maklon_po_number': po.get('po_number', ''),
         'customer_id': po.get('buyer_id'), 'customer_name': po.get('customer_name', ''),
         'client_code': client.get('code', ''),
@@ -393,7 +393,7 @@ async def sync_ar_schedule(db, po_id: str, user: dict | None = None) -> dict:
     items = await db.po_items.find({'po_id': po_id}, {'_id': 0}).sort('created_at', 1).to_list(None)
     # PPN: mengikuti Status Pajak perusahaan SELAMA belum ada pendapatan; sesudah itu DIBEKUKAN.
     if not ar.get('revenue_postings'):
-        prof = await get_tax_profile(db)
+        prof = await get_tax_profile(db, "SMU")   # Tahap 8: PPN maklon = status pajak CV Sukma
         ar['kena_ppn'] = bool(prof.get('pkp'))
     if not ar.get('gl_ar_account_code') and accounts.get('ar'):
         ar['gl_ar_account_code'] = accounts['ar']
@@ -689,8 +689,13 @@ async def refresh_ap_schedules(db, po_id: str, user: dict | None = None) -> list
     vids = [v for v in set(split) | set(bills_by_vendor) if v]
     async for vp in db.vendor_partners.find({'id': {'$in': vids}}, {'_id': 0, 'id': 1, 'name': 1}):
         vnames[vp['id']] = vp.get('name', '')
+    # Tahap 8 fase 2: tim jahit CV Sukma sendiri → TIDAK ada jadwal hutang CMT (tanpa tagihan; desain §2).
+    from core.intercompany import vendor_owner
+    own_team = {v for v in vids if await vendor_owner(db, v) == 'SMU'}
     out = []
     for vid in sorted(set(split) | set(bills_by_vendor)):
+        if vid in own_team:
+            continue
         lines = []
         for poi, q in (split.get(vid) or {}).items():
             it = by_item.get(poi) or {}

@@ -13,6 +13,8 @@ import { formatRupiah } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
 import ExportCsvButton from '@/components/ui/export-csv-button';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { Button } from '@/components/ui/button';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 // FASE G (sesi #18) — kolom nomor dokumen yang MENGIKUTI kebijakan Otomatis/Manual
 // yang disetel System Admin. Tanpa ini layar & backend bisa berbeda pendapat.
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
@@ -56,6 +58,21 @@ function ProgressBar({ paid, total }) {
   );
 }
 
+// Tahap 7: tarik pengajuan yang masih menunggu review HR (409 bila HR baru saja memutusnya).
+async function cancelKasbon(req, onDone) {
+  if (!(await confirmDialog({ title: `Batalkan pengajuan ${req.request_number || ''}?`.trim(),
+    confirmLabel: 'Batalkan pengajuan', cancelLabel: 'Kembali', danger: true }))) return;
+  try {
+    const r = await fetch(`${API}/api/dewi/kasbon/requests/${req.id}/cancel`, {
+      method: 'POST', headers: authH(), body: JSON.stringify({ reason: 'Dibatalkan oleh karyawan' }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok) toast.success('Pengajuan dibatalkan');
+    else toast.error(d.detail || 'Gagal membatalkan');
+  } catch (_e) { toast.error('Gagal membatalkan'); }
+  onDone?.();
+}
+
 // ─── Request Card ─────────────────────────────────────────────────────────────
 function RequestCard({ req, onRefresh }) {
   const [expanded, setExpanded] = useState(false);
@@ -79,6 +96,10 @@ function RequestCard({ req, onRefresh }) {
             <p className="text-xs text-muted-foreground">{fmtDate(req.created_at)}</p>
             {req.status === 'disbursed' && (
               <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400 mt-0.5">Sisa: {fmt(req.outstanding_balance)}</p>
+            )}
+            {req.status === 'submitted' && (
+              <Button size="sm" variant="outline" className="mt-1" onClick={() => cancelKasbon(req, onRefresh)}
+                data-testid={`kasbon-cancel-${req.id}`}>Batalkan</Button>
             )}
           </div>
         </div>
@@ -465,6 +486,7 @@ export default function KasbonStaffModule() {
                       </button>
                     </th>
                   ))}
+                  <th className="px-2.5 py-2"><span className="sr-only">Aksi</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -481,6 +503,12 @@ export default function KasbonStaffModule() {
                     <td className="px-2.5 py-2 text-right">{r.installment_count || '—'}</td>
                     <td className="px-2.5 py-2 whitespace-nowrap">{r.deduction_start_period || '—'}</td>
                     <td className="px-2.5 py-2 whitespace-nowrap">{fmtDate(r.created_at)}</td>
+                    <td className="px-2.5 py-2 text-right">
+                      {r.status === 'submitted' && (
+                        <Button size="sm" variant="outline" onClick={() => cancelKasbon(r, load)}
+                          data-testid={`kasbon-cancel-row-${r.id}`}>Batalkan</Button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

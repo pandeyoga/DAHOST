@@ -23,6 +23,23 @@ from database import get_db  # noqa: E402
 logger = logging.getLogger("ensure_indexes")
 
 
+async def _drop_index_if(db, coll: str, name: str, cond) -> bool:
+    """Buang indeks `name` bila ada dan `cond(info)` benar (Tahap 8: ganti kunci unik). Aman diulang."""
+    try:
+        info = (await db[coll].index_information()).get(name)
+    except Exception:  # noqa: BLE001 (koleksi belum ada)
+        return False
+    if info is None or not cond(info):
+        return False
+    try:
+        await db[coll].drop_index(name)
+        logger.info("indeks %s.%s dibuang (diganti kunci baru)", coll, name)
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("indeks %s.%s gagal dibuang: %s", coll, name, e)
+        return False
+
+
 async def _ensure_unique_index(db, coll: str, keys: list, *, name: str,
                                partial: dict | None = None,
                                drop_conflicting: list | None = None):
@@ -254,7 +271,12 @@ async def create_indexes():
         await db.rahaza_journal_lines.create_index("je_id")
         await db.rahaza_journal_lines.create_index([("account_code", 1), ("date", 1)])
         await db.rahaza_journal_lines.create_index("period_code")
-        await db.rahaza_periods.create_index("period_code", unique=True)
+        # Tahap 8 (dua CV): periode unik per (CV, kode). Indeks unik lama `period_code_1` dibuang dulu
+        # (kalau tidak, salinan periode CV Sukma bertabrakan). Aman diulang.
+        await _drop_index_if(db, "rahaza_periods", "period_code_1", lambda i: i.get("unique"))
+        await db.rahaza_periods.create_index([("entity", 1), ("period_code", 1)], unique=True,
+                                             name="uniq_entity_period")
+        await db.rahaza_periods.create_index("period_code")
         await db.rahaza_periods.create_index("year")
 
         # Rahaza Accounting Core (Phase F2 — Auto-posting)
@@ -264,13 +286,20 @@ async def create_indexes():
         await db.rahaza_journal_entries.create_index([("source_module", 1), ("source_ref", 1), ("status", 1)])
         # T-10: tepat SATU JE aktif per sumber (ditegakkan DB, bukan read-then-write).
         # Migrasi `scripts/find_duplicate_active_je.py` melaporkan duplikat lama lebih dulu.
+        # Tahap 8 (dua CV): kunci = (modul, ref, CV) supaya fase 2 bisa membuat jurnal pasangan di buku
+        # CV lain untuk sumber yang sama. Indeks lama tanpa CV dibuang dulu (pola kunci berbeda).
+        await _drop_index_if(db, "rahaza_journal_entries", "uniq_active_source_ref", lambda i: True)
         try:
             await db.rahaza_journal_entries.create_index(
-                [("source_module", 1), ("source_ref", 1)], unique=True, name="uniq_active_source_ref",
+                [("source_module", 1), ("source_ref", 1), ("entity", 1)], unique=True,
+                name="uniq_active_source_ref_entity",
                 partialFilterExpression={"status": {"$in": ["posted", "draft"]},
                                          "source_ref": {"$type": "string"}})
         except Exception as _e:  # duplikat lama masih ada → laporkan, jangan gagalkan boot
-            logging.getLogger(__name__).error("INDEX uniq_active_source_ref gagal dibuat: %s", _e)
+            logging.getLogger(__name__).error("INDEX uniq_active_source_ref_entity gagal dibuat: %s", _e)
+        await db.rahaza_journal_entries.create_index([("entity", 1), ("date", -1)])
+        await db.rahaza_journal_lines.create_index([("entity", 1), ("account_code", 1), ("date", 1)])
+        await db.rahaza_cash_accounts.create_index("entity")
         await db.rahaza_journal_lines.create_index("source_module")
         await db.rahaza_journal_lines.create_index("account_type")
 

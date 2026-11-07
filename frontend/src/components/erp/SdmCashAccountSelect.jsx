@@ -8,17 +8,39 @@
  * dihitung di zona WIB (keputusan owner No.54(a)), bukan `toISOString()` (UTC) — helper-nya di `lib/waktu.js`.
  *
  * 2026-11-07 (audit form Tahap 5): pilihan memakai SmartNativeSelect (bisa dicari — 20 rekening) dan
- * berlabel "nama · kode akun"; dulu <select> polos bawaan browser (PANDUAN_UI G6). API & testid tetap:
+ * berlabel "nama · kode akun"; dulu kotak pilihan polos bawaan browser (PANDUAN_UI G6). API & testid tetap:
  * `testId` = akar, `${testId}-trigger` = tombol, `${testId}-option-<nilai>` = opsi.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { CV_ALL, CV_DA, normalizeCv, useCv } from '@/lib/entitas';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
-/** Rekening kas/bank aktif. `accounts` = [] selama memuat / bila gagal (form menahan tombol bayar). */
-export function usePaymentCashAccounts(token) {
-  const [accounts, setAccounts] = useState([]);
+/**
+ * Tahap 8 (dua CV): rekening kas/bank punya pemilik (`entity`; kosong = DA, data lama).
+ * Rekening ditampilkan bila milik CV `entity`; 'ALL' / null = semua rekening.
+ */
+export function filterCashAccountsByCv(accounts, entity) {
+  const cv = entity ? normalizeCv(entity, null) : null;
+  if (!cv || cv === CV_ALL) return accounts || [];
+  return (accounts || []).filter((a) => normalizeCv(a?.entity, CV_DA) === cv);
+}
+
+/**
+ * CV yang dipakai menyaring rekening: `entity` eksplisit menang; bila tidak dikirim → CV terpilih di
+ * Portal Keuangan; di luar keuangan → DA (modul HR hanya memegang staf DA).
+ */
+function useEffectiveCv(entity) {
+  const ctx = useCv();
+  if (entity) return normalizeCv(entity);
+  return ctx ? ctx.cv : CV_DA;
+}
+
+/** Rekening kas/bank aktif milik CV yang berlaku. `accounts` = [] selama memuat / bila gagal (form menahan tombol bayar). */
+export function usePaymentCashAccounts(token, entity) {
+  const cv = useEffectiveCv(entity);
+  const [all, setAccounts] = useState([]);
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     let off = false;
@@ -30,7 +52,8 @@ export function usePaymentCashAccounts(token) {
       .finally(() => { if (!off) setLoaded(true); });
     return () => { off = true; };
   }, [token]);
-  return { accounts, loaded };
+  const accounts = useMemo(() => filterCashAccountsByCv(all, cv), [all, cv]);
+  return { accounts, loaded, entity: cv };
 }
 
 /** Label rekening: "Bank BCA · 1-1201" (kode akun buku besar di belakang supaya nama bisa dicari dulu). */
@@ -41,8 +64,12 @@ export const cashAccountLabel = (a) => (a.gl_account_code ? `${a.name} · ${a.gl
  * 'gl_account_code' (kirim bank_account_code, mis. bayar gaji).
  */
 export default function CashAccountSelect({
-  accounts, loaded = true, value, onChange, valueKey = 'id', className = '', testId, disabled = false,
+  accounts: accountsIn, loaded = true, value, onChange, valueKey = 'id', className = '', testId, disabled = false,
+  entity,
 }) {
+  // `entity` (opsional): tampilkan hanya rekening milik CV itu (DA/SMU); kosong = sesuai daftar yang dikirim.
+  const accounts = useMemo(() => (entity ? filterCashAccountsByCv(accountsIn, entity) : (accountsIn || [])),
+    [accountsIn, entity]);
   return (
     <SmartNativeSelect
       value={value || ''}

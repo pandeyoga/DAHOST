@@ -338,7 +338,7 @@ async def ensure_store_revenue_account(db, store: dict, *, rev_accounts: dict | 
                      "channel": canonical_platform(store.get("platform"))},
            "cash_flow_group": "OPR", "active": True, "created_at": _now(), "updated_at": _now(),
            "created_by": "system", "created_by_name": "finance_sync",
-           "code_format": cfg["code_format"]}
+           "code_format": cfg["code_format"], "entities": ["DA"]}   # Tahap 8: semua toko milik CV Dewi Aditya
     await db.rahaza_coa_accounts.insert_one(doc)
     doc.pop("_id", None)
     rev_accounts[code] = doc

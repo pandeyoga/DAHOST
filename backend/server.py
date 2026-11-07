@@ -693,6 +693,14 @@ _REPORTS_GUARD = _DENY_EXTERNAL + [
 _PAYSLIPS_GUARD = _DENY_EXTERNAL + [
     _Depends(_on_paths(_deny_roles(*_MKT_ROLES), skip=("/api/rahaza/payslips/{pid}/pdf",))),
 ]
+# dewi_kasbon_router: 2026-11-07 (Tahap 7, keputusan owner) — peran marketing juga karyawan: boleh mengajukan,
+# melihat, dan membatalkan kasbon MILIKNYA di Portal Saya (handler hanya mengembalikan/menerima milik sendiri
+# untuk peran non-HR/Keuangan). Review HR, pencairan, angsuran, statistik tetap ditolak untuk peran marketing.
+_KASBON_GUARD = _DENY_EXTERNAL + [
+    _Depends(_on_paths(_deny_roles(*_MKT_ROLES), skip=(
+        "/api/dewi/kasbon/requests", "/api/dewi/kasbon/my-requests", "/api/dewi/kasbon/requests/{req_id}",
+        "/api/dewi/kasbon/requests/{req_id}/cancel"))),
+]
 
 # Register all active routers
 app.include_router(auth_router)
@@ -757,6 +765,9 @@ app.include_router(rahaza_payroll_payslips_router, dependencies=_PAYSLIPS_GUARD)
 app.include_router(rahaza_finance_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 from routes.rahaza_payment_receipt import router as rahaza_payment_receipt_router  # noqa: E402
 app.include_router(rahaza_payment_receipt_router, dependencies=_DENY_MKT)
+# Tahap 8 fase 2: Transaksi & Saldo antar CV (Portal Keuangan)
+from routes.rahaza_intercompany import router as rahaza_intercompany_router  # noqa: E402
+app.include_router(rahaza_intercompany_router, dependencies=_DENY_MKT)
 app.include_router(rahaza_hpp_router, dependencies=_DENY_MKT)
 app.include_router(rahaza_reports_router, dependencies=_REPORTS_GUARD)  # 2026-11-02 audit No.57: vendor CMT baca AR/payroll
 app.include_router(notifications_unified_router)  # Must come before rahaza_notifications to win path race
@@ -1170,7 +1181,7 @@ from routes.dewi_org import router as dewi_org_router
 app.include_router(dewi_lms_router, dependencies=_DENY_EXTERNAL)
 app.include_router(dewi_onboarding_router, dependencies=_DENY_EXTERNAL)
 app.include_router(dewi_recruitment_router, dependencies=_DENY_EXTERNAL)
-app.include_router(dewi_kasbon_router, dependencies=_DENY_EXTERNAL_AND_MKT)
+app.include_router(dewi_kasbon_router, dependencies=_KASBON_GUARD)  # Tahap 7: kasbon sendiri untuk peran marketing
 app.include_router(rahaza_channel_gl_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 app.include_router(dewi_org_router, dependencies=_DENY_EXTERNAL)
 
@@ -1522,6 +1533,11 @@ app.add_middleware(APIv1PathRewriteMiddleware)
 # endpoint daftar. Lihat middleware/marketing_scope_guard.py.
 from middleware.marketing_scope_guard import MarketingScopeGuardMiddleware
 app.add_middleware(MarketingScopeGuardMiddleware)
+
+# ─── TAHAP 8 (dua CV): mode Gabungan Portal Keuangan hanya untuk dilihat ─────
+# Permintaan tulis berheader `X-CV: ALL` ke rute keuangan ditolak 400 (middleware/cv_readonly_guard.py).
+from middleware.cv_readonly_guard import CvReadOnlyGuardMiddleware
+app.add_middleware(CvReadOnlyGuardMiddleware)
 
 # ─── CORS MIDDLEWARE ────────────────────────────────────────────────────────
 # FASE 4 (T-23): tanpa default '*'. Di produksi (ENV=production) CORS_ORIGINS wajib terisi

@@ -873,7 +873,9 @@ async def sj_pdf(
     headers, rows2, keys, weights, right_cols, doc_settings = await tpl_table_parts(
         db, 'delivery-note', all_keys, all_headers, rows, numeric_keys=('qty',))
     tpl = (doc_settings or {}).get('_template') or {}
-    profile = await get_company_profile(db)
+    # Tahap 8: surat jalan ke klien maklon = dokumen CV Sukma (kop & NPWP Sukma); SJ lain = DA.
+    from core.entities import DA, SMU
+    profile = await get_company_profile(db, SMU if sj.get("sj_type") == "SJ-MAKLON" else DA)
 
     info = [
         ("No. Surat Jalan", sj.get("sj_number", "")),

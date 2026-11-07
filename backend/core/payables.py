@@ -73,12 +73,27 @@ def cmt_row(p: dict) -> dict:
     }
 
 
-async def open_payable_rows(db, include_cmt: bool = True) -> list[dict]:
-    """Semua tagihan yang masih harus dibayar (tanpa batas jumlah baris)."""
-    rows = [ap_row(r) async for r in db.rahaza_ap_invoices.find({"status": {"$in": list(AP_OPEN)}}, {"_id": 0})]
+async def open_payable_rows(db, include_cmt: bool = True, entity: str | None = None) -> list[dict]:
+    """Semua tagihan yang masih harus dibayar (tanpa batas jumlah baris).
+
+    Tahap 8: setiap baris membawa `entity` (CV pemilik hutang). Faktur pemasok = field `entity` dokumen
+    (lama = DA); tagihan CMT = jenis PO (maklon → CV Sukma, internal/tanpa jenis → DA).
+    `entity` DA|SMU menyaring satu buku; None/ALL = semua."""
+    from core.entities import entity_of_doc, entity_for_business_type, matches_entity, DA
+    rows = []
+    async for r in db.rahaza_ap_invoices.find({"status": {"$in": list(AP_OPEN)}}, {"_id": 0}):
+        rows.append({**ap_row(r), "entity": entity_of_doc(r)})
     if include_cmt:
-        rows += [cmt_row(p) async for p in db.dewi_cmt_payments.find({"status": {"$nin": list(CMT_CLOSED)}}, {"_id": 0})]
-    return [r for r in rows if r["balance"] > 0.5]
+        bills = [p async for p in db.dewi_cmt_payments.find({"status": {"$nin": list(CMT_CLOSED)}}, {"_id": 0})]
+        po_ids = sorted({b.get("po_id") for b in bills if b.get("po_id")})
+        bt = {}
+        if po_ids:
+            async for po in db.production_pos.find({"id": {"$in": po_ids}}, {"_id": 0, "id": 1, "business_type": 1}):
+                bt[po["id"]] = po.get("business_type")
+        for p in bills:
+            ent = p.get("entity") or (entity_for_business_type(bt.get(p.get("po_id"))) if p.get("po_id") else DA)
+            rows.append({**cmt_row(p), "entity": ent})
+    return [r for r in rows if r["balance"] > 0.5 and matches_entity(r.get("entity"), entity)]
 
 
 def days_overdue(due_iso: str, today: date) -> int:

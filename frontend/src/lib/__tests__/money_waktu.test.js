@@ -4,7 +4,7 @@ import {
 import {
   todayWIB, thisMonthWIB, toWIBDate, daysAgoWIB, monthStartWIB, monthEndISO, addMonthsYM,
   addDaysISO, lastMonthPeriodWIB, nowWIBLocalInput, daysBetweenISO, yearStartWIB,
-  toWIBLocalInput, fromWIBLocalInput,
+  toWIBLocalInput, fromWIBLocalInput, parseServerTime,
 } from '../waktu';
 
 describe('input uang (No.45)', () => {
@@ -101,5 +101,14 @@ describe('tanggal WIB (No.54a) — tidak bergantung zona perangkat', () => {
   test('tampilan tanggal selalu WIB', () => {
     expect(formatDateID('2026-11-01T23:30:00Z')).toMatch(/02/);
     expect(formatDateTimeID('2026-11-01T23:30:00Z')).toMatch(/06[.:]30/);
+  });
+});
+
+describe('jam dari server (Tahap 7)', () => {
+  test('stempel tanpa zona dibaca sebagai UTC (absen 03.04 WIB tidak tampil 20.04)', () => {
+    expect(parseServerTime('2026-11-06T20:04:45.450000').toISOString()).toBe('2026-11-06T20:04:45.450Z');
+    expect(parseServerTime('2026-11-06T20:04:45+00:00').toISOString()).toBe('2026-11-06T20:04:45.000Z');
+    expect(parseServerTime('')).toBeNull();
+    expect(parseServerTime('bukan tanggal')).toBeNull();
   });
 });

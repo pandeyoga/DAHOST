@@ -526,7 +526,8 @@ async def shipment_pdf(sid: str, request: Request):
         raise HTTPException(404, "Shipment tidak ditemukan")
 
     # Load company info
-    company = await db.company_settings.find_one({}, {"_id": 0}) or {}
+    from core.entities import company_settings_doc  # Tahap 8: profil DA (bukan dokumen pertama)
+    company = await company_settings_doc(db, "DA")
 
     pdf_bytes = _build_surat_jalan_pdf(shp, company)
 

@@ -154,12 +154,15 @@ def assign_import_keys(candidates: list, existing: dict) -> tuple:
     return fresh, skipped
 
 
-async def _existing_content(db, dates) -> dict:
+async def _existing_content(db, dates, entity=None) -> dict:
+    """Tahap 8: anti-dobel per buku CV (`entity`); None = semua buku (perilaku lama)."""
+    from core.entities import entity_match
     out: dict = {}
     if not dates:
         return out
     async for je in db.rahaza_journal_entries.find(
-            {"source_module": SOURCE_MODULE, "status": {"$ne": "voided"}, "date": {"$in": sorted(dates)}},
+            {"source_module": SOURCE_MODULE, "status": {"$ne": "voided"}, "date": {"$in": sorted(dates)},
+             **(entity_match(entity) if entity else {})},
             {"_id": 0, "date": 1, "memo": 1, "lines": 1, "source_ref": 1, "import_content_hash": 1}):
         h = je.get("import_content_hash") or content_hash(je.get("date"), je.get("memo") or "", je.get("lines") or [])
         e = out.setdefault(h, {"count": 0, "used": set()})
@@ -170,7 +173,7 @@ async def _existing_content(db, dates) -> dict:
     return out
 
 
-async def parse_workbook(db, data: bytes) -> dict:
+async def parse_workbook(db, data: bytes, entity=None) -> dict:
     sha = hashlib.sha1(data).hexdigest()[:8]
     wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
     acc = {a["code"]: a async for a in db.rahaza_coa_accounts.find({"active": True}, {"_id": 0, "code": 1, "name": 1, "type": 1, "is_group": 1})}
@@ -267,7 +270,7 @@ async def parse_workbook(db, data: bytes) -> dict:
                           "content_hash": content_hash(tgl, memo_full(memo, refno), raw)})
 
     # ── Tahap 2: anti-dobel berdasarkan ISI terhadap jurnal impor yang sudah ada ─
-    existing = await _existing_content(db, {c["date"] for c in cands})
+    existing = await _existing_content(db, {c["date"] for c in cands}, entity)
     fresh, skipped = assign_import_keys(cands, existing)
 
     # ── Tahap 3: cek akun hanya untuk yang akan diposting ───────────────────────
@@ -292,16 +295,21 @@ async def parse_workbook(db, data: bytes) -> dict:
             "totals": {"journals": len(journals), "amount": round(sum(j["total"] for j in journals), 2)}}
 
 
-async def post_journals(db, user: dict, journals: list, filename: str) -> dict:
+async def post_journals(db, user: dict, journals: list, filename: str, entity: str = "DA") -> dict:
+    """Tahap 8: semua jurnal satu berkas masuk ke buku SATU CV (`entity`, dari layar); akun/rekening yang
+    tidak berlaku untuk CV itu membuat jurnalnya gagal (masuk daftar gagal, sisanya tetap diposting)."""
+    from core.entities import validate_manual_lines
     from routes.rahaza_journals import _check_period_open, _gen_je_number, _mirror_lines, _validate_lines
     posted, failed = [], []
     for j in journals:
         try:
             d = date.fromisoformat(j["date"])
             total_d, total_c = await _validate_lines(db, j["lines"])
-            await _check_period_open(db, d)
+            await validate_manual_lines(db, j["lines"], entity, what="Jurnal impor")
+            await _check_period_open(db, d, entity)
             now = now_utc()   # stempel simpan = UTC aware (dulu UTC naif)
-            doc = {"id": str(uuid4()), "je_number": await _gen_je_number(db, d), "date": d.isoformat(),
+            doc = {"id": str(uuid4()), "je_number": await _gen_je_number(db, d, "", entity), "entity": entity,
+                   "date": d.isoformat(),
                    "memo": j["memo"] + (f" [{j['reference']}]" if j.get("reference") else ""),
                    "source_module": SOURCE_MODULE, "source_ref": j["key"], "import_file": filename,
                    "import_content_hash": j.get("content_hash"),  # 2026-11-02: kunci anti-dobel per isi

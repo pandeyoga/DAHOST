@@ -29,7 +29,8 @@ async def _read(file: UploadFile) -> bytes:
 async def status(request: Request):
     await _require_fin(request)
     db = get_db()
-    je = await ob.existing_opening(db)
+    from core.entities import entity_from_request
+    je = await ob.existing_opening(db, entity_from_request(request, allow_all=True))   # Tahap 8: per CV
     acc_count = await db.rahaza_coa_accounts.count_documents({"active": True, "type": {"$in": list(ob.BALANCE_TYPES)}, "is_group": False})
     lines = []
     if je:
@@ -52,7 +53,8 @@ async def preview(request: Request, file: UploadFile = File(...), balance_to_ret
     await _require_fin(request)
     db = get_db()
     res = await ob.parse_workbook(db, await _read(file), balance_to_retained)
-    res["existing"] = serialize_doc(await ob.existing_opening(db))
+    from core.entities import entity_from_request
+    res["existing"] = serialize_doc(await ob.existing_opening(db, entity_from_request(request)))
     res["filename"] = file.filename
     return res
 
@@ -64,6 +66,8 @@ async def apply(request: Request, file: UploadFile = File(...), ob_date: str = F
     res = await ob.parse_workbook(db, await _read(file), balance_to_retained)
     if not res["ok"]:
         raise HTTPException(400, {"message": "Berkas belum lolos pemeriksaan — perbaiki dulu.", "errors": res["errors"]})
-    je = await ob.post_opening(db, user, ob_date, res["lines"], file.filename or "upload")
+    from core.entities import entity_from_request
+    je = await ob.post_opening(db, user, ob_date, res["lines"], file.filename or "upload",
+                               entity_from_request(request))   # Tahap 8: buku CV terpilih (Gabungan ditolak)
     await log_activity(user["id"], user.get("name", ""), "post_opening_balance", "journal", f"{je['je_number']} {ob_date} {len(res['lines'])} baris")
     return {"ok": True, "journal": serialize_doc(je), "totals": res["totals"]}

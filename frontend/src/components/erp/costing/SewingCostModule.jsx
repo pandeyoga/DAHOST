@@ -11,16 +11,21 @@
  * mengalikan dengan qty (total baris + total SPK). Setelah tarif terisi, HPP
  * batch = bahan (BOM) + jahit (SPK) + permak + upah internal, dan angka itulah
  * yang menjadi lapisan FIFO saat barang jadi masuk gudang.
+ *
+ * K12 (7 Nov 2026): upah jahit kini diisi per baris LANGSUNG di form PO (internal & maklon). Layar ini menjadi
+ * REKAP upah & HPP per PO — field yang dibaca/ditulis SAMA (`po_items.cmt_price_snapshot`), dan usulannya
+ * dari pintu yang sama dengan form PO (tarif terakhir model yang sama dengan penjahit yang sama).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Scissors, RefreshCw, Search, Save, Wand2, AlertTriangle, CheckCircle2,
-  Loader2, Layers, ArrowRight,
+  Loader2, Layers, ArrowRight, Pencil,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '../moduleAtoms';
+import PageLayout from '../layout/PageLayout';
 import { apiGet, apiPut, apiPost } from '@/lib/api';
 
 const rp = (v) => `Rp ${Math.round(Number(v || 0)).toLocaleString('id-ID')}`;
@@ -158,23 +163,24 @@ export default function SewingCostModule({ onNavigate }) {
     toast.success(n ? `${n} baris memakai usulan tarif` : 'Tidak ada usulan tarif yang bisa dipakai');
   };
 
+  // Ubah upah di form PO — tempat utama mengisi upah jahit (K12). Angka yang sama dengan kolom di layar ini.
+  const openInPoForm = (po) => {
+    if (!onNavigate || !po?.id) return;
+    onNavigate(po.business_type === 'maklon' ? 'maklon-pos-engine' : 'prod-pos-internal', { edit_po_id: po.id });
+  };
+
   return (
-    <div className="space-y-4" data-testid="sewing-cost-module">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold flex items-center gap-2">
-            <Scissors className="w-6 h-6" /> Biaya Jahit SPK &amp; HPP Batch
-          </h1>
-          <p className="text-sm text-foreground/60 mt-1">
-            Isi tarif jahit <b>per SKU per pcs</b>; total dihitung sistem. Tarif ini masuk HPP batch
-            (bahan + jahit + permak + upah internal) saat barang jadi diterima gudang.
-          </p>
-        </div>
+    <PageLayout
+      testId="sewing-cost-module"
+      title="Biaya Jahit"
+      subtitle="Rekap upah jahit per PO dan HPP batch — angka yang sama dengan kolom upah jahit di form PO."
+      tools={(
         <Button variant="outline" size="icon" data-testid="sewing-refresh-btn" onClick={loadList}
           title="Muat ulang" aria-label="Muat ulang">
           <RefreshCw className="w-4 h-4" />
         </Button>
-      </div>
+      )}
+    >
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <GlassCard className="p-4 lg:col-span-1">
@@ -211,8 +217,8 @@ export default function SewingCostModule({ onNavigate }) {
                     : <AlertTriangle className="w-4 h-4 text-[hsl(var(--warning))]" />}
                 </div>
                 <div className="text-xs text-foreground/50 mt-0.5">
-                  {p.business_type === 'internal' ? 'Internal' : p.vendor_name} · {num(p.qty_total)} pcs ·{' '}
-                  {p.items_with_rate}/{p.item_count} tarif
+                  {p.business_type === 'maklon' ? 'Maklon' : 'Internal'} · {p.vendor_name} · {num(p.qty_total)} pcs ·{' '}
+                  {p.items_with_rate}/{p.item_count} berupah
                 </div>
                 <div className="text-xs text-foreground/60 mt-0.5">
                   ongkos jahit {rp(p.sewing_total)}{p.sewing_avg_per_pcs ? ` · ${rp(p.sewing_avg_per_pcs)}/pcs` : ''}
@@ -247,9 +253,14 @@ export default function SewingCostModule({ onNavigate }) {
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                   <div className="text-sm font-medium">
                     {detail.po.po_number}
-                    <span className="text-foreground/50 font-normal"> · {detail.po.vendor_name} · {detail.po.status}</span>
+                    <span className="text-foreground/50 font-normal"> · {detail.po.business_type === 'maklon' ? 'Maklon' : 'Internal'} · {detail.po.vendor_name} · {detail.po.status}</span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {onNavigate && (
+                      <Button variant="outline" size="sm" data-testid="sewing-open-po-form" onClick={() => openInPoForm(detail.po)}>
+                        <Pencil className="w-3.5 h-3.5" /> Ubah di form PO
+                      </Button>
+                    )}
                     <Button variant="outline" size="sm" data-testid="sewing-use-suggestion" onClick={useSuggestions}>
                       <Wand2 className="w-3.5 h-3.5" /> Pakai usulan tarif
                     </Button>
@@ -259,7 +270,7 @@ export default function SewingCostModule({ onNavigate }) {
                       SKU sama ikut terisi
                     </label>
                     <Button size="sm" data-testid="sewing-save-btn" onClick={save} disabled={saving || detail.po.rate_locked}>
-                      {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Simpan tarif
+                      {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Simpan upah
                     </Button>
                   </div>
                 </div>
@@ -276,8 +287,8 @@ export default function SewingCostModule({ onNavigate }) {
                       <tr className="text-xs uppercase tracking-wide text-foreground/50 border-b border-foreground/10">
                         <th className="text-left py-2 px-2">SKU / Produk</th>
                         <th className="text-right py-2 px-2">Qty</th>
-                        <th className="text-right py-2 px-2">Jahit / pcs</th>
-                        <th className="text-right py-2 px-2">Total jahit</th>
+                        <th className="text-right py-2 px-2">Upah jahit / pcs</th>
+                        <th className="text-right py-2 px-2">Total upah</th>
                         <th className="text-right py-2 px-2">Bahan / pcs</th>
                         <th className="text-right py-2 px-2">HPP / pcs</th>
                       </tr>
@@ -375,6 +386,6 @@ export default function SewingCostModule({ onNavigate }) {
           )}
         </div>
       </div>
-    </div>
+    </PageLayout>
   );
 }

@@ -48,6 +48,8 @@ import routes.dewi_procurement as dp  # noqa: E402
 import routes.rahaza_inventory_shared as ris  # noqa: E402
 import routes.rahaza_posting as rp  # noqa: E402
 import routes.rahaza_posting_profiles as pp  # noqa: E402
+from core import intercompany as icm  # noqa: E402
+import utils.counters as counters  # noqa: E402
 
 T0 = datetime(2026, 11, 6, 2, 0, tzinfo=timezone.utc)
 DEFAULT_MAP = {p["event_type"]: dict(p["mapping"]) for p in pp.DEFAULT_PROFILES}
@@ -79,18 +81,36 @@ def posting(monkeypatch):
         return None
 
     async def create(db, d, memo, mod, ref, lines, user, **kw):
-        jes.append({"memo": memo, "ref": ref, "lines": lines})
+        jes.append({"memo": memo, "ref": ref, "lines": lines, "module": mod, "entity": kw.get("entity")})
         return {"ok": True, "je_id": f"je-{len(jes)}", "je_number": f"JE-{len(jes)}"}
     monkeypatch.setattr(rp, "get_mapping", mapping)
     monkeypatch.setattr(rp, "_find_existing_je", none)
     monkeypatch.setattr(rp, "_create_posted_je", create)
 
+    # Tahap 8 fase 2 (keputusan owner K5): aksesoris untuk PO MAKLON = nota antar CV — buku DA mendebit piutang
+    # CV Sukma (1-1301-…), buku CV Sukma mendebit biaya bahan maklon 5-4100 / kredit hutang ke DA (2-1100-…).
+    async def ic_accounts(db, user=None, create=True):
+        return {"DA": {"ar": "1-1301-SMU", "ap": "2-1110-SGO"},
+                "SMU": {"ar": "1-1305-DA", "revenue": "4-1500-DA", "ap": "2-1100-DA"},
+                "records": {"da_customer": {"id": "c-smu", "name": "CV Sukma Mitra Utama"},
+                            "smu_supplier": {"id": "s-da", "code": "DA", "name": "CV Dewi Aditya Official"},
+                            "smu_client": {}}, "vendor": None}
+
+    async def number(db_, coll, field, prefix, width=4, **kw):
+        return f"{prefix}001"
+    monkeypatch.setattr(icm, "ic_accounts", ic_accounts)
+    monkeypatch.setattr(icm, "precheck_period", none)
+    monkeypatch.setattr(counters, "gen_prefixed_number", number)
+
     class P:
         pass
     p = P()
     p.jes = jes
+    da_jes = lambda: [j for j in jes if j.get("module") != icm.SRC_ACCESSORY_AP]  # noqa: E731
     p.lines = lambda i=-1: [(ln["account_code"], round(ln["debit"], 2), round(ln["credit"], 2))
-                            for ln in jes[i]["lines"]]
+                            for ln in da_jes()[i]["lines"]]
+    p.mirror = lambda: [(ln["account_code"], round(ln["debit"], 2), round(ln["credit"], 2))
+                        for ln in [j for j in jes if j.get("module") == icm.SRC_ACCESSORY_AP][-1]["lines"]]
     return p
 
 
@@ -160,7 +180,7 @@ def test_divisi_tidak_dikenal_ditolak_bukan_diam_diam_wip():
 
 
 @pytest.mark.parametrize("target,code", [("kantor", "6-2400"), ("pemasaran", "6-1130"), ("lainnya", "6-2900"),
-                                         ("sampel_rnd", "6-2900"), ("wip", "1-1403"), ("maklon", "5-4100"),
+                                         ("sampel_rnd", "6-2900"), ("wip", "1-1403"), ("maklon", "1-1301-SMU"),
                                          (None, "1-1403")])
 def test_jurnal_pengeluaran_aksesoris_per_tujuan_biaya(posting, target, code):
     db = _issue_db()
@@ -170,6 +190,8 @@ def test_jurnal_pengeluaran_aksesoris_per_tujuan_biaya(posting, target, code):
     res = run(rp.post_accessory_issue(db, mv, FIN))
     assert res["ok"] is True
     assert posting.lines() == [(code, 6000.0, 0), ("1-1402", 0, 6000.0)]   # 3 × 2.000
+    if target == "maklon":   # Tahap 8 fase 2: pasangan di buku CV Sukma
+        assert posting.mirror() == [("5-4100", 6000.0, 0), ("2-1100-DA", 0, 6000.0)]
 
 
 def test_peran_kosong_menolak_jurnal_dengan_pesan_jelas(monkeypatch):
@@ -217,7 +239,7 @@ def test_keluar_manual_wajib_divisi_dan_dijurnal_ke_akun_divisi(monkeypatch, pos
 
 
 # ═════════════════════════ 2. ber-PO mengikuti jenis PO ═════════════════════════
-@pytest.mark.parametrize("bt,code", [("maklon", "5-4100"), ("internal", "1-1403")])
+@pytest.mark.parametrize("bt,code", [("maklon", "1-1301-SMU"), ("internal", "1-1403")])
 def test_pengeluaran_ber_po_mengikuti_jenis_po_dan_membawa_po(posting, stock, bt, code):
     db = _issue_db(business_type=bt)
     db.po_accessories.docs = [{"po_id": "PO1", "accessory_id": "ACC1", "qty_needed": 50,
@@ -363,7 +385,8 @@ def test_permintaan_ber_po_dalam_kebutuhan_tidak_butuh_alasan(req_db, posting, s
     stock["ACC1"] = 50
     out = run(req_mod.deliver_request("r1", {}, ADMIN_ACC))
     assert out["cost_target"] == "maklon" and out["over_issue_lines"] == []
-    assert posting.lines() == [("5-4100", 60000.0, 0), ("1-1402", 0, 60000.0)]   # 30 × 2.000
+    assert posting.lines() == [("1-1301-SMU", 60000.0, 0), ("1-1402", 0, 60000.0)]   # 30 × 2.000 (nota antar CV)
+    assert posting.mirror() == [("5-4100", 60000.0, 0), ("2-1100-DA", 0, 60000.0)]   # buku CV Sukma
 
 
 def test_permintaan_lama_ber_po_tetap_dihitung_sudah_keluar():
@@ -437,7 +460,7 @@ def test_endpoint_buat_permintaan_tidak_lagi_membuat_pengeluaran():
 # ═════════════════════════ 5. sampel R&D / vendor memotong stok ═════════════════════════
 @pytest.mark.parametrize("rtype,po,code", [
     ("rnd_sample", None, "6-2900"),
-    ("vendor_additional", "maklon", "5-4100"),
+    ("vendor_additional", "maklon", "1-1301-SMU"),   # Tahap 8 fase 2: nota antar CV
     ("vendor_replacement", "internal", "1-1403"),
 ])
 def test_serah_sampel_dan_vendor_memotong_stok_dan_berjurnal(req_db, posting, stock, rtype, po, code):

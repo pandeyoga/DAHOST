@@ -60,9 +60,13 @@ def build_invoice_pdf(*, invoice: dict, client: dict, company: dict | None = Non
 
     company = company or {}
     template = template or {}
+    # Tahap 8: cadangan nama/alamat DA HANYA untuk dokumen CV Dewi Aditya. Invoice CV lain (mis. maklon =
+    # CV Sukma) tidak pernah tercetak dengan identitas DA.
+    _is_da = (company.get('entity') or 'DA') == 'DA' and company.get('type') != 'cv_profile'
     profile = profile or {
-        'company_name': company.get('company_name') or 'CV. DEWI ADITYA OFFICIAL',
-        'address': company.get('company_address') or 'Sragen, Jawa Tengah',
+        'entity': company.get('entity') or 'DA',
+        'company_name': company.get('company_name') or ('CV. DEWI ADITYA OFFICIAL' if _is_da else ''),
+        'address': company.get('company_address') or ('Sragen, Jawa Tengah' if _is_da else ''),
         'phone': company.get('company_phone') or company.get('phone') or '',
         'email': company.get('company_email') or company.get('email') or '',
         'website': company.get('company_website') or '',
