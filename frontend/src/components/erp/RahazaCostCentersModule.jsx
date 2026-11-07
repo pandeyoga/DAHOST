@@ -4,9 +4,10 @@ import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { EmptyState } from './moduleAtoms';
+import { EmptyState, Notice } from './moduleAtoms';
 import PageLayout from './layout/PageLayout';
-import Modal from './Modal';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { MoneyInput } from '@/components/ui/money-input';
 import { formatRupiah } from '@/lib/format';
@@ -55,10 +56,17 @@ export default function RahazaCostCentersModule({ token }) {
       title="Pusat biaya"
       subtitle="Pusat biaya untuk alokasi biaya dan overhead ke HPP."
       actions={<Button onClick={() => setEditing({ code: '', name: '', category: 'umum', overhead_rate_per_pcs: 0 })} data-testid="cc-add"><Plus className="w-4 h-4" />Pusat biaya baru</Button>}
-      tools={<Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchRows} data-testid="cc-refresh"><RefreshCw className="w-4 h-4" /></Button>}
-      summary={error && (
-        <div className="p-3 rounded-lg bg-[hsl(var(--destructive)/0.08)] border border-[hsl(var(--destructive)/0.3)] text-[hsl(var(--destructive))] text-sm" role="alert">{error}</div>
-      )}
+      tools={<>
+        <TombolUnduh namaBerkas="pusat-biaya" namaLembar="Pusat biaya" baris={rows} testId="cc-unduh"
+          kolom={[
+            { label: 'Kode', nilai: (r) => r.code },
+            { label: 'Nama', nilai: (r) => r.name },
+            { label: 'Kategori', nilai: (r) => catLabel(r.category) },
+            { label: 'Overhead per pcs', nilai: (r) => Number(r.overhead_rate_per_pcs) || 0 },
+          ]} />
+        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchRows} data-testid="cc-refresh"><RefreshCw className="w-4 h-4" /></Button>
+      </>}
+      summary={error && <Notice tone="danger">{error}</Notice>}
       footer={!loading && rows.length > 0 && (
         <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />
       )}
@@ -82,7 +90,7 @@ export default function RahazaCostCentersModule({ token }) {
                     <td className="text-right">
                       <div className="flex gap-1 justify-end">
                         <Button variant="ghost" size="icon-sm" onClick={() => setEditing({ ...r })} title="Ubah" aria-label="Ubah" data-testid={`cc-edit-${r.code}`}><Edit2 className="w-4 h-4" /></Button>
-                        <Button variant="ghost" size="icon-sm" onClick={() => del(r.id)} title="Nonaktifkan" aria-label="Nonaktifkan" className="text-[hsl(var(--destructive))]" data-testid={`cc-delete-${r.code}`}><Trash2 className="w-4 h-4" /></Button>
+                        <Button variant="ghost" size="icon-sm" onClick={() => del(r.id)} title="Nonaktifkan" aria-label="Nonaktifkan" className="text-[hsl(var(--danger-text))]" data-testid={`cc-delete-${r.code}`}><Trash2 className="w-4 h-4" /></Button>
                       </div>
                     </td>
                   </tr>
@@ -101,17 +109,14 @@ function CCEditor({ value, onClose, onSave }) {
   const [s, setS] = useState(value);
   const upd = (k, v) => setS(x => ({ ...x, [k]: v }));
   return (
-    <Modal title={s.id ? 'Ubah pusat biaya' : 'Pusat biaya baru'} onClose={onClose} size="sm" data-testid="cc-editor">
-      <div className="space-y-3">
-        <div><label className="text-xs text-muted-foreground block mb-1">Kode</label><GlassInput value={s.code} onChange={e => upd('code', e.target.value.toUpperCase())} disabled={!!s.id} data-testid="cc-code" /></div>
-        <div><label className="text-xs text-muted-foreground block mb-1">Nama</label><GlassInput value={s.name} onChange={e => upd('name', e.target.value)} data-testid="cc-name" /></div>
-        <div><label className="text-xs text-muted-foreground block mb-1">Kategori</label><GlassInput value={s.category} onChange={e => upd('category', e.target.value)} placeholder="mis. produksi, gudang, umum" /></div>
-        <div><label className="text-xs text-muted-foreground block mb-1">Overhead per pcs (Rp)</label><MoneyInput glass value={s.overhead_rate_per_pcs || 0} onChange={e => upd('overhead_rate_per_pcs', Number(e.target.value))} data-testid="cc-overhead" /></div>
-        <div className="flex gap-2 pt-2 justify-end">
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={() => onSave(s)} data-testid="cc-save">Simpan</Button>
-        </div>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="cc-editor"
+      judul={s.id ? 'Ubah pusat biaya' : 'Pusat biaya baru'} onSimpan={() => onSave(s)}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Isian label="Kode"><GlassInput value={s.code} onChange={e => upd('code', e.target.value.toUpperCase())} disabled={!!s.id} data-testid="cc-code" /></Isian>
+        <Isian label="Nama"><GlassInput value={s.name} onChange={e => upd('name', e.target.value)} data-testid="cc-name" /></Isian>
+        <Isian label="Kategori"><GlassInput value={s.category} onChange={e => upd('category', e.target.value)} placeholder="mis. produksi, gudang, umum" /></Isian>
+        <Isian label="Overhead per pcs (Rp)"><MoneyInput glass value={s.overhead_rate_per_pcs || 0} onChange={e => upd('overhead_rate_per_pcs', Number(e.target.value))} data-testid="cc-overhead" /></Isian>
       </div>
-    </Modal>
+    </FormPopup>
   );
 }
