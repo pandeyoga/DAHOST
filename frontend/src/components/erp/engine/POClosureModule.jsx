@@ -164,18 +164,18 @@ export default function POClosureModule({ portalId }) {
                       <TableCell className="text-right tabular-nums">{f?.qc ? fmtNum(f.qc.accepted) : '—'}</TableCell>
                       <TableCell className="text-right tabular-nums">
                         {f?.qc && Number(f.qc.reject || 0) > 0
-                          ? <span className="text-[hsl(var(--destructive))]">{fmtNum(f.qc.reject)} ({String(f.qc.reject_rate_pct).replace('.', ',')}%)</span>
+                          ? <span className="text-[hsl(var(--danger-text))]">{fmtNum(f.qc.reject)} ({String(f.qc.reject_rate_pct).replace('.', ',')}%)</span>
                           : fmtNum(0)}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">{f ? fmtNum(f.total_received) : '—'}</TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {s > 0 ? <span className="text-[hsl(var(--warning))] font-medium">{fmtNum(s)}</span> : fmtNum(0)}
-                        {s > 0 && <div className="text-[11px] text-muted-foreground">{shortText(f.lines)}</div>}
+                        {s > 0 ? <span className="text-[hsl(var(--warning-text))] font-medium">{fmtNum(s)}</span> : fmtNum(0)}
+                        {s > 0 && <div className="text-xs text-muted-foreground">{shortText(f.lines)}</div>}
                       </TableCell>
                       <TableCell>
                         <StatusBadge status={po.status} label={poStatusLabel(po.status)} tone={poStatusTone(po.status)} />
                         {po.closed_reason && REASON_LABELS[po.closed_reason] && (
-                          <div className="text-[11px] text-muted-foreground">{REASON_LABELS[po.closed_reason]}</div>
+                          <div className="text-xs text-muted-foreground">{REASON_LABELS[po.closed_reason]}</div>
                         )}
                       </TableCell>
                       <TableCell className="text-right">
@@ -198,7 +198,7 @@ export default function POClosureModule({ portalId }) {
                           <p className="text-sm text-muted-foreground">Rincian per ukuran tidak tersedia.</p>
                         ) : (
                           <div className="grid gap-1 text-sm">
-                            <div className="grid grid-cols-6 gap-2 text-[11px] uppercase text-muted-foreground">
+                            <div className="grid grid-cols-6 gap-2 text-xs text-muted-foreground">
                               <span>Ukuran / barang</span><span className="text-right">Dipesan</span><span className="text-right">Lolos QC</span>
                               <span className="text-right">Terpenuhi</span><span className="text-right">Kurang</span><span className="text-right">Lebih</span>
                             </div>
@@ -208,7 +208,7 @@ export default function POClosureModule({ portalId }) {
                                 <span className="text-right">{fmtNum(ln.ordered)}</span>
                                 <span className="text-right">{fmtNum(ln.accepted)}</span>
                                 <span className="text-right">{fmtNum(ln.fulfilled)}</span>
-                                <span className={`text-right ${ln.short > 0 ? 'text-[hsl(var(--warning))] font-medium' : ''}`}>{fmtNum(ln.short)}</span>
+                                <span className={`text-right ${ln.short > 0 ? 'text-[hsl(var(--warning-text))] font-medium' : ''}`}>{fmtNum(ln.short)}</span>
                                 <span className="text-right">{fmtNum(ln.over)}</span>
                               </div>
                             ))}

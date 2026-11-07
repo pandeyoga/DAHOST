@@ -124,9 +124,9 @@ export default function KirimanDetail({ id, canDelete, onClose, onOpen, onChange
         {j ? (
           <span>
             Dokumen pengeluaran <b className="tabular-nums">{j.mi_number}</b> ·{' '}
-            {j.posted ? <span className="text-[hsl(var(--success))]">jurnal {j.je_number}</span>
-              : <span className="text-[hsl(var(--warning))]">belum dijurnal{j.error ? ` — ${j.error}` : ''}</span>}
-            {j.negative_lines > 0 && <span className="text-[hsl(var(--warning))]"> · {j.negative_lines} baris stok minus</span>}
+            {j.posted ? <span className="text-[hsl(var(--success-text))]">jurnal {j.je_number}</span>
+              : <span className="text-[hsl(var(--warning-text))]">belum dijurnal{j.error ? ` — ${j.error}` : ''}</span>}
+            {j.negative_lines > 0 && <span className="text-[hsl(var(--warning-text))]"> · {j.negative_lines} baris stok minus</span>}
           </span>
         ) : <span className="text-muted-foreground">{s.opening ? 'Saldo awal cutoff — tanpa pengeluaran gudang.' : 'Belum ada dokumen pengeluaran gudang.'}</span>}
         {j && j.status === 'issued' && (

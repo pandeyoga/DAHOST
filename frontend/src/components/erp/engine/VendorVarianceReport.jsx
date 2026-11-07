@@ -84,15 +84,15 @@ export default function VendorVarianceReport({ token, user }) {
 
   const getTypeBadge = (type) => {
     return type === 'OVERPRODUCTION' 
-      ? <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]">Over</span>
+      ? <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]">Over</span>
       : <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]">Under</span>;
   };
 
   const getStatusBadge = (status) => {
     const cfg = {
-      'Reported': 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]',
+      'Reported': 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]',
       'Acknowledged': 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]',
-      'Resolved': 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]'
+      'Resolved': 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))]'
     };
     return <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${cfg[status] || 'bg-gray-100 text-gray-700'}`}>{status}</span>;
   };
@@ -118,8 +118,8 @@ export default function VendorVarianceReport({ token, user }) {
           <p className="text-2xl font-bold text-foreground">{variances.length}</p>
         </div>
         <div className="bg-[hsl(var(--warning)/0.1)] p-4 rounded-lg border border-[hsl(var(--warning)/0.35)]">
-          <p className="text-xs text-[hsl(var(--warning))] mb-1">Overproduction</p>
-          <p className="text-2xl font-bold text-[hsl(var(--warning))]">{variances.filter(v => v.variance_type === 'OVERPRODUCTION').length}</p>
+          <p className="text-xs text-[hsl(var(--warning-text))] mb-1">Overproduction</p>
+          <p className="text-2xl font-bold text-[hsl(var(--warning-text))]">{variances.filter(v => v.variance_type === 'OVERPRODUCTION').length}</p>
         </div>
         <div className="bg-[hsl(var(--primary)/0.1)] p-4 rounded-lg border border-[hsl(var(--primary)/0.35)]">
           <p className="text-xs text-[hsl(var(--primary))] mb-1">Underproduction</p>

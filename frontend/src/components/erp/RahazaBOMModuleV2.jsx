@@ -406,7 +406,7 @@ export default function RahazaBOMModuleV2({ token }) {
       </div>
 
       <GlassCard className="p-3 flex items-center gap-3 flex-wrap" data-testid="bom-shortcuts-card">
-        <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Jalan pintas</span>
+        <span className="text-xs text-muted-foreground font-semibold">Jalan pintas</span>
         <BomShortcuts headers={headers} token={token} selectedModelId={selectedModelId}
           modelLabel={(models.find(m => m.id === selectedModelId) || {}).code || ''} categories={categories}
           onDone={() => { loadMatrix(); }} />
@@ -526,7 +526,7 @@ export default function RahazaBOMModuleV2({ token }) {
                           </TableCell>
                           <TableCell>
                             {row.bom_id ? (
-                              <Badge variant="default" className="text-[10px]">v{row.version}</Badge>
+                              <Badge variant="default" className="text-xs">v{row.version}</Badge>
                             ) : (
                               <span className="text-xs text-muted-foreground">Belum ada</span>
                             )}
@@ -610,7 +610,7 @@ export default function RahazaBOMModuleV2({ token }) {
                       {formError && (
                         <div
                           data-testid="bom-form-error"
-                          className="bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  rounded-lg p-3 text-sm text-[hsl(var(--destructive))] "
+                          className="bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  rounded-lg p-3 text-sm text-[hsl(var(--danger-text))] "
                         >
                           {formError}
                         </div>
@@ -659,7 +659,7 @@ export default function RahazaBOMModuleV2({ token }) {
                                       {/* ACC-2 — indikator kopling ke master material */}
                                       {m.material_id ? (
                                         <span title="Tertaut ke master material" data-testid={`bom-mat-${idx}-linked`}>
-                                          <Link2 className="w-3.5 h-3.5 text-[hsl(var(--success))] " />
+                                          <Link2 className="w-3.5 h-3.5 text-[hsl(var(--success-text))] " />
                                         </span>
                                       ) : (
                                         <span
@@ -669,8 +669,8 @@ export default function RahazaBOMModuleV2({ token }) {
                                           data-testid={`bom-mat-${idx}-unlinked`}
                                         >
                                           <Unlink className={`w-3.5 h-3.5 ${isAccessoryLine(m)
-                                            ? 'text-[hsl(var(--destructive))] '
-                                            : 'text-[hsl(var(--warning))] '}`} />
+                                            ? 'text-[hsl(var(--danger-text))] '
+                                            : 'text-[hsl(var(--warning-text))] '}`} />
                                         </span>
                                       )}
                                     </div>
@@ -740,7 +740,7 @@ export default function RahazaBOMModuleV2({ token }) {
                                   <TableCell>
                                     <Button
                                       variant="ghost" size="icon-sm"
-                                      className="hover:bg-[hsl(var(--destructive)/0.1)] hover:text-[hsl(var(--destructive))]"
+                                      className="hover:bg-[hsl(var(--destructive)/0.1)] hover:text-[hsl(var(--danger-text))]"
                                       title="Hapus baris" aria-label="Hapus baris"
                                       onClick={() => removeMaterial(idx)}
                                       data-testid={`bom-mat-${idx}-remove`}
@@ -855,7 +855,7 @@ export default function RahazaBOMModuleV2({ token }) {
                                           {m.material_id ? (
                                             <span title="Tertaut ke master material"
                                               data-testid={`bom-viewer-mat-${idx}-linked`}>
-                                              <Link2 className="w-3.5 h-3.5 text-[hsl(var(--success))] " />
+                                              <Link2 className="w-3.5 h-3.5 text-[hsl(var(--success-text))] " />
                                             </span>
                                           ) : (
                                             <span
@@ -864,8 +864,8 @@ export default function RahazaBOMModuleV2({ token }) {
                                                 : 'Belum tertaut ke master material (disarankan pilih dari master)'}
                                               data-testid={`bom-viewer-mat-${idx}-unlinked`}>
                                               <Unlink className={`w-3.5 h-3.5 ${isAccessoryLine(m)
-                                                ? 'text-[hsl(var(--destructive))] '
-                                                : 'text-[hsl(var(--warning))] '}`} />
+                                                ? 'text-[hsl(var(--danger-text))] '
+                                                : 'text-[hsl(var(--warning-text))] '}`} />
                                             </span>
                                           )}
                                         </TableCell>
@@ -981,7 +981,7 @@ export default function RahazaBOMModuleV2({ token }) {
                           data-testid={`bom-copy-target-${r.size_code}`}
                         />
                         <span className="tabular-nums">{r.size_code}</span>
-                        {r.bom_id && <span className="text-[10px] text-[hsl(var(--warning))]">(ada)</span>}
+                        {r.bom_id && <span className="text-xs text-[hsl(var(--warning-text))]">(ada)</span>}
                       </label>
                     );
                   })}

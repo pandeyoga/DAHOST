@@ -42,7 +42,7 @@ export default function BuyerReceiptVarianceReport() {
   const grandShortOpen = filtered.reduce((s, r) => s + (r.qty_short_open || 0), 0);
   const poWithVariance = filtered.filter(r => (r.total_variance || 0) !== 0 || (r.qty_short_open || 0) > 0).length;
 
-  const varianceClass = (v) => v > 0 ? 'text-[hsl(var(--destructive))]' : v < 0 ? 'text-[hsl(var(--warning))]' : 'text-muted-foreground/70';
+  const varianceClass = (v) => v > 0 ? 'text-[hsl(var(--danger-text))]' : v < 0 ? 'text-[hsl(var(--warning-text))]' : 'text-muted-foreground/70';
   const varianceText = (v) => v > 0 ? fmtNum(v) : v < 0 ? `+${fmtNum(-v)}` : '0';
 
   const exportExcel = async () => {
@@ -109,7 +109,7 @@ export default function BuyerReceiptVarianceReport() {
             testId={`variance-kpi-${s.label}`} />
         ))}
       </div>
-      <p className="text-[11px] text-muted-foreground -mt-2">
+      <p className="text-xs text-muted-foreground -mt-2">
         Catatan: saat buyer menerima lebih sedikit, dokumen surat jalan otomatis dikoreksi ke qty
         yang benar-benar diterima (klaim awal tersimpan di jejak audit) dan kekurangannya menjadi
         dokumen selisih <strong>SEL-BYR-…</strong> berstatus <strong>open</strong> — itulah kolom
@@ -151,13 +151,13 @@ export default function BuyerReceiptVarianceReport() {
             <thead className="bg-muted/40 border-b border-border">
               <tr>
                 <th className="w-8"></th>
-                <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase">No. PO</th>
-                <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase">Customer</th>
-                <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase">Vendor</th>
-                <th className="text-right px-3 py-2.5 text-xs font-semibold text-[hsl(var(--success))] uppercase">Dikirim</th>
-                <th className="text-right px-3 py-2.5 text-xs font-semibold text-[hsl(var(--primary))] uppercase">Diterima</th>
-                <th className="text-right px-3 py-2.5 text-xs font-semibold text-[hsl(var(--destructive))] uppercase">Selisih</th>
-                <th className="text-right px-3 py-2.5 text-xs font-semibold text-[hsl(var(--destructive))] uppercase">Belum sampai</th>
+                <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground">No. PO</th>
+                <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground">Customer</th>
+                <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground">Vendor</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-[hsl(var(--success-text))]">Dikirim</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-[hsl(var(--primary))]">Diterima</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-[hsl(var(--danger-text))]">Selisih</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-[hsl(var(--danger-text))]">Belum sampai</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/60">
@@ -171,13 +171,13 @@ export default function BuyerReceiptVarianceReport() {
                       <td className="px-3 py-2.5 font-bold text-[hsl(var(--primary))]">{r.po_number || '-'}</td>
                       <td className="px-3 py-2.5 text-foreground/90">{r.customer_name || '-'}</td>
                       <td className="px-3 py-2.5 text-muted-foreground">{r.vendor_name || '-'}</td>
-                      <td className="px-3 py-2.5 text-right font-semibold text-[hsl(var(--success))]">{fmtNum(r.total_shipped)}</td>
+                      <td className="px-3 py-2.5 text-right font-semibold text-[hsl(var(--success-text))]">{fmtNum(r.total_shipped)}</td>
                       <td className="px-3 py-2.5 text-right font-semibold text-[hsl(var(--primary))]">{fmtNum(r.total_received)}</td>
                       <td className={`px-3 py-2.5 text-right font-bold ${varianceClass(r.total_variance)}`}>
                         {(r.total_variance || 0) !== 0 && <AlertTriangle className="w-3.5 h-3.5 inline mr-1" />}
                         {varianceText(r.total_variance)}
                       </td>
-                      <td className={`px-3 py-2.5 text-right font-bold ${(r.qty_short_open || 0) > 0 ? 'text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.1)]' : 'text-muted-foreground/70'}`}
+                      <td className={`px-3 py-2.5 text-right font-bold ${(r.qty_short_open || 0) > 0 ? 'text-[hsl(var(--danger-text))] bg-[hsl(var(--destructive)/0.1)]' : 'text-muted-foreground/70'}`}
                         data-testid={`variance-short-${r.po_number}`}>
                         {fmtNum(r.qty_short_open)}
                       </td>
@@ -200,19 +200,19 @@ export default function BuyerReceiptVarianceReport() {
                             <tbody className="divide-y divide-border/60">
                               {(r.items || []).map((it, i) => (
                                 <tr key={i}>
-                                  <td className="py-1.5 px-2 tabular-nums text-[hsl(var(--warning))]">{it.serial_number || '—'}</td>
+                                  <td className="py-1.5 px-2 tabular-nums text-[hsl(var(--warning-text))]">{it.serial_number || '—'}</td>
                                   <td className="py-1.5 px-2 tabular-nums text-[hsl(var(--primary))]">{it.sku || '-'}</td>
                                   <td className="py-1.5 px-2 text-foreground/90">{it.product_name} <span className="text-muted-foreground/70">{it.size}/{it.color}</span></td>
-                                  <td className="py-1.5 px-2 text-right text-[hsl(var(--success))]">{fmtNum(it.shipped)}</td>
+                                  <td className="py-1.5 px-2 text-right text-[hsl(var(--success-text))]">{fmtNum(it.shipped)}</td>
                                   <td className="py-1.5 px-2 text-right text-[hsl(var(--primary))]">{fmtNum(it.received)}</td>
                                   <td className={`py-1.5 px-2 text-right font-semibold ${varianceClass(it.variance)}`}>{varianceText(it.variance)}</td>
-                                  <td className={`py-1.5 px-2 text-right font-semibold ${(it.qty_short_open || 0) > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground/70'}`}>{fmtNum(it.qty_short_open)}</td>
+                                  <td className={`py-1.5 px-2 text-right font-semibold ${(it.qty_short_open || 0) > 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground/70'}`}>{fmtNum(it.qty_short_open)}</td>
                                 </tr>
                               ))}
                             </tbody>
                           </table>
                           {(r.short_docs || []).filter(d => d.status === 'open').length > 0 && (
-                            <div className="mt-2 text-[11px] text-[hsl(var(--destructive))]">
+                            <div className="mt-2 text-xs text-[hsl(var(--danger-text))]">
                               Dokumen selisih terbuka:{' '}
                               {(r.short_docs || []).filter(d => d.status === 'open')
                                 .map(d => `${d.short_number} (${d.sku} · ${fmtNum(d.qty_open)} pcs)`).join(' · ')}

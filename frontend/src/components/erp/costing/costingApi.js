@@ -40,24 +40,24 @@ export const fmtPct = (v) => `${Number(v || 0).toLocaleString('id-ID', { maximum
 /** Label sumber angka — layar TIDAK BOLEH menampilkan angka tanpa asal. */
 export const SOURCE_LABEL = {
   owner: { text: 'dikunci pemilik', cls: 'bg-primary/10 text-primary border-primary/25' },
-  cmt_job_actual: { text: 'rata-rata job CMT', cls: 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.25)]' },
-  wip_actual: { text: 'upah nyata produksi', cls: 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.25)]' },
+  cmt_job_actual: { text: 'rata-rata job CMT', cls: 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.25)]' },
+  wip_actual: { text: 'upah nyata produksi', cls: 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.25)]' },
   settings_process_rates: { text: 'tarif standar proses', cls: 'bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.25)]' },
-  settings_fallback: { text: 'tarif cadangan', cls: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.25)]' },
-  none: { text: 'belum ada', cls: 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.25)]' },
+  settings_fallback: { text: 'tarif cadangan', cls: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning-text))] border-[hsl(var(--warning)/0.25)]' },
+  none: { text: 'belum ada', cls: 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--danger-text))] border-[hsl(var(--destructive)/0.25)]' },
 };
 
 export const COST_SOURCE_LABEL = {
-  purchase: { text: 'dari pembelian', cls: 'text-[hsl(var(--success))] ' },
+  purchase: { text: 'dari pembelian', cls: 'text-[hsl(var(--success-text))] ' },
   opening: { text: 'harga awal', cls: 'text-[hsl(var(--primary))] ' },
-  master: { text: 'nilai lama', cls: 'text-[hsl(var(--warning))] ' },
-  none: { text: 'belum ada harga', cls: 'text-[hsl(var(--destructive))]' },
+  master: { text: 'nilai lama', cls: 'text-[hsl(var(--warning-text))] ' },
+  none: { text: 'belum ada harga', cls: 'text-[hsl(var(--danger-text))]' },
 };
 
 export const STATUS_META = {
-  ready: { label: 'Siap', cls: 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.25)]' },
-  partial: { label: 'Sebagian', cls: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.25)]' },
-  no_bom: { label: 'Belum ada BOM', cls: 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.25)]' },
+  ready: { label: 'Siap', cls: 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.25)]' },
+  partial: { label: 'Sebagian', cls: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning-text))] border-[hsl(var(--warning)/0.25)]' },
+  no_bom: { label: 'Belum ada BOM', cls: 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--danger-text))] border-[hsl(var(--destructive)/0.25)]' },
 };
 
 /** Layar tujuan perbaikan untuk tiap jenis kekurangan (dipakai tombol "Perbaiki"). */

@@ -195,7 +195,7 @@ export default function VendorMaterialInspection({ user }) {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-          <ClipboardCheck className="w-6 h-6 text-[hsl(var(--success))]" />
+          <ClipboardCheck className="w-6 h-6 text-[hsl(var(--success-text))]" />
           Inspeksi Material
         </h1>
         <p className="text-muted-foreground text-sm mt-1">Laporkan hasil inspeksi material yang diterima (wajib dalam 3 hari)</p>
@@ -203,14 +203,14 @@ export default function VendorMaterialInspection({ user }) {
 
       {pendingShipments.length > 0 && (
         <div className="bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-xl p-4">
-          <p className="text-[hsl(var(--warning))] font-semibold text-sm mb-2">⏰ Shipment Menunggu Inspeksi ({pendingShipments.length})</p>
+          <p className="text-[hsl(var(--warning-text))] font-semibold text-sm mb-2">⏰ Shipment Menunggu Inspeksi ({pendingShipments.length})</p>
           <div className="space-y-2">
             {pendingShipments.map(s => {
               const overdue = isOverdue(s);
               return (
                 <div key={s.id} className={`flex items-center justify-between p-3 rounded-lg border ${overdue ? 'bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.35)]' : 'bg-card border-border'}`}>
                   <div>
-                    <p className={`font-semibold text-sm ${overdue ? 'text-[hsl(var(--destructive))]' : 'text-foreground'}`}>
+                    <p className={`font-semibold text-sm ${overdue ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`}>
                       {s.shipment_number} {overdue && '⚠️ TERLAMBAT'}
                     </p>
                     <p className="text-xs text-muted-foreground">Diterima: {fmtDate(s.updated_at)} • Tipe: {s.shipment_type || 'NORMAL'}</p>
@@ -238,8 +238,8 @@ export default function VendorMaterialInspection({ user }) {
                   <p className="font-semibold text-sm text-foreground">{insp.shipment_number}</p>
                   <p className="text-xs text-muted-foreground">
                     Inspeksi: {fmtDate(insp.inspection_date)} •
-                    Diterima: <span className="text-[hsl(var(--success))] font-medium">{insp.total_received}</span> pcs •
-                    Missing: <span className={`font-medium ${insp.total_missing > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>{insp.total_missing}</span> pcs
+                    Diterima: <span className="text-[hsl(var(--success-text))] font-medium">{insp.total_received}</span> pcs •
+                    Missing: <span className={`font-medium ${insp.total_missing > 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>{insp.total_missing}</span> pcs
                   </p>
                 </div>
                 <button onClick={() => openDetail(insp)} className="px-3 py-1.5 bg-muted text-foreground/90 rounded-lg text-xs font-medium hover:bg-muted">
@@ -255,7 +255,7 @@ export default function VendorMaterialInspection({ user }) {
       {showModal && selectedShipment && (
         <Modal title={`Inspeksi: ${selectedShipment.shipment_number}`} onClose={() => setShowModal(false)} size="xl">
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--success))]">
+            <div className="bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--success-text))]">
               Periksa setiap item material yang diterima. Isi jumlah yang benar-benar diterima dan jumlah yang missing/kurang.
             </div>
             <div>
@@ -269,8 +269,8 @@ export default function VendorMaterialInspection({ user }) {
                   <tr className="bg-muted">
                     <th className="text-left px-3 py-2 text-xs">Produk / SKU</th>
                     <th className="text-right px-3 py-2 text-xs">Dikirim</th>
-                    <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))]">Diterima *</th>
-                    <th className="text-right px-3 py-2 text-xs text-[hsl(var(--destructive))]">Missing</th>
+                    <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success-text))]">Diterima *</th>
+                    <th className="text-right px-3 py-2 text-xs text-[hsl(var(--danger-text))]">Missing</th>
                     <th className="text-left px-3 py-2 text-xs">Kondisi / Catatan</th>
                   </tr>
                 </thead>
@@ -288,7 +288,7 @@ export default function VendorMaterialInspection({ user }) {
                           value={item.received_qty}
                           onChange={e => updateItem(idx, 'received_qty', e.target.value)} />
                       </td>
-                      <td className={`px-3 py-2 text-right font-semibold ${item.missing_qty > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground/70'}`}>
+                      <td className={`px-3 py-2 text-right font-semibold ${item.missing_qty > 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground/70'}`}>
                         {item.missing_qty}
                       </td>
                       <td className="px-3 py-2">
@@ -301,8 +301,8 @@ export default function VendorMaterialInspection({ user }) {
                   <tr>
                     <td className="px-3 py-2 text-sm">Total</td>
                     <td className="px-3 py-2 text-right">{form.items.reduce((s, i) => s + (i.ordered_qty || 0), 0)}</td>
-                    <td className="px-3 py-2 text-right text-[hsl(var(--success))]">{form.items.reduce((s, i) => s + (Number(i.received_qty) || 0), 0)}</td>
-                    <td className="px-3 py-2 text-right text-[hsl(var(--destructive))]">{form.items.reduce((s, i) => s + (i.missing_qty || 0), 0)}</td>
+                    <td className="px-3 py-2 text-right text-[hsl(var(--success-text))]">{form.items.reduce((s, i) => s + (Number(i.received_qty) || 0), 0)}</td>
+                    <td className="px-3 py-2 text-right text-[hsl(var(--danger-text))]">{form.items.reduce((s, i) => s + (i.missing_qty || 0), 0)}</td>
                     <td></td>
                   </tr>
                 </tfoot>
@@ -317,16 +317,16 @@ export default function VendorMaterialInspection({ user }) {
             {/* Accessories Inspection */}
             {form.accessory_items.length > 0 && (
               <div className="mt-3" data-testid="inspection-accessories">
-                <label className="block text-sm font-semibold text-[hsl(var(--success))] mb-2">Inspeksi Aksesoris ({form.accessory_items.length} item)</label>
+                <label className="block text-sm font-semibold text-[hsl(var(--success-text))] mb-2">Inspeksi Aksesoris ({form.accessory_items.length} item)</label>
                 <div className="overflow-x-auto border border-[hsl(var(--success)/0.35)] rounded-xl">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-[hsl(var(--success)/0.1)]">
-                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))]">Aksesoris</th>
-                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))]">Kode</th>
+                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success-text))]">Aksesoris</th>
+                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success-text))]">Kode</th>
                         <th className="text-right px-3 py-2 text-xs text-muted-foreground">Qty Dibutuhkan</th>
-                        <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))]">Diterima *</th>
-                        <th className="text-right px-3 py-2 text-xs text-[hsl(var(--destructive))]">Missing</th>
+                        <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success-text))]">Diterima *</th>
+                        <th className="text-right px-3 py-2 text-xs text-[hsl(var(--danger-text))]">Missing</th>
                         <th className="text-left px-3 py-2 text-xs">Catatan</th>
                       </tr>
                     </thead>
@@ -334,12 +334,12 @@ export default function VendorMaterialInspection({ user }) {
                       {form.accessory_items.map((acc, idx) => (
                         <tr key={idx} className="border-t border-[hsl(var(--success)/0.35)]">
                           <td className="px-3 py-2 font-medium text-xs text-foreground/90">{acc.accessory_name}</td>
-                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--success))]">{acc.accessory_code}</td>
+                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--success-text))]">{acc.accessory_code}</td>
                           <td className="px-3 py-2 text-right text-muted-foreground font-medium">{acc.ordered_qty} {acc.unit}</td>
                           <td className="px-3 py-2 text-right">
                             <input type="number" min="0" className="w-20 border border-[hsl(var(--success)/0.35)] rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-1 focus:ring-[hsl(var(--success)/0.35)]" value={acc.received_qty} onChange={e => updateAccItem(idx, 'received_qty', e.target.value)} />
                           </td>
-                          <td className={`px-3 py-2 text-right font-semibold ${acc.missing_qty > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground/70'}`}>{acc.missing_qty}</td>
+                          <td className={`px-3 py-2 text-right font-semibold ${acc.missing_qty > 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground/70'}`}>{acc.missing_qty}</td>
                           <td className="px-3 py-2">
                             <input className="w-full border border-border rounded px-2 py-1 text-xs" value={acc.condition_notes} onChange={e => updateAccItem(idx, 'condition_notes', e.target.value)} placeholder="Kondisi aksesoris..." />
                           </td>
@@ -350,8 +350,8 @@ export default function VendorMaterialInspection({ user }) {
                       <tr>
                         <td className="px-3 py-2 text-sm" colSpan="2">Total Aksesoris</td>
                         <td className="px-3 py-2 text-right">{form.accessory_items.reduce((s, i) => s + (i.ordered_qty || 0), 0)}</td>
-                        <td className="px-3 py-2 text-right text-[hsl(var(--success))]">{form.accessory_items.reduce((s, i) => s + (Number(i.received_qty) || 0), 0)}</td>
-                        <td className="px-3 py-2 text-right text-[hsl(var(--destructive))]">{form.accessory_items.reduce((s, i) => s + (i.missing_qty || 0), 0)}</td>
+                        <td className="px-3 py-2 text-right text-[hsl(var(--success-text))]">{form.accessory_items.reduce((s, i) => s + (Number(i.received_qty) || 0), 0)}</td>
+                        <td className="px-3 py-2 text-right text-[hsl(var(--danger-text))]">{form.accessory_items.reduce((s, i) => s + (i.missing_qty || 0), 0)}</td>
                         <td></td>
                       </tr>
                     </tfoot>
@@ -377,12 +377,12 @@ export default function VendorMaterialInspection({ user }) {
             <div className="flex items-center justify-between">
               <div className="grid grid-cols-3 gap-3 flex-1">
                 <div className="bg-[hsl(var(--success)/0.1)] rounded-lg p-3 text-center">
-                  <p className="text-xs text-[hsl(var(--success))]">Total Diterima</p>
-                  <p className="text-2xl font-bold text-[hsl(var(--success))]">{detailData.total_received}</p>
+                  <p className="text-xs text-[hsl(var(--success-text))]">Total Diterima</p>
+                  <p className="text-2xl font-bold text-[hsl(var(--success-text))]">{detailData.total_received}</p>
                 </div>
                 <div className={`rounded-lg p-3 text-center ${detailData.total_missing > 0 ? 'bg-[hsl(var(--destructive)/0.1)]' : 'bg-muted/40'}`}>
-                  <p className={`text-xs ${detailData.total_missing > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>Total Missing</p>
-                  <p className={`text-2xl font-bold ${detailData.total_missing > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>{detailData.total_missing}</p>
+                  <p className={`text-xs ${detailData.total_missing > 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>Total Missing</p>
+                  <p className={`text-2xl font-bold ${detailData.total_missing > 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>{detailData.total_missing}</p>
                 </div>
                 <div className="bg-muted/40 rounded-lg p-3 text-center">
                   <p className="text-xs text-muted-foreground">Tanggal Inspeksi</p>
@@ -419,8 +419,8 @@ export default function VendorMaterialInspection({ user }) {
                     <tr className="bg-muted">
                       <th className="text-left px-3 py-2 text-xs">Produk / SKU</th>
                       <th className="text-right px-3 py-2 text-xs">Dikirim</th>
-                      <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))]">Diterima</th>
-                      <th className="text-right px-3 py-2 text-xs text-[hsl(var(--destructive))]">Missing</th>
+                      <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success-text))]">Diterima</th>
+                      <th className="text-right px-3 py-2 text-xs text-[hsl(var(--danger-text))]">Missing</th>
                       <th className="text-left px-3 py-2 text-xs">Catatan</th>
                     </tr>
                   </thead>
@@ -432,8 +432,8 @@ export default function VendorMaterialInspection({ user }) {
                           <p className="text-xs text-muted-foreground/70 tabular-nums">{item.sku} {item.size}/{item.color}</p>
                         </td>
                         <td className="px-3 py-2 text-right">{item.ordered_qty}</td>
-                        <td className="px-3 py-2 text-right text-[hsl(var(--success))] font-medium">{item.received_qty}</td>
-                        <td className={`px-3 py-2 text-right font-medium ${item.missing_qty > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground/70'}`}>{item.missing_qty}</td>
+                        <td className="px-3 py-2 text-right text-[hsl(var(--success-text))] font-medium">{item.received_qty}</td>
+                        <td className={`px-3 py-2 text-right font-medium ${item.missing_qty > 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground/70'}`}>{item.missing_qty}</td>
                         <td className="px-3 py-2 text-xs text-muted-foreground">{item.condition_notes || '-'}</td>
                       </tr>
                     ))}
@@ -444,23 +444,23 @@ export default function VendorMaterialInspection({ user }) {
             {/* Accessory items in detail */}
             {(detailData.accessory_items || []).length > 0 && (
               <div className="overflow-x-auto">
-                <h5 className="text-sm font-semibold text-[hsl(var(--success))] mb-2">Aksesoris ({detailData.accessory_items.length} item)</h5>
+                <h5 className="text-sm font-semibold text-[hsl(var(--success-text))] mb-2">Aksesoris ({detailData.accessory_items.length} item)</h5>
                 <table className="w-full text-sm">
                   <thead><tr className="bg-[hsl(var(--success)/0.1)]">
-                    <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))]">Aksesoris</th>
-                    <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))]">Kode</th>
+                    <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success-text))]">Aksesoris</th>
+                    <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success-text))]">Kode</th>
                     <th className="text-right px-3 py-2 text-xs">Dibutuhkan</th>
-                    <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))]">Diterima</th>
-                    <th className="text-right px-3 py-2 text-xs text-[hsl(var(--destructive))]">Missing</th>
+                    <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success-text))]">Diterima</th>
+                    <th className="text-right px-3 py-2 text-xs text-[hsl(var(--danger-text))]">Missing</th>
                     <th className="text-left px-3 py-2 text-xs">Catatan</th>
                   </tr></thead>
                   <tbody>{detailData.accessory_items.map(acc => (
                     <tr key={acc.id} className="border-t border-[hsl(var(--success)/0.35)]">
                       <td className="px-3 py-2 font-medium text-xs">{acc.accessory_name}</td>
-                      <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--success))]">{acc.accessory_code || '-'}</td>
+                      <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--success-text))]">{acc.accessory_code || '-'}</td>
                       <td className="px-3 py-2 text-right">{acc.ordered_qty} {acc.unit || 'pcs'}</td>
-                      <td className="px-3 py-2 text-right text-[hsl(var(--success))] font-medium">{acc.received_qty}</td>
-                      <td className={`px-3 py-2 text-right font-medium ${acc.missing_qty > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground/70'}`}>{acc.missing_qty}</td>
+                      <td className="px-3 py-2 text-right text-[hsl(var(--success-text))] font-medium">{acc.received_qty}</td>
+                      <td className={`px-3 py-2 text-right font-medium ${acc.missing_qty > 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground/70'}`}>{acc.missing_qty}</td>
                       <td className="px-3 py-2 text-xs text-muted-foreground">{acc.condition_notes || '-'}</td>
                     </tr>
                   ))}</tbody>

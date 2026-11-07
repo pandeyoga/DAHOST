@@ -133,7 +133,7 @@ export function RahazaColorsModule({ token }) {
                       {row.active !== false && (
                         <button
                           onClick={() => handleDelete(row)}
-                          className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.15)] text-muted-foreground hover:text-[hsl(var(--destructive))]"
+                          className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.15)] text-muted-foreground hover:text-[hsl(var(--danger-text))]"
                           title="Nonaktifkan" data-testid={`color-delete-${row.code}`}
                         ><Trash2 className="w-3.5 h-3.5" /></button>
                       )}
@@ -150,16 +150,16 @@ export function RahazaColorsModule({ token }) {
         <Modal onClose={() => setModalOpen(false)} title={editing ? 'Edit Warna' : 'Tambah Warna'} size="sm">
           <div className="space-y-3" data-testid="color-form">
             <div>
-              <label className="text-xs text-muted-foreground">Nama Warna <span className="text-[hsl(var(--destructive))]">*</span></label>
+              <label className="text-xs text-muted-foreground">Nama Warna <span className="text-[hsl(var(--danger-text))]">*</span></label>
               <GlassInput value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
                 placeholder="cth: Merah Marun" data-testid="color-form-name" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-muted-foreground">Kode (singkatan) <span className="text-[hsl(var(--destructive))]">*</span></label>
+                <label className="text-xs text-muted-foreground">Kode (singkatan) <span className="text-[hsl(var(--danger-text))]">*</span></label>
                 <GlassInput value={form.code} onChange={e => setForm({ ...form, code: e.target.value.toUpperCase() })}
                   placeholder="cth: MRN" maxLength={6} data-testid="color-form-code" />
-                <p className="text-[10px] text-muted-foreground mt-1">Dipakai di SKU. Kosongkan = auto 3 huruf.</p>
+                <p className="text-xs text-muted-foreground mt-1">Dipakai di SKU. Kosongkan = auto 3 huruf.</p>
               </div>
               <div>
                 <label className="text-xs text-muted-foreground">Warna (hex)</label>

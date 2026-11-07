@@ -150,11 +150,11 @@ export default function VendorProductionJobs({ user }) {
                           +{job.child_jobs.length} child job
                         </span>
                       )}
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${job.status === 'Completed' ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' : 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]'}`}>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${job.status === 'Completed' ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))]' : 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]'}`}>
                         {job.status}
                       </span>
                       {isOverdue && (
-                        <span className="px-2 py-0.5 bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] rounded-full text-xs font-medium flex items-center gap-1">
+                        <span className="px-2 py-0.5 bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--danger-text))] rounded-full text-xs font-medium flex items-center gap-1">
                           <AlertTriangle className="w-3 h-3" /> Lewat jatuh tempo
                         </span>
                       )}
@@ -169,7 +169,7 @@ export default function VendorProductionJobs({ user }) {
                     {(job.serial_numbers || []).length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">
                         {job.serial_numbers.map(sn => (
-                          <span key={sn} className="px-2 py-0.5 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded text-xs tabular-nums text-[hsl(var(--warning))] font-semibold">
+                          <span key={sn} className="px-2 py-0.5 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded text-xs tabular-nums text-[hsl(var(--warning-text))] font-semibold">
                             Serial: {sn}
                           </span>
                         ))}
@@ -225,7 +225,7 @@ export default function VendorProductionJobs({ user }) {
                         <thead className="bg-muted/40">
                           <tr>
                             {['Serial', 'SKU', 'Produk', 'Size', 'Warna', 'Qty PO', 'Tersedia', 'Diproduksi', 'Klaim kirim', 'Lolos QC DA', 'Ditolak', 'Permak', 'Belum sampai', 'Sisa', 'Progres'].map(h => (
-                              <th key={h} className={`text-left px-3 py-2 font-semibold whitespace-nowrap ${h === 'Serial' ? 'text-[hsl(var(--warning))]' : h === 'Ditolak' ? 'text-[hsl(var(--destructive))]' : h === 'Permak' ? 'text-[hsl(var(--warning))]' : h === 'Belum sampai' ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>{h}</th>
+                              <th key={h} className={`text-left px-3 py-2 font-semibold whitespace-nowrap ${h === 'Serial' ? 'text-[hsl(var(--warning-text))]' : h === 'Ditolak' ? 'text-[hsl(var(--danger-text))]' : h === 'Permak' ? 'text-[hsl(var(--warning-text))]' : h === 'Belum sampai' ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>{h}</th>
                             ))}
                           </tr>
                         </thead>
@@ -248,24 +248,24 @@ export default function VendorProductionJobs({ user }) {
                             const claimed = Number(item.qty_claimed_by_vendor || 0);
                             return (
                               <tr key={item.id} className="border-t border-border/60 hover:bg-muted/50">
-                                <td className="px-3 py-2 tabular-nums text-[hsl(var(--warning))] font-semibold bg-[hsl(var(--warning)/0.3)] whitespace-nowrap">{item.serial_number || '—'}</td>
+                                <td className="px-3 py-2 tabular-nums text-[hsl(var(--warning-text))] font-semibold bg-[hsl(var(--warning)/0.3)] whitespace-nowrap">{item.serial_number || '—'}</td>
                                 <td className="px-3 py-2 tabular-nums text-[hsl(var(--primary))] whitespace-nowrap">{item.sku || '-'}</td>
                                 <td className="px-3 py-2 font-medium">{item.product_name}</td>
                                 <td className="px-3 py-2 text-center">{item.size || '-'}</td>
                                 <td className="px-3 py-2 text-center">{item.color || '-'}</td>
                                 <td className="px-3 py-2 text-right text-muted-foreground">{(item.ordered_qty || 0).toLocaleString('id-ID')}</td>
                                 <td className="px-3 py-2 text-right font-medium text-[hsl(var(--primary))]">{avail.toLocaleString('id-ID')}</td>
-                                <td className="px-3 py-2 text-right font-bold text-[hsl(var(--success))]">{(item.produced_qty || 0).toLocaleString('id-ID')}</td>
+                                <td className="px-3 py-2 text-right font-bold text-[hsl(var(--success-text))]">{(item.produced_qty || 0).toLocaleString('id-ID')}</td>
                                 <td className="px-3 py-2 text-right text-muted-foreground">{claimed.toLocaleString('id-ID')}</td>
-                                <td className="px-3 py-2 text-right font-semibold text-[hsl(var(--success))]">{Number(item.qty_accepted || 0).toLocaleString('id-ID')}</td>
-                                <td className={`px-3 py-2 text-right font-semibold ${reject > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>{reject.toLocaleString('id-ID')}</td>
-                                <td className={`px-3 py-2 text-right font-semibold ${rework > 0 ? 'text-[hsl(var(--warning))]' : 'text-muted-foreground'}`}>{rework.toLocaleString('id-ID')}</td>
-                                <td className={`px-3 py-2 text-right font-bold ${shortOpen > 0 ? 'text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.1)]' : 'text-muted-foreground'}`}
+                                <td className="px-3 py-2 text-right font-semibold text-[hsl(var(--success-text))]">{Number(item.qty_accepted || 0).toLocaleString('id-ID')}</td>
+                                <td className={`px-3 py-2 text-right font-semibold ${reject > 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>{reject.toLocaleString('id-ID')}</td>
+                                <td className={`px-3 py-2 text-right font-semibold ${rework > 0 ? 'text-[hsl(var(--warning-text))]' : 'text-muted-foreground'}`}>{rework.toLocaleString('id-ID')}</td>
+                                <td className={`px-3 py-2 text-right font-bold ${shortOpen > 0 ? 'text-[hsl(var(--danger-text))] bg-[hsl(var(--destructive)/0.1)]' : 'text-muted-foreground'}`}
                                   data-testid={`vendor-item-short-${item.id}`}
                                   title={shortOpen > 0 ? 'Barang belum sampai di DA — harus dicari & dikirim ulang' : ''}>
                                   {shortOpen.toLocaleString('id-ID')}
                                 </td>
-                                <td className="px-3 py-2 text-right text-[hsl(var(--warning))]">{Math.max(0, avail - (item.produced_qty || 0)).toLocaleString('id-ID')}</td>
+                                <td className="px-3 py-2 text-right text-[hsl(var(--warning-text))]">{Math.max(0, avail - (item.produced_qty || 0)).toLocaleString('id-ID')}</td>
                                 <td className="px-3 py-2 min-w-24"><MiniBar pct={pct} /></td>
                               </tr>
                             );
@@ -273,7 +273,7 @@ export default function VendorProductionJobs({ user }) {
                         </tbody>
                       </table>
                     </div>
-                    <p className="text-[11px] text-muted-foreground mt-2">
+                    <p className="text-xs text-muted-foreground mt-2">
                       <strong>Diproduksi</strong> = output Anda (TIDAK dikurangi yang ditolak).
                       <strong> Lolos QC DA</strong> = diterima DA. <strong>Ditolak</strong> = ditolak saat QC DA.
                       <strong> Permak</strong> = barang ditolak yang masih harus dikerjakan ulang — bila diretur,
@@ -290,10 +290,10 @@ export default function VendorProductionJobs({ user }) {
                           <div key={child.id} className="ml-6 pl-4 border-l-2 border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary)/0.3)] rounded-r-lg p-3">
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-[hsl(var(--primary))] text-sm">{child.job_number}</span>
-                              <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${child.shipment_type === 'ADDITIONAL' ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' : 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]'}`}>
+                              <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${child.shipment_type === 'ADDITIONAL' ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' : 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]'}`}>
                                 {child.shipment_type}
                               </span>
-                              <span className={`px-1.5 py-0.5 rounded text-xs ${child.status === 'Completed' ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' : 'bg-muted text-muted-foreground'}`}>
+                              <span className={`px-1.5 py-0.5 rounded text-xs ${child.status === 'Completed' ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))]' : 'bg-muted text-muted-foreground'}`}>
                                 {child.status}
                               </span>
                             </div>
@@ -384,7 +384,7 @@ export default function VendorProductionJobs({ user }) {
                 )}
               </SmartNativeSelect>
               {receivedShipments.length === 0 && (
-                <p className="text-xs text-[hsl(var(--warning))] mt-1">Tidak ada shipment yang siap. Konfirmasi penerimaan & inspeksi di menu Penerimaan Material.</p>
+                <p className="text-xs text-[hsl(var(--warning-text))] mt-1">Tidak ada shipment yang siap. Konfirmasi penerimaan & inspeksi di menu Penerimaan Material.</p>
               )}
             </div>
 
@@ -399,7 +399,7 @@ export default function VendorProductionJobs({ user }) {
                           <p className="font-bold text-foreground text-sm">{item.product_name}</p>
                           <p className="text-muted-foreground tabular-nums text-xs mt-0.5">SKU: {item.sku || '-'} · {item.size || '-'}/{item.color || '-'}</p>
                           {item.serial_number && (
-                            <p className="text-[hsl(var(--warning))] tabular-nums text-xs mt-0.5 font-semibold">Serial: {item.serial_number}</p>
+                            <p className="text-[hsl(var(--warning-text))] tabular-nums text-xs mt-0.5 font-semibold">Serial: {item.serial_number}</p>
                           )}
                         </div>
                         <div className="text-right">
@@ -410,7 +410,7 @@ export default function VendorProductionJobs({ user }) {
                     </div>
                   ))}
                 </div>
-                <div className="bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-lg p-2 text-xs text-[hsl(var(--warning))]">
+                <div className="bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-lg p-2 text-xs text-[hsl(var(--warning-text))]">
                   ⚠️ Qty job = qty material diterima dari inspeksi. Vendor hanya bisa input progress.
                 </div>
               </div>
@@ -440,7 +440,7 @@ export default function VendorProductionJobs({ user }) {
             <div className="grid grid-cols-3 gap-3">
               {[
                 { l: 'No. Job', v: <span className="font-bold text-[hsl(var(--primary))]">{detailJob.job_number}</span> },
-                { l: 'Status', v: <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${detailJob.status === 'Completed' ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' : 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]'}`}>{detailJob.status}</span> },
+                { l: 'Status', v: <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${detailJob.status === 'Completed' ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))]' : 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]'}`}>{detailJob.status}</span> },
                 { l: 'PO', v: detailJob.po_number || '-' },
                 { l: 'Shipment', v: detailJob.shipment_number },
                 { l: 'Customer', v: detailJob.customer_name || '-' },
@@ -460,7 +460,7 @@ export default function VendorProductionJobs({ user }) {
                   {detailJob.child_jobs.map(c => (
                     <div key={c.id} className="flex items-center gap-2 text-xs">
                       <span className="font-bold text-[hsl(var(--primary))]">{c.job_number}</span>
-                      <span className={`px-1.5 py-0.5 rounded ${c.shipment_type === 'ADDITIONAL' ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' : 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]'}`}>{c.shipment_type}</span>
+                      <span className={`px-1.5 py-0.5 rounded ${c.shipment_type === 'ADDITIONAL' ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' : 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]'}`}>{c.shipment_type}</span>
                       <span className="text-muted-foreground">{c.status}</span>
                     </div>
                   ))}
@@ -479,7 +479,7 @@ export default function VendorProductionJobs({ user }) {
                     <thead className="bg-muted/40">
                       <tr>
                         {['Serial 🏷️', 'Produk', 'SKU 🔒', 'Artikel Buyer', 'Size 🔒', 'Warna 🔒', 'Qty PO 🔒', 'Tersedia 🔒', 'Diproduksi', 'Lolos QC DA', 'Ditolak', 'Permak', 'Sisa', 'Progres'].map(h => (
-                          <th key={h} className={`text-left px-3 py-2 text-xs font-semibold whitespace-nowrap ${h === 'Serial 🏷️' ? 'text-[hsl(var(--warning))]' : h === 'Ditolak' ? 'text-[hsl(var(--destructive))]' : h === 'Permak' ? 'text-[hsl(var(--warning))]' : 'text-muted-foreground'}`}>{h}</th>
+                          <th key={h} className={`text-left px-3 py-2 text-xs font-semibold whitespace-nowrap ${h === 'Serial 🏷️' ? 'text-[hsl(var(--warning-text))]' : h === 'Ditolak' ? 'text-[hsl(var(--danger-text))]' : h === 'Permak' ? 'text-[hsl(var(--warning-text))]' : 'text-muted-foreground'}`}>{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -491,7 +491,7 @@ export default function VendorProductionJobs({ user }) {
                         const rework = Number(item.qty_rework_open || 0);
                         return (
                           <tr key={item.id} className="border-t border-border/60 hover:bg-muted/60">
-                            <td className="px-3 py-2.5 tabular-nums text-xs text-[hsl(var(--warning))] font-semibold bg-[hsl(var(--warning)/0.3)]">{item.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
+                            <td className="px-3 py-2.5 tabular-nums text-xs text-[hsl(var(--warning-text))] font-semibold bg-[hsl(var(--warning)/0.3)]">{item.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
                             <td className="px-3 py-2.5 font-medium">{item.product_name}</td>
                             <td className="px-3 py-2.5 tabular-nums text-xs text-[hsl(var(--primary))]">{item.sku || '-'}</td>
                             <td className="px-3 py-2.5 tabular-nums text-xs text-muted-foreground">{item.buyer_ref_code || '—'}</td>
@@ -499,11 +499,11 @@ export default function VendorProductionJobs({ user }) {
                             <td className="px-3 py-2.5 text-xs text-center">{item.color || '-'}</td>
                             <td className="px-3 py-2.5 text-right text-muted-foreground">{(item.ordered_qty || 0).toLocaleString('id-ID')}</td>
                             <td className="px-3 py-2.5 text-right font-medium text-[hsl(var(--primary))]">{avail.toLocaleString('id-ID')}</td>
-                            <td className="px-3 py-2.5 text-right font-bold text-[hsl(var(--success))]">{(item.produced_qty || 0).toLocaleString('id-ID')}</td>
-                            <td className="px-3 py-2.5 text-right font-semibold text-[hsl(var(--success))]">{Number(item.qty_accepted || 0).toLocaleString('id-ID')}</td>
-                            <td className={`px-3 py-2.5 text-right font-semibold ${reject > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>{reject.toLocaleString('id-ID')}</td>
-                            <td className={`px-3 py-2.5 text-right font-semibold ${rework > 0 ? 'text-[hsl(var(--warning))]' : 'text-muted-foreground'}`}>{rework.toLocaleString('id-ID')}</td>
-                            <td className="px-3 py-2.5 text-right text-[hsl(var(--warning))]">{Math.max(0, avail - item.produced_qty).toLocaleString('id-ID')}</td>
+                            <td className="px-3 py-2.5 text-right font-bold text-[hsl(var(--success-text))]">{(item.produced_qty || 0).toLocaleString('id-ID')}</td>
+                            <td className="px-3 py-2.5 text-right font-semibold text-[hsl(var(--success-text))]">{Number(item.qty_accepted || 0).toLocaleString('id-ID')}</td>
+                            <td className={`px-3 py-2.5 text-right font-semibold ${reject > 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>{reject.toLocaleString('id-ID')}</td>
+                            <td className={`px-3 py-2.5 text-right font-semibold ${rework > 0 ? 'text-[hsl(var(--warning-text))]' : 'text-muted-foreground'}`}>{rework.toLocaleString('id-ID')}</td>
+                            <td className="px-3 py-2.5 text-right text-[hsl(var(--warning-text))]">{Math.max(0, avail - item.produced_qty).toLocaleString('id-ID')}</td>
                             <td className="px-3 py-2.5 min-w-28"><MiniBar pct={pct} /></td>
                           </tr>
                         );
@@ -511,7 +511,7 @@ export default function VendorProductionJobs({ user }) {
                     </tbody>
                   </table>
                 </div>
-                <p className="text-[11px] text-muted-foreground mt-2">
+                <p className="text-xs text-muted-foreground mt-2">
                   <strong>Diproduksi</strong> = output Anda (tidak dikurangi yang ditolak).
                   <strong> Lolos QC DA</strong> = diterima DA. <strong>Ditolak</strong> = ditolak saat QC.
                   <strong> Permak</strong> = barang ditolak yang masih harus dikerjakan ulang —

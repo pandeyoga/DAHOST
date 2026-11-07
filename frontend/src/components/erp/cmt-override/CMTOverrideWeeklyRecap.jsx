@@ -65,17 +65,17 @@ import { dayLabel, isoToday, shiftDay as shiftDayUtil } from './recapDates';
 const DAY_STYLE = {
   done: {
     Icon: CheckCircle2,
-    cls: 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] hover:bg-[hsl(var(--success)/0.15)]',
+    cls: 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))] hover:bg-[hsl(var(--success)/0.15)]',
     label: 'Lengkap',
   },
   partial: {
     Icon: AlertTriangle,
-    cls: 'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.15)]',
+    cls: 'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning-text))] hover:bg-[hsl(var(--warning)/0.15)]',
     label: 'Masih ada sisa',
   },
   pending: {
     Icon: XCircle,
-    cls: 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.15)]',
+    cls: 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--danger-text))] hover:bg-[hsl(var(--destructive)/0.15)]',
     label: 'BELUM diisi',
   },
   idle: {
@@ -91,9 +91,9 @@ const DAY_STYLE = {
 };
 
 const ROW_STATUS = {
-  late: { text: 'Pernah terlambat', cls: 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]' },
-  unfinished: { text: 'Belum beres', cls: 'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' },
-  clean: { text: 'Rapi sepekan', cls: 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' },
+  late: { text: 'Pernah terlambat', cls: 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--danger-text))]' },
+  unfinished: { text: 'Belum beres', cls: 'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]' },
+  clean: { text: 'Rapi sepekan', cls: 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))]' },
   idle: { text: 'Tidak ada pekerjaan', cls: 'border-border bg-muted text-muted-foreground' },
 };
 
@@ -158,9 +158,9 @@ function DayBox({ cell, vendorId, onOpen }) {
     <>
       <span className="flex items-center justify-center gap-1">
         <Icon className="h-3.5 w-3.5 flex-shrink-0" />
-        {cell?.is_today ? <span className="text-[9px] font-bold uppercase">kini</span> : null}
+        {cell?.is_today ? <span className="text-xs font-bold">kini</span> : null}
       </span>
-      <span className="mt-0.5 block text-[10px] font-semibold leading-none">
+      <span className="mt-0.5 block text-xs font-semibold leading-none">
         {qty > 0 ? `${qty} pcs` : future ? '—' : ''}
       </span>
     </>
@@ -204,9 +204,9 @@ function DeltaNum({ diff, lowerIsBetter, unit = '', testid }) {
   const Arrow = flat ? MinusCircle : (n > 0 ? TrendingUp : TrendingDown);
   const cls = flat
     ? 'text-muted-foreground'
-    : better ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--destructive))]';
+    : better ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--danger-text))]';
   return (
-    <span className={`inline-flex items-center gap-0.5 text-[11px] font-bold ${cls}`}
+    <span className={`inline-flex items-center gap-0.5 text-xs font-bold ${cls}`}
       data-testid={testid} data-diff={n}>
       <Arrow className="h-3 w-3" />
       {flat ? 'sama' : `${n > 0 ? '+' : ''}${n}${unit}`}
@@ -233,16 +233,16 @@ function MoverRow({ v, tone, onOpen }) {
       title={`Buka ${v.vendor_name}`}
       data-testid={`cmt-week-mover-${v.vendor_id}`} data-direction={v.direction}>
       <p className="flex items-center justify-between gap-2">
-        <span className="truncate text-[11px] font-bold text-foreground">{v.vendor_name}</span>
+        <span className="truncate text-xs font-bold text-foreground">{v.vendor_name}</span>
         <DeltaNum diff={v.days_late_diff} lowerIsBetter unit=" hari"
           testid={`cmt-week-mover-late-${v.vendor_id}`} />
       </p>
-      <p className="mt-0.5 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+      <p className="mt-0.5 flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <span className="truncate">{statusFrom} → <b className="text-foreground">{statusTo}</b></span>
         <DeltaNum diff={v.qty_diff} unit=" pcs"
           testid={`cmt-week-mover-qty-${v.vendor_id}`} />
       </p>
-      <p className="mt-0.5 text-[10px] text-muted-foreground">
+      <p className="mt-0.5 text-xs text-muted-foreground">
         terlambat {v.days_late_prev} → <b className="text-foreground">{v.days_late_now}</b> hari
         {' · '}pcs {v.qty_prev} → <b className="text-foreground">{v.qty_now}</b>
       </p>
@@ -498,10 +498,10 @@ export default function CMTOverrideWeeklyRecap({
         <p className="mt-3 text-xs font-medium text-foreground" data-testid="cmt-week-range-label">
           {data ? `${dayLabel(data.start)} — ${dayLabel(data.end)}` : '…'}
           {isCurrent
-            ? <span className="ml-2 rounded-full bg-[hsl(var(--primary)/0.15)] px-2 py-0.5 text-[10px] font-bold text-[hsl(var(--primary))]">7 HARI TERAKHIR</span>
-            : <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">JENDELA LAIN</span>}
+            ? <span className="ml-2 rounded-full bg-[hsl(var(--primary)/0.15)] px-2 py-0.5 text-xs font-bold text-[hsl(var(--primary))]">7 HARI TERAKHIR</span>
+            : <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-xs font-bold text-muted-foreground">JENDELA LAIN</span>}
           {summary.days_elapsed < summary.days && (
-            <span className="ml-2 rounded-full bg-[hsl(var(--warning)/0.15)] px-2 py-0.5 text-[10px] font-bold text-[hsl(var(--warning))]">
+            <span className="ml-2 rounded-full bg-[hsl(var(--warning)/0.15)] px-2 py-0.5 text-xs font-bold text-[hsl(var(--warning-text))]">
               {summary.days - summary.days_elapsed} hari belum terjadi
             </span>
           )}
@@ -536,20 +536,20 @@ export default function CMTOverrideWeeklyRecap({
           <Notice tone="info" className="mt-3"
             testId="cmt-week-comparison">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-[11px] font-semibold text-[hsl(var(--primary))]">
+              <p className="text-xs font-semibold text-[hsl(var(--primary))]">
                 Dibandingkan pekan sebelumnya
                 <span className="ml-1 font-normal opacity-80">
                   ({dayLabel(comparison.previous?.start)} — {dayLabel(comparison.previous?.end)})
                 </span>
               </p>
               {!comparison.comparable && (
-                <span className="rounded-full bg-[hsl(var(--warning)/0.15)] px-2 py-0.5 text-[10px] font-bold text-[hsl(var(--warning))]"
+                <span className="rounded-full bg-[hsl(var(--warning)/0.15)] px-2 py-0.5 text-xs font-bold text-[hsl(var(--warning-text))]"
                   data-testid="cmt-week-comparison-not-comparable">
                   belum sebanding
                 </span>
               )}
             </div>
-            <p className="mt-1 text-[10px] leading-snug text-[hsl(var(--primary)/0.8)]"
+            <p className="mt-1 text-xs leading-snug text-[hsl(var(--primary)/0.8)]"
               data-testid="cmt-week-comparison-note">{comparison.note}</p>
             <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
               {DELTA_METRICS.map(({ key, label }) => {
@@ -559,21 +559,21 @@ export default function CMTOverrideWeeklyRecap({
                 const tone = flat
                   ? 'border-border bg-card text-muted-foreground'
                   : (d.better
-                    ? 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))]'
-                    : 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))]');
+                    ? 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))]'
+                    : 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--danger-text))]');
                 const Arrow = flat ? MinusCircle : (d.diff > 0 ? TrendingUp : TrendingDown);
                 return (
                   <div key={key} className={`rounded-md border p-2 ${tone}`}
                     data-testid={`cmt-week-delta-${key}`}>
-                    <p className="text-[10px] font-medium leading-tight">{label}</p>
+                    <p className="text-xs font-medium leading-tight">{label}</p>
                     <p className="mt-0.5 flex items-baseline gap-1 text-lg font-bold leading-none">
                       {d.now}
-                      <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold">
+                      <span className="inline-flex items-center gap-0.5 text-xs font-semibold">
                         <Arrow className="h-3 w-3" />
                         {flat ? 'sama' : `${d.diff > 0 ? '+' : ''}${d.diff}`}
                       </span>
                     </p>
-                    <p className="mt-1 text-[10px] opacity-80">
+                    <p className="mt-1 text-xs opacity-80">
                       pekan lalu {d.prev}
                       {!comparison.comparable && (
                         <> · per hari {d.now_per_day} vs {d.prev_per_day}</>
@@ -593,8 +593,8 @@ export default function CMTOverrideWeeklyRecap({
             {movers && (
               <div className="mt-3 border-t border-[hsl(var(--primary)/0.35)] pt-2.5" data-testid="cmt-week-movers">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-[11px] font-semibold text-[hsl(var(--primary))]">Vendor yang bergerak</p>
-                  <p className="text-[10px] text-[hsl(var(--primary)/0.8)]" data-testid="cmt-week-movers-counts">
+                  <p className="text-xs font-semibold text-[hsl(var(--primary))]">Vendor yang bergerak</p>
+                  <p className="text-xs text-[hsl(var(--primary)/0.8)]" data-testid="cmt-week-movers-counts">
                     memburuk <b>{movers.counts?.worsened ?? 0}</b>
                     {' · '}membaik <b>{movers.counts?.improved ?? 0}</b>
                     {' · '}sama <b>{movers.counts?.flat ?? 0}</b>
@@ -604,7 +604,7 @@ export default function CMTOverrideWeeklyRecap({
                 </div>
                 <div className="mt-2 grid gap-2 lg:grid-cols-2">
                   <div data-testid="cmt-week-movers-worsened">
-                    <p className="mb-1 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-[hsl(var(--destructive))]">
+                    <p className="mb-1 flex items-center gap-1 text-xs font-bold text-[hsl(var(--danger-text))]">
                       <TrendingDown className="h-3 w-3" /> Paling memburuk
                     </p>
                     {(movers.worsened || []).length === 0 ? (
@@ -620,7 +620,7 @@ export default function CMTOverrideWeeklyRecap({
                     )}
                   </div>
                   <div data-testid="cmt-week-movers-improved">
-                    <p className="mb-1 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-[hsl(var(--success))]">
+                    <p className="mb-1 flex items-center gap-1 text-xs font-bold text-[hsl(var(--success-text))]">
                       <TrendingUp className="h-3 w-3" /> Paling membaik
                     </p>
                     {(movers.improved || []).length === 0 ? (
@@ -636,12 +636,12 @@ export default function CMTOverrideWeeklyRecap({
                     )}
                   </div>
                 </div>
-                <p className="mt-2 text-[10px] leading-snug text-[hsl(var(--primary)/0.7)]"
+                <p className="mt-2 text-xs leading-snug text-[hsl(var(--primary)/0.7)]"
                   data-testid="cmt-week-movers-rule">
                   {movers.rule}
                 </p>
                 {(movers.counts?.incomparable ?? 0) > 0 && (
-                  <p className="mt-1 text-[10px] leading-snug text-[hsl(var(--warning))]"
+                  <p className="mt-1 text-xs leading-snug text-[hsl(var(--warning-text))]"
                     data-testid="cmt-week-movers-excluded">
                     {movers.counts.incomparable} vendor tidak diperingkat karena tidak punya
                     pekerjaan di salah satu pekan
@@ -676,7 +676,7 @@ export default function CMTOverrideWeeklyRecap({
             lalu, "memburuk" tidak punya arti dan kotaknya cuma akan mengosongkan
             tabel tanpa alasan yang terlihat. */}
         {compare && comparison && (
-          <label className="flex cursor-pointer select-none items-center gap-2 rounded-md border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] px-2 py-1 text-xs font-medium text-[hsl(var(--destructive))]">
+          <label className="flex cursor-pointer select-none items-center gap-2 rounded-md border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] px-2 py-1 text-xs font-medium text-[hsl(var(--danger-text))]">
             <input type="checkbox" checked={onlyWorse}
               onChange={e => setOnlyWorse(e.target.checked)}
               className="h-4 w-4 rounded border-[hsl(var(--destructive)/0.35)]"
@@ -700,19 +700,19 @@ export default function CMTOverrideWeeklyRecap({
       {confirmRemind && (
         <div className="border-b border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] p-4" data-testid="cmt-week-remind-confirm">
           <div className="flex items-start gap-3">
-            <BellRing className="mt-0.5 h-5 w-5 flex-shrink-0 text-[hsl(var(--warning))]" />
+            <BellRing className="mt-0.5 h-5 w-5 flex-shrink-0 text-[hsl(var(--warning-text))]" />
             <div className="min-w-0 flex-1">
-              <p className="font-semibold text-[hsl(var(--warning))]">
+              <p className="font-semibold text-[hsl(var(--warning-text))]">
                 Kirim reminder ke {remindPending.length} vendor untuk tanggal{' '}
                 <span data-testid="cmt-week-remind-date">{data?.remind_date}</span>?
               </p>
-              <p className="mt-1 text-xs text-[hsl(var(--warning))]">
+              <p className="mt-1 text-xs text-[hsl(var(--warning-text))]">
                 Reminder selalu menempel pada <b>satu tanggal</b> (hari terakhir yang sudah
                 berjalan di jendela ini), bukan pada rentang 7 hari — supaya vendor tahu
                 data hari mana yang diminta. Satu vendor hanya menerima satu reminder rekap
                 per tanggal: klik dua kali tidak menggandakan.
               </p>
-              <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto text-xs text-[hsl(var(--warning))]">
+              <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto text-xs text-[hsl(var(--warning-text))]">
                 {remindPending.map(r => (
                   <li key={r.vendor_id}>
                     • <b>{r.vendor_name}</b>
@@ -749,8 +749,8 @@ export default function CMTOverrideWeeklyRecap({
       {data?.legacy_jobs_without_closed_at > 0 && data?.legacy_note && (
         <div className="flex items-start gap-2 border-b border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] px-4 py-2.5"
           data-testid="cmt-week-legacy-jobs">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-[hsl(var(--warning))]" />
-          <p className="text-[11px] leading-snug text-[hsl(var(--warning))]">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-[hsl(var(--warning-text))]" />
+          <p className="text-xs leading-snug text-[hsl(var(--warning-text))]">
             <span className="font-semibold">Sebagian kotak hari belum bisa dihitung penuh — </span>
             {data.legacy_note}
           </p>
@@ -762,7 +762,7 @@ export default function CMTOverrideWeeklyRecap({
         <div className="flex items-start gap-2 border-b border-border bg-muted/40 px-4 py-2.5"
           data-testid="cmt-week-as-of-note">
           <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-[hsl(var(--primary))]" />
-          <p className="text-[11px] leading-snug text-muted-foreground">{data.as_of_note}</p>
+          <p className="text-xs leading-snug text-muted-foreground">{data.as_of_note}</p>
         </div>
       )}
 
@@ -801,7 +801,7 @@ export default function CMTOverrideWeeklyRecap({
         <ResponsiveTableWrapper stickyFirstCol>
           <table className={`w-full text-sm ${showCompareCol ? 'min-w-[1500px]' : 'min-w-[1320px]'}`}>
             <thead className="bg-muted/60">
-              <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <tr className="text-left text-xs text-muted-foreground">
                 <th className="px-4 py-2.5">Vendor</th>
                 {days.map(d => {
                   const pd = perDayMap[d.date] || {};
@@ -817,17 +817,17 @@ export default function CMTOverrideWeeklyRecap({
                           ? `${d.date} — belum terjadi`
                           : `${d.date} — buka Rekap Harian tanggal ini`}
                         data-testid={`cmt-week-dayhead-${d.date}`}>
-                        <span className={`block text-[11px] ${d.is_today ? 'text-[hsl(var(--primary))]' : ''}`}>
+                        <span className={`block text-xs ${d.is_today ? 'text-[hsl(var(--primary))]' : ''}`}>
                           {d.short}
                         </span>
-                        <span className="block text-[11px] font-bold text-foreground">
+                        <span className="block text-xs font-bold text-foreground">
                           {d.day_num}
                         </span>
                         {d.is_future ? (
-                          <span className="mt-0.5 block text-[9px] font-normal normal-case">—</span>
+                          <span className="mt-0.5 block text-xs font-normal normal-case">—</span>
                         ) : (
-                          <span className={`mt-0.5 block rounded-full px-1 text-[9px] font-bold normal-case ${
-                            npend > 0 ? 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]' : 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]'
+                          <span className={`mt-0.5 block rounded-full px-1 text-xs font-bold normal-case ${
+                            npend > 0 ? 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--danger-text))]' : 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))]'
                           }`} data-testid={`cmt-week-daycount-${d.date}`}>
                             {npend > 0 ? `${npend} belum` : 'aman'}
                           </span>
@@ -858,15 +858,15 @@ export default function CMTOverrideWeeklyRecap({
                     data-testid={`cmt-week-row-${r.vendor_id}`} data-status={r.status}>
                     <td className="px-4 py-3">
                       <p className="font-semibold text-foreground">{r.vendor_name}</p>
-                      <p className="mt-0.5 tabular-nums text-[11px] text-muted-foreground">
+                      <p className="mt-0.5 tabular-nums text-xs text-muted-foreground">
                         {r.vendor_code || '—'}
                       </p>
-                      <span className={`mt-1.5 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${stat.cls}`}
+                      <span className={`mt-1.5 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-bold ${stat.cls}`}
                         data-testid={`cmt-week-status-${r.vendor_id}`}>
                         {stat.text}
                       </span>
                       {r.has_active_portal_account && (
-                        <span className="mt-1 flex items-center gap-1 text-[10px] text-[hsl(var(--warning))]"
+                        <span className="mt-1 flex items-center gap-1 text-xs text-[hsl(var(--warning-text))]"
                           title="Vendor ini punya akun portal aktif — hati-hati dobel input">
                           <AlertTriangle className="h-3 w-3" /> punya akun portal
                         </span>
@@ -881,19 +881,19 @@ export default function CMTOverrideWeeklyRecap({
 
                     <td className="px-2 py-3 text-center" data-testid={`cmt-week-late-${r.vendor_id}`}>
                       <span className={`inline-flex min-w-[2rem] justify-center rounded-md px-2 py-1 text-sm font-bold ${
-                        r.days_late > 0 ? 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]' : 'text-muted-foreground'
+                        r.days_late > 0 ? 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--danger-text))]' : 'text-muted-foreground'
                       }`}>
                         {r.days_late}
                       </span>
-                      <span className="mt-0.5 block text-[9px] text-muted-foreground">hari</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">hari</span>
                     </td>
                     <td className="px-2 py-3 text-center" data-testid={`cmt-week-unfinished-${r.vendor_id}`}>
                       <span className={`inline-flex min-w-[2rem] justify-center rounded-md px-2 py-1 text-sm font-bold ${
-                        r.days_unfinished > 0 ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' : 'text-muted-foreground'
+                        r.days_unfinished > 0 ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]' : 'text-muted-foreground'
                       }`}>
                         {r.days_unfinished}
                       </span>
-                      <span className="mt-0.5 block text-[9px] text-muted-foreground">hari</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">hari</span>
                     </td>
                     <td className="px-2 py-3 text-center" data-testid={`cmt-week-nosetor-${r.vendor_id}`}>
                       <span className={`text-sm font-bold ${
@@ -901,13 +901,13 @@ export default function CMTOverrideWeeklyRecap({
                       }`}>
                         {r.days_no_progress}
                       </span>
-                      <span className="mt-0.5 block text-[9px] text-muted-foreground">
+                      <span className="mt-0.5 block text-xs text-muted-foreground">
                         dari {r.days_with_work} hari kerja
                       </span>
                     </td>
                     <td className="px-2 py-3 text-center" data-testid={`cmt-week-qty-${r.vendor_id}`}>
                       <p className="text-sm font-bold text-foreground">{r.qty_progress_total}</p>
-                      <p className="text-[10px] text-muted-foreground">
+                      <p className="text-xs text-muted-foreground">
                         kirim {r.qty_shipped_total}
                       </p>
                     </td>
@@ -915,7 +915,7 @@ export default function CMTOverrideWeeklyRecap({
                       const cv = cmpByVendor[r.vendor_id];
                       if (!cv) {
                         return (
-                          <td className="px-2 py-3 text-center text-[10px] text-muted-foreground"
+                          <td className="px-2 py-3 text-center text-xs text-muted-foreground"
                             data-testid={`cmt-week-vs-${r.vendor_id}`} data-direction="unknown">—</td>
                         );
                       }
@@ -927,10 +927,10 @@ export default function CMTOverrideWeeklyRecap({
                           <td className="px-2 py-3 text-center"
                             data-testid={`cmt-week-vs-${r.vendor_id}`} data-direction="incomparable"
                             title={cv.incomparable_reason}>
-                            <span className="inline-block rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                            <span className="inline-block rounded-full bg-muted px-2 py-0.5 text-xs font-semibold text-muted-foreground">
                               tak sebanding
                             </span>
-                            <p className="mt-1 max-w-[9rem] text-[9px] leading-tight text-muted-foreground">
+                            <p className="mt-1 max-w-[9rem] text-xs leading-tight text-muted-foreground">
                               {cv.incomparable_reason}
                             </p>
                           </td>
@@ -947,7 +947,7 @@ export default function CMTOverrideWeeklyRecap({
                             <DeltaNum diff={cv.qty_diff} unit=" pcs"
                               testid={`cmt-week-vs-qty-${r.vendor_id}`} />
                           </p>
-                          <p className="mt-0.5 text-[9px] text-muted-foreground">
+                          <p className="mt-0.5 text-xs text-muted-foreground">
                             lalu: {cv.days_late_prev} hari · {cv.qty_prev} pcs
                           </p>
                         </td>
@@ -961,10 +961,10 @@ export default function CMTOverrideWeeklyRecap({
                     </td>
                     <td className="px-2 py-3 text-center" data-testid={`cmt-week-streak-${r.vendor_id}`}>
                       <span className="inline-flex items-center gap-1 text-sm font-bold text-foreground">
-                        {r.streak > 0 && <Flame className="h-3.5 w-3.5 text-[hsl(var(--warning))]" />}
+                        {r.streak > 0 && <Flame className="h-3.5 w-3.5 text-[hsl(var(--warning-text))]" />}
                         {r.streak}
                       </span>
-                      <span className="mt-0.5 block text-[9px] text-muted-foreground">
+                      <span className="mt-0.5 block text-xs text-muted-foreground">
                         {r.streak_broken_by === 'pending'
                           ? 'putus: hari terlambat'
                           : r.streak_broken_by === 'partial'
@@ -989,11 +989,11 @@ export default function CMTOverrideWeeklyRecap({
 
       {/* ── Legenda + aturan ────────────────────────────────────────────── */}
       <div className="space-y-2 border-t border-border px-4 py-2.5">
-        <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
           <span className="font-semibold text-foreground">Keterangan:</span>
-          <span className="inline-flex items-center gap-1"><XCircle className="h-3.5 w-3.5 text-[hsl(var(--destructive))]" /> terlambat (ada pekerjaan, nol bukti)</span>
-          <span className="inline-flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5 text-[hsl(var(--warning))]" /> terisi, masih ada sisa</span>
-          <span className="inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5 text-[hsl(var(--success))]" /> lengkap</span>
+          <span className="inline-flex items-center gap-1"><XCircle className="h-3.5 w-3.5 text-[hsl(var(--danger-text))]" /> terlambat (ada pekerjaan, nol bukti)</span>
+          <span className="inline-flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5 text-[hsl(var(--warning-text))]" /> terisi, masih ada sisa</span>
+          <span className="inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5 text-[hsl(var(--success-text))]" /> lengkap</span>
           <span className="inline-flex items-center gap-1"><MinusCircle className="h-3.5 w-3.5" /> tidak ada pekerjaan</span>
           <span className="inline-flex items-center gap-1"><TrendingUp className="h-3 w-3" /> batang = pcs disetor hari itu</span>
           {compare && (
@@ -1007,7 +1007,7 @@ export default function CMTOverrideWeeklyRecap({
           </span>
         </div>
         {data?.rules_note && (
-          <p className="text-[11px] leading-snug text-muted-foreground" data-testid="cmt-week-rules-note">
+          <p className="text-xs leading-snug text-muted-foreground" data-testid="cmt-week-rules-note">
             {data.rules_note}
           </p>
         )}

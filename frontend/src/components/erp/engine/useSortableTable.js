@@ -137,7 +137,7 @@ export function SortableHeader({ columnKey, sortKey, sortDir, onToggle, classNam
         {children}
         {sortable && (
           <span
-            className={`text-[10px] ${active ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground/50'}`}
+            className={`text-xs ${active ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground/50'}`}
             aria-hidden="true"
           >
             {indicator}

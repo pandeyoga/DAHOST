@@ -5,7 +5,7 @@ export function StatCard({ title, value, icon: Icon, color, sub, alert }) {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-muted-foreground">{title}</p>
-          <p className={`text-2xl font-bold mt-1 ${alert ? 'text-[hsl(var(--destructive))]' : 'text-foreground'}`}>{value}</p>
+          <p className={`text-2xl font-bold mt-1 ${alert ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`}>{value}</p>
           {sub && <p className="text-xs text-muted-foreground/70 mt-1">{sub}</p>}
         </div>
         <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${color}`}>

@@ -85,7 +85,7 @@ export default function VendorProgress({ token, user }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border/60 bg-muted/40">
-              <th className="text-left px-4 py-2.5 text-xs text-[hsl(var(--warning))] font-semibold">Serial 🏷️</th>
+              <th className="text-left px-4 py-2.5 text-xs text-[hsl(var(--warning-text))] font-semibold">Serial 🏷️</th>
               <th className="text-left px-4 py-2.5 text-xs text-muted-foreground">Produk</th>
               <th className="text-left px-4 py-2.5 text-xs text-muted-foreground">SKU 🔒</th>
               <th className="text-left px-4 py-2.5 text-xs text-muted-foreground">Size</th>
@@ -105,18 +105,18 @@ export default function VendorProgress({ token, user }) {
               const isDone = item.produced_qty >= avail && avail > 0;
               return (
                 <tr key={item.id} className={`hover:bg-muted/60 ${isDone ? 'bg-[hsl(var(--success)/0.3)]' : ''} ${isChild ? 'bg-[hsl(var(--primary)/0.2)]' : ''}`}>
-                  <td className="px-4 py-3 tabular-nums text-xs text-[hsl(var(--warning))] font-semibold">{item.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
+                  <td className="px-4 py-3 tabular-nums text-xs text-[hsl(var(--warning-text))] font-semibold">{item.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
                   <td className="px-4 py-3 font-medium text-foreground">{item.product_name}</td>
                   <td className="px-4 py-3 tabular-nums text-xs text-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.2)]">{item.sku || '-'}</td>
                   <td className="px-4 py-3 text-xs text-center">{item.size || '-'}</td>
                   <td className="px-4 py-3 text-xs text-center">{item.color || '-'}</td>
                   <td className="px-4 py-3 text-right font-medium text-[hsl(var(--primary))]">{avail.toLocaleString('id-ID')}</td>
-                  <td className="px-4 py-3 text-right font-bold text-[hsl(var(--success))]">{(item.produced_qty || 0).toLocaleString('id-ID')}</td>
-                  <td className={`px-4 py-3 text-right font-medium ${sisa === 0 ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--warning))]'}`}>{sisa.toLocaleString('id-ID')}</td>
+                  <td className="px-4 py-3 text-right font-bold text-[hsl(var(--success-text))]">{(item.produced_qty || 0).toLocaleString('id-ID')}</td>
+                  <td className={`px-4 py-3 text-right font-medium ${sisa === 0 ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--warning-text))]'}`}>{sisa.toLocaleString('id-ID')}</td>
                   <td className="px-4 py-3 min-w-32"><MiniBar pct={pct} /></td>
                   <td className="px-4 py-3">
                     {isDone ? (
-                      <span className="px-2 py-1 bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] rounded text-xs font-medium">✅ Selesai</span>
+                      <span className="px-2 py-1 bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))] rounded text-xs font-medium">✅ Selesai</span>
                     ) : (
                       <button onClick={() => openProgress(item)}
                         className="flex items-center gap-1 px-3 py-1.5 bg-[hsl(var(--success))] text-white rounded-lg text-xs hover:bg-[hsl(var(--success)/0.9)]">
@@ -164,18 +164,18 @@ export default function VendorProgress({ token, user }) {
       {selectedJob && (
         <div className="bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] rounded-lg p-3 text-sm">
           <div className="flex justify-between items-center">
-            <span className="font-semibold text-[hsl(var(--success))]">{selectedJob.job_number} — PO: {selectedJob.po_number || '-'}</span>
-            <span className="text-xs text-[hsl(var(--success))]">Shipment: {selectedJob.shipment_number}</span>
+            <span className="font-semibold text-[hsl(var(--success-text))]">{selectedJob.job_number} — PO: {selectedJob.po_number || '-'}</span>
+            <span className="text-xs text-[hsl(var(--success-text))]">Shipment: {selectedJob.shipment_number}</span>
           </div>
           {(selectedJob.serial_numbers || []).length > 0 && (
             <div className="flex flex-wrap gap-1 mt-2">
               {selectedJob.serial_numbers.map(sn => (
-                <span key={sn} className="px-1.5 py-0.5 bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.35)] rounded text-xs tabular-nums text-[hsl(var(--warning))]">Serial: {sn}</span>
+                <span key={sn} className="px-1.5 py-0.5 bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.35)] rounded text-xs tabular-nums text-[hsl(var(--warning-text))]">Serial: {sn}</span>
               ))}
             </div>
           )}
           <MiniBar pct={selectedJob.progress_pct || 0} />
-          <p className="text-xs text-[hsl(var(--success))] mt-1">
+          <p className="text-xs text-[hsl(var(--success-text))] mt-1">
             Total tersedia: {(selectedJob.total_available || 0).toLocaleString('id-ID')} pcs • 
             Diproduksi: {(selectedJob.total_produced || 0).toLocaleString('id-ID')} pcs
           </p>
@@ -229,7 +229,7 @@ export default function VendorProgress({ token, user }) {
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Locked info */}
             <div className="bg-muted/40 rounded-xl p-3 space-y-1.5">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Info Item (Terkunci 🔒)</p>
+              <p className="text-xs font-semibold text-muted-foreground mb-2">Info Item (Terkunci 🔒)</p>
               {[
                 ['Serial / Batch', selectedItem.serial_number || '-'],
                 ['Produk', selectedItem.product_name],
@@ -240,9 +240,9 @@ export default function VendorProgress({ token, user }) {
                 ['Sudah Diproduksi', `${selectedItem.produced_qty} pcs`],
                 ['Sisa (Maks Input)', `${Math.max(0, (selectedItem.available_qty ?? selectedItem.shipment_qty ?? 0) - selectedItem.produced_qty)} pcs`],
               ].map(([l, v]) => (
-                <div key={l} className={`flex justify-between text-sm ${l === 'Serial / Batch' ? 'text-[hsl(var(--warning))] font-medium' : ''}`}>
+                <div key={l} className={`flex justify-between text-sm ${l === 'Serial / Batch' ? 'text-[hsl(var(--warning-text))] font-medium' : ''}`}>
                   <span className="text-muted-foreground">{l}</span>
-                  <span className={`font-semibold ${l === 'Sisa (Maks Input)' ? 'text-[hsl(var(--warning))]' : 'text-foreground'}`}>{v}</span>
+                  <span className={`font-semibold ${l === 'Sisa (Maks Input)' ? 'text-[hsl(var(--warning-text))]' : 'text-foreground'}`}>{v}</span>
                 </div>
               ))}
             </div>

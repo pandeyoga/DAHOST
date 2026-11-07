@@ -182,11 +182,11 @@ function PoRiskTable({ rows, testId }) {
       <TableBody>
         {rows.map((r) => (
           <TableRow key={r.po_id} data-testid={`${testId}-${r.po_number}`}>
-            <TableCell className="font-medium whitespace-nowrap">{r.po_number}<div className="text-[11px] text-muted-foreground">{r.customer_name}</div></TableCell>
+            <TableCell className="font-medium whitespace-nowrap">{r.po_number}<div className="text-xs text-muted-foreground">{r.customer_name}</div></TableCell>
             <TableCell>{r.vendor_name || '—'}</TableCell>
             <TableCell>{poStatusLabel(r.status)}</TableCell>
             <TableCell className="whitespace-nowrap">{r.deadline ? formatDateID(r.deadline) : '—'}</TableCell>
-            <TableCell className={`text-right tabular-nums ${r.days_to_deadline < 0 ? 'text-[hsl(var(--destructive))] font-semibold' : ''}`}>
+            <TableCell className={`text-right tabular-nums ${r.days_to_deadline < 0 ? 'text-[hsl(var(--danger-text))] font-semibold' : ''}`}>
               {r.days_to_deadline == null ? '—' : r.days_to_deadline < 0 ? `telat ${n(-r.days_to_deadline)}` : n(r.days_to_deadline)}
             </TableCell>
             <TableCell className="text-right tabular-nums">{n(r.ordered)}</TableCell>

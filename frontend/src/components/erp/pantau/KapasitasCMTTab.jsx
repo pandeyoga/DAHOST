@@ -101,13 +101,13 @@ export default function KapasitasCMTTab(props) {
               {vendors.map((v) => (
                 <TableRow key={v.vendor_id} data-testid={`pantau-kapasitas-row-${v.code || v.name}`}>
                   <TableCell className="font-medium">{v.name}{v.code ? <span className="text-xs text-muted-foreground"> · {v.code}</span> : null}
-                    {v.capacity_note ? <div className="text-[11px] text-muted-foreground">{v.capacity_note}</div> : null}</TableCell>
+                    {v.capacity_note ? <div className="text-xs text-muted-foreground">{v.capacity_note}</div> : null}</TableCell>
                   <TableCell className="text-right tabular-nums">{v.capacity_pcs ? n(v.capacity_pcs) : '—'}</TableCell>
                   <TableCell className="text-right tabular-nums" data-testid="pantau-kap-internal">{n(v.load_internal_pcs)}</TableCell>
                   <TableCell className="text-right tabular-nums" data-testid="pantau-kap-maklon">{n(v.load_maklon_pcs)}</TableCell>
                   <TableCell className="text-right tabular-nums font-semibold">{n(v.current_load_pcs)}</TableCell>
                   <TableCell className="text-right tabular-nums">{v.utilization_pct == null ? '—' : pct(v.utilization_pct)}</TableCell>
-                  <TableCell className={`text-right tabular-nums ${v.available_pcs < 0 ? 'text-[hsl(var(--destructive))] font-semibold' : ''}`}>{v.available_pcs == null ? '—' : n(v.available_pcs)}</TableCell>
+                  <TableCell className={`text-right tabular-nums ${v.available_pcs < 0 ? 'text-[hsl(var(--danger-text))] font-semibold' : ''}`}>{v.available_pcs == null ? '—' : n(v.available_pcs)}</TableCell>
                   <TableCell className="text-right tabular-nums">{n(v.daily_rate)}</TableCell>
                   <TableCell className="text-right tabular-nums">{!v.current_load_pcs || v.days_to_clear == null ? '—' : `${n(v.days_to_clear)} hari`}</TableCell>
                   <TableCell className="text-right tabular-nums">{n(v.telat_po_count)}</TableCell>

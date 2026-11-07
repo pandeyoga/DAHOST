@@ -41,12 +41,12 @@ export default function VendorReminderInbox({ token, user }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-foreground flex items-center gap-2"><Bell className="w-5 h-5 text-[hsl(var(--success))]" /> Inbox Reminder</h2>
+          <h2 className="text-xl font-bold text-foreground flex items-center gap-2"><Bell className="w-5 h-5 text-[hsl(var(--success-text))]" /> Inbox Reminder</h2>
           <p className="text-sm text-muted-foreground">Pesan dan reminder dari ERP Admin</p>
         </div>
         <div className="flex items-center gap-2">
           {pending.length > 0 && (
-            <span className="px-3 py-1 bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] rounded-full text-xs font-medium">{pending.length} belum dibalas</span>
+            <span className="px-3 py-1 bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))] rounded-full text-xs font-medium">{pending.length} belum dibalas</span>
           )}
         </div>
       </div>
@@ -62,14 +62,14 @@ export default function VendorReminderInbox({ token, user }) {
           {/* Pending first */}
           {pending.length > 0 && (
             <div>
-              <h3 className="text-sm font-semibold text-[hsl(var(--warning))] mb-2 flex items-center gap-1"><Clock className="w-4 h-4" /> Menunggu Respon ({pending.length})</h3>
+              <h3 className="text-sm font-semibold text-[hsl(var(--warning-text))] mb-2 flex items-center gap-1"><Clock className="w-4 h-4" /> Menunggu Respon ({pending.length})</h3>
               <div className="space-y-3">
                 {pending.map(r => (
                   <div key={r.id} className="bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-xl p-4 shadow-sm">
                     <div className="flex items-start justify-between">
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${r.priority === 'urgent' ? 'bg-[hsl(var(--destructive)/0.2)] text-[hsl(var(--destructive))]' : r.priority === 'high' ? 'bg-[hsl(var(--warning)/0.2)] text-[hsl(var(--warning))]' : 'bg-[hsl(var(--primary)/0.2)] text-[hsl(var(--primary))]'}`}>{r.priority === 'urgent' ? 'Mendesak' : r.priority === 'high' ? 'Tinggi' : 'Normal'}</span>
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${r.priority === 'urgent' ? 'bg-[hsl(var(--destructive)/0.2)] text-[hsl(var(--danger-text))]' : r.priority === 'high' ? 'bg-[hsl(var(--warning)/0.2)] text-[hsl(var(--warning-text))]' : 'bg-[hsl(var(--primary)/0.2)] text-[hsl(var(--primary))]'}`}>{r.priority === 'urgent' ? 'Mendesak' : r.priority === 'high' ? 'Tinggi' : 'Normal'}</span>
                           <span className="text-xs text-muted-foreground/70">{fmtDate(r.created_at)}</span>
                         </div>
                         <h4 className="font-semibold text-foreground mt-1">{r.subject}</h4>
@@ -97,19 +97,19 @@ export default function VendorReminderInbox({ token, user }) {
           {/* Responded */}
           {responded.length > 0 && (
             <div>
-              <h3 className="text-sm font-semibold text-[hsl(var(--success))] mb-2 flex items-center gap-1"><CheckCircle className="w-4 h-4" /> Sudah Dibalas ({responded.length})</h3>
+              <h3 className="text-sm font-semibold text-[hsl(var(--success-text))] mb-2 flex items-center gap-1"><CheckCircle className="w-4 h-4" /> Sudah Dibalas ({responded.length})</h3>
               <div className="space-y-3">
                 {responded.map(r => (
                   <div key={r.id} className="bg-card border border-[hsl(var(--success)/0.35)] rounded-xl p-4 shadow-sm">
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-xs text-muted-foreground/70">{fmtDate(r.created_at)}</span>
-                      <span className="px-1.5 py-0.5 rounded text-[10px] bg-[hsl(var(--success)/0.2)] text-[hsl(var(--success))] font-medium">Dibalas</span>
+                      <span className="px-1.5 py-0.5 rounded text-xs bg-[hsl(var(--success)/0.2)] text-[hsl(var(--success-text))] font-medium">Dibalas</span>
                     </div>
                     <h4 className="font-medium text-foreground/90">{r.subject}</h4>
                     <p className="text-sm text-muted-foreground mt-0.5">{r.message}</p>
                     <div className="mt-2 p-2 bg-[hsl(var(--success)/0.1)] rounded-lg border border-[hsl(var(--success)/0.35)]">
-                      <p className="text-sm text-[hsl(var(--success))]">{r.response}</p>
-                      <p className="text-[10px] text-muted-foreground/70 mt-1">Dibalas: {fmtDate(r.response_date)}</p>
+                      <p className="text-sm text-[hsl(var(--success-text))]">{r.response}</p>
+                      <p className="text-xs text-muted-foreground/70 mt-1">Dibalas: {fmtDate(r.response_date)}</p>
                     </div>
                   </div>
                 ))}

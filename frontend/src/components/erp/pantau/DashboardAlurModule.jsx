@@ -56,7 +56,7 @@ export function useDashboardAlur(props) {
             <TableBody>
               {data.alur.map((s) => (
                 <TableRow key={s.key} data-testid={`dash-alur-${s.key}`}>
-                  <TableCell className="font-medium">{s.label}{s.note ? <div className="text-[11px] text-muted-foreground">{s.note}</div> : null}</TableCell>
+                  <TableCell className="font-medium">{s.label}{s.note ? <div className="text-xs text-muted-foreground">{s.note}</div> : null}</TableCell>
                   <TableCell className="text-right tabular-nums font-semibold" data-testid={`dash-alur-${s.key}-qty`}>{n(s.qty)}</TableCell>
                   <TableCell className="text-right tabular-nums text-muted-foreground">{n(s.docs)} {s.doc_label}</TableCell>
                   <TableCell className="text-right"><Button variant="link" size="sm" className="h-auto p-0" onClick={() => go(s.module)}>Buka</Button></TableCell>
@@ -82,7 +82,7 @@ export function useDashboardAlur(props) {
               <TableBody>
                 {actions.map((a) => (
                   <TableRow key={a.id}>
-                    <TableCell>{a.title}{a.description ? <div className="text-[11px] text-muted-foreground">{a.description}</div> : null}</TableCell>
+                    <TableCell>{a.title}{a.description ? <div className="text-xs text-muted-foreground">{a.description}</div> : null}</TableCell>
                     <TableCell><Badge meta={SEVERITY[a.severity] || SEVERITY.info} /></TableCell>
                     <TableCell className="text-right"><Button variant="link" size="sm" className="h-auto p-0" onClick={() => go(a.cta_module, a.cta_params)}>{a.cta_label || 'Buka'}</Button></TableCell>
                   </TableRow>
@@ -108,7 +108,7 @@ export function useDashboardAlur(props) {
                     <TableCell>{a.customer_name || '—'}</TableCell>
                     <TableCell>{a.vendor_name || '—'}</TableCell>
                     <TableCell>{poStatusLabel(a.status)}</TableCell>
-                    <TableCell className={`text-right tabular-nums ${a.idle_days >= 7 ? 'text-[hsl(var(--warning))] font-semibold' : ''}`}>{n(a.idle_days)} hari</TableCell>
+                    <TableCell className={`text-right tabular-nums ${a.idle_days >= 7 ? 'text-[hsl(var(--warning-text))] font-semibold' : ''}`}>{n(a.idle_days)} hari</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

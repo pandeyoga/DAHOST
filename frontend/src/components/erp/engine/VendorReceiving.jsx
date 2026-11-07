@@ -25,9 +25,9 @@ function VendorAccessoriesPanel({ shipmentId, token, count }) {
   return (
     <div className="mt-3 border-t border-[hsl(var(--success)/0.35)] pt-3">
       <button onClick={loadAccessories}
-        className="flex items-center gap-2 text-xs font-semibold text-[hsl(var(--success))] hover:text-[hsl(var(--success))] transition-colors"
+        className="flex items-center gap-2 text-xs font-semibold text-[hsl(var(--success-text))] hover:text-[hsl(var(--success-text))] transition-colors"
         data-testid="vendor-accessories-toggle">
-        <span className="w-4 h-4 bg-[hsl(var(--success)/0.15)] rounded-full flex items-center justify-center text-[10px]">{expanded ? '▼' : '▶'}</span>
+        <span className="w-4 h-4 bg-[hsl(var(--success)/0.15)] rounded-full flex items-center justify-center text-xs">{expanded ? '▼' : '▶'}</span>
         🧷 Aksesoris PO ({count} item)
       </button>
       {expanded && accessories.length > 0 && (
@@ -35,8 +35,8 @@ function VendorAccessoriesPanel({ shipmentId, token, count }) {
           {accessories.map((acc, idx) => (
             <div key={acc.id || idx} className="bg-[hsl(var(--success)/0.1)] rounded-lg p-2.5 border border-[hsl(var(--success)/0.35)]">
               <p className="text-sm font-medium text-foreground/90">{acc.accessory_name}</p>
-              <p className="text-xs text-[hsl(var(--success))] tabular-nums">{acc.accessory_code || '-'}</p>
-              <p className="text-sm font-bold text-[hsl(var(--success))] mt-1">{(acc.qty_needed || 0).toLocaleString('id-ID')} {acc.unit || 'pcs'}</p>
+              <p className="text-xs text-[hsl(var(--success-text))] tabular-nums">{acc.accessory_code || '-'}</p>
+              <p className="text-sm font-bold text-[hsl(var(--success-text))] mt-1">{(acc.qty_needed || 0).toLocaleString('id-ID')} {acc.unit || 'pcs'}</p>
               {acc.notes && <p className="text-xs text-muted-foreground/70 mt-0.5">{acc.notes}</p>}
             </div>
           ))}
@@ -85,12 +85,12 @@ export default function VendorReceiving({ token, user }) {
   });
 
   const getTypeLabel = (type) => {
-    if (type === 'ADDITIONAL') return { label: 'Pengiriman Tambahan', color: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' };
-    if (type === 'REPLACEMENT') return { label: 'Pengiriman Pengganti', color: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]' };
+    if (type === 'ADDITIONAL') return { label: 'Pengiriman Tambahan', color: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]' };
+    if (type === 'REPLACEMENT') return { label: 'Pengiriman Pengganti', color: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--danger-text))]' };
     // FASE 22 — surat jalan REWORK (barang reject dikembalikan untuk diperbaiki)
     // dulu ikut berlabel "Pengiriman Awal", jadi vendor tidak tahu ini pekerjaan
     // ULANG dari reject QC — padahal justru ini yang harus diprioritaskan.
-    if (type === 'REWORK') return { label: '🔄 Retur Perbaikan (Rework)', color: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' };
+    if (type === 'REWORK') return { label: '🔄 Retur Perbaikan (Rework)', color: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]' };
     return { label: 'Pengiriman Awal', color: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' };
   };
 
@@ -114,14 +114,14 @@ export default function VendorReceiving({ token, user }) {
               <span className="font-bold text-foreground tabular-nums">{s.shipment_number}</span>
               <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${typeConf.color}`}>{typeConf.label}</span>
               <StatusBadge status={s.status} />
-              {s.inspection_status === 'Inspected' && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]">✓ Diinspeksi</span>}
+              {s.inspection_status === 'Inspected' && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))]">✓ Diinspeksi</span>}
             </div>
             {s.delivery_note_number && <p className="text-xs text-muted-foreground tabular-nums mt-0.5">SJ: {s.delivery_note_number}</p>}
             <p className="text-sm text-muted-foreground mt-1">{fmtDate(s.shipment_date)} • {s.vendor_name}</p>
             <div className="flex items-center gap-2 mt-1 flex-wrap text-xs text-muted-foreground">
               <span>{(s.items || []).length} item</span>
-              {s.total_received != null && <span>• Diterima: <strong className="text-[hsl(var(--success))]">{s.total_received} pcs</strong></span>}
-              {(s.total_missing || 0) > 0 && <span>• Missing: <strong className="text-[hsl(var(--destructive))]">{s.total_missing} pcs</strong></span>}
+              {s.total_received != null && <span>• Diterima: <strong className="text-[hsl(var(--success-text))]">{s.total_received} pcs</strong></span>}
+              {(s.total_missing || 0) > 0 && <span>• Missing: <strong className="text-[hsl(var(--danger-text))]">{s.total_missing} pcs</strong></span>}
             </div>
             {(s.notes_for_vendor || s.notes) && (
               <div className="mt-2 px-3 py-2 bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] rounded-lg text-xs text-[hsl(var(--primary))]">
@@ -136,12 +136,12 @@ export default function VendorReceiving({ token, user }) {
               </button>
             )}
             {s.status === 'Received' && s.inspection_status !== 'Inspected' && (
-              <div className="text-xs text-[hsl(var(--warning))] bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-lg px-3 py-1.5 text-center">
+              <div className="text-xs text-[hsl(var(--warning-text))] bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-lg px-3 py-1.5 text-center">
                 ⏰ Wajib inspeksi dalam 3 hari
               </div>
             )}
             {s.status === 'Received' && s.inspection_status === 'Inspected' && (
-              <span className="flex items-center gap-1.5 px-3 py-1.5 bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] rounded-lg text-sm border border-[hsl(var(--success)/0.35)]">
+              <span className="flex items-center gap-1.5 px-3 py-1.5 bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))] rounded-lg text-sm border border-[hsl(var(--success)/0.35)]">
                 <CheckCircle className="w-4 h-4" /> Selesai
               </span>
             )}
@@ -156,7 +156,7 @@ export default function VendorReceiving({ token, user }) {
                 <div key={item.id} className="bg-card rounded-lg p-2.5 border border-border/60">
                   <p className="text-sm font-medium">{item.product_name}</p>
                   <p className="text-xs text-muted-foreground tabular-nums">{item.sku || '-'} • {item.size}/{item.color}</p>
-                  {item.serial_number && <p className="text-xs text-[hsl(var(--warning))] tabular-nums mt-0.5">SN: {item.serial_number}</p>}
+                  {item.serial_number && <p className="text-xs text-[hsl(var(--warning-text))] tabular-nums mt-0.5">SN: {item.serial_number}</p>}
                   <p className="text-sm font-bold text-[hsl(var(--primary))] mt-1">{(item.qty_sent || 0).toLocaleString('id-ID')} pcs</p>
                 </div>
               ))}

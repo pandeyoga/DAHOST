@@ -28,9 +28,9 @@ const TABS = [
 ];
 
 const STATUS_COLORS = {
-  Pending: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]',
-  Approved: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]',
-  Rejected: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.35)]',
+  Pending: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))] border-[hsl(var(--warning)/0.35)]',
+  Approved: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)]',
+  Rejected: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--danger-text))] border-[hsl(var(--destructive)/0.35)]',
 };
 
 const STATUS_ICONS = {
@@ -255,7 +255,7 @@ export default function VendorMaterialRequests({ user }) {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <ClipboardList className="w-6 h-6 text-[hsl(var(--success))]" />
+            <ClipboardList className="w-6 h-6 text-[hsl(var(--success-text))]" />
             Permintaan Material
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
@@ -361,7 +361,7 @@ export default function VendorMaterialRequests({ user }) {
                   return (
                     <tr key={row.id} className="hover:bg-muted/60 transition-colors">
                       <td className="px-4 py-3">
-                        <div className="font-bold tabular-nums text-sm text-[hsl(var(--success))]">
+                        <div className="font-bold tabular-nums text-sm text-[hsl(var(--success-text))]">
                           {row.request_number}
                         </div>
                         {row.previous_request_number && (
@@ -412,7 +412,7 @@ export default function VendorMaterialRequests({ user }) {
                           {canResubmit && (
                             <button
                               onClick={() => openResubmit(row)}
-                              className="p-1.5 rounded hover:bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))]"
+                              className="p-1.5 rounded hover:bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning-text))]"
                               title="Ajukan Ulang"
                               data-testid={`vendor-mr-resubmit-btn-${row.id}`}
                             >
@@ -458,7 +458,7 @@ export default function VendorMaterialRequests({ user }) {
                   v: (
                     <span
                       className={`px-2 py-0.5 rounded text-xs font-bold ${
-                        isAdditional ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' : 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]'
+                        isAdditional ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]' : 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--danger-text))]'
                       }`}
                     >
                       {selectedReq.request_type}
@@ -499,7 +499,7 @@ export default function VendorMaterialRequests({ user }) {
                       <tr>
                         <th className="text-left px-3 py-2 text-xs">Produk</th>
                         <th className="text-left px-3 py-2 text-xs">SKU</th>
-                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--warning))]">No. Seri</th>
+                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--warning-text))]">No. Seri</th>
                         <th className="text-left px-3 py-2 text-xs">Size/Warna</th>
                         <th className="text-right px-3 py-2 text-xs">Qty</th>
                         <th className="text-left px-3 py-2 text-xs">Alasan</th>
@@ -510,7 +510,7 @@ export default function VendorMaterialRequests({ user }) {
                         <tr key={idx} className="border-t border-border/60">
                           <td className="px-3 py-2 font-medium">{item.product_name}</td>
                           <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--primary))]">{item.sku || '-'}</td>
-                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--warning))] font-semibold">
+                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--warning-text))] font-semibold">
                             {item.serial_number || <span className="text-muted-foreground/50">—</span>}
                           </td>
                           <td className="px-3 py-2 text-xs">{item.size}/{item.color}</td>
@@ -528,23 +528,23 @@ export default function VendorMaterialRequests({ user }) {
 
             {/* Status banners */}
             {selectedReq.child_shipment_number && (
-              <div className="bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--success))]">
+              <div className="bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--success-text))]">
                 ✅ Disetujui! Child shipment <strong className="tabular-nums">{selectedReq.child_shipment_number}</strong> sudah dibuat oleh {selectedReq.approved_by} pada {fmtDate(selectedReq.approved_at)}.
               </div>
             )}
 
             {selectedReq.status === 'Rejected' && (
               <div className="bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.35)] rounded-lg p-3 text-sm">
-                <p className="font-semibold text-[hsl(var(--destructive))] flex items-center gap-2">
+                <p className="font-semibold text-[hsl(var(--danger-text))] flex items-center gap-2">
                   <XCircle className="w-4 h-4" /> Permintaan Ditolak
                 </p>
                 {selectedReq.admin_notes && (
-                  <p className="text-[hsl(var(--destructive))] mt-1.5">
+                  <p className="text-[hsl(var(--danger-text))] mt-1.5">
                     <span className="font-medium">Alasan admin:</span> {selectedReq.admin_notes}
                   </p>
                 )}
                 {selectedReq.rejected_by && (
-                  <p className="text-[hsl(var(--destructive))] text-xs mt-1">
+                  <p className="text-[hsl(var(--danger-text))] text-xs mt-1">
                     Ditolak oleh {selectedReq.rejected_by} pada {fmtDate(selectedReq.rejected_at)}
                   </p>
                 )}
@@ -615,15 +615,15 @@ export default function VendorMaterialRequests({ user }) {
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]">
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))]">
                           Terinspeksi
                         </span>
                         {s.shipment_type && s.shipment_type !== 'NORMAL' && (
                           <span
                             className={`px-1.5 py-0.5 rounded text-xs font-bold ${
                               s.shipment_type === 'ADDITIONAL'
-                                ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]'
-                                : 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]'
+                                ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]'
+                                : 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--danger-text))]'
                             }`}
                           >
                             {s.shipment_type}

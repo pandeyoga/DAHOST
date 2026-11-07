@@ -76,19 +76,19 @@ export default function PerPOTab(props) {
                     <TableRow data-testid={`pantau-po-row-${r.po_number}`}>
                       <TableCell><RowToggle open={isOpen} onClick={() => setOpen(isOpen ? '' : r.po_id)} label="Lihat seri dan SKU" testId={`pantau-po-toggle-${r.po_number}`} /></TableCell>
                       <TableCell className="font-medium whitespace-nowrap">{r.po_number}
-                        <div className="text-[11px] text-muted-foreground">{r.customer_name || '—'} · {poStatusLabel(r.status)}</div></TableCell>
+                        <div className="text-xs text-muted-foreground">{r.customer_name || '—'} · {poStatusLabel(r.status)}</div></TableCell>
                       <TableCell>{r.vendor_name || '—'}</TableCell>
                       <TableCell className="whitespace-nowrap">{r.deadline ? formatDateID(r.deadline) : '—'}
                         {(r.risk === 'telat' || r.risk === 'berisiko') && <div><Badge meta={RISK_META[r.risk]} /></div>}</TableCell>
                       <TableCell className="text-right tabular-nums" data-testid="pantau-po-ordered">{n(r.ordered)}</TableCell>
                       <TableCell className="text-right tabular-nums" data-testid="pantau-po-sent">{n(r.sent_cmt)}{r.sent_extra ? <span className="text-xs text-muted-foreground"> +{n(r.sent_extra)}</span> : null}</TableCell>
-                      <TableCell className="text-right tabular-nums" data-testid="pantau-po-received">{n(r.material_received)}{r.material_missing ? <span className="text-xs text-[hsl(var(--destructive))]"> −{n(r.material_missing)}</span> : null}</TableCell>
+                      <TableCell className="text-right tabular-nums" data-testid="pantau-po-received">{n(r.material_received)}{r.material_missing ? <span className="text-xs text-[hsl(var(--danger-text))]"> −{n(r.material_missing)}</span> : null}</TableCell>
                       <TableCell className="text-right tabular-nums" data-testid="pantau-po-produced">{n(r.produced)}</TableCell>
                       <TableCell className="text-right tabular-nums" data-testid="pantau-po-dicmt">{n(r.di_cmt)}</TableCell>
                       <TableCell className="text-right tabular-nums" data-testid="pantau-po-accepted">{n(r.accepted)}{r.reject ? <span className="text-xs text-muted-foreground"> · ditolak {n(r.reject)}</span> : null}</TableCell>
                       <TableCell className="text-right tabular-nums" data-testid="pantau-po-dispatched">{n(r.dispatched)}</TableCell>
                       {maklon && <TableCell className="text-right tabular-nums" data-testid="pantau-po-final">{n(r.received_confirmed)}
-                        {r.pending_confirm ? <div className="text-[11px] text-[hsl(var(--warning))]">{n(r.pending_confirm)} belum dikonfirmasi</div> : null}</TableCell>}
+                        {r.pending_confirm ? <div className="text-xs text-[hsl(var(--warning-text))]">{n(r.pending_confirm)} belum dikonfirmasi</div> : null}</TableCell>}
                       <TableCell><Badge meta={STATE_META[r.state]} testId="pantau-po-state" /></TableCell>
                     </TableRow>
                     {isOpen && (
@@ -125,19 +125,19 @@ function PoLines({ lines, maklon }) {
         {lines.map((l) => (
           <TableRow key={l.po_item_id} data-testid={`pantau-line-${l.sku}-${l.size}`}>
             <TableCell className="text-xs whitespace-nowrap">{l.serial_number || '—'}</TableCell>
-            <TableCell className="whitespace-nowrap">{l.sku}<div className="text-[11px] text-muted-foreground">{l.product_name}</div></TableCell>
+            <TableCell className="whitespace-nowrap">{l.sku}<div className="text-xs text-muted-foreground">{l.product_name}</div></TableCell>
             <TableCell>{l.size || '—'}</TableCell>
             <TableCell>{l.color || '—'}</TableCell>
             <TableCell className="text-right tabular-nums">{n(l.ordered)}</TableCell>
             <TableCell className="text-right tabular-nums">{n(l.sent_cmt)}{l.sent_extra ? <span className="text-xs text-muted-foreground"> +{n(l.sent_extra)}</span> : null}</TableCell>
             <TableCell className="text-right tabular-nums">{l.material_uninspected && !l.material_received ? <span className="text-xs text-muted-foreground">belum diperiksa</span> : n(l.material_received)}
-              {l.material_missing ? <span className="text-xs text-[hsl(var(--destructive))]"> −{n(l.material_missing)}</span> : null}</TableCell>
+              {l.material_missing ? <span className="text-xs text-[hsl(var(--danger-text))]"> −{n(l.material_missing)}</span> : null}</TableCell>
             <TableCell className="text-right tabular-nums">{n(l.produced)}</TableCell>
             <TableCell className="text-right tabular-nums">{n(l.in_qc)}</TableCell>
             <TableCell className="text-right tabular-nums">{n(l.accepted)}</TableCell>
-            <TableCell className="text-right tabular-nums">{n(l.reject)}{l.reject_open ? <span className="text-xs text-[hsl(var(--warning))]"> ({n(l.reject_open)} terbuka)</span> : null}</TableCell>
+            <TableCell className="text-right tabular-nums">{n(l.reject)}{l.reject_open ? <span className="text-xs text-[hsl(var(--warning-text))]"> ({n(l.reject_open)} terbuka)</span> : null}</TableCell>
             <TableCell className="text-right tabular-nums">{n(l.dispatched)}</TableCell>
-            {maklon && <TableCell className="text-right tabular-nums">{n(l.received_confirmed)}{l.pending_confirm ? <span className="text-xs text-[hsl(var(--warning))]"> ({n(l.pending_confirm)} belum dikonfirmasi)</span> : null}</TableCell>}
+            {maklon && <TableCell className="text-right tabular-nums">{n(l.received_confirmed)}{l.pending_confirm ? <span className="text-xs text-[hsl(var(--warning-text))]"> ({n(l.pending_confirm)} belum dikonfirmasi)</span> : null}</TableCell>}
             <TableCell><Badge meta={STATE_META[l.state]} /></TableCell>
           </TableRow>
         ))}

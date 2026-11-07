@@ -139,9 +139,9 @@ export function LoadingRows({ rows = 5 }) {
 /** Sel angka standar (rata kanan, tabular). `tone` = success | warning | danger | muted. */
 export function numClass(tone) {
   return {
-    success: 'text-[hsl(var(--success))] font-semibold',
-    warning: 'text-[hsl(var(--warning))] font-semibold',
-    danger: 'text-[hsl(var(--destructive))] font-semibold',
+    success: 'text-[hsl(var(--success-text))] font-semibold',
+    warning: 'text-[hsl(var(--warning-text))] font-semibold',
+    danger: 'text-[hsl(var(--danger-text))] font-semibold',
     muted: 'text-muted-foreground',
   }[tone] || '';
 }
@@ -150,7 +150,7 @@ export function numClass(tone) {
 export function Signed({ v }) {
   const x = Number(v || 0);
   if (!x) return <span className="text-muted-foreground tabular-nums">0</span>;
-  return <span className={`tabular-nums font-semibold ${x > 0 ? 'text-[hsl(var(--warning))]' : 'text-[hsl(var(--destructive))]'}`}>
+  return <span className={`tabular-nums font-semibold ${x > 0 ? 'text-[hsl(var(--warning-text))]' : 'text-[hsl(var(--danger-text))]'}`}>
     {x > 0 ? `+${n(x)}` : `−${n(-x)}`}
   </span>;
 }

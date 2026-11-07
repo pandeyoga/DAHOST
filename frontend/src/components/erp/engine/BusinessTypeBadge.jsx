@@ -11,7 +11,7 @@ import { Factory, Handshake } from 'lucide-react';
 export function BizBadge({ type, size = 'sm', className = '' }) {
   const isMaklon = type === 'maklon';
   const Icon = isMaklon ? Handshake : Factory;
-  const pad = size === 'xs' ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-0.5 text-xs';
+  const pad = size === 'xs' ? 'px-1.5 py-0.5 text-xs' : 'px-2 py-0.5 text-xs';
   const tone = isMaklon
     ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]'
     : 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]';
@@ -60,7 +60,7 @@ export function BizFilter({ value = 'all', onChange, counts = null, className = 
           >
             {o.l}
             {count != null && (
-              <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${active ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' : 'bg-muted text-muted-foreground'}`}>
+              <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs font-semibold ${active ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' : 'bg-muted text-muted-foreground'}`}>
                 {count}
               </span>
             )}

@@ -8,8 +8,8 @@ import { apiGet, apiPost, apiDelete, getToken } from '../../../lib/api';
 
 function getFileIcon(ext) {
   if (['jpg','jpeg','png','webp','gif'].includes(ext)) return <FileImage className="w-4 h-4 text-[hsl(var(--primary))]" />;
-  if (['xlsx','xls','csv'].includes(ext)) return <FileSpreadsheet className="w-4 h-4 text-[hsl(var(--success))]" />;
-  if (['zip','rar'].includes(ext)) return <Archive className="w-4 h-4 text-[hsl(var(--warning))]" />;
+  if (['xlsx','xls','csv'].includes(ext)) return <FileSpreadsheet className="w-4 h-4 text-[hsl(var(--success-text))]" />;
+  if (['zip','rar'].includes(ext)) return <Archive className="w-4 h-4 text-[hsl(var(--warning-text))]" />;
   return <File className="w-4 h-4 text-muted-foreground" />;
 }
 
@@ -150,7 +150,7 @@ export default function FileAttachmentPanel({ token, entityType, entityId, userR
                 <Download className="w-3.5 h-3.5" />
               </a>
               <Button type="button" variant="ghost" size="icon-sm" onClick={() => handleDelete(att)}
-                className="text-[hsl(var(--destructive))]" title="Hapus" aria-label="Hapus">
+                className="text-[hsl(var(--danger-text))]" title="Hapus" aria-label="Hapus">
                 <Trash2 className="w-3.5 h-3.5" />
               </Button>
             </div>

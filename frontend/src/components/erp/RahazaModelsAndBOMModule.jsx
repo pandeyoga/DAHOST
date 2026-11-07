@@ -115,7 +115,7 @@ export default function RahazaModelsAndBOMModule({ token, user, headers, userRol
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-3">
-              <p className="text-[10px] uppercase tracking-[0.16em] text-foreground/50 font-semibold mb-1">{V.eyebrow}</p>
+              <p className="text-xs text-foreground/50 font-semibold mb-1">{V.eyebrow}</p>
               {variant === 'rnd' && (
                 <button type="button" onClick={runMasterSync} disabled={syncing}
                   className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-medium border border-[var(--glass-border)] hover:bg-[hsl(var(--primary)/0.08)] disabled:opacity-60"
@@ -155,7 +155,7 @@ export default function RahazaModelsAndBOMModule({ token, user, headers, userRol
                 <span>{t.label}</span>
                 {n !== null && n !== undefined && (
                   <span className={[
-                    'inline-flex items-center justify-center min-w-[1.5rem] h-5 px-1.5 rounded-full text-[11px] font-semibold tabular-nums',
+                    'inline-flex items-center justify-center min-w-[1.5rem] h-5 px-1.5 rounded-full text-xs font-semibold tabular-nums',
                     active ? 'bg-white/20 text-inherit' : 'bg-foreground/[0.07] text-foreground/60',
                   ].join(' ')} data-testid={`tab-${t.key}-count`}>{n}</span>
                 )}
@@ -165,7 +165,7 @@ export default function RahazaModelsAndBOMModule({ token, user, headers, userRol
         </nav>
       </header>
 
-      <p className="text-[13px] text-foreground/60 px-1 -mt-1" data-testid="models-bom-tab-hint">{current.hint}</p>
+      <p className="text-sm text-foreground/60 px-1 -mt-1" data-testid="models-bom-tab-hint">{current.hint}</p>
 
       <div key={activeTab} className="animate-in fade-in-0 slide-in-from-bottom-1 duration-200">
         {activeTab === 'models' && <RahazaModelsModule {...shared} embedded />}

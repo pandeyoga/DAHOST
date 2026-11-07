@@ -194,7 +194,7 @@ export default function KirimanForm({ businessType, onClose, onSaved, onNavigate
             </Table>
           )}
           {overRemaining.length > 0 && (
-            <p className="text-xs text-[hsl(var(--destructive))]">Qty melebihi sisa ke CMT — kurangi, atau pakai Permintaan tambahan.</p>
+            <p className="text-xs text-[hsl(var(--danger-text))]">Qty melebihi sisa ke CMT — kurangi, atau pakai Permintaan tambahan.</p>
           )}
         </div>
       )}

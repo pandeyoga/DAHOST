@@ -93,7 +93,7 @@ function VendorJobs({ v }) {
   return (
     <div className="space-y-3">
       {v.entry_source === 'staff' || v.entry_source === 'mixed' ? (
-        <p className="text-xs text-[hsl(var(--warning))]">{n(v.staff_qty)} pcs progres vendor ini diketik staf DA atas nama vendor — periksa sebelum tagihan dibuat.</p>
+        <p className="text-xs text-[hsl(var(--warning-text))]">{n(v.staff_qty)} pcs progres vendor ini diketik staf DA atas nama vendor — periksa sebelum tagihan dibuat.</p>
       ) : null}
       {v.jobs.length > 0 && (
         <Table data-testid="pantau-vendor-jobs">
@@ -107,7 +107,7 @@ function VendorJobs({ v }) {
             {v.jobs.map((j) => (
               <TableRow key={j.id}>
                 <TableCell className="font-medium whitespace-nowrap">{j.job_number}
-                  {j.child_jobs?.length > 0 && <div className="text-[11px] text-muted-foreground">+{j.child_jobs.length} job tambahan: {j.child_jobs.map((c) => c.job_number).join(', ')}</div>}
+                  {j.child_jobs?.length > 0 && <div className="text-xs text-muted-foreground">+{j.child_jobs.length} job tambahan: {j.child_jobs.map((c) => c.job_number).join(', ')}</div>}
                 </TableCell>
                 <TableCell className="whitespace-nowrap">{j.po_number}</TableCell>
                 <TableCell className="text-xs">{(j.serial_numbers || []).join(', ') || '—'}</TableCell>

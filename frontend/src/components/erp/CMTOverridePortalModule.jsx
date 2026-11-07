@@ -147,12 +147,12 @@ function VendorPicker({ vendors, loading, err, onPick, onReload }) {
                   <TableCell className="text-right tabular-nums">{fmtNum(v.open_reminders)}</TableCell>
                   <TableCell className="text-right tabular-nums">
                     {Number(v.pending_actions || 0) > 0
-                      ? <span className="font-semibold text-[hsl(var(--warning))]">{fmtNum(v.pending_actions)}</span>
+                      ? <span className="font-semibold text-[hsl(var(--warning-text))]">{fmtNum(v.pending_actions)}</span>
                       : <span className="text-muted-foreground">0</span>}
                   </TableCell>
                   <TableCell className="text-xs" data-testid={`cmt-override-account-${v.id}`}>
                     {v.has_active_portal_account ? (
-                      <span className="text-[hsl(var(--warning))]">Aktif · {v.last_login_at ? `login terakhir ${fmtDT(v.last_login_at)}` : 'belum pernah login'}</span>
+                      <span className="text-[hsl(var(--warning-text))]">Aktif · {v.last_login_at ? `login terakhir ${fmtDT(v.last_login_at)}` : 'belum pernah login'}</span>
                     ) : <span className="text-muted-foreground">Tanpa akun — memang diisi staf</span>}
                   </TableCell>
                   <TableCell className="text-right">

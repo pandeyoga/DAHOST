@@ -171,8 +171,8 @@ export default function VendorBuyerShipments({ user }) {
 
   const fmtDate = d => d ? new Date(d).toLocaleDateString('id-ID') : '-';
   const getStatusColor = (s) => {
-    if (s === 'Fully Shipped') return 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border border-[hsl(var(--success)/0.35)]';
-    if (s === 'Partially Shipped') return 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border border-[hsl(var(--warning)/0.35)]';
+    if (s === 'Fully Shipped') return 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))] border border-[hsl(var(--success)/0.35)]';
+    if (s === 'Partially Shipped') return 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))] border border-[hsl(var(--warning)/0.35)]';
     return 'bg-muted text-muted-foreground';
   };
 
@@ -210,10 +210,10 @@ export default function VendorBuyerShipments({ user }) {
       {shorts.items?.length > 0 && (
         <GlassCard className="overflow-hidden border-[hsl(var(--destructive)/0.35)]" data-testid="vendor-short-panel">
           <div className="px-3 py-2 bg-[hsl(var(--destructive)/0.1)] border-b border-[hsl(var(--destructive)/0.35)]">
-            <p className="text-sm font-bold text-[hsl(var(--destructive))]">
+            <p className="text-sm font-bold text-[hsl(var(--danger-text))]">
               ⚠ {Number(shorts.total_qty_open || 0).toLocaleString('id-ID')} pcs BELUM SAMPAI di DA — harus dicari &amp; dikirim ulang
             </p>
-            <p className="text-[11px] text-[hsl(var(--destructive))] mt-0.5">
+            <p className="text-xs text-[hsl(var(--danger-text))] mt-0.5">
               DA hanya menerima lebih sedikit dari klaim kirim Anda. Dokumen deklarasi sudah
               dikoreksi mengikuti qty yang diterima, dan <strong>sisa kirim Anda bertambah</strong> —
               silakan buat <em>Dispatch</em> baru untuk mengirim ulang kekurangannya.
@@ -235,12 +235,12 @@ export default function VendorBuyerShipments({ user }) {
               <tbody>
                 {shorts.items.map(s => (
                   <tr key={s.id} className="border-t border-border/60">
-                    <td className="px-3 py-2 tabular-nums text-[11px] font-semibold">{s.short_number}</td>
+                    <td className="px-3 py-2 tabular-nums text-xs font-semibold">{s.short_number}</td>
                     <td className="px-3 py-2">{s.po_number || '—'}</td>
-                    <td className="px-3 py-2 tabular-nums text-[11px]">{s.sku || '—'}</td>
+                    <td className="px-3 py-2 tabular-nums text-xs">{s.sku || '—'}</td>
                     <td className="px-3 py-2 text-right text-muted-foreground">{Number(s.qty_claimed || 0).toLocaleString('id-ID')}</td>
-                    <td className="px-3 py-2 text-right text-[hsl(var(--success))] font-medium">{Number(s.qty_arrived || 0).toLocaleString('id-ID')}</td>
-                    <td className="px-3 py-2 text-right font-bold text-[hsl(var(--destructive))]">{Number(s.qty_open ?? s.qty_short ?? 0).toLocaleString('id-ID')}</td>
+                    <td className="px-3 py-2 text-right text-[hsl(var(--success-text))] font-medium">{Number(s.qty_arrived || 0).toLocaleString('id-ID')}</td>
+                    <td className="px-3 py-2 text-right font-bold text-[hsl(var(--danger-text))]">{Number(s.qty_open ?? s.qty_short ?? 0).toLocaleString('id-ID')}</td>
                     <td className="px-3 py-2 text-muted-foreground">{s.short_date || '—'}</td>
                   </tr>
                 ))}
@@ -285,7 +285,7 @@ export default function VendorBuyerShipments({ user }) {
                     {/* Add dispatch button — only if not fully shipped */}
                     {progressPct < 100 && (
                       <button onClick={() => openDispatch(s)}
-                        className="flex items-center gap-1 px-3 py-1.5 bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] rounded-lg text-sm hover:bg-[hsl(var(--success)/0.15)] border border-[hsl(var(--success)/0.35)]">
+                        className="flex items-center gap-1 px-3 py-1.5 bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))] rounded-lg text-sm hover:bg-[hsl(var(--success)/0.15)] border border-[hsl(var(--success)/0.35)]">
                         <Plus className="w-3.5 h-3.5" /> Dispatch
                       </button>
                     )}
@@ -304,7 +304,7 @@ export default function VendorBuyerShipments({ user }) {
                 <div className="mt-3 bg-muted/40 rounded-lg p-3">
                   <div className="flex items-center justify-between text-sm mb-1.5">
                     <span className="font-bold text-foreground/90">{totalShipped.toLocaleString('id-ID')} / {totalOrdered.toLocaleString('id-ID')} pcs</span>
-                    <span className={`font-bold ${progressPct >= 100 ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--primary))]'}`}>{progressPct}%</span>
+                    <span className={`font-bold ${progressPct >= 100 ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--primary))]'}`}>{progressPct}%</span>
                   </div>
                   <div className="w-full h-2.5 bg-muted rounded-full overflow-hidden">
                     <div className={`h-full rounded-full transition-all ${progressPct >= 100 ? 'bg-[hsl(var(--success))]' : progressPct > 50 ? 'bg-[hsl(var(--primary))]' : 'bg-[hsl(var(--warning))]'}`}
@@ -320,7 +320,7 @@ export default function VendorBuyerShipments({ user }) {
               {/* Dispatch history */}
               {isExpanded && (
                 <div className="border-t border-border/60 bg-muted/40">
-                  <p className="px-5 pt-3 text-xs font-semibold text-muted-foreground uppercase">Riwayat Dispatch</p>
+                  <p className="px-5 pt-3 text-xs font-semibold text-muted-foreground">Riwayat Dispatch</p>
                   {(dispatches[s.id] || []).length === 0 ? (
                     <p className="px-5 py-3 text-sm text-muted-foreground/70">Memuat riwayat...</p>
                   ) : (() => {
@@ -337,7 +337,7 @@ export default function VendorBuyerShipments({ user }) {
                               <span className="text-xs text-muted-foreground/70">{fmtDate(d.dispatch_date)}</span>
                             </div>
                             <div className="flex items-center gap-3 text-xs">
-                              <span className="text-[hsl(var(--success))] font-bold">+{(d.total_qty || 0).toLocaleString('id-ID')} pcs</span>
+                              <span className="text-[hsl(var(--success-text))] font-bold">+{(d.total_qty || 0).toLocaleString('id-ID')} pcs</span>
                               <span className="text-[hsl(var(--primary))]">Kumulatif: {cumulative.toLocaleString('id-ID')}/{totalOrdered.toLocaleString('id-ID')}</span>
                               <span className="text-muted-foreground/70">Sisa: {dispatchRemaining.toLocaleString('id-ID')}</span>
                             </div>
@@ -345,13 +345,13 @@ export default function VendorBuyerShipments({ user }) {
                           <div className="mt-2 grid grid-cols-4 gap-1.5">
                             {(d.items || []).map(it => (
                               <div key={it.id} className="bg-card rounded px-2 py-1.5 text-xs border border-border/60">
-                                <p className="tabular-nums text-[hsl(var(--warning))] font-semibold">{it.serial_number || '—'}</p>
+                                <p className="tabular-nums text-[hsl(var(--warning-text))] font-semibold">{it.serial_number || '—'}</p>
                                 <p className="tabular-nums text-[hsl(var(--primary))]">{it.sku || '-'}</p>
                                 <p className="font-bold">{(it.qty_shipped || 0).toLocaleString('id-ID')} pcs</p>
                                 {it.edit_history?.length > 0 && (
                                   <span data-testid={`vendor-edited-badge-${it.id}`}
                                     title={(it.edit_history || []).map(h => `${fmtDate(h.edited_at)} • ${h.old_qty}→${h.new_qty} pcs • ${h.edited_by}: ${h.reason}`).join('\n')}
-                                    className="mt-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] text-[9px] font-semibold cursor-help">
+                                    className="mt-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))] text-xs font-semibold cursor-help">
                                     <Pencil className="w-2.5 h-2.5" /> diedit admin
                                   </span>
                                 )}
@@ -375,7 +375,7 @@ export default function VendorBuyerShipments({ user }) {
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Show info if this is a continuation */}
             {form.job_id && shipments.find(s => s.job_id === form.job_id) && (
-              <div className="bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--warning))]">
+              <div className="bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--warning-text))]">
                 📦 <strong>Pengiriman Lanjutan</strong>: Dispatch baru akan ditambahkan ke record pengiriman yang sudah ada untuk job ini.
               </div>
             )}
@@ -445,7 +445,7 @@ export default function VendorBuyerShipments({ user }) {
                 <button type="button" className="text-xs text-[hsl(var(--primary))] hover:underline mt-1" onClick={() => setShowAllJobs(v => !v)}>
                   {showAllJobs ? '▲ Sembunyikan job selesai/belum mulai' : '▼ Tampilkan semua job'}
                 </button>
-                {jobs.length === 0 && <p className="text-xs text-[hsl(var(--warning))] mt-1">Job produksi untuk vendor ini belum tersedia.</p>}
+                {jobs.length === 0 && <p className="text-xs text-[hsl(var(--warning-text))] mt-1">Job produksi untuk vendor ini belum tersedia.</p>}
               </div>
               <div>
                 <label className="block text-sm font-medium text-foreground/90 mb-1">Tanggal Dispatch</label>
@@ -468,13 +468,13 @@ export default function VendorBuyerShipments({ user }) {
                   <table className="w-full text-sm">
                     <thead className="bg-muted/40">
                       <tr>
-                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--warning))]">Serial</th>
+                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--warning-text))]">Serial</th>
                         <th className="text-left px-3 py-2 text-xs text-muted-foreground">Produk / SKU</th>
                         <th className="text-right px-3 py-2 text-xs text-muted-foreground">Dipesan</th>
-                        <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))]">Diproduksi</th>
+                        <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success-text))]">Diproduksi</th>
                         <th className="text-right px-3 py-2 text-xs text-muted-foreground bg-[hsl(var(--warning)/0.1)]">Diklaim ke DA</th>
                         <th className="text-right px-3 py-2 text-xs text-muted-foreground bg-[hsl(var(--primary)/0.1)]">Diterima DA</th>
-                        <th className="text-right px-3 py-2 text-xs text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.1)]">Belum sampai</th>
+                        <th className="text-right px-3 py-2 text-xs text-[hsl(var(--danger-text))] bg-[hsl(var(--destructive)/0.1)]">Belum sampai</th>
                         <th className="text-right px-3 py-2 text-xs text-muted-foreground bg-[hsl(var(--success)/0.1)]">Sisa Kirim</th>
                         <th className="text-right px-3 py-2 text-xs text-foreground/90 font-bold">Kirim Sekarang *</th>
                       </tr>
@@ -482,25 +482,25 @@ export default function VendorBuyerShipments({ user }) {
                     <tbody>
                       {form.items.map((item, idx) => (
                         <tr key={idx} className="border-t border-border/60">
-                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--warning))] font-semibold">{item.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
+                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--warning-text))] font-semibold">{item.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
                           <td className="px-3 py-2">
                             <p className="font-medium">{item.product_name}</p>
                             <p className="text-xs tabular-nums text-[hsl(var(--primary))]">{item.sku || '-'} · {item.size}/{item.color}</p>
                           </td>
                           <td className="px-3 py-2 text-right text-muted-foreground">{(item.ordered_qty || 0).toLocaleString('id-ID')}</td>
-                          <td className="px-3 py-2 text-right text-[hsl(var(--success))] font-medium">
+                          <td className="px-3 py-2 text-right text-[hsl(var(--success-text))] font-medium">
                             {(item.produced_qty || 0).toLocaleString('id-ID')}
                             {item.child_produced_qty > 0 && (
                               <span className="block text-xs text-[hsl(var(--primary))]">+{item.child_produced_qty} child</span>
                             )}
                           </td>
-                          <td className="px-3 py-2 text-right text-[hsl(var(--warning))] bg-[hsl(var(--warning)/0.1)]">{(item.shipped_to_da || 0).toLocaleString('id-ID')}</td>
+                          <td className="px-3 py-2 text-right text-[hsl(var(--warning-text))] bg-[hsl(var(--warning)/0.1)]">{(item.shipped_to_da || 0).toLocaleString('id-ID')}</td>
                           <td className="px-3 py-2 text-right text-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.1)]">{(item.received_by_da || 0).toLocaleString('id-ID')}</td>
-                          <td className={`px-3 py-2 text-right font-bold bg-[hsl(var(--destructive)/0.1)] ${(item.qty_short_open || 0) > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground/60'}`}>{(item.qty_short_open || 0).toLocaleString('id-ID')}</td>
-                          <td className="px-3 py-2 text-right text-[hsl(var(--success))] font-bold bg-[hsl(var(--success)/0.1)]">{(item.remaining_to_ship || 0).toLocaleString('id-ID')}</td>
+                          <td className={`px-3 py-2 text-right font-bold bg-[hsl(var(--destructive)/0.1)] ${(item.qty_short_open || 0) > 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground/60'}`}>{(item.qty_short_open || 0).toLocaleString('id-ID')}</td>
+                          <td className="px-3 py-2 text-right text-[hsl(var(--success-text))] font-bold bg-[hsl(var(--success)/0.1)]">{(item.remaining_to_ship || 0).toLocaleString('id-ID')}</td>
                           <td className="px-3 py-2">
                             <input type="number" min="0" max={item.remaining_to_ship}
-                              className={`w-24 border rounded px-2 py-1 text-sm text-right ml-auto block focus:outline-none focus:ring-1 ${Number(item.qty_shipped) > Number(item.remaining_to_ship) ? 'border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]' : 'border-border focus:ring-[hsl(var(--success)/0.35)]'}`}
+                              className={`w-24 border rounded px-2 py-1 text-sm text-right ml-auto block focus:outline-none focus:ring-1 ${Number(item.qty_shipped) > Number(item.remaining_to_ship) ? 'border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--danger-text))]' : 'border-border focus:ring-[hsl(var(--success)/0.35)]'}`}
                               value={item.qty_shipped}
                               onChange={e => updateQty(idx, e.target.value)} />
                           </td>
@@ -511,11 +511,11 @@ export default function VendorBuyerShipments({ user }) {
                       <tr>
                         <td colSpan={2} className="px-3 py-2">Total</td>
                         <td className="px-3 py-2 text-right">{form.items.reduce((s, i) => s + (Number(i.ordered_qty) || 0), 0).toLocaleString('id-ID')}</td>
-                        <td className="px-3 py-2 text-right text-[hsl(var(--success))]">{form.items.reduce((s, i) => s + (Number(i.produced_qty) || 0), 0).toLocaleString('id-ID')}</td>
-                        <td className="px-3 py-2 text-right text-[hsl(var(--warning))] bg-[hsl(var(--warning)/0.1)]">{form.items.reduce((s, i) => s + (Number(i.shipped_to_da) || 0), 0).toLocaleString('id-ID')}</td>
+                        <td className="px-3 py-2 text-right text-[hsl(var(--success-text))]">{form.items.reduce((s, i) => s + (Number(i.produced_qty) || 0), 0).toLocaleString('id-ID')}</td>
+                        <td className="px-3 py-2 text-right text-[hsl(var(--warning-text))] bg-[hsl(var(--warning)/0.1)]">{form.items.reduce((s, i) => s + (Number(i.shipped_to_da) || 0), 0).toLocaleString('id-ID')}</td>
                         <td className="px-3 py-2 text-right text-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.1)]">{form.items.reduce((s, i) => s + (Number(i.received_by_da) || 0), 0).toLocaleString('id-ID')}</td>
-                        <td className="px-3 py-2 text-right text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.1)]">{form.items.reduce((s, i) => s + (Number(i.qty_short_open) || 0), 0).toLocaleString('id-ID')}</td>
-                        <td className="px-3 py-2 text-right text-[hsl(var(--success))] bg-[hsl(var(--success)/0.1)]">{form.items.reduce((s, i) => s + (Number(i.remaining_to_ship) || 0), 0).toLocaleString('id-ID')}</td>
+                        <td className="px-3 py-2 text-right text-[hsl(var(--danger-text))] bg-[hsl(var(--destructive)/0.1)]">{form.items.reduce((s, i) => s + (Number(i.qty_short_open) || 0), 0).toLocaleString('id-ID')}</td>
+                        <td className="px-3 py-2 text-right text-[hsl(var(--success-text))] bg-[hsl(var(--success)/0.1)]">{form.items.reduce((s, i) => s + (Number(i.remaining_to_ship) || 0), 0).toLocaleString('id-ID')}</td>
                         <td className="px-3 py-2 text-right text-[hsl(var(--primary))]">{form.items.reduce((s, i) => s + (Number(i.qty_shipped) || 0), 0).toLocaleString('id-ID')} pcs</td>
                       </tr>
                     </tfoot>

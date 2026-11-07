@@ -385,7 +385,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                           <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
                             <div className={`h-full rounded-full ${pct >= 100 ? 'bg-[hsl(var(--success))]' : 'bg-[hsl(var(--primary))]'}`} style={{ width: `${Math.min(pct, 100)}%` }} />
                           </div>
-                          <span className="text-[11px] text-muted-foreground">Sisa {fmtNum(row.remaining)} pcs{row.dispatch_count ? ` · ${row.dispatch_count} kali kirim` : ''}</span>
+                          <span className="text-xs text-muted-foreground">Sisa {fmtNum(row.remaining)} pcs{row.dispatch_count ? ` · ${row.dispatch_count} kali kirim` : ''}</span>
                         </TableCell>
                         <TableCell><StatusBadge status={stLabel} label={stLabel} tone={stTone} /></TableCell>
                         <TableCell className="text-right">
@@ -499,7 +499,7 @@ function ShipmentRowDetail({ row, detail }) {
                     <TableCell className="whitespace-nowrap">
                       {idx === 0 ? <><span className="font-medium">#{d.seq}</span> <span className="text-xs text-muted-foreground">{fmtDate(d.date)} · kumulatif {fmtNum(cumulative)}/{fmtNum(row.total_ordered)}</span></> : ''}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap">{item.sku || '—'}{item.serial_number ? <span className="block text-[11px] text-muted-foreground">{item.serial_number}</span> : null}</TableCell>
+                    <TableCell className="whitespace-nowrap">{item.sku || '—'}{item.serial_number ? <span className="block text-xs text-muted-foreground">{item.serial_number}</span> : null}</TableCell>
                     <TableCell>{item.product_name}</TableCell>
                     <TableCell className="whitespace-nowrap">{item.size || '—'} / {item.color || '—'}</TableCell>
                     <TableCell className="text-right tabular-nums">{fmtNum(item.qty_shipped)}</TableCell>
@@ -527,7 +527,7 @@ function CogsCell({ item }) {
         </span>
       ) : fmtRp(item.fg_cogs)}
       {Number(item.fg_cogs_uncosted_qty || 0) > 0 && (
-        <span className="block text-[11px] text-[hsl(var(--warning))]">{fmtNum(item.fg_cogs_uncosted_qty)} pcs tanpa lapisan biaya</span>
+        <span className="block text-xs text-[hsl(var(--warning-text))]">{fmtNum(item.fg_cogs_uncosted_qty)} pcs tanpa lapisan biaya</span>
       )}
     </>
   );
@@ -560,7 +560,7 @@ function OutstandingView({ loading, rows, poBoard, canEdit, onDispatch }) {
               <TableCell className="text-right tabular-nums">{fmtNum(g.dispatched)} <span className="text-xs text-muted-foreground">({g.pct}%)</span></TableCell>
               <TableCell className="text-right tabular-nums">{fmtNum(g.remaining)}</TableCell>
               <TableCell className="text-right tabular-nums">
-                {g.shippable > 0 ? <span className="font-medium text-[hsl(var(--success))]" data-testid={`po-board-shippable-${g.po_number}`}>{fmtNum(g.shippable)}</span>
+                {g.shippable > 0 ? <span className="font-medium text-[hsl(var(--success-text))]" data-testid={`po-board-shippable-${g.po_number}`}>{fmtNum(g.shippable)}</span>
                   : <span className="text-xs text-muted-foreground">belum ada barang</span>}
               </TableCell>
               <TableCell className="text-xs">{g.openShip ? `${g.openShip.shipment_number} (${g.openShip.progress_pct || 0}%)` : <span className="text-muted-foreground">belum ada</span>}</TableCell>
@@ -593,12 +593,12 @@ function OutstandingView({ loading, rows, poBoard, canEdit, onDispatch }) {
               <TableCell className="text-right tabular-nums">{fmtNum(r.ordered)}</TableCell>
               <TableCell className="text-right tabular-nums">
                 {fmtNum(r.source === 'internal' ? r.internal_produced : r.good_from_cmt)}
-                <span className="block text-[11px] text-muted-foreground">{r.source === 'internal' ? 'hasil produksi' : 'lolos QC'}</span>
+                <span className="block text-xs text-muted-foreground">{r.source === 'internal' ? 'hasil produksi' : 'lolos QC'}</span>
               </TableCell>
               <TableCell className="text-right tabular-nums">{r.source === 'internal' ? '—' : fmtNum(r.reworked_ok)}</TableCell>
               <TableCell className="text-right tabular-nums">{fmtNum(r.dispatched)}</TableCell>
               <TableCell className="text-right tabular-nums">
-                {r.shippable > 0 ? <span className="font-medium text-[hsl(var(--success))]" data-testid={`outstanding-shippable-${r.sku || r.key}`}>{fmtNum(r.shippable)}</span>
+                {r.shippable > 0 ? <span className="font-medium text-[hsl(var(--success-text))]" data-testid={`outstanding-shippable-${r.sku || r.key}`}>{fmtNum(r.shippable)}</span>
                   : <span className="text-xs text-muted-foreground">belum ada barang</span>}
               </TableCell>
               <TableCell className="text-right tabular-nums">
@@ -631,7 +631,7 @@ function BuyerShortTable({ rows, onResolve }) {
             <TableCell className="whitespace-nowrap">{s.sku || '—'}</TableCell>
             <TableCell className="text-right tabular-nums">{fmtNum(s.qty_shipped_claimed)}</TableCell>
             <TableCell className="text-right tabular-nums">{fmtNum(s.qty_received)}</TableCell>
-            <TableCell className="text-right tabular-nums font-medium text-[hsl(var(--destructive))]">{fmtNum(s.qty_open ?? s.qty_short)}</TableCell>
+            <TableCell className="text-right tabular-nums font-medium text-[hsl(var(--danger-text))]">{fmtNum(s.qty_open ?? s.qty_short)}</TableCell>
             <TableCell className="text-right">
               <Button size="sm" variant="outline" data-testid={`buyer-short-resolve-${s.short_number}`} onClick={() => onResolve(s)}>Putuskan</Button>
             </TableCell>
@@ -943,7 +943,7 @@ function ShipmentForm({ businessType, pos, setPOs, continueShip, presetPoId, onC
                   return (
                     <TableRow key={`${item.po_item_id}-${idx}`} data-testid={`dispatch-item-row-${item.sku || idx}`}>
                       {consolidate && <TableCell className="whitespace-nowrap">{item.po_number || '—'}</TableCell>}
-                      <TableCell className="whitespace-nowrap">{item.sku || '—'}{item.serial_number ? <span className="block text-[11px] text-muted-foreground">{item.serial_number}</span> : null}</TableCell>
+                      <TableCell className="whitespace-nowrap">{item.sku || '—'}{item.serial_number ? <span className="block text-xs text-muted-foreground">{item.serial_number}</span> : null}</TableCell>
                       <TableCell>{item.product_name}</TableCell>
                       <TableCell className="whitespace-nowrap">{item.size || '—'} / {item.color || '—'}</TableCell>
                       <TableCell className="text-right tabular-nums">{fmtNum(item.ordered_qty)}</TableCell>
@@ -953,13 +953,13 @@ function ShipmentForm({ businessType, pos, setPOs, continueShip, presetPoId, onC
                       <TableCell className="text-right tabular-nums">
                         {!hasCap ? '—' : lunas ? (
                           <StatusBadge status="lunas" label={notProduced ? 'Belum produksi' : 'Lunas'} tone="muted" testId={`dispatch-item-lunas-${item.sku || idx}`} />
-                        ) : <span className="font-medium text-[hsl(var(--success))]" data-testid={`dispatch-item-shippable-${item.sku || idx}`}>{fmtNum(sisa)}</span>}
+                        ) : <span className="font-medium text-[hsl(var(--success-text))]" data-testid={`dispatch-item-shippable-${item.sku || idx}`}>{fmtNum(sisa)}</span>}
                       </TableCell>
                       <TableCell className="text-right">
                         <GlassInput type="number" min="0" max={hasCap ? sisa : item.ordered_qty} disabled={lunas}
                           data-testid={`dispatch-item-qty-${item.sku || idx}`} aria-label="Qty kirim"
                           className="w-24 h-8 text-right ml-auto" value={item.qty_shipped} onChange={(e) => updateItemQty(idx, e.target.value)} />
-                        {lowStock && <span className="block text-[11px] text-[hsl(var(--warning))]" title="Stok fisik gudang lebih kecil dari sisa dokumen">stok {fmtNum(item.fg_stock)}</span>}
+                        {lowStock && <span className="block text-xs text-[hsl(var(--warning-text))]" title="Stok fisik gudang lebih kecil dari sisa dokumen">stok {fmtNum(item.fg_stock)}</span>}
                       </TableCell>
                     </TableRow>
                   );
@@ -1029,7 +1029,7 @@ function ShipmentDetail({ data, canForceEdit, onClose, onEditReceived }) {
                       <TableCell className="text-right tabular-nums" data-testid={`received-badge-${item.id}`}>
                         {fmtNum(received)}{item.qty_received != null && <ClipboardCheck className="w-3 h-3 inline ml-1 text-muted-foreground" aria-label="dicatat" />}
                       </TableCell>
-                      <TableCell className={`text-right tabular-nums ${variance > 0 ? 'text-[hsl(var(--destructive))]' : ''}`}>
+                      <TableCell className={`text-right tabular-nums ${variance > 0 ? 'text-[hsl(var(--danger-text))]' : ''}`}>
                         {variance > 0 ? fmtNum(variance) : variance < 0 ? `+${fmtNum(-variance)}` : '0'}
                       </TableCell>
                       <TableCell className="text-right tabular-nums" data-testid={`detail-item-cogs-${item.id || idx}`}><CogsCell item={item} /></TableCell>

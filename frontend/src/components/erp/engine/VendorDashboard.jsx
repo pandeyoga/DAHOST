@@ -58,12 +58,12 @@ export default function VendorDashboard({ token, user, onNavigate }) {
           {(metrics.totalMissing > 0 || metrics.totalDefect > 0) && (
             <div className="flex gap-4 mt-3 text-xs">
               {metrics.totalMissing > 0 && (
-                <span className="px-2 py-1 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded text-[hsl(var(--warning))]">
+                <span className="px-2 py-1 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded text-[hsl(var(--warning-text))]">
                   ⚠️ {metrics.totalMissing.toLocaleString('id-ID')} pcs material kurang
                 </span>
               )}
               {metrics.totalDefect > 0 && (
-                <span className="px-2 py-1 bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.35)] rounded text-[hsl(var(--destructive))]">
+                <span className="px-2 py-1 bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.35)] rounded text-[hsl(var(--danger-text))]">
                   🚫 {metrics.totalDefect.toLocaleString('id-ID')} pcs material cacat
                 </span>
               )}
@@ -75,15 +75,15 @@ export default function VendorDashboard({ token, user, onNavigate }) {
       {/* Alerts */}
       {metrics?.alerts?.overdueJobs?.length > 0 && (
         <div className="bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.35)] rounded-xl p-4">
-          <h3 className="font-semibold text-[hsl(var(--destructive))] flex items-center gap-2 mb-3"><AlertTriangle className="w-4 h-4" /> Job Melewati Deadline ({metrics.alerts.overdueJobs.length})</h3>
+          <h3 className="font-semibold text-[hsl(var(--danger-text))] flex items-center gap-2 mb-3"><AlertTriangle className="w-4 h-4" /> Job Melewati Deadline ({metrics.alerts.overdueJobs.length})</h3>
           <div className="space-y-2">
             {metrics.alerts.overdueJobs.map(j => (
               <div key={j.id} className="flex items-center justify-between p-2 bg-card rounded-lg border border-[hsl(var(--destructive)/0.35)]">
                 <div>
-                  <span className="font-bold text-[hsl(var(--destructive))] text-sm">{j.job_number}</span>
+                  <span className="font-bold text-[hsl(var(--danger-text))] text-sm">{j.job_number}</span>
                   <span className="text-xs text-muted-foreground ml-2">PO: {j.po_number}</span>
                 </div>
-                <span className="text-xs text-[hsl(var(--destructive))] font-medium">Deadline: {fmtDate(j.deadline)}</span>
+                <span className="text-xs text-[hsl(var(--danger-text))] font-medium">Deadline: {fmtDate(j.deadline)}</span>
               </div>
             ))}
           </div>
@@ -92,15 +92,15 @@ export default function VendorDashboard({ token, user, onNavigate }) {
 
       {metrics?.alerts?.nearDeadlineJobs?.length > 0 && (
         <div className="bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-xl p-4">
-          <h3 className="font-semibold text-[hsl(var(--warning))] flex items-center gap-2 mb-3"><Clock className="w-4 h-4" /> Mendekati Deadline ({metrics.alerts.nearDeadlineJobs.length})</h3>
+          <h3 className="font-semibold text-[hsl(var(--warning-text))] flex items-center gap-2 mb-3"><Clock className="w-4 h-4" /> Mendekati Deadline ({metrics.alerts.nearDeadlineJobs.length})</h3>
           <div className="space-y-2">
             {metrics.alerts.nearDeadlineJobs.map(j => (
               <div key={j.id} className="flex items-center justify-between p-2 bg-card rounded-lg border border-[hsl(var(--warning)/0.35)]">
                 <div>
-                  <span className="font-bold text-[hsl(var(--warning))] text-sm">{j.job_number}</span>
+                  <span className="font-bold text-[hsl(var(--warning-text))] text-sm">{j.job_number}</span>
                   <span className="text-xs text-muted-foreground ml-2">PO: {j.po_number}</span>
                 </div>
-                <span className="text-xs text-[hsl(var(--warning))] font-medium">Deadline: {fmtDate(j.deadline)}</span>
+                <span className="text-xs text-[hsl(var(--warning-text))] font-medium">Deadline: {fmtDate(j.deadline)}</span>
               </div>
             ))}
           </div>
@@ -108,13 +108,13 @@ export default function VendorDashboard({ token, user, onNavigate }) {
       )}
 
       <div className="grid grid-cols-2 gap-3">
-        <button onClick={() => onNavigate('receiving')} className="py-3 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] text-[hsl(var(--warning))] rounded-xl text-sm font-medium hover:bg-[hsl(var(--warning)/0.15)] transition-colors">
+        <button onClick={() => onNavigate('receiving')} className="py-3 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] text-[hsl(var(--warning-text))] rounded-xl text-sm font-medium hover:bg-[hsl(var(--warning)/0.15)] transition-colors">
           📦 Penerimaan Material
         </button>
         <button onClick={() => onNavigate('production-jobs')} className="py-3 bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] text-[hsl(var(--primary))] rounded-xl text-sm font-medium hover:bg-[hsl(var(--primary)/0.15)] transition-colors">
           💼 Kelola Job Produksi
         </button>
-        <button onClick={() => onNavigate('progress')} className="py-3 bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] text-[hsl(var(--success))] rounded-xl text-sm font-medium hover:bg-[hsl(var(--success)/0.15)] transition-colors">
+        <button onClick={() => onNavigate('progress')} className="py-3 bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] text-[hsl(var(--success-text))] rounded-xl text-sm font-medium hover:bg-[hsl(var(--success)/0.15)] transition-colors">
           📈 Input Progress Produksi
         </button>
         <button onClick={() => onNavigate('buyer-shipments')} className="py-3 bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] text-[hsl(var(--primary))] rounded-xl text-sm font-medium hover:bg-[hsl(var(--primary)/0.15)] transition-colors">

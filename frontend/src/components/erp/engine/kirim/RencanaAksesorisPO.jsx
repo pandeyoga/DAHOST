@@ -103,9 +103,9 @@ export default function RencanaAksesorisPO({ businessType, items, rows = [], onC
                   <TableCell>
                     <span className="block">{b.accessory_name}</span>
                     <span className="text-xs text-muted-foreground tabular-nums">{b.accessory_code || '—'}</span>
-                    {b.unlinked && <span className="ml-1.5 text-[hsl(var(--destructive))] text-[10px] font-semibold">belum tertaut master</span>}
+                    {b.unlinked && <span className="ml-1.5 text-[hsl(var(--danger-text))] text-xs font-semibold">belum tertaut master</span>}
                     {b.handover_status && !['ok', 'dasar'].includes(b.handover_status) && (
-                      <span className="block text-[11px] text-[hsl(var(--warning))]">Satuan serah perlu dicek gudang</span>
+                      <span className="block text-xs text-[hsl(var(--warning-text))]">Satuan serah perlu dicek gudang</span>
                     )}
                   </TableCell>
                   {maklon && <TableCell className="text-xs">{client ? 'Klien' : 'CV DA'}</TableCell>}
@@ -138,12 +138,12 @@ export default function RencanaAksesorisPO({ businessType, items, rows = [], onC
         </Table>
       )}
       {preview.rows.length > 0 && (
-        <p className="text-[11px] text-muted-foreground">Untuk {fmtNum(preview.total_pcs)} pcs. Baris BOM ditulis sistem saat PO disimpan;
+        <p className="text-xs text-muted-foreground">Untuk {fmtNum(preview.total_pcs)} pcs. Baris BOM ditulis sistem saat PO disimpan;
           rencana serah yang diubah ikut tersimpan dan dipakai sebagai jumlah bawaan saat Kirim ke CMT.</p>
       )}
       {(preview.warnings || []).length > 0 && (
         <Notice tone="warning" icon={AlertTriangle} testId="po-bom-acc-warning">
-          <div className="space-y-0.5">{preview.warnings.slice(0, 6).map((w, i) => <p key={i} className="text-[11px]">{w}</p>)}</div>
+          <div className="space-y-0.5">{preview.warnings.slice(0, 6).map((w, i) => <p key={i} className="text-xs">{w}</p>)}</div>
         </Notice>
       )}
       <p className="text-xs font-medium text-muted-foreground">Tambahan di luar BOM (opsional)</p>

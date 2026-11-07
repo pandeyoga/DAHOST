@@ -54,17 +54,17 @@ import { dayLabel, isoToday, shiftDay } from './recapDates';
 const CELL_STYLE = {
   done: {
     Icon: CheckCircle2,
-    cls: 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] hover:bg-[hsl(var(--success)/0.15)]',
+    cls: 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))] hover:bg-[hsl(var(--success)/0.15)]',
     label: 'Sudah diisi',
   },
   partial: {
     Icon: AlertTriangle,
-    cls: 'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.15)]',
+    cls: 'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning-text))] hover:bg-[hsl(var(--warning)/0.15)]',
     label: 'Sudah diisi, masih ada sisa',
   },
   pending: {
     Icon: XCircle,
-    cls: 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.15)]',
+    cls: 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--danger-text))] hover:bg-[hsl(var(--destructive)/0.15)]',
     label: 'BELUM diisi',
   },
   none: {
@@ -75,9 +75,9 @@ const CELL_STYLE = {
 };
 
 const ROW_STATUS = {
-  pending: { text: 'Belum diisi', cls: 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]' },
-  partial: { text: 'Sebagian', cls: 'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' },
-  done: { text: 'Lengkap', cls: 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' },
+  pending: { text: 'Belum diisi', cls: 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--danger-text))]' },
+  partial: { text: 'Sebagian', cls: 'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]' },
+  done: { text: 'Lengkap', cls: 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))]' },
   idle: { text: 'Tidak ada pekerjaan', cls: 'border-border bg-muted text-muted-foreground' },
 };
 
@@ -110,13 +110,13 @@ function TaskCell({ row, taskKey, task, onOpen, canFill }) {
     <>
       <span className="flex items-center gap-1.5">
         <Icon className="h-3.5 w-3.5 flex-shrink-0" />
-        <span className="text-[11px] font-semibold">{st.label}</span>
+        <span className="text-xs font-semibold">{st.label}</span>
       </span>
       {detail ? (
-        <span className="mt-0.5 block text-[11px] leading-snug opacity-90">{detail}</span>
+        <span className="mt-0.5 block text-xs leading-snug opacity-90">{detail}</span>
       ) : null}
       {src ? (
-        <span className="mt-1 inline-flex items-center rounded-full border border-current/30 px-1.5 py-px text-[10px] font-medium opacity-90">
+        <span className="mt-1 inline-flex items-center rounded-full border border-current/30 px-1.5 py-px text-xs font-medium opacity-90">
           diisi {src}
         </span>
       ) : null}
@@ -332,8 +332,8 @@ export default function CMTOverrideDailyRecap({
         <p className="mt-3 text-xs font-medium text-foreground" data-testid="cmt-recap-day-label">
           {dayLabel(day)}
           {isToday
-            ? <span className="ml-2 rounded-full bg-[hsl(var(--primary)/0.15)] px-2 py-0.5 text-[10px] font-bold text-[hsl(var(--primary))]">HARI INI</span>
-            : <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">TANGGAL LAIN</span>}
+            ? <span className="ml-2 rounded-full bg-[hsl(var(--primary)/0.15)] px-2 py-0.5 text-xs font-bold text-[hsl(var(--primary))]">HARI INI</span>
+            : <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-xs font-bold text-muted-foreground">TANGGAL LAIN</span>}
         </p>
 
         {/* ── Kartu ringkasan ─────────────────────────────────────────────── */}
@@ -382,16 +382,16 @@ export default function CMTOverrideDailyRecap({
       {confirmRemind && (
         <div className="border-b border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] p-4" data-testid="cmt-recap-remind-confirm">
           <div className="flex items-start gap-3">
-            <BellRing className="mt-0.5 h-5 w-5 flex-shrink-0 text-[hsl(var(--warning))]" />
+            <BellRing className="mt-0.5 h-5 w-5 flex-shrink-0 text-[hsl(var(--warning-text))]" />
             <div className="min-w-0 flex-1">
-              <p className="font-semibold text-[hsl(var(--warning))]">
+              <p className="font-semibold text-[hsl(var(--warning-text))]">
                 Kirim reminder ke {pendingRows.length} vendor yang belum diisi?
               </p>
-              <p className="mt-1 text-xs text-[hsl(var(--warning))]">
+              <p className="mt-1 text-xs text-[hsl(var(--warning-text))]">
                 Reminder masuk ke <b>Inbox Reminder</b> vendor. Satu vendor hanya menerima
                 satu reminder rekap per tanggal — klik dua kali tidak menggandakan.
               </p>
-              <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto text-xs text-[hsl(var(--warning))]">
+              <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto text-xs text-[hsl(var(--warning-text))]">
                 {pendingRows.map(r => (
                   <li key={r.vendor_id}>
                     • <b>{r.vendor_name}</b>
@@ -430,8 +430,8 @@ export default function CMTOverrideDailyRecap({
       {data?.legacy_jobs_without_closed_at > 0 && data?.legacy_note && (
         <div className="flex items-start gap-2 border-b border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] px-4 py-2.5"
           data-testid="cmt-recap-legacy-jobs">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-[hsl(var(--warning))]" />
-          <p className="text-[11px] leading-snug text-[hsl(var(--warning))]">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-[hsl(var(--warning-text))]" />
+          <p className="text-xs leading-snug text-[hsl(var(--warning-text))]">
             <span className="font-semibold">Sebagian tanggal lampau belum bisa dihitung penuh — </span>
             {data.legacy_note}
           </p>
@@ -443,7 +443,7 @@ export default function CMTOverrideDailyRecap({
         <div className="flex items-start gap-2 border-b border-border bg-muted/40 px-4 py-2.5"
           data-testid="cmt-recap-as-of-note">
           <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-[hsl(var(--primary))]" />
-          <p className="text-[11px] leading-snug text-muted-foreground">
+          <p className="text-xs leading-snug text-muted-foreground">
             {data.as_of_note_base || data.as_of_note}
           </p>
         </div>
@@ -474,7 +474,7 @@ export default function CMTOverrideDailyRecap({
         <ResponsiveTableWrapper stickyFirstCol>
           <table className="w-full min-w-[980px] text-sm">
             <thead className="bg-muted/60">
-              <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <tr className="text-left text-xs text-muted-foreground">
                 <th className="px-4 py-2.5">Vendor</th>
                 {tasks.map(t => (
                   <th key={t.key} className="px-2 py-2.5 font-semibold">{t.label}</th>
@@ -490,15 +490,15 @@ export default function CMTOverrideDailyRecap({
                     data-testid={`cmt-recap-row-${r.vendor_id}`} data-status={r.status}>
                     <td className="px-4 py-3">
                       <p className="font-semibold text-foreground">{r.vendor_name}</p>
-                      <p className="mt-0.5 tabular-nums text-[11px] text-muted-foreground">
+                      <p className="mt-0.5 tabular-nums text-xs text-muted-foreground">
                         {r.vendor_code || '—'}
                       </p>
-                      <span className={`mt-1.5 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${stat.cls}`}
+                      <span className={`mt-1.5 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-bold ${stat.cls}`}
                         data-testid={`cmt-recap-status-${r.vendor_id}`}>
                         {stat.text}
                       </span>
                       {r.has_active_portal_account && (
-                        <span className="mt-1 flex items-center gap-1 text-[10px] text-[hsl(var(--warning))]"
+                        <span className="mt-1 flex items-center gap-1 text-xs text-[hsl(var(--warning-text))]"
                           title="Vendor ini punya akun portal aktif — hati-hati dobel input">
                           <AlertTriangle className="h-3 w-3" /> punya akun portal
                         </span>
@@ -526,11 +526,11 @@ export default function CMTOverrideDailyRecap({
       )}
 
       {/* ── Legenda ─────────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-2.5 text-[11px] text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-2.5 text-xs text-muted-foreground">
         <span className="font-semibold text-foreground">Keterangan:</span>
-        <span className="inline-flex items-center gap-1"><XCircle className="h-3.5 w-3.5 text-[hsl(var(--destructive))]" /> belum diisi (ada pekerjaan menunggu)</span>
-        <span className="inline-flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5 text-[hsl(var(--warning))]" /> sudah diisi, masih ada sisa</span>
-        <span className="inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5 text-[hsl(var(--success))]" /> sudah diisi</span>
+        <span className="inline-flex items-center gap-1"><XCircle className="h-3.5 w-3.5 text-[hsl(var(--danger-text))]" /> belum diisi (ada pekerjaan menunggu)</span>
+        <span className="inline-flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5 text-[hsl(var(--warning-text))]" /> sudah diisi, masih ada sisa</span>
+        <span className="inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5 text-[hsl(var(--success-text))]" /> sudah diisi</span>
         <span className="inline-flex items-center gap-1"><MinusCircle className="h-3.5 w-3.5" /> memang tidak ada pekerjaan</span>
         <span className="ml-auto inline-flex items-center gap-1"><Download className="h-3 w-3" /> Excel/PDF isinya sama dengan layar ini</span>
       </div>

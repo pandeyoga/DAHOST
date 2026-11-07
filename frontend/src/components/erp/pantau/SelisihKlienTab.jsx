@@ -87,7 +87,7 @@ export default function SelisihKlienTab() {
                             {r.items.map((it) => (
                               <TableRow key={it.po_item_id || it.sku}>
                                 <TableCell className="text-xs">{it.serial_number || '—'}</TableCell>
-                                <TableCell>{it.sku}<div className="text-[11px] text-muted-foreground">{it.product_name}</div></TableCell>
+                                <TableCell>{it.sku}<div className="text-xs text-muted-foreground">{it.product_name}</div></TableCell>
                                 <TableCell>{it.size || '—'}</TableCell>
                                 <TableCell className="text-right tabular-nums">{n(it.shipped)}</TableCell>
                                 <TableCell className="text-right tabular-nums">{n(it.received)}</TableCell>

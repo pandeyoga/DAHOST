@@ -91,14 +91,14 @@ export default function SelisihBarisTab() {
                   <Fragment key={r.po_item_id}>
                     <TableRow data-testid={`selisih-row-${r.po_number}-${r.sku}-${r.size}`}>
                       <TableCell><RowToggle open={isOpen} onClick={() => setOpen(isOpen ? '' : r.po_item_id)} label="Lihat rantai dan alasan" testId={`selisih-toggle-${r.po_number}-${r.sku}-${r.size}`} /></TableCell>
-                      <TableCell className="font-medium whitespace-nowrap">{r.po_number}<div className="text-[11px] text-muted-foreground">{r.vendor_name || '—'}</div></TableCell>
-                      <TableCell className="whitespace-nowrap">{r.sku}<div className="text-[11px] text-muted-foreground">{[r.serial_number, r.size, r.color].filter(Boolean).join(' · ')}</div></TableCell>
+                      <TableCell className="font-medium whitespace-nowrap">{r.po_number}<div className="text-xs text-muted-foreground">{r.vendor_name || '—'}</div></TableCell>
+                      <TableCell className="whitespace-nowrap">{r.sku}<div className="text-xs text-muted-foreground">{[r.serial_number, r.size, r.color].filter(Boolean).join(' · ')}</div></TableCell>
                       <TableCell className="text-right tabular-nums">{n(r.ordered)}</TableCell>
                       <TableCell className="text-right tabular-nums">{n(r.material_received)}</TableCell>
                       <TableCell className="text-right tabular-nums">{n(r.produced)}</TableCell>
                       <TableCell className="text-right tabular-nums">{n(r.accepted)}</TableCell>
                       <TableCell className="text-right tabular-nums" data-testid="selisih-final">{n(r.final)}
-                        {maklon && r.pending_confirm ? <div className="text-[11px] text-[hsl(var(--warning))]">+{n(r.pending_confirm)} belum dikonfirmasi</div> : null}</TableCell>
+                        {maklon && r.pending_confirm ? <div className="text-xs text-[hsl(var(--warning-text))]">+{n(r.pending_confirm)} belum dikonfirmasi</div> : null}</TableCell>
                       <TableCell className="text-right whitespace-nowrap" data-testid="selisih-gap">
                         {r.final_gap && !r.differences.some((d) => d.key === 'akhir_vs_pesan')
                           ? <span className="text-xs text-muted-foreground tabular-nums" title="Masih berjalan — belum dihitung selisih">{n(r.final_gap)} · berjalan</span>
@@ -157,7 +157,7 @@ function LineDetail({ r, maklon }) {
               <TableBody>
                 {r.differences.map((d) => (
                   <TableRow key={d.key}>
-                    <TableCell>{d.label}{d.note ? <div className="text-[11px] text-muted-foreground">{d.note}</div> : null}</TableCell>
+                    <TableCell>{d.label}{d.note ? <div className="text-xs text-muted-foreground">{d.note}</div> : null}</TableCell>
                     <TableCell className="text-right"><Signed v={d.qty} /></TableCell>
                     <TableCell><Badge meta={KIND_META[d.kind]} /></TableCell>
                   </TableRow>
@@ -169,7 +169,7 @@ function LineDetail({ r, maklon }) {
         <div className="space-y-1">
           <p className="text-xs font-semibold text-muted-foreground">Alasan yang tercatat</p>
           {r.reasons.length === 0 ? (
-            <p className="text-sm text-[hsl(var(--destructive))]">{r.has_diff ? 'Belum ada alasan tercatat untuk selisih ini.' : 'Tidak ada catatan.'}</p>
+            <p className="text-sm text-[hsl(var(--danger-text))]">{r.has_diff ? 'Belum ada alasan tercatat untuk selisih ini.' : 'Tidak ada catatan.'}</p>
           ) : (
             <Table data-testid="selisih-reasons">
               <TableBody>
@@ -177,7 +177,7 @@ function LineDetail({ r, maklon }) {
                   <TableRow key={`${x.kind}-${i}`}>
                     <TableCell className="whitespace-nowrap">{x.label}{x.open ? <div><Badge meta={{ label: 'Belum diputuskan', tone: 'warning' }} /></div> : null}</TableCell>
                     <TableCell className="text-right tabular-nums">{x.qty == null ? '—' : n(x.qty)}</TableCell>
-                    <TableCell className="text-xs">{x.reason || '—'}<div className="text-[11px] text-muted-foreground">{[x.by, x.at ? formatDateID(x.at) : ''].filter(Boolean).join(' · ')}</div></TableCell>
+                    <TableCell className="text-xs">{x.reason || '—'}<div className="text-xs text-muted-foreground">{[x.by, x.at ? formatDateID(x.at) : ''].filter(Boolean).join(' · ')}</div></TableCell>
                   </TableRow>
                 ))}
               </TableBody>

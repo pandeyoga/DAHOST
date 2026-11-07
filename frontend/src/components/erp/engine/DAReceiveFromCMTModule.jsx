@@ -428,16 +428,16 @@ export default function DAReceiveFromCMTModule({ portalId }) {
                       <TableCell className="text-right tabular-nums">{fmtNum(r.total_claimed_by_cmt ?? r.total_shipped_by_cmt)}</TableCell>
                       <TableCell className="text-right tabular-nums">{fmtNum(r.total_qty_actual)}</TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {Number(r.total_qty_reject || 0) > 0 ? <span className="text-[hsl(var(--destructive))]">{fmtNum(r.total_qty_reject)}</span> : fmtNum(0)}
-                        {undecided > 0 && <span className="block text-[11px] text-[hsl(var(--warning))]">{fmtNum(undecided)} belum diputuskan</span>}
+                        {Number(r.total_qty_reject || 0) > 0 ? <span className="text-[hsl(var(--danger-text))]">{fmtNum(r.total_qty_reject)}</span> : fmtNum(0)}
+                        {undecided > 0 && <span className="block text-xs text-[hsl(var(--warning-text))]">{fmtNum(undecided)} belum diputuskan</span>}
                       </TableCell>
                       <TableCell className="text-right tabular-nums" data-testid={`receipt-short-${r.receipt_code}`}>
-                        {shortOpen > 0 ? <span className="font-medium text-[hsl(var(--destructive))]">{fmtNum(shortOpen)}</span> : fmtNum(0)}
+                        {shortOpen > 0 ? <span className="font-medium text-[hsl(var(--danger-text))]">{fmtNum(shortOpen)}</span> : fmtNum(0)}
                       </TableCell>
                       <TableCell>
                         <StatusBadge status={r.status} label={r.status_label || STATUS_LABEL[r.status] || r.status} tone={STATUS_TONE[r.status] || 'muted'} />
                         {!editable && r.pass_rate != null && (
-                          <span className="block text-[11px] text-muted-foreground whitespace-nowrap">lolos {pct(r.pass_rate)}%</span>
+                          <span className="block text-xs text-muted-foreground whitespace-nowrap">lolos {pct(r.pass_rate)}%</span>
                         )}
                       </TableCell>
                       <TableCell className="text-right">
@@ -623,7 +623,7 @@ function ReceiptLines({ receipt: r, editable, draft, savingLine, lineValue, setL
                     <TableCell className="text-right tabular-nums">
                       {fmtNum(claimed)}
                       {!editable && claimed !== declared && (
-                        <span className="block text-[11px] text-[hsl(var(--destructive))]">dokumen: {fmtNum(declared)}</span>
+                        <span className="block text-xs text-[hsl(var(--danger-text))]">dokumen: {fmtNum(declared)}</span>
                       )}
                     </TableCell>
                     <TableCell className="text-right">
@@ -637,7 +637,7 @@ function ReceiptLines({ receipt: r, editable, draft, savingLine, lineValue, setL
                         className="w-20 h-8 text-right ml-auto" aria-label="Qty ditolak" />
                     </TableCell>
                     <TableCell className="text-right tabular-nums" data-testid={`line-short-${line.id}`}>
-                      {shortOpen > 0 ? <span className="font-medium text-[hsl(var(--destructive))]">{fmtNum(shortOpen)}</span> : fmtNum(0)}
+                      {shortOpen > 0 ? <span className="font-medium text-[hsl(var(--danger-text))]">{fmtNum(shortOpen)}</span> : fmtNum(0)}
                     </TableCell>
                     <TableCell>
                       <GlassInput value={val('reject_reason')} disabled={!editable} placeholder="mis. jahitan lepas"
@@ -715,8 +715,8 @@ function RejectTable({ rows, onRework }) {
               <TableCell className="whitespace-nowrap font-medium">{r.receipt_code}</TableCell>
               <TableCell>{r.po_number || '—'}<span className="block text-xs text-muted-foreground">{r.vendor_name || '—'}</span></TableCell>
               <TableCell className="whitespace-nowrap">{r.sku || '—'}</TableCell>
-              <TableCell className="text-right tabular-nums text-[hsl(var(--destructive))]">{fmtNum(r.qty_reject)}</TableCell>
-              <TableCell className="text-right tabular-nums font-medium text-[hsl(var(--warning))]">{fmtNum(r.qty_undecided)}</TableCell>
+              <TableCell className="text-right tabular-nums text-[hsl(var(--danger-text))]">{fmtNum(r.qty_reject)}</TableCell>
+              <TableCell className="text-right tabular-nums font-medium text-[hsl(var(--warning-text))]">{fmtNum(r.qty_undecided)}</TableCell>
               <TableCell className="text-muted-foreground">{r.reject_reason || '—'}</TableCell>
               <TableCell className="text-right">
                 <div className="flex items-center justify-end gap-1.5 flex-wrap">
@@ -758,7 +758,7 @@ function ShortTable({ rows, onResolve }) {
               <TableCell className="whitespace-nowrap">{s.sku || '—'}</TableCell>
               <TableCell className="text-right tabular-nums">{fmtNum(s.qty_claimed)}</TableCell>
               <TableCell className="text-right tabular-nums">{fmtNum(s.qty_arrived)}</TableCell>
-              <TableCell className="text-right tabular-nums font-medium text-[hsl(var(--destructive))]">{fmtNum(s.qty_open ?? s.qty_short)}</TableCell>
+              <TableCell className="text-right tabular-nums font-medium text-[hsl(var(--danger-text))]">{fmtNum(s.qty_open ?? s.qty_short)}</TableCell>
               <TableCell className="whitespace-nowrap text-muted-foreground">{s.receipt_code || '—'}</TableCell>
               <TableCell className="text-right">
                 <Button size="sm" variant="outline" data-testid={`short-resolve-${s.short_number}`} onClick={() => onResolve(s)}>Selesaikan</Button>

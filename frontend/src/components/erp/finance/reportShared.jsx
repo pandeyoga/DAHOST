@@ -42,7 +42,7 @@ export function MonthlyRow({ code, name, months, total, bold, tone, testId, inde
   return (
     <tr className={`border-b border-[var(--glass-border)] ${bold ? 'bg-[var(--card-surface)]' : 'hover:bg-foreground/5'}`} data-testid={testId}>
       <td className="py-1.5 px-2 font-mono text-xs text-muted-foreground sticky left-0 bg-[var(--card-surface)]">{code}</td>
-      <td className={`py-1.5 px-2 text-xs whitespace-nowrap sticky left-[88px] bg-[var(--card-surface)] ${bold ? 'font-semibold uppercase' : indent ? 'pl-5' : ''}`}>{name}</td>
+      <td className={`py-1.5 px-2 text-xs whitespace-nowrap sticky left-[88px] bg-[var(--card-surface)] ${bold ? 'font-semibold' : indent ? 'pl-5' : ''}`}>{name}</td>
       {months.map((v, i) => <td key={i} className={cls}>{fmtCell(v)}</td>)}
       {total !== undefined && <td className={`${cls} border-l border-[var(--glass-border)]`}>{fmtCell(total)}</td>}
     </tr>
@@ -52,7 +52,7 @@ export function MonthlyRow({ code, name, months, total, bold, tone, testId, inde
 export function MonthlyHead({ labels, year, withTotal }) {
   return (
     <thead className="sticky top-0 z-10 bg-[var(--card-surface)] backdrop-blur-sm">
-      <tr className="text-left text-[10px] uppercase text-muted-foreground border-b border-[var(--glass-border)]">
+      <tr className="text-left text-xs text-muted-foreground border-b border-[var(--glass-border)]">
         <th className="py-2 px-2 sticky left-0 bg-[var(--card-surface)]">Kode</th>
         <th className="py-2 px-2 sticky left-[88px] bg-[var(--card-surface)]">Akun</th>
         {labels.map((l) => <th key={l} className="py-2 px-2 text-right whitespace-nowrap">{l} {String(year).slice(2)}</th>)}

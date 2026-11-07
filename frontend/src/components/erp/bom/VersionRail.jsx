@@ -119,7 +119,7 @@ export const VersionRail = ({
                           {isActive && (
                             <Badge
                               variant="default"
-                              className="text-[10px] px-1.5 py-0 h-5"
+                              className="text-xs px-1.5 py-0 h-5"
                               data-testid={`version-${version.id}-active-badge`}
                             >
                               <CheckCircle2 className="w-3 h-3 mr-1" />

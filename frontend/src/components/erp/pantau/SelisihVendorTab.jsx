@@ -73,7 +73,7 @@ export default function SelisihVendorTab() {
                       <TableCell><RowToggle open={isOpen} onClick={() => setOpen(isOpen ? '' : v.id)} /></TableCell>
                       <TableCell className="whitespace-nowrap">{formatDateID(v.created_at)}</TableCell>
                       <TableCell>{v.vendor_name || '—'}</TableCell>
-                      <TableCell className="whitespace-nowrap">{v.po_number}<div className="text-[11px] text-muted-foreground">{v.job_number}</div></TableCell>
+                      <TableCell className="whitespace-nowrap">{v.po_number}<div className="text-xs text-muted-foreground">{v.job_number}</div></TableCell>
                       <TableCell>{TYPE_LABEL[v.variance_type] || v.variance_type}</TableCell>
                       <TableCell className="text-right tabular-nums">{n(v.total_variance_qty)}</TableCell>
                       <TableCell className="text-xs">{v.reason || '—'}</TableCell>
@@ -94,7 +94,7 @@ export default function SelisihVendorTab() {
                           <TableBody>
                             {(v.items || []).map((it, i) => (
                               <TableRow key={it.job_item_id || i}>
-                                <TableCell>{it.sku}<div className="text-[11px] text-muted-foreground">{it.product_name}</div></TableCell>
+                                <TableCell>{it.sku}<div className="text-xs text-muted-foreground">{it.product_name}</div></TableCell>
                                 <TableCell>{it.size || '—'}</TableCell><TableCell>{it.color || '—'}</TableCell>
                                 <TableCell className="text-right tabular-nums">{n(it.ordered_qty)}</TableCell>
                                 <TableCell className="text-right tabular-nums">{n(it.produced_qty)}</TableCell>

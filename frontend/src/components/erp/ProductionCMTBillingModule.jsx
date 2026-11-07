@@ -246,17 +246,17 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
                   <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(r.payable_amount)}</TableCell>
                   <TableCell className="text-xs" data-testid={`cmt-billing-variance-${r.payment_code}`}>
                     {Number(r.blocked_amount || 0) > 0 ? (
-                      <span className="text-[hsl(var(--destructive))]">tertahan {fmtRp(r.blocked_amount)}</span>
+                      <span className="text-[hsl(var(--danger-text))]">tertahan {fmtRp(r.blocked_amount)}</span>
                     ) : Number(r.variance_unresolved_qty || 0) > 0 ? (
-                      <span className="text-[hsl(var(--warning))]">{fmtNum(r.variance_unresolved_qty)} pcs belum selesai</span>
+                      <span className="text-[hsl(var(--warning-text))]">{fmtNum(r.variance_unresolved_qty)} pcs belum selesai</span>
                     ) : r.variance_flagged && !r.variance_resolution ? (
-                      <span className="text-[hsl(var(--warning))]">ditandai</span>
+                      <span className="text-[hsl(var(--warning-text))]">ditandai</span>
                     ) : <span className="text-muted-foreground">—</span>}
                   </TableCell>
                   <TableCell><StatusPill status={r.status} /></TableCell>
                   <TableCell className="text-xs">
-                    {r.gl_posted ? <span className="text-[hsl(var(--success))]">{r.gl_je_number || 'terjurnal'}</span>
-                      : <span className="text-[hsl(var(--warning))]">Belum dijurnal</span>}
+                    {r.gl_posted ? <span className="text-[hsl(var(--success-text))]">{r.gl_je_number || 'terjurnal'}</span>
+                      : <span className="text-[hsl(var(--warning-text))]">Belum dijurnal</span>}
                   </TableCell>
                   <TableCell className="text-right">
                     {!r.gl_posted && (r.status || '').toLowerCase() !== 'cancelled' && canPost ? (
@@ -299,7 +299,7 @@ function ScheduleTable({ items, loading }) {
             <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(s.matured_amount)}</TableCell>
             <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(s.paid_amount)}</TableCell>
             <TableCell className="text-right tabular-nums whitespace-nowrap">
-              {Number(s.blocked_amount || 0) > 0 ? <span className="text-[hsl(var(--destructive))]">{fmtRp(s.blocked_amount)}</span> : fmtRp(0)}
+              {Number(s.blocked_amount || 0) > 0 ? <span className="text-[hsl(var(--danger-text))]">{fmtRp(s.blocked_amount)}</span> : fmtRp(0)}
             </TableCell>
             <TableCell className="whitespace-nowrap text-sm" data-testid={`cmt-ap-payable-${s.po_number}`}>
               Bisa dibayar <b className="tabular-nums">{fmtRp(s.payable_amount)}</b> dari <span className="tabular-nums">{fmtRp(Math.max(Number(s.scheduled_amount || 0), Number(s.matured_amount || 0)))}</span>

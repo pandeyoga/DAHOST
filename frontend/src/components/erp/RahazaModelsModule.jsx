@@ -41,10 +41,10 @@ const rupiah = (v) => {
 const HPP_SOURCE_LABEL = {
   // 2026-08-23 — sumber baru & DIDAHULUKAN: HPP lahir dari BOM × harga pembelian
   // + upah CMT/cutting (layar "HPP per Potong"), bukan ketikan master.
-  bom: { text: 'BOM + pembelian', cls: 'bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.4)] text-[hsl(var(--success))] ' },
+  bom: { text: 'BOM + pembelian', cls: 'bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.4)] text-[hsl(var(--success-text))] ' },
   rnd: { text: 'dari R&D', cls: 'bg-[hsl(var(--primary)/0.1)] border-[hsl(var(--primary)/0.4)] text-[hsl(var(--primary))] ' },
-  manual: { text: 'manual', cls: 'bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.4)] text-[hsl(var(--warning))] ' },
-  none: { text: 'belum ada', cls: 'bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.4)] text-[hsl(var(--destructive))] ' },
+  manual: { text: 'manual', cls: 'bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.4)] text-[hsl(var(--warning-text))] ' },
+  none: { text: 'belum ada', cls: 'bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.4)] text-[hsl(var(--danger-text))] ' },
 };
 
 function HppCell({ row }) {
@@ -53,7 +53,7 @@ function HppCell({ row }) {
   return (
     <div className="flex flex-col gap-0.5" data-testid={`model-hpp-${row?.code}`}>
       <span className={val ? 'text-foreground font-medium' : 'text-muted-foreground'}>{rupiah(val)}</span>
-      <span className={`text-[10px] px-1.5 py-0.5 rounded-full border w-fit ${src.cls}`}>{src.text}</span>
+      <span className={`text-xs px-1.5 py-0.5 rounded-full border w-fit ${src.cls}`}>{src.text}</span>
     </div>
   );
 }
@@ -192,7 +192,7 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
                   data-testid="model-image-upload-label">
                   {uploading ? <span className="text-xs text-muted-foreground">Uploading...</span> : (<>
                     <Upload className="w-5 h-5 text-muted-foreground" />
-                    <span className="text-[10px] text-muted-foreground">Tambah foto</span>
+                    <span className="text-xs text-muted-foreground">Tambah foto</span>
                   </>)}
                   <input type="file" accept="image/*" className="hidden" disabled={uploading} onChange={handleUploadPhoto} data-testid="model-image-upload-input" />
                 </label>
@@ -235,11 +235,11 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
                         ) : (
                           <label className="w-20 h-20 rounded-lg border-2 border-dashed border-[var(--glass-border)] flex flex-col items-center justify-center gap-1 cursor-pointer hover:border-primary text-muted-foreground"
                             data-testid={`sop-step-${idx}-photo-label`}>
-                            {stepUploading === idx ? <span className="text-[9px]">...</span> : (<><ImageIcon className="w-4 h-4" /><span className="text-[9px]">Foto</span></>)}
+                            {stepUploading === idx ? <span className="text-xs">...</span> : (<><ImageIcon className="w-4 h-4" /><span className="text-xs">Foto</span></>)}
                             <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadStepPhoto(idx, e.target.files?.[0])} />
                           </label>
                         )}
-                        <button onClick={() => removeStep(idx)} className="ml-auto flex items-center gap-1 text-xs text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]" data-testid={`sop-step-${idx}-remove`}>
+                        <button onClick={() => removeStep(idx)} className="ml-auto flex items-center gap-1 text-xs text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))]" data-testid={`sop-step-${idx}-remove`}>
                           <Trash2 className="w-3.5 h-3.5" /> Hapus langkah
                         </button>
                       </div>
@@ -275,7 +275,7 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
                         <GlassInput value={v.title} onChange={(e) => updateVideo(idx, { title: e.target.value })} placeholder="Judul video" data-testid={`ref-video-${idx}-title`} />
                         <GlassInput value={v.url} onChange={(e) => updateVideo(idx, { url: e.target.value })} placeholder="https://youtu.be/... atau link Drive" data-testid={`ref-video-${idx}-url`} />
                       </div>
-                      <button onClick={() => removeVideo(idx)} className="p-1.5 text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]" data-testid={`ref-video-${idx}-remove`}><Trash2 className="w-4 h-4" /></button>
+                      <button onClick={() => removeVideo(idx)} className="p-1.5 text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))]" data-testid={`ref-video-${idx}-remove`}><Trash2 className="w-4 h-4" /></button>
                     </GlassCard>
                   );
                 })}
@@ -298,7 +298,7 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
                       <GlassInput value={v.caption} onChange={(e) => updateRefImage(idx, { caption: e.target.value })} placeholder="Keterangan" data-testid={`ref-image-${idx}-caption`} />
                       <GlassInput value={v.url} onChange={(e) => updateRefImage(idx, { url: e.target.value })} placeholder="https://.../gambar.jpg" data-testid={`ref-image-${idx}-url`} />
                     </div>
-                    <button onClick={() => removeRefImage(idx)} className="p-1.5 text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]" data-testid={`ref-image-${idx}-remove`}><Trash2 className="w-4 h-4" /></button>
+                    <button onClick={() => removeRefImage(idx)} className="p-1.5 text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))]" data-testid={`ref-image-${idx}-remove`}><Trash2 className="w-4 h-4" /></button>
                   </GlassCard>
                 ))}
                 {refImages.length === 0 && (
@@ -441,7 +441,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
       render: (row) => {
         if (!row.category_id) {
           return (
-            <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.4)] text-[hsl(var(--warning))] "
+            <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.4)] text-[hsl(var(--warning-text))] "
               title="Kategori belum dipilih — tidak ditebak oleh sistem" data-testid={`model-nocat-${row.code}`}>
               <AlertTriangle className="w-3 h-3" /> belum dipilih
             </span>
@@ -449,7 +449,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
         }
         return (
           <span className="inline-flex items-center gap-1.5" data-testid={`model-cat-${row.code}`}>
-            <span className="tabular-nums text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/30">
+            <span className="tabular-nums text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/30">
               {row.category_code || '—'}
             </span>
             <span className="text-sm">{row.category_name || row.category}</span>
@@ -483,7 +483,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
         return (
           <div className="flex items-center gap-1.5" data-testid={`model-images-${row.code}`}>
             {arr.slice(0, 3).map((p) => <ImageThumb key={p} path={p} token={token} />)}
-            {arr.length > 3 && <span className="text-[10px] text-muted-foreground">+{arr.length - 3}</span>}
+            {arr.length > 3 && <span className="text-xs text-muted-foreground">+{arr.length - 3}</span>}
           </div>
         );
       },
@@ -530,7 +530,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
             <Edit2 className="w-3.5 h-3.5" />
           </button>
           <button onClick={(e) => { e.stopPropagation(); handleDelete(row); }}
-            className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.15)] text-muted-foreground hover:text-[hsl(var(--destructive))] " title="Nonaktifkan" data-testid={`model-deactivate-${row.code}`}>
+            className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.15)] text-muted-foreground hover:text-[hsl(var(--danger-text))] " title="Nonaktifkan" data-testid={`model-deactivate-${row.code}`}>
             <Trash2 className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -576,17 +576,17 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
               </Notice>
             )}
             <div>
-              <label className="text-xs text-muted-foreground">Nama Model <span className="text-[hsl(var(--destructive))] ">*</span></label>
+              <label className="text-xs text-muted-foreground">Nama Model <span className="text-[hsl(var(--danger-text))] ">*</span></label>
               <GlassInput value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Contoh: Vest Rajut Formal" data-testid="model-form-name" />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground">Kategori <span className="text-[hsl(var(--destructive))] ">*</span></label>
+              <label className="text-xs text-muted-foreground">Kategori <span className="text-[hsl(var(--danger-text))] ">*</span></label>
               <SmartNativeSelect value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}
                 className="w-full text-sm" data-testid="model-form-category">
                 <option value="">— pilih kategori —</option>
                 {categories.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.sku_prefix})</option>)}
               </SmartNativeSelect>
-              <p className="text-[11px] text-muted-foreground mt-1">
+              <p className="text-xs text-muted-foreground mt-1">
                 Dipakai untuk filter & grouping katalog marketing. Daftar ini diambil dari tab <b>Kategori</b>.
               </p>
             </div>
@@ -596,7 +596,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
               <div className="flex items-center justify-between">
                 <label className="text-xs text-muted-foreground">Kode Produk</label>
                 {!editing && (
-                  <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
                     <input type="checkbox" checked={autoCode} onChange={(e) => setAutoCode(e.target.checked)}
                       data-testid="model-form-autocode" />
                     Buat otomatis
@@ -609,7 +609,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
                   <span className="tabular-nums">
                     {selectedCat ? `${selectedCat.sku_prefix}-0001` : '(pilih kategori dulu)'}
                   </span>
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-xs text-muted-foreground">
                     — nomor urut berikutnya dibuat server; SKU varian menjadi{' '}
                     <span className="tabular-nums">{selectedCat ? `${selectedCat.sku_prefix}-0001-NVY-M` : '…'}</span>
                   </span>
@@ -626,24 +626,24 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
                 <label className="text-xs text-muted-foreground">HPP dasar (Rp)</label>
                 <MoneyInput glass value={form.base_hpp}
                   onChange={(e) => setForm({ ...form, base_hpp: e.target.value })} data-testid="model-form-base-hpp" />
-                <p className="text-[10px] text-muted-foreground mt-1">Dipakai bila belum ada HPP dari R&D.</p>
+                <p className="text-xs text-muted-foreground mt-1">Dipakai bila belum ada HPP dari R&D.</p>
               </div>
               <div>
                 <label className="text-xs text-muted-foreground">Harga jual resmi (Rp)</label>
                 <MoneyInput glass value={form.retail_price}
                   onChange={(e) => setForm({ ...form, retail_price: e.target.value })} data-testid="model-form-retail-price" />
-                <p className="text-[10px] text-muted-foreground mt-1">Jadi nilai awal harga di katalog.</p>
+                <p className="text-xs text-muted-foreground mt-1">Jadi nilai awal harga di katalog.</p>
               </div>
               <div>
                 <label className="text-xs text-muted-foreground">Berat satuan (gram)</label>
                 <GlassInput type="number" min="0" value={form.weight_gram}
                   onChange={(e) => setForm({ ...form, weight_gram: e.target.value })} data-testid="model-form-weight-gram" />
-                <p className="text-[10px] text-muted-foreground mt-1">Dipakai hitung biaya kirim.</p>
+                <p className="text-xs text-muted-foreground mt-1">Dipakai hitung biaya kirim.</p>
               </div>
             </div>
 
             {editing && (
-              <GlassCard className="p-3 text-[11px] space-y-1"
+              <GlassCard className="p-3 text-xs space-y-1"
                 data-testid="model-form-hpp-info">
                 <div className="flex items-center gap-2">
                   <span className="text-muted-foreground">HPP berlaku:</span>
@@ -691,7 +691,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
               <GlassInput value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Opsional" data-testid="model-form-description" />
             </div>
             {editing && (
-              <p className="text-[11px] text-muted-foreground bg-[var(--glass-bg)] p-2 rounded border border-[var(--glass-border)]">
+              <p className="text-xs text-muted-foreground bg-[var(--glass-bg)] p-2 rounded border border-[var(--glass-border)]">
                 💡 <b>Panduan Produksi</b> (SOP, foto jadi, video) dikelola lewat tombol <BookOpen className="inline w-3 h-3" /> di kolom Panduan pada tabel.
               </p>
             )}
@@ -711,7 +711,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
         <Modal onClose={() => setTechpackModel(null)}
           title={`Tech Pack (R&D) · ${techpackModel.code} — ${techpackModel.name}`} size="md">
           <div className="space-y-3 text-sm" data-testid="model-techpack-dialog">
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Ringkasan spesifikasi hasil promosi dari R&D — <b>hanya baca</b>. Sumber kebenarannya
               tetap Tech Pack di modul R&D.
             </p>

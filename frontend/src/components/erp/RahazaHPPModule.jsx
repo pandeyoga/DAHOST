@@ -251,14 +251,14 @@ export default function RahazaHPPModule({ portalId, userRole }) {
                   <TableCell className="text-right tabular-nums whitespace-nowrap">{rp(r.cut_cost + r.accessory_cost)}</TableCell>
                   <TableCell className="text-right tabular-nums whitespace-nowrap">
                     {rp(r.cmt_cost)}
-                    {r.items_missing_rate > 0 && <span className="block text-xs text-[hsl(var(--warning))]">{r.items_missing_rate} baris tanpa tarif</span>}
+                    {r.items_missing_rate > 0 && <span className="block text-xs text-[hsl(var(--warning-text))]">{r.items_missing_rate} baris tanpa tarif</span>}
                   </TableCell>
                   <TableCell className="text-right tabular-nums whitespace-nowrap">{rp(r.permak_cost)}</TableCell>
                   <TableCell className="text-right tabular-nums whitespace-nowrap font-semibold">{rp(r.total_hpp)}</TableCell>
                   <TableCell className="text-right tabular-nums whitespace-nowrap">{rp(r.hpp_per_pcs)}</TableCell>
                   {showMargin && <TableCell className="text-right tabular-nums whitespace-nowrap">{r.business_type === 'maklon' ? rp(r.selling_price_per_pcs) : '—'}</TableCell>}
                   {showMargin && (
-                    <TableCell className={`text-right tabular-nums whitespace-nowrap ${Number(r.margin_per_pcs) < 0 ? 'text-[hsl(var(--destructive))]' : ''}`}>
+                    <TableCell className={`text-right tabular-nums whitespace-nowrap ${Number(r.margin_per_pcs) < 0 ? 'text-[hsl(var(--danger-text))]' : ''}`}>
                       {r.business_type === 'maklon' ? rp(r.margin_per_pcs) : '—'}
                     </TableCell>
                   )}
@@ -356,7 +356,7 @@ function PoHppDetail({ detail, canClear, onClose, onChanged }) {
             <TableRow>
               <TableCell>Pendapatan jasa (qty diterima klien × harga jasa) · margin = pendapatan − HPP</TableCell>
               <TableCell className="text-right tabular-nums">{rp(d.revenue)}</TableCell>
-              <TableCell colSpan={2} className={`text-right tabular-nums ${Number(d.margin) < 0 ? 'text-[hsl(var(--destructive))]' : ''}`} data-testid="hpp-detail-margin-total">margin {rp(d.margin)}</TableCell>
+              <TableCell colSpan={2} className={`text-right tabular-nums ${Number(d.margin) < 0 ? 'text-[hsl(var(--danger-text))]' : ''}`} data-testid="hpp-detail-margin-total">margin {rp(d.margin)}</TableCell>
             </TableRow>
           )}
         </TableBody>
@@ -394,7 +394,7 @@ function PoHppDetail({ detail, canClear, onClose, onChanged }) {
               <TableCell className="text-right tabular-nums">{num(ln.qty_ordered)}</TableCell>
               <TableCell className="text-right tabular-nums">{num(ln.qty_sent)}</TableCell>
               <TableCell className="text-right tabular-nums">{num(ln.qty_accepted)}</TableCell>
-              <TableCell className={`text-right tabular-nums ${Number(ln.cmt_rate) > 0 ? '' : 'text-[hsl(var(--warning))]'}`}>
+              <TableCell className={`text-right tabular-nums ${Number(ln.cmt_rate) > 0 ? '' : 'text-[hsl(var(--warning-text))]'}`}>
                 {Number(ln.cmt_rate) > 0 ? rp(ln.cmt_rate) : 'belum diisi'}
               </TableCell>
               <TableCell className="text-right tabular-nums">{rp(ln.cut_per_pcs)}</TableCell>

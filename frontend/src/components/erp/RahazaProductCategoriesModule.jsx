@@ -132,7 +132,7 @@ export default function RahazaProductCategoriesModule({ token }) {
     {
       key: 'created_from', label: 'Asal',
       render: (row) => {
-        const map = { seed: ['Bawaan', 'text-muted-foreground'], manual: ['Manual', 'text-foreground'], migrasi: ['Hasil migrasi', 'text-[hsl(var(--warning))] '] };
+        const map = { seed: ['Bawaan', 'text-muted-foreground'], manual: ['Manual', 'text-foreground'], migrasi: ['Hasil migrasi', 'text-[hsl(var(--warning-text))] '] };
         const [label, cls] = map[row.created_from] || ['—', 'text-muted-foreground'];
         return <span className={`text-xs ${cls}`}>{label}</span>;
       },
@@ -141,8 +141,8 @@ export default function RahazaProductCategoriesModule({ token }) {
       key: 'active', label: 'Status',
       render: (row) => (
         <span className={`text-xs px-2 py-0.5 rounded-full border ${row.active === false
-          ? 'bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.4)] text-[hsl(var(--destructive))] '
-          : 'bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.4)] text-[hsl(var(--success))] '}`}>
+          ? 'bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.4)] text-[hsl(var(--danger-text))] '
+          : 'bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.4)] text-[hsl(var(--success-text))] '}`}>
           {row.active === false ? 'Non-aktif' : 'Aktif'}
         </span>
       ),
@@ -158,13 +158,13 @@ export default function RahazaProductCategoriesModule({ token }) {
           </button>
           {row.active === false ? (
             <button onClick={(e) => { e.stopPropagation(); handleReactivate(row); }}
-              className="p-1.5 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground hover:text-[hsl(var(--success))]"
+              className="p-1.5 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground hover:text-[hsl(var(--success-text))]"
               title="Aktifkan kembali" data-testid={`cat-reactivate-${row.code}`}>
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
           ) : (
             <button onClick={(e) => { e.stopPropagation(); handleDeactivate(row); }}
-              className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.15)] text-muted-foreground hover:text-[hsl(var(--destructive))] "
+              className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.15)] text-muted-foreground hover:text-[hsl(var(--danger-text))] "
               title="Nonaktifkan (ditolak bila masih dipakai)" data-testid={`cat-deactivate-${row.code}`}>
               <Ban className="w-3.5 h-3.5" />
             </button>
@@ -195,7 +195,7 @@ export default function RahazaProductCategoriesModule({ token }) {
         )}
       />
 
-      <div className="flex items-start gap-2 text-[12px] text-foreground bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-lg p-3"
+      <div className="flex items-start gap-2 text-xs text-foreground bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-lg p-3"
         data-testid="cat-explainer">
         <Info className="w-4 h-4 shrink-0 mt-0.5 text-primary" />
         <div className="space-y-1">
@@ -220,17 +220,17 @@ export default function RahazaProductCategoriesModule({ token }) {
           title={editing ? `Ubah Kategori · ${editing.name}` : 'Tambah Kategori Produk'} size="md">
           <div className="space-y-3" data-testid="cat-form">
             <div>
-              <label className="text-xs text-muted-foreground">Nama Kategori <span className="text-[hsl(var(--destructive))] ">*</span></label>
+              <label className="text-xs text-muted-foreground">Nama Kategori <span className="text-[hsl(var(--danger-text))] ">*</span></label>
               <GlassInput value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
                 placeholder="Contoh: Vest" data-testid="cat-form-name" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-muted-foreground">Prefix SKU <span className="text-[hsl(var(--destructive))] ">*</span></label>
+                <label className="text-xs text-muted-foreground">Prefix SKU <span className="text-[hsl(var(--danger-text))] ">*</span></label>
                 <GlassInput value={form.sku_prefix}
                   onChange={(e) => setForm({ ...form, sku_prefix: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '') })}
                   placeholder="VST" maxLength={6} data-testid="cat-form-prefix" />
-                <p className="text-[11px] text-muted-foreground mt-1">Harus unik. Dipakai membuat kode produk otomatis.</p>
+                <p className="text-xs text-muted-foreground mt-1">Harus unik. Dipakai membuat kode produk otomatis.</p>
               </div>
               <div>
                 <label className="text-xs text-muted-foreground">Urutan tampil</label>

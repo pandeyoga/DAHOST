@@ -163,7 +163,7 @@ function NeedPanel({ detail, onClose }) {
         <Download className="w-4 h-4" />Unduh CSV
       </Button>}>
       <p className="text-sm text-muted-foreground" data-testid="kebutuhan-summary">
-        {totals.lines || 0} baris bahan · <span className={totals.shortage_lines ? 'text-[hsl(var(--destructive))] font-medium' : ''}>{totals.shortage_lines || 0} kurang</span>
+        {totals.lines || 0} baris bahan · <span className={totals.shortage_lines ? 'text-[hsl(var(--danger-text))] font-medium' : ''}>{totals.shortage_lines || 0} kurang</span>
         {totals.unlinked_lines ? ` · ${totals.unlinked_lines} belum tertaut master` : ''}
         {totals.client_lines ? ` · ${totals.client_lines} disediakan klien` : ''}
         {Number(totals.value_estimate || 0) > 0 && <> · perkiraan nilai <span className="tabular-nums text-foreground">{fmtRp(totals.value_estimate)}</span></>}
@@ -200,7 +200,7 @@ function NeedPanel({ detail, onClose }) {
                     <TableCell className="text-right tabular-nums">{fmtQty(r.remaining)}</TableCell>
                     <TableCell className="text-right tabular-nums">{fmtQty(r.available)}</TableCell>
                     <TableCell className="text-right tabular-nums" data-testid={`kebutuhan-shortage-${r.code || i}`}>
-                      {r.shortage ? <span className="font-medium text-[hsl(var(--destructive))]">{fmtQty(r.shortage)}</span> : fmtQty(r.shortage)}
+                      {r.shortage ? <span className="font-medium text-[hsl(var(--danger-text))]">{fmtQty(r.shortage)}</span> : fmtQty(r.shortage)}
                     </TableCell>
                     <TableCell><StatusBadge status={r.status} label={label} tone={tone} /></TableCell>
                   </TableRow>

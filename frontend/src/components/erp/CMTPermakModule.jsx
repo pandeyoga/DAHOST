@@ -184,7 +184,7 @@ export default function CMTPermakModule({ portalId }) {
                       <TableCell>
                         {TYPE_LABEL[r.permak_type] || SOURCE_LABEL[r.source] || '—'}
                         {r.h3_flag && (
-                          <span className="block text-[11px] text-[hsl(var(--destructive))]" title={`Lewat batas waktu ${Math.abs(r.days_to_deadline || 0)} hari`}>
+                          <span className="block text-xs text-[hsl(var(--danger-text))]" title={`Lewat batas waktu ${Math.abs(r.days_to_deadline || 0)} hari`}>
                             <AlertTriangle className="w-3 h-3 inline mr-0.5" />Perlu tindakan
                           </span>
                         )}
@@ -222,7 +222,7 @@ export default function CMTPermakModule({ portalId }) {
                             <dd data-testid={`permak-workshop-${r.id}`}>{r.vendor_permak_name || r.vendor_permak || '—'}</dd></div>
                           <div><dt className="text-xs text-muted-foreground">Surat jalan perbaikan</dt>
                             <dd>{r.rework_shipment_number || (r.permak_type === 'retur_ke_cmt'
-                              ? <span className="text-[hsl(var(--destructive))]">Belum terbentuk</span> : '—')}</dd></div>
+                              ? <span className="text-[hsl(var(--danger-text))]">Belum terbentuk</span> : '—')}</dd></div>
                           <div><dt className="text-xs text-muted-foreground">Asal barang</dt><dd>{SOURCE_LABEL[r.source] || '—'}</dd></div>
                           <div><dt className="text-xs text-muted-foreground">Target kembali</dt><dd>{fmtDate(r.return_deadline)}</dd></div>
                           <div><dt className="text-xs text-muted-foreground">Ongkos per pcs</dt><dd className="tabular-nums">{r.cost_per_pcs ? fmtRp(r.cost_per_pcs) : '—'}</dd></div>

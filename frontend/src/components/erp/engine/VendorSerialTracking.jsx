@@ -44,8 +44,8 @@ export default function VendorSerialTracking({ token, user }) {
           <p className="text-xs text-[hsl(var(--primary))]">Ongoing</p>
         </button>
         <button onClick={() => setFilter('completed')} className={`rounded-lg p-3 border text-center ${filter === 'completed' ? 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)]' : 'border-border bg-card'}`}>
-          <p className="text-xl font-bold text-[hsl(var(--success))]">{completedCount}</p>
-          <p className="text-xs text-[hsl(var(--success))]">Selesai</p>
+          <p className="text-xl font-bold text-[hsl(var(--success-text))]">{completedCount}</p>
+          <p className="text-xs text-[hsl(var(--success-text))]">Selesai</p>
         </button>
         <button onClick={() => setFilter('all')} className={`rounded-lg p-3 border text-center ${filter === 'all' ? 'border-border bg-muted/40' : 'border-border bg-card'}`}>
           <p className="text-xl font-bold text-foreground/90">{serialList.length}</p>
@@ -71,7 +71,7 @@ export default function VendorSerialTracking({ token, user }) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-bold text-foreground text-sm tabular-nums">{s.serial_number}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${s.status === 'ongoing' ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' : s.status === 'completed' ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' : 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]'}`}>{s.status === 'ongoing' ? 'Ongoing' : s.status === 'completed' ? 'Selesai' : 'Menunggu'}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${s.status === 'ongoing' ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' : s.status === 'completed' ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))]' : 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]'}`}>{s.status === 'ongoing' ? 'Ongoing' : s.status === 'completed' ? 'Selesai' : 'Menunggu'}</span>
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5">{s.product_name} · {s.sku} · {s.size}/{s.color}</p>
                 </div>
@@ -88,7 +88,7 @@ export default function VendorSerialTracking({ token, user }) {
                     <div className="bg-card rounded p-2 text-center border border-border/60"><p className="text-xs text-muted-foreground/70">PO</p><p className="text-sm font-bold text-foreground/90">{s.po_number}</p></div>
                     <div className="bg-card rounded p-2 text-center border border-border/60"><p className="text-xs text-muted-foreground/70">Customer</p><p className="text-sm font-bold text-foreground/90 truncate">{s.customer_name || '-'}</p></div>
                     <div className="bg-card rounded p-2 text-center border border-border/60"><p className="text-xs text-muted-foreground/70">Status PO</p><p className="text-sm font-bold text-[hsl(var(--primary))]">{s.po_status}</p></div>
-                    <div className="bg-card rounded p-2 text-center border border-border/60"><p className="text-xs text-muted-foreground/70">Sisa</p><p className="text-sm font-bold text-[hsl(var(--warning))]">{(s.remaining_qty || 0).toLocaleString('id-ID')} pcs</p></div>
+                    <div className="bg-card rounded p-2 text-center border border-border/60"><p className="text-xs text-muted-foreground/70">Sisa</p><p className="text-sm font-bold text-[hsl(var(--warning-text))]">{(s.remaining_qty || 0).toLocaleString('id-ID')} pcs</p></div>
                   </div>
                   {(traceData.timeline || []).length > 0 && (
                     <div className="space-y-1 max-h-40 overflow-y-auto">

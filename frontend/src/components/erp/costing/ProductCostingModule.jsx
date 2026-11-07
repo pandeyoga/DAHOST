@@ -52,13 +52,13 @@ const SOURCE_TONE = {
 };
 const STATUS_TONE = { ready: 'success', partial: 'warning', no_bom: 'danger' };
 const COST_SOURCE_TONE = {
-  purchase: 'text-[hsl(var(--success))]', opening: 'text-[hsl(var(--info))]',
-  master: 'text-[hsl(var(--warning))]', none: 'text-[hsl(var(--destructive))]',
+  purchase: 'text-[hsl(var(--success-text))]', opening: 'text-[hsl(var(--info-text))]',
+  master: 'text-[hsl(var(--warning-text))]', none: 'text-[hsl(var(--danger-text))]',
 };
 // Asal HPP tersimpan (core/product_master.resolve_hpp) — dulu kode mentah "bom"/"rnd"/"manual".
 const HPP_SOURCE_ID = { bom: 'dari BOM', rnd: 'dari R&D', manual: 'diketik manual', none: 'belum ada' };
 const hppSource = (s) => HPP_SOURCE_ID[s] || (SOURCE_LABEL[s]?.text) || String(s || '—').replace(/_/g, ' ');
-const posCls = (n) => (n >= 0 ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--destructive))]');
+const posCls = (n) => (n >= 0 ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--danger-text))]');
 
 function SourcePill({ source, title }) {
   const m = SOURCE_LABEL[source] || SOURCE_LABEL.none;
@@ -71,7 +71,7 @@ function SourcePill({ source, title }) {
 
 function StatusPill({ status }) {
   const m = STATUS_META[status] || STATUS_META.no_bom;
-  return <StatusBadge tone={STATUS_TONE[status] || 'danger'} label={m.label} className="normal-case tracking-normal text-[11px]" />;
+  return <StatusBadge tone={STATUS_TONE[status] || 'danger'} label={m.label} className="normal-case tracking-normal text-xs" />;
 }
 
 /**
@@ -226,13 +226,13 @@ export default function ProductCostingModule({ token, onNavigate }) {
       }
       summary={<>
         {totalModels != null && totalModels > stat('models') && (
-          <p className="text-sm text-[hsl(var(--warning))]" data-testid="costing-truncated">
+          <p className="text-sm text-[hsl(var(--warning-text))]" data-testid="costing-truncated">
             Dihitung {stat('models')} dari {totalModels} model (urut kode). Cari kode/nama untuk melihat model lainnya.
           </p>
         )}
         {/* penjelasan jujur bila belum ada yang siap */}
         {!loading && stat('ready') === 0 && (
-          <div className="flex items-start gap-2 rounded-[var(--radius-md)] bg-[hsl(var(--warning)/0.08)] px-4 py-3 text-sm text-[hsl(var(--warning))]"
+          <div className="flex items-start gap-2 rounded-[var(--radius-md)] bg-[hsl(var(--warning)/0.08)] px-4 py-3 text-sm text-[hsl(var(--warning-text))]"
             data-testid="costing-empty-warning">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
             <p>
@@ -291,10 +291,10 @@ export default function ProductCostingModule({ token, onNavigate }) {
                   <td className="text-xs text-muted-foreground whitespace-nowrap">{r.code}</td>
                   <td className="text-foreground">
                     {r.name}
-                    <span className="block text-[10px] text-muted-foreground">
+                    <span className="block text-xs text-muted-foreground">
                       {r.category_name || 'tanpa kategori'}
                       {r.hpp_bom_current > 0 && (
-                        <span className="text-[hsl(var(--success))]">
+                        <span className="text-[hsl(var(--success-text))]">
                           {' '}· tersimpan {fmtRp(r.hpp_bom_current)}
                         </span>
                       )}
@@ -322,7 +322,7 @@ export default function ProductCostingModule({ token, onNavigate }) {
                     data-testid={`costing-hpp-${r.code}`}>
                     {r.hpp_avg > 0 ? fmtRp(r.hpp_avg) : '—'}
                     {r.hpp_min > 0 && r.hpp_max > r.hpp_min && (
-                      <span className="block text-[10px] font-normal text-muted-foreground">
+                      <span className="block text-xs font-normal text-muted-foreground">
                         {fmtRp(r.hpp_min)}–{fmtRp(r.hpp_max)} per ukuran
                       </span>
                     )}
@@ -341,7 +341,7 @@ export default function ProductCostingModule({ token, onNavigate }) {
                       /* SESI #32 (temuan penguji): dulu sel ini hanya bertanda "—"
                          sehingga alasannya hanya terbaca kalau kursor didiamkan di
                          atasnya. Sekarang alasannya DITULIS. */
-                      <span className="text-[10px] text-muted-foreground" title={r.price_best > 0
+                      <span className="text-xs text-muted-foreground" title={r.price_best > 0
                         ? 'HPP belum bisa dihitung — margin tidak ditampilkan supaya tidak menyesatkan'
                         : 'Margin baru bisa dihitung setelah harga jual ditetapkan'}>
                         {r.price_best > 0 ? 'HPP belum ada' : 'harga jual belum ada'}
@@ -354,7 +354,7 @@ export default function ProductCostingModule({ token, onNavigate }) {
                   <td className="whitespace-nowrap">
                     <StatusPill status={r.status} />
                     {r.gap_count > 0 && (
-                      <span className="block text-[10px] text-[hsl(var(--warning))] mt-0.5">
+                      <span className="block text-xs text-[hsl(var(--warning-text))] mt-0.5">
                         {r.gap_count} kekurangan
                       </span>
                     )}
@@ -515,7 +515,7 @@ function CostDetail({ detail, token, onClose, onApply, onReload, onGoto }) {
         {/* kekurangan */}
         {(detail.gaps || []).length > 0 && (
           <div className={section} data-testid="costing-gaps">
-            <p className="text-sm font-semibold text-[hsl(var(--warning))] flex items-center gap-1.5 mb-2">
+            <p className="text-sm font-semibold text-[hsl(var(--warning-text))] flex items-center gap-1.5 mb-2">
               <AlertTriangle className="w-3.5 h-3.5" /> {detail.gaps.length} kekurangan yang menahan HPP
             </p>
             <ul className="space-y-1.5">
@@ -554,7 +554,7 @@ function CostDetail({ detail, token, onClose, onApply, onReload, onGoto }) {
                     BOM v{s.bom_version} · {s.line_count} baris bahan
                   </span>
                 ) : (
-                  <span className="text-xs text-[hsl(var(--destructive))] font-normal">BOM belum ada</span>
+                  <span className="text-xs text-[hsl(var(--danger-text))] font-normal">BOM belum ada</span>
                 )}
               </p>
               <div className="text-sm text-foreground flex items-center gap-3 flex-wrap tabular-nums">
@@ -602,7 +602,7 @@ function CostDetail({ detail, token, onClose, onApply, onReload, onGoto }) {
                       return (
                         <tr key={i} className="border-b border-[var(--glass-border)]/50">
                           <td className="text-foreground">
-                            <span className="text-[10px] text-muted-foreground">{ln.code}</span>
+                            <span className="text-xs text-muted-foreground">{ln.code}</span>
                             <span className="block">{ln.name}</span>
                           </td>
                           <td className="text-muted-foreground">{ln.material_type ? categoryLabel(ln.material_type) : '—'}</td>
@@ -614,18 +614,18 @@ function CostDetail({ detail, token, onClose, onApply, onReload, onGoto }) {
                           </td>
                           <td className="text-right tabular-nums whitespace-nowrap text-foreground">
                             {ln.unit_cost > 0 ? fmtRp(ln.unit_cost) : '—'}
-                            <span className={`block text-[10px] ${COST_SOURCE_TONE[ln.cost_source] || COST_SOURCE_TONE.none}`}>{cs.text}</span>
+                            <span className={`block text-xs ${COST_SOURCE_TONE[ln.cost_source] || COST_SOURCE_TONE.none}`}>{cs.text}</span>
                           </td>
                           <td className="text-right tabular-nums whitespace-nowrap font-semibold text-foreground">
                             {fmtRp(ln.amount)}
                           </td>
                           <td className="text-muted-foreground">
                             {ln.status === 'unvalued' && (
-                              <span className="text-[hsl(var(--destructive))]">belum punya harga — belum pernah dibeli</span>)}
+                              <span className="text-[hsl(var(--danger-text))]">belum punya harga — belum pernah dibeli</span>)}
                             {ln.status === 'unlinked' && (
-                              <span className="text-[hsl(var(--destructive))]">belum tertaut master bahan</span>)}
+                              <span className="text-[hsl(var(--danger-text))]">belum tertaut master bahan</span>)}
                             {ln.status === 'uom_unclear' && (
-                              <span className="text-[hsl(var(--warning))]">{ln.uom_note || 'satuan belum jelas'}</span>)}
+                              <span className="text-[hsl(var(--warning-text))]">{ln.uom_note || 'satuan belum jelas'}</span>)}
                             {ln.status === 'ok' && <span className="text-xs">{ln.notes || ''}</span>}
                           </td>
                         </tr>
@@ -643,7 +643,7 @@ function CostDetail({ detail, token, onClose, onApply, onReload, onGoto }) {
                   <span key={v.id} className="mr-2">
                     <span className="text-foreground">{v.code}</span>
                     {v.hpp_current > 0 && (
-                      <span className="text-[hsl(var(--success))]">
+                      <span className="text-[hsl(var(--success-text))]">
                         {' '}(HPP {fmtRp(v.hpp_current)} · {hppSource(v.hpp_source_current)})
                       </span>
                     )}

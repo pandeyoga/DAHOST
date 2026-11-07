@@ -63,10 +63,10 @@ export default function KejarCMTTab(props) {
                   <Fragment key={r.po_id}>
                     <TableRow data-testid={`pantau-kejar-row-${r.po_number}`}>
                       <TableCell><RowToggle open={isOpen} onClick={() => setOpen(isOpen ? '' : r.po_id)} testId={`pantau-kejar-toggle-${r.po_number}`} /></TableCell>
-                      <TableCell className="font-medium whitespace-nowrap">{r.po_number}<div className="text-[11px] text-muted-foreground">{r.customer_name || '—'}</div></TableCell>
+                      <TableCell className="font-medium whitespace-nowrap">{r.po_number}<div className="text-xs text-muted-foreground">{r.customer_name || '—'}</div></TableCell>
                       <TableCell>{r.vendor_name || '—'}</TableCell>
                       <TableCell><Badge meta={BUCKET_META[r.bucket]} />
-                        {r.bucket === 'telat' || r.bucket === 'jatuh_tempo' ? <div className="text-[11px] text-[hsl(var(--destructive))]">lewat {n(r.overdue_days)} hari</div> : null}</TableCell>
+                        {r.bucket === 'telat' || r.bucket === 'jatuh_tempo' ? <div className="text-xs text-[hsl(var(--danger-text))]">lewat {n(r.overdue_days)} hari</div> : null}</TableCell>
                       <TableCell className="whitespace-nowrap">{r.target_cmt_date ? formatDateID(r.target_cmt_date) : '—'}</TableCell>
                       <TableCell className="whitespace-nowrap">{r.delivery_deadline || r.internal_deadline ? formatDateID(r.delivery_deadline || r.internal_deadline) : '—'}</TableCell>
                       <TableCell className="text-right tabular-nums">{n(r.qty_ordered)}</TableCell>
