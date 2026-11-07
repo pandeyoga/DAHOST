@@ -58,7 +58,7 @@ export default function CourseDetail({ courseId, onBack }) {
       // The viewer components handle their own refresh logic.
     } catch (error) {
       console.error('Error fetching course:', error);
-      toast.error('Gagal memuat detail course');
+      toast.error('Gagal memuat rincian kursus');
     } finally {
       setLoading(false);
     }
@@ -93,11 +93,11 @@ export default function CourseDetail({ courseId, onBack }) {
   const handleEnroll = async () => {
     try {
       await apiFetch(`/lms/student/courses/${courseId}/enroll`, { method: 'POST' });
-      toast.success('Berhasil enroll ke course!');
+      toast.success('Berhasil mendaftar kursus');
       fetchCourseDetail(); // Refresh to show enrollment status
     } catch (error) {
       console.error('Error enrolling:', error);
-      toast.error('Gagal enroll ke course');
+      toast.error('Gagal mendaftar kursus');
     }
   };
 
@@ -141,7 +141,7 @@ export default function CourseDetail({ courseId, onBack }) {
         <div className="flex items-start gap-4">
           <Button variant="ghost" size="sm" onClick={onBack} data-testid="course-detail-back-btn">
             <ArrowLeft size={16} className="mr-2" />
-            Back
+            Kembali
           </Button>
           <div className="flex-1">
             <div className="flex items-start justify-between">
@@ -455,9 +455,9 @@ export default function CourseDetail({ courseId, onBack }) {
                           }
                           variant={assign.submission_status === 'not_submitted' ? 'outline' : 'default'}
                         >
-                          {assign.submission_status === 'graded' && `Graded: ${assign.submission?.grade}/${assign.submission?.max_grade || 100}`}
-                          {assign.submission_status === 'submitted' && 'Submitted'}
-                          {assign.submission_status === 'not_submitted' && 'Not submitted'}
+                          {assign.submission_status === 'graded' && `Dinilai: ${assign.submission?.grade}/${assign.submission?.max_grade || 100}`}
+                          {assign.submission_status === 'submitted' && 'Sudah dikirim'}
+                          {assign.submission_status === 'not_submitted' && 'Belum dikirim'}
                         </Badge>
                       </div>
                       <Button
@@ -469,7 +469,7 @@ export default function CourseDetail({ courseId, onBack }) {
                         }}
                         data-testid={`open-assignment-${assign.material_id}`}
                       >
-                        {assign.submission_status === 'not_submitted' ? 'Submit Now' : 'View Submission'}
+                        {assign.submission_status === 'not_submitted' ? 'Kirim jawaban' : 'Lihat jawaban'}
                       </Button>
                     </CardContent>
                   </Card>
@@ -525,7 +525,7 @@ export default function CourseDetail({ courseId, onBack }) {
                           <span className="capitalize">{mat.type}</span>
                           {typeof mat.quiz_score === 'number' && (
                             <Badge variant="outline" className="h-5">
-                              Score: {mat.quiz_score}
+                              Nilai: {mat.quiz_score}
                             </Badge>
                           )}
                         </div>

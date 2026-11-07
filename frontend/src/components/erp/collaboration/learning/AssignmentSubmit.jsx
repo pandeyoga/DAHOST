@@ -51,7 +51,7 @@ export default function AssignmentSubmit({ material, existingSubmission, onSubmi
       if (onSubmitted) onSubmitted();
     } catch (error) {
       console.error('Assignment submit error:', error);
-      toast.error('Gagal submit assignment');
+      toast.error('Gagal mengirim tugas');
     } finally {
       setSubmitting(false);
     }

@@ -53,7 +53,7 @@ export default function QuizInterface({ material, onComplete }) {
       if (onComplete) onComplete(data);
     } catch (error) {
       console.error('Quiz submit error:', error);
-      toast.error('Gagal submit quiz');
+      toast.error('Gagal mengirim jawaban kuis');
     } finally {
       setSubmitting(false);
     }
@@ -69,7 +69,7 @@ export default function QuizInterface({ material, onComplete }) {
     return (
       <div className="text-center py-8">
         <AlertCircle size={48} className="mx-auto mb-3 text-muted-foreground opacity-30" />
-        <p className="text-muted-foreground">Quiz belum memiliki pertanyaan</p>
+        <p className="text-muted-foreground">Kuis belum memiliki pertanyaan</p>
       </div>
     );
   }
