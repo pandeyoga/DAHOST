@@ -18,7 +18,7 @@ import PaginationLite from '@/components/ui/pagination-lite';
 import PageLayout from '../../layout/PageLayout';
 import { EmptyState, StatusBadge as Lencana } from '../../moduleAtoms';
 import { PR_STATUS_CONFIG, PR_PRIORITY_LABEL } from '../constants';
-import { angka, ambilSemuaHalaman, fmtCurrency, fmtDate } from '../utils';
+import { angka, ambilSemuaHalaman, fmtCurrency, fmtDate, useHP } from '../utils';
 import { StatusBadge } from '../components/StatusBadge';
 
 const labelStatus = (s) => PR_STATUS_CONFIG[s]?.label || PR_STATUS_CONFIG[String(s || '').toLowerCase()]?.label || s || '';
@@ -46,6 +46,7 @@ export function ProcurementTab({
   uniqueDepartments,
 }) {
   const kotak = prTab === 'inbox';
+  const hp = useHP();
   const halaman = prPagination?.page || 1;
   const muatUlang = () => loadPRs(kotak ? 1 : halaman);
 
@@ -69,6 +70,23 @@ export function ProcurementTab({
     : inboxScope === 'all'
       ? 'Tidak ada permintaan yang menunggu persetujuan.'
       : 'Tidak ada permintaan yang menunggu persetujuan Anda.';
+
+  const alat = (
+    <>
+      {kotak ? (
+        <TombolUnduh namaBerkas="pengadaan-menunggu-persetujuan" namaLembar="Menunggu persetujuan" baris={prInbox}
+          kolom={[...KOLOM_UNDUH, { label: 'Bisa saya setujui', nilai: (p) => (p.can_approve === false ? 'Tidak' : 'Ya') }]}
+          testId="inbox-unduh" />
+      ) : (
+        <TombolUnduh namaBerkas="permintaan-pengadaan" namaLembar="Permintaan pengadaan" baris={prData}
+          kolom={KOLOM_UNDUH} testId="pr-unduh" ambilSemua={() => ambilSemuaHalaman(fetchPRPage)} />
+      )}
+      <Button variant="outline" size="icon" onClick={muatUlang} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+        data-testid={kotak ? 'inbox-refresh-btn' : 'pr-refresh-btn'}>
+        <RefreshCw className={loading ? 'animate-spin' : ''} />
+      </Button>
+    </>
+  );
 
   return (
     <PageLayout testId="asset-procurement" title="Pengadaan" subtitle="Permintaan pengadaan dan persetujuannya."
@@ -104,21 +122,9 @@ export function ProcurementTab({
             )}
           </>
         )}
+        {hp && alat}
       </>}
-      tools={<>
-        {kotak ? (
-          <TombolUnduh namaBerkas="pengadaan-menunggu-persetujuan" namaLembar="Menunggu persetujuan" baris={prInbox}
-            kolom={[...KOLOM_UNDUH, { label: 'Bisa saya setujui', nilai: (p) => (p.can_approve === false ? 'Tidak' : 'Ya') }]}
-            testId="inbox-unduh" />
-        ) : (
-          <TombolUnduh namaBerkas="permintaan-pengadaan" namaLembar="Permintaan pengadaan" baris={prData}
-            kolom={KOLOM_UNDUH} testId="pr-unduh" ambilSemua={() => ambilSemuaHalaman(fetchPRPage)} />
-        )}
-        <Button variant="outline" size="icon" onClick={muatUlang} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
-          data-testid={kotak ? 'inbox-refresh-btn' : 'pr-refresh-btn'}>
-          <RefreshCw className={loading ? 'animate-spin' : ''} />
-        </Button>
-      </>}
+      tools={hp ? null : alat}
       footer={!kotak && prPagination?.total > 0 ? (
         <PaginationLite page={halaman} totalPages={prPagination.total_pages} total={prPagination.total}
           pageSize={prPagination.page_size || 50} onPageChange={(p) => loadPRs(p)} />

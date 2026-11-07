@@ -21,7 +21,7 @@ import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PageLayout from '../../layout/PageLayout';
 import { EmptyState, Notice } from '../../moduleAtoms';
 import { DISPOSAL_STATUS_CONFIG } from '../constants';
-import { angka, apicall, fmtCurrency, fmtDate } from '../utils';
+import { angka, apicall, fmtCurrency, fmtDate, useHP } from '../utils';
 import { StatusBadge } from '../components/StatusBadge';
 
 const SARINGAN = [
@@ -40,6 +40,7 @@ export function DisposalApprovalInbox({ token, userRole, onRefresh }) {
   const [processing, setProcessing] = useState(false);
   const [detail, setDetail] = useState(null);
   const canReview = ['admin', 'superadmin', 'finance', 'manager'].includes(userRole);
+  const hp = useHP();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -94,29 +95,36 @@ export function DisposalApprovalInbox({ token, userRole, onRefresh }) {
 
   const labelSaringan = SARINGAN.find((s) => s.key === filterStatus)?.label.toLowerCase();
 
+  const alat = (
+    <>
+      <TombolUnduh namaBerkas="permintaan-pelepasan-aset" namaLembar="Pelepasan" baris={requests} testId="disposal-unduh"
+        kolom={[
+          { label: 'Aset', nilai: (r) => r.asset_name },
+          { label: 'No. aset', nilai: (r) => r.asset_number },
+          { label: 'Nilai buku', nilai: (r) => angka(r.nbv || 0) },
+          { label: 'Nilai jual', nilai: (r) => angka(r.disposal_value || 0) },
+          { label: 'Tanggal pelepasan', nilai: (r) => fmtDate(r.disposal_date) },
+          { label: 'Alasan', nilai: (r) => r.reason || '' },
+          { label: 'Diminta oleh', nilai: (r) => r.requested_by_name || '' },
+          { label: 'Tanggal diminta', nilai: (r) => fmtDate(r.requested_at) },
+          { label: 'Status', nilai: (r) => DISPOSAL_STATUS_CONFIG[r.status]?.label || r.status },
+          { label: 'Catatan peninjau', nilai: (r) => r.review_notes || '' },
+        ]} />
+      <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+        <RefreshCw className={loading ? 'animate-spin' : ''} />
+      </Button>
+    </>
+  );
+
   return (
     <PageLayout testId="disposal-requests-tab" title="Pelepasan"
       subtitle="Permintaan pelepasan aset bernilai tinggi yang perlu persetujuan."
-      filters={<FilterChips options={SARINGAN} value={filterStatus} onChange={setFilterStatus} hideWhenEmpty={false}
-        testId="disposal-filter" ariaLabel="Status permintaan" />}
-      tools={<>
-        <TombolUnduh namaBerkas="permintaan-pelepasan-aset" namaLembar="Pelepasan" baris={requests} testId="disposal-unduh"
-          kolom={[
-            { label: 'Aset', nilai: (r) => r.asset_name },
-            { label: 'No. aset', nilai: (r) => r.asset_number },
-            { label: 'Nilai buku', nilai: (r) => angka(r.nbv || 0) },
-            { label: 'Nilai jual', nilai: (r) => angka(r.disposal_value || 0) },
-            { label: 'Tanggal pelepasan', nilai: (r) => fmtDate(r.disposal_date) },
-            { label: 'Alasan', nilai: (r) => r.reason || '' },
-            { label: 'Diminta oleh', nilai: (r) => r.requested_by_name || '' },
-            { label: 'Tanggal diminta', nilai: (r) => fmtDate(r.requested_at) },
-            { label: 'Status', nilai: (r) => DISPOSAL_STATUS_CONFIG[r.status]?.label || r.status },
-            { label: 'Catatan peninjau', nilai: (r) => r.review_notes || '' },
-          ]} />
-        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
-          <RefreshCw className={loading ? 'animate-spin' : ''} />
-        </Button>
-      </>}>
+      filters={<>
+        <FilterChips options={SARINGAN} value={filterStatus} onChange={setFilterStatus} hideWhenEmpty={false}
+          testId="disposal-filter" ariaLabel="Status permintaan" />
+        {hp && alat}
+      </>}
+      tools={hp ? null : alat}>
       {loading && requests.length === 0 ? (
         <p className="py-10 text-center text-sm text-muted-foreground">Memuat permintaan…</p>
       ) : (

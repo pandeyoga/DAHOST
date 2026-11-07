@@ -19,7 +19,7 @@ import {
 import PageLayout from '../../layout/PageLayout';
 import { EmptyState } from '../../moduleAtoms';
 import { STATUS_CONFIG, STATUS_FILTER_OPTIONS } from '../constants';
-import { angka, ambilSemuaHalaman, fmtCurrency } from '../utils';
+import { angka, ambilSemuaHalaman, fmtCurrency, useHP } from '../utils';
 import { StatusBadge } from '../components/StatusBadge';
 
 /**
@@ -65,6 +65,7 @@ export function AssetsTab({
   onTambahAset, onScan, onImpor, onDepresiasiMassal,
 }) {
   const halaman = assetPagination?.page || 1;
+  const hp = useHP();
   const kolomUnduh = [
     { label: 'No. aset', nilai: (a) => a.asset_number },
     { label: 'Nama', nilai: (a) => a.name },
@@ -77,6 +78,17 @@ export function AssetsTab({
     { label: 'Lokasi', nilai: (a) => a.location || '' },
     { label: 'Departemen', nilai: (a) => a.department || '' },
   ];
+
+  const alat = (
+    <>
+      <TombolUnduh namaBerkas="daftar-aset" namaLembar="Aset" baris={assets} kolom={kolomUnduh} testId="asset-unduh"
+        ambilSemua={() => ambilSemuaHalaman(fetchAssetPage)} />
+      <Button variant="outline" size="icon" onClick={() => loadAssets(halaman)} disabled={loading}
+        title="Muat ulang" aria-label="Muat ulang" data-testid="asset-search-btn">
+        <RefreshCw className={loading ? 'animate-spin' : ''} />
+      </Button>
+    </>
+  );
 
   return (
     <PageLayout testId="asset-list" title="Aset" subtitle="Daftar aset perusahaan."
@@ -93,15 +105,9 @@ export function AssetsTab({
           className="w-44" aria-label="Status aset" data-testid="asset-status-select">
           {STATUS_FILTER_OPTIONS.map(o => <option key={o.value || 'semua'} value={o.value}>{o.label}</option>)}
         </SmartNativeSelect>
+        {hp && alat}
       </>}
-      tools={<>
-        <TombolUnduh namaBerkas="daftar-aset" namaLembar="Aset" baris={assets} kolom={kolomUnduh} testId="asset-unduh"
-          ambilSemua={() => ambilSemuaHalaman(fetchAssetPage)} />
-        <Button variant="outline" size="icon" onClick={() => loadAssets(halaman)} disabled={loading}
-          title="Muat ulang" aria-label="Muat ulang" data-testid="asset-search-btn">
-          <RefreshCw className={loading ? 'animate-spin' : ''} />
-        </Button>
-      </>}
+      tools={hp ? null : alat}
       footer={assetPagination?.total > 0 ? (
         <PaginationLite page={halaman} totalPages={assetPagination.total_pages} total={assetPagination.total}
           pageSize={assetPagination.page_size || 20} onPageChange={(p) => loadAssets(p)} />

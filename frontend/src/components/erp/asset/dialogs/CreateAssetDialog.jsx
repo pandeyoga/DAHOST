@@ -84,19 +84,21 @@ export function CreateAssetDialog({ open, onClose, token, categories, onCreated 
       judul="Daftarkan aset baru"
       keterangan="Isi data aset: nama, kategori, harga beli; garansi & asuransi boleh dikosongkan."
       onSimpan={submit} labelSimpan="Daftarkan aset" menyimpan={loading} galat={galat}>
-      <Isian label="Tautkan ke aset tetap Keuangan" htmlFor="asset-finance-link"
-        petunjuk="Harga, penyusutan & nilai buku diambil dari registri Keuangan. Aset baru didaftarkan dulu di Keuangan › Aset Tetap (atau lewat penerimaan barang).">
-        {/* 2026-11-07 (audit form Tahap 5): pilihan aplikasi yang bisa dicari (dulu pilihan polos peramban) */}
-        <SmartNativeSelect id="asset-finance-link" value={fixedAssetId} onChange={e => pickFinance(e.target.value)} data-testid="asset-finance-link"
-          className="h-9 w-full" searchPlaceholder="Cari kode atau nama aset…">
-          <option value="">— Belum ditaut (catatan operasional saja) —</option>
-          {finAssets.map(f => <option key={f.id} value={f.id}>{`${f.code} · ${f.name} · nilai buku Rp ${Number(f.book_value || 0).toLocaleString('id-ID')}`}</option>)}
-        </SmartNativeSelect>
-      </Isian>
-      <Isian label="Nama aset" wajib htmlFor="asset-name">
-        <Input id="asset-name" placeholder="Contoh: Mesin jahit Juki DDL-8700" value={form.name}
-          onChange={e => set('name', e.target.value)} data-testid="asset-name-input" />
-      </Isian>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Tautkan ke aset tetap Keuangan" htmlFor="asset-finance-link"
+          petunjuk="Harga, penyusutan & nilai buku diambil dari registri Keuangan. Aset baru didaftarkan dulu di Keuangan › Aset Tetap (atau lewat penerimaan barang).">
+          {/* 2026-11-07 (audit form Tahap 5): pilihan aplikasi yang bisa dicari (dulu pilihan polos peramban) */}
+          <SmartNativeSelect id="asset-finance-link" value={fixedAssetId} onChange={e => pickFinance(e.target.value)} data-testid="asset-finance-link"
+            className="h-9 w-full" searchPlaceholder="Cari kode atau nama aset…">
+            <option value="">— Belum ditaut (catatan operasional saja) —</option>
+            {finAssets.map(f => <option key={f.id} value={f.id}>{`${f.code} · ${f.name} · nilai buku Rp ${Number(f.book_value || 0).toLocaleString('id-ID')}`}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Nama aset" wajib htmlFor="asset-name">
+          <Input id="asset-name" placeholder="Contoh: Mesin jahit Juki DDL-8700" value={form.name}
+            onChange={e => set('name', e.target.value)} data-testid="asset-name-input" />
+        </Isian>
+      </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <Isian label="Kategori" htmlFor="asset-category">
           <SmartNativeSelect id="asset-category" value={form.category_id} onChange={e => set('category_id', e.target.value)}

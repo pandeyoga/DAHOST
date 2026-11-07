@@ -24,7 +24,7 @@ import PageLayout from '../../layout/PageLayout';
 import PeriodPicker, { periodFromPreset } from '../../finance/PeriodPicker';
 import { EmptyState } from '../../moduleAtoms';
 import { STATUS_CONFIG } from '../constants';
-import { angka, apicall, fmtCurrency, fmtDate, fmtPersen } from '../utils';
+import { angka, apicall, fmtCurrency, fmtDate, fmtPersen, useHP } from '../utils';
 import { KPICard, BarisKartu, Bagian } from '../components/KPICard';
 
 const nadaPemakaian = (p) => (p >= 80 ? 'text-[hsl(var(--success-text))]'
@@ -41,6 +41,7 @@ export function UtilizationReportTab({ token, categories }) {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [view, setView] = useState('top'); // top | underutilized | idle
+  const hp = useHP();
 
   const params = useCallback((limit) => {
     const p = new URLSearchParams({
@@ -79,6 +80,31 @@ export function UtilizationReportTab({ token, categories }) {
   const adaAset = (summary.total_assets || 0) > 0;
   const namaView = { top: 'semua-aset', underutilized: 'jarang-dipakai', idle: 'tidak-dipakai' }[view];
 
+  const alat = (
+    <>
+      <TombolUnduh namaBerkas={`pemakaian-aset-${namaView}`} namaLembar="Pemakaian aset" baris={detailRows}
+        ambilSemua={ambilSemua} testId="util-unduh"
+        kolom={[
+          { label: 'No. aset', nilai: (r) => r.asset_number },
+          { label: 'Nama aset', nilai: (r) => r.asset_name },
+          { label: 'Kategori', nilai: (r) => namaKategori(r.category_name) },
+          { label: 'Status', nilai: (r) => STATUS_CONFIG[r.status]?.label || r.status || '' },
+          { label: 'Pemakaian (%)', nilai: (r) => Number(r.utilization_pct) || 0 },
+          { label: 'Hari ditugaskan', nilai: (r) => r.assigned_days },
+          { label: 'Hari dalam periode', nilai: (r) => r.effective_window_days },
+          { label: 'Jumlah penugasan', nilai: (r) => r.assignment_count },
+          { label: 'Pemegang sekarang', nilai: (r) => r.current_assignee || '' },
+          { label: 'Terakhir ditugaskan', nilai: (r) => (r.last_assigned_date ? fmtDate(r.last_assigned_date) : '') },
+          { label: 'Terakhir dikembalikan', nilai: (r) => (r.last_returned_date ? fmtDate(r.last_returned_date) : '') },
+          { label: 'Harga beli', nilai: (r) => angka(r.purchase_cost) },
+        ]} />
+      <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+        data-testid="util-apply-button">
+        <RefreshCw className={loading ? 'animate-spin' : ''} />
+      </Button>
+    </>
+  );
+
   return (
     <PageLayout testId="utilization-report-tab" title="Pemakaian"
       subtitle="Berapa lama tiap aset dipegang karyawan dalam periode terpilih."
@@ -96,29 +122,9 @@ export function UtilizationReportTab({ token, categories }) {
             data-testid="util-filter-threshold" className="h-9 w-20" />
           %
         </label>
+        {hp && alat}
       </>}
-      tools={<>
-        <TombolUnduh namaBerkas={`pemakaian-aset-${namaView}`} namaLembar="Pemakaian aset" baris={detailRows}
-          ambilSemua={ambilSemua} testId="util-unduh"
-          kolom={[
-            { label: 'No. aset', nilai: (r) => r.asset_number },
-            { label: 'Nama aset', nilai: (r) => r.asset_name },
-            { label: 'Kategori', nilai: (r) => namaKategori(r.category_name) },
-            { label: 'Status', nilai: (r) => STATUS_CONFIG[r.status]?.label || r.status || '' },
-            { label: 'Pemakaian (%)', nilai: (r) => Number(r.utilization_pct) || 0 },
-            { label: 'Hari ditugaskan', nilai: (r) => r.assigned_days },
-            { label: 'Hari dalam periode', nilai: (r) => r.effective_window_days },
-            { label: 'Jumlah penugasan', nilai: (r) => r.assignment_count },
-            { label: 'Pemegang sekarang', nilai: (r) => r.current_assignee || '' },
-            { label: 'Terakhir ditugaskan', nilai: (r) => (r.last_assigned_date ? fmtDate(r.last_assigned_date) : '') },
-            { label: 'Terakhir dikembalikan', nilai: (r) => (r.last_returned_date ? fmtDate(r.last_returned_date) : '') },
-            { label: 'Harga beli', nilai: (r) => angka(r.purchase_cost) },
-          ]} />
-        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
-          data-testid="util-apply-button">
-          <RefreshCw className={loading ? 'animate-spin' : ''} />
-        </Button>
-      </>}
+      tools={hp ? null : alat}
       summary={adaAset ? (
         <BarisKartu testId="util-kpi">
           <KPICard label="Aset dinilai" value={angkaID(summary.total_assets)} testId="util-kpi-total"

@@ -21,7 +21,7 @@ import FormPopup, { Isian } from '@/components/ui/form-popup';
 import PageLayout from '../../layout/PageLayout';
 import { EmptyState, StatusBadge as Lencana } from '../../moduleAtoms';
 import { SEVERITY_CONFIG } from '../constants';
-import { apicall, fmtDate } from '../utils';
+import { apicall, fmtDate, useHP } from '../utils';
 import { KPICard, BarisKartu } from '../components/KPICard';
 import { JENIS_PERINGATAN, URUTAN_JENIS, keteranganPeringatan } from '../components/PMAlertCard';
 
@@ -51,6 +51,7 @@ export function PredictiveMaintenanceTab({ token }) {
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState('all'); // all | overdue | upcoming | stale | high_frequency | predicted
   const [ackBusy, setAckBusy] = useState(false);
+  const hp = useHP();
 
   const load = useCallback(async (cfg = config) => {
     setLoading(true);
@@ -101,39 +102,45 @@ export function PredictiveMaintenanceTab({ token }) {
   const semua = URUTAN_JENIS.flatMap((k) => report?.[k] || []);
   const baris = filter === 'all' ? semua : semua.filter((a) => a.kind === filter);
   const adaPeringatan = (summary.total_alerts || 0) > 0;
+  const alatDiPenyaring = hp && adaPeringatan;
   const kalimatBatas = `Batas: jatuh tempo ≤ ${config.upcoming_window_days} hari · tidak dirawat ≥ ${config.stale_months} bulan · `
     + `berulang ≥ ${config.high_frequency_threshold} kali dalam ${config.high_frequency_window_days} hari.`;
+
+  const alat = (
+    <>
+      <Button variant="outline" onClick={() => setDraft({ ...config })} data-testid="pm-atur-batas">
+        <SlidersHorizontal />Atur batas
+      </Button>
+      <TombolUnduh namaBerkas="peringatan-pemeliharaan" namaLembar="Peringatan" baris={baris} testId="pm-unduh"
+        kolom={[
+          { label: 'No. aset', nilai: (a) => a.asset_number },
+          { label: 'Aset', nilai: (a) => a.asset_name },
+          { label: 'Peringatan', nilai: (a) => JENIS_PERINGATAN[a.kind]?.label || a.kind },
+          { label: 'Tingkat', nilai: (a) => SEVERITY_CONFIG[a.severity]?.label || a.severity },
+          { label: 'Keterangan', nilai: keteranganPeringatan },
+          { label: 'Kategori', nilai: (a) => a.category_name || '' },
+          { label: 'Pemegang', nilai: (a) => a.current_assignee || '' },
+          { label: 'Pemeliharaan terakhir', nilai: (a) => (a.last_maintenance_date ? fmtDate(a.last_maintenance_date) : '') },
+        ]} />
+      <Button variant="outline" size="icon" onClick={() => load()} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+        data-testid="pm-apply-button">
+        <RefreshCw className={loading ? 'animate-spin' : ''} />
+      </Button>
+    </>
+  );
 
   return (
     <PageLayout testId="pm-alerts-tab" title="Peringatan pemeliharaan"
       subtitle="Aset yang perlu dirawat, dihitung dari riwayat pemeliharaan."
-      filters={adaPeringatan ? (
+      filters={adaPeringatan ? (<>
         <FilterChips value={filter} onChange={setFilter} testId="pm-filter" ariaLabel="Jenis peringatan"
           options={[
             { key: 'all', label: 'Semua', count: summary.total_alerts || 0 },
             ...URUTAN_JENIS.map((k) => ({ key: k, label: JENIS_PERINGATAN[k].label, count: (report?.[k] || []).length })),
           ]} />
-      ) : null}
-      tools={<>
-        <Button variant="outline" onClick={() => setDraft({ ...config })} data-testid="pm-atur-batas">
-          <SlidersHorizontal />Atur batas
-        </Button>
-        <TombolUnduh namaBerkas="peringatan-pemeliharaan" namaLembar="Peringatan" baris={baris} testId="pm-unduh"
-          kolom={[
-            { label: 'No. aset', nilai: (a) => a.asset_number },
-            { label: 'Aset', nilai: (a) => a.asset_name },
-            { label: 'Peringatan', nilai: (a) => JENIS_PERINGATAN[a.kind]?.label || a.kind },
-            { label: 'Tingkat', nilai: (a) => SEVERITY_CONFIG[a.severity]?.label || a.severity },
-            { label: 'Keterangan', nilai: keteranganPeringatan },
-            { label: 'Kategori', nilai: (a) => a.category_name || '' },
-            { label: 'Pemegang', nilai: (a) => a.current_assignee || '' },
-            { label: 'Pemeliharaan terakhir', nilai: (a) => (a.last_maintenance_date ? fmtDate(a.last_maintenance_date) : '') },
-          ]} />
-        <Button variant="outline" size="icon" onClick={() => load()} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
-          data-testid="pm-apply-button">
-          <RefreshCw className={loading ? 'animate-spin' : ''} />
-        </Button>
-      </>}
+        {alatDiPenyaring && alat}
+      </>) : null}
+      tools={alatDiPenyaring ? null : alat}
       summary={adaPeringatan ? (
         <BarisKartu testId="pm-kpi">
           <KPICard label="Mendesak" value={summary.critical_count || 0} accent={summary.critical_count ? 'danger' : 'default'}

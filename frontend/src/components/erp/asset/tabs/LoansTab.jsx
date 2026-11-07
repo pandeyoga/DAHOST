@@ -19,7 +19,7 @@ import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import PageLayout from '../../layout/PageLayout';
 import { EmptyState, Notice } from '../../moduleAtoms';
-import { apicall, fmtDate } from '../utils';
+import { apicall, fmtDate, useHP } from '../utils';
 import { KPICard, BarisKartu } from '../components/KPICard';
 import { StatusBadge } from '../components/StatusBadge';
 import { LOAN_STATUS_CONFIG, RETURN_CONDITION_LABEL } from '../constants';
@@ -37,6 +37,7 @@ export function LoansTab({ token }) {
   const [err, setErr] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [returnLoan, setReturnLoan] = useState(null);
+  const hp = useHP();
 
   const load = useCallback(async () => {
     setLoading(true); setErr('');
@@ -64,6 +65,30 @@ export function LoansTab({ token }) {
   const adaAngka = summary && [summary.active_loans, summary.overdue_loans, summary.returned_this_month, summary.available_assets]
     .some((n) => Number(n) > 0);
 
+  const alat = (
+    <>
+      <TombolUnduh namaBerkas="peminjaman-aset" namaLembar="Peminjaman" baris={filtered} testId="asset-loan-unduh"
+        kolom={[
+          { label: 'No. pinjam', nilai: (l) => l.loan_number },
+          { label: 'No. aset', nilai: (l) => l.asset_number },
+          { label: 'Aset', nilai: (l) => l.asset_name },
+          { label: 'Peminjam', nilai: (l) => l.borrower_name },
+          { label: 'Divisi', nilai: (l) => l.borrower_divisi || '' },
+          { label: 'Tujuan', nilai: (l) => l.purpose || '' },
+          { label: 'Tanggal pinjam', nilai: (l) => fmtDate(l.loan_date) },
+          { label: 'Target kembali', nilai: (l) => (l.expected_return_date ? fmtDate(l.expected_return_date) : 'Tidak ditentukan') },
+          { label: 'Tanggal kembali', nilai: (l) => (l.return_date ? fmtDate(l.return_date) : '') },
+          { label: 'Kondisi kembali', nilai: (l) => (l.condition_in ? RETURN_CONDITION_LABEL[l.condition_in] || l.condition_in : '') },
+          { label: 'Status', nilai: (l) => LOAN_STATUS_CONFIG[rowStatus(l)]?.label || l.status },
+          { label: 'Hari terlambat', nilai: (l) => (l.is_overdue ? l.days_overdue : 0) },
+        ]} />
+      <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+        data-testid="asset-loan-refresh">
+        <RefreshCw className={loading ? 'animate-spin' : ''} />
+      </Button>
+    </>
+  );
+
   return (
     <PageLayout testId="asset-loans-tab" title="Peminjaman"
       subtitle="Alat/aset ber-nomor yang dibawa keluar dan harus dikembalikan."
@@ -80,28 +105,9 @@ export function LoansTab({ token }) {
           <option value="returned">Sudah kembali</option>
           <option value="all">Semua</option>
         </SmartNativeSelect>
+        {hp && alat}
       </>}
-      tools={<>
-        <TombolUnduh namaBerkas="peminjaman-aset" namaLembar="Peminjaman" baris={filtered} testId="asset-loan-unduh"
-          kolom={[
-            { label: 'No. pinjam', nilai: (l) => l.loan_number },
-            { label: 'No. aset', nilai: (l) => l.asset_number },
-            { label: 'Aset', nilai: (l) => l.asset_name },
-            { label: 'Peminjam', nilai: (l) => l.borrower_name },
-            { label: 'Divisi', nilai: (l) => l.borrower_divisi || '' },
-            { label: 'Tujuan', nilai: (l) => l.purpose || '' },
-            { label: 'Tanggal pinjam', nilai: (l) => fmtDate(l.loan_date) },
-            { label: 'Target kembali', nilai: (l) => (l.expected_return_date ? fmtDate(l.expected_return_date) : 'Tidak ditentukan') },
-            { label: 'Tanggal kembali', nilai: (l) => (l.return_date ? fmtDate(l.return_date) : '') },
-            { label: 'Kondisi kembali', nilai: (l) => (l.condition_in ? RETURN_CONDITION_LABEL[l.condition_in] || l.condition_in : '') },
-            { label: 'Status', nilai: (l) => LOAN_STATUS_CONFIG[rowStatus(l)]?.label || l.status },
-            { label: 'Hari terlambat', nilai: (l) => (l.is_overdue ? l.days_overdue : 0) },
-          ]} />
-        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
-          data-testid="asset-loan-refresh">
-          <RefreshCw className={loading ? 'animate-spin' : ''} />
-        </Button>
-      </>}
+      tools={hp ? null : alat}
       summary={adaAngka ? (
         <div className="space-y-2">
           <BarisKartu testId="asset-loan-kpi">

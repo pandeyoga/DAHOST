@@ -37,7 +37,7 @@ export function CategoriesTab({ categories, loading, onMuatUlang, onEditCategory
         </Button>
       </>}
       summary={<p className="text-sm text-muted-foreground">
-        Umur manfaat, metode penyusutan, dan akun di Bagan Akun untuk tiap kategori. Klik baris untuk mengubah.
+        Umur manfaat, metode penyusutan, dan akun di Bagan Akun untuk tiap kategori. Klik baris (atau kartu di HP) untuk mengubah.
       </p>}>
       <TabelData baris={categories} onKlikBaris={onEditCategory} testId="category-table"
         kosong={<EmptyState title="Belum ada kategori aset" description="Kategori bawaan dibuat otomatis saat ringkasan aset dibuka." />}
@@ -48,7 +48,7 @@ export function CategoriesTab({ categories, loading, onMuatUlang, onEditCategory
           { kunci: 'metode', label: 'Metode penyusutan', isi: metode },
           { kunci: 'akun', label: 'Akun aset', isi: (c) => akun(c.coa_asset_account) },
           { kunci: 'akum', label: 'Akun akumulasi penyusutan', isi: (c) => akun(c.coa_depreciation_account) },
-          { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (c) => (
+          { kunci: 'aksi', label: '', rata: 'kanan', hp: false, isi: (c) => (
             <Button size="sm" variant="outline" onClick={() => onEditCategory?.(c)} data-testid={`edit-cat-btn-${c.id}`}>
               <Pencil />Ubah
             </Button>) },

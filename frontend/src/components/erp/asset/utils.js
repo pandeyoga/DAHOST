@@ -1,6 +1,7 @@
 /**
  * Manajemen Aset — fungsi bantu bersama (panggilan API, format angka/tanggal, unduhan semua halaman).
  */
+import { useEffect, useState } from 'react';
 import { formatDateID, formatDateTimeID, formatPercent } from '@/lib/format';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
@@ -62,6 +63,25 @@ export async function ambilSemuaHalaman(ambilHalaman, batas = 100) {
     if (!d?.pagination || page >= (d.pagination.total_pages || 1)) break;
   }
   return semua;
+}
+
+/**
+ * true bila layar HP (< 640 px). Dipakai untuk menaruh alat (Unduh, muat ulang) di baris penyaring pada HP:
+ * Toolbar bersama menaruh alat di samping penyaring, sehingga di 390 px kotak cari terjepit ±200 px dan pil
+ * penyaring tertimpa tombol Unduh.
+ */
+export function useHP(batas = 640) {
+  const q = `(max-width: ${batas - 1}px)`;
+  const [hp, setHp] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(q).matches);
+  useEffect(() => {
+    const m = window.matchMedia?.(q);
+    if (!m) return undefined;
+    const ubah = () => setHp(m.matches);
+    ubah();
+    m.addEventListener?.('change', ubah);
+    return () => m.removeEventListener?.('change', ubah);
+  }, [q]);
+  return hp;
 }
 
 // Re-export API base for components that need it directly (e.g., multipart/file uploads)
