@@ -409,6 +409,19 @@ async def executive_summary(
     }
 
 
+def metrics_for_ai(metrics: dict) -> str:
+    """Isi prompt narasi eksekutif TANPA nominal total gaji (audit AI 7 Nov 2026).
+
+    `sdm.payroll_total_rp` diganti kisaran kasar (`kisaran_biaya_tenaga_kerja`), lalu `ai_json` membuang kunci
+    gaji/payroll yang tersisa (pertahanan berlapis K27). `metrics` milik respons layar tidak diubah."""
+    from services.ai.privacy import ai_json, rupiah_band
+    sdm = dict(metrics.get("sdm") or {})
+    total = sdm.pop("payroll_total_rp", None)
+    if total:
+        sdm["kisaran_biaya_tenaga_kerja"] = rupiah_band(total)
+    return ai_json({**metrics, "sdm": sdm}, indent=None)
+
+
 @router.get("/ai-narrative")
 async def executive_ai_narrative(
     request: Request,
@@ -422,7 +435,7 @@ async def executive_ai_narrative(
     wrapper (tier 'executive' = Opus) to produce a concise management report.
     Cached 1h per period (bypass with refresh=true).
     """
-    await require_exec_report(request)  # K33
+    user = await require_exec_report(request)  # K33
     db = get_db()
     now = _now()
     wib = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
@@ -431,7 +444,6 @@ async def executive_ai_narrative(
     prev_y, prev_m = _prev_month(y, m)
 
     import asyncio
-    import json as _json
     finance, production, hr = await asyncio.gather(
         _finance_kpis(db, y, m),
         _production_kpis(db, y, m),
@@ -469,7 +481,8 @@ async def executive_ai_narrative(
         "## Rekomendasi Strategis\n(3-5 bullet actionable, urut prioritas)\n\n"
         "Aturan: tulis nominal dengan format Rupiah Indonesia (mis. Rp 1.500.000). "
         "JANGAN mengarang data di luar yang diberikan; bila nilai 0/kosong, sampaikan apa adanya "
-        "dan beri saran perbaikan. Maksimal ~400 kata."
+        "dan beri saran perbaikan. Biaya tenaga kerja hanya diberikan sebagai kisaran; sebutkan kisarannya, "
+        "jangan menebak angka pastinya. Maksimal ~400 kata."
     )
 
     from services.ai import cached_call_claude
@@ -482,12 +495,13 @@ async def executive_ai_narrative(
         res = await cached_call_claude(
             db,
             system_message=system,
-            user_message=_json.dumps(metrics, default=str, ensure_ascii=False),
+            user_message=metrics_for_ai(metrics),
             cache_namespace="exec_narrative",
             cache_key_extra=extra,
             ttl_seconds=3600,
             session_tag="executive-narrative",
             tier="executive",
+            user_id=user.get("id"),  # 2026-11-07: Monitor AI tahu pemicunya
         )
     except Exception as e:
         # Surface AI/budget errors gracefully so the KPI dashboard still works.

@@ -37,6 +37,32 @@ export class ApiError extends Error {
 }
 
 /**
+ * Token login yang dipakai setiap panggilan API (override → erp_token → client_token).
+ * Dipakai bersama oleh apiFetch dan sseFetch (Asisten AI) supaya cara membaca token hanya satu.
+ */
+export function resolveToken(tokenOverride) {
+  if (tokenOverride !== undefined) return tokenOverride;
+  try {
+    return localStorage.getItem('erp_token') || localStorage.getItem('client_token');
+  } catch {
+    return null;
+  }
+}
+
+/** Alamat lengkap endpoint: '/x' → `${BACKEND}/api/x`; '/api/x' dan http(s)://… dipakai apa adanya. */
+export function buildApiUrl(endpoint) {
+  if (endpoint.startsWith('http://') || endpoint.startsWith('https://')) return endpoint;
+  const clean = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const prefix = clean.startsWith('/api') ? '' : '/api';
+  return `${BACKEND_URL}${prefix}${clean}`;
+}
+
+/** Jalankan penanganan sesi habis (logout/redirect) yang dipasang lewat configureApi. */
+export function notifyUnauthorized() {
+  if (_config.onUnauthorized) _config.onUnauthorized();
+}
+
+/**
  * apiFetch — Fetch wrapper for all ERP API calls.
  *
  * @param {string} endpoint   — API path, e.g. '/employees' (no /api prefix, added automatically)
@@ -61,10 +87,7 @@ async function apiFetch(endpoint, options = {}) {
   } = options;
 
   // Resolve JWT token
-  const token =
-    tokenOverride !== undefined
-      ? tokenOverride
-      : localStorage.getItem('erp_token') || localStorage.getItem('client_token');
+  const token = resolveToken(tokenOverride);
 
   // Build headers
   const headers = {};
@@ -79,15 +102,7 @@ async function apiFetch(endpoint, options = {}) {
   Object.assign(headers, extraHeaders);
 
   // Build URL — endpoint may already start with /api or just /
-  let url;
-  if (endpoint.startsWith('http://') || endpoint.startsWith('https://')) {
-    url = endpoint;
-  } else {
-    const clean = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-    // If endpoint already has /api prefix, use as-is; otherwise prepend /api
-    const prefix = clean.startsWith('/api') ? '' : '/api';
-    url = `${BACKEND_URL}${prefix}${clean}`;
-  }
+  const url = buildApiUrl(endpoint);
 
   // Build fetch init
   const init = {
@@ -113,9 +128,7 @@ async function apiFetch(endpoint, options = {}) {
 
   // Handle 401 — unauthorized
   if (response.status === 401) {
-    if (!skipOnUnauthorized && _config.onUnauthorized) {
-      _config.onUnauthorized();
-    }
+    if (!skipOnUnauthorized) notifyUnauthorized();
     const errBody = await response.json().catch(() => ({}));
     throw new ApiError(401, errBody.detail || 'Sesi habis. Silakan login kembali.', errBody);
   }

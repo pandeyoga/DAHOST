@@ -14,6 +14,7 @@ import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Loader2, Brain, BarChart3 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import MarkdownAman from '@/components/ui/markdown-aman';
 import { EmptyState, StatTile } from '../moduleAtoms';
 import PageLayout from '../layout/PageLayout';
 
@@ -68,30 +69,12 @@ function AgingBars({ data, label }) {
   );
 }
 
-// Render markdown-ish text with bold & bullets
+// 2026-11-08 (Asisten AI Tahap A): teks AI dirender lewat pengurai markdown aman bersama. Dulu `**…**` diganti
+// jadi HTML lalu dipasang dengan dangerouslySetInnerHTML — teks AI berisi <img onerror=…> bisa menjalankan skrip (XSS).
+// Butir "• " dari model diubah jadi "- " supaya tampil sebagai daftar.
 function AnalysisText({ text }) {
   if (!text) return null;
-  const lines = text.split('\n');
-  return (
-    <div className="space-y-1.5 text-sm leading-relaxed">
-      {lines.map((line, i) => {
-        if (!line.trim()) return <div key={i} className="h-2" />;
-        // Bold headers: **text**
-        const bold = line.replace(/\*\*(.+?)\*\*/g, '<strong class="font-semibold text-foreground">$1</strong>');
-        // Bullets
-        const isBullet = line.trim().startsWith('- ') || line.trim().startsWith('• ');
-        if (isBullet) {
-          return (
-            <div key={i} className="flex gap-2 items-start">
-              <div className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5 shrink-0" />
-              <span className="text-muted-foreground" dangerouslySetInnerHTML={{ __html: bold.replace(/^[-•]\s*/, '') }} />
-            </div>
-          );
-        }
-        return <p key={i} className="text-muted-foreground" dangerouslySetInnerHTML={{ __html: bold }} />;
-      })}
-    </div>
-  );
+  return <MarkdownAman text={String(text).replace(/^(\s*)•\s+/gm, '$1- ')} className="text-muted-foreground" testId="cf-ai-analysis-text" />;
 }
 
 function UpcomingList({ title, rows, nameKey, fallback }) {

@@ -89,6 +89,23 @@ export function formatRupiahShort(value) {
 }
 
 /**
+ * Angka ringkas tanpa "Rp" untuk sumbu grafik: 1500000 → "1,5 jt", 2300000000 → "2,3 M", 950 → "950".
+ * 2026-11-08 (Asisten AI): dulu `fmtCompact` lokal di RevenueChart menulis "1.5jt" (desimal titik).
+ */
+export function formatAngkaRingkas(value) {
+  const n = toFiniteNumber(value);
+  if (n === null) return '0';
+  const abs = Math.abs(n);
+  const sign = n < 0 ? '−' : '';
+  const fmt = (x) => x.toLocaleString(LOCALE, { maximumFractionDigits: 1 });
+  if (abs >= 1e12) return `${sign}${fmt(abs / 1e12)} T`;
+  if (abs >= 1e9) return `${sign}${fmt(abs / 1e9)} M`;
+  if (abs >= 1e6) return `${sign}${fmt(abs / 1e6)} jt`;
+  if (abs >= 1e4) return `${sign}${fmt(abs / 1e3)} rb`;
+  return `${sign}${abs.toLocaleString(LOCALE, { maximumFractionDigits: 2 })}`;
+}
+
+/**
  * Persen gaya Indonesia: 24.19 → "24,19%" (2026-11-04, audit Keuangan: dulu "24.19%" bertitik).
  * @param {number|string} value  nilai persen (24.19 berarti 24,19%)
  * @param {number} [digits=2]    desimal maksimum

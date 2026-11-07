@@ -112,7 +112,7 @@ async def generate_daily_summary(
     days: int = Query(1, description="Periode ringkasan (default 1 hari)"),
 ):
     """P2-1: Aggregates metrics via DB pipelines, then asks Claude for narrative."""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
 
     since = _now() - timedelta(days=days)
@@ -156,6 +156,7 @@ async def generate_daily_summary(
         cache_key_extra=[str(days), str(today_wib())],
         ttl_seconds=3600,
         session_tag="daily-summary",
+        user_id=user.get("id"),  # 2026-11-07: Monitor AI tahu pemicunya
     )
     summary_text = cached["text"]
 

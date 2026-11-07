@@ -146,7 +146,8 @@ def test_penulisan_path_lain_tidak_melewati_penjagaan(env):
 
 
 def test_daftar_sensitif_satu_sumber():
-    assert set(sf.SENSITIVE_UPLOAD_PREFIXES) == {"attendance/", "leave_docs/", "profile/"}
+    # Asisten AI (laporan), 7 Nov 2026: + "ai_reports/" (laporan PDF/Excel buatan Asisten AI).
+    assert set(sf.SENSITIVE_UPLOAD_PREFIXES) == {"attendance/", "leave_docs/", "profile/", "ai_reports/"}
     assert "employee" in sf.SENSITIVE_ATTACHMENT_TYPES
     # jenis lampiran non-HR yang dipakai layar tetap publik
     for t in ("company_logo", "rahaza_model", "rnd_style", "production_po", "buyer_shipment", "style"):
@@ -156,6 +157,7 @@ def test_daftar_sensitif_satu_sumber():
         "attendance/": (BACKEND / "utils" / "attendance_policy.py").read_text(encoding="utf-8"),
         "leave_docs/": (BACKEND / "routes" / "rahaza_leave.py").read_text(encoding="utf-8"),
         "profile/": (BACKEND / "routes" / "dewi_portal_saya_hr.py").read_text(encoding="utf-8"),
+        "ai_reports/": (BACKEND / "core" / "laporan_ai.py").read_text(encoding="utf-8"),
     }
     for prefix, text in src.items():
         assert f'f"{prefix}' in text, prefix

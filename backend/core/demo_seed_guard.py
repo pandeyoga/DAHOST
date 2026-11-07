@@ -16,3 +16,13 @@ async def ensure_empty_for_demo(db, collections, label: str) -> None:
             raise HTTPException(
                 409, f"{label} sudah berisi data. Data contoh hanya bisa dimuat bila masih kosong — "
                      "data yang ada tidak dihapus.")
+
+
+def demo_seed_enabled() -> bool:
+    """2026-11-07 (Asisten AI, audit §3.C #4) — data contoh OTOMATIS hanya boleh ditulis
+    bila lingkungan ini memang lingkungan demo (``ALLOW_DEMO_SEED=true``, aturan yang sama
+    dengan ``auth.require_demo_seed_allowed``). Dulu iklan/live/kesehatan akun diisi data
+    acak setiap kali koleksinya kosong — di produksi pun — dan angka acak itu terbaca
+    sebagai biaya iklan & ROAS sungguhan oleh layar maupun AI."""
+    import os
+    return os.environ.get("ALLOW_DEMO_SEED", "false").strip().lower() in ("true", "1", "ya", "yes")

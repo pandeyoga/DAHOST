@@ -165,6 +165,36 @@ export function useCvOr(fallback = CV_DEFAULT) {
 }
 
 let _optionsCache = null;
+let _optionsPromise = null;
+
+/**
+ * Pilihan CV yang DIIZINKAN untuk pengguna (`/api/entities`), dimuat sekali per halaman. Dipakai CvProvider
+ * (Portal Keuangan) dan Asisten AI (Portal Management, tanpa CvProvider — 8 Nov 2026). Hasil `null` = pakai cadangan.
+ */
+export function loadCvOptions() {
+  if (_optionsCache) return Promise.resolve(_optionsCache);
+  if (_optionsPromise) return _optionsPromise;
+  let token = null;
+  try { token = window.localStorage.getItem('erp_token'); } catch { token = null; }
+  _optionsPromise = fetch(`${BACKEND}/api/entities`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => {
+      const rows = Array.isArray(d?.entities) ? d.entities : null;
+      if (!rows) return null;
+      // Tahap 8 fase 3: backend hanya mengirim CV yang DIIZINKAN untuk pengguna (`users.allowed_entities`;
+      // kosong = kedua CV + Gabungan) — pilihan lain tidak ditampilkan.
+      const merged = CV_OPTIONS_FALLBACK.filter((fb) => rows.some((x) => x.code === fb.code)).map((fb) => {
+        const row = rows.find((x) => x.code === fb.code);
+        return { ...fb, name: row.name || fb.name, label: fb.code === CV_ALL ? fb.label : (row.short || fb.label) };
+      });
+      if (!merged.length) return null;
+      _optionsCache = merged;
+      return merged;
+    })
+    .catch(() => null)
+    .finally(() => { _optionsPromise = null; });
+  return _optionsPromise;
+}
 
 export function CvProvider({ children }) {
   const [cv, setCvState] = useState(() => readStoredCv());
@@ -182,24 +212,7 @@ export function CvProvider({ children }) {
   useEffect(() => {
     if (_optionsCache) return undefined;
     let off = false;
-    let token = null;
-    try { token = window.localStorage.getItem('erp_token'); } catch { token = null; }
-    fetch(`${BACKEND}/api/entities`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        const rows = Array.isArray(d?.entities) ? d.entities : null;
-        if (!rows || off) return;
-        // Tahap 8 fase 3: backend hanya mengirim CV yang DIIZINKAN untuk pengguna (`users.allowed_entities`;
-        // kosong = kedua CV + Gabungan) — pilihan lain tidak ditampilkan.
-        const merged = CV_OPTIONS_FALLBACK.filter((fb) => rows.some((x) => x.code === fb.code)).map((fb) => {
-          const row = rows.find((x) => x.code === fb.code);
-          return { ...fb, name: row.name || fb.name, label: fb.code === CV_ALL ? fb.label : (row.short || fb.label) };
-        });
-        if (!merged.length) return;
-        _optionsCache = merged;
-        setOptions(merged);
-      })
-      .catch(() => {});
+    loadCvOptions().then((merged) => { if (merged && !off) setOptions(merged); });
     return () => { off = true; };
   }, []);
 

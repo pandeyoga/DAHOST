@@ -1,0 +1,644 @@
+"""Kerangka alat Asisten AI (Kontrak A) — agen inti, Tahap A (7 Nov 2026).
+
+Modul alat (di `core/asisten_ai/alat/`) mendaftar dengan dekorator:
+
+    from core.asisten_ai.alat_base import alat, AlatError
+
+    @alat(name="ringkasan_penjualan", kind="read", label="Membaca ringkasan penjualan",
+          description="…", input_schema={...}, domain="penjualan")
+    async def ringkasan_penjualan(ctx, args: dict) -> dict:
+        data = await ctx.api("GET", "/api/marketing/analitik/penjualan", params={...})
+        return {"hasil": data, "_sumber": "Rekap penjualan harian"}
+
+Aturan inti yang dipegang di sini:
+  * nama alat unik, snake_case; jenis `read` | `ui` | `action` (action = Tahap B, TIDAK dikirim
+    ke model di Tahap A);
+  * daftar alat untuk API selalu urut nama dan deterministik (tidak ada tanggal/acak) supaya
+    prefix prompt bisa di-cache;
+  * `ctx.api` = panggilan ASGI DALAM PROSES dengan token Bearer pengguna sendiri + header `X-CV`,
+    sehingga middleware izin, cakupan toko, kunci periode, dan CV berlaku sama seperti di layar;
+  * kunci `_sumber` / `_ui_events` dibuang dari hasil sebelum dikirim ke model, lalu dipancarkan
+    sebagai event `sumber` / event UI;
+  * hasil > 15.000 karakter dipotong dengan catatan jelas;
+  * alat baca dalam satu giliran dijalankan bersamaan.
+"""
+from __future__ import annotations
+
+import asyncio
+import importlib
+import inspect
+import json
+import logging
+import math
+import pkgutil
+import re
+import uuid
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any, Awaitable, Callable, Optional
+
+log = logging.getLogger(__name__)
+
+KIND_BACA = "read"
+KIND_UI = "ui"
+KIND_TINDAKAN = "action"
+KINDS = (KIND_BACA, KIND_UI, KIND_TINDAKAN)
+KINDS_TAHAP_A = (KIND_BACA, KIND_UI)
+DOMAINS = ("penjualan", "iklan", "live", "setoran", "keuangan", "stok", "produksi", "sdm",
+           "umum", "laporan", "ui")
+
+BATAS_HASIL = 15_000          # karakter JSON hasil alat yang dikirim ke model
+BATAS_DETIK_ALAT = 45.0       # satu alat
+BATAS_DETIK_API = 30.0        # satu panggilan ctx.api
+_NAMA_RX = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
+NAMA_ALAT_SERVER = ("web_search", "web_fetch")
+
+# Event yang boleh dipancarkan alat lewat ctx.emit / `_ui_events` (event lain milik inti).
+EVENT_ALAT = ("status", "grafik", "tabel", "sumber", "laporan")
+
+# Peran yang boleh melihat gaji per orang (keputusan owner no. 1).
+PERAN_GAJI = frozenset({"owner", "superadmin", "hr", "hr_manager", "manager_hr", "staff_hr"})
+
+# Server tools resmi (skill claude-api: versi 20260209 = penyaringan dinamis; JANGAN tambah
+# code_execution). Keputusan owner no. 2: ≤5 pencarian + ≤3 pengambilan halaman per pertanyaan.
+ALAT_SERVER = (
+    {"type": "web_search_20260209", "name": "web_search", "max_uses": 5,
+     "user_location": {"type": "approximate", "country": "ID", "timezone": "Asia/Jakarta"}},
+    {"type": "web_fetch_20260209", "name": "web_fetch", "max_uses": 3, "max_content_tokens": 20000},
+)
+
+
+class AlatError(Exception):
+    """Galat alat dengan pesan RAMAH berbahasa Indonesia (aman untuk model & layar).
+
+    `status` meniru kode HTTP (400 isian salah, 403 tanpa akses, 404 tidak ada, 5xx sistem).
+    """
+
+    def __init__(self, status: int = 400, pesan: str = "Alat gagal dijalankan."):
+        super().__init__(pesan)
+        try:
+            self.status = int(status)
+        except (TypeError, ValueError):
+            self.status = 500
+        self.pesan = str(pesan or "Alat gagal dijalankan.")
+
+    def __str__(self) -> str:
+        return self.pesan
+
+
+@dataclass(frozen=True)
+class Alat:
+    name: str
+    kind: str
+    label: str
+    description: str
+    input_schema: dict
+    domain: str
+    handler: Callable[..., Awaitable[Any]]
+    asal: str  # modul.fungsi (untuk mendeteksi nama ganda)
+
+    def untuk_api(self) -> dict:
+        return {"name": self.name, "description": self.description,
+                "input_schema": kanonik(self.input_schema)}
+
+
+_DAFTAR: dict[str, Alat] = {}
+_GALAT_MUAT: dict[str, str] = {}
+_SUDAH_MUAT = False
+
+
+def kanonik(obj: Any) -> Any:
+    """Salinan JSON dengan kunci terurut — serialisasi identik antar proses (cache prompt)."""
+    return json.loads(json.dumps(obj, sort_keys=True, ensure_ascii=False))
+
+
+def alat(*, name: str, kind: str, label: str, description: str, input_schema: dict,
+         domain: str = "umum"):
+    """Dekorator pendaftaran alat (Kontrak A). Lihat docstring modul."""
+    if not isinstance(name, str) or not _NAMA_RX.match(name) or name in NAMA_ALAT_SERVER:
+        raise ValueError(f"Nama alat tidak sah: {name!r} (snake_case, 3–64 huruf, bukan nama alat server)")
+    if kind not in KINDS:
+        raise ValueError(f"Jenis alat {name}: {kind!r} bukan salah satu dari {KINDS}")
+    if domain not in DOMAINS:
+        raise ValueError(f"Domain alat {name}: {domain!r} bukan salah satu dari {DOMAINS}")
+    if not (isinstance(label, str) and label.strip()) or not (isinstance(description, str) and description.strip()):
+        raise ValueError(f"Alat {name}: label dan description wajib diisi")
+    if not isinstance(input_schema, dict) or input_schema.get("type") != "object":
+        raise ValueError(f"Alat {name}: input_schema wajib JSON Schema bertipe object")
+    try:
+        json.dumps(input_schema)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"Alat {name}: input_schema tidak bisa diubah ke JSON") from e
+
+    def _daftar(fn):
+        if not inspect.iscoroutinefunction(fn):
+            raise TypeError(f"Alat {name}: handler wajib `async def f(ctx, args)`")
+        asal = f"{fn.__module__}.{fn.__qualname__}"
+        lama = _DAFTAR.get(name)
+        if lama is not None and lama.asal != asal:
+            raise ValueError(f"Nama alat '{name}' sudah dipakai oleh {lama.asal}")
+        _DAFTAR[name] = Alat(name=name, kind=kind, label=label.strip(), description=description.strip(),
+                             input_schema=input_schema, domain=domain, handler=fn, asal=asal)
+        return fn
+
+    return _daftar
+
+
+def muat_semua_alat(paksa: bool = False) -> dict[str, str]:
+    """Impor setiap modul di `core/asisten_ai/alat/` (urut nama). Return {modul: galat} yang gagal.
+
+    Modul yang rusak dicatat dan dilewati supaya satu alat tidak mematikan seluruh chat.
+    """
+    global _SUDAH_MUAT
+    if _SUDAH_MUAT and not paksa:
+        return dict(_GALAT_MUAT)
+    pkg = importlib.import_module("core.asisten_ai.alat")
+    for m in sorted(pkgutil.iter_modules(pkg.__path__), key=lambda m: m.name):
+        if m.name.startswith("_"):
+            continue
+        nama = f"{pkg.__name__}.{m.name}"
+        try:
+            importlib.import_module(nama)
+            _GALAT_MUAT.pop(m.name, None)
+        except Exception as e:  # noqa: BLE001 — modul alat pihak lain tidak boleh mematikan chat
+            log.exception("Modul alat Asisten AI gagal dimuat: %s", nama)
+            _GALAT_MUAT[m.name] = f"{type(e).__name__}: {str(e)[:200]}"
+    _SUDAH_MUAT = True
+    return dict(_GALAT_MUAT)
+
+
+def daftar_alat(kinds=KINDS_TAHAP_A) -> list[Alat]:
+    muat_semua_alat()
+    return sorted((a for a in _DAFTAR.values() if a.kind in kinds), key=lambda a: a.name)
+
+
+def cari_alat(name: str, kinds=KINDS_TAHAP_A) -> Optional[Alat]:
+    muat_semua_alat()
+    a = _DAFTAR.get(name)
+    return a if a is not None and a.kind in kinds else None
+
+
+def tools_untuk_api(kinds=KINDS_TAHAP_A, *, eager: bool = True, server: bool = True) -> list[dict]:
+    """Daftar `tools` untuk Messages API: alat klien urut nama, lalu web_search & web_fetch.
+
+    `eager_input_streaming` dipasang untuk alat klien (skill: aturan bawaan permintaan streaming);
+    karena server tidak lagi memvalidasi isian, inti memvalidasi sendiri (`periksa_skema`).
+    """
+    out = []
+    for a in daftar_alat(kinds):
+        d = a.untuk_api()
+        if eager:
+            d["eager_input_streaming"] = True
+        out.append(d)
+    if server:
+        out += [kanonik(s) for s in ALAT_SERVER]
+    return out
+
+
+def label_alat(name: str) -> str:
+    if name == "web_search":
+        return "Mencari di web"
+    if name == "web_fetch":
+        return "Membuka halaman web"
+    a = _DAFTAR.get(name)
+    return a.label if a else f"Menjalankan {name.replace('_', ' ')}"
+
+
+# ── Validasi isian (subset JSON Schema yang dipakai alat) ────────────────────
+_TIPE = {
+    "string": lambda v: isinstance(v, str),
+    "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+    "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v),
+    "boolean": lambda v: isinstance(v, bool),
+    "array": lambda v: isinstance(v, list),
+    "object": lambda v: isinstance(v, dict),
+    "null": lambda v: v is None,
+}
+
+
+def periksa_skema(schema: dict, value: Any, path: str = "isian", _errs: Optional[list] = None) -> list[str]:
+    """Validasi ringan (tanpa dependensi): type, enum, const, required, properties,
+    additionalProperties, items, min/maxItems, min/maxLength, minimum/maximum, pattern, anyOf/oneOf.
+    Return daftar galat (≤ 8) berbahasa Indonesia; kosong = sah."""
+    errs = [] if _errs is None else _errs
+    if len(errs) >= 8 or not isinstance(schema, dict):
+        return errs
+    for kunci in ("anyOf", "oneOf"):
+        if kunci in schema:
+            if not any(not periksa_skema(s, value, path) for s in schema[kunci]):
+                errs.append(f"{path}: tidak cocok dengan pilihan bentuk yang sah")
+            return errs
+    t = schema.get("type")
+    if t is not None:
+        tipe = t if isinstance(t, list) else [t]
+        if not any(_TIPE.get(x, lambda v: True)(value) for x in tipe):
+            errs.append(f"{path}: harus bertipe {'/'.join(tipe)}")
+            return errs
+    if "enum" in schema and value not in schema["enum"]:
+        errs.append(f"{path}: harus salah satu dari {schema['enum']}")
+    if "const" in schema and value != schema["const"]:
+        errs.append(f"{path}: harus {schema['const']!r}")
+    if isinstance(value, str):
+        if "minLength" in schema and len(value) < schema["minLength"]:
+            errs.append(f"{path}: minimal {schema['minLength']} karakter")
+        if "maxLength" in schema and len(value) > schema["maxLength"]:
+            errs.append(f"{path}: maksimal {schema['maxLength']} karakter")
+        if "pattern" in schema and not re.search(schema["pattern"], value):
+            errs.append(f"{path}: format tidak sesuai")
+    if _TIPE["number"](value):
+        if "minimum" in schema and value < schema["minimum"]:
+            errs.append(f"{path}: minimal {schema['minimum']}")
+        if "maximum" in schema and value > schema["maximum"]:
+            errs.append(f"{path}: maksimal {schema['maximum']}")
+    if isinstance(value, list):
+        if "minItems" in schema and len(value) < schema["minItems"]:
+            errs.append(f"{path}: minimal {schema['minItems']} butir")
+        if "maxItems" in schema and len(value) > schema["maxItems"]:
+            errs.append(f"{path}: maksimal {schema['maxItems']} butir")
+        if isinstance(schema.get("items"), dict):
+            for i, v in enumerate(value):
+                periksa_skema(schema["items"], v, f"{path}[{i}]", errs)
+                if len(errs) >= 8:
+                    break
+    if isinstance(value, dict):
+        props = schema.get("properties") or {}
+        for r in schema.get("required") or []:
+            if r not in value:
+                errs.append(f"{path}.{r}: wajib diisi")
+        extra = schema.get("additionalProperties", True)
+        for k, v in value.items():
+            if k in props:
+                periksa_skema(props[k], v, f"{path}.{k}", errs)
+            elif extra is False:
+                errs.append(f"{path}.{k}: tidak dikenal")
+            elif isinstance(extra, dict):
+                periksa_skema(extra, v, f"{path}.{k}", errs)
+            if len(errs) >= 8:
+                break
+    return errs
+
+
+# ── Konteks alat ─────────────────────────────────────────────────────────────
+class _Selesai:
+    """Nilai kembali `ctx.emit`: bisa dipanggil biasa ATAU di-`await` (keduanya aman)."""
+
+    __slots__ = ()
+
+    def __await__(self):
+        return iter(())
+
+
+_SELESAI = _Selesai()
+
+_PII_KEY_RX = re.compile(
+    r"(buyer|customer|pembeli|penerima|recipient|receiver|shipping_?name|nama_?kirim|alamat|address|"
+    r"phone|telepon|telp|no_?hp|handphone|whatsapp|\bwa\b|email|\bnik\b|ktp|username)")
+
+
+def _pesan_status(status: int, detail: Any) -> str:
+    """Pesan ramah untuk respons non-2xx dari endpoint aplikasi (tanpa jejak teknis)."""
+    teks = ""
+    if isinstance(detail, str):
+        teks = detail.strip()
+    elif isinstance(detail, dict):
+        teks = str(detail.get("detail") or detail.get("message") or detail.get("error") or "").strip()
+    elif isinstance(detail, list) and status == 422:
+        teks = ""
+    aman = bool(teks) and len(teks) <= 240 and "Traceback" not in teks and "\n" not in teks
+    # Detail bawaan FastAPI/Starlette berbahasa Inggris tidak diteruskan.
+    if aman and re.match(r"^(not found|forbidden|unauthorized|method not allowed|internal server error)\b",
+                         teks, re.IGNORECASE):
+        aman = False
+    if status == 401:
+        return "Sesi login sudah berakhir. Muat ulang halaman lalu masuk lagi."
+    if status == 403:
+        return "Akun ini tidak punya akses ke data tersebut." + (f" ({teks})" if aman else "")
+    if status == 404:
+        return teks if aman else "Data yang diminta tidak ditemukan."
+    if status in (400, 409, 422):
+        return teks if aman else "Permintaan data tidak sah (periksa periode, toko, atau isian lain)."
+    if status == 429:
+        return "Sistem sedang sibuk. Coba lagi sebentar lagi."
+    if status >= 500:
+        return "Sistem sedang bermasalah saat membaca data ini."
+    return teks if aman else f"Permintaan data gagal (kode {status})."
+
+
+def _bersih_params(params: Optional[dict]) -> Optional[dict]:
+    if not params:
+        return None
+    out = {}
+    for k, v in params.items():
+        if v is None:
+            continue
+        if isinstance(v, bool):
+            out[k] = "true" if v else "false"
+        elif isinstance(v, (date, datetime)):
+            out[k] = v.isoformat()
+        else:
+            out[k] = v
+    return out
+
+
+class AlatContext:
+    """Konteks yang diterima setiap handler alat (`ctx`).
+
+    Atribut: `user` (dict dari require_auth), `cv` ("DA" | "SMU" | "ALL"), `today` (tanggal WIB),
+    `alat_id` (id panggilan alat saat ini, bila ada), `sesi_id`, `db`, `samaran` (Pseudonymizer bersama satu giliran).
+    Metode: `api`, `emit`, `mask`.
+    """
+
+    def __init__(self, *, user: dict, cv: str, today: date, token: Optional[str] = None, app=None,
+                 emit: Optional[Callable[[str, dict], None]] = None,
+                 klien_api: Optional[Callable[[], Any]] = None, alat_id: Optional[str] = None,
+                 sesi_id: Optional[str] = None, db=None):
+        self.user = dict(user or {})
+        self.sesi_id = sesi_id
+        self.db = db
+        self.cv = cv
+        self.today = today
+        self.alat_id = alat_id
+        self._token = token
+        self._app = app
+        self._emit_fn = emit
+        self._klien_api = klien_api
+        self._bersama = {"klien": None}
+
+    # — identitas —
+    @property
+    def peran(self) -> str:
+        return str(self.user.get("role") or "").lower()
+
+    @property
+    def samaran(self):
+        """Satu Pseudonymizer bersama untuk semua alat dalam satu giliran (kode samaran konsisten)."""
+        ps = self._bersama.get("samaran")
+        if ps is None:
+            from services.ai.privacy import Pseudonymizer
+            ps = self._bersama["samaran"] = Pseudonymizer()
+        return ps
+
+    @property
+    def boleh_gaji(self) -> bool:
+        return self.peran in PERAN_GAJI
+
+    def untuk_alat(self, alat_id: Optional[str]) -> "AlatContext":
+        """Salinan untuk satu panggilan alat (klien HTTP dipakai bersama)."""
+        c = AlatContext(user=self.user, cv=self.cv, today=self.today, token=self._token, app=self._app,
+                        emit=self._emit_fn, klien_api=self._klien_api, alat_id=alat_id,
+                        sesi_id=self.sesi_id, db=self.db)
+        c._bersama = self._bersama
+        return c
+
+    # — panggilan endpoint aplikasi —
+    def _klien(self):
+        if self._bersama["klien"] is None:
+            if self._klien_api is not None:
+                self._bersama["klien"] = self._klien_api()
+            else:
+                if self._app is None:
+                    raise AlatError(500, "Alat tidak bisa membaca data: aplikasi tidak tersedia.")
+                import httpx  # lazy: CI tidak memasang httpx; image backend memasangnya
+                self._bersama["klien"] = httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=self._app), base_url="http://asisten-ai.internal",
+                    timeout=BATAS_DETIK_API)
+        return self._bersama["klien"]
+
+    async def api(self, method: str, path: str, params: Optional[dict] = None, json: Any = None, *,
+                  headers: Optional[dict] = None, timeout: Optional[float] = None) -> Any:
+        """Panggil endpoint aplikasi SENDIRI dalam proses dengan token pengguna + header X-CV.
+
+        Return JSON hasil parse. Respons non-2xx → `AlatError(status, pesan ramah)`.
+        `X-CV: ALL` hanya dikirim untuk GET (penjaga CV menolak tulis dengan Gabungan).
+        """
+        method = (method or "GET").upper()
+        if not isinstance(path, str) or not path.startswith("/api/"):
+            raise AlatError(400, "Alat hanya boleh membaca endpoint aplikasi (/api/...).")
+        if not self._token:
+            raise AlatError(401, _pesan_status(401, None))
+        hdr = {"Authorization": f"Bearer {self._token}", "Accept": "application/json",
+               "X-Asisten-AI": "1"}
+        if self.cv in ("DA", "SMU") or (self.cv == "ALL" and method == "GET"):
+            hdr["X-CV"] = self.cv
+        for k, v in (headers or {}).items():
+            if str(k).lower() not in ("authorization", "x-cv", "cookie"):
+                hdr[k] = v
+        kw: dict = {"params": _bersih_params(params), "headers": hdr,
+                    "timeout": timeout or BATAS_DETIK_API}
+        if json is not None:
+            kw["json"] = json
+        try:
+            resp = await self._klien().request(method, path, **kw)
+        except AlatError:
+            raise
+        except asyncio.TimeoutError as e:
+            raise AlatError(504, "Sistem terlalu lama menjawab permintaan data ini.") from e
+        except Exception as e:  # noqa: BLE001 — galat transport/handler tidak boleh bocor mentah
+            if "Timeout" in type(e).__name__:
+                raise AlatError(504, "Sistem terlalu lama menjawab permintaan data ini.") from e
+            log.warning("ctx.api %s %s gagal: %s", method, path, type(e).__name__)
+            raise AlatError(502, "Sistem gagal membaca data ini.") from e
+        status = int(getattr(resp, "status_code", 500))
+        if status >= 400:
+            try:
+                detail = resp.json()
+            except Exception:  # noqa: BLE001
+                detail = None
+            raise AlatError(status, _pesan_status(status, detail))
+        if status == 204:
+            return None
+        try:
+            return resp.json()
+        except Exception as e:  # noqa: BLE001
+            raise AlatError(502, "Jawaban sistem tidak bisa dibaca.") from e
+
+    async def tutup(self) -> None:
+        k = self._bersama.get("klien")
+        self._bersama["klien"] = None
+        if k is not None and hasattr(k, "aclose"):
+            try:
+                await k.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+
+    # — event UI —
+    def emit(self, event: str, data: dict):
+        """Pancarkan event UI (status | grafik | tabel | sumber | laporan). Boleh di-`await` atau tidak."""
+        if event not in EVENT_ALAT:
+            log.warning("ctx.emit: event %r tidak boleh dipancarkan alat (diabaikan)", event)
+            return _SELESAI
+        if self._emit_fn is not None:
+            self._emit_fn(event, data if isinstance(data, dict) else {"data": data})
+        return _SELESAI
+
+    # — privasi —
+    def mask(self, obj: Any, *, gaji: Optional[bool] = None, teks: bool = True) -> Any:
+        """Samarkan data pribadi sebelum dikembalikan ke model (pakai `services/ai/privacy.py`).
+
+        * kunci data pribadi pembeli (nama pembeli/penerima, HP, alamat, email, NIK) dibuang;
+        * kunci gaji/upah/kasbon per orang dibuang KECUALI peran owner/superadmin/SDM
+          (`gaji=True/False` memaksa);
+        * `teks=True`: email, nomor HP, dan deret angka panjang di dalam teks disamarkan.
+        """
+        from services.ai.privacy import mask_pii, strip_sensitive
+        boleh = self.boleh_gaji if gaji is None else bool(gaji)
+        data = obj if boleh else strip_sensitive(obj)
+
+        def _jalan(v):
+            if isinstance(v, dict):
+                return {k: _jalan(x) for k, x in v.items() if not _PII_KEY_RX.search(str(k).lower())}
+            if isinstance(v, list):
+                return [_jalan(x) for x in v]
+            if isinstance(v, tuple):
+                return [_jalan(x) for x in v]
+            if teks and isinstance(v, str):
+                return mask_pii(v)
+            return v
+        return _jalan(data)
+
+
+# ── Eksekusi ─────────────────────────────────────────────────────────────────
+@dataclass
+class HasilAlat:
+    tool_use_id: str
+    nama: str
+    isi: str                     # teks tool_result untuk model
+    is_error: bool = False
+    pesan: Optional[str] = None  # pesan ramah untuk event `alat` (gagal)
+    sumber: list = field(default_factory=list)
+
+    def untuk_api(self) -> dict:
+        d = {"type": "tool_result", "tool_use_id": self.tool_use_id, "content": self.isi}
+        if self.is_error:
+            d["is_error"] = True
+        return d
+
+
+def _json_default(o):
+    if isinstance(o, (datetime, date)):
+        return o.isoformat()
+    if isinstance(o, Decimal):
+        return float(o)
+    if isinstance(o, (set, frozenset, tuple)):
+        return list(o)
+    return str(o)
+
+
+def serialisasi(hasil: Any) -> str:
+    return json.dumps(hasil, ensure_ascii=False, default=_json_default, separators=(",", ":"))
+
+
+def potong(teks: str, batas: int = BATAS_HASIL) -> str:
+    if len(teks) <= batas:
+        return teks
+    catatan = (f"\n…[DIPOTONG: hasil alat ini {len(teks):,} karakter; hanya {batas:,} karakter pertama "
+               "yang dikirim, jadi data di atas TIDAK lengkap. Persempit permintaan (periode, toko, "
+               "atau kategori) bila butuh sisanya, dan jangan menebak bagian yang terpotong.]")
+    return teks[: max(0, batas - len(catatan))] + catatan
+
+
+def _sumber_dari(v: Any) -> list[dict]:
+    out = []
+    for x in (v if isinstance(v, list) else [v]):
+        if isinstance(x, str) and x.strip():
+            out.append({"jenis": "data", "label": x.strip()[:120]})
+        elif isinstance(x, dict) and str(x.get("label") or "").strip():
+            item = {"jenis": "web" if x.get("jenis") == "web" else "data",
+                    "label": str(x["label"]).strip()[:120]}
+            if x.get("url"):
+                item["url"] = str(x["url"])
+            out.append(item)
+    return out
+
+
+def olah_hasil(tool_use_id: str, nama: str, hasil: Any, ctx: AlatContext) -> HasilAlat:
+    """Buang `_sumber`/`_ui_events`, pancarkan event-nya, serialisasi + potong hasil."""
+    sumber: list = []
+    if isinstance(hasil, dict):
+        hasil = dict(hasil)
+        sumber = _sumber_dari(hasil.pop("_sumber", None))
+        events = hasil.pop("_ui_events", None) or []
+        for ev in events if isinstance(events, list) else []:
+            if isinstance(ev, dict) and ev.get("event") in EVENT_ALAT:
+                ctx.emit(ev["event"], ev.get("data") or {})
+            else:
+                log.warning("Alat %s: _ui_events berisi event tidak sah (diabaikan)", nama)
+    elif hasil is None:
+        hasil = {"ok": True}
+    else:
+        hasil = {"hasil": hasil}
+    if sumber:
+        ctx.emit("sumber", {"item": sumber})
+    return HasilAlat(tool_use_id=tool_use_id, nama=nama, isi=potong(serialisasi(hasil)), sumber=sumber)
+
+
+def _gagal(tool_use_id: str, nama: str, pesan: str, pesan_layar: Optional[str] = None) -> HasilAlat:
+    return HasilAlat(tool_use_id=tool_use_id, nama=nama, isi=pesan, is_error=True,
+                     pesan=pesan_layar or pesan)
+
+
+async def jalankan_satu(tool_use_id: str, nama: str, args: Any, ctx: AlatContext, *,
+                        batas_detik: float = BATAS_DETIK_ALAT) -> HasilAlat:
+    """Jalankan SATU alat klien dengan validasi isian dan galat yang ramah."""
+    a = cari_alat(nama)
+    if a is None:
+        return _gagal(tool_use_id, nama,
+                      f"Alat '{nama}' belum tersedia di sistem ini. Jawab tanpa alat ini dan beri tahu "
+                      "pengguna bahwa data tersebut belum bisa dibaca Asisten AI.",
+                      "Alat ini belum tersedia")
+    if not isinstance(args, dict):
+        return _gagal(tool_use_id, nama, json.dumps({"INVALID_JSON": serialisasi(args)}, ensure_ascii=False),
+                      "Isian alat tidak sah")
+    errs = periksa_skema(a.input_schema, args)
+    if errs:
+        return _gagal(tool_use_id, nama, "Isian alat tidak sah: " + "; ".join(errs) + ". Perbaiki lalu coba lagi.",
+                      "Isian alat tidak sah")
+    c = ctx.untuk_alat(tool_use_id)
+    try:
+        hasil = await asyncio.wait_for(a.handler(c, args), timeout=batas_detik)
+    except AlatError as e:
+        return _gagal(tool_use_id, nama, e.pesan)
+    except asyncio.TimeoutError:
+        return _gagal(tool_use_id, nama, "Alat terlalu lama berjalan dan dihentikan. Persempit permintaan.",
+                      "Alat terlalu lama berjalan")
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        log.exception("Alat Asisten AI %s gagal", nama)
+        return _gagal(tool_use_id, nama, "Terjadi kesalahan saat menjalankan alat ini.")
+    try:
+        return olah_hasil(tool_use_id, nama, hasil, c)
+    except Exception:  # noqa: BLE001
+        log.exception("Hasil alat %s tidak bisa diolah", nama)
+        return _gagal(tool_use_id, nama, "Hasil alat ini tidak bisa dibaca sistem.")
+
+
+async def jalankan_banyak(panggilan: list[tuple[str, str, Any]], ctx: AlatContext, *,
+                          saat_mulai: Optional[Callable[[str, str], None]] = None,
+                          saat_selesai: Optional[Callable[[HasilAlat], None]] = None) -> list[HasilAlat]:
+    """Jalankan panggilan alat satu giliran: alat `read` BERSAMAAN, alat `ui` berurutan sesudahnya
+    (urutan grafik/tabel di layar = urutan panggilan model). Hasil dikembalikan sesuai urutan input."""
+    hasil: dict[int, HasilAlat] = {}
+
+    async def _satu(i, tid, nama, args):
+        if saat_mulai:
+            saat_mulai(tid, nama)
+        h = await jalankan_satu(tid, nama, args, ctx)
+        hasil[i] = h
+        if saat_selesai:
+            saat_selesai(h)
+
+    baca, lain = [], []
+    for i, (tid, nama, args) in enumerate(panggilan):
+        a = cari_alat(nama)
+        (baca if a is not None and a.kind == KIND_BACA else lain).append((i, tid, nama, args))
+    if baca:
+        await asyncio.gather(*(_satu(*p) for p in baca))
+    for p in lain:
+        await _satu(*p)
+    return [hasil[i] for i in range(len(panggilan))]
+
+
+def id_pendek(awalan: str) -> str:
+    return f"{awalan}-{uuid.uuid4().hex[:10]}"

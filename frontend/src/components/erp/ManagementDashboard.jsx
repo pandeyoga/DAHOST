@@ -9,8 +9,9 @@ import {
 } from 'recharts';
 import {
   TrendingUp, Package, Factory, Banknote, AlertTriangle, Clock, Truck, Users,
-  Calendar, UserCheck, Zap, Activity, TrendingDown,
+  Calendar, UserCheck, Zap, Activity, TrendingDown, Sparkles,
 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import {
   StatCard, ChartCard, GlassTooltip, HeroCrystalCard, CHART_PALETTE,
 } from './dashboardAtoms';
@@ -116,15 +117,17 @@ export default function ManagementDashboard({ token, onNavigate, onModuleChange 
           <div className="flex items-center gap-2 flex-wrap">
             <PeriodPicker value={period} onChange={setPeriod} compareEnabled={true} testId="mgmt-dashboard-period" />
             {(onModuleChange || onNavigate) && (
-              <button
+              <Button
                 // 2026-11-02: dulu `drill(...)()` → navigasi DIPANGGIL SAAT RENDER sehingga
                 // Dashboard Eksekutif langsung terlempar ke AI Business dan tak bisa dibuka.
-                onClick={drill('ai-business-dashboard')}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-purple-600/80 hover:bg-purple-600 text-foreground rounded-lg shadow-sm transition-colors"
-                title="Buka AI Business Intelligence"
+                // 2026-11-08 (Asisten AI Tahap A): tombol emoji → Button standar, langsung ke 'asisten-ai'.
+                onClick={drill('asisten-ai')}
+                variant="outline"
+                title="Buka Asisten AI"
+                data-testid="mgmt-buka-asisten-ai"
               >
-                🤖 AI Business
-              </button>
+                <Sparkles className="w-4 h-4" /> Buka Asisten AI
+              </Button>
             )}
           </div>
         }

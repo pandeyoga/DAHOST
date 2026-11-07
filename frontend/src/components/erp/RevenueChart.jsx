@@ -1,12 +1,8 @@
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { formatAngkaRingkas } from '@/lib/format';
 
-const fmtCompact = (n) => {
-  if (!n) return '0';
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}M`;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}jt`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}rb`;
-  return n.toLocaleString('id-ID');
-};
+// 2026-11-08: pemformat sumbu dipindah ke lib/format (dipakai juga grafik Asisten AI) — "1,5 jt", bukan "1.5jt".
+const fmtCompact = formatAngkaRingkas;
 
 const fmtFull = (n) => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
 const fmtDateShort = (d) => {

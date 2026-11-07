@@ -13,8 +13,8 @@ import uuid
 
 from database import get_db
 from auth import require_auth, serialize_doc
-from core import marketing_sales_shape as _shape
 from core import marketing_cycle as _cycle
+from core import ukuran_penjualan as _ukuran
 from core import marketing_returns as _ret
 from core import marketing_account_scope as _scope
 from utils.waktu import now_wib
@@ -189,6 +189,9 @@ async def monthly_summary(
     total_rev_actual = 0.0
     total_ord_target = 0
     total_ord_actual = 0
+    # 2026-11-07 (Asisten AI) — aktual lewat SATU definisi omzet (`core.ukuran_penjualan`):
+    # rekap harian tanpa data contoh, satu dokumen per (toko, tanggal).
+    _oms = await _ukuran.ringkas_omzet(db, accounts, date_from, date_to)
 
     for acc in accounts:
         acc_id = acc["id"]
@@ -198,15 +201,10 @@ async def monthly_summary(
             {"account_id": acc_id, "year": y, "month": m}, {"_id": 0}
         )
 
-        # Actual sales (total type only)
-        sales = await db.marketing_sales_data.find(
-            {"account_id": acc_id, "date": {"$gte": date_from, "$lte": date_to}, "revenue_type": "total"},
-            {"_id": 0}      # F0.3 — dokumen lama menaruh `revenue` di akar
-        ).to_list(500)
-
-        rev_actual = sum(_shape.read_metrics(s).get("revenue", 0) for s in sales)
-        ord_actual = sum(_shape.read_metrics(s).get("orders", 0) for s in sales)
-        sales_days = len({s["date"] for s in sales})
+        _act = _oms["per_toko"].get(acc_id) or _ukuran.jumlahkan([])
+        rev_actual = _act["omzet"]
+        ord_actual = _act["pesanan"]
+        sales_days = _act["hari_ada_data"]
 
         # Task stats for month
         task_count = await db.marketing_tasks.count_documents({
@@ -650,10 +648,10 @@ async def creator_scorecard(
         oq["account_id"] = acc_filter
     order_by_creator: dict = {}
     for o in await db.marketing_orders.find(
-            oq, {"_id": 0, "creator_id": 1, "status": 1, "revenue_product": 1,
+            oq, {"_id": 0, "creator_id": 1, "revenue_product": 1,
                  "order_amount": 1, "items": 1, "total_payment": 1,
-                 "quantity": 1}).to_list(30000):
-        if (o.get("status") or "") in _cycle.EXCLUDED_FOR_REVENUE:
+                 "quantity": 1, **_ukuran.PROYEKSI_STATUS}).to_list(30000):
+        if not _ukuran.dihitung_omzet(o):   # 2026-11-07: satu definisi omzet
             continue
         b = order_by_creator.setdefault(o.get("creator_id"),
                                         {"order_revenue": 0.0, "order_count": 0,
@@ -905,7 +903,7 @@ async def creator_detail(
     for o in await db.marketing_orders.find(oq, {"_id": 0}).sort("order_date", 1).to_list(limit):
         rev = _rollup.order_revenue_product(o)
         status = (o.get("status") or "")
-        excluded = status in _cycle.EXCLUDED_FOR_REVENUE
+        excluded = not _ukuran.dihitung_omzet(o)   # 2026-11-07: satu definisi omzet
         if excluded:
             o_tot["excluded_count"] += 1
             o_tot["excluded_revenue"] += rev

@@ -3,6 +3,10 @@
 Prinsip: jawab dari basis pengetahuan statis lebih dulu (gratis & instan).
 AI (Claude) hanya dipanggil bila basis pengetahuan tidak yakin DAN kunci
 `ANTHROPIC_API_KEY` tersedia. Tanpa kunci, asisten tetap berguna penuh.
+
+2026-11-07 (Asisten AI Tahap A): `/ask` multi-giliran — saat AI dipanggil, 10 pesan terakhir
+sesi yang sama (pertanyaan + jawaban, termasuk jawaban basis pengetahuan) ikut dikirim supaya
+pertanyaan lanjutan ("lalu langkah berikutnya?") dipahami.
 """
 from __future__ import annotations
 
@@ -23,6 +27,8 @@ router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 
 ASSISTANT_NAME = "Asisten ERP CV. Dewi Aditya"
 COLL = "assistant_chat_history"
+RIWAYAT_GILIRAN = 10   # pesan terakhir sesi yang sama yang dikirim ke AI (multi-giliran)
+MAKS_KARAKTER_GILIRAN = 2000
 
 SYSTEM_PROMPT = (
     "Kamu adalah Asisten ERP CV. Dewi Aditya, sebuah perusahaan garmen di Indonesia. "
@@ -104,12 +110,38 @@ async def ask(request: Request):
             "related": res.get("related", []), "created_at": now}
 
 
+async def _riwayat_sesi(db, session_id, user_id, limit: int = RIWAYAT_GILIRAN) -> list:
+    """`limit` pesan terakhir sesi ini (milik pengguna sendiri), urut lama → baru, untuk AI."""
+    if not session_id or not user_id:
+        return []
+    rows = await db[COLL].find(
+        {"session_id": session_id, "user_id": user_id}, {"_id": 0, "role": 1, "content": 1, "created_at": 1},
+    ).sort("created_at", -1).limit(limit).to_list(limit)
+    # pasangan tanya-jawab ditulis dengan created_at sama → pertanyaan didahulukan
+    rows.sort(key=lambda r: (str(r.get("created_at") or ""), 0 if r.get("role") == "user" else 1))
+    out = []
+    for r in rows[-limit:]:
+        role = r.get("role")
+        text = str(r.get("content") or "").strip()
+        if role in ("user", "assistant") and text:
+            out.append({"role": role, "content": text[:MAKS_KARAKTER_GILIRAN]})
+    return out
+
+
 async def _try_ai(db, question, portal, module, session_id, user):
-    """Panggil Claude hanya bila basis pengetahuan gagal. Return (reply, error_note)."""
+    """Panggil Claude hanya bila basis pengetahuan gagal. Return (reply, error_note).
+
+    Multi-giliran: 10 pesan terakhir sesi yang sama ikut dikirim (`history`).
+    """
     from services.ai import call_claude, LLMUnavailable
     ctx = kb.ai_context(portal)
     where = f"Pengguna sedang membuka portal '{portal or 'tidak diketahui'}'" + (
         f", modul '{module}'." if module else ".")
+    try:
+        history = await _riwayat_sesi(db, session_id, (user or {}).get("id"))
+    except Exception:  # pragma: no cover — riwayat hanya pelengkap
+        log.warning("assistant: riwayat sesi tidak terbaca")
+        history = []
     try:
         reply = await call_claude(
             system_message=f"{SYSTEM_PROMPT}\n\nKONTEKS SISTEM:\n{ctx}",
@@ -118,6 +150,7 @@ async def _try_ai(db, question, portal, module, session_id, user):
             db=db,
             tier="light",
             user_id=(user or {}).get("id"),
+            history=history,
         )
         return (reply or "").strip(), None
     except LLMUnavailable as e:

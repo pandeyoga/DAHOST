@@ -8,6 +8,7 @@ import { MoneyInput } from '@/components/ui/money-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
+import { StatTile } from './moduleAtoms';
 import {
   DollarSign, Activity, AlertTriangle, CheckCircle2, RefreshCw, Loader2,
   TrendingUp, Zap, Clock, Brain, BarChart3, List, Sparkles, Settings, Save, Power
@@ -42,6 +43,22 @@ function fmtUSD(v) {
 function fmtNum(v) {
   if (v == null) return '0';
   return Number(v).toLocaleString('id-ID');
+}
+
+// 2026-11-08 (Asisten AI Tahap A): token prompt caching & pencarian web dicatat backend (`cache_read_tokens`,
+// `cache_write_tokens`, `web_search_requests`). Ditampilkan hanya bila ringkasan membawanya (data lama tanpa field).
+const CACHE_FIELDS = ['cache_read_tokens', 'cache_write_tokens', 'web_search_requests'];
+const adaCache = (d) => !!d && CACHE_FIELDS.some((k) => d[k] !== undefined && d[k] !== null);
+
+function CacheWebTiles({ data, testId }) {
+  if (!adaCache(data)) return null;
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3" data-testid={testId}>
+      <StatTile label="Token dibaca dari cache" value={fmtNum(data.cache_read_tokens)} sub="tarif ±10% token masuk biasa" testId={`${testId}-baca`} />
+      <StatTile label="Token ditulis ke cache" value={fmtNum(data.cache_write_tokens)} sub="tarif ±125% token masuk biasa" testId={`${testId}-tulis`} />
+      <StatTile label="Pencarian web" value={fmtNum(data.web_search_requests)} sub="$10 per 1.000 pencarian" testId={`${testId}-web`} />
+    </div>
+  );
 }
 
 export default function AIUsageMonitorModule({ token }) {
@@ -247,6 +264,7 @@ export default function AIUsageMonitorModule({ token }) {
                 <StatCard label="Failed" value={fmtNum(today.failed_calls)} icon={AlertTriangle} color="amber" />
                 <StatCard label="Tokens" value={fmtNum(today.total_tokens)} icon={Zap} color="indigo" />
               </div>
+              <CacheWebTiles data={today} testId="ai-usage-today-cache" />
 
               {today.top_features?.length > 0 ? (
                 <GlassCard className="p-6">
@@ -312,6 +330,7 @@ export default function AIUsageMonitorModule({ token }) {
                 <StatCard label="Failed" value={fmtNum(summary.overall.failed_calls)} icon={AlertTriangle} color="amber" small />
                 <StatCard label="Avg Latency" value={`${fmtNum(summary.overall.avg_latency_ms)}ms`} icon={Clock} color="indigo" small />
               </div>
+              <CacheWebTiles data={summary.overall} testId="ai-usage-summary-cache" />
 
               {summary.by_feature?.length > 0 && (
                 <GlassCard className="p-6">
