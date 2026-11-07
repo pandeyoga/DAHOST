@@ -75,9 +75,9 @@ function MasterSelect({ label, hint, value, onChange, rows, loading, placeholder
           <Loader2 className="w-4 h-4 animate-spin absolute right-8 top-3 text-muted-foreground" />
         )}
       </div>
-      {hint ? <p className="text-[11px] text-muted-foreground mt-1">{hint}</p> : null}
+      {hint ? <p className="text-xs text-muted-foreground mt-1">{hint}</p> : null}
       {!loading && rows.length === 0 && (
-        <p className="text-[11px] text-[hsl(var(--warning))] mt-1">
+        <p className="text-xs text-[hsl(var(--warning-text))] mt-1">
           Master masih kosong — lengkapi dulu di Master Data.
         </p>
       )}
