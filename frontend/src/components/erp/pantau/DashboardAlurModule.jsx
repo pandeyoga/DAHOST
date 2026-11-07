@@ -15,7 +15,7 @@ import {
   Badge, LoadingRows, RefreshButton, Section, n, pct, poStatusLabel, portalBusinessType, useApi,
 } from './pantauShared';
 
-const SEVERITY = { error: { label: 'Penting', tone: 'danger' }, warning: { label: 'Perhatian', tone: 'warning' }, info: { label: 'Info', tone: 'info' } };
+const SEVERITY = { error: { label: 'Penting', tone: 'danger' }, warning: { label: 'Perhatian', tone: 'warning' }, info: { label: 'Catatan', tone: 'info' } };
 
 /** Isi Dashboard sebagai props cetakan PageLayout — dipakai Dashboard Produksi dan tab alur Dashboard Maklon
  *  supaya keduanya identik (satu definisi). */
@@ -47,7 +47,12 @@ export function useDashboardAlur(props) {
         )}
       </>,
     children: loading && !data ? <Section><LoadingRows /></Section> : data && <>
-        <Section title="Alur barang" hint="Jumlah barang yang sedang berada di tiap tahap (PO berjalan)." testId="dash-alur">
+        <Section title="Alur barang" hint="Jumlah barang yang sedang berada di tiap tahap (PO berjalan)." testId="dash-alur"
+          unduh={{ namaBerkas: 'alur-barang', baris: data.alur || [], kolom: [
+            { label: 'Tahap', nilai: (s) => s.label }, { label: 'Pcs', nilai: (s) => Number(s.qty) || 0 },
+            { label: 'Dokumen', nilai: (s) => Number(s.docs) || 0 }, { label: 'Jenis dokumen', nilai: (s) => s.doc_label || '' },
+            { label: 'Catatan', nilai: (s) => s.note || '' },
+          ] }}>
           <Table data-testid="dash-alur-table">
             <TableHeader><TableRow>
               <TableHead>Tahap</TableHead><TableHead className="text-right">Pcs</TableHead>
@@ -74,7 +79,10 @@ export function useDashboardAlur(props) {
         )}
 
         {actions.length > 0 && (
-          <Section title="Perlu ditindaklanjuti" testId="dash-next-actions">
+          <Section title="Perlu ditindaklanjuti" testId="dash-next-actions" unduh={{ namaBerkas: 'perlu-ditindaklanjuti', baris: actions, kolom: [
+            { label: 'Hal', nilai: (a) => a.title || '' }, { label: 'Keterangan', nilai: (a) => a.description || '' },
+            { label: 'Tingkat', nilai: (a) => (SEVERITY[a.severity] || SEVERITY.info).label },
+          ] }}>
             <Table>
               <TableHeader><TableRow>
                 <TableHead>Hal</TableHead><TableHead>Tingkat</TableHead><TableHead className="text-right">Buka</TableHead>
@@ -92,7 +100,12 @@ export function useDashboardAlur(props) {
           </Section>
         )}
 
-        <Section title="PO paling lama tidak bergerak" hint="PO yang diam ≥ 7 hari biasanya menunggu kiriman bahan, setoran CMT, atau QC." testId="dash-aging">
+        <Section title="PO paling lama tidak bergerak" hint="PO yang diam ≥ 7 hari biasanya menunggu kiriman bahan, setoran CMT, atau QC." testId="dash-aging"
+          unduh={{ namaBerkas: 'po-tidak-bergerak', baris: data.aging || [], kolom: [
+            { label: 'PO', nilai: (a) => a.po_number }, { label: 'Pemesan', nilai: (a) => a.customer_name || '' },
+            { label: 'Vendor CMT', nilai: (a) => a.vendor_name || '' }, { label: 'Status', nilai: (a) => poStatusLabel(a.status) },
+            { label: 'Diam (hari)', nilai: (a) => Number(a.idle_days) || 0 },
+          ] }}>
           {data.aging.length === 0 ? (
             <EmptyState icon={CheckCircle2} title="Tidak ada PO berjalan" description="PO baru dibuat di menu PO." />
           ) : (

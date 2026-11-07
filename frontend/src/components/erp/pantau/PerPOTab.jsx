@@ -3,6 +3,7 @@
  * angka per tahap. Cari PO, vendor, seri, atau SKU; saring status (Selesai = LOLOS QC ≥ dipesan, bukan
  * sekadar diproduksi). Pengganti pohon kartu 4 tingkat Production Jobs.
  */
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Fragment, useEffect, useState } from 'react';
 import { AlertCircle, ClipboardList } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -49,7 +50,16 @@ export default function PerPOTab(props) {
             ...Object.entries(STATE_META).map(([k, m]) => ({ key: k, label: m.label, count: c[k] || 0 }))]} />
         <ScopeChips value={scope} onChange={setScope} testId="pantau-po-scope" />
       </>}
-      tools={<RefreshButton onClick={reload} loading={loading} testId="pantau-po-refresh" />}
+      tools={<><TombolUnduh namaBerkas="pantau-per-po" baris={rows} kolom={[
+          { label: 'PO', nilai: (r) => r.po_number }, { label: 'Pemesan', nilai: (r) => r.customer_name || '' },
+          { label: 'Vendor CMT', nilai: (r) => r.vendor_name || '' }, { label: 'Batas kirim', nilai: (r) => formatDateID(r.deadline, { fallback: '' }) },
+          { label: 'Dipesan', nilai: (r) => Number(r.ordered) || 0 }, { label: 'Potongan dikirim', nilai: (r) => Number(r.sent_cmt) || 0 },
+          { label: 'Diterima CMT', nilai: (r) => Number(r.material_received) || 0 }, { label: 'Diproduksi', nilai: (r) => Number(r.produced) || 0 },
+          { label: 'Di CMT', nilai: (r) => Number(r.di_cmt) || 0 }, { label: 'Lolos QC', nilai: (r) => Number(r.accepted) || 0 },
+          { label: 'Ditolak QC', nilai: (r) => Number(r.reject) || 0 }, { label: 'Dikirim/diserahkan', nilai: (r) => Number(r.dispatched) || 0 },
+          { label: 'Status', nilai: (r) => (STATE_META[r.state] || {}).label || '' },
+        ]} />
+        <RefreshButton onClick={reload} loading={loading} testId="pantau-po-refresh" /></>}
       summary={error && <Notice tone="danger" icon={AlertCircle}>{error}</Notice>}
       footer={rows.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}
     >

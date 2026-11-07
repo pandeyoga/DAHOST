@@ -3,6 +3,7 @@
  * (alasan lebih qty, tutup PO kurang, selisih kirim CMT / klien, laporan vendor). Kekurangan terhadap pesanan
  * baru dihitung setelah CMT selesai atau PO ditutup; selama berjalan, angka yang belum sampai bukan selisih.
  */
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Fragment, useMemo, useState } from 'react';
 import { AlertCircle, Scale } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -54,7 +55,15 @@ export default function SelisihBarisTab() {
             { key: 'tertunda', label: 'Menunggu tindakan', count: counts.tertunda },
             { key: '', label: 'Semua baris', count: all.length }]} />
       </>}
-      tools={<RefreshButton onClick={reload} loading={loading} testId="selisih-baris-refresh" />}
+      tools={<><TombolUnduh namaBerkas="selisih-per-baris-po" baris={rows} kolom={[
+          { label: 'PO', nilai: (r) => r.po_number || '' }, { label: 'Vendor', nilai: (r) => r.vendor_name || '' },
+          { label: 'SKU', nilai: (r) => r.sku || '' }, { label: 'Ukuran', nilai: (r) => r.size || '' }, { label: 'Warna', nilai: (r) => r.color || '' },
+          { label: 'No. seri', nilai: (r) => r.serial_number || '' }, { label: 'Dipesan', nilai: (r) => Number(r.ordered) || 0 },
+          { label: 'Bahan diterima CMT', nilai: (r) => Number(r.material_received) || 0 }, { label: 'Diproduksi', nilai: (r) => Number(r.produced) || 0 },
+          { label: 'Lolos QC', nilai: (r) => Number(r.accepted) || 0 }, { label: 'Hasil akhir', nilai: (r) => Number(r.final) || 0 },
+          { label: 'Selisih akhir', nilai: (r) => Number(r.final_gap) || 0 },
+        ]} />
+        <RefreshButton onClick={reload} loading={loading} testId="selisih-baris-refresh" /></>}
       summary={<>
         {error && <Notice tone="danger" icon={AlertCircle}>{error}</Notice>}
         {data && all.length > 0 && (

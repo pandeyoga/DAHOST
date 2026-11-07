@@ -3,6 +3,7 @@
  * untuk job jahit vendor itu beserta QC per job, job anak, tanda "diinput staf DA", dan PO yang belum
  * punya job (menunggu kiriman bahan). Pengganti kartu vendor di Tracking Produksi / Production Jobs.
  */
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Fragment, useMemo, useState } from 'react';
 import { AlertCircle, Factory } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -37,7 +38,15 @@ export default function PerVendorTab(props) {
         <SearchBox value={search} onChange={setSearch} placeholder="Cari vendor…" testId="pantau-vendor-search" />
         <ScopeChips value={scope} onChange={setScope} testId="pantau-vendor-scope" />
       </>}
-      tools={<RefreshButton onClick={reload} loading={loading} testId="pantau-vendor-refresh" />}
+      tools={<><TombolUnduh namaBerkas="pantau-per-vendor" baris={rows} kolom={[
+          { label: 'Vendor', nilai: (v) => v.vendor_name || '' }, { label: 'Kode', nilai: (v) => v.vendor_code || '' },
+          { label: 'PO', nilai: (v) => Number(v.po_count) || 0 }, { label: 'Dipesan', nilai: (v) => Number(v.ordered) || 0 },
+          { label: 'Potongan dikirim', nilai: (v) => Number(v.sent_cmt) || 0 }, { label: 'Diproduksi', nilai: (v) => Number(v.produced) || 0 },
+          { label: 'Di CMT', nilai: (v) => Number(v.di_cmt) || 0 }, { label: 'Lolos QC', nilai: (v) => Number(v.accepted) || 0 },
+          { label: 'Ditolak QC', nilai: (v) => Number(v.reject) || 0 }, { label: 'Dikirim/diserahkan', nilai: (v) => Number(v.dispatched) || 0 },
+          { label: 'Ditolak (%)', nilai: (v) => Number(v.reject_rate) || 0 },
+        ]} />
+        <RefreshButton onClick={reload} loading={loading} testId="pantau-vendor-refresh" /></>}
       summary={error && <Notice tone="danger" icon={AlertCircle}>{error}</Notice>}
       footer={rows.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}
     >

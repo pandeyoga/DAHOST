@@ -3,6 +3,7 @@
  * (hasil periksa bahan), kurang. Kiriman pengganti/tambahan ditandai terpisah dari kiriman normal.
  * Pengganti tab "Potongan masuk" Monitoring CMT (kini juga untuk PO internal).
  */
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Fragment, useMemo, useState } from 'react';
 import { AlertCircle, Truck } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -56,7 +57,14 @@ export default function KirimanCMTTab(props) {
           options={[{ key: '', label: 'Semua periksa' }, { key: 'belum', label: 'Belum diperiksa', count: counts.belum },
             { key: 'kurang', label: 'Ada kurang', count: counts.kurang }]} hideWhenEmpty={false} />
       </>}
-      tools={<RefreshButton onClick={reload} loading={loading} testId="pantau-kiriman-refresh" />}
+      tools={<><TombolUnduh namaBerkas="kiriman-ke-cmt-pantau" baris={rows} kolom={[
+          { label: 'Surat jalan', nilai: (b) => b.shipment_number || '' }, { label: 'No. SJ', nilai: (b) => b.delivery_note_number || '' },
+          { label: 'PO', nilai: (b) => b.po_number || '' }, { label: 'Vendor CMT', nilai: (b) => b.vendor_name || '' },
+          { label: 'Tanggal', nilai: (b) => formatDateID(b.shipment_date, { fallback: '' }) }, { label: 'Jenis', nilai: (b) => KIND_LABEL[b.kind] || b.kind || '' },
+          { label: 'Dikirim', nilai: (b) => Number(b.total_sent) || 0 }, { label: 'Diterima CMT', nilai: (b) => Number(b.total_received) || 0 },
+          { label: 'Kurang', nilai: (b) => Number(b.total_missing) || 0 },
+        ]} />
+        <RefreshButton onClick={reload} loading={loading} testId="pantau-kiriman-refresh" /></>}
       summary={<>
         {error && <Notice tone="danger" icon={AlertCircle}>{error}</Notice>}
         {data && all.length > 0 && (

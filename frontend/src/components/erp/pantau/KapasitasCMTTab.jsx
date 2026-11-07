@@ -4,6 +4,7 @@
  * setor nyata (pcs lolos QC per hari) dan cek order baru: pengganti Kapasitas di Analitik Produksi yang
  * memakai data lini/mesin yang sudah tidak dipakai (keputusan owner no. 11).
  */
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { useState } from 'react';
 import { AlertCircle, CheckCircle2, Gauge, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -45,7 +46,16 @@ export default function KapasitasCMTTab(props) {
     <PageLayout
       testId="pantau-kapasitas"
       title="Kapasitas CMT"
-      tools={<RefreshButton onClick={reload} loading={loading} testId="pantau-kapasitas-refresh" />}
+      tools={<><TombolUnduh namaBerkas="kapasitas-cmt" baris={vendors} kolom={[
+          { label: 'Vendor', nilai: (v) => v.name || '' }, { label: 'Kode', nilai: (v) => v.code || '' },
+          { label: 'Beban internal (pcs)', nilai: (v) => Number(v.load_internal_pcs) || 0 }, { label: 'Beban maklon (pcs)', nilai: (v) => Number(v.load_maklon_pcs) || 0 },
+          { label: 'Total beban (pcs)', nilai: (v) => Number(v.current_load_pcs) || 0 }, { label: 'Kapasitas (pcs)', nilai: (v) => (v.capacity_pcs == null ? '' : Number(v.capacity_pcs)) },
+          { label: 'Sisa (pcs)', nilai: (v) => (v.available_pcs == null ? '' : Number(v.available_pcs)) },
+          { label: 'Terpakai (%)', nilai: (v) => (v.utilization_pct == null ? '' : Number(v.utilization_pct)) },
+          { label: 'Laju per hari', nilai: (v) => Number(v.daily_rate) || 0 }, { label: 'Perkiraan habis (hari)', nilai: (v) => (v.days_to_clear == null ? '' : Number(v.days_to_clear)) },
+          { label: 'PO telat', nilai: (v) => Number(v.telat_po_count) || 0 }, { label: 'Keadaan', nilai: (v) => v.status || '' },
+        ]} />
+        <RefreshButton onClick={reload} loading={loading} testId="pantau-kapasitas-refresh" /></>}
       summary={<>
         {error && <Notice tone="danger" icon={AlertCircle}>{error}</Notice>}
         {data && (

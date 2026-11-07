@@ -3,6 +3,7 @@
  * produksi job. Admin menandai diketahui/selesai. Tidak dijurnal: kelebihan barang sudah masuk stok lewat
  * Terima & QC, dan sisa WIP PO ditutup saat Tutup PO.
  */
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Fragment, useState } from 'react';
 import { AlertCircle, FileWarning, Info } from 'lucide-react';
 import { toast } from 'sonner';
@@ -13,7 +14,7 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout, { RowDetail, RowToggle } from '../layout/PageLayout';
 import { EmptyState, Notice, StatTile } from '../moduleAtoms';
-import Modal from '../Modal';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { formatDateID } from '@/lib/format';
 import { apiPut } from '../../../lib/api';
 import { Badge, LoadingRows, RefreshButton, Section, n, useApi } from './pantauShared';
@@ -40,7 +41,14 @@ export default function SelisihVendorTab() {
       testId="selisih-vendor"
       title="Laporan vendor"
       filters={<SelisihFilters testId="selisih-vendor-filter" />}
-      tools={<RefreshButton onClick={reload} loading={loading} testId="selisih-vendor-refresh" />}
+      tools={<><TombolUnduh namaBerkas="laporan-selisih-vendor" baris={rows} kolom={[
+          { label: 'Tanggal', nilai: (v) => formatDateID(v.created_at, { fallback: '' }) }, { label: 'Vendor', nilai: (v) => v.vendor_name || '' },
+          { label: 'PO', nilai: (v) => v.po_number || '' }, { label: 'Job', nilai: (v) => v.job_number || '' },
+          { label: 'Jenis', nilai: (v) => (v.variance_type === 'OVERPRODUCTION' ? 'Produksi lebih' : v.variance_type === 'UNDERPRODUCTION' ? 'Produksi kurang' : (v.variance_type || '')) },
+          { label: 'Pcs', nilai: (v) => Number(v.total_variance_qty) || 0 }, { label: 'Alasan', nilai: (v) => v.reason || '' },
+          { label: 'Status', nilai: (v) => v.status || '' },
+        ]} />
+        <RefreshButton onClick={reload} loading={loading} testId="selisih-vendor-refresh" /></>}
       summary={<>
         {error && <Notice tone="danger" icon={AlertCircle}>{error}</Notice>}
         {rows.length > 0 && (
@@ -132,19 +140,16 @@ function StatusForm({ v, onClose, onDone }) {
     finally { setSaving(false); }
   };
   return (
-    <Modal onClose={onClose} title="Ubah status laporan vendor" size="sm" description={`${v.po_number} · ${v.job_number}`}>
-      <div className="space-y-3">
-        <div><label className="text-xs text-muted-foreground">Status baru</label>
-          <SmartNativeSelect value={status} onChange={(e) => setStatus(e.target.value)} searchable={false} className="h-9 w-full" aria-label="Status baru" data-testid="selisih-vendor-status-select">
-            {(v.allowed_next || []).map((s) => <option key={s} value={s}>{STATUS_META[s]?.label || s}</option>)}
-          </SmartNativeSelect></div>
-        <div><label className="text-xs text-muted-foreground" htmlFor="selisih-admin-notes">Catatan</label>
-          <GlassInput id="selisih-admin-notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="opsional" /></div>
-      </div>
-      <div className="flex gap-2 mt-4 justify-end">
-        <Button variant="outline" onClick={onClose}>Batal</Button>
-        <Button onClick={save} disabled={!status || saving} data-testid="selisih-vendor-status-save">{saving ? 'Menyimpan…' : 'Simpan'}</Button>
-      </div>
-    </Modal>
+    <FormPopup open onClose={onClose} ukuran="pendek" judul="Ubah status laporan vendor" keterangan={`${v.po_number} · ${v.job_number}`}
+      onSimpan={save} menyimpan={saving} bisaSimpan={!!status} testId="selisih-vendor-status">
+      <Isian label="Status baru">
+        <SmartNativeSelect value={status} onChange={(e) => setStatus(e.target.value)} searchable={false} className="w-full" aria-label="Status baru" data-testid="selisih-vendor-status-select">
+          {(v.allowed_next || []).map((s) => <option key={s} value={s}>{STATUS_META[s]?.label || s}</option>)}
+        </SmartNativeSelect>
+      </Isian>
+      <Isian label="Catatan" htmlFor="selisih-admin-notes">
+        <GlassInput id="selisih-admin-notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="opsional" />
+      </Isian>
+    </FormPopup>
   );
 }
