@@ -1,78 +1,59 @@
+/**
+ * Peluncuran produk (Portal Toko) — rencana peluncuran produk multi-platform.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, penyaring satu baris, ViewToggle Tabel/Linimasa di alat,
+ * 4 StatTile berketerangan, tabel + unduh Excel/CSV semua baris (dulu CSV halaman ini saja), detail popup,
+ * form = FormPopup + DatePicker, label Indonesia, tanpa emoji. Linimasa dibuat ringkas (dulu kartu per produk).
+ * F14b (produk wajib dari Master Produk) dan peringatan "belum tertaut" tetap.
+ */
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import {
-  Rocket, Plus, Pencil, Trash2, RefreshCw, Loader2,
-  CheckCircle2, Clock, XCircle, AlertTriangle, Package,
-  ChevronDown, ChevronUp, X, TrendingUp
-} from 'lucide-react';
+import { Plus, Pencil, Trash2, RefreshCw, AlertTriangle, Search, Table2, CalendarDays } from 'lucide-react';
+import axios from 'axios';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
-} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue
-} from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import DatePicker from '@/components/ui/date-picker';
+import ViewToggle from '@/components/ui/view-toggle';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import PaginationLite from '@/components/ui/pagination-lite';
 import { useToast } from '@/hooks/use-toast';
-import axios from 'axios';
-import { MarketingAccountSelect, useStorePlatforms } from './pickers/MarketingPickers';
-// F14b (temuan pemilik) — produk yang diluncurkan WAJIB produk yang ada di
-// Master Produk. Sebelum ini nama/bahan/model diketik bebas, dan saat status
-// menjadi "launched" sistem MEMBUAT barang jadi baru dari teks itu ⇒ satu
-// produk lahir dua kali di master stok. Lihat komentar di komponennya.
-import MasterProductSelect from '../pickers/MasterProductSelect';
-// F10 (sesi #10) — rencana peluncuran & harganya dipakai rapat ⇒ bisa diunduh.
-import ExportCsvButton from '@/components/ui/export-csv-button';
-
-import { formatRupiah } from '@/lib/format';
+import { formatRupiah, formatDateID } from '@/lib/format';
 import { todayWIB } from '@/lib/waktu';
+import { cn } from '@/lib/utils';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
+import { MarketingAccountSelect, useStorePlatforms } from './pickers/MarketingPickers';
+// F14b (temuan pemilik) — produk yang diluncurkan WAJIB produk yang ada di Master Produk.
+import MasterProductSelect from '../pickers/MasterProductSelect';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
-const PLATFORM_ICONS = { shopee: '🛒', tiktok: '🎵', tokopedia: '🟢', instagram: '📷', website: '🌐' };
+const PLATFORM_LABEL = { shopee: 'Shopee', tiktok: 'TikTok', tokopedia: 'Tokopedia', instagram: 'Instagram', website: 'Situs web' };
+const labelPlatform = (p) => PLATFORM_LABEL[p] || (p ? p.charAt(0).toUpperCase() + p.slice(1) : '—');
 const STATUS_CONFIG = {
-  planning:  { label: 'Perencanaan', color: 'bg-muted text-muted-foreground ',         icon: AlertTriangle },
-  ready:     { label: 'Siap Launch', color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] ',      icon: Clock },
-  launched:  { label: 'Launched',    color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ', icon: CheckCircle2 },
-  postponed: { label: 'Ditunda',     color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ', icon: AlertTriangle },
-  cancelled: { label: 'Dibatalkan',  color: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] ',         icon: XCircle },
+  planning: { label: 'Perencanaan', tone: 'muted' },
+  ready: { label: 'Siap diluncurkan', tone: 'info' },
+  launched: { label: 'Sudah diluncurkan', tone: 'success' },
+  postponed: { label: 'Ditunda', tone: 'warning' },
+  cancelled: { label: 'Dibatalkan', tone: 'danger' },
 };
-
-function StatusBadge({ status }) {
+const StatusPeluncuran = ({ status }) => {
   const c = STATUS_CONFIG[status] || STATUS_CONFIG.planning;
-  const Icon = c.icon;
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${c.color}`}>
-      <Icon size={10} />{c.label}
-    </span>
-  );
-}
-
+  return <StatusBadge status={status} label={c.label} tone={c.tone} />;
+};
+const VIEWS = [
+  { key: 'table', label: 'Tampilan tabel', icon: Table2 },
+  { key: 'timeline', label: 'Tampilan linimasa', icon: CalendarDays },
+];
+const tgl = (v) => (v ? formatDateID(String(v).slice(0, 10)) : '—');
 const fmtRp = (n) => n ? formatRupiah(n) : '—';
 function fmt(n)   { return new Intl.NumberFormat('id-ID').format(n || 0); }
-
-function KPICard({ label, value, sub, color, bg, icon: Icon }) {
-  return (
-    <Card className={`${bg} border-0`}>
-      <CardContent className="p-4 flex items-center gap-3">
-        <div className="p-2 rounded-lg bg-background/60 dark:bg-black/20">
-          <Icon size={20} className={color} />
-        </div>
-        <div>
-          <p className="text-xl font-bold leading-tight">{value}</p>
-          <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 
 const EMPTY_FORM = {
   // F14 — peluncuran WAJIB milik satu toko. Sebelum ini 8/8 dokumen demo tidak
@@ -106,6 +87,8 @@ export default function ProductLaunchModule({ token }) {
   const [search,        setSearch]        = useState('');
   const [page,          setPage]          = useState(1);
   const [viewMode,      setViewMode]      = useState('table'); // 'table' | 'timeline'
+  const [detail,        setDetail]        = useState(null);
+  const [galatForm,     setGalatForm]     = useState('');
 
   const [showForm,    setShowForm]    = useState(false);
   const [editTarget,  setEditTarget]  = useState(null);
@@ -136,14 +119,14 @@ export default function ProductLaunchModule({ token }) {
         // mudah membuat orang percaya semuanya sudah beres.
         setUnlinked(res.data.master_link?.unlinked_total || 0);
       }
-    } catch { toast({ title: 'Gagal load produk', variant: 'destructive' }); }
+    } catch { toast({ title: 'Gagal memuat rencana peluncuran', variant: 'destructive' }); }
     finally { setLoading(false); }
   }, [page, filterStatus, filterPlatform, filterAccountId, search, authH, toast]);
 
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
   useEffect(() => { fetchItems();   }, [fetchItems]);
 
-  const openCreate = () => { setEditTarget(null); setForm(EMPTY_FORM); setShowForm(true); };
+  const openCreate = () => { setEditTarget(null); setForm(EMPTY_FORM); setGalatForm(''); setShowForm(true); };
   const openEdit   = (item) => {
     setEditTarget(item);
     setForm({
@@ -165,6 +148,7 @@ export default function ProductLaunchModule({ token }) {
       platforms: item.platforms || [], description: item.description || '',
       status: item.status || 'planning', launch_notes: item.launch_notes || ''
     });
+    setGalatForm('');
     setShowForm(true);
   };
 
@@ -180,23 +164,18 @@ export default function ProductLaunchModule({ token }) {
     // F14b — produk WAJIB dari master. Pesannya menyebut jalan keluarnya, bukan
     // hanya melarang: staf yang produknya belum terdaftar harus tahu ke mana.
     if (!form.model_id) {
-      toast({
-        title: 'Pilih produk dari Master Produk',
-        description: 'Rencana peluncuran untuk produk yang tidak ada di master '
-          + 'tidak bisa dicocokkan dengan stok, HPP, maupun harga resmi. Kalau '
-          + 'produknya belum ada, daftarkan dulu di Master Produk.',
-        variant: 'destructive',
-      });
+      setGalatForm('Pilih produk dari Master Produk. Kalau produknya belum ada, daftarkan dulu di Master Produk.');
       return;
     }
     if (!form.launch_date) {
-      toast({ title: 'Isi Tanggal Launch', variant: 'destructive' }); return;
+      setGalatForm('Isi tanggal peluncuran.'); return;
     }
     if (!form.account_id) {
       // F14 — peluncuran tanpa toko tidak akan pernah muncul di layar yang
       // difilter per toko, dan backend menolaknya (400).
-      toast({ title: 'Pilih toko dulu', description: 'Rencana peluncuran harus menempel pada satu toko.', variant: 'destructive' }); return;
+      setGalatForm('Pilih toko dulu — rencana peluncuran harus menempel pada satu toko.'); return;
     }
+    setGalatForm('');
     setFormLoading(true);
     try {
       const payload = {
@@ -214,10 +193,10 @@ export default function ProductLaunchModule({ token }) {
       };
       if (editTarget) {
         await axios.put(`${API}/api/marketing/product-launches/${editTarget.id}`, payload, { headers: authH });
-        toast({ title: 'Produk diperbarui' });
+        toast({ title: 'Rencana peluncuran disimpan.' });
       } else {
         await axios.post(`${API}/api/marketing/product-launches`, payload, { headers: authH });
-        toast({ title: '🚀 Produk berhasil ditambahkan' });
+        toast({ title: 'Rencana peluncuran ditambahkan.' });
       }
       setShowForm(false);
       fetchSummary();
@@ -225,477 +204,295 @@ export default function ProductLaunchModule({ token }) {
     } catch (e) {
       // Alasan penolakan server (mis. produk sudah tidak aktif di master) harus
       // sampai ke staf — "Gagal menyimpan" saja membuat orang menebak.
-      toast({
-        title: 'Gagal menyimpan',
-        description: e?.response?.data?.detail || e?.message || '',
-        variant: 'destructive',
-      });
+      setGalatForm(e?.response?.data?.detail || e?.message || 'Gagal menyimpan.');
     }
     finally { setFormLoading(false); }
   };
 
   const handleDelete = async (id) => {
-    if (!(await confirmDialog('Hapus entri ini?'))) return;
+    if (!(await confirmDialog({ title: 'Hapus rencana peluncuran ini?', body: 'Rencana dihapus dari daftar.', confirmLabel: 'Hapus', danger: true }))) return;
+    setDetail(null);
     try {
       await axios.delete(`${API}/api/marketing/product-launches/${id}`, { headers: authH });
-      toast({ title: 'Dihapus' });
+      toast({ title: 'Rencana peluncuran dihapus.' });
       fetchSummary();
       fetchItems();
-    } catch { toast({ title: 'Gagal hapus', variant: 'destructive' }); }
+    } catch { toast({ title: 'Gagal menghapus', variant: 'destructive' }); }
   };
 
   const handleStatusChange = async (id, newStatus) => {
     try {
       await axios.post(`${API}/api/marketing/product-launches/${id}/status`, { status: newStatus }, { headers: authH });
-      toast({ title: `Status → ${STATUS_CONFIG[newStatus]?.label}` });
+      toast({ title: `Status diubah: ${STATUS_CONFIG[newStatus]?.label}` });
       fetchSummary();
       fetchItems();
-    } catch { toast({ title: 'Gagal update status', variant: 'destructive' }); }
+    } catch { toast({ title: 'Gagal mengubah status', variant: 'destructive' }); }
   };
 
-  const kpis = [
-    { label: 'Total Produk',  value: fmt(summary?.total),      sub: 'Semua kategori',        color: 'text-[hsl(var(--primary))]',  bg: 'bg-[hsl(var(--primary)/0.08)] ', icon: Package },
-    { label: 'Siap Launch',   value: fmt(summary?.ready),       sub: 'Sudah siap',            color: 'text-[hsl(var(--primary))]',    bg: 'bg-[hsl(var(--primary)/0.08)] ',   icon: Clock },
-    { label: 'Sudah Launch',  value: fmt(summary?.launched),    sub: 'Di pasar',              color: 'text-[hsl(var(--success-text))]', bg: 'bg-[hsl(var(--success)/0.08)] ', icon: CheckCircle2 },
-    { label: 'Dalam 30 Hari', value: fmt(summary?.upcoming_30), sub: 'Jadwal upcoming',       color: 'text-[hsl(var(--warning-text))]',   bg: 'bg-[hsl(var(--warning)/0.08)] ', icon: Rocket },
+  // Urut tanggal peluncuran untuk linimasa
+  const sortedItems = [...items].sort((a, b) => a.launch_date?.localeCompare(b.launch_date) || 0);
+  const paramSaring = () => {
+    const params = {};
+    if (filterStatus)   params.status   = filterStatus;
+    if (filterPlatform) params.platform = filterPlatform;
+    if (filterAccountId) params.account_id = filterAccountId;
+    if (search)         params.search   = search;
+    return params;
+  };
+  /** Unduh semua rencana hasil saringan (dulu hanya 20 baris halaman ini). */
+  const ambilSemua = async () => {
+    const semua = [];
+    for (let p = 1; p <= 200; p += 1) {
+      const res = await axios.get(`${API}/api/marketing/product-launches`, { params: { page: p, page_size: 100, ...paramSaring() }, headers: authH });
+      semua.push(...(res.data.data || []));
+      if (p >= (res.data.pagination?.total_pages || 1)) break;
+    }
+    return semua;
+  };
+  const adaSaring = !!(filterStatus || filterPlatform || filterAccountId || search);
+  const labelTertaut = (item) => (item.master_linked
+    ? <span className="tabular-nums text-xs text-muted-foreground" data-testid={`launch-code-${item.id}`}>{item.model_code || item.model}</span>
+    : <span title="Rencana ini belum tertaut Master Produk — buka Ubah lalu pilih produknya." data-testid={`launch-unlinked-${item.id}`}>
+        <StatusBadge status="belum-tertaut" label="Belum tertaut" tone="warning" />
+      </span>);
+  const hargaRingkas = (item) => (
+    <span className="tabular-nums md:whitespace-nowrap">
+      {item.listing_price > 0 ? <span className="font-medium">{fmtRp(item.listing_price)}</span> : <span className="text-muted-foreground">—</span>}
+      {item.flash_sale_price > 0 && item.flash_sale_price !== item.listing_price && (
+        <span className="block text-xs text-muted-foreground">Flash sale {fmtRp(item.flash_sale_price)}</span>)}
+      {item.cross_price > 0 && <span className="block text-xs text-muted-foreground line-through">{fmtRp(item.cross_price)}</span>}
+    </span>);
+  const pilihStatus = (item) => (
+    <SmartNativeSelect value={item.status} onChange={(e) => handleStatusChange(item.id, e.target.value)} className="w-40"
+      searchable={false} data-testid={`launch-status-${item.id}`}>
+      {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+    </SmartNativeSelect>);
+
+  const kolom = [
+    { kunci: 'produk', label: 'Produk', hp: 'judul', isi: (item) => (
+      <div className="min-w-0 md:max-w-[15rem]"><p className="truncate font-medium" title={item.product_name}>{item.product_name}</p>
+        <div className="mt-0.5">{labelTertaut(item)}</div></div>) },
+    { kunci: 'bahan', label: 'Bahan / kategori', isi: (item) => (
+      <span className="text-sm">{item.material || <span className="text-muted-foreground">—</span>}
+        <span className="block text-xs text-muted-foreground">{item.category_name || ''}</span></span>) },
+    { kunci: 'tanggal', label: 'Tanggal peluncuran', hp: 'keterangan', isi: (item) => <span className="tabular-nums md:whitespace-nowrap">{tgl(item.launch_date)}</span> },
+    { kunci: 'harga', label: 'Harga', rata: 'kanan', isi: hargaRingkas },
+    { kunci: 'platform', label: 'Platform', isi: (item) => <span className="text-sm">{(item.platforms || []).map(labelPlatform).join(', ') || '—'}</span> },
+    { kunci: 'status', label: 'Status', hp: 'aksi', isi: pilihStatus },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (item) => (
+      <Button size="icon-sm" variant="ghost" onClick={() => openEdit(item)} title="Ubah rencana" aria-label="Ubah rencana"><Pencil /></Button>) },
   ];
 
-  // Sort items by launch_date for timeline view
-  const sortedItems = [...items].sort((a, b) => a.launch_date?.localeCompare(b.launch_date) || 0);
-
   return (
-    <div className="min-h-screen bg-background p-4 md:p-4" data-testid="product-launch-dashboard">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Product Launch Manager</h1>
-          <p className="text-sm text-muted-foreground">Manajemen peluncuran produk multi-platform</p>
+    <PageLayout testId="product-launch-dashboard" title="Peluncuran produk"
+      subtitle="Rencana peluncuran produk dari Master Produk: tanggal, harga, dan platform."
+      actions={<Button onClick={openCreate} data-testid="btn-add-launch"><Plus />Tambah rencana</Button>}
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input className="pl-8" placeholder="Cari produk" value={search}
+            onChange={e => { setSearch(e.target.value); setPage(1); }} data-testid="launch-search" />
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => { fetchSummary(); fetchItems(); }}>
-            <RefreshCw size={14} className="mr-1" />Refresh
-          </Button>
-          <Button size="sm" onClick={openCreate} data-testid="btn-add-launch">
-            <Plus size={14} className="mr-1" />Tambah Produk
-          </Button>
-        </div>
-      </div>
-
-      {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-        {kpis.map(k => <KPICard key={k.label} {...k} />)}
-      </div>
-
-      {/* F14b — WARISAN DIAKUI, BUKAN DISEMBUNYIKAN.
-          Rencana yang dibuat sebelum aturan "produk wajib dari Master Produk"
-          isinya teks bebas. Selama belum ditautkan, stok/HPP/harga resminya
-          tidak bisa dicocokkan — dan dulu itu tidak terlihat sama sekali. */}
-      {unlinked > 0 && (
-        <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.08)] px-4 py-3 "
-             data-testid="launch-unlinked-banner">
-          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-[hsl(var(--warning-text))] " />
-          <div className="text-xs text-[hsl(var(--warning-text))] ">
-            <b>{unlinked} rencana peluncuran belum tertaut Master Produk.</b>{' '}
-            Dibuat sebelum aturan &quot;produk wajib dari master&quot;, jadi nama/bahan/modelnya
-            masih teks bebas. Buka <b>Edit</b> pada baris bertanda
-            <span className="mx-1 inline-flex items-center rounded border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.12)] px-1.5 py-0.5 font-medium ">belum tertaut</span>
-            lalu pilih produknya — supaya stok, HPP, dan harga resminya punya satu sumber.
+        <MarketingAccountSelect token={token} value={filterAccountId} className="w-56"
+          onChange={(v) => { setFilterAccountId(v); setPage(1); }} label=""
+          includeAll allLabel="Semua toko" required={false} testId="launch-filter-account" />
+        <SmartNativeSelect value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }} className="w-44" searchable={false}>
+          <option value="">Semua status</option>
+          {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+        </SmartNativeSelect>
+        <SmartNativeSelect value={filterPlatform} onChange={(e) => { setFilterPlatform(e.target.value); setPage(1); }} className="w-40" searchable={false}>
+          <option value="">Semua platform</option>
+          {PLATFORMS.map(p => <option key={p} value={p}>{labelPlatform(p)}</option>)}
+        </SmartNativeSelect>
+      </>}
+      tools={<>
+        <ViewToggle value={viewMode} onChange={setViewMode} options={VIEWS} testId="launch-view" />
+        <TombolUnduh namaBerkas="peluncuran-produk" namaLembar="Peluncuran" baris={items} ambilSemua={ambilSemua} testId="launch-export-csv"
+          kolom={[
+            { label: 'Kode master', nilai: (it) => it.model_code || it.model || '' },
+            { label: 'Produk', nilai: (it) => it.product_name },
+            { label: 'Kategori', nilai: (it) => it.category_name || '' },
+            { label: 'Bahan', nilai: (it) => it.material || '' },
+            { label: 'Tanggal peluncuran', nilai: (it) => tgl(it.launch_date) },
+            { label: 'Harga listing', nilai: (it) => Number(it.listing_price) || 0 },
+            { label: 'Harga coret', nilai: (it) => Number(it.cross_price) || 0 },
+            { label: 'Harga flash sale', nilai: (it) => Number(it.flash_sale_price) || 0 },
+            { label: 'Harga resmi master', nilai: (it) => (it.retail_price_master ?? '') },
+            { label: 'Platform', nilai: (it) => (it.platforms || []).map(labelPlatform).join(', ') },
+            { label: 'Status', nilai: (it) => STATUS_CONFIG[it.status]?.label || it.status || '' },
+            { label: 'Tertaut master', nilai: (it) => (it.master_linked ? 'Ya' : 'Belum') },
+          ]} />
+        <Button variant="outline" size="icon" onClick={() => { fetchSummary(); fetchItems(); }} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={<>
+        {(summary?.total || 0) > 0 && (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="launch-kpi">
+            <StatTile label="Total rencana" value={fmt(summary?.total)}
+              sub={`${fmt(summary?.planning)} perencanaan · ${fmt(summary?.postponed)} ditunda`} hint="Semua toko; tidak ikut penyaring." />
+            <StatTile label="Siap diluncurkan" value={fmt(summary?.ready)} accent="primary" hint="Rencana berstatus siap diluncurkan." />
+            <StatTile label="Sudah diluncurkan" value={fmt(summary?.launched)} accent="success" hint="Produk yang sudah di pasar." />
+            <StatTile label="Dalam 30 hari" value={fmt(summary?.upcoming_30)} accent="warning" hint="Tanggal peluncuran dalam 30 hari ke depan." />
           </div>
-        </div>
+        )}
+        {/* F14b — WARISAN DIAKUI, BUKAN DISEMBUNYIKAN. */}
+        {unlinked > 0 && (
+          <Notice tone="warning" icon={AlertTriangle} testId="launch-unlinked-banner"
+            title={`${unlinked} rencana peluncuran belum tertaut Master Produk`}>
+            Dibuat sebelum aturan "produk wajib dari master", jadi namanya masih teks bebas. Buka Ubah pada baris bertanda
+            "Belum tertaut" lalu pilih produknya — supaya stok, HPP, dan harga resminya punya satu sumber.
+          </Notice>
+        )}
+      </>}
+      footer={viewMode === 'table' && pagination && pagination.total_pages > 1 && (
+        <PaginationLite page={page} totalPages={pagination.total_pages} total={pagination.total} pageSize={20} onPageChange={setPage} />
+      )}>
+      {loading && items.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat rencana peluncuran…</p>
+      ) : items.length === 0 ? (
+        <EmptyState title={adaSaring ? 'Tidak ada rencana yang cocok' : 'Belum ada rencana peluncuran'}
+          description={adaSaring ? 'Ubah saringan atau kata pencarian.' : 'Tambahkan rencana peluncuran produk dari Master Produk.'}
+          action={!adaSaring && <Button onClick={openCreate}><Plus />Tambah rencana</Button>} />
+      ) : viewMode === 'table' ? (
+        <TabelData kolom={kolom} baris={items} onKlikBaris={setDetail} testId="launch-table" />
+      ) : (
+        /* Linimasa ringkas: satu baris per rencana, urut tanggal (dulu kartu besar per produk). */
+        <ol className="space-y-0 border-l-2 border-[var(--glass-border)] pl-4" data-testid="launch-timeline">
+          {sortedItems.map(item => {
+            const today = todayWIB();
+            const isToday = item.launch_date === today;
+            return (
+              <li key={item.id} className="relative cursor-pointer py-2" onClick={() => setDetail(item)}>
+                <span className={cn('absolute -left-[1.3rem] top-3.5 h-2.5 w-2.5 rounded-full border-2 border-background',
+                  item.status === 'launched' ? 'bg-[hsl(var(--success))]' : item.status === 'cancelled' ? 'bg-[hsl(var(--destructive))]'
+                    : isToday ? 'bg-primary' : 'bg-muted-foreground/50')} />
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="w-28 shrink-0 text-sm tabular-nums text-muted-foreground">{tgl(item.launch_date)}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.product_name}</span>
+                  <span className="text-sm text-muted-foreground">{(item.platforms || []).map(labelPlatform).join(', ')}</span>
+                  {item.listing_price > 0 && <span className="text-sm tabular-nums">{fmtRp(item.listing_price)}</span>}
+                  <StatusPeluncuran status={item.status} />
+                </div>
+              </li>
+            );
+          })}
+        </ol>
       )}
 
-      {/* Filters */}
-      <Card className="mb-4">
-        <CardContent className="p-3 flex flex-wrap gap-2 items-center">
-          <div className="flex rounded-md border overflow-hidden">
-            <button onClick={() => setViewMode('table')}
-              className={`px-3 py-1.5 text-sm font-medium transition-colors ${viewMode==='table' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>
-              📋 Tabel
-            </button>
-            <button onClick={() => setViewMode('timeline')}
-              className={`px-3 py-1.5 text-sm font-medium transition-colors ${viewMode==='timeline' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>
-              📅 Timeline
-            </button>
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} judul={detail.product_name} testId="launch-detail"
+          status={<StatusPeluncuran status={detail.status} />}
+          keterangan={`Peluncuran ${tgl(detail.launch_date)}`}
+          aksi={<>
+            <Button size="sm" variant="outline" onClick={() => { const it = detail; setDetail(null); openEdit(it); }}><Pencil />Ubah</Button>
+            <Button size="sm" variant="destructive" onClick={() => handleDelete(detail.id)}><Trash2 />Hapus</Button>
+          </>}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Kode master">{labelTertaut(detail)}</BarisDetail>
+            <BarisDetail label="Bahan / kategori">{[detail.material, detail.category_name].filter(Boolean).join(' · ') || '—'}</BarisDetail>
+            <BarisDetail label="Harga listing">{fmtRp(detail.listing_price)}</BarisDetail>
+            <BarisDetail label="Harga flash sale">{fmtRp(detail.flash_sale_price)}</BarisDetail>
+            <BarisDetail label="Harga coret">{fmtRp(detail.cross_price)}</BarisDetail>
+            <BarisDetail label="Harga resmi master">{fmtRp(detail.retail_price_master)}</BarisDetail>
+            <BarisDetail label="Platform">{(detail.platforms || []).map(labelPlatform).join(', ') || '—'}</BarisDetail>
+            {detail.description && <BarisDetail label="Deskripsi">{detail.description}</BarisDetail>}
+            {detail.launch_notes && <BarisDetail label="Catatan peluncuran">{detail.launch_notes}</BarisDetail>}
+          </dl>
+          <div className="flex flex-wrap items-center gap-2 border-t border-[var(--glass-border)] pt-3">
+            <span className="text-sm text-muted-foreground">Ubah status:</span>
+            {pilihStatus(detail)}
           </div>
-          <Input className="h-8 text-xs w-48" placeholder="🔍 Cari produk..."
-            value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
-          <ExportCsvButton
-            filename="peluncuran-produk"
-            testId="launch-export-csv"
-            head={['Kode master', 'Produk', 'Kategori', 'Bahan', 'Tanggal launch',
-              'Harga listing', 'Harga coret', 'Harga flash sale',
-              'Harga resmi master', 'Platform', 'Status', 'Tertaut master']}
-            rows={(items || []).map((it) => [it.model_code || it.model || '',
-              it.product_name, it.category_name || '', it.material || '',
-              String(it.launch_date || '').slice(0, 10), it.listing_price, it.cross_price,
-              it.flash_sale_price, it.retail_price_master ?? '',
-              (it.platforms || []).join(' | '), it.status,
-              it.master_linked ? 'ya' : 'BELUM'])}
-          />
-          <div className="w-52">
-            <MarketingAccountSelect token={token} value={filterAccountId}
-              onChange={(v) => { setFilterAccountId(v); setPage(1); }} label=""
-              includeAll allLabel="Semua Toko" required={false}
-              testId="launch-filter-account" />
-          </div>
-          <Select value={filterStatus || 'all'} onValueChange={v => { setFilterStatus(v === 'all' ? '' : v); setPage(1); }}>
-            <SelectTrigger className="w-36 h-8 text-xs"><SelectValue placeholder="Status" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Semua Status</SelectItem>
-              {Object.entries(STATUS_CONFIG).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select value={filterPlatform || 'all'} onValueChange={v => { setFilterPlatform(v === 'all' ? '' : v); setPage(1); }}>
-            <SelectTrigger className="w-36 h-8 text-xs"><SelectValue placeholder="Platform" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Semua Platform</SelectItem>
-              {PLATFORMS.map(p => <SelectItem key={p} value={p}>{PLATFORM_ICONS[p]} {p}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          {(filterStatus || filterPlatform || search) && (
-            <Button size="sm" variant="ghost" className="h-8 px-2" onClick={() => { setFilterStatus(''); setFilterPlatform(''); setSearch(''); setPage(1); }}>
-              <X size={12} className="mr-1" />Reset
-            </Button>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* TABLE VIEW */}
-      {viewMode === 'table' && (
-        <Card>
-          <CardContent className="p-0">
-            {loading ? (
-              <div className="flex justify-center py-6"><Loader2 size={28} className="animate-spin text-muted-foreground" /></div>
-            ) : items.length === 0 ? (
-              <div className="text-center py-6 text-muted-foreground">
-                <Rocket size={40} className="mx-auto mb-3 opacity-30" />
-                <p className="font-medium">Belum ada produk launch</p>
-                <Button size="sm" className="mt-3" onClick={openCreate}><Plus size={12} className="mr-1" />Tambah</Button>
-              </div>
-            ) : (
-              <>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-muted/40">
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground ">Produk</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground ">Bahan / Kategori</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground ">Tanggal Launch</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground ">Harga</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground ">Platform</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground ">Status</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold text-muted-foreground ">Aksi</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {items.map((item, i) => (
-                        <tr key={item.id} className={`border-b last:border-0 hover:bg-muted/30 transition-colors ${i%2===0?'':'bg-muted/10'}`}>
-                          <td className="px-4 py-3">
-                            <div className="font-medium max-w-[220px] truncate" title={item.product_name}>{item.product_name}</div>
-                            <div className="mt-0.5 flex items-center gap-1.5">
-                              {item.master_linked ? (
-                                <span className="tabular-nums text-xs text-muted-foreground"
-                                      data-testid={`launch-code-${item.id}`}>{item.model_code || item.model}</span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 rounded border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.12)] px-1.5 py-0.5 text-xs font-medium text-[hsl(var(--warning-text))] "
-                                      title="Rencana ini belum tertaut Master Produk — buka Edit lalu pilih produknya."
-                                      data-testid={`launch-unlinked-${item.id}`}>
-                                  <AlertTriangle size={9} /> belum tertaut
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-xs">
-                            <div>{item.material || <span className="text-muted-foreground">—</span>}</div>
-                            <div className="text-muted-foreground">{item.category_name || ''}</div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="tabular-nums text-xs">{item.launch_date}</div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="text-xs space-y-0.5">
-                              {item.listing_price > 0 && <div className="font-semibold text-[hsl(var(--success-text))]">{fmtRp(item.listing_price)}</div>}
-                              {item.flash_sale_price > 0 && item.flash_sale_price !== item.listing_price && (
-                                <div className="text-[hsl(var(--primary))]">Flash: {fmtRp(item.flash_sale_price)}</div>
-                              )}
-                              {item.cross_price > 0 && <div className="line-through text-muted-foreground">{fmtRp(item.cross_price)}</div>}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex flex-wrap gap-0.5">
-                              {(item.platforms || []).map(p => (
-                                <span key={p} className="text-sm" title={p}>{PLATFORM_ICONS[p] || '📌'}</span>
-                              ))}
-                              {(!item.platforms || item.platforms.length === 0) && <span className="text-muted-foreground">—</span>}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <StatusBadge status={item.status} />
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center justify-end gap-1">
-                              <Select value={item.status} onValueChange={v => handleStatusChange(item.id, v)}>
-                                <SelectTrigger className="h-7 w-28 text-xs px-2">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {Object.entries(STATUS_CONFIG).map(([k, v]) => (
-                                    <SelectItem key={k} value={k} className="text-xs">{v.label}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(item)}>
-                                <Pencil size={12} />
-                              </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))]" onClick={() => handleDelete(item.id)}>
-                                <Trash2 size={12} />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {pagination && pagination.total_pages > 1 && (
-                  <div className="flex items-center justify-between px-4 py-3 border-t">
-                    <p className="text-xs text-muted-foreground">{pagination.total} produk</p>
-                    <div className="flex gap-1">
-                      <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>‹ Prev</Button>
-                      <span className="px-3 py-1.5 text-xs">{page} / {pagination.total_pages}</span>
-                      <Button size="sm" variant="outline" disabled={page >= pagination.total_pages} onClick={() => setPage(p => p + 1)}>Next ›</Button>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </CardContent>
-        </Card>
+        </DetailPopup>
       )}
 
-      {/* TIMELINE VIEW */}
-      {viewMode === 'timeline' && (
-        <Card>
-          <CardContent className="p-4">
-            {loading ? (
-              <div className="flex justify-center py-6"><Loader2 size={28} className="animate-spin text-muted-foreground" /></div>
-            ) : sortedItems.length === 0 ? (
-              <div className="text-center py-6 text-muted-foreground">
-                <Rocket size={40} className="mx-auto mb-3 opacity-30" />
-                <p>Belum ada produk launch</p>
-              </div>
-            ) : (
-              <div className="relative">
-                {/* Timeline line */}
-                <div className="absolute left-[19px] top-2 bottom-2 w-0.5 bg-border" />
-                <div className="space-y-4">
-                  {sortedItems.map(item => {
-                    const sc = STATUS_CONFIG[item.status] || STATUS_CONFIG.planning;
-                    const Icon = sc.icon;
-                    const today = todayWIB();
-                    const isPast = item.launch_date < today;
-                    const isToday = item.launch_date === today;
-                    return (
-                      <div key={item.id} className="flex gap-4">
-                        {/* Dot */}
-                        <div className={`relative z-10 flex-shrink-0 w-10 h-10 rounded-full border-2 flex items-center justify-center ${
-                          item.status === 'launched' ? 'bg-[hsl(var(--success-strong))] border-[hsl(var(--success)/0.35)] text-foreground' :
-                          item.status === 'ready'    ? 'bg-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)] text-foreground' :
-                          item.status === 'cancelled'? 'bg-[hsl(var(--destructive-strong))] border-[hsl(var(--destructive)/0.35)] text-foreground' :
-                          isToday                    ? 'bg-primary border-primary text-primary-foreground' :
-                          'bg-background border-border text-muted-foreground'
-                        }`}>
-                          <Icon size={16} />
-                        </div>
-                        {/* Content */}
-                        <Card className="flex-1 p-3 hover:shadow-md transition-shadow">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-semibold text-sm">{item.product_name}</span>
-                                <StatusBadge status={item.status} />
-                              </div>
-                              <div className="text-xs text-muted-foreground mt-1">
-                                📅 {item.launch_date}
-                                {item.material && ` · ${item.material}`}
-                                {item.model && ` · ${item.model}`}
-                              </div>
-                              <div className="flex items-center gap-2 mt-1.5">
-                                {item.listing_price > 0 && (
-                                  <span className="text-xs font-medium text-[hsl(var(--success-text))]">{fmtRp(item.listing_price)}</span>
-                                )}
-                                {(item.platforms || []).map(p => (
-                                  <span key={p} className="text-sm" title={p}>{PLATFORM_ICONS[p] || '📌'}</span>
-                                ))}
-                              </div>
-                            </div>
-                            <div className="flex gap-1">
-                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(item)}>
-                                <Pencil size={12} />
-                              </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))]" onClick={() => handleDelete(item.id)}>
-                                <Trash2 size={12} />
-                              </Button>
-                            </div>
-                          </div>
-                        </Card>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* FORM DIALOG */}
-      <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Rocket size={18} className="text-primary" />
-              {editTarget ? 'Edit Produk Launch' : 'Tambah Produk Launch'}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="grid grid-cols-2 gap-3 max-h-[65vh] overflow-y-auto pr-1">
-            <div className="col-span-2">
-              <MarketingAccountSelect token={token} value={form.account_id}
-                onChange={(v) => setForm(f => ({ ...f, account_id: v }))}
-                testId="launch-account-select" className="mb-3" />
-
-              {/* F14b — SATU pemilih, bukan tiga kotak ketik. Nama, kode,
-                  kategori, HPP, dan harga resmi mengikuti master. */}
-              <MasterProductSelect
-                token={token}
-                value={form.model_id}
-                testId="launch-product-select"
-                onChange={(m) => setForm(f => ({
-                  ...f,
-                  model_id: m?.model_id || '',
-                  master: m || null,
-                  // Harga BOLEH beda dari master (keputusan owner K-3a), tetapi
-                  // titik berangkatnya harga RESMI — bukan angka kosong yang
-                  // memancing ketikan baru. Yang sudah diisi staf tidak ditimpa.
-                  original_price: f.original_price !== '' && f.original_price != null
-                    ? f.original_price : (m?.retail_price_master ?? ''),
-                }))}
-                helpText="Daftar ini sama persis dengan daftar di layar Katalog dari Master — satu sumber."
-              />
-
-              {/* Dokumen WARISAN: katakan apa adanya, jangan ditebak. */}
-              {editTarget && !form.model_id && (
-                <div className="mt-2 rounded-md border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.08)] px-3 py-2 text-xs text-[hsl(var(--warning-text))] "
-                     data-testid="launch-legacy-warning">
-                  <b>Belum tertaut Master Produk.</b> Rencana ini dibuat sebelum
-                  aturan &quot;produk wajib dari master&quot;, isinya teks bebas
-                  {form.legacy_name ? <> — <i>&quot;{form.legacy_name}&quot;</i></> : null}.
-                  Pilih produknya di atas untuk menautkannya. Selama belum
-                  tertaut, stok/HPP/harga resminya tidak bisa dicocokkan.
-                </div>
-              )}
-            </div>
-            <div>
-              <Label>Tanggal Launch *</Label>
-              <Input type="date" value={form.launch_date} onChange={e => setForm(f => ({...f, launch_date: e.target.value}))} className="mt-1" />
-            </div>
-            <div>
-              <Label>Status</Label>
-              <Select value={form.status} onValueChange={v => setForm(f => ({...f, status: v}))}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Object.entries(STATUS_CONFIG).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            {/* F14b — Bahan & Model TIDAK lagi diketik: keduanya milik master.
-                Kalau master belum mencatat bahannya, itu dikatakan apa adanya
-                beserta tempat memperbaikinya — bukan diisi ejaan keempat. */}
-            <div>
-              <Label className="text-xs text-muted-foreground">Bahan (dari master)</Label>
-              <div className="mt-1 h-9 flex items-center rounded-md border border-border bg-muted/50 px-3 text-sm"
-                   data-testid="launch-material-readonly">
-                {form.master?.material || form.master
-                  ? (form.master?.material || <span className="text-muted-foreground text-xs">Belum dicatat di Master Produk</span>)
-                  : <span className="text-muted-foreground text-xs">Pilih produk dulu</span>}
-              </div>
-            </div>
-            <div>
-              <Label className="text-xs text-muted-foreground">Kode Model (dari master)</Label>
-              <div className="mt-1 h-9 flex items-center rounded-md border border-border bg-muted/50 px-3 tabular-nums text-sm"
-                   data-testid="launch-model-readonly">
-                {form.master?.code || <span className="font-sans text-muted-foreground text-xs">Pilih produk dulu</span>}
-              </div>
-            </div>
-            <div>
-              <Label>Harga Asli (Rp)</Label>
-              <MoneyInput value={form.original_price} onChange={e => setForm(f => ({...f, original_price: e.target.value}))}
-                placeholder="0" className="mt-1" data-testid="launch-original-price" />
-              {/* K-3a — harga per platform BOLEH menimpa harga resmi master,
-                  tetapi selisihnya harus TERLIHAT, bukan diam-diam. */}
-              {form.master && Number(form.master.retail_price_master || 0) > 0
-                && Number(form.original_price || 0) > 0
-                && Number(form.original_price) !== Number(form.master.retail_price_master) && (
-                <p className="mt-1 text-xs text-[hsl(var(--warning-text))] "
-                   data-testid="launch-price-diff">
-                  Beda {fmtRp(Math.abs(Number(form.original_price) - Number(form.master.retail_price_master)))} dari
-                  harga resmi master ({fmtRp(form.master.retail_price_master)}).
-                </p>
-              )}
-            </div>
-            <div>
-              <Label>Harga Pasang / Listing (Rp)</Label>
-              <MoneyInput value={form.listing_price} onChange={e => setForm(f => ({...f, listing_price: e.target.value}))}
-                placeholder="0" className="mt-1" />
-            </div>
-            <div>
-              <Label>Harga Flash Sale (Rp)</Label>
-              <MoneyInput value={form.flash_sale_price} onChange={e => setForm(f => ({...f, flash_sale_price: e.target.value}))}
-                placeholder="0" className="mt-1" />
-            </div>
-            <div>
-              <Label>Harga Coret (Rp)</Label>
-              <MoneyInput value={form.cross_price} onChange={e => setForm(f => ({...f, cross_price: e.target.value}))}
-                placeholder="0" className="mt-1" />
-            </div>
-            <div className="col-span-2">
-              <Label>Platform Target</Label>
-              <div className="mt-1 flex flex-wrap gap-2">
-                {PLATFORMS.map(p => (
-                  <button key={p} type="button"
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
-                      form.platforms.includes(p)
-                        ? 'bg-primary text-primary-foreground border-primary'
-                        : 'bg-background border-border hover:border-primary/50'
-                    }`}
-                    onClick={() => togglePlatform(p)}
-                  >
-                    {PLATFORM_ICONS[p]} {p.charAt(0).toUpperCase() + p.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="col-span-2">
-              <Label>Deskripsi</Label>
-              <Textarea value={form.description} onChange={e => setForm(f => ({...f, description: e.target.value}))}
-                placeholder="Detail produk..." rows={2} className="mt-1" />
-            </div>
-            <div className="col-span-2">
-              <Label>Catatan Launch</Label>
-              <Textarea value={form.launch_notes} onChange={e => setForm(f => ({...f, launch_notes: e.target.value}))}
-                placeholder="Persiapan, checklist, dll..." rows={2} className="mt-1" />
-            </div>
+      <FormPopup open={showForm} onClose={() => setShowForm(false)} ukuran="panjang" onSimpan={handleSave} menyimpan={formLoading}
+        judul={editTarget ? 'Ubah rencana peluncuran' : 'Tambah rencana peluncuran'} galat={galatForm} testId="launch-form"
+        labelSimpan={editTarget ? 'Simpan perubahan' : 'Tambah rencana'}>
+        <MarketingAccountSelect token={token} value={form.account_id}
+          onChange={(v) => setForm(f => ({ ...f, account_id: v }))} testId="launch-account-select" />
+        {/* F14b — SATU pemilih, bukan tiga kotak ketik. Nama, kode, kategori, HPP, dan harga resmi mengikuti master. */}
+        <MasterProductSelect
+          token={token}
+          value={form.model_id}
+          testId="launch-product-select"
+          onChange={(m) => setForm(f => ({
+            ...f,
+            model_id: m?.model_id || '',
+            master: m || null,
+            // Harga BOLEH beda dari master (K-3a), tetapi titik berangkatnya harga RESMI.
+            original_price: f.original_price !== '' && f.original_price != null
+              ? f.original_price : (m?.retail_price_master ?? ''),
+          }))}
+          helpText="Daftar ini sama persis dengan daftar di layar Katalog dari Master — satu sumber."
+        />
+        {/* Dokumen WARISAN: katakan apa adanya, jangan ditebak. */}
+        {editTarget && !form.model_id && (
+          <Notice tone="warning" icon={AlertTriangle} title="Belum tertaut Master Produk" testId="launch-legacy-warning">
+            Rencana ini dibuat sebelum aturan "produk wajib dari master", isinya teks bebas
+            {form.legacy_name ? ` — "${form.legacy_name}"` : ''}. Pilih produknya di atas untuk menautkannya.
+          </Notice>
+        )}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Tanggal peluncuran" wajib>
+            <DatePicker value={form.launch_date || ''} onChange={(v) => setForm(f => ({...f, launch_date: v}))} testId="launch-date" />
+          </Isian>
+          <Isian label="Status" htmlFor="launch-status-form">
+            <SmartNativeSelect id="launch-status-form" value={form.status} searchable={false} onChange={(e) => setForm(f => ({...f, status: e.target.value}))}>
+              {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          {/* F14b — Bahan & Model milik master (hanya dibaca). */}
+          <Isian label="Bahan (dari master)">
+            <p className="flex h-9 items-center text-sm" data-testid="launch-material-readonly">
+              {form.master?.material || form.master
+                ? (form.master?.material || <span className="text-muted-foreground">Belum dicatat di Master Produk</span>)
+                : <span className="text-muted-foreground">Pilih produk dulu</span>}
+            </p>
+          </Isian>
+          <Isian label="Kode model (dari master)">
+            <p className="flex h-9 items-center text-sm tabular-nums" data-testid="launch-model-readonly">
+              {form.master?.code || <span className="text-muted-foreground">Pilih produk dulu</span>}
+            </p>
+          </Isian>
+          <Isian label="Harga asli (Rp)"
+            galat={form.master && Number(form.master.retail_price_master || 0) > 0 && Number(form.original_price || 0) > 0
+              && Number(form.original_price) !== Number(form.master.retail_price_master)
+              ? `Beda ${fmtRp(Math.abs(Number(form.original_price) - Number(form.master.retail_price_master)))} dari harga resmi master (${fmtRp(form.master.retail_price_master)}).`
+              : undefined}>
+            <MoneyInput value={form.original_price} onChange={e => setForm(f => ({...f, original_price: e.target.value}))}
+              placeholder="0" data-testid="launch-original-price" />
+          </Isian>
+          <Isian label="Harga pasang / listing (Rp)">
+            <MoneyInput value={form.listing_price} onChange={e => setForm(f => ({...f, listing_price: e.target.value}))} placeholder="0" />
+          </Isian>
+          <Isian label="Harga flash sale (Rp)">
+            <MoneyInput value={form.flash_sale_price} onChange={e => setForm(f => ({...f, flash_sale_price: e.target.value}))} placeholder="0" />
+          </Isian>
+          <Isian label="Harga coret (Rp)">
+            <MoneyInput value={form.cross_price} onChange={e => setForm(f => ({...f, cross_price: e.target.value}))} placeholder="0" />
+          </Isian>
+        </div>
+        <Isian label="Platform tujuan">
+          <div className="flex flex-wrap gap-1.5">
+            {PLATFORMS.map(p => {
+              const aktif = form.platforms.includes(p);
+              return (
+                <Button key={p} type="button" size="sm" variant={aktif ? 'default' : 'outline'} aria-pressed={aktif}
+                  onClick={() => togglePlatform(p)}>{labelPlatform(p)}</Button>
+              );
+            })}
           </div>
-          <DialogFooter className="mt-2">
-            <Button variant="outline" onClick={() => setShowForm(false)}>Batal</Button>
-            <Button onClick={handleSave} disabled={formLoading}>
-              {formLoading && <Loader2 size={14} className="mr-2 animate-spin" />}
-              {editTarget ? 'Simpan Perubahan' : '🚀 Tambah Produk'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+        </Isian>
+        <Isian label="Deskripsi" htmlFor="launch-desc">
+          <Textarea id="launch-desc" value={form.description} rows={2} placeholder="Rincian produk"
+            onChange={e => setForm(f => ({...f, description: e.target.value}))} />
+        </Isian>
+        <Isian label="Catatan peluncuran" htmlFor="launch-notes">
+          <Textarea id="launch-notes" value={form.launch_notes} rows={2} placeholder="Persiapan, daftar periksa, dll."
+            onChange={e => setForm(f => ({...f, launch_notes: e.target.value}))} />
+        </Isian>
+      </FormPopup>
+    </PageLayout>
   );
 }
-
