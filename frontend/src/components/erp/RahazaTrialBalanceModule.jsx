@@ -99,7 +99,7 @@ export default function RahazaTrialBalanceModule({ token }) {
           {data.balanced
             ? <><CheckCircle2 className="w-4 h-4 shrink-0 text-[hsl(var(--success-text))]" />
                 <span>Seimbang (semua akun): mutasi debit = kredit <b className="text-foreground tabular-nums" data-testid="tb-kpi-pd">{fmt(totSemua.period_debit)}</b>
-                {' '}· saldo akhir debit = kredit <b className="text-foreground tabular-nums" data-testid="tb-kpi-ed">{fmt(totSemua.end_debit)}</b></span></>
+                <span className="hidden sm:inline">{' '}· saldo akhir debit = kredit <b className="text-foreground tabular-nums" data-testid="tb-kpi-ed">{fmt(totSemua.end_debit)}</b></span></span></>
             : <><AlertTriangle className="w-4 h-4 shrink-0" /> Tidak seimbang — saldo akhir debit {fmt(totSemua.end_debit)} ≠ kredit {fmt(totSemua.end_credit)}</>}
         </p>
       </>}

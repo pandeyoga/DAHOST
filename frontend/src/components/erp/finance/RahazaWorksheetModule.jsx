@@ -82,7 +82,7 @@ export default function RahazaWorksheetModule({ token }) {
             ? <><CheckCircle2 className="w-4 h-4 shrink-0 text-[hsl(var(--success-text))]" />
                 <span>Seimbang: mutasi debit = kredit <b className="text-foreground tabular-nums" data-testid="ws-kpi-pd">{fmt(t.period_debit)}</b>
                 {' '}· {netLabel.toLowerCase()} <b className={`tabular-nums ${(b.net_income || 0) < 0 ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`} data-testid="ws-kpi-net">{fmt(b.net_income)}</b>
-                {' '}menyeimbangkan kolom laba rugi dan neraca · total neraca <b className="text-foreground tabular-nums" data-testid="ws-kpi-bs">{fmt(g.bs_debit)}</b></span></>
+                <span className="hidden sm:inline">{' '}menyeimbangkan kolom laba rugi dan neraca · total neraca <b className="text-foreground tabular-nums" data-testid="ws-kpi-bs">{fmt(g.bs_debit)}</b></span></span></>
             : <><AlertTriangle className="w-4 h-4 shrink-0" /> Tidak seimbang — periksa jurnal yang debit dan kreditnya berbeda</>}
         </p>
       </>}

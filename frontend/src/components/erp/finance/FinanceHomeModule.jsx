@@ -31,7 +31,9 @@ const LEVEL_CLS = {
   warning: 'border-l-[hsl(var(--warning))]',
   info: 'border-l-[hsl(var(--primary))]',
 };
-const DANGER_TEXT = 'text-[hsl(var(--destructive))]';
+const DANGER_TEXT = 'text-[hsl(var(--danger-text))]';
+// Angka kartu: penuh di layar lebar, ringkas di HP (dulu "Rp 3.394.525.736" patah dua baris di kartu selebar 170 px).
+const nilaiKartu = (n) => (<><span className="sm:hidden">{formatRupiahShort(n)}</span><span className="hidden sm:inline">{fmt(n)}</span></>);
 // Label tugas dari server bisa memuat bulan mentah ("… untuk 2026-10") — tampilkan "Oktober 2026".
 const humanMonths = (s) => String(s || '').replace(/\b(20\d{2})-(0[1-9]|1[0-2])\b/g,
   (_, y, m) => formatDateID(`${y}-${m}-15`, { month: 'long', year: 'numeric' }));
@@ -85,22 +87,22 @@ export default function FinanceHomeModule({ token, onNavigate }) {
       tools={refreshBtn}
       summary={
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <StatTile label="Kas & bank" value={fmt(cash.balance)} testId="home-kpi-cash"
+          <StatTile label="Kas & bank" value={nilaiKartu(cash.balance)} testId="home-kpi-cash"
             sub={`Bulan ini masuk ${formatRupiahShort(cash.cash_in)} · keluar ${formatRupiahShort(cash.cash_out)}`}
-            hint="Buku besar · semua rekening"
+            hint="Buka rekening"
             onClick={() => go(onNavigate, 'fin-cash')} />
-          <StatTile label="Saldo di toko marketplace" value={fmt(stores.total)} testId="home-kpi-stores"
+          <StatTile label="Saldo di toko marketplace" value={nilaiKartu(stores.total)} testId="home-kpi-stores"
             sub={`${stores.stores.length} toko · belum ditarik ke bank`}
-            hint="Buku besar · akun toko"
+            hint="Buka saldo toko"
             onClick={() => go(onNavigate, 'fin-marketplace-settlement', 'balances')} />
-          <StatTile label="Piutang reseller" value={fmt(ar.total)} testId="home-kpi-ar"
+          <StatTile label="Piutang reseller" value={nilaiKartu(ar.total)} testId="home-kpi-ar"
             sub={ar.overdue ? `${formatRupiahShort(ar.overdue)} lewat jatuh tempo` : `${ar.count} faktur belum lunas`}
-            hint="Sama dengan Umur piutang"
+            hint="Buka umur piutang"
             subTone={ar.overdue ? 'danger' : undefined}
             onClick={() => go(onNavigate, 'fin-ar-hub', 'aging')} />
-          <StatTile label="Hutang pemasok & CMT" value={fmt(ap.total)} testId="home-kpi-ap"
+          <StatTile label="Hutang pemasok & CMT" value={nilaiKartu(ap.total)} testId="home-kpi-ap"
             sub={ap.overdue ? `${formatRupiahShort(ap.overdue)} lewat jatuh tempo` : `${ap.count} tagihan terbuka`}
-            hint="Sama dengan Umur hutang"
+            hint="Buka umur hutang"
             subTone={ap.overdue ? 'danger' : undefined}
             onClick={() => go(onNavigate, 'fin-ap-hub', 'aging')} />
         </div>
@@ -122,7 +124,7 @@ export default function FinanceHomeModule({ token, onNavigate }) {
             <ul className="space-y-2">
               {todo.map(t => (
                 <li key={t.key} className={`flex items-center gap-3 rounded-lg border border-[var(--glass-border)] border-l-4 ${LEVEL_CLS[t.level] || ''} px-3 py-2`} data-testid={`home-todo-${t.key}`}>
-                  <span className="text-lg font-bold tabular-nums w-10 text-right text-foreground">{t.count}</span>
+                  <span className="text-base font-bold tabular-nums w-10 text-right text-foreground">{t.count}</span>
                   <span className="text-sm text-foreground flex-1">{humanMonths(t.label)}{t.amount ? <span className="text-muted-foreground tabular-nums"> · {fmt(t.amount)}</span> : null}</span>
                   <Button size="sm" variant="outline" onClick={() => go(onNavigate, t.module, t.tab)}>
                     Buka <ArrowRight className="w-3.5 h-3.5" />
@@ -139,7 +141,7 @@ export default function FinanceHomeModule({ token, onNavigate }) {
               <p className="text-base font-semibold text-foreground">Laba bulan ini</p>
               <Button variant="link" size="sm" className="h-auto p-0" onClick={() => go(onNavigate, 'fin-pnl')}>Laba Rugi</Button>
             </div>
-            <div className="text-2xl font-bold tabular-nums text-foreground">{fmt(cur.net_income)}</div>
+            <div className="text-xl font-bold tabular-nums text-foreground">{fmt(cur.net_income)}</div>
             <p className="text-xs text-muted-foreground mb-3">
               laba bersih {formatDateID(profit.this_month_from)} – {formatDateID(d.today)}
             </p>

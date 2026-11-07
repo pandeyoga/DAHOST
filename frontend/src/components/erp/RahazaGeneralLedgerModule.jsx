@@ -88,7 +88,7 @@ export default function RahazaGeneralLedgerModule({ token }) {
         <p className="text-sm text-muted-foreground" data-testid="gl-ringkas">
           <b className="text-foreground" data-testid="gl-kpi-acc">{acc.code ? `${acc.code} · ` : ''}{acc.name}</b>
           {' '}· saldo awal <b className={`tabular-nums ${neg(data.opening_balance) || 'text-foreground'}`} data-testid="gl-kpi-open">{fmt(data.opening_balance)}</b>
-          {' '}· debit <b className="text-foreground tabular-nums" data-testid="gl-kpi-mv">{fmt(totalDebit)}</b> · kredit <b className="text-foreground tabular-nums">{fmt(totalCredit)}</b>
+          <span className="hidden sm:inline">{' '}· debit <b className="text-foreground tabular-nums" data-testid="gl-kpi-mv">{fmt(totalDebit)}</b> · kredit <b className="text-foreground tabular-nums">{fmt(totalCredit)}</b></span>
           {' '}· saldo akhir <b className={`tabular-nums ${neg(data.end_balance) || 'text-foreground'}`} data-testid="gl-kpi-end">{fmt(data.end_balance)}</b>
         </p>
       )}
