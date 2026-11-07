@@ -5,6 +5,9 @@
  * Unified approval inbox untuk:
  *  - Klaim Biaya (Reimbursement) — Manager/HR approve/reject → Finance disburse
  *  - Perjalanan Dinas — Manager/HR approve → Finance bayar uang muka
+ *
+ * 2026-11-08 (Standar UI/UX v2): rincian = popup; tanggal bayar = DatePicker; Setujui/Bayar hijau, Tolak merah;
+ * unduh Excel & CSV (dulu CSV saja); judul kolom tanpa huruf kapital dan tanpa tombol buatan sendiri.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import FilterChips from '@/components/ui/filter-chips';
@@ -23,7 +26,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { EmptyState, StatusBadge } from './moduleAtoms';
 import PageLayout, { DetailPanel } from './layout/PageLayout';
 import { formatRupiah } from '@/lib/format';
-import ExportCsvButton from '@/components/ui/export-csv-button';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DatePicker from '@/components/ui/date-picker';
+import { Isian } from '@/components/ui/form-popup';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import CashAccountSelect, { usePaymentCashAccounts } from './SdmCashAccountSelect';
 import { todayWIB } from '../../lib/waktu';
@@ -35,8 +40,6 @@ import { todayWIB } from '../../lib/waktu';
    "total yang menunggu dibayar bulan ini berapa?" tidak bisa dijawab tanpa
    menjumlah kartu satu per satu. */
 const EXPENSE_VIEW_KEY = 'hr_expense_approval_view';
-const CSV_HEAD = ['No. Referensi', 'Jenis', 'Judul', 'Karyawan', 'Departemen',
-  'Diajukan', 'Status', 'Jumlah'];
 const SORT_COLS = [
   { key: 'ref_number', label: 'No. referensi' }, { key: 'type_label', label: 'Jenis' },
   { key: 'title', label: 'Judul' }, { key: 'employee_name', label: 'Karyawan' },
@@ -132,7 +135,7 @@ function ActionPanel({ item, token, onClose, onRefresh }) {
             <div className="space-y-2 max-w-xl">
               <label className="text-sm font-medium">Alasan penolakan *</label>
               <Textarea
-                placeholder="Jelaskan alasan penolakan..."
+                placeholder="Jelaskan alasan penolakan…"
                 value={rejectReason}
                 onChange={e => setRejectReason(e.target.value)}
                 rows={3}
@@ -154,10 +157,10 @@ function ActionPanel({ item, token, onClose, onRefresh }) {
                 onChange={e => setNote(e.target.value)}
                 className="text-sm max-w-md"
               />
-              <Button variant="outline" onClick={() => setShowReject(true)} disabled={loading}>
+              <Button variant="destructive" onClick={() => setShowReject(true)} disabled={loading}>
                 <XCircle className="w-3.5 h-3.5" />Tolak
               </Button>
-              <Button onClick={() => doAction('approve', { note, cash_advance_approved: item.cash_advance_requested ?? item.amount })} disabled={loading}>
+              <Button variant="success" onClick={() => doAction('approve', { note, cash_advance_approved: item.cash_advance_requested ?? item.amount })} disabled={loading}>
                 <CheckCircle className="w-3.5 h-3.5" />Setujui
               </Button>
             </div>
@@ -166,16 +169,14 @@ function ActionPanel({ item, token, onClose, onRefresh }) {
 
         {/* Pencairan oleh Keuangan */}
         {item.status === 'approved' && (
-          <div className="grid grid-cols-2 gap-3 max-w-xl" data-testid="expense-pay-source">
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Dibayar dari rekening</label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl" data-testid="expense-pay-source">
+            <Isian label="Dibayar dari rekening" wajib>
               <CashAccountSelect accounts={accounts} loaded={accLoaded} value={payAccount} onChange={setPayAccount}
-                className="w-full h-9 px-2 rounded-md border border-border bg-background text-sm" testId="expense-pay-account" />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Tanggal bayar</label>
-              <Input type="date" value={payDate} onChange={e => setPayDate(e.target.value)} className="text-sm" />
-            </div>
+                testId="expense-pay-account" />
+            </Isian>
+            <Isian label="Tanggal bayar">
+              <DatePicker value={payDate} onChange={(v) => setPayDate(v || todayWIB())} bolehKosong={false} testId="expense-pay-date" />
+            </Isian>
           </div>
         )}
         {!isClaim && item.status === 'approved' && (
@@ -188,7 +189,7 @@ function ActionPanel({ item, token, onClose, onRefresh }) {
                 onChange={e => setAdvanceAmount(e.target.value)}
                 className="text-sm"
               />
-              <Button className="whitespace-nowrap"
+              <Button variant="success" className="whitespace-nowrap"
                 onClick={() => doAction('advance-paid', { amount_paid: parseFloat(advanceAmount) || item.amount, bank_account_id: payAccount, payment_date: payDate })}
                 disabled={loading || !payAccount}>
                 <Banknote className="w-3.5 h-3.5" />Bayar
@@ -200,7 +201,7 @@ function ActionPanel({ item, token, onClose, onRefresh }) {
         {isClaim && item.status === 'approved' && (
           <div className="space-y-2">
             <p className="text-sm font-medium">Pencairan klaim biaya</p>
-            <Button
+            <Button variant="success"
               onClick={() => doAction('disburse', { payment_method: 'transfer', bank_account_id: payAccount, payment_date: payDate })}
               disabled={loading || !payAccount}>
               <Banknote className="w-3.5 h-3.5" />Bayar & catat jurnal
@@ -291,11 +292,16 @@ export default function EmployeeExpenseApprovalModule({ token, user }) {
   const toggleSort = (key) => setSort((s) => (
     s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' }));
   const sumVisible = rows.reduce((s, r) => s + Number(r.amount || 0), 0);
-  const csvRows = rows.map((r) => [
-    r.ref_number, r.type_label || (r.type === 'expense_claim' ? 'Klaim Biaya' : 'Perjalanan Dinas'),
-    r.title, r.employee_name, r.employee_dept, fmtDate(r.submitted_at), EXP_STATUS[r.status]?.label || r.status,
-    r.amount ?? 0,
-  ]);
+  const KOLOM_UNDUH = [
+    { label: 'No. referensi', nilai: (r) => r.ref_number },
+    { label: 'Jenis', nilai: (r) => (r.type === 'expense_claim' ? 'Klaim biaya' : 'Perjalanan dinas') },
+    { label: 'Judul', nilai: (r) => r.title },
+    { label: 'Karyawan', nilai: (r) => r.employee_name },
+    { label: 'Departemen', nilai: (r) => r.employee_dept || '' },
+    { label: 'Diajukan', nilai: (r) => fmtDate(r.submitted_at) },
+    { label: 'Status', nilai: (r) => EXP_STATUS[r.status]?.label || r.status },
+    { label: 'Jumlah', nilai: (r) => Number(r.amount) || 0 },
+  ];
 
   const openItem = (item) => setSelected((cur) => (cur?.id === item.id ? null : item));
   const empty = items.length === 0;
@@ -311,7 +317,7 @@ export default function EmployeeExpenseApprovalModule({ token, user }) {
         <FilterChips value={filter} onChange={setFilter} testId="expense-filter" ariaLabel="Jenis" hideWhenEmpty={filter === 'all'}
           options={[{ key: 'all', label: 'Semua', count: totalPending }, { key: 'expense_claim', label: 'Klaim biaya', count: summary?.expense_claims?.total_pending_approval || 0 },
             { key: 'travel_request', label: 'Perjalanan dinas', count: summary?.travel_requests?.total_pending_approval || 0 }]} />
-        <div className="relative w-72 max-w-full">
+        <div className="relative w-full sm:w-64">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <GlassInput value={search} onChange={(e) => setSearch(e.target.value)}
             placeholder="Cari no. referensi / karyawan / judul…"
@@ -323,9 +329,8 @@ export default function EmployeeExpenseApprovalModule({ token, user }) {
         <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData}>
           <RefreshCw className="w-4 h-4" />
         </Button>
-        <ExportCsvButton filename="inbox-approval-klaim-dinas" testId="expense-export-csv"
-          head={CSV_HEAD} rows={csvRows} label="Unduh CSV" size="default" className=""
-          note={`total ${fmt(sumVisible)}`} />
+        <TombolUnduh namaBerkas="persetujuan-klaim-dinas" namaLembar="Klaim & dinas" baris={rows} kolom={KOLOM_UNDUH}
+          testId="expense-export-csv" />
         <ViewToggle value={view} onChange={setView} testId="expense-view" />
       </>}
       summary={!loading && !empty && (
@@ -357,21 +362,21 @@ export default function EmployeeExpenseApprovalModule({ token, user }) {
               description={`Kosongkan pencarian untuk melihat ${items.length} item lagi.`} />
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-xs" data-testid="expense-table">
-                <thead className="bg-muted/60">
+              <table className="w-full" data-testid="expense-table">
+                <thead>
                   <tr className="text-left">
                     {SORT_COLS.map(({ key: k, label }) => (
-                      <th key={k} className={`px-2.5 py-2 font-semibold whitespace-nowrap ${k === 'amount' ? 'text-right' : ''}`}>
-                        <button type="button" onClick={() => toggleSort(k)}
-                          data-testid={`expense-sort-${k}`}
-                          className="inline-flex items-center gap-1 uppercase hover:text-primary">
+                      <th key={k} className={`whitespace-nowrap ${k === 'amount' ? 'text-right' : ''}`}>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => toggleSort(k)}
+                          data-testid={`expense-sort-${k}`} title={`Urutkan menurut ${label.toLowerCase()}`}
+                          className="h-auto p-0 font-semibold text-muted-foreground hover:bg-transparent hover:text-primary">
                           {label}
-                          <ArrowUpDown size={10}
+                          <ArrowUpDown size={12}
                             className={sort.key === k ? 'text-primary' : 'opacity-40'} />
-                        </button>
+                        </Button>
                       </th>
                     ))}
-                    <th className="px-2.5 py-2 font-semibold text-right">Tindakan</th>
+                    <th className="text-right">Tindakan</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -379,15 +384,15 @@ export default function EmployeeExpenseApprovalModule({ token, user }) {
                     <tr key={item.id} className={`cursor-pointer hover:bg-muted/40 ${selected?.id === item.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}
                       onClick={() => openItem(item)}
                       data-testid={`expense-row-${item.ref_number}`}>
-                      <td className="px-2.5 py-2 whitespace-nowrap">{item.ref_number}</td>
-                      <td className="px-2.5 py-2"><TypeBadge type={item.type} /></td>
-                      <td className="px-2.5 py-2 max-w-[18rem] truncate" title={item.title}>{item.title}</td>
-                      <td className="px-2.5 py-2 font-medium whitespace-nowrap">{item.employee_name}</td>
-                      <td className="px-2.5 py-2 text-muted-foreground whitespace-nowrap">{item.employee_dept || '—'}</td>
-                      <td className="px-2.5 py-2 whitespace-nowrap">{fmtDate(item.submitted_at)}</td>
-                      <td className="px-2.5 py-2"><ExpStatusBadge status={item.status} /></td>
-                      <td className="px-2.5 py-2 text-right tabular-nums font-semibold whitespace-nowrap">{fmt(item.amount)}</td>
-                      <td className="px-2.5 py-2 text-right whitespace-nowrap">
+                      <td className="whitespace-nowrap">{item.ref_number}</td>
+                      <td><TypeBadge type={item.type} /></td>
+                      <td className="max-w-[18rem] truncate" title={item.title}>{item.title}</td>
+                      <td className="font-medium whitespace-nowrap">{item.employee_name}</td>
+                      <td className="text-muted-foreground whitespace-nowrap">{item.employee_dept || '—'}</td>
+                      <td className="whitespace-nowrap">{fmtDate(item.submitted_at)}</td>
+                      <td><ExpStatusBadge status={item.status} /></td>
+                      <td className="text-right tabular-nums font-semibold whitespace-nowrap">{fmt(item.amount)}</td>
+                      <td className="text-right whitespace-nowrap">
                         {item.status === 'submitted' && (
                           <Button size="sm" variant="outline"
                             onClick={(e) => { e.stopPropagation(); setSelected(item); }}>
