@@ -15,6 +15,7 @@ const ROLE_OPTIONS = [
   { value: 'packing', label: 'Area packing (barang setengah jadi)' },
 ];
 const ROLE_LABEL = Object.fromEntries(ROLE_OPTIONS.map((o) => [o.value, o.label]));
+const JENIS_LOKASI = { gedung: 'Gedung', zona: 'Zona', gudang: 'Gudang', kantor: 'Kantor', produksi: 'Produksi' };
 
 export default function RahazaLocationsModule({ token }) {
   const [locs, setLocs] = useState([]);
@@ -37,7 +38,8 @@ export default function RahazaLocationsModule({ token }) {
       columns={[
         { key: 'code', label: 'Kode' },
         { key: 'name', label: 'Nama' },
-        { key: 'type', label: 'Jenis', render: v => v === 'gedung' ? 'Gedung' : 'Zona' },
+        // Data nyata juga berisi jenis 'gudang' / 'kantor' / 'produksi' (hasil impor) — dulu semuanya tampil "Zona".
+        { key: 'type', label: 'Jenis', render: v => JENIS_LOKASI[v] || 'Lainnya' },
         { key: 'storage_role', label: 'Peran gudang', render: v => (v ? (ROLE_LABEL[v] || v) : '—') },
         { key: 'parent_name', label: 'Induk (gedung)', render: v => v || '—' },
       ]}
