@@ -44,6 +44,7 @@ import { Input } from '@/components/ui/input';
 import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import PageLayout from '../layout/PageLayout';
+import DetailPopup from '@/components/ui/detail-popup';
 import SkuMappingPanel from './SkuMappingPanel';
 import ImportValueMapPanel from './ImportValueMapPanel';
 import ImportPlanPanel from './ImportPlanPanel';
@@ -2272,18 +2273,15 @@ export default function DataImportWizard({ token }) {
           <AlertDialogFooter>
             <AlertDialogCancel>Tidak</AlertDialogCancel>
             <AlertDialogAction onClick={() => rollback(rollbackTarget)}
+              className="bg-[hsl(var(--destructive-strong))] text-white hover:bg-[hsl(var(--destructive-strong)/0.9)]"
               data-testid="rollback-confirm">Ya, batalkan</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
       {/* F3.F — LAPORAN PEMULIHAN (menetap; bisa dibuka lagi besok dari Riwayat) */}
-      <AlertDialog open={!!undoReport} onOpenChange={(o) => !o && setUndoReport(null)}>
-        <AlertDialogContent className="max-w-2xl">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Laporan pemulihan impor</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-3 text-xs" data-testid="undo-report">
+      <DetailPopup open={!!undoReport} onClose={() => setUndoReport(null)} judul="Laporan pemulihan impor" testId="undo-report-popup">
+              <div className="space-y-3 text-sm" data-testid="undo-report">
                 {undoReport?.loading && <p>Memuat laporan…</p>}
                 {undoReport?.error && (
                   <p className="text-[hsl(var(--danger-text))]">{undoReport.error}</p>
@@ -2333,7 +2331,7 @@ export default function DataImportWizard({ token }) {
                             <p key={i} className="text-xs text-muted-foreground">• {n}</p>
                           ) : (
                             <p key={i} className="text-xs text-muted-foreground">
-                              • <span className="font-mono text-foreground">{n.order || '—'}</span>
+                              • <span className="text-foreground">{n.order || '—'}</span>
                               {n.result ? <> — <b>{n.result}</b></> : null}
                               {n.why ? `: ${n.why}` : ''}
                               {n.next ? ` · Langkah berikutnya: ${n.next}` : ''}
@@ -2353,7 +2351,7 @@ export default function DataImportWizard({ token }) {
                           <tbody>
                             {undoReport.trail.map((t, i) => (
                               <tr key={`${t.order_ref}-${i}`} className="border-t border-border">
-                                <td className="px-2 py-1 font-mono">{t.order_ref}</td>
+                                <td className="px-2 py-1">{t.order_ref}</td>
                                 <td className="px-2 py-1">{t.status_before || '—'}</td>
                                 <td className="px-2 py-1">
                                   {t.restored_at
@@ -2377,22 +2375,11 @@ export default function DataImportWizard({ token }) {
                   </>
                 )}
               </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogAction onClick={() => setUndoReport(null)}
-              data-testid="undo-report-close">Tutup</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      </DetailPopup>
 
       {/* F8 — DAFTAR SUSUNAN KOLOM YANG DIINGAT (bisa dilihat & dilupakan) */}
-      <AlertDialog open={formats !== null} onOpenChange={(o) => !o && setFormats(null)}>
-        <AlertDialogContent className="max-w-3xl">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Susunan kolom yang diingat sistem</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-2 text-xs" data-testid="import-formats-dialog">
+      <DetailPopup open={formats !== null} onClose={() => setFormats(null)} judul="Susunan kolom yang diingat sistem" testId="import-formats-popup">
+              <div className="space-y-2 text-sm" data-testid="import-formats-dialog">
                 <p className="text-muted-foreground">
                   Setiap kali Anda menyimpan impor, susunan kolom berkasnya diingat
                   beserta pemetaan yang Anda konfirmasi — supaya berkas rutin harian
@@ -2444,14 +2431,7 @@ export default function DataImportWizard({ token }) {
                   </div>
                 )}
               </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogAction onClick={() => setFormats(null)}
-              data-testid="import-formats-close">Tutup</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      </DetailPopup>
     </PageLayout>
   );
 }

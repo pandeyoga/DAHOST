@@ -223,6 +223,12 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
   }, [selectedCatalog, searchQ, filterStatus, filterCategoryId, filterAttention, f4,
       tab, loadItems, loadHistory]);
 
+  // Tab Item/Riwayat dibuka tanpa katalog terpilih → pilih katalog pertama (dulu tab itu terkunci sampai
+  // satu kartu katalog diklik; kini pemilih katalog ada di baris tab).
+  useEffect(() => {
+    if ((tab === 'items' || tab === 'history') && !selectedCatalog && catalogs.length) setSelectedCatalog(catalogs[0]);
+  }, [tab, selectedCatalog, catalogs]);
+
   const reloadItems = () => {
     if (!selectedCatalog) return;
     loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention, f4);

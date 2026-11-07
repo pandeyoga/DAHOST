@@ -931,13 +931,13 @@ function AccountManagementBase({ token, onAksi, onScoring }) {
       <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted-foreground" data-testid="acc-ringkasan">
         <span data-testid="stat-total-accounts"><b className="text-foreground">{stats.total}</b> toko{serverFilterAktif ? ' (sesuai saringan)' : ''}</span>
         <span>· <b className="text-foreground">{stats.active}</b> aktif ·</span>
-        <Button variant="link" size="sm" className="h-auto p-0" data-testid="stat-nopic-accounts" aria-pressed={onlyNoPic}
+        <Button variant="link" size="sm" className="h-auto p-0 text-sm" data-testid="stat-nopic-accounts" aria-pressed={onlyNoPic}
           onClick={() => { setOnlyNoPic(v => !v); setOnlyReview(false); }}
           title={onlyNoPic ? 'Klik lagi untuk melihat semua' : 'Tampilkan toko tanpa penanggung jawab'}>
           <span className={stats.noPic ? 'text-[hsl(var(--warning-text))]' : ''}>{stats.noPic} tanpa PIC</span>
         </Button>
         <span>·</span>
-        <Button variant="link" size="sm" className="h-auto p-0" data-testid="stat-review-accounts" aria-pressed={onlyReview}
+        <Button variant="link" size="sm" className="h-auto p-0 text-sm" data-testid="stat-review-accounts" aria-pressed={onlyReview}
           onClick={() => { setOnlyReview(v => !v); setOnlyNoPic(false); }}
           title={onlyReview ? 'Klik lagi untuk melihat semua' : 'Data seed yang belum dikoreksi owner'}>
           <span className={stats.review ? 'text-[hsl(var(--warning-text))]' : ''}>{stats.review} perlu ditinjau</span>
