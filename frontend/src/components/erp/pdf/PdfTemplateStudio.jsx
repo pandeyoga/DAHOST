@@ -57,11 +57,11 @@ const ALIGN_LABELS = { left: 'Kiri', center: 'Tengah', right: 'Kanan' };
 /** Label kecil di atas kontrol — dipakai konsisten supaya editor mudah dipindai. */
 const Field = ({ label, hint, children, className = '' }) => (
   <div className={className}>
-    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">
+    <Label className="text-sm font-medium text-foreground">
       {label}
     </Label>
     <div className="mt-1">{children}</div>
-    {hint && <p className="text-[11px] text-muted-foreground mt-1">{hint}</p>}
+    {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
   </div>
 );
 
@@ -69,7 +69,7 @@ const Toggle = ({ label, hint, checked, onCheckedChange, testId, disabled }) => 
   <div className="flex items-start justify-between gap-3 py-2">
     <div className="min-w-0">
       <p className="text-sm text-foreground">{label}</p>
-      {hint && <p className="text-[11px] text-muted-foreground mt-0.5">{hint}</p>}
+      {hint && <p className="text-xs text-muted-foreground mt-0.5">{hint}</p>}
     </div>
     <Switch
       checked={!!checked}
@@ -86,9 +86,9 @@ const SectionCard = ({ icon: Icon, title, desc, children, testId }) => (
        data-testid={testId}>
     <div className="flex items-center gap-2 mb-3">
       {Icon && <Icon className="w-4 h-4 text-[hsl(var(--primary))]" />}
-      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+      <h3 className="text-base font-semibold text-foreground">{title}</h3>
     </div>
-    {desc && <p className="text-[11px] text-muted-foreground -mt-2 mb-3">{desc}</p>}
+    {desc && <p className="text-xs text-muted-foreground -mt-2 mb-3">{desc}</p>}
     {children}
   </div>
 );
@@ -150,7 +150,7 @@ export default function PdfTemplateStudio({ token }) {
       }
       setDirty(false);
     } catch (e) {
-      toast.error(e.message || 'Gagal memuat template');
+      toast.error(e.message || 'Gagal memuat templat');
     } finally {
       setLoaded(true);
     }
@@ -290,9 +290,9 @@ export default function PdfTemplateStudio({ token }) {
         });
       }
       setDirty(false);
-      toast.success('Template tersimpan — dokumen baru langsung memakai setelan ini.');
+      toast.success('Templat tersimpan — dokumen baru langsung memakai setelan ini.');
     } catch (e) {
-      toast.error(e.message || 'Gagal menyimpan template');
+      toast.error(e.message || 'Gagal menyimpan templat');
     } finally {
       setSaving(false);
     }
@@ -303,7 +303,7 @@ export default function PdfTemplateStudio({ token }) {
     try {
       await pdfTplApi.resetDoc(token, docKey);
       await load();
-      toast.success('Override dihapus — dokumen ini kembali mengikuti template global.');
+      toast.success('Setelan khusus dihapus — dokumen ini kembali mengikuti templat global.');
     } catch (e) {
       toast.error(e.message || 'Gagal mengembalikan ke global');
     }
@@ -319,33 +319,28 @@ export default function PdfTemplateStudio({ token }) {
   return (
     <div className="space-y-5" data-testid="pdf-template-studio">
       <PageHeader
-        icon={FileText}
-        eyebrow="Administrasi Sistem · Dokumen"
-        title="PDF & Kop Surat"
-        subtitle="Satu tempat untuk kop surat (logo & identitas PT), kolom tabel, blok tanda tangan, dan footer semua dokumen. Pratinjau di kanan memakai generator PDF yang sama dengan dokumen sungguhan."
+        title="PDF & kop surat"
+        subtitle="Kop surat, kolom tabel, tanda tangan, dan kaki halaman semua dokumen, dengan pratinjau di samping."
         testId="pdf-studio-header"
         actions={
           <>
             <Button
-              variant="ghost" onClick={load}
-              className="h-9 border border-[var(--glass-border)]"
+              variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang"
               data-testid="pdf-studio-reload"
             >
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang
+              <RefreshCw />
             </Button>
             {!isGlobal && (
               <Button
-                variant="ghost" onClick={resetDoc}
-                className="h-9 border border-[var(--glass-border)]"
+                variant="outline" onClick={resetDoc}
                 data-testid="pdf-studio-reset-doc"
               >
-                <RotateCcw className="w-3.5 h-3.5 mr-1.5" />Ikuti Global
+                <RotateCcw />Ikuti templat global
               </Button>
             )}
-            <Button onClick={save} disabled={saving || !dirty} className="h-9"
+            <Button variant="success" onClick={save} disabled={saving || !dirty}
                     data-testid="pdf-studio-save">
-              {saving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                      : <Save className="w-3.5 h-3.5 mr-1.5" />}
+              {saving ? <Loader2 className="animate-spin" /> : <Save />}
               Simpan
             </Button>
           </>
@@ -362,7 +357,7 @@ export default function PdfTemplateStudio({ token }) {
               </SelectTrigger>
               <SelectContent className="max-h-[420px]">
                 <SelectItem value={GLOBAL_KEY} data-testid="pdf-studio-doc-global">
-                  Template Global (berlaku untuk semua dokumen)
+                  Templat global (semua dokumen)
                 </SelectItem>
                 {Object.entries(groups).map(([g, items]) => (
                   <SelectGroup key={g}>
@@ -394,16 +389,16 @@ export default function PdfTemplateStudio({ token }) {
             </Field>
           ) : (
             <div className="lg:col-span-4 flex flex-wrap gap-2" data-testid="pdf-studio-override-badges">
-              <Badge variant="outline" className="text-[11px]">
+              <Badge variant="outline" className="text-xs">
                 Kop: {tpl?.override_header ? 'khusus dokumen ini' : 'ikut global'}
               </Badge>
-              <Badge variant="outline" className="text-[11px]">
+              <Badge variant="outline" className="text-xs">
                 Tanda tangan: {tpl?.override_signatures ? 'khusus' : 'ikut global'}
               </Badge>
-              <Badge variant="outline" className="text-[11px]">
-                Footer: {tpl?.override_footer ? 'khusus' : 'ikut global'}
+              <Badge variant="outline" className="text-xs">
+                Kaki halaman: {tpl?.override_footer ? 'khusus' : 'ikut global'}
               </Badge>
-              <Badge variant="outline" className="text-[11px]"
+              <Badge variant="outline" className="text-xs"
                      data-testid="pdf-studio-columns-badge">
                 Kolom: {activeDoc?.columns_enforced === false
                   ? 'belum bisa diatur' : 'bisa diatur'}
@@ -413,22 +408,22 @@ export default function PdfTemplateStudio({ token }) {
 
           <div className="lg:col-span-3 flex lg:justify-end">
             {dirty ? (
-              <Badge className="bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border border-[hsl(var(--warning)/0.35)]"
+              <Badge className="bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))] border border-[hsl(var(--warning)/0.35)]"
                      data-testid="pdf-studio-dirty">
                 Ada perubahan belum disimpan
               </Badge>
             ) : (
-              <Badge variant="outline" className="text-[11px]" data-testid="pdf-studio-clean">
+              <Badge variant="outline" className="text-xs" data-testid="pdf-studio-clean">
                 Tersimpan
               </Badge>
             )}
           </div>
         </div>
         {!isGlobal && (
-          <p className="text-[11px] text-muted-foreground mt-3 flex items-start gap-1.5">
+          <p className="text-xs text-muted-foreground mt-3 flex items-start gap-1.5">
             <Info className="w-3.5 h-3.5 mt-px shrink-0" />
-            Kop, tanda tangan, dan footer dokumen ini mengikuti Template Global sampai
-            Anda menyalakan override di tab masing-masing. Kolom tabel selalu milik
+            Kop, tanda tangan, dan kaki halaman dokumen ini mengikuti templat global sampai
+            Anda menyalakan setelan khusus di bagian masing-masing. Kolom tabel selalu milik
             jenis dokumen ini.
           </p>
         )}
@@ -447,16 +442,16 @@ export default function PdfTemplateStudio({ token }) {
             <Tabs defaultValue="kop">
               <TabsList data-testid="pdf-studio-tabs">
                 <TabsTrigger value="kop" data-testid="pdf-studio-tab-kop">
-                  <Layers className="w-3.5 h-3.5 mr-1.5" />Kop Surat
+                  <Layers className="w-3.5 h-3.5 mr-1.5" />Kop surat
                 </TabsTrigger>
                 <TabsTrigger value="kolom" data-testid="pdf-studio-tab-kolom">
-                  <Columns3 className="w-3.5 h-3.5 mr-1.5" />Kolom Tabel
+                  <Columns3 className="w-3.5 h-3.5 mr-1.5" />Kolom tabel
                 </TabsTrigger>
                 <TabsTrigger value="ttd" data-testid="pdf-studio-tab-ttd">
-                  <PenLine className="w-3.5 h-3.5 mr-1.5" />Tanda Tangan
+                  <PenLine className="w-3.5 h-3.5 mr-1.5" />Tanda tangan
                 </TabsTrigger>
                 <TabsTrigger value="lain" data-testid="pdf-studio-tab-lain">
-                  <Sparkles className="w-3.5 h-3.5 mr-1.5" />Footer & Gaya Tabel
+                  <Sparkles className="w-3.5 h-3.5 mr-1.5" />Kaki halaman & gaya tabel
                 </TabsTrigger>
               </TabsList>
 
@@ -466,7 +461,7 @@ export default function PdfTemplateStudio({ token }) {
                   <SectionCard icon={Info} title="Sumber setelan kop" testId="pdf-kop-override">
                     <Toggle
                       label="Pakai kop khusus untuk dokumen ini"
-                      hint="Mati = mengikuti Template Global (ubah sekali, berlaku untuk semua surat)."
+                      hint="Mati = mengikuti templat global (ubah sekali, berlaku untuk semua surat)."
                       checked={!!tpl.override_header}
                       onCheckedChange={v => patchRoot('override_header', v)}
                       testId="pdf-kop-override-switch"
@@ -484,7 +479,7 @@ export default function PdfTemplateStudio({ token }) {
                              className="max-h-full max-w-full object-contain"
                              data-testid="pdf-kop-logo-preview" />
                       ) : (
-                        <span className="text-[11px] text-muted-foreground px-2 text-center">
+                        <span className="text-xs text-muted-foreground px-2 text-center">
                           Belum ada logo
                         </span>
                       )}
@@ -669,7 +664,7 @@ export default function PdfTemplateStudio({ token }) {
                     </p>
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       {columns.map(c => (
-                        <Badge key={c.key} variant="outline" className="text-[11px]"
+                        <Badge key={c.key} variant="outline" className="text-xs"
                                data-testid={`pdf-kolom-readonly-${c.key}`}>
                           {c.label}
                         </Badge>
@@ -686,7 +681,7 @@ export default function PdfTemplateStudio({ token }) {
                              className="rounded-[var(--radius-sm)] border border-[var(--glass-border)] bg-muted/20 p-2.5"
                              data-testid={`pdf-kolom-row-${c.key}`}>
                           <div className="flex items-center gap-2">
-                            <span className="text-[11px] font-mono text-muted-foreground w-6 text-right">
+                            <span className="text-xs font-mono text-muted-foreground w-6 text-right">
                               {i + 1}
                             </span>
                             <div className="flex flex-col gap-0.5">
@@ -730,7 +725,7 @@ export default function PdfTemplateStudio({ token }) {
                               data-testid={`pdf-kolom-width-${c.key}`}
                             />
                             {c.required ? (
-                              <Badge variant="outline" className="text-[10px]"
+                              <Badge variant="outline" className="text-xs"
                                      data-testid={`pdf-kolom-required-${c.key}`}>wajib</Badge>
                             ) : (
                               <Switch
@@ -749,7 +744,7 @@ export default function PdfTemplateStudio({ token }) {
                               </Button>
                             )}
                           </div>
-                          <p className="text-[10px] text-muted-foreground mt-1 pl-8 font-mono">
+                          <p className="text-xs text-muted-foreground mt-1 pl-8 font-mono">
                             {c.key}{c.custom ? ' · kolom tambahan (dicetak kosong untuk ditulis tangan)' : ''}
                           </p>
                         </div>
@@ -771,7 +766,7 @@ export default function PdfTemplateStudio({ token }) {
                                testId="pdf-ttd-override">
                     <Toggle
                       label="Pakai blok tanda tangan khusus untuk dokumen ini"
-                      hint="Mati = mengikuti Template Global; bila global belum diisi, dipakai blok bawaan dokumen ini."
+                      hint="Mati = mengikuti templat global; bila global belum diisi, dipakai blok bawaan dokumen ini."
                       checked={!!tpl.override_signatures}
                       onCheckedChange={v => patchRoot('override_signatures', v)}
                       testId="pdf-ttd-override-switch"
@@ -833,7 +828,7 @@ export default function PdfTemplateStudio({ token }) {
                            className="rounded-[var(--radius-sm)] border border-[var(--glass-border)] bg-muted/20 p-3"
                            data-testid={`pdf-ttd-block-${i}`}>
                         <div className="flex items-center justify-between mb-2">
-                          <span className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">
+                          <span className="text-xs font-medium text-muted-foreground">
                             Blok {i + 1}
                           </span>
                           <div className="flex items-center gap-1">
@@ -925,8 +920,8 @@ export default function PdfTemplateStudio({ token }) {
                 {!isGlobal && (
                   <SectionCard icon={Info} title="Sumber setelan footer" testId="pdf-footer-override">
                     <Toggle
-                      label="Pakai footer khusus untuk dokumen ini"
-                      hint="Mati = mengikuti Template Global."
+                      label="Pakai kaki halaman khusus untuk dokumen ini"
+                      hint="Mati = mengikuti templat global."
                       checked={!!tpl.override_footer}
                       onCheckedChange={v => patchRoot('override_footer', v)}
                       testId="pdf-footer-override-switch"
@@ -934,12 +929,12 @@ export default function PdfTemplateStudio({ token }) {
                   </SectionCard>
                 )}
 
-                <SectionCard icon={FileText} title="Footer" testId="pdf-footer">
-                  <Toggle label="Tampilkan footer"
+                <SectionCard icon={FileText} title="Kaki halaman" testId="pdf-footer">
+                  <Toggle label="Tampilkan kaki halaman"
                           checked={ftr.show !== false}
                           onCheckedChange={v => patch('footer', 'show', v)}
                           testId="pdf-footer-show" />
-                  <Field label="Teks footer" className="mt-2"
+                  <Field label="Teks kaki halaman" className="mt-2"
                          hint="Mis. syarat pengiriman, catatan hukum, atau alamat cabang.">
                     <Textarea rows={2} value={ftr.text || ''}
                               onChange={e => patch('footer', 'text', e.target.value)}
@@ -989,16 +984,16 @@ export default function PdfTemplateStudio({ token }) {
         {/* ── PRATINJAU ───────────────────────────────────────────────────── */}
         <div className="xl:col-span-5" data-testid="pdf-studio-preview">
           <GlassCard className="p-3 xl:sticky xl:top-4">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
               <div className="flex items-center gap-2 min-w-0">
                 <Eye className="w-4 h-4 text-[hsl(var(--primary))]" />
-                <span className="text-sm font-semibold text-foreground truncate">
+                <span className="min-w-0 text-sm font-semibold text-foreground">
                   Pratinjau: {docs.find(d => d.doc_key === previewKey)?.label || previewKey}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
                 {previewing && (
-                  <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1"
+                  <span className="text-xs text-muted-foreground inline-flex items-center gap-1"
                         data-testid="pdf-preview-loading">
                     <Loader2 className="w-3 h-3 animate-spin" />memuat
                   </span>
@@ -1008,7 +1003,7 @@ export default function PdfTemplateStudio({ token }) {
                     <button
                       key={m} type="button"
                       onClick={() => setPreviewMode(m)}
-                      className={`px-2.5 h-7 text-[11px] transition-colors ${
+                      className={`px-2.5 h-7 text-xs transition-colors ${
                         previewMode === m
                           ? 'bg-[hsl(var(--primary)/0.15)] text-foreground'
                           : 'text-muted-foreground hover:bg-muted/50'}`}
@@ -1030,9 +1025,9 @@ export default function PdfTemplateStudio({ token }) {
               <div className="rounded-[var(--radius-sm)] border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.08)] p-3"
                    data-testid="pdf-preview-error">
                 <p className="text-sm text-foreground">{previewErr}</p>
-                <Button variant="ghost" className="mt-2 h-8 text-xs border border-[var(--glass-border)]"
+                <Button variant="outline" size="sm" className="mt-2"
                         onClick={() => setTpl(p => ({ ...p }))} data-testid="pdf-preview-retry">
-                  <RefreshCw className="w-3 h-3 mr-1" />Coba lagi
+                  <RefreshCw />Coba lagi
                 </Button>
               </div>
             ) : previewUrl ? (
@@ -1054,8 +1049,8 @@ export default function PdfTemplateStudio({ token }) {
             ) : (
               <Skeleton className="w-full h-[76vh]" data-testid="pdf-preview-skeleton" />
             )}
-            <p className="text-[11px] text-muted-foreground mt-2">
-              Pratinjau memakai DATA CONTOH dan dibuat oleh generator PDF yang sama
+            <p className="text-xs text-muted-foreground mt-2">
+              Pratinjau memakai data contoh dan dibuat oleh generator PDF yang sama
               dengan dokumen sungguhan, jadi yang terlihat di sini itulah yang tercetak.
               Mode <b className="text-foreground">Gambar</b> menampilkan halaman pertama;
               mode <b className="text-foreground">PDF</b> memakai penampil PDF browser.
@@ -1064,10 +1059,10 @@ export default function PdfTemplateStudio({ token }) {
               /* Kejujuran: untuk jenis yang tata letak isinya khusus (slip gaji A5,
                  panduan produksi), yang benar-benar berlaku dari template adalah kop,
                  tanda tangan, dan footer — bukan susunan tabelnya. */
-              <p className="text-[11px] mt-1 text-[hsl(var(--warning))]"
+              <p className="text-xs mt-1 text-[hsl(var(--warning-text))]"
                  data-testid="pdf-preview-caveat">
-                Catatan untuk jenis ini: yang benar-benar diambil dari template adalah
-                kop surat, blok tanda tangan, dan footer. Tata letak isinya memakai
+                Catatan untuk jenis ini: yang benar-benar diambil dari templat adalah
+                kop surat, blok tanda tangan, dan kaki halaman. Tata letak isinya memakai
                 rancangan khusus dokumen ini, jadi bagian tabel di pratinjau hanya
                 gambaran.
               </p>
