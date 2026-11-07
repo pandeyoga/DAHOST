@@ -658,8 +658,8 @@ function WorkspaceCalendar({ headers }) {
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">{MONTHS[month]} {year}</h3>
         <div className="flex gap-1">
-          <Button variant="outline" size="icon" className="h-7 w-7" onClick={prevMonth}><ChevronLeft className="w-4 h-4" /></Button>
-          <Button variant="outline" size="icon" className="h-7 w-7" onClick={nextMonth}><ChevronRight className="w-4 h-4" /></Button>
+          <Button variant="outline" size="icon-sm" onClick={prevMonth} title="Bulan sebelumnya" aria-label="Bulan sebelumnya"><ChevronLeft /></Button>
+          <Button variant="outline" size="icon-sm" onClick={nextMonth} title="Bulan berikutnya" aria-label="Bulan berikutnya"><ChevronRight /></Button>
         </div>
       </div>
 

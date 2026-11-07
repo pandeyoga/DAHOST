@@ -736,7 +736,7 @@ export default function PdfTemplateStudio({ token }) {
                               />
                             )}
                             {c.custom && (
-                              <Button variant="ghost" size="icon" className="h-7 w-7"
+                              <Button variant="ghost" size="icon-sm"
                                       onClick={() => removeColumn(i)}
                                       aria-label={`Hapus kolom ${c.label}`}
                                       data-testid={`pdf-kolom-remove-${c.key}`}>
@@ -832,20 +832,20 @@ export default function PdfTemplateStudio({ token }) {
                             Blok {i + 1}
                           </span>
                           <div className="flex items-center gap-1">
-                            <Button variant="ghost" size="icon" className="h-7 w-7"
+                            <Button variant="ghost" size="icon-sm"
                                     onClick={() => moveBlock(i, -1)} disabled={i === 0}
                                     aria-label={`Naikkan blok ${i + 1}`}
                                     data-testid={`pdf-ttd-up-${i}`}>
                               <ArrowUp className="w-3.5 h-3.5" />
                             </Button>
-                            <Button variant="ghost" size="icon" className="h-7 w-7"
+                            <Button variant="ghost" size="icon-sm"
                                     onClick={() => moveBlock(i, 1)}
                                     disabled={i === sigBlocks.length - 1}
                                     aria-label={`Turunkan blok ${i + 1}`}
                                     data-testid={`pdf-ttd-down-${i}`}>
                               <ArrowDown className="w-3.5 h-3.5" />
                             </Button>
-                            <Button variant="ghost" size="icon" className="h-7 w-7"
+                            <Button variant="ghost" size="icon-sm"
                                     onClick={() => removeBlock(i)}
                                     aria-label={`Hapus blok ${i + 1}`}
                                     data-testid={`pdf-ttd-remove-${i}`}>
@@ -1014,7 +1014,7 @@ export default function PdfTemplateStudio({ token }) {
                     </button>
                   ))}
                 </div>
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={openPdfTab}
+                <Button variant="ghost" size="icon-sm" onClick={openPdfTab}
                         aria-label="Buka PDF di tab baru" data-testid="pdf-preview-open">
                   <ExternalLink className="w-3.5 h-3.5" />
                 </Button>
