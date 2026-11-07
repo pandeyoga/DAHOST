@@ -32,6 +32,7 @@ const CATEGORY_META = {
 };
 // Nama setelan dari server sebagian masih berbahasa Inggris — diterjemahkan untuk tampilan saja.
 const LABEL_ID = {
+  hpp_profit_margin_pct: 'Target margin laba (%)',
   maklon_cmt_buffer_days: 'Cadangan waktu target CMT (hari)',
   maklon_cmt_late_grace_days: 'Toleransi telat CMT (hari, H+N)',
   maklon_invoice_prefix: 'Awalan nomor tagihan maklon',
@@ -51,6 +52,7 @@ const DESC_ID = {
   maklon_cmt_buffer_days: 'Selisih hari antara tenggat mitra/pembeli dan target CMT. Target CMT = tenggat pengiriman − cadangan. Dipakai pemantauan Kejar CMT.',
   maklon_cmt_late_grace_days: 'Ambang "telat": pekerjaan dianggap telat bila melewati target CMT lebih dari N hari (mis. H+5). Di bawahnya berstatus "mendekati tenggat".',
   maklon_invoice_prefix: 'Awalan nomor tagihan pesanan maklon. Contoh INV-MKL → INV-MKL-2026-0001.',
+  maklon_payment_terms_default: 'Jangka pembayaran bawaan tagihan maklon (jatuh tempo setelah tagihan terbit).',
   maklon_permak_return_grace_days: 'Penanda H+N untuk permak/retur ke CMT: bila melewati tenggat kembali lebih dari N hari, permak ditandai perlu tindakan (mis. H+3).',
   maklon_qc_reject_threshold_pct: 'Ambang persentase tolak QC maklon. Di atas nilai ini sistem mengirim peringatan.',
   marketplace_shopee_enabled: 'Aktifkan integrasi Shopee Open API.',
