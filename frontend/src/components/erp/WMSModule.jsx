@@ -1,43 +1,87 @@
 /**
- * WMS Module — Warehouse Management System Phase 1
- * Tabs: Dashboard | Struktur Gudang | Satuan & Konversi | Receiving (Scan In/Out) | Posisi & Stok
+ * WMS Module — bagian gudang yang dibuka per menu lewat prop `section` (registry `withProps`):
+ *   structure → Struktur Gudang (wh-structure) · units → Satuan & Konversi (wh-units)
+ *   audit → Audit Trail (wh-audit) · receiving → Scan Gudang (wh-scan, tautan lama)
+ *   PositionsTab (ekspor bernama) → tab "Posisi & cari" di hub Stok & Akurasi.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): setiap bagian = PageLayout (kepala ikon besar + `p-6` dihapus), daftar kartu
+ * (gedung, zona, rak, satuan, antrean scan) → tabel (kartu ringkas di HP), unduh Excel/CSV di setiap tabel,
+ * semua form (gedung/zona/rak, satuan, konversi, kalkulator, scan) → FormPopup, analisa AI → DetailPopup,
+ * konfirmasi → confirmDialog, tanggal → PeriodPicker, kode mentah (count/length, adjust_in, occupied,
+ * pending) → label Indonesia. API, field, dan validasi tidak berubah.
+ * Tab "Dashboard" lama (DashboardTab) dihapus dari berkas: sudah tidak dirender sejak Fase E (kode mati).
  */
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { Building2, Layers, Scale, PackageCheck, Search, Plus, Edit2, Trash2, X, Check,
-  ArrowDownToLine, ArrowUpFromLine, RefreshCw, Scan, ScanLine, MapPin, Package, AlertCircle,
-  ChevronRight, BarChart3, Settings, Warehouse, Info, ClipboardCheck, Printer,
-  TrendingUp, TrendingDown, FileDown, Play, StopCircle, History, User as UserIcon, Calendar } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  Plus, Pencil, Ban, RefreshCw, Scan, MapPin, AlertCircle, ChevronRight, Printer, Calculator,
+  MoreHorizontal, Sparkles, Search,
+} from 'lucide-react';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { GlassCard } from '@/components/ui/glass';
+import PaginationLite from '@/components/ui/pagination-lite';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { formatDateTimeID } from '@/lib/format';
 // Sprint A.1: UniversalScanner SSOT replaces inline ScannerInput
 import UniversalScanner from './scanner/UniversalScanner';
-import { EmptyState } from './EmptyState';
-import { Skeleton } from '@/components/ui/skeleton';
 import useUomOptions from '@/hooks/useUomOptions';
 import { UomSelect, UomConversionHint } from './uom/UomPicker';
 import StorageLocationSelect from './StorageLocationSelect';
 import { MATERIAL_UNITS } from '@/lib/uom';
 import ImportExportToolbar from './ImportExportToolbar';
-// F15-B — kelas Tailwind tidak boleh dirakit saat berjalan; lihat lib/tone.js
-import { tone } from '@/lib/tone';
+import PeriodPicker, { ALL_TIME, PERIOD_PRESETS } from './finance/PeriodPicker';
+import PageLayout from './layout/PageLayout';
+import HubTabs from './hubs/HubTabs';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
 const fmt = (n) => new Intl.NumberFormat('id-ID').format(n ?? 0);
-const fmtPct = (n) => `${n ?? 0}%`;
 
-const ZONE_TYPE_LABELS = { rm: 'Bahan Baku', fg: 'Produk Jadi', wip: 'WIP', transit: 'Transit', general: 'Umum' };
-const ZONE_TYPE_COLORS = { rm: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ', fg: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ', wip: 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)] ', general: 'bg-muted dark:bg-zinc-500/20 text-muted-foreground dark:text-zinc-400 border-border dark:border-zinc-500/30', transit: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' };
-const STATUS_COLORS = { pending: 'text-[hsl(var(--warning))] ', partial: 'text-[hsl(var(--primary))] ', confirmed: 'text-[hsl(var(--success))] ', cancelled: 'text-muted-foreground/60 dark:text-zinc-500' };
-const RACK_COLORS = { red: 'border-[hsl(var(--destructive)/0.5)] bg-[hsl(var(--destructive)/0.15)] ', orange: 'border-[hsl(var(--warning)/0.5)] bg-[hsl(var(--warning)/0.15)] ', yellow: 'border-[hsl(var(--warning)/0.5)] bg-[hsl(var(--warning)/0.15)] ', green: 'border-[hsl(var(--success)/0.5)] bg-[hsl(var(--success)/0.15)] ' };
+const ZONE_TYPE_LABELS = { rm: 'Bahan baku', fg: 'Produk jadi', wip: 'Barang setengah jadi', transit: 'Transit', general: 'Umum' };
+const ZONE_TYPE_TONE = { rm: 'primary', fg: 'success', wip: 'warning', transit: 'info', general: 'muted' };
+const UNIT_CATEGORY_LABELS = {
+  weight: 'Berat', length: 'Panjang', count: 'Hitungan', roll: 'Gulungan', pack: 'Kemasan', volume: 'Volume', other: 'Lainnya',
+};
+const kategoriSatuan = (c) => UNIT_CATEGORY_LABELS[c] || 'Lainnya';
+const POSITION_STATUS = { occupied: { label: 'Terisi', tone: 'success' }, empty: { label: 'Kosong', tone: 'muted' } };
+const MOVE_STATUS = {
+  pending: { label: 'Menunggu', tone: 'warning' }, partial: { label: 'Sebagian', tone: 'info' },
+  confirmed: { label: 'Selesai', tone: 'success' }, cancelled: { label: 'Dibatalkan', tone: 'muted' },
+};
+const moveStatus = (s) => MOVE_STATUS[s] || { label: s ? 'Lainnya' : '—', tone: 'muted' };
+const ARAH = { adjust_in: { label: 'Lebih', tone: 'success' }, adjust_out: { label: 'Kurang', tone: 'danger' } };
+const arahDari = (d) => ARAH[d] || { label: d ? 'Lainnya' : '—', tone: 'muted' };
 
-function Badge({ cls, children }) {
-  return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${cls}`}>{children}</span>;
+const SelectPenyaring = ({ lebar = 'sm:w-44', className, ...props }) => (
+  <SmartNativeSelect className={className || 'w-full'} wrapperClassName={`w-full ${lebar}`} {...props} />
+);
+
+function Alat({ children }) {
+  return <div className="ml-auto flex shrink-0 items-center gap-2">{children}</div>;
+}
+
+function MuatUlang({ onClick, loading, testId }) {
+  return (
+    <Button variant="outline" size="icon" onClick={onClick} disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid={testId}>
+      <RefreshCw className={loading ? 'animate-spin' : ''} />
+    </Button>
+  );
 }
 
 // ─── Scanner Input Wrapper (Sprint A.1: uses UniversalScanner inline) ──────
 // Backward-compat shim — converts onScan(value) + loading to UniversalScanner inline
-function ScannerInput({ placeholder = "Scan atau ketik barcode...", onScan, loading, className = '' }) {
+function ScannerInput({ placeholder = 'Scan atau ketik barcode', onScan, loading, className = '' }) {
   return (
     <div className={`relative ${className}`}>
       <UniversalScanner
@@ -53,170 +97,10 @@ function ScannerInput({ placeholder = "Scan atau ketik barcode...", onScan, load
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// TAB: DASHBOARD
+// STRUKTUR GUDANG (wh-structure)
 // ──────────────────────────────────────────────────────────────────────────────
-function DashboardTab({ token }) {
-  const [buildings, setBuildings] = useState([]);
-  const [mapData, setMapData] = useState(null);
-  const [selectedBldg, setSelectedBldg] = useState(null);
-  const [summary, setSummary] = useState({});
-  const [alerts, setAlerts] = useState({ critical: [], warning: [], total_alerts: 0, critical_count: 0, warning_count: 0 });
-  const [loading, setLoading] = useState(true);
-  const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
+const JUDUL_TIPE = { building: 'gedung', zone: 'zona', rack: 'rak' };
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const buildingFilter = selectedBldg ? `?building_id=${selectedBldg}` : '';
-      const [bRes, sRes, aRes] = await Promise.all([
-        fetch(`${API}/api/wms/buildings`, { headers }).then(r => r.json()),
-        fetch(`${API}/api/wms/pending/summary${buildingFilter}`, { headers }).then(r => r.json()),
-        fetch(`${API}/api/wms/alerts/occupancy?threshold=90${selectedBldg ? `&building_id=${selectedBldg}` : ''}`, { headers }).then(r => r.json()),
-      ]);
-      const bldgs = Array.isArray(bRes) ? bRes : [];
-      setBuildings(bldgs);
-      setSummary(sRes || {});
-      setAlerts(aRes || { critical: [], warning: [], total_alerts: 0 });
-      if (bldgs.length > 0 && !selectedBldg) setSelectedBldg(bldgs[0].id);
-    } catch { toast.error('Gagal memuat dashboard'); }
-    finally { setLoading(false); }
-  }, [headers, selectedBldg]);
-
-  useEffect(() => { load(); }, [load]);
-
-  useEffect(() => {
-    if (!selectedBldg) return;
-    fetch(`${API}/api/wms/map/${selectedBldg}`, { headers }).then(r => r.json()).then(d => setMapData(d)).catch(() => {});
-  }, [selectedBldg, headers]);
-
-  if (loading) return (
-    <div className="space-y-5 p-2" data-testid="wms-dashboard-skeleton">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)}
-      </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Skeleton className="h-48 rounded-xl" />
-        <Skeleton className="h-48 rounded-xl" />
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="space-y-5">
-      {/* OCCUPANCY ALERTS — racks ≥ 90% */}
-      {alerts.total_alerts > 0 && (
-        <div data-testid="occupancy-alert-banner" className="bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  rounded-2xl p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <AlertCircle size={16} className="text-[hsl(var(--destructive))] " />
-            <span className="text-sm font-semibold text-[hsl(var(--destructive))] ">
-              Peringatan Kapasitas Rak ({alerts.total_alerts} rak)
-            </span>
-            <span className="ml-auto text-xs text-muted-foreground">
-              {alerts.critical_count > 0 && <span className="text-[hsl(var(--destructive))] font-bold mr-2">⚠ {alerts.critical_count} kritis (≥95%)</span>}
-              {alerts.warning_count} hampir penuh (90-94%)
-            </span>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-48 overflow-y-auto">
-            {[...(alerts.critical || []), ...(alerts.warning || [])].slice(0, 12).map(r => (
-              <div key={r.rack_id} data-testid="occupancy-alert-row"
-                className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2 border ${r.severity === 'critical' ? 'bg-[hsl(var(--destructive)/0.15)]  border-[hsl(var(--destructive)/0.4)]' : 'bg-[hsl(var(--warning)/0.15)]  border-[hsl(var(--warning)/0.35)] '}`}>
-                <div className="min-w-0">
-                  <div className="text-xs tabular-nums font-bold truncate">{r.building_code}-{r.zone_code}-{r.rack_code}</div>
-                  <div className="text-[10px] text-muted-foreground truncate">{r.rack_name}</div>
-                </div>
-                <div className="text-right flex-shrink-0">
-                  <div className={`text-sm font-bold ${r.severity === 'critical' ? 'text-[hsl(var(--destructive))] ' : 'text-[hsl(var(--warning))] '}`}>{r.occupancy_pct}%</div>
-                  <div className="text-[10px] text-muted-foreground">{r.free_slots} slot kosong</div>
-                </div>
-              </div>
-            ))}
-          </div>
-          {alerts.total_alerts > 12 && <div className="text-xs text-muted-foreground mt-2 text-center">+{alerts.total_alerts - 12} rak lainnya...</div>}
-        </div>
-      )}
-
-      {/* Pending Summary Badges */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { label: 'Pending Inbound', value: summary.pending_inbound, icon: ArrowDownToLine, color: 'emerald' },
-          { label: 'Pending Outbound RM', value: summary.pending_outbound_rm, icon: ArrowUpFromLine, color: 'amber' },
-          { label: 'Pending Outbound FG', value: summary.pending_outbound_fg, icon: ArrowUpFromLine, color: 'orange' },
-          { label: 'Total Pending', value: summary.total_pending, icon: Package, color: 'violet' },
-        ].map(c => (
-          <div key={c.label} className={`border rounded-2xl p-4 ${tone(c.color).surface}`}>
-            <c.icon size={18} className={`mb-2 ${tone(c.color).text}`} />
-            <div className={`text-2xl font-bold ${tone(c.color).text}`}>{c.value ?? 0}</div>
-            <div className="text-xs text-muted-foreground">{c.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Warehouse Map */}
-      {buildings.length > 0 ? (
-        <div className="space-y-4">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-muted-foreground mr-1">Filter Gedung:</span>
-            {buildings.map(b => (
-              <button key={b.id} data-testid={`building-filter-${b.code}`} onClick={() => setSelectedBldg(b.id)}
-                className={`px-3 py-1.5 rounded-lg text-sm border transition-all ${selectedBldg === b.id ? 'bg-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)] text-foreground' : 'bg-foreground/5 border-foreground/10 text-muted-foreground hover:text-foreground'}`}>
-                <Building2 size={13} className="inline mr-1.5" />{b.name}
-              </button>
-            ))}
-          </div>
-
-          {mapData && (
-            <div className="space-y-4">
-              {(mapData.zones || []).map(zone => (
-                <div key={zone.id} className="border border-foreground/[0.08] rounded-2xl overflow-hidden">
-                  <div className="flex items-center gap-3 px-4 py-2.5 bg-foreground/[0.03]">
-                    <Badge cls={ZONE_TYPE_COLORS[zone.zone_type] || ZONE_TYPE_COLORS.general}>{ZONE_TYPE_LABELS[zone.zone_type] || zone.zone_type}</Badge>
-                    <span className="font-medium text-sm">{zone.name}</span>
-                    <span className="text-xs text-muted-foreground ml-auto">{zone.occupied_positions}/{zone.total_positions} slot terisi ({zone.occupancy_pct}%)</span>
-                  </div>
-                  <div className="p-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
-                    {(zone.racks || []).map(rack => (
-                      <div key={rack.id} data-testid="rack-map-card"
-                        className={`rounded-xl border p-3 ${RACK_COLORS[rack.color] || RACK_COLORS.green}`}>
-                        <div className="font-semibold text-xs mb-1">{rack.code}</div>
-                        <div className="text-[10px] text-muted-foreground">{rack.name}</div>
-                        <div className="mt-1.5 h-1.5 rounded-full bg-foreground/10">
-                          <div className={`h-full rounded-full ${rack.color === 'red' ? 'bg-[hsl(var(--destructive))]' : rack.color === 'orange' ? 'bg-[hsl(var(--warning))]' : rack.color === 'yellow' ? 'bg-[hsl(var(--warning))]' : 'bg-[hsl(var(--success))]'} transition-all`}
-                            style={{ width: `${rack.occupancy_pct}%` }} />
-                        </div>
-                        <div className="text-[10px] mt-1 text-right">{rack.occupied}/{rack.total}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : (
-        <EmptyState
-          icon={Warehouse}
-          title="Belum ada struktur gudang"
-          description="Klik 'Seed Demo' untuk membuat demo gudang atau buat gedung baru di tab Struktur."
-          action={{
-            label: 'Seed Demo Gudang',
-            onClick: async () => {
-              try {
-                await fetch(`${API}/api/wms/units/seed`, { method: 'POST', headers });
-                await fetch(`${API}/api/wms/structure/seed-demo`, { method: 'POST', headers });
-                toast.success('Demo gudang berhasil dibuat');
-                load();
-              } catch { toast.error('Gagal seed demo'); }
-            }
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// TAB: STRUKTUR GUDANG (Building → Zone → Rack)
-// ──────────────────────────────────────────────────────────────────────────────
 function StructureTab({ token }) {
   const [buildings, setBuildings] = useState([]);
   const [zones, setZones] = useState([]);
@@ -226,14 +110,19 @@ function StructureTab({ token }) {
   const [view, setView] = useState('buildings'); // buildings | zones | racks
   const [modal, setModal] = useState(null); // {type: 'building'|'zone'|'rack', data: null|obj}
   const [saving, setSaving] = useState(false);
+  const [galat, setGalat] = useState('');
   const [form, setForm] = useState({});
+  const [loading, setLoading] = useState(false);
   // 2026-11-02 (K9): pilihan lokasi gudang untuk menautkan zona (`zone.location_id`, dibaca mesin opname)
   const [locations, setLocations] = useState([]);
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
   const loadBuildings = useCallback(async () => {
-    const r = await fetch(`${API}/api/wms/buildings`, { headers });
-    const d = await r.json(); setBuildings(Array.isArray(d) ? d : []);
+    setLoading(true);
+    try {
+      const r = await fetch(`${API}/api/wms/buildings`, { headers });
+      const d = await r.json(); setBuildings(Array.isArray(d) ? d : []);
+    } finally { setLoading(false); }
   }, [headers]);
 
   const loadZones = useCallback(async (bldgId) => {
@@ -253,12 +142,12 @@ function StructureTab({ token }) {
       .then(d => setLocations((Array.isArray(d) ? d : []).filter(l => l.type !== 'kantor' && l.active !== false))).catch(() => setLocations([]));
   }, [headers]);
 
-  function openBldgModal(data = null) { setForm(data || { code: '', name: '', address: '' }); setModal({ type: 'building', data }); }
-  function openZoneModal(data = null) { setForm(data ? { ...data, location_id: data.location_id || '' } : { code: '', name: '', zone_type: 'rm', building_id: selectedBldg, location_id: '' }); setModal({ type: 'zone', data }); }
-  function openRackModal(data = null) { setForm(data || { code: '', name: '', zone_id: selectedZone, num_shelves: 4, slots_per_shelf: 6, capacity_per_slot: 0, capacity_unit: '' }); setModal({ type: 'rack', data }); }
+  function openBldgModal(data = null) { setGalat(''); setForm(data || { code: '', name: '', address: '' }); setModal({ type: 'building', data }); }
+  function openZoneModal(data = null) { setGalat(''); setForm(data ? { ...data, location_id: data.location_id || '' } : { code: '', name: '', zone_type: 'rm', building_id: selectedBldg, location_id: '' }); setModal({ type: 'zone', data }); }
+  function openRackModal(data = null) { setGalat(''); setForm(data || { code: '', name: '', zone_id: selectedZone, num_shelves: 4, slots_per_shelf: 6, capacity_per_slot: 0, capacity_unit: '' }); setModal({ type: 'rack', data }); }
 
   async function handleSave() {
-    setSaving(true);
+    setSaving(true); setGalat('');
     try {
       const t = modal.type;
       const url = modal.data
@@ -273,14 +162,19 @@ function StructureTab({ token }) {
       if (t === 'building') loadBuildings();
       if (t === 'zone') loadZones(selectedBldg);
       if (t === 'rack') loadRacks(selectedZone);
-    } catch (e) { toast.error(e.message); }
+    } catch (e) { setGalat(e.message); toast.error(e.message); }
     finally { setSaving(false); }
   }
 
-  async function handleDelete(type, id) {
-    if (!confirm('Nonaktifkan item ini?')) return;
+  async function handleDelete(type, row) {
+    const ok = await confirmDialog({
+      title: `Nonaktifkan ${JUDUL_TIPE[type]} ${row.code}?`,
+      body: `"${row.name}" tidak lagi dipakai untuk penempatan barang.`,
+      confirmLabel: 'Nonaktifkan', danger: true,
+    });
+    if (!ok) return;
     try {
-      const r = await fetch(`${API}/api/wms/${type}s/${id}`, { method: 'DELETE', headers });
+      const r = await fetch(`${API}/api/wms/${type}s/${row.id}`, { method: 'DELETE', headers });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail);
       toast.success(d.message || 'Berhasil');
@@ -290,245 +184,225 @@ function StructureTab({ token }) {
     } catch (e) { toast.error(e.message); }
   }
 
+  const bukaGedung = (b) => { setSelectedBldg(b.id); loadZones(b.id); setView('zones'); };
+  const bukaZona = (z) => { setSelectedZone(z.id); loadRacks(z.id); setView('racks'); };
+  const cetakLabel = (rack) => window.open(`${API}/api/wms/racks/${rack.id}/labels-pdf?token=${encodeURIComponent(token)}`, '_blank');
+  const namaGedung = buildings.find(b => b.id === selectedBldg)?.name;
+  const namaZona = zones.find(z => z.id === selectedZone)?.name;
+
+  const kolomGedung = [
+    { kunci: 'code', label: 'Kode', hp: 'judul', isi: (b) => <span className="tabular-nums font-medium" data-testid="building-card">{b.code}</span> },
+    { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (b) => b.name },
+    { kunci: 'address', label: 'Alamat', isi: (b) => <span className="text-muted-foreground">{b.address || '—'}</span> },
+    { kunci: 'zone_count', label: 'Zona', rata: 'kanan', isi: (b) => <span className="tabular-nums">{fmt(b.zone_count)}</span> },
+    { kunci: 'rack_count', label: 'Rak', rata: 'kanan', isi: (b) => <span className="tabular-nums">{fmt(b.rack_count)}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (b) => (
+      <Button variant="ghost" size="icon-sm" onClick={() => openBldgModal(b)} title="Ubah gedung" aria-label={`Ubah gedung ${b.code}`}><Pencil /></Button>) },
+  ];
+  const kolomZona = [
+    { kunci: 'code', label: 'Kode', hp: 'judul', isi: (z) => <span className="tabular-nums font-medium" data-testid="zone-card">{z.code}</span> },
+    { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (z) => z.name },
+    { kunci: 'zone_type', label: 'Jenis zona', isi: (z) => (
+      <StatusBadge status={z.zone_type} label={ZONE_TYPE_LABELS[z.zone_type] || 'Umum'} tone={ZONE_TYPE_TONE[z.zone_type] || 'muted'} />) },
+    { kunci: 'rack_count', label: 'Rak', rata: 'kanan', isi: (z) => <span className="tabular-nums">{fmt(z.rack_count)}</span> },
+    { kunci: 'location', label: 'Lokasi gudang (opname)', isi: (z) => (
+      <span data-testid="zone-location" className={z.location_id ? 'text-foreground' : 'text-[hsl(var(--warning-text))]'}>
+        {z.location_id ? `${z.location_code || ''} ${z.location_name || ''}`.trim() : 'Belum ditautkan — opname tidak menjangkau rak zona ini'}
+      </span>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (z) => (
+      <div className="inline-flex items-center gap-1">
+        <Button variant="ghost" size="icon-sm" onClick={() => openZoneModal(z)} title="Ubah zona" aria-label={`Ubah zona ${z.code}`}><Pencil /></Button>
+        <Button variant="ghost" size="icon-sm" onClick={() => handleDelete('zone', z)} title="Nonaktifkan zona" aria-label={`Nonaktifkan zona ${z.code}`}><Ban /></Button>
+      </div>) },
+  ];
+  const kolomRak = [
+    { kunci: 'code', label: 'Kode', hp: 'judul', isi: (r) => <span className="tabular-nums font-medium" data-testid="rack-card">{r.code}</span> },
+    { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (r) => r.name },
+    { kunci: 'susunan', label: 'Tingkat × slot', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.num_shelves} × {r.slots_per_shelf}</span> },
+    { kunci: 'total', label: 'Total posisi', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmt(r.total_positions)}</span> },
+    { kunci: 'terisi', label: 'Terisi', rata: 'kanan', isi: (r) => (
+      <span className="tabular-nums">{fmt(r.occupied_positions)} <span className="text-muted-foreground">({r.occupancy_pct ?? 0}%)</span></span>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+      <div className="inline-flex items-center gap-1">
+        <Button variant="ghost" size="icon-sm" onClick={() => cetakLabel(r)} data-testid="print-rack-labels-btn"
+          title="Cetak label barcode semua posisi di rak ini" aria-label={`Cetak label rak ${r.code}`}><Printer /></Button>
+        <Button variant="ghost" size="icon-sm" onClick={() => openRackModal(r)} title="Ubah rak" aria-label={`Ubah rak ${r.code}`}><Pencil /></Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-sm" title="Lainnya" aria-label={`Aksi lain rak ${r.code}`}><MoreHorizontal /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => handleDelete('rack', r)}><Ban className="mr-2 h-4 w-4" />Nonaktifkan rak</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>) },
+  ];
+
+  const unduh = view === 'buildings' ? (
+    <TombolUnduh namaBerkas="gedung-gudang" namaLembar="Gedung" baris={buildings} testId="wms-building-unduh"
+      kolom={[
+        { label: 'Kode', nilai: (b) => b.code }, { label: 'Nama', nilai: (b) => b.name },
+        { label: 'Alamat', nilai: (b) => b.address || '' },
+        { label: 'Zona', nilai: (b) => Number(b.zone_count || 0) }, { label: 'Rak', nilai: (b) => Number(b.rack_count || 0) },
+      ]} />
+  ) : view === 'zones' ? (
+    <TombolUnduh namaBerkas={`zona-${namaGedung || 'gedung'}`} namaLembar="Zona" baris={zones} testId="wms-zone-unduh"
+      kolom={[
+        { label: 'Kode', nilai: (z) => z.code }, { label: 'Nama', nilai: (z) => z.name },
+        { label: 'Jenis zona', nilai: (z) => ZONE_TYPE_LABELS[z.zone_type] || 'Umum' },
+        { label: 'Rak', nilai: (z) => Number(z.rack_count || 0) },
+        { label: 'Lokasi gudang', nilai: (z) => (z.location_id ? `${z.location_code || ''} ${z.location_name || ''}`.trim() : 'Belum ditautkan') },
+      ]} />
+  ) : (
+    <TombolUnduh namaBerkas={`rak-${namaZona || 'zona'}`} namaLembar="Rak" baris={racks} testId="wms-rack-unduh"
+      kolom={[
+        { label: 'Kode', nilai: (r) => r.code }, { label: 'Nama', nilai: (r) => r.name },
+        { label: 'Tingkat', nilai: (r) => Number(r.num_shelves || 0) }, { label: 'Slot per tingkat', nilai: (r) => Number(r.slots_per_shelf || 0) },
+        { label: 'Total posisi', nilai: (r) => Number(r.total_positions || 0) }, { label: 'Terisi', nilai: (r) => Number(r.occupied_positions || 0) },
+        { label: 'Terisi (%)', nilai: (r) => Number(r.occupancy_pct || 0) },
+        { label: 'Kapasitas per slot', nilai: (r) => Number(r.capacity_per_slot || 0) }, { label: 'Satuan kapasitas', nilai: (r) => r.capacity_unit || '' },
+      ]} />
+  );
+
+  const tombolTambah = view === 'buildings'
+    ? <Button data-testid="add-building-btn" onClick={() => openBldgModal()}><Plus />Tambah gedung</Button>
+    : view === 'zones'
+      ? <Button data-testid="add-zone-btn" onClick={() => openZoneModal()}><Plus />Tambah zona</Button>
+      : <Button data-testid="add-rack-btn" onClick={() => openRackModal()}><Plus />Tambah rak</Button>;
+
   return (
-    <div className="space-y-4">
-      {/* Breadcrumb nav */}
-      <div className="flex items-center gap-2 text-sm">
-        <button onClick={() => { setView('buildings'); setSelectedBldg(null); setSelectedZone(null); }} className={`${view === 'buildings' ? 'text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'} transition-colors`}>
-          <Building2 size={14} className="inline mr-1" />Gedung
-        </button>
-        {selectedBldg && <>
-          <ChevronRight size={14} className="text-muted-foreground" />
-          <button onClick={() => { setView('zones'); setSelectedZone(null); }} className={`${view === 'zones' ? 'text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
-            <Layers size={14} className="inline mr-1" />{buildings.find(b => b.id === selectedBldg)?.name}
-          </button>
-        </>}
-        {selectedZone && <>
-          <ChevronRight size={14} className="text-muted-foreground" />
-          <span className="text-foreground font-medium"><Settings size={14} className="inline mr-1" />{zones.find(z => z.id === selectedZone)?.name}</span>
-        </>}
-      </div>
-
-      {/* BUILDINGS */}
+    <PageLayout testId="wms-section-structure" title="Struktur gudang"
+      subtitle="Gedung, zona, dan rak gudang — sumber tunggal lokasi rak & bin."
+      actions={<>
+        {view === 'buildings' && <ImportExportToolbar collectionKey="wh_bins" label="Rak & Bin Gudang" onImported={loadBuildings} size="default" caption="rak & bin" />}
+        {tombolTambah}
+      </>}
+      filters={<>
+        <nav aria-label="Tingkat struktur" className="flex flex-wrap items-center gap-1 text-sm">
+          <Button variant="link" className="h-auto px-0" onClick={() => { setView('buildings'); setSelectedBldg(null); setSelectedZone(null); }}
+            aria-current={view === 'buildings' ? 'page' : undefined}>
+            Gedung ({buildings.length})
+          </Button>
+          {selectedBldg && <>
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            <Button variant="link" className="h-auto px-0" onClick={() => { setView('zones'); setSelectedZone(null); }}
+              aria-current={view === 'zones' ? 'page' : undefined}>
+              {namaGedung} · zona ({zones.length})
+            </Button>
+          </>}
+          {selectedZone && <>
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            <span className="font-medium text-foreground">{namaZona} · rak ({racks.length})</span>
+          </>}
+        </nav>
+        <Alat>
+          {unduh}
+          <MuatUlang loading={loading} onClick={() => { if (view === 'buildings') loadBuildings(); else if (view === 'zones') loadZones(selectedBldg); else loadRacks(selectedZone); }} />
+        </Alat>
+      </>}>
       {view === 'buildings' && (
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold">Gedung ({buildings.length})</h3>
-            <div className="flex items-center gap-2">
-            <ImportExportToolbar collectionKey="wh_bins" label="Rak & Bin Gudang" onImported={loadBuildings} />
-            <button data-testid="add-building-btn" onClick={() => openBldgModal()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-xs font-medium transition-colors">
-              <Plus size={13} /> Tambah Gedung
-            </button>
-            </div>
-          </div>
-          {buildings.length === 0 ? (
-            <EmptyState
-              icon={Building2}
-              title="Belum ada gedung"
-              description="Klik 'Tambah Gedung' di atas atau gunakan 'Seed Demo' di tab Dashboard untuk mengisi data contoh."
-            />
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {buildings.map(b => (
-                <div key={b.id} data-testid="building-card" className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-4 hover:border-[hsl(var(--primary)/0.35)] transition-all cursor-pointer"
-                  onClick={() => { setSelectedBldg(b.id); loadZones(b.id); setView('zones'); }}>
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="font-bold text-lg">{b.code}</div>
-                      <div className="text-sm text-muted-foreground">{b.name}</div>
-                      {b.address && <div className="text-xs text-muted-foreground mt-0.5">{b.address}</div>}
-                    </div>
-                    <div className="flex gap-1.5">
-                      <button onClick={e => { e.stopPropagation(); openBldgModal(b); }} className="text-muted-foreground hover:text-foreground p-1"><Edit2 size={13} /></button>
-                    </div>
-                  </div>
-                  <div className="mt-3 flex gap-3 text-xs text-muted-foreground">
-                    <span><Layers size={12} className="inline mr-1" />{b.zone_count} zona</span>
-                    <span><Settings size={12} className="inline mr-1" />{b.rack_count} rak</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <TabelData kolom={kolomGedung} baris={buildings} onKlikBaris={bukaGedung} testId="wms-building-table"
+          kosong={<EmptyState title="Belum ada gedung" description='Klik "Tambah gedung" untuk mulai menyusun struktur gudang.' />} />
       )}
-
-      {/* ZONES */}
       {view === 'zones' && selectedBldg && (
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold">Zona ({zones.length})</h3>
-            <button data-testid="add-zone-btn" onClick={() => openZoneModal()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-xs font-medium transition-colors">
-              <Plus size={13} /> Tambah Zona
-            </button>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {zones.map(z => (
-              <div key={z.id} data-testid="zone-card" className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-4 hover:border-[hsl(var(--primary)/0.35)] cursor-pointer transition-all"
-                onClick={() => { setSelectedZone(z.id); loadRacks(z.id); setView('racks'); }}>
-                <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <div className="font-bold">{z.code}</div>
-                    <div className="text-sm text-muted-foreground">{z.name}</div>
-                  </div>
-                  <div className="flex gap-1">
-                    <button onClick={e => { e.stopPropagation(); openZoneModal(z); }} className="text-muted-foreground hover:text-foreground p-1"><Edit2 size={13} /></button>
-                    <button onClick={e => { e.stopPropagation(); handleDelete('zone', z.id); }} className="text-muted-foreground hover:text-[hsl(var(--destructive))] p-1"><Trash2 size={13} /></button>
-                  </div>
-                </div>
-                <Badge cls={ZONE_TYPE_COLORS[z.zone_type] || ZONE_TYPE_COLORS.general}>{ZONE_TYPE_LABELS[z.zone_type]}</Badge>
-                <div className="text-xs text-muted-foreground mt-2">{z.rack_count} rak</div>
-                <div className={`text-xs mt-1 ${z.location_id ? 'text-muted-foreground' : 'text-[hsl(var(--warning))] '}`} data-testid="zone-location">
-                  {z.location_id ? `Lokasi: ${z.location_code || ''} ${z.location_name || ''}` : 'Belum ditautkan ke lokasi gudang (opname tidak menjangkau rak zona ini)'}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        <TabelData kolom={kolomZona} baris={zones} onKlikBaris={bukaZona} testId="wms-zone-table"
+          kosong={<EmptyState title="Belum ada zona di gedung ini" description='Klik "Tambah zona".' />} />
       )}
-
-      {/* RACKS */}
       {view === 'racks' && selectedZone && (
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold">Rak ({racks.length})</h3>
-            <button data-testid="add-rack-btn" onClick={() => openRackModal()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-xs font-medium transition-colors">
-              <Plus size={13} /> Tambah Rak
-            </button>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {racks.map(rack => (
-              <div key={rack.id} data-testid="rack-card" className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-4 hover:border-[hsl(var(--primary)/0.35)] transition-all">
-                <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <div className="font-bold">{rack.code}</div>
-                    <div className="text-xs text-muted-foreground">{rack.name}</div>
-                  </div>
-                  <div className="flex gap-1">
-                    <button
-                      data-testid="print-rack-labels-btn"
-                      onClick={() => window.open(`${API}/api/wms/racks/${rack.id}/labels-pdf?token=${encodeURIComponent(token)}`, '_blank')}
-                      className="text-[hsl(var(--primary))] hover:text-[hsl(var(--primary))]  p-1"
-                      title="Cetak label barcode untuk semua posisi di rak ini">
-                      <Printer size={13} />
-                    </button>
-                    <button onClick={() => openRackModal(rack)} className="text-muted-foreground hover:text-foreground p-1"><Edit2 size={13} /></button>
-                    <button onClick={() => handleDelete('rack', rack.id)} className="text-muted-foreground hover:text-[hsl(var(--destructive))] p-1"><Trash2 size={13} /></button>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-xs mb-2">
-                  <div className="bg-foreground/5 rounded-lg p-2"><div className="text-muted-foreground">Shelves</div><div className="font-bold">{rack.num_shelves}</div></div>
-                  <div className="bg-foreground/5 rounded-lg p-2"><div className="text-muted-foreground">Slot/Shelf</div><div className="font-bold">{rack.slots_per_shelf}</div></div>
-                  <div className="bg-foreground/5 rounded-lg p-2"><div className="text-muted-foreground">Total Posisi</div><div className="font-bold">{rack.total_positions}</div></div>
-                  <div className="bg-foreground/5 rounded-lg p-2"><div className="text-muted-foreground">Terisi</div><div className="font-bold text-[hsl(var(--success))] ">{rack.occupied_positions}</div></div>
-                </div>
-                <div className="h-1.5 rounded-full bg-foreground/10">
-                  <div className="h-full rounded-full bg-[hsl(var(--primary))] transition-all" style={{ width: `${rack.occupancy_pct}%` }} />
-                </div>
-                <div className="text-xs text-right mt-0.5 text-muted-foreground">{rack.occupancy_pct}% terisi</div>
-              </div>
-            ))}
-          </div>
-        </div>
+        <TabelData kolom={kolomRak} baris={racks} testId="wms-rack-table"
+          kosong={<EmptyState title="Belum ada rak di zona ini" description='Klik "Tambah rak"; barcode posisi dibuat otomatis per slot.' />} />
       )}
 
-      {/* MODAL */}
-      {modal && (
-        <div className="fixed inset-0 bg-foreground/60 z-50 flex items-center justify-center p-4">
-          <div className="bg-[hsl(var(--card))] border border-foreground/10 rounded-2xl w-full max-w-md p-6">
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="font-semibold capitalize">{modal.data ? 'Edit' : 'Tambah'} {modal.type === 'building' ? 'Gedung' : modal.type === 'zone' ? 'Zona' : 'Rak'}</h3>
-              <button onClick={() => setModal(null)}><X size={18} /></button>
-            </div>
-            <div className="space-y-3">
-              {modal.type === 'building' && <>
-                <div className="grid grid-cols-2 gap-3">
-                  <div><label className="block text-xs mb-1.5">Kode *</label><input value={form.code||''} onChange={e => setForm(f => ({...f, code: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="WH1" /></div>
-                  <div><label className="block text-xs mb-1.5">Nama *</label><input value={form.name||''} onChange={e => setForm(f => ({...f, name: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="Gudang Utama" /></div>
-                </div>
-                <div><label className="block text-xs mb-1.5">Alamat</label><input value={form.address||''} onChange={e => setForm(f => ({...f, address: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" /></div>
-              </>}
-              {modal.type === 'zone' && <>
-                <div className="grid grid-cols-2 gap-3">
-                  <div><label className="block text-xs mb-1.5">Kode *</label><input value={form.code||''} onChange={e => setForm(f => ({...f, code: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="RM" /></div>
-                  <div><label className="block text-xs mb-1.5">Nama *</label><input value={form.name||''} onChange={e => setForm(f => ({...f, name: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" /></div>
-                </div>
-                <div><label className="block text-xs mb-1.5">Tipe Zona</label>
-                  <SmartNativeSelect value={form.zone_type||'general'} onChange={e => setForm(f => ({...f, zone_type: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
-                    <option value="rm">Bahan Baku (RM)</option><option value="fg">Produk Jadi (FG)</option><option value="wip">Work-in-Progress</option><option value="transit">Transit</option><option value="general">Umum</option>
-                  </SmartNativeSelect>
-                </div>
-                <div><label className="block text-xs mb-1.5">Lokasi Gudang (untuk opname)</label>
-                  <SmartNativeSelect data-testid="zone-location-select" value={form.location_id||''} onChange={e => setForm(f => ({...f, location_id: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
-                    <option value="">— belum ditautkan —</option>
-                    {locations.map(l => <option key={l.id} value={l.id}>{l.code} · {l.name}</option>)}
-                  </SmartNativeSelect>
-                  <p className="text-[11px] text-muted-foreground mt-1">Rak & bin zona ini ikut dihitung saat opname lokasi yang dipilih.</p>
-                </div>
-              </>}
-              {modal.type === 'rack' && <>
-                <div className="grid grid-cols-2 gap-3">
-                  <div><label className="block text-xs mb-1.5">Kode *</label><input value={form.code||''} onChange={e => setForm(f => ({...f, code: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="R01" /></div>
-                  <div><label className="block text-xs mb-1.5">Nama *</label><input value={form.name||''} onChange={e => setForm(f => ({...f, name: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" /></div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div><label className="block text-xs mb-1.5">Jumlah Shelf</label><input type="number" min="1" max="50" value={form.num_shelves||4} onChange={e => setForm(f => ({...f, num_shelves: +e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" /></div>
-                  <div><label className="block text-xs mb-1.5">Slot per Shelf</label><input type="number" min="1" max="100" value={form.slots_per_shelf||6} onChange={e => setForm(f => ({...f, slots_per_shelf: +e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" /></div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div><label className="block text-xs mb-1.5">Kapasitas/Slot</label><input type="number" min="0" value={form.capacity_per_slot||0} onChange={e => setForm(f => ({...f, capacity_per_slot: +e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" /></div>
-                  <div><label className="block text-xs mb-1.5">Satuan Kapasitas</label><SmartNativeSelect value={form.capacity_unit||''} onChange={e => setForm(f => ({...f, capacity_unit: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" data-testid="rack-capacity-unit">
-                    {/* 2026-11-07 (Tahap 5): satuan dari daftar satuan sah (dulu teks bebas "kg, pcs, ...") */}
-                    <option value="">— tanpa satuan —</option>
-                    {form.capacity_unit && !MATERIAL_UNITS.includes(form.capacity_unit) && <option value={form.capacity_unit}>{form.capacity_unit}</option>}
-                    {MATERIAL_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-                  </SmartNativeSelect></div>
-                </div>
-                <div className="text-xs text-muted-foreground bg-foreground/[0.03] rounded-lg p-2">
-                  Total posisi yang akan dibuat: <span className="font-bold text-foreground">{(form.num_shelves||4) * (form.slots_per_shelf||6)}</span> slot
-                  {!modal.data && <span className="text-xs"> — Barcode otomatis dibuat per slot</span>}
-                </div>
-              </>}
-            </div>
-            <div className="flex gap-3 mt-5">
-              <button onClick={() => setModal(null)} className="flex-1 py-2 rounded-lg border border-foreground/10 text-sm hover:bg-foreground/5">Batal</button>
-              <button data-testid="modal-save-btn" onClick={handleSave} disabled={saving} className="flex-1 py-2 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-sm font-medium disabled:opacity-50">
-                {saving ? 'Menyimpan...' : 'Simpan'}
-              </button>
-            </div>
+      <FormPopup open={!!modal} onClose={() => setModal(null)} onSimpan={handleSave} menyimpan={saving} galat={galat}
+        judul={modal ? `${modal.data ? 'Ubah' : 'Tambah'} ${JUDUL_TIPE[modal.type]}` : ''} testId="modal-save"
+        labelSimpan={modal?.data ? 'Simpan perubahan' : 'Simpan'}>
+        {modal?.type === 'building' && <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Isian label="Kode" wajib htmlFor="wms-b-kode"><Input id="wms-b-kode" value={form.code || ''} onChange={e => setForm(f => ({ ...f, code: e.target.value }))} placeholder="WH1" /></Isian>
+            <Isian label="Nama" wajib htmlFor="wms-b-nama"><Input id="wms-b-nama" value={form.name || ''} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Gudang Utama" /></Isian>
           </div>
-        </div>
-      )}
-    </div>
+          <Isian label="Alamat" htmlFor="wms-b-alamat"><Input id="wms-b-alamat" value={form.address || ''} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} /></Isian>
+        </>}
+        {modal?.type === 'zone' && <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Isian label="Kode" wajib htmlFor="wms-z-kode"><Input id="wms-z-kode" value={form.code || ''} onChange={e => setForm(f => ({ ...f, code: e.target.value }))} placeholder="RM" /></Isian>
+            <Isian label="Nama" wajib htmlFor="wms-z-nama"><Input id="wms-z-nama" value={form.name || ''} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></Isian>
+          </div>
+          <Isian label="Jenis zona">
+            <SmartNativeSelect value={form.zone_type || 'general'} searchable={false} className="w-full"
+              onChange={e => setForm(f => ({ ...f, zone_type: e.target.value }))}>
+              <option value="rm">Bahan baku</option><option value="fg">Produk jadi</option><option value="wip">Barang setengah jadi</option>
+              <option value="transit">Transit</option><option value="general">Umum</option>
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Lokasi gudang (untuk opname)" petunjuk="Rak & bin zona ini ikut dihitung saat opname lokasi yang dipilih.">
+            <SmartNativeSelect data-testid="zone-location-select" value={form.location_id || ''} className="w-full"
+              onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))}>
+              <option value="">Belum ditautkan</option>
+              {locations.map(l => <option key={l.id} value={l.id}>{`${l.code} · ${l.name}`}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+        </>}
+        {modal?.type === 'rack' && <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Isian label="Kode" wajib htmlFor="wms-r-kode"><Input id="wms-r-kode" value={form.code || ''} onChange={e => setForm(f => ({ ...f, code: e.target.value }))} placeholder="R01" /></Isian>
+            <Isian label="Nama" wajib htmlFor="wms-r-nama"><Input id="wms-r-nama" value={form.name || ''} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></Isian>
+            <Isian label="Jumlah tingkat (shelf)" htmlFor="wms-r-shelf"><Input id="wms-r-shelf" type="number" min="1" max="50" value={form.num_shelves || 4} onChange={e => setForm(f => ({ ...f, num_shelves: +e.target.value }))} /></Isian>
+            <Isian label="Slot per tingkat" htmlFor="wms-r-slot"><Input id="wms-r-slot" type="number" min="1" max="100" value={form.slots_per_shelf || 6} onChange={e => setForm(f => ({ ...f, slots_per_shelf: +e.target.value }))} /></Isian>
+            <Isian label="Kapasitas per slot" htmlFor="wms-r-kap"><Input id="wms-r-kap" type="number" min="0" value={form.capacity_per_slot || 0} onChange={e => setForm(f => ({ ...f, capacity_per_slot: +e.target.value }))} /></Isian>
+            <Isian label="Satuan kapasitas">
+              <SmartNativeSelect value={form.capacity_unit || ''} onChange={e => setForm(f => ({ ...f, capacity_unit: e.target.value }))} className="w-full" data-testid="rack-capacity-unit">
+                {/* 2026-11-07 (Tahap 5): satuan dari daftar satuan sah (dulu teks bebas "kg, pcs, ...") */}
+                <option value="">Tanpa satuan</option>
+                {form.capacity_unit && !MATERIAL_UNITS.includes(form.capacity_unit) && <option value={form.capacity_unit}>{form.capacity_unit}</option>}
+                {MATERIAL_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+              </SmartNativeSelect>
+            </Isian>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Total posisi yang akan dibuat: <span className="font-semibold text-foreground">{(form.num_shelves || 4) * (form.slots_per_shelf || 6)}</span> slot
+            {!modal.data && ' — barcode otomatis dibuat per slot.'}
+          </p>
+        </>}
+      </FormPopup>
+    </PageLayout>
   );
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// TAB: SATUAN & KONVERSI
+// SATUAN & KONVERSI (wh-units)
 // ──────────────────────────────────────────────────────────────────────────────
 function UnitsTab({ token }) {
   const [units, setUnits] = useState([]);
   const [conversions, setConversions] = useState([]);
   const [subTab, setSubTab] = useState('units');
+  const [kategori, setKategori] = useState('');
+  const [cari, setCari] = useState('');
+  const [calcOpen, setCalcOpen] = useState(false);
   const [calcForm, setCalcForm] = useState({ qty: 1, from_unit: '', to_unit: '' });
   const [calcResult, setCalcResult] = useState(null);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [galat, setGalat] = useState('');
+  const [loading, setLoading] = useState(false);
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
   const load = useCallback(async () => {
-    const [u, c] = await Promise.all([
-      fetch(`${API}/api/wms/units`, { headers }).then(r => r.json()),
-      fetch(`${API}/api/wms/unit-conversions`, { headers }).then(r => r.json()),
-    ]);
-    setUnits(Array.isArray(u) ? u : []);
-    setConversions(Array.isArray(c) ? c : []);
+    setLoading(true);
+    try {
+      const [u, c] = await Promise.all([
+        fetch(`${API}/api/wms/units`, { headers }).then(r => r.json()),
+        fetch(`${API}/api/wms/unit-conversions`, { headers }).then(r => r.json()),
+      ]);
+      setUnits(Array.isArray(u) ? u : []);
+      setConversions(Array.isArray(c) ? c : []);
+    } finally { setLoading(false); }
   }, [headers]);
   useEffect(() => { load(); }, [load]);
 
   async function handleSave() {
-    setSaving(true);
+    setSaving(true); setGalat('');
     try {
       const url = modal.type === 'unit'
         ? (modal.data ? `${API}/api/wms/units/${modal.data.id}` : `${API}/api/wms/units`)
@@ -537,7 +411,7 @@ function UnitsTab({ token }) {
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || 'Gagal');
       toast.success(d.message || 'Berhasil'); setModal(null); load();
-    } catch (e) { toast.error(e.message); }
+    } catch (e) { setGalat(e.message); toast.error(e.message); }
     finally { setSaving(false); }
   }
 
@@ -550,172 +424,164 @@ function UnitsTab({ token }) {
     } catch (e) { toast.error(e.message); }
   }
 
+  const seed = async () => {
+    await fetch(`${API}/api/wms/units/seed`, { method: 'POST', headers });
+    toast.success('Satuan bawaan selesai diisi');
+    load();
+  };
+
   const CATEGORIES = [...new Set(units.map(u => u.category))].sort();
+  const q = cari.trim().toLowerCase();
+  const unitTampil = units
+    .filter(u => !kategori || u.category === kategori)
+    .filter(u => !q || `${u.code} ${u.name} ${u.symbol || ''}`.toLowerCase().includes(q));
+  const konversiTampil = conversions
+    .filter(c => !q || `${c.from_unit_code} ${c.to_unit_code} ${c.notes || ''}`.toLowerCase().includes(q));
+
+  const kolomSatuan = [
+    { kunci: 'code', label: 'Kode', hp: 'judul', isi: (u) => <span className="font-medium" data-testid="unit-card">{u.code}</span> },
+    { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (u) => u.name },
+    { kunci: 'symbol', label: 'Simbol', isi: (u) => u.symbol || '—' },
+    { kunci: 'category', label: 'Kategori', isi: (u) => kategoriSatuan(u.category) },
+    { kunci: 'is_base', label: 'Satuan dasar', isi: (u) => (u.is_base ? <StatusBadge status="dasar" label="Dasar" tone="primary" /> : <span className="text-muted-foreground">—</span>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (u) => (
+      <Button variant="ghost" size="icon-sm" onClick={() => { setGalat(''); setForm({ ...u }); setModal({ type: 'unit', data: u }); }}
+        title="Ubah satuan" aria-label={`Ubah satuan ${u.code}`}><Pencil /></Button>) },
+  ];
+  const kolomKonversi = [
+    { kunci: 'from', label: 'Dari', hp: 'judul', isi: (c) => <span className="font-medium" data-testid="conversion-row">{c.from_unit_code}</span> },
+    { kunci: 'to', label: 'Ke', isi: (c) => <span className="font-medium">{c.to_unit_code}</span> },
+    { kunci: 'factor', label: 'Faktor', rata: 'kanan', isi: (c) => <span className="tabular-nums">{String(c.factor).replace('.', ',')}</span> },
+    { kunci: 'rumus', label: 'Rumus', hp: 'keterangan', isi: (c) => <span className="text-muted-foreground">1 {c.from_unit_code} = {String(c.factor).replace('.', ',')} {c.to_unit_code}</span> },
+    { kunci: 'notes', label: 'Catatan', isi: (c) => <span className="text-muted-foreground">{c.notes || '—'}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (c) => (
+      <Button variant="ghost" size="icon-sm" onClick={() => { setGalat(''); setForm({ ...c }); setModal({ type: 'conversion', data: c }); }}
+        title="Ubah konversi" aria-label={`Ubah konversi ${c.from_unit_code} ke ${c.to_unit_code}`}><Pencil /></Button>) },
+  ];
 
   return (
-    <div className="space-y-4">
-      <div className="flex gap-1 p-1 bg-foreground/5 rounded-xl w-fit">
-        {['units', 'conversions', 'calculator'].map(t => (
-          <button key={t} onClick={() => setSubTab(t)} className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${subTab === t ? 'bg-[hsl(var(--primary))] text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
-            {t === 'units' ? 'Master Satuan' : t === 'conversions' ? 'Aturan Konversi' : 'Kalkulator'}
-          </button>
-        ))}
-      </div>
-
-      {/* MASTER SATUAN */}
-      {subTab === 'units' && (
-        <div>
-          <div className="flex justify-between items-center mb-3">
-            <h3 className="text-sm font-semibold">Master Satuan ({units.length})</h3>
-            <div className="flex gap-2">
-              <button onClick={async () => { await fetch(`${API}/api/wms/units/seed`, { method: 'POST', headers }); toast.success('Seed satuan selesai'); load(); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-foreground/10 text-xs hover:bg-foreground/5">
-                <RefreshCw size={12} /> Seed Default
-              </button>
-              <button data-testid="add-unit-btn" onClick={() => { setForm({ code: '', name: '', category: 'count', symbol: '', is_base: false }); setModal({ type: 'unit', data: null }); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-xs font-medium transition-colors">
-                <Plus size={12} /> Tambah Satuan
-              </button>
-            </div>
-          </div>
-          {CATEGORIES.map(cat => (
-            <div key={cat} className="mb-4">
-              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">{cat}</div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-                {units.filter(u => u.category === cat).map(u => (
-                  <div key={u.id} data-testid="unit-card" className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-xl p-3 flex items-center justify-between group">
-                    <div>
-                      <div className="font-bold text-sm">{u.code}</div>
-                      <div className="text-xs text-muted-foreground">{u.name}</div>
-                      {u.is_base && <span className="text-[10px] text-[hsl(var(--primary))] ">base</span>}
-                    </div>
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => { setForm({...u}); setModal({ type: 'unit', data: u }); }} className="text-muted-foreground hover:text-foreground p-0.5"><Edit2 size={11} /></button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
+    <PageLayout testId="wms-section-units" title="Satuan & konversi"
+      subtitle="Master satuan gudang dan aturan konversinya."
+      actions={<>
+        <Button variant="outline" onClick={() => { setCalcResult(null); setCalcOpen(true); }} data-testid="calculate-open-btn"><Calculator />Kalkulator</Button>
+        <Button variant="outline" onClick={seed}><RefreshCw />Isi satuan bawaan</Button>
+        {subTab === 'units' ? (
+          <Button data-testid="add-unit-btn" onClick={() => { setGalat(''); setForm({ code: '', name: '', category: 'count', symbol: '', is_base: false }); setModal({ type: 'unit', data: null }); }}>
+            <Plus />Tambah satuan
+          </Button>
+        ) : (
+          <Button data-testid="add-conversion-btn" onClick={() => { setGalat(''); setForm({ from_unit_code: '', to_unit_code: '', factor: 1, notes: '' }); setModal({ type: 'conversion', data: null }); }}>
+            <Plus />Tambah konversi
+          </Button>
+        )}
+      </>}
+      filters={<>
+        <FilterChips value={subTab} onChange={setSubTab} hideWhenEmpty={false} className="w-full sm:w-auto" ariaLabel="Tampilan" testId="wms-units-view"
+          options={[{ key: 'units', label: 'Master satuan', count: units.length }, { key: 'conversions', label: 'Aturan konversi', count: conversions.length }]} />
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={cari} onChange={e => setCari(e.target.value)} placeholder={subTab === 'units' ? 'Cari kode atau nama satuan' : 'Cari satuan'} className="pl-8" />
         </div>
+        {subTab === 'units' && (
+          <SelectPenyaring value={kategori} onChange={e => setKategori(e.target.value)} searchable={false} aria-label="Kategori">
+            <option value="">Semua kategori</option>
+            {CATEGORIES.map(c => <option key={c} value={c}>{kategoriSatuan(c)}</option>)}
+          </SelectPenyaring>
+        )}
+        <Alat>
+          {subTab === 'units' ? (
+            <TombolUnduh namaBerkas="satuan-gudang" namaLembar="Satuan" baris={unitTampil} testId="wms-units-unduh"
+              kolom={[
+                { label: 'Kode', nilai: (u) => u.code }, { label: 'Nama', nilai: (u) => u.name }, { label: 'Simbol', nilai: (u) => u.symbol || '' },
+                { label: 'Kategori', nilai: (u) => kategoriSatuan(u.category) }, { label: 'Satuan dasar', nilai: (u) => (u.is_base ? 'Ya' : 'Tidak') },
+              ]} />
+          ) : (
+            <TombolUnduh namaBerkas="konversi-satuan" namaLembar="Konversi" baris={konversiTampil} testId="wms-conv-unduh"
+              kolom={[
+                { label: 'Dari', nilai: (c) => c.from_unit_code }, { label: 'Ke', nilai: (c) => c.to_unit_code },
+                { label: 'Faktor', nilai: (c) => Number(c.factor) }, { label: 'Catatan', nilai: (c) => c.notes || '' },
+              ]} />
+          )}
+          <MuatUlang loading={loading} onClick={load} />
+        </Alat>
+      </>}>
+      {subTab === 'units' ? (
+        <TabelData kolom={kolomSatuan} baris={unitTampil} testId="wms-units-table"
+          kosong={<EmptyState title={units.length ? 'Tidak ada satuan yang cocok' : 'Belum ada satuan'}
+            description={units.length ? 'Ubah kategori atau kata pencarian.' : 'Klik "Isi satuan bawaan" atau "Tambah satuan".'} />} />
+      ) : (
+        <TabelData kolom={kolomKonversi} baris={konversiTampil} testId="wms-conv-table"
+          kosong={<EmptyState title={conversions.length ? 'Tidak ada konversi yang cocok' : 'Belum ada aturan konversi'} />} />
       )}
 
-      {/* KONVERSI */}
-      {subTab === 'conversions' && (
-        <div>
-          <div className="flex justify-between items-center mb-3">
-            <h3 className="text-sm font-semibold">Aturan Konversi ({conversions.length})</h3>
-            <button data-testid="add-conversion-btn" onClick={() => { setForm({ from_unit_code: '', to_unit_code: '', factor: 1, notes: '' }); setModal({ type: 'conversion', data: null }); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-xs font-medium transition-colors">
-              <Plus size={12} /> Tambah Konversi
-            </button>
+      {/* Form satuan / konversi */}
+      <FormPopup open={!!modal} onClose={() => setModal(null)} onSimpan={handleSave} menyimpan={saving} galat={galat}
+        judul={modal ? `${modal.data ? 'Ubah' : 'Tambah'} ${modal.type === 'unit' ? 'satuan' : 'konversi'}` : ''} testId="wms-unit-form"
+        labelSimpan={modal?.data ? 'Simpan perubahan' : 'Simpan'}>
+        {modal?.type === 'unit' && <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Isian label="Kode" wajib htmlFor="wms-u-kode"><Input id="wms-u-kode" value={form.code || ''} onChange={e => setForm(f => ({ ...f, code: e.target.value }))} placeholder="rol" /></Isian>
+            <Isian label="Simbol" wajib htmlFor="wms-u-simbol"><Input id="wms-u-simbol" value={form.symbol || ''} onChange={e => setForm(f => ({ ...f, symbol: e.target.value }))} /></Isian>
           </div>
-          <div className="overflow-auto rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-            <table className="w-full text-sm">
-              <thead className="bg-foreground/[0.03]"><tr>{['Dari', 'Ke', 'Faktor', 'Formula', 'Catatan', 'Aksi'].map(h => <th key={h} className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">{h}</th>)}</tr></thead>
-              <tbody>
-                {conversions.map(c => (
-                  <tr key={c.id} data-testid="conversion-row" className="border-t border-foreground/5">
-                    <td className="px-4 py-3 font-bold">{c.from_unit_code}</td>
-                    <td className="px-4 py-3 font-bold">{c.to_unit_code}</td>
-                    <td className="px-4 py-3 tabular-nums text-[hsl(var(--success))] ">{c.factor}</td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground tabular-nums">qty × {c.factor}</td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground">{c.notes || '-'}</td>
-                    <td className="px-4 py-3">
-                      <button onClick={() => { setForm({...c}); setModal({ type: 'conversion', data: c }); }} className="text-muted-foreground hover:text-foreground mr-2"><Edit2 size={13} /></button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <Isian label="Nama" wajib htmlFor="wms-u-nama"><Input id="wms-u-nama" value={form.name || ''} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></Isian>
+          <Isian label="Kategori">
+            <SmartNativeSelect value={form.category || 'count'} searchable={false} className="w-full" onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
+              {['weight', 'length', 'count', 'roll', 'pack', 'volume', 'other'].map(c => <option key={c} value={c}>{kategoriSatuan(c)}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+        </>}
+        {modal?.type === 'conversion' && <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Isian label="Dari" wajib>
+              <SmartNativeSelect value={form.from_unit_code || ''} className="w-full" onChange={e => setForm(f => ({ ...f, from_unit_code: e.target.value }))}>
+                <option value="">Pilih</option>{units.map(u => <option key={u.id} value={u.code}>{u.code}</option>)}
+              </SmartNativeSelect>
+            </Isian>
+            <Isian label="Ke" wajib>
+              <SmartNativeSelect value={form.to_unit_code || ''} className="w-full" onChange={e => setForm(f => ({ ...f, to_unit_code: e.target.value }))}>
+                <option value="">Pilih</option>{units.map(u => <option key={u.id} value={u.code}>{u.code}</option>)}
+              </SmartNativeSelect>
+            </Isian>
           </div>
-        </div>
-      )}
+          <Isian label="Faktor pengali" wajib htmlFor="wms-c-faktor"
+            petunjuk={form.from_unit_code && form.to_unit_code ? `1 ${form.from_unit_code} = ${form.factor || 1} ${form.to_unit_code}` : undefined}>
+            <Input id="wms-c-faktor" type="number" step="0.000001" value={form.factor || 1} onChange={e => setForm(f => ({ ...f, factor: +e.target.value }))} />
+          </Isian>
+          <Isian label="Catatan" htmlFor="wms-c-catatan"><Input id="wms-c-catatan" value={form.notes || ''} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></Isian>
+        </>}
+      </FormPopup>
 
-      {/* KALKULATOR */}
-      {subTab === 'calculator' && (
-        <div className="max-w-sm">
-          <h3 className="text-sm font-semibold mb-3">Kalkulator Konversi Satuan</h3>
-          <div className="space-y-3 bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-5">
-            <div><label className="text-xs mb-1 block">Jumlah</label>
-              <input type="number" value={calcForm.qty} onChange={e => setCalcForm(f => ({...f, qty: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" /></div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-xs mb-1 block">Dari</label>
-                <SmartNativeSelect value={calcForm.from_unit} onChange={e => setCalcForm(f => ({...f, from_unit: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
-                  <option value="">Pilih</option>{units.map(u => <option key={u.id} value={u.code}>{`${u.code} (${u.name})`}</option>)}
-                </SmartNativeSelect>
-              </div>
-              <div><label className="text-xs mb-1 block">Ke</label>
-                <SmartNativeSelect value={calcForm.to_unit} onChange={e => setCalcForm(f => ({...f, to_unit: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
-                  <option value="">Pilih</option>{units.map(u => <option key={u.id} value={u.code}>{`${u.code} (${u.name})`}</option>)}
-                </SmartNativeSelect>
-              </div>
-            </div>
-            <button data-testid="calculate-btn" onClick={handleCalc} className="w-full py-2 rounded-xl bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-sm font-medium transition-colors">Hitung Konversi</button>
-            {calcResult && (
-              <div className="bg-[hsl(var(--success)/0.15)] border border-[hsl(var(--success)/0.35)]  rounded-xl p-4 text-center">
-                <div className="text-2xl font-bold text-[hsl(var(--success))] ">{fmt(calcResult.result)} {calcResult.to}</div>
-                <div className="text-xs text-muted-foreground mt-1">{calcResult.input} {calcResult.from} × {calcResult.factor}</div>
-              </div>
-            )}
-          </div>
+      {/* Kalkulator konversi */}
+      <FormPopup open={calcOpen} onClose={() => setCalcOpen(false)} judul="Kalkulator konversi satuan" testId="calculate"
+        onSimpan={handleCalc} labelSimpan="Hitung konversi" bisaSimpan={!!calcForm.from_unit && !!calcForm.to_unit}>
+        <Isian label="Jumlah" htmlFor="wms-calc-qty">
+          <Input id="wms-calc-qty" type="number" value={calcForm.qty} onChange={e => setCalcForm(f => ({ ...f, qty: e.target.value }))} />
+        </Isian>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Dari">
+            <SmartNativeSelect value={calcForm.from_unit} className="w-full" onChange={e => setCalcForm(f => ({ ...f, from_unit: e.target.value }))}>
+              <option value="">Pilih</option>{units.map(u => <option key={u.id} value={u.code}>{`${u.code} (${u.name})`}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Ke">
+            <SmartNativeSelect value={calcForm.to_unit} className="w-full" onChange={e => setCalcForm(f => ({ ...f, to_unit: e.target.value }))}>
+              <option value="">Pilih</option>{units.map(u => <option key={u.id} value={u.code}>{`${u.code} (${u.name})`}</option>)}
+            </SmartNativeSelect>
+          </Isian>
         </div>
-      )}
-
-      {/* MODAL Unit / Conversion */}
-      {modal && (
-        <div className="fixed inset-0 bg-foreground/60 z-50 flex items-center justify-center p-4">
-          <div className="bg-[hsl(var(--card))] border border-foreground/10 rounded-2xl w-full max-w-sm p-6">
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="font-semibold">{modal.data ? 'Edit' : 'Tambah'} {modal.type === 'unit' ? 'Satuan' : 'Konversi'}</h3>
-              <button onClick={() => setModal(null)}><X size={18} /></button>
-            </div>
-            {modal.type === 'unit' && (
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div><label className="text-xs mb-1 block">Kode *</label><input value={form.code||''} onChange={e => setForm(f => ({...f, code: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="rol" /></div>
-                  <div><label className="text-xs mb-1 block">Simbol *</label><input value={form.symbol||''} onChange={e => setForm(f => ({...f, symbol: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" /></div>
-                </div>
-                <div><label className="text-xs mb-1 block">Nama *</label><input value={form.name||''} onChange={e => setForm(f => ({...f, name: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" /></div>
-                <div><label className="text-xs mb-1 block">Kategori</label>
-                  <SmartNativeSelect value={form.category||'count'} onChange={e => setForm(f => ({...f, category: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
-                    {['weight','length','count','roll','pack','volume','other'].map(c => <option key={c} value={c}>{c}</option>)}
-                  </SmartNativeSelect>
-                </div>
-              </div>
-            )}
-            {modal.type === 'conversion' && (
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div><label className="text-xs mb-1 block">Dari *</label>
-                    <SmartNativeSelect value={form.from_unit_code||''} onChange={e => setForm(f => ({...f, from_unit_code: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
-                      <option value="">Pilih</option>{units.map(u => <option key={u.id} value={u.code}>{u.code}</option>)}
-                    </SmartNativeSelect>
-                  </div>
-                  <div><label className="text-xs mb-1 block">Ke *</label>
-                    <SmartNativeSelect value={form.to_unit_code||''} onChange={e => setForm(f => ({...f, to_unit_code: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
-                      <option value="">Pilih</option>{units.map(u => <option key={u.id} value={u.code}>{u.code}</option>)}
-                    </SmartNativeSelect>
-                  </div>
-                </div>
-                <div><label className="text-xs mb-1 block">Faktor Pengali *</label><input type="number" step="0.000001" value={form.factor||1} onChange={e => setForm(f => ({...f, factor: +e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" /></div>
-                {form.from_unit_code && form.to_unit_code && <div className="text-xs text-muted-foreground bg-foreground/5 rounded-lg p-2">1 {form.from_unit_code} = {form.factor||1} {form.to_unit_code}</div>}
-                <div><label className="text-xs mb-1 block">Catatan</label><input value={form.notes||''} onChange={e => setForm(f => ({...f, notes: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" /></div>
-              </div>
-            )}
-            <div className="flex gap-3 mt-5">
-              <button onClick={() => setModal(null)} className="flex-1 py-2 rounded-lg border border-foreground/10 text-sm hover:bg-foreground/5">Batal</button>
-              <button onClick={handleSave} disabled={saving} className="flex-1 py-2 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-sm font-medium disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan'}</button>
-            </div>
+        {calcResult && (
+          <div className="rounded-md border border-[var(--glass-border)] p-3 text-center" data-testid="calculate-result">
+            <p className="text-lg font-semibold tabular-nums text-foreground">{fmt(calcResult.result)} {calcResult.to}</p>
+            <p className="text-xs text-muted-foreground">{calcResult.input} {calcResult.from} × {calcResult.factor}</p>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </FormPopup>
+    </PageLayout>
   );
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// TAB: RECEIVING (Scan In / Scan Out)
+// SCAN GUDANG (wh-scan — tautan lama, tidak lagi di navigasi sejak Fase H-4)
 // ──────────────────────────────────────────────────────────────────────────────
 // Lokasi wajib dipilih, kecuali dokumen antrean sudah menunjuk lokasinya
 // (fulfillment ber-stock_id / location_id) — No.18(a), 2026-11-02.
@@ -724,6 +590,9 @@ function needsScanLocation(scanModal) {
   if (scanModal?.mode === 'out' && m.source_type === 'fulfillment' && m.stock_id) return false;
   return !m.location_id;
 }
+
+const TYPE_LABEL = { inbound: 'Masuk barang jadi', outbound_rm: 'Keluar bahan', outbound_fg: 'Keluar barang jadi' };
+const TYPE_TONE = { inbound: 'success', outbound_rm: 'warning', outbound_fg: 'warning' };
 
 function ReceivingTab({ token }) {
   const [pending, setPending] = useState([]);
@@ -777,6 +646,11 @@ function ReceivingTab({ token }) {
     } catch { setPositionInfo(null); }
   }
 
+  const bukaScan = (m, mode) => {
+    setScanModal({ movement: m, mode }); setScanQty(String(m.expected_qty - (m.scanned_qty || 0)));
+    setPositionBarcode(''); setPositionInfo(null); setScanLocation('');
+  };
+
   async function handleScan() {
     if (!scanModal || !scanQty || +scanQty <= 0) { toast.error('Masukkan jumlah yang valid'); return; }
     if (needsScanLocation(scanModal) && !scanLocation) { toast.error('Pilih lokasi terlebih dahulu'); return; }
@@ -796,7 +670,7 @@ function ReceivingTab({ token }) {
       if (!r.ok) throw new Error(d.detail || 'Gagal');
       const u = d.uom_applied;
       toast.success(
-        `${mode === 'in' ? 'Scan-in' : 'Scan-out'} berhasil: ${d.ref_number} — ${d.status}`
+        `${mode === 'in' ? 'Scan masuk' : 'Scan keluar'} berhasil: ${d.ref_number} — ${moveStatus(d.status).label}`
         + (u ? ` · ${fmt(u.input_qty)} ${u.input_uom} = ${fmt(u.qty_base)} ${u.base_unit}` : ''));
       setScanModal(null); setScanQty(''); setScanUom(''); setPositionBarcode(''); setPositionInfo(null); setScanLocation('');
       load();
@@ -804,175 +678,103 @@ function ReceivingTab({ token }) {
     finally { setSubmitting(false); }
   }
 
-  const TYPE_ICON = { inbound: ArrowDownToLine, outbound_rm: ArrowUpFromLine, outbound_fg: ArrowUpFromLine };
-  const TYPE_LABEL = { inbound: 'Inbound FG', outbound_rm: 'Outbound Bahan', outbound_fg: 'Outbound FG' };
-  const TYPE_COLOR = { inbound: 'text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)]  bg-[hsl(var(--success)/0.15)] ', outbound_rm: 'text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)]  bg-[hsl(var(--warning)/0.15)] ', outbound_fg: 'text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)]  bg-[hsl(var(--warning)/0.15)] ' };
+  const kolom = [
+    { kunci: 'ref', label: 'Ref', hp: 'judul', isi: (m) => <span className="tabular-nums" data-testid="pending-movement-row">{m.ref_number}</span> },
+    { kunci: 'type', label: 'Jenis', isi: (m) => <StatusBadge status={m.type} label={TYPE_LABEL[m.type] || 'Lainnya'} tone={TYPE_TONE[m.type] || 'muted'} /> },
+    { kunci: 'material', label: 'Barang', hp: 'keterangan', isi: (m) => m.material_name },
+    { kunci: 'source', label: 'Sumber', isi: (m) => <span className="text-muted-foreground">{m.source_ref || '—'}</span> },
+    { kunci: 'progres', label: 'Terscan / diharapkan', rata: 'kanan', isi: (m) => <span className="tabular-nums">{fmt(m.scanned_qty || 0)} / {fmt(m.expected_qty)} {m.unit}</span> },
+    { kunci: 'status', label: 'Status', isi: (m) => { const s = moveStatus(m.status); return <StatusBadge status={m.status} label={s.label} tone={s.tone} />; } },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (m) => (
+      m.type === 'inbound'
+        ? <Button size="sm" variant="outline" data-testid="scan-in-btn" onClick={() => bukaScan(m, 'in')}><Scan />Scan masuk</Button>
+        : (m.type === 'outbound_rm' || m.type === 'outbound_fg')
+          ? <Button size="sm" variant="outline" data-testid="scan-out-btn" onClick={() => bukaScan(m, 'out')}><Scan />Scan keluar</Button>
+          : null) },
+  ];
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex gap-1 p-1 bg-foreground/5 rounded-xl">
-          {['all', 'inbound', 'outbound_rm', 'outbound_fg'].map(f => (
-            <button key={f} onClick={() => setFilter(f)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${filter === f ? 'bg-[hsl(var(--primary))] text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
-              {f === 'all' ? 'Semua' : TYPE_LABEL[f]}
-            </button>
-          ))}
-        </div>
+    <PageLayout testId="wms-section-receiving" title="Scan gudang"
+      subtitle="Eksekusi fisik: scan masuk penerimaan dan scan keluar pengeluaran dari antrean pergerakan."
+      filters={<>
+        <FilterChips value={filter} onChange={setFilter} hideWhenEmpty={false} className="w-full sm:w-auto" ariaLabel="Jenis pergerakan"
+          options={[{ key: 'all', label: 'Semua' }, ...Object.entries(TYPE_LABEL).map(([k, l]) => ({ key: k, label: l }))]} />
         {buildings.length > 0 && (
-          <SmartNativeSelect data-testid="receiving-building-filter" value={buildingFilter} onChange={e => setBuildingFilter(e.target.value)}
-            className="bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-1.5 text-xs">
-            <option value="">Semua Gedung</option>
+          <SelectPenyaring data-testid="receiving-building-filter" value={buildingFilter} onChange={e => setBuildingFilter(e.target.value)} aria-label="Gedung">
+            <option value="">Semua gedung</option>
             {buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </SmartNativeSelect>
+          </SelectPenyaring>
         )}
-        <button onClick={load} className="text-muted-foreground hover:text-foreground"><RefreshCw size={14} /></button>
-      </div>
-
-      {loading && (
-        <div className="space-y-2">
-          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12 rounded-lg" />)}
-        </div>
+        <Alat>
+          <TombolUnduh namaBerkas="antrean-scan-gudang" namaLembar="Antrean" baris={pending} testId="wms-pending-unduh"
+            kolom={[
+              { label: 'Ref', nilai: (m) => m.ref_number }, { label: 'Jenis', nilai: (m) => TYPE_LABEL[m.type] || '' },
+              { label: 'Barang', nilai: (m) => m.material_name }, { label: 'Sumber', nilai: (m) => m.source_ref || '' },
+              { label: 'Terscan', nilai: (m) => Number(m.scanned_qty || 0) }, { label: 'Diharapkan', nilai: (m) => Number(m.expected_qty || 0) },
+              { label: 'Satuan', nilai: (m) => m.unit || '' }, { label: 'Status', nilai: (m) => moveStatus(m.status).label },
+            ]} />
+          <MuatUlang loading={loading} onClick={load} />
+        </Alat>
+      </>}>
+      {loading && pending.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat antrean…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={pending} testId="wms-pending-table"
+          kosong={<EmptyState title={`Tidak ada antrean pergerakan${filter !== 'all' ? ` untuk ${TYPE_LABEL[filter].toLowerCase()}` : ''}`} />} />
       )}
 
-      {!loading && pending.length === 0 && (
-        <div className="text-center py-12 text-muted-foreground">
-          <PackageCheck className="mx-auto mb-3 opacity-30" size={40} />
-          <p className="text-sm">Tidak ada pending movement{filter !== 'all' ? ` untuk ${TYPE_LABEL[filter]}` : ''}.</p>
-        </div>
-      )}
-
-      {!loading && pending.length > 0 && (
-        <div className="space-y-2">
-          {pending.map(m => {
-            const Icon = TYPE_ICON[m.type] || Package;
-            return (
-              <div key={m.id} data-testid="pending-movement-row" className="flex items-center gap-4 bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-4">
-                <div className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center ${TYPE_COLOR[m.type]}`}>
-                  <Icon size={16} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="tabular-nums text-xs text-[hsl(var(--primary))] ">{m.ref_number}</span>
-                    <Badge cls={TYPE_COLOR[m.type]}>{TYPE_LABEL[m.type]}</Badge>
-                    <span className={`text-xs font-medium ${STATUS_COLORS[m.status]}`}>{m.status}</span>
-                  </div>
-                  <div className="font-medium text-sm mt-0.5">{m.material_name}</div>
-                  <div className="text-xs text-muted-foreground">{m.source_ref || m.source_type} · {m.scanned_qty}/{m.expected_qty} {m.unit}</div>
-                </div>
-                <div className="flex gap-2 flex-shrink-0">
-                  {m.type === 'inbound' && (
-                    <button
-                      data-testid="scan-in-btn"
-                      onClick={() => { setScanModal({ movement: m, mode: 'in' }); setScanQty(String(m.expected_qty - (m.scanned_qty || 0))); setPositionBarcode(''); setPositionInfo(null); setScanLocation(''); }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]  border border-[hsl(var(--success)/0.35)]  text-xs hover:bg-[hsl(var(--success)/0.3)] transition-colors"
-                    >
-                      <Scan size={13} /> Scan In
-                    </button>
-                  )}
-                  {(m.type === 'outbound_rm' || m.type === 'outbound_fg') && (
-                    <button
-                      data-testid="scan-out-btn"
-                      onClick={() => { setScanModal({ movement: m, mode: 'out' }); setScanQty(String(m.expected_qty - (m.scanned_qty || 0))); setPositionBarcode(''); setPositionInfo(null); setScanLocation(''); }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]  border border-[hsl(var(--warning)/0.35)]  text-xs hover:bg-[hsl(var(--warning)/0.3)] transition-colors"
-                    >
-                      <Scan size={13} /> Scan Out
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Scan Modal */}
-      {scanModal && (
-        <div className="fixed inset-0 bg-foreground/60 z-50 flex items-center justify-center p-4">
-          <div className="bg-card border border-foreground/10 rounded-2xl w-full max-w-md p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-foreground">{scanModal.mode === 'in' ? 'Scan In — Terima Barang' : 'Scan Out — Keluarkan Barang'}</h3>
-              <button onClick={() => setScanModal(null)} className="text-muted-foreground/60 dark:text-zinc-400 hover:text-foreground"><X size={18} /></button>
-            </div>
-            <div className="bg-foreground/[0.04] rounded-xl p-3 mb-4">
-              <div className="font-medium text-foreground text-sm">{scanModal.movement.material_name}</div>
-              <div className="text-xs text-muted-foreground/60 dark:text-zinc-400 mt-1">
-                Ref: {scanModal.movement.ref_number} · Sumber: {scanModal.movement.source_ref || scanModal.movement.source_type}
-              </div>
-              <div className="text-xs text-muted-foreground/60 dark:text-zinc-400">Expected: {scanModal.movement.expected_qty} {scanModal.movement.unit} · Scanned: {scanModal.movement.scanned_qty || 0}</div>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs text-muted-foreground/60 dark:text-zinc-400 mb-1.5">Jumlah yang {scanModal.mode === 'in' ? 'Diterima' : 'Dikeluarkan'} *</label>
-                <div className="flex gap-2">
-                  <input type="number" min="0.0001" step="0.0001" value={scanQty} onChange={e => setScanQty(e.target.value)}
-                    className="w-full bg-foreground/5 border border-foreground/10 rounded-xl px-4 py-3 text-sm text-foreground"
-                    data-testid="wms-scan-qty-input" />
-                  {scanModal.mode === 'in' && (
-                    <UomSelect opt={scanUomOpt} value={effScanUom} fallbackUnit={scanModal.movement.unit}
-                      onChange={e => setScanUom(e.target.value)}
-                      testId="wms-scan-uom-select" className="w-24 shrink-0 !h-auto rounded-xl" />
-                  )}
-                </div>
-                {scanModal.mode === 'in' && (
-                  <UomConversionHint opt={scanUomOpt} qty={scanQty} unit={effScanUom}
-                    fallbackUnit={scanModal.movement.unit} className="mt-1.5" testId="wms-scan-uom-hint" />
-                )}
-                {scanModal.mode === 'in' && effScanUom && docUnit && effScanUom !== docUnit && (
-                  <p className="text-[11px] text-muted-foreground mt-0.5" data-testid="wms-scan-doc-unit-note">
-                    Dokumen memakai satuan <b>{docUnit}</b> — sistem menerjemahkan otomatis.
-                  </p>
-                )}
-              </div>
-              {needsScanLocation(scanModal) && (
-                <div>
-                  <label className="block text-xs text-muted-foreground/60 dark:text-zinc-400 mb-1.5">
-                    {scanModal.mode === 'in' ? 'Lokasi Tujuan *' : 'Lokasi Asal *'}
-                  </label>
-                  <StorageLocationSelect token={token} value={scanLocation} onChange={setScanLocation}
-                    testId="wms-scan-location-select"
-                    className="w-full bg-foreground/5 border border-foreground/10 rounded-xl px-4 py-3 text-sm text-foreground" />
-                </div>
+      <FormPopup open={!!scanModal} onClose={() => setScanModal(null)} testId="confirm-scan" menyimpan={submitting}
+        judul={scanModal?.mode === 'in' ? 'Scan masuk — terima barang' : 'Scan keluar — keluarkan barang'}
+        keterangan={scanModal ? `${scanModal.movement.material_name} · ref ${scanModal.movement.ref_number} · diharapkan ${scanModal.movement.expected_qty} ${scanModal.movement.unit}, terscan ${scanModal.movement.scanned_qty || 0}` : undefined}
+        onSimpan={handleScan} labelSimpan={scanModal?.mode === 'in' ? 'Konfirmasi terima' : 'Konfirmasi keluar'}
+        bisaSimpan={!!scanQty && !(scanModal && needsScanLocation(scanModal) && !scanLocation)}>
+        {scanModal && <>
+          <Isian label={`Jumlah yang ${scanModal.mode === 'in' ? 'diterima' : 'dikeluarkan'}`} wajib htmlFor="wms-scan-qty">
+            <div className="flex gap-2">
+              <Input id="wms-scan-qty" type="number" min="0.0001" step="0.0001" value={scanQty} onChange={e => setScanQty(e.target.value)}
+                data-testid="wms-scan-qty-input" />
+              {scanModal.mode === 'in' && (
+                <UomSelect opt={scanUomOpt} value={effScanUom} fallbackUnit={scanModal.movement.unit}
+                  onChange={e => setScanUom(e.target.value)} testId="wms-scan-uom-select" className="w-24 shrink-0" />
               )}
-              <div>
-                <label className="block text-xs text-muted-foreground/60 dark:text-zinc-400 mb-1.5">
-                  {scanModal.mode === 'in' ? 'Barcode Posisi Tujuan (Scan Rak)' : 'Barcode Posisi Asal (Scan Rak)'}
-                  <span className="text-muted-foreground/60 dark:text-zinc-500 ml-1">— opsional</span>
-                </label>
-                <ScannerInput
-                  placeholder={`Scan label rak (mis: WH1-RM-R01-S01-P01)`}
-                  onScan={v => { setPositionBarcode(v); lookupPosition(v); }}
-                />
-                {positionBarcode && (
-                  <div className="text-xs mt-1">
-                    {positionInfo ? (
-                      <span className="text-[hsl(var(--success))] "><MapPin size={11} className="inline mr-1" />{positionInfo.label} — {positionInfo.building_code}/{positionInfo.zone_code}/{positionInfo.rack_code}</span>
-                    ) : (
-                      <span className="text-[hsl(var(--warning))] "><AlertCircle size={11} className="inline mr-1" />Posisi tidak ditemukan: {positionBarcode}</span>
-                    )}
-                  </div>
+            </div>
+            {scanModal.mode === 'in' && (
+              <UomConversionHint opt={scanUomOpt} qty={scanQty} unit={effScanUom}
+                fallbackUnit={scanModal.movement.unit} className="mt-1.5" testId="wms-scan-uom-hint" />
+            )}
+            {scanModal.mode === 'in' && effScanUom && docUnit && effScanUom !== docUnit && (
+              <p className="mt-0.5 text-xs text-muted-foreground" data-testid="wms-scan-doc-unit-note">
+                Dokumen memakai satuan <b>{docUnit}</b> — sistem menerjemahkan otomatis.
+              </p>
+            )}
+          </Isian>
+          {needsScanLocation(scanModal) && (
+            <Isian label={scanModal.mode === 'in' ? 'Lokasi tujuan' : 'Lokasi asal'} wajib>
+              <StorageLocationSelect token={token} value={scanLocation} onChange={setScanLocation}
+                testId="wms-scan-location-select" className="w-full" />
+            </Isian>
+          )}
+          <Isian label={scanModal.mode === 'in' ? 'Barcode posisi tujuan (scan rak)' : 'Barcode posisi asal (scan rak)'} petunjuk="Opsional">
+            <ScannerInput placeholder="Scan label rak (mis. WH1-RM-R01-S01-P01)"
+              onScan={v => { setPositionBarcode(v); lookupPosition(v); }} />
+            {positionBarcode && (
+              <p className="mt-1 text-xs">
+                {positionInfo ? (
+                  <span className="text-[hsl(var(--success-text))]"><MapPin className="mr-1 inline h-3 w-3" />{positionInfo.label} — {positionInfo.building_code}/{positionInfo.zone_code}/{positionInfo.rack_code}</span>
+                ) : (
+                  <span className="text-[hsl(var(--warning-text))]"><AlertCircle className="mr-1 inline h-3 w-3" />Posisi tidak ditemukan: {positionBarcode}</span>
                 )}
-              </div>
-            </div>
-            <div className="flex gap-3 mt-5">
-              <button onClick={() => setScanModal(null)} className="flex-1 py-3 rounded-xl border border-foreground/10 text-sm hover:bg-foreground/5">Batal</button>
-              <button
-                data-testid="confirm-scan-btn"
-                onClick={handleScan}
-                disabled={submitting || !scanQty || (needsScanLocation(scanModal) && !scanLocation)}
-                className={`flex-1 py-3 rounded-xl text-foreground text-sm font-medium disabled:opacity-50 transition-colors ${scanModal.mode === 'in' ? 'bg-[hsl(var(--success))] hover:bg-[hsl(var(--success)/0.9)]' : 'bg-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.9)]'}`}
-              >
-                {submitting ? 'Memproses...' : scanModal.mode === 'in' ? 'Konfirmasi Terima' : 'Konfirmasi Keluar'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+              </p>
+            )}
+          </Isian>
+        </>}
+      </FormPopup>
+    </PageLayout>
   );
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// TAB: POSISI & PENCARIAN
+// POSISI & CARI (tab di hub Stok & Akurasi)
 // ──────────────────────────────────────────────────────────────────────────────
 export function PositionsTab({ token }) {
   const [searchQ, setSearchQ] = useState('');
@@ -999,108 +801,117 @@ export function PositionsTab({ token }) {
     finally { setSearching(false); }
   }
 
+  const posisi = searchResult?.type === 'position' ? null : (searchResult?.positions || []);
+  const material = searchResult?.type === 'position' ? [] : (searchResult?.materials || []);
+  const kolomPosisi = [
+    { kunci: 'barcode', label: 'Barcode posisi', hp: 'judul', isi: (p) => <span className="tabular-nums" data-testid="position-result">{p.barcode}</span> },
+    { kunci: 'lokasi', label: 'Lokasi', hp: 'keterangan', isi: (p) => `${p.building_code} / ${p.zone_code} / ${p.rack_code} / ${p.label}` },
+    { kunci: 'qty', label: 'Stok', rata: 'kanan', isi: (p) => <span className="tabular-nums font-medium">{fmt(p.qty)} {p.unit}</span> },
+  ];
+  const kolomMaterial = [
+    { kunci: 'code', label: 'Kode', hp: 'judul', isi: (m) => <span className="tabular-nums">{m.code}</span> },
+    { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (m) => m.name },
+  ];
+  const res = searchResult?.result;
+  const statusPosisi = res ? (POSITION_STATUS[res.status] || { label: res.status ? 'Lainnya' : '—', tone: 'muted' }) : null;
+
   return (
-    <div className="space-y-4">
-      <div>
-        <h3 className="text-sm font-semibold mb-2">Smart Search — Cari Posisi Barang</h3>
-        <p className="text-xs text-muted-foreground mb-3">Scan barcode rak, barcode material, atau ketik nama/kode produk</p>
-        <div className="flex gap-3">
-          {buildings.length > 1 && (
-            <SmartNativeSelect value={selectedBldg} onChange={e => setSelectedBldg(e.target.value)} className="bg-foreground/5 border border-foreground/10 rounded-xl px-3 py-2.5 text-sm flex-shrink-0">
-              <option value="">Semua Gedung</option>
-              {buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </SmartNativeSelect>
-          )}
-          <ScannerInput
-            className="flex-1"
-            placeholder="Scan barcode atau ketik nama produk..."
-            onScan={doSearch}
-          />
-        </div>
-        <p className="text-xs text-muted-foreground mt-1">Tekan Enter setelah mengetik / scanning</p>
-      </div>
+    <PageLayout testId="wms-section-positions" title="Posisi & cari"
+      subtitle="Cari letak barang: scan barcode rak atau material, atau ketik nama/kode produk lalu Enter."
+      filters={<>
+        {buildings.length > 1 && (
+          <SelectPenyaring value={selectedBldg} onChange={e => setSelectedBldg(e.target.value)} aria-label="Gedung">
+            <option value="">Semua gedung</option>
+            {buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </SelectPenyaring>
+        )}
+        <ScannerInput className="w-full sm:w-96" placeholder="Scan barcode atau ketik nama/kode, lalu Enter" onScan={doSearch} />
+        {posisi && posisi.length > 0 && (
+          <Alat>
+            <TombolUnduh namaBerkas={`posisi-${searchQ}`} namaLembar="Posisi" baris={posisi} testId="wms-positions-unduh"
+              kolom={[
+                { label: 'Barcode posisi', nilai: (p) => p.barcode }, { label: 'Gedung', nilai: (p) => p.building_code },
+                { label: 'Zona', nilai: (p) => p.zone_code }, { label: 'Rak', nilai: (p) => p.rack_code }, { label: 'Posisi', nilai: (p) => p.label },
+                { label: 'Stok', nilai: (p) => Number(p.qty || 0) }, { label: 'Satuan', nilai: (p) => p.unit || '' },
+              ]} />
+          </Alat>
+        )}
+      </>}>
+      {searching && <p className="py-6 text-center text-sm text-muted-foreground">Mencari…</p>}
 
-      {searching && <div className="text-center py-8 text-muted-foreground text-sm">Mencari...</div>}
+      {!searching && !searchResult && (
+        <EmptyState title="Belum ada pencarian" description="Scan label rak untuk melihat isinya, atau scan/ketik barang untuk melihat letaknya." />
+      )}
 
-      {searchResult && !searching && (
+      {searchResult && !searching && searchResult.type === 'position' && res && (
+        <GlassCard className="p-4">
+          <p className="mb-2 text-sm font-medium text-foreground">Posisi ditemukan</p>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Barcode"><span className="tabular-nums">{res.barcode}</span></BarisDetail>
+            <BarisDetail label="Label">{res.label}</BarisDetail>
+            <BarisDetail label="Lokasi">{res.building_code}/{res.zone_code}/{res.rack_code}</BarisDetail>
+            <BarisDetail label="Status"><StatusBadge status={res.status} label={statusPosisi.label} tone={statusPosisi.tone} /></BarisDetail>
+            {res.material_name && <>
+              <BarisDetail label="Barang">{res.material_name}</BarisDetail>
+              <BarisDetail label="Stok"><span className="font-medium tabular-nums">{fmt(res.qty)} {res.unit}</span></BarisDetail>
+            </>}
+          </dl>
+        </GlassCard>
+      )}
+
+      {searchResult && !searching && searchResult.type !== 'position' && (
         <div className="space-y-4">
-          {searchResult.type === 'position' ? (
-            <div className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-5">
-              <div className="text-xs font-semibold text-[hsl(var(--primary))] mb-3">Posisi Ditemukan</div>
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><span className="text-muted-foreground">Barcode:</span> <span className="tabular-nums">{searchResult.result.barcode}</span></div>
-                <div><span className="text-muted-foreground">Label:</span> {searchResult.result.label}</div>
-                <div><span className="text-muted-foreground">Lokasi:</span> {searchResult.result.building_code}/{searchResult.result.zone_code}/{searchResult.result.rack_code}</div>
-                <div><span className="text-muted-foreground">Status:</span> <Badge cls={searchResult.result.status === 'occupied' ? 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ' : 'bg-muted dark:bg-zinc-500/20 text-muted-foreground dark:text-zinc-400 border-border dark:border-zinc-500/30'}>{searchResult.result.status}</Badge></div>
-                {searchResult.result.material_name && <>
-                  <div><span className="text-muted-foreground">Produk:</span> {searchResult.result.material_name}</div>
-                  <div><span className="text-muted-foreground">Stok:</span> <span className="font-bold text-[hsl(var(--success))] ">{fmt(searchResult.result.qty)} {searchResult.result.unit}</span></div>
-                </>}
-              </div>
-            </div>
-          ) : (
-            <div>
-              {(searchResult.materials || []).length > 0 && (
-                <div className="mb-3">
-                  <div className="text-xs font-semibold text-muted-foreground mb-2">Material Cocok</div>
-                  <div className="flex flex-wrap gap-2">
-                    {searchResult.materials.map(m => (
-                      <span key={m.id} className="bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-1.5 text-sm">
-                        <span className="font-bold">{m.code}</span> — {m.name}
-                      </span>
-                    ))}
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">Total stok di gudang: <span className="font-bold text-foreground">{fmt(searchResult.total_qty)}</span></div>
-                </div>
-              )}
-              {(searchResult.positions || []).length > 0 ? (
-                <div>
-                  <div className="text-xs font-semibold text-muted-foreground mb-2">Lokasi Penyimpanan</div>
-                  <div className="space-y-2">
-                    {searchResult.positions.map(pos => (
-                      <div key={pos.id} data-testid="position-result" className="flex items-center gap-4 bg-foreground/[0.03] border border-foreground/[0.08] rounded-xl p-3">
-                        <MapPin size={16} className="text-[hsl(var(--primary))] flex-shrink-0" />
-                        <div className="flex-1">
-                          <div className="tabular-nums text-sm text-[hsl(var(--primary))] ">{pos.barcode}</div>
-                          <div className="text-xs text-muted-foreground">{pos.building_code} / {pos.zone_code} / {pos.rack_code} / {pos.label}</div>
-                        </div>
-                        <div className="text-right">
-                          <div className="font-bold text-[hsl(var(--success))] ">{fmt(pos.qty)} {pos.unit}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="text-sm text-muted-foreground text-center py-4">Tidak ada data posisi tersimpan untuk item ini.</div>
-              )}
+          {material.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-foreground">
+                Barang cocok ({material.length}) · total stok di gudang <span className="tabular-nums">{fmt(searchResult.total_qty)}</span>
+              </p>
+              <TabelData kolom={kolomMaterial} baris={material} testId="wms-search-materials" />
             </div>
           )}
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-foreground">Lokasi penyimpanan</p>
+            <TabelData kolom={kolomPosisi} baris={posisi || []} testId="wms-search-positions"
+              kosong={<EmptyState title="Tidak ada data posisi tersimpan untuk barang ini" />} />
+          </div>
         </div>
       )}
-    </div>
+    </PageLayout>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// TAB: AUDIT TRAIL — history opname adjustment per operator/posisi
+// AUDIT TRAIL — riwayat penyesuaian opname per operator/posisi (wh-audit)
 // ══════════════════════════════════════════════════════════════════════════════
+const FILTER_KOSONG = { operator: '', position_barcode: '', building_id: '', date_from: '', date_to: '', direction: '' };
+
 function AuditTrailTab({ token }) {
   const [items, setItems] = useState([]);
   const [stats, setStats] = useState(null);
   const [buildings, setBuildings] = useState([]);
   const [loading, setLoading] = useState(false);
   const [rcaModal, setRcaModal] = useState(null); // {barcode, loading, result, error}
-  const [filters, setFilters] = useState({
-    operator: '', position_barcode: '', building_id: '',
-    date_from: '', date_to: '', direction: '',
-  });
+  const [filters, setFilters] = useState(FILTER_KOSONG);
+  const [ketik, setKetik] = useState({ operator: '', position_barcode: '' });
+  const [period, setPeriod] = useState({ preset: 'all', from: '', to: '' });
   const [page, setPage] = useState({ limit: 50, skip: 0, total: 0 });
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
   useEffect(() => {
     fetch(`${API}/api/wms/buildings`, { headers }).then(r => r.json()).then(d => setBuildings(Array.isArray(d) ? d : [])).catch(() => {});
   }, [headers]);
+
+  // Kotak ketik diteruskan ke penyaring setelah jeda singkat; periode → date_from/date_to (YYYY-MM-DD).
+  useEffect(() => {
+    const t = setTimeout(() => setFilters(f => (f.operator === ketik.operator && f.position_barcode === ketik.position_barcode
+      ? f : { ...f, operator: ketik.operator, position_barcode: ketik.position_barcode })), 300);
+    return () => clearTimeout(t);
+  }, [ketik]);
+  useEffect(() => {
+    setFilters(f => (f.date_from === (period.from || '') && f.date_to === (period.to || '')
+      ? f : { ...f, date_from: period.from || '', date_to: period.to || '' }));
+  }, [period]);
+  useEffect(() => { setPage(p => (p.skip === 0 ? p : { ...p, skip: 0 })); }, [filters]);
 
   const qs = useCallback(() => {
     const p = new URLSearchParams();
@@ -1132,417 +943,231 @@ function AuditTrailTab({ token }) {
   useEffect(() => { load(); }, [load]);
 
   const resetFilters = () => {
-    setFilters({ operator: '', position_barcode: '', building_id: '', date_from: '', date_to: '', direction: '' });
+    setKetik({ operator: '', position_barcode: '' });
+    setPeriod({ preset: 'all', from: '', to: '' });
+    setFilters(FILTER_KOSONG);
     setPage({ limit: 50, skip: 0, total: 0 });
   };
 
-  const exportCSV = () => {
+  // Unduh: SEMUA baris hasil saringan (bukan hanya halaman ini) — API yang sama, 500 per permintaan.
+  const ambilSemua = async () => {
+    const semua = [];
     const qStr = qs();
-    const url = `${API}/api/wms/audit/adjustments/export-csv?token=${encodeURIComponent(token)}${qStr ? `&${qStr}` : ''}`;
-    window.open(url, '_blank');
+    for (let skip = 0; skip < 50000; skip += 500) {
+      const d = await fetch(`${API}/api/wms/audit/adjustments?limit=500&skip=${skip}${qStr ? `&${qStr}` : ''}`, { headers }).then(r => r.json());
+      const rows = d.items || [];
+      semua.push(...rows);
+      if (rows.length < 500 || semua.length >= (d.total || 0)) break;
+    }
+    return semua;
   };
 
+  const jalankanRca = async (barcode) => {
+    setRcaModal({ barcode, loading: true, result: null, error: null });
+    try {
+      const r = await fetch(`${API}/api/wms/audit/hotspot/${encodeURIComponent(barcode)}/rca`, { method: 'POST', headers });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Gagal analisa');
+      setRcaModal({ barcode, loading: false, result: d, error: null });
+    } catch (e) {
+      setRcaModal({ barcode, loading: false, result: null, error: e.message });
+    }
+  };
+
+  const lokasiDari = (r) => (r.building_code ? `${r.building_code}/${r.zone_code}/${r.rack_code}` : (r.location_code || '—'));
+  const kolom = [
+    { kunci: 'waktu', label: 'Waktu', hp: 'keterangan', isi: (r) => <span className="whitespace-nowrap" data-testid="audit-row">{formatDateTimeID(r.timestamp)}</span> },
+    { kunci: 'session', label: 'Sesi', hp: 'judul', isi: (r) => <span className="tabular-nums">{r.session_ref || '—'}</span> },
+    { kunci: 'operator', label: 'Operator', isi: (r) => r.created_by || '—' },
+    { kunci: 'lokasi', label: 'Lokasi', isi: (r) => lokasiDari(r) },
+    { kunci: 'barcode', label: 'Barcode posisi', isi: (r) => <span className="tabular-nums">{r.position_barcode || '—'}</span> },
+    { kunci: 'material', label: 'Barang', isi: (r) => r.fg_code || '—' },
+    { kunci: 'arah', label: 'Arah', isi: (r) => { const a = arahDari(r.direction); return <StatusBadge status={r.direction} label={a.label} tone={a.tone} />; } },
+    { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (r) => <span className="tabular-nums font-medium">{fmt(r.qty || 0)}</span> },
+    { kunci: 'notes', label: 'Catatan', isi: (r) => <span className="line-clamp-1 max-w-[16rem] text-muted-foreground" title={r.notes}>{r.notes || '—'}</span> },
+  ];
+  const kolomOperator = [
+    { kunci: 'operator', label: 'Operator', hp: 'judul', isi: (op) => <span data-testid="audit-operator-row">{op.operator}</span> },
+    { kunci: 'count', label: 'Penyesuaian', rata: 'kanan', isi: (op) => <span className="tabular-nums">{fmt(op.count)}</span> },
+    { kunci: 'surplus', label: 'Lebih', rata: 'kanan', isi: (op) => <span className="tabular-nums">{fmt(op.surplus_qty)}</span> },
+    { kunci: 'shortage', label: 'Kurang', rata: 'kanan', isi: (op) => <span className="tabular-nums">{fmt(op.shortage_qty)}</span> },
+    { kunci: 'last', label: 'Terakhir aktif', hp: 'keterangan', isi: (op) => formatDateTimeID(op.last_activity) },
+  ];
+  const kolomHotspot = [
+    { kunci: 'barcode', label: 'Barcode posisi', hp: 'judul', isi: (p) => <span className="tabular-nums" data-testid="audit-hotspot-row">{p.position_barcode}</span> },
+    { kunci: 'count', label: 'Kali disesuaikan', rata: 'kanan', isi: (p) => <span className="tabular-nums">{fmt(p.count)}</span> },
+    { kunci: 'net', label: 'Selisih bersih', rata: 'kanan', isi: (p) => <span className="tabular-nums">{p.net_qty > 0 ? '+' : ''}{fmt(p.net_qty)}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (p) => (p.count >= 3 ? (
+      <Button size="sm" variant="outline" data-testid={`rca-btn-${p.position_barcode}`} onClick={() => jalankanRca(p.position_barcode)}
+        title="Analisa penyebab dengan AI"><Sparkles />Analisa AI</Button>) : null) },
+  ];
+
+  const adaStat = stats && Number(stats.total_adjustments || 0) > 0;
+  const totalHalaman = Math.max(1, Math.ceil((page.total || 0) / page.limit));
+  const rca = rcaModal?.result;
+
   return (
-    <div className="space-y-5">
-      {/* Filters */}
-      <div className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-4 space-y-3">
-        <div className="flex items-center gap-2">
-          <History size={14} className="text-[hsl(var(--primary))] " />
-          <span className="text-sm font-semibold">Filter Audit Trail</span>
+    <PageLayout testId="wms-section-audit" title="Audit trail gudang"
+      subtitle="Riwayat penyesuaian stok hasil opname, per operator dan per posisi rak."
+      filters={<>
+        <Input data-testid="audit-filter-operator" placeholder="Operator (email)" value={ketik.operator}
+          onChange={e => setKetik(k => ({ ...k, operator: e.target.value }))} className="w-full sm:w-52" />
+        <Input data-testid="audit-filter-position" placeholder="Barcode posisi" value={ketik.position_barcode}
+          onChange={e => setKetik(k => ({ ...k, position_barcode: e.target.value }))} className="w-full sm:w-44" />
+        <SelectPenyaring data-testid="audit-filter-building" value={filters.building_id} aria-label="Gedung"
+          onChange={e => setFilters(f => ({ ...f, building_id: e.target.value }))}>
+          <option value="">Semua gedung</option>
+          {buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </SelectPenyaring>
+        <SelectPenyaring data-testid="audit-filter-direction" value={filters.direction} searchable={false} aria-label="Arah"
+          onChange={e => setFilters(f => ({ ...f, direction: e.target.value }))}>
+          <option value="">Semua arah</option>
+          <option value="adjust_in">Lebih (stok bertambah)</option>
+          <option value="adjust_out">Kurang (stok berkurang)</option>
+        </SelectPenyaring>
+        <PeriodPicker value={period} onChange={setPeriod} presets={[ALL_TIME, ...PERIOD_PRESETS]} testId="audit-period" />
+        <Button variant="link" className="px-1" onClick={resetFilters} data-testid="audit-reset">Atur ulang</Button>
+        <Alat>
+          <TombolUnduh namaBerkas="audit-trail-gudang" namaLembar="Audit trail" baris={items} ambilSemua={ambilSemua} testId="audit-export-csv"
+            kolom={[
+              { label: 'Waktu', nilai: (r) => formatDateTimeID(r.timestamp, { fallback: '' }) },
+              { label: 'Sesi', nilai: (r) => r.session_ref || '' },
+              { label: 'Operator', nilai: (r) => r.created_by || '' },
+              { label: 'Gedung', nilai: (r) => r.building_code || r.location_code || '' },
+              { label: 'Zona', nilai: (r) => r.zone_code || '' },
+              { label: 'Rak', nilai: (r) => r.rack_code || '' },
+              { label: 'Barcode posisi', nilai: (r) => r.position_barcode || '' },
+              { label: 'Barang', nilai: (r) => r.fg_code || '' },
+              { label: 'Arah', nilai: (r) => arahDari(r.direction).label },
+              { label: 'Qty', nilai: (r) => Number(r.qty || 0) },
+              { label: 'Catatan', nilai: (r) => r.notes || '' },
+            ]} />
+          <MuatUlang loading={loading} onClick={load} testId="audit-apply-filters" />
+        </Alat>
+      </>}
+      summary={adaStat ? (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile label="Total penyesuaian" value={fmt(stats.total_adjustments)} sub="sesuai saringan" />
+          <StatTile label="Lebih (surplus)" value={fmt(stats.surplus_qty)} accent="success" sub={`${fmt(stats.surplus_count)} kali`} />
+          <StatTile label="Kurang (selisih hilang)" value={fmt(stats.shortage_qty)} accent="danger" sub={`${fmt(stats.shortage_count)} kali`} />
+          <StatTile label="Selisih bersih" value={`${stats.net_qty > 0 ? '+' : ''}${fmt(stats.net_qty)}`}
+            accent={(stats.net_qty || 0) < 0 ? 'danger' : 'default'} sub="lebih dikurangi kurang" />
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
-          <input data-testid="audit-filter-operator" placeholder="Operator (email)" value={filters.operator}
-            onChange={e => setFilters({ ...filters, operator: e.target.value })}
-            className="bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-xs" />
-          <input data-testid="audit-filter-position" placeholder="Barcode posisi" value={filters.position_barcode}
-            onChange={e => setFilters({ ...filters, position_barcode: e.target.value })}
-            className="bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-xs tabular-nums" />
-          <SmartNativeSelect data-testid="audit-filter-building" value={filters.building_id}
-            onChange={e => setFilters({ ...filters, building_id: e.target.value })}
-            className="bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-xs">
-            <option value="">Semua Gedung</option>
-            {buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </SmartNativeSelect>
-          <SmartNativeSelect data-testid="audit-filter-direction" value={filters.direction}
-            onChange={e => setFilters({ ...filters, direction: e.target.value })}
-            className="w-44 bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-xs">
-            <option value="">Semua Arah</option>
-            <option value="adjust_in">Surplus (Tambah)</option>
-            <option value="adjust_out">Shortage (Kurang)</option>
-          </SmartNativeSelect>
-          <input data-testid="audit-filter-date-from" type="date" value={filters.date_from}
-            onChange={e => setFilters({ ...filters, date_from: e.target.value })}
-            className="bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-xs" />
-          <input data-testid="audit-filter-date-to" type="date" value={filters.date_to}
-            onChange={e => setFilters({ ...filters, date_to: e.target.value })}
-            className="bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-xs" />
-        </div>
-        <div className="flex gap-2">
-          <button data-testid="audit-apply-filters" onClick={() => { setPage(p => ({ ...p, skip: 0 })); load(); }}
-            className="px-3 py-1.5 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-xs font-medium">
-            <Search size={12} className="inline mr-1" /> Cari
-          </button>
-          <button onClick={resetFilters} className="px-3 py-1.5 rounded-lg bg-foreground/5 border border-foreground/10 text-xs hover:bg-foreground/10">
-            Reset
-          </button>
-          <button data-testid="audit-export-csv" onClick={exportCSV}
-            className="ml-auto px-3 py-1.5 rounded-lg bg-[hsl(var(--success))] hover:bg-[hsl(var(--success)/0.9)] text-xs font-medium">
-            <FileDown size={12} className="inline mr-1" /> Export CSV
-          </button>
-        </div>
-      </div>
+      ) : null}
+      footer={page.total > page.limit ? (
+        <PaginationLite page={Math.floor(page.skip / page.limit) + 1} totalPages={totalHalaman} total={page.total} pageSize={page.limit}
+          onPageChange={(n) => setPage(p => ({ ...p, skip: (n - 1) * p.limit }))} />
+      ) : null}>
 
-      {/* Stats cards */}
-      {stats && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="bg-foreground/[0.03] border border-[hsl(var(--primary)/0.35)] rounded-2xl p-4">
-            <BarChart3 size={16} className="text-[hsl(var(--primary))] mb-1" />
-            <div className="text-xl font-bold text-[hsl(var(--primary))] ">{stats.total_adjustments || 0}</div>
-            <div className="text-xs text-muted-foreground">Total Adjustment</div>
-          </div>
-          <div className="bg-foreground/[0.03] border border-[hsl(var(--success)/0.35)] rounded-2xl p-4">
-            <TrendingUp size={16} className="text-[hsl(var(--success))] mb-1" />
-            <div className="text-xl font-bold text-[hsl(var(--success))] ">+{stats.surplus_qty || 0}</div>
-            <div className="text-xs text-muted-foreground">Surplus ({stats.surplus_count || 0}x)</div>
-          </div>
-          <div className="bg-foreground/[0.03] border border-[hsl(var(--destructive)/0.35)] rounded-2xl p-4">
-            <TrendingDown size={16} className="text-[hsl(var(--destructive))] mb-1" />
-            <div className="text-xl font-bold text-[hsl(var(--destructive))] ">-{stats.shortage_qty || 0}</div>
-            <div className="text-xs text-muted-foreground">Shortage ({stats.shortage_count || 0}x)</div>
-          </div>
-          <div className="bg-foreground/[0.03] border border-[hsl(var(--warning)/0.35)] rounded-2xl p-4">
-            <Package size={16} className="text-[hsl(var(--warning))] mb-1" />
-            <div className={`text-xl font-bold ${(stats.net_qty || 0) >= 0 ? 'text-[hsl(var(--success))] ' : 'text-[hsl(var(--destructive))] '}`}>
-              {stats.net_qty > 0 ? '+' : ''}{stats.net_qty || 0}
+      {adaStat && (stats.by_operator?.length > 0 || stats.by_position_hotspots?.length > 0) && (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-medium text-foreground">Operator teratas</p>
+              <TombolUnduh namaBerkas="audit-operator" namaLembar="Operator" baris={stats.by_operator || []} testId="audit-operator-unduh"
+                kolom={[
+                  { label: 'Operator', nilai: (o) => o.operator }, { label: 'Penyesuaian', nilai: (o) => Number(o.count || 0) },
+                  { label: 'Lebih', nilai: (o) => Number(o.surplus_qty || 0) }, { label: 'Kurang', nilai: (o) => Number(o.shortage_qty || 0) },
+                  { label: 'Terakhir aktif', nilai: (o) => formatDateTimeID(o.last_activity, { fallback: '' }) },
+                ]} />
             </div>
-            <div className="text-xs text-muted-foreground">Net Δ</div>
+            <TabelData kolom={kolomOperator} baris={stats.by_operator || []} kunci={(o) => o.operator} testId="audit-operator-table"
+              kosong={<p className="text-sm text-muted-foreground">Tidak ada data.</p>} />
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-medium text-foreground">Posisi paling sering disesuaikan</p>
+              <TombolUnduh namaBerkas="audit-hotspot" namaLembar="Hotspot" baris={stats.by_position_hotspots || []} testId="audit-hotspot-unduh"
+                kolom={[
+                  { label: 'Barcode posisi', nilai: (p) => p.position_barcode }, { label: 'Kali disesuaikan', nilai: (p) => Number(p.count || 0) },
+                  { label: 'Selisih bersih', nilai: (p) => Number(p.net_qty || 0) },
+                ]} />
+            </div>
+            <TabelData kolom={kolomHotspot} baris={stats.by_position_hotspots || []} kunci={(p) => p.position_barcode} testId="audit-hotspot-table"
+              kosong={<p className="text-sm text-muted-foreground">Tidak ada data.</p>} />
           </div>
         </div>
       )}
 
-      {/* By operator + hotspots */}
-      {stats && (stats.by_operator?.length > 0 || stats.by_position_hotspots?.length > 0) && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          <div className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <UserIcon size={13} className="text-[hsl(var(--primary))] " />
-              <span className="text-sm font-semibold">Top Operator</span>
-            </div>
-            {stats.by_operator?.length ? (
-              <div className="space-y-2">
-                {stats.by_operator.map(op => (
-                  <div key={op.operator} data-testid="audit-operator-row"
-                    className="flex items-center justify-between gap-3 bg-foreground/5 rounded-lg p-2.5 text-xs">
-                    <div className="min-w-0 flex-1">
-                      <div className="tabular-nums truncate">{op.operator}</div>
-                      <div className="text-[10px] text-muted-foreground">{op.count} adjustment · aktif {op.last_activity ? new Date(op.last_activity).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : '—'}</div>
-                    </div>
-                    <div className="text-right text-[11px]">
-                      <div className="text-[hsl(var(--success))] ">+{op.surplus_qty}</div>
-                      <div className="text-[hsl(var(--destructive))] ">-{op.shortage_qty}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : <div className="text-xs text-muted-foreground italic">Tidak ada data</div>}
-          </div>
-          <div className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <MapPin size={13} className="text-[hsl(var(--warning))] " />
-              <span className="text-sm font-semibold">Hotspot Posisi (Paling Sering Adjust)</span>
-            </div>
-            {stats.by_position_hotspots?.length ? (
-              <div className="space-y-2">
-                {stats.by_position_hotspots.map(p => (
-                  <div key={p.position_barcode} data-testid="audit-hotspot-row"
-                    className="flex items-center justify-between gap-3 bg-foreground/5 rounded-lg p-2.5 text-xs">
-                    <div className="tabular-nums text-[hsl(var(--primary))] ">{p.position_barcode}</div>
-                    <div className="flex items-center gap-2">
-                      <div className="text-right text-[11px]">
-                        <div className="font-bold">{p.count}x</div>
-                        <div className={p.net_qty >= 0 ? 'text-[hsl(var(--success))] ' : 'text-[hsl(var(--destructive))] '}>
-                          {p.net_qty > 0 ? '+' : ''}{p.net_qty}
-                        </div>
-                      </div>
-                      {p.count >= 3 && (
-                        <button
-                          data-testid={`rca-btn-${p.position_barcode}`}
-                          onClick={async () => {
-                            setRcaModal({ barcode: p.position_barcode, loading: true, result: null, error: null });
-                            try {
-                              const r = await fetch(`${API}/api/wms/audit/hotspot/${encodeURIComponent(p.position_barcode)}/rca`, {
-                                method: 'POST', headers,
-                              });
-                              const d = await r.json();
-                              if (!r.ok) throw new Error(d.detail || 'Gagal RCA');
-                              setRcaModal({ barcode: p.position_barcode, loading: false, result: d, error: null });
-                            } catch (e) {
-                              setRcaModal({ barcode: p.position_barcode, loading: false, result: null, error: e.message });
-                            }
-                          }}
-                          className="flex items-center gap-1 px-2 py-1 rounded bg-gradient-to-r from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] hover:from-[hsl(var(--primary)/0.1)] hover:to-[hsl(var(--primary)/0.1)] text-[10px] font-medium text-foreground"
-                          title="AI Root-Cause Analysis (Claude Sonnet)"
-                        >
-                          <Info size={10} /> Analisa AI
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : <div className="text-xs text-muted-foreground italic">Tidak ada data</div>}
-          </div>
-        </div>
-      )}
-
-      {/* Detail table */}
-      <div className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-foreground/[0.08] flex items-center justify-between">
-          <span className="text-sm font-semibold">Detail Adjustment ({page.total} total)</span>
-          {loading && <RefreshCw size={13} className="animate-spin text-muted-foreground" />}
-        </div>
-        <div className="overflow-auto max-h-[560px]">
-          <table className="w-full text-xs">
-            <thead className="bg-foreground/[0.03] sticky top-0 text-muted-foreground">
-              <tr className="text-left">
-                <th className="px-3 py-2"><Calendar size={11} className="inline" /> Waktu</th>
-                <th className="px-3 py-2">Session</th>
-                <th className="px-3 py-2">Operator</th>
-                <th className="px-3 py-2">Lokasi</th>
-                <th className="px-3 py-2">Barcode Posisi</th>
-                <th className="px-3 py-2">Material</th>
-                <th className="px-3 py-2 text-right">Arah</th>
-                <th className="px-3 py-2 text-right">Qty</th>
-                <th className="px-3 py-2">Catatan</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.length === 0 && !loading && (
-                <tr><td colSpan={9} className="text-center py-8 text-muted-foreground">Tidak ada adjustment sesuai filter.</td></tr>
-              )}
-              {items.map(r => (
-                <tr key={r.id} data-testid="audit-row" className="border-t border-foreground/5 hover:bg-foreground/[0.03]">
-                  <td className="px-3 py-2 whitespace-nowrap">{r.timestamp ? new Date(r.timestamp).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : '—'}</td>
-                  <td className="px-3 py-2 tabular-nums text-[hsl(var(--primary))] text-[11px]">{r.session_ref || '—'}</td>
-                  <td className="px-3 py-2 tabular-nums text-[11px]">{r.created_by || '—'}</td>
-                  <td className="px-3 py-2 text-[11px]">{r.building_code ? `${r.building_code}/${r.zone_code}/${r.rack_code}` : '—'}</td>
-                  <td className="px-3 py-2 tabular-nums text-[11px]">{r.position_barcode || '—'}</td>
-                  <td className="px-3 py-2">{r.fg_code || '—'}</td>
-                  <td className="px-3 py-2 text-right">
-                    {r.direction === 'adjust_in' ? (
-                      <span className="text-[hsl(var(--success))] flex items-center justify-end gap-1"><TrendingUp size={11} /> Surplus</span>
-                    ) : r.direction === 'adjust_out' ? (
-                      <span className="text-[hsl(var(--destructive))] flex items-center justify-end gap-1"><TrendingDown size={11} /> Shortage</span>
-                    ) : r.direction}
-                  </td>
-                  <td className="px-3 py-2 text-right font-bold">{r.qty || 0}</td>
-                  <td className="px-3 py-2 text-muted-foreground text-[11px] max-w-[280px] truncate" title={r.notes}>{r.notes || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {page.total > page.limit && (
-          <div className="px-4 py-2 border-t border-foreground/[0.08] flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">Menampilkan {page.skip + 1}–{Math.min(page.skip + page.limit, page.total)} dari {page.total}</span>
-            <div className="flex gap-1">
-              <button disabled={page.skip === 0}
-                onClick={() => setPage(p => ({ ...p, skip: Math.max(0, p.skip - p.limit) }))}
-                className="px-3 py-1 rounded bg-foreground/5 disabled:opacity-40">‹ Prev</button>
-              <button disabled={page.skip + page.limit >= page.total}
-                onClick={() => setPage(p => ({ ...p, skip: p.skip + p.limit }))}
-                className="px-3 py-1 rounded bg-foreground/5 disabled:opacity-40">Next ›</button>
-            </div>
-          </div>
-        )}
+      <div className="space-y-2">
+        <p className="text-sm font-medium text-foreground">Rincian penyesuaian ({fmt(page.total)})</p>
+        <TabelData kolom={kolom} baris={items} testId="audit-table"
+          kosong={<EmptyState title={loading ? 'Memuat…' : 'Tidak ada penyesuaian pada saringan ini'}
+            description={loading ? undefined : 'Penyesuaian muncul setelah hasil opname disetujui.'} />} />
       </div>
 
-      {/* RCA Modal */}
+      {/* Analisa AI (popup detail) */}
       {rcaModal && (
-        <div className="fixed inset-0 z-50 bg-foreground/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setRcaModal(null)}>
-          <div data-testid="rca-modal" className="bg-card border border-[hsl(var(--primary)/0.35)] rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] flex items-center justify-center">
-                    <Info size={16} className="text-foreground" />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-bold">AI Root-Cause Analysis</h3>
-                    <p className="text-xs text-muted-foreground tabular-nums">{rcaModal.barcode}</p>
-                  </div>
-                </div>
-              </div>
-              <button onClick={() => setRcaModal(null)} className="text-muted-foreground hover:text-foreground">
-                <X size={18} />
-              </button>
+        <DetailPopup open onClose={() => setRcaModal(null)} judul="Analisa penyebab dengan AI" keterangan={`Posisi ${rcaModal.barcode}`}
+          testId="rca-modal">
+          {rcaModal.loading && <p className="py-6 text-center text-sm text-muted-foreground">AI sedang menganalisis pola penyesuaian…</p>}
+          {rcaModal.error && <Notice tone="danger" icon={AlertCircle}>{rcaModal.error}</Notice>}
+          {rca && <>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <StatTile label="Jumlah data" value={fmt(rca.data_points)} />
+              <StatTile label="Lebih" value={fmt(rca.stats.surplus_qty)} />
+              <StatTile label="Kurang" value={fmt(rca.stats.shortage_qty)} />
+              <StatTile label="Selisih bersih" value={`${rca.stats.net_qty > 0 ? '+' : ''}${fmt(rca.stats.net_qty)}`} />
             </div>
-
-            {rcaModal.loading && (
-              <div className="flex flex-col items-center justify-center py-12">
-                <div className="w-10 h-10 rounded-full border-2 border-[hsl(var(--primary)/0.35)] border-t-transparent animate-spin mb-3"></div>
-                <p className="text-sm text-muted-foreground">Claude Sonnet menganalisis pola adjustment...</p>
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-medium text-foreground">Dugaan penyebab</p>
+                <StatusBadge status="keyakinan" label={`Keyakinan: ${rca.analysis.confidence}`}
+                  tone={rca.analysis.confidence === 'tinggi' ? 'success' : rca.analysis.confidence === 'sedang' ? 'warning' : 'muted'} />
+                <StatusBadge status="risiko" label={`Risiko: ${rca.analysis.risk_level}`}
+                  tone={rca.analysis.risk_level === 'tinggi' ? 'danger' : rca.analysis.risk_level === 'sedang' ? 'warning' : 'success'} />
               </div>
-            )}
-
-            {rcaModal.error && (
-              <div className="bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  rounded-xl p-4 text-sm text-[hsl(var(--destructive))] ">
-                <AlertCircle size={14} className="inline mr-1" /> {rcaModal.error}
-              </div>
-            )}
-
-            {rcaModal.result && (
-              <div className="space-y-4">
-                {/* Position info + stats */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                  <div className="bg-foreground/5 rounded-lg p-2">
-                    <div className="text-muted-foreground">Data Points</div>
-                    <div className="font-bold text-[hsl(var(--primary))] ">{rcaModal.result.data_points}</div>
-                  </div>
-                  <div className="bg-[hsl(var(--success)/0.15)] rounded-lg p-2">
-                    <div className="text-muted-foreground">Surplus</div>
-                    <div className="font-bold text-[hsl(var(--success))] ">+{rcaModal.result.stats.surplus_qty}</div>
-                  </div>
-                  <div className="bg-[hsl(var(--destructive)/0.15)] rounded-lg p-2">
-                    <div className="text-muted-foreground">Shortage</div>
-                    <div className="font-bold text-[hsl(var(--destructive))] ">-{rcaModal.result.stats.shortage_qty}</div>
-                  </div>
-                  <div className="bg-[hsl(var(--warning)/0.15)] rounded-lg p-2">
-                    <div className="text-muted-foreground">Net Δ</div>
-                    <div className={`font-bold ${rcaModal.result.stats.net_qty >= 0 ? 'text-[hsl(var(--success))] ' : 'text-[hsl(var(--destructive))] '}`}>
-                      {rcaModal.result.stats.net_qty > 0 ? '+' : ''}{rcaModal.result.stats.net_qty}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Analysis */}
-                <div className="bg-gradient-to-br from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] rounded-xl p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-bold uppercase tracking-wider text-[hsl(var(--primary))] ">Root Cause Hypothesis</span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${
-                      rcaModal.result.analysis.confidence === 'tinggi' ? 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] ' :
-                      rcaModal.result.analysis.confidence === 'sedang' ? 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))] ' :
-                      'bg-muted dark:bg-zinc-500/20 text-muted-foreground dark:text-zinc-400'
-                    }`}>
-                      confidence: {rcaModal.result.analysis.confidence}
-                    </span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full ml-auto ${
-                      rcaModal.result.analysis.risk_level === 'tinggi' ? 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))] ' :
-                      rcaModal.result.analysis.risk_level === 'sedang' ? 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))] ' :
-                      'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] '
-                    }`}>
-                      risk: {rcaModal.result.analysis.risk_level}
-                    </span>
-                  </div>
-                  <div className="text-base font-semibold text-foreground mb-2 capitalize">
-                    {rcaModal.result.analysis.root_cause_hypothesis}
-                  </div>
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    {rcaModal.result.analysis.reasoning}
-                  </p>
-                </div>
-
-                {/* Recommended actions */}
-                <div>
-                  <div className="text-xs font-bold uppercase tracking-wider text-foreground/80 mb-2">
-                    <Check size={12} className="inline mr-1 text-[hsl(var(--success))] " /> Rekomendasi Action Item
-                  </div>
-                  <ol className="space-y-1.5 text-xs">
-                    {(rcaModal.result.analysis.recommended_actions || []).map((a, i) => (
-                      <li key={i} className="flex gap-2 bg-foreground/5 rounded-lg p-2.5">
-                        <span className="tabular-nums text-[hsl(var(--primary))] flex-shrink-0">{i + 1}.</span>
-                        <span>{a}</span>
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-
-                <div className="text-[10px] text-muted-foreground text-right">
-                  Generated {new Date(rcaModal.result.generated_at).toLocaleString('id-ID')} · Claude Sonnet 4.5
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+              <p className="text-base font-medium text-foreground">{rca.analysis.root_cause_hypothesis}</p>
+              <p className="text-sm text-muted-foreground">{rca.analysis.reasoning}</p>
+            </div>
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-foreground">Tindakan yang disarankan</p>
+              <ol className="list-decimal space-y-1 pl-5 text-sm">
+                {(rca.analysis.recommended_actions || []).map((a, i) => <li key={i}>{a}</li>)}
+              </ol>
+            </div>
+            <p className="text-right text-xs text-muted-foreground">Dibuat {formatDateTimeID(rca.generated_at)}</p>
+          </>}
+        </DetailPopup>
       )}
-    </div>
+    </PageLayout>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
 // MAIN MODULE
 // ══════════════════════════════════════════════════════════════════════════════
-export default function WMSModule({ token, section }) {
-  const [tab, setTab] = useState('dashboard');
+const SECTIONS = {
+  structure: StructureTab,
+  units: UnitsTab,
+  receiving: ReceivingTab,
+  audit: AuditTrailTab,
+  positions: PositionsTab,
+};
 
+export default function WMSModule({ token, section, ...rest }) {
   // ── FASE E: monolit "Scanner Barcode" dipecah jadi menu terpisah ──────────────
-  // Bila `section` diberikan (via registry withProps), render SATU bagian saja
-  // dengan header sendiri & tanpa tab-bar (menghilangkan duplikasi menu/tab).
-  const SECTION_META = {
-    structure: { label: 'Struktur Gudang', desc: 'Kelola gedung, zona, rak & bin — sumber tunggal lokasi gudang (SSOT).', icon: Building2, Comp: StructureTab },
-    units:     { label: 'Satuan & Konversi', desc: 'Kelola satuan & konversi UOM gudang.', icon: Scale, Comp: UnitsTab },
-    receiving: { label: 'Scan Gudang — Inbound / Outbound', desc: 'Eksekusi fisik: scan-in penerimaan & scan-out pengeluaran (antrean pergerakan).', icon: Scan, Comp: ReceivingTab },
-    audit:     { label: 'Audit Trail Gudang', desc: 'Riwayat aktivitas & pergerakan gudang.', icon: History, Comp: AuditTrailTab },
-    positions: { label: 'Posisi & Search', desc: 'Cari & lihat isi posisi/bin gudang.', icon: Search, Comp: PositionsTab },
-  };
-  if (section && SECTION_META[section]) {
-    const S = SECTION_META[section];
-    const Comp = S.Comp;
-    return (
-      <div data-testid={`wms-section-${section}`} className="space-y-5 p-6">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <S.icon size={22} className="text-[hsl(var(--primary))] " />
-            {S.label}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">{S.desc}</p>
-        </div>
-        <Comp token={token} />
-      </div>
-    );
+  // Bila `section` diberikan (via registry withProps), render SATU bagian saja (kepala dari PageLayout bagian itu).
+  if (section && SECTIONS[section]) {
+    const Comp = SECTIONS[section];
+    return <Comp token={token} />;
   }
 
   // ── LEGACY MONOLITH (fallback; tidak lagi ada di navigasi setelah Fase E) ──────
-  const TABS = [
-    { id: 'structure', label: 'Struktur Gudang', icon: Building2 },
-    { id: 'units', label: 'Satuan & Konversi', icon: Scale },
-    { id: 'receiving', label: 'Receiving / Scan', icon: Scan },
-    { id: 'audit', label: 'Audit Trail', icon: History },
-    { id: 'positions', label: 'Posisi & Search', icon: Search },
-  ];
-  // Fallback default tab: 'structure' (Dashboard tab dihapus — pakai menu Dashboard Gudang).
-  const activeTab = tab === 'dashboard' ? 'structure' : tab;
-
   return (
-    <div data-testid="wms-module" className="space-y-5 p-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-          <Warehouse size={24} className="text-[hsl(var(--primary))] " />
-          Warehouse Management System
-        </h1>
-        <p className="text-sm text-muted-foreground mt-0.5">Kelola struktur gudang, satuan, receiving, opname, audit trail, dan posisi barang</p>
-      </div>
-
-      <div className="flex gap-1 p-1 bg-foreground/5 rounded-xl overflow-x-auto">
-        {TABS.map(t => (
-          <button
-            key={t.id}
-            data-testid={`wms-tab-${t.id}`}
-            onClick={() => setTab(t.id)}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
-              activeTab === t.id ? 'bg-[hsl(var(--primary))] text-foreground shadow-lg' : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'
-            }`}
-          >
-            <t.icon size={14} /> {t.label}
-          </button>
-        ))}
-      </div>
-
-      {activeTab === 'structure' && <StructureTab token={token} />}
-      {activeTab === 'units' && <UnitsTab token={token} />}
-      {activeTab === 'receiving' && <ReceivingTab token={token} />}
-      {activeTab === 'audit' && <AuditTrailTab token={token} />}
-      {activeTab === 'positions' && <PositionsTab token={token} />}
-    </div>
+    <HubTabs
+      {...rest}
+      token={token}
+      hubId="wms-module"
+      title="Gudang (WMS)"
+      subtitle="Struktur gudang, satuan, scan gudang, audit trail, dan posisi barang."
+      tabs={[
+        { key: 'structure', label: 'Struktur gudang', Component: StructureTab },
+        { key: 'units', label: 'Satuan & konversi', Component: UnitsTab },
+        { key: 'receiving', label: 'Scan gudang', Component: ReceivingTab },
+        { key: 'audit', label: 'Audit trail', Component: AuditTrailTab },
+        { key: 'positions', label: 'Posisi & cari', Component: PositionsTab },
+      ]}
+    />
   );
 }
