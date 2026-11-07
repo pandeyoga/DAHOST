@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
 import { RefreshCw, Save, BookOpen, AlertCircle, CheckCircle2, AlertTriangle, Search } from 'lucide-react';
@@ -6,7 +6,7 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Skeleton } from '@/components/ui/skeleton';
-import { EmptyState } from './moduleAtoms';
+import { EmptyState, Notice } from './moduleAtoms';
 import PageLayout from './layout/PageLayout';
 import ImportExportToolbar from './ImportExportToolbar';
 
@@ -161,7 +161,7 @@ export default function RahazaPostingProfilesModule({ token }) {
       title="Jurnal otomatis per transaksi"
       subtitle="Akun debit/kredit tiap jenis transaksi. Akun yang hilang, nonaktif, atau grup ditandai merah."
       filters={<>
-        <div className="relative w-72 max-w-full">
+        <div className="relative w-full sm:w-64">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
           <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari transaksi, peran, atau kode akun…" className="pl-8 h-9" aria-label="Cari jurnal otomatis" data-testid="pp-search" />
         </div>
@@ -181,35 +181,22 @@ export default function RahazaPostingProfilesModule({ token }) {
       </>}
       summary={<>
         {problems.length > 0 && (
-          <div className="bg-[hsl(var(--destructive)/0.08)] border border-[hsl(var(--destructive)/0.3)] rounded-[var(--radius-md)] px-4 py-3" data-testid="pp-problems">
-            <div className="flex items-start gap-2 text-sm">
-              <AlertTriangle className="w-5 h-5 text-[hsl(var(--destructive))] shrink-0" />
-              <div className="min-w-0">
-                <p className="font-semibold">{problems.length} peran menunjuk akun yang bermasalah — jurnal otomatisnya akan gagal</p>
-                <ul className="mt-1 space-y-0.5 text-xs">
-                  {problems.slice(0, 8).map((x) => (
-                    <li key={`${x.et}.${x.role}`}>
-                      <Button variant="link" size="sm" className="h-auto p-0 text-xs text-foreground text-left whitespace-normal" onClick={() => scrollTo(x.et)}>
-                        {eventLabel(x.et)} › {roleLabel(x.et, x.role)}: <span className="text-[hsl(var(--destructive))]">{x.st.text}</span>
-                      </Button>
-                    </li>
-                  ))}
-                  {problems.length > 8 && <li>+{problems.length - 8} lagi (pilih "Bermasalah")</li>}
-                </ul>
-              </div>
-            </div>
-          </div>
+          <Notice tone="danger" icon={AlertTriangle} testId="pp-problems"
+            title={`${problems.length} peran menunjuk akun yang bermasalah — jurnal otomatisnya akan gagal`}>
+            <ul className="mt-1 space-y-0.5 text-sm">
+              {problems.slice(0, 8).map((x) => (
+                <li key={`${x.et}.${x.role}`}>
+                  <Button variant="link" size="sm" className="h-auto p-0 text-foreground text-left whitespace-normal" onClick={() => scrollTo(x.et)}>
+                    {eventLabel(x.et)} › {roleLabel(x.et, x.role)}: <span className="text-[hsl(var(--danger-text))]">{x.st.text}</span>
+                  </Button>
+                </li>
+              ))}
+              {problems.length > 8 && <li>+{problems.length - 8} lagi (pilih "Bermasalah")</li>}
+            </ul>
+          </Notice>
         )}
-        {error && (
-          <div className="flex items-start gap-2 text-sm text-[hsl(var(--destructive))]" role="alert">
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" /> <span className="break-words">{error}</span>
-          </div>
-        )}
-        {info && (
-          <div className="flex items-center gap-2 text-sm text-[hsl(var(--success))]">
-            <CheckCircle2 className="w-4 h-4" /> {info}
-          </div>
-        )}
+        {error && <Notice tone="danger" icon={AlertCircle}><span className="break-words">{error}</span></Notice>}
+        {info && <Notice tone="success" icon={CheckCircle2}>{info}</Notice>}
       </>}
     >
       {loading ? (
@@ -224,85 +211,105 @@ export default function RahazaPostingProfilesModule({ token }) {
           <EmptyState icon={Search} title="Tidak ada yang cocok" description="Ubah pencarian atau pilih Semua." />
         </GlassCard>
       ) : (
-        <div className="space-y-4">
-          {shown.map((p) => {
-            const mapping = p.mapping || {};
-            const roles = Object.keys(mapping);
-            const hasEdits = !!edits[p.event_type];
-            const bad = badRoles[p.event_type] || new Set();
-            return (
-              <div key={p.event_type} ref={(el) => { cardRefs.current[p.event_type] = el; }}>
-                <GlassCard className={`p-4 ${focus === p.event_type ? 'ring-2 ring-primary' : ''} ${problemEvents.has(p.event_type) ? 'border-[hsl(var(--destructive)/0.4)]' : ''}`} data-testid={`pp-card-${p.event_type}`}>
-                  <div className="flex items-start justify-between mb-3 flex-wrap gap-2">
-                    <div className="min-w-0">
-                      <h3 className="font-semibold text-foreground text-sm sm:text-base">{eventLabel(p.event_type)}</h3>
-                      {p.active === false && <p className="text-[11px] text-muted-foreground">Nonaktif</p>}
-                    </div>
-                    {/* PANDUAN_UI G3: hanya kartu yang diubah yang memberi tombol utama */}
-                    <Button size="sm" variant={hasEdits ? 'default' : 'outline'} onClick={() => saveProfile(p.event_type)} disabled={!hasEdits || saving === p.event_type}
-                      data-testid={`pp-save-${p.event_type}`}>
-                      <Save className="w-4 h-4" />
-                      {saving === p.event_type ? 'Menyimpan…' : 'Simpan'}
-                    </Button>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {roles.map((role) => {
-                      const value = getValue(p.event_type, role, mapping[role]);
-                      const st = codeStatus(value, byCode);
-                      const red = (st.kind !== 'ok' && st.kind !== 'empty') || bad.has(role);
-                      const pending = consumersOf(p.event_type, role);
-                      const fam = familyOf(p.event_type, role);
-                      const famLabel = meta?.families?.[fam] || '';
-                      const famSet = familySets[fam];
-                      // KU1: nilai tersimpan/terpilih di luar jenis tetap tampil, ditandai (tidak hilang dari pilihan)
-                      const offType = st.kind === 'ok' && !fitsRole(p.event_type, role, value);
-                      const options = (showAll || !famSet) ? leafAccounts : leafAccounts.filter((a) => famSet.has(a.code));
-                      const offTypeAcc = offType && !options.some((a) => a.code === value) ? byCode.get(value) : null;
-                      return (
-                        <div key={role} data-testid={`pp-row-${p.event_type}-${role}`} data-role={role} data-family={fam || undefined} className="min-w-0">
-                          <label className="text-xs font-medium text-foreground/80 block mb-1">
-                            {roleLabel(p.event_type, role)}
-                            {famLabel && <span className="font-normal text-muted-foreground"> · akun {famLabel}</span>}
-                          </label>
-                          <SmartNativeSelect
-                            value={value}
-                            onChange={(e) => handleEdit(p.event_type, role, e.target.value)}
-                            className={`w-full h-9 ${red ? 'border-[hsl(var(--destructive))] ring-1 ring-[hsl(var(--destructive)/0.4)]' : offType ? 'border-[hsl(var(--warning))]' : ''}`}
-                            data-testid={`pp-select-${p.event_type}-${role}`}
-                            aria-invalid={red}
-                          >
-                            <option value="">— Tidak dipetakan —</option>
-                            {st.kind !== 'ok' && st.kind !== 'empty' && <option value={value}>{`⚠ ${st.text}`}</option>}
-                            {offTypeAcc && <option value={value}>{`${offTypeAcc.code} — ${offTypeAcc.name} (di luar jenis yang disarankan)`}</option>}
-                            {options.map((a) => (
-                              <option key={a.code} value={a.code}>{`${a.code} — ${a.name}`}</option>
-                            ))}
-                          </SmartNativeSelect>
-                          {red && (
-                            <p className="text-[11px] text-[hsl(var(--destructive))] mt-1" role="alert" data-testid={`pp-bad-${p.event_type}-${role}`}>
-                              {st.text || 'Ditolak server — lihat pesan di atas.'} Pilih akun rinci yang aktif.
-                            </p>
-                          )}
-                          {offType && !red && (
-                            <p className="text-[11px] text-[hsl(var(--warning))] mt-1" data-testid={`pp-offtype-${p.event_type}-${role}`}>
-                              Akun ini di luar jenis yang disarankan untuk peran ini (akun {famLabel}). Periksa lagi bila tidak disengaja.
-                            </p>
-                          )}
-                          {pending.length > 0 && (
-                            <p className="text-[11px] text-[hsl(var(--warning))] mt-1" data-testid={`pp-pending-${p.event_type}-${role}`}
-                              data-sources={pending.map((c) => c.source).join(', ')}>
-                              Akun ini masih ditetapkan di program ({pending[0].code}) — perubahan di sini baru berlaku setelah program diperbarui.
-                            </p>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </GlassCard>
-              </div>
-            );
-          })}
-        </div>
+        // 2026-11-08 (Standar UI/UX v2, keluhan owner "kartu berulang"): satu TABEL berkelompok — baris kelompok =
+        // jenis transaksi + tombol Simpan, baris di bawahnya = peran debit/kredit + pilihan akun (lebar tetap, bukan
+        // selebar layar). Dulu 46 kartu besar dengan pilihan selebar setengah layar.
+        <GlassCard className="p-0 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full" data-testid="pp-table">
+              <thead>
+                <tr>
+                  <th className="text-left">Transaksi · peran</th>
+                  <th className="text-left">Akun</th>
+                  <th className="text-right w-28"><span className="sr-only">Simpan</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((p) => {
+                  const mapping = p.mapping || {};
+                  const roles = Object.keys(mapping);
+                  const hasEdits = !!edits[p.event_type];
+                  const bad = badRoles[p.event_type] || new Set();
+                  return (
+                    <Fragment key={p.event_type}>
+                      <tr ref={(el) => { cardRefs.current[p.event_type] = el; }} data-testid={`pp-card-${p.event_type}`}
+                        className={`bg-muted/40 ${focus === p.event_type ? 'ring-2 ring-inset ring-primary' : ''}`}>
+                        <td colSpan={2} className="font-semibold text-foreground">
+                          {eventLabel(p.event_type)}
+                          {problemEvents.has(p.event_type) && <span className="ml-2 text-xs font-normal text-[hsl(var(--danger-text))]">ada akun bermasalah</span>}
+                          {p.active === false && <span className="ml-2 text-xs font-normal text-muted-foreground">nonaktif</span>}
+                        </td>
+                        <td className="text-right">
+                          {/* PANDUAN_UI G3: hanya kelompok yang diubah yang memberi tombol Simpan hijau */}
+                          <Button size="sm" variant={hasEdits ? 'success' : 'outline'} onClick={() => saveProfile(p.event_type)} disabled={!hasEdits || saving === p.event_type}
+                            data-testid={`pp-save-${p.event_type}`}>
+                            <Save className="w-4 h-4" />
+                            {saving === p.event_type ? 'Menyimpan…' : 'Simpan'}
+                          </Button>
+                        </td>
+                      </tr>
+                      {roles.map((role) => {
+                        const value = getValue(p.event_type, role, mapping[role]);
+                        const st = codeStatus(value, byCode);
+                        const red = (st.kind !== 'ok' && st.kind !== 'empty') || bad.has(role);
+                        const pending = consumersOf(p.event_type, role);
+                        const fam = familyOf(p.event_type, role);
+                        const famLabel = meta?.families?.[fam] || '';
+                        const famSet = familySets[fam];
+                        // KU1: nilai tersimpan/terpilih di luar jenis tetap tampil, ditandai (tidak hilang dari pilihan)
+                        const offType = st.kind === 'ok' && !fitsRole(p.event_type, role, value);
+                        const options = (showAll || !famSet) ? leafAccounts : leafAccounts.filter((a) => famSet.has(a.code));
+                        const offTypeAcc = offType && !options.some((a) => a.code === value) ? byCode.get(value) : null;
+                        return (
+                          <tr key={role} data-testid={`pp-row-${p.event_type}-${role}`} data-role={role} data-family={fam || undefined}>
+                            <td className="!pl-8 align-top">
+                              <span className="text-foreground">{roleLabel(p.event_type, role)}</span>
+                              {famLabel && <span className="block text-xs text-muted-foreground">akun {famLabel}</span>}
+                            </td>
+                            <td className="align-top">
+                              <SmartNativeSelect
+                                value={value}
+                                onChange={(e) => handleEdit(p.event_type, role, e.target.value)}
+                                className={`w-full md:w-96 h-9 ${red ? 'border-[hsl(var(--destructive))] ring-1 ring-[hsl(var(--destructive)/0.4)]' : offType ? 'border-[hsl(var(--warning))]' : ''}`}
+                                data-testid={`pp-select-${p.event_type}-${role}`}
+                                aria-label={`${eventLabel(p.event_type)} › ${roleLabel(p.event_type, role)}`}
+                                aria-invalid={red}
+                              >
+                                <option value="">— Tidak dipetakan —</option>
+                                {st.kind !== 'ok' && st.kind !== 'empty' && <option value={value}>{`⚠ ${st.text}`}</option>}
+                                {offTypeAcc && <option value={value}>{`${offTypeAcc.code} — ${offTypeAcc.name} (di luar jenis yang disarankan)`}</option>}
+                                {options.map((a) => (
+                                  <option key={a.code} value={a.code}>{`${a.code} — ${a.name}`}</option>
+                                ))}
+                              </SmartNativeSelect>
+                              {red && (
+                                <p className="text-xs text-[hsl(var(--danger-text))] mt-1" role="alert" data-testid={`pp-bad-${p.event_type}-${role}`}>
+                                  {st.text || 'Ditolak server — lihat pesan di atas.'} Pilih akun rinci yang aktif.
+                                </p>
+                              )}
+                              {offType && !red && (
+                                <p className="text-xs text-[hsl(var(--warning-text))] mt-1" data-testid={`pp-offtype-${p.event_type}-${role}`}>
+                                  Akun ini di luar jenis yang disarankan untuk peran ini (akun {famLabel}). Periksa lagi bila tidak disengaja.
+                                </p>
+                              )}
+                              {pending.length > 0 && (
+                                <p className="text-xs text-[hsl(var(--warning-text))] mt-1" data-testid={`pp-pending-${p.event_type}-${role}`}
+                                  data-sources={pending.map((c) => c.source).join(', ')}>
+                                  Akun ini masih ditetapkan di program ({pending[0].code}) — perubahan di sini baru berlaku setelah program diperbarui.
+                                </p>
+                              )}
+                            </td>
+                            <td />
+                          </tr>
+                        );
+                      })}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </GlassCard>
       )}
     </PageLayout>
   );
