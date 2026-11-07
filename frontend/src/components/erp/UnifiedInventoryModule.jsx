@@ -7,21 +7,23 @@
  *   • "Tampilkan juga yang stoknya 0" mengikuti kepemilikan — dulu pilihan klien maklon + stok 0 menampilkan
  *     seluruh master DA.
  *   • Teks layar berbahasa Indonesia (tanpa kode program seperti raw_material).
- *   • PANDUAN_UI: PageLayout · tabel · riwayat mutasi dibuka di halaman (DetailPanel), bukan popup.
+ *   • Standar UI/UX v2 (8 Nov 2026): TabelData (kartu ringkas di HP), riwayat mutasi = popup (DetailPanel ber-onClose),
+ *     unduh Excel/CSV semua baris hasil saringan, kartu jumlah lintas satuan dihapus (lihat ringkasan).
  *
  *   - daftar  : GET /api/wms/stock/unified?ownership=cv_da|titipan_klien&client_id=…
  *   - riwayat : GET /api/rahaza/material-movements?material_id=… (DA) · GET /api/wms/stock/titipan-klien/mutasi?stock_key=…
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Package, Search, RefreshCw, Download, History, AlertTriangle, X } from 'lucide-react';
+import { Package, Search, RefreshCw, History, AlertTriangle, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { GlassInput } from '@/components/ui/glass';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Checkbox } from '@/components/ui/checkbox';
 import PaginationLite from '@/components/ui/pagination-lite';
-import { todayWIB } from '@/lib/waktu';
 import { formatDateID } from '@/lib/format';
 import { apiGet } from '../../lib/api';
 import PageLayout, { DetailPanel } from './layout/PageLayout';
@@ -64,7 +66,7 @@ export default function UnifiedInventoryModule() {
   const [includeZero, setIncludeZero] = useState(true);
   const [page, setPage] = useState(1);
   const [data, setData] = useState({ items: [], total: 0, total_pages: 0, totals: {}, facets: {} });
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);   // dulu false → sebelum muatan pertama tampil 'Belum ada stok'
   const [error, setError] = useState('');
   const [detail, setDetail] = useState(null);
   const reqSeq = useRef(0);
@@ -118,33 +120,39 @@ export default function UnifiedInventoryModule() {
     setSearch(''); setTypeFilter(''); setCategoryFilter(''); setColorFilter(''); setOptionFilter(''); setClientId('');
   };
 
-  const handleExport = async () => {
-    try {
-      const res = await apiGet(`/wms/stock/unified?${buildQuery(1, 500)}`);
-      const rows = res?.items || [];
-      const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-      const head = titipan
-        ? ['Klien', 'Artikel', 'Kode barang', 'Nama barang', 'Warna', 'Ukuran', 'Jumlah (pcs)', 'Lokasi']
-        : ['Kode barang', 'Nama barang', 'Kategori', 'Warna', 'Opsi', 'Ukuran', 'Jenis', 'Jumlah', 'Tersedia',
-          'Dicadangkan', 'Satuan', 'Lokasi'];
-      const body = rows.map((i) => (titipan
-        ? [q(i.owner_client_name), q(i.artikel_code), q(i.material_code), q(i.material_name), q(i.color_name),
-          q(i.size_code), i.quantity, q(locLabel(i))]
-        : [q(i.material_code || i.sku), q(i.material_name), q(i.category_name), q(i.color_name), q(i.option_name),
-          q(i.size_code), q(jenisLabel(i)), i.quantity, i.available_quantity, i.reserved_quantity, q(i.unit),
-          q(locLabel(i))]).join(','));
-      const csv = [head.join(','), ...body].join('\n');
-      const blob = new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8;' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${titipan ? 'stok-titipan-klien' : 'stok-barang'}-${todayWIB()}.csv`;
-      a.click();
-      toast.success(`${rows.length} baris diunduh`);
-    } catch (e) {
-      toast.error(`Gagal mengunduh: ${e?.message || e}`);
+  // Unduh SEMUA baris hasil saringan (bukan hanya halaman tampil): loop halaman @500 (batas server).
+  const ambilSemua = async () => {
+    const semua = [];
+    for (let p = 1; p <= 100; p += 1) {
+      const res = await apiGet(`/wms/stock/unified?${buildQuery(p, 500)}`);
+      semua.push(...(res?.items || []));
+      if (!res?.has_next) break;
     }
+    return semua;
   };
+  const kolomUnduh = titipan ? [
+    { label: 'Klien', nilai: (i) => i.owner_client_name || '' },
+    { label: 'Artikel', nilai: (i) => i.artikel_code || '' },
+    { label: 'Kode barang', nilai: (i) => i.material_code || '' },
+    { label: 'Nama barang', nilai: (i) => i.material_name || '' },
+    { label: 'Warna', nilai: (i) => i.color_name || '' },
+    { label: 'Ukuran', nilai: (i) => i.size_code || '' },
+    { label: 'Jumlah (pcs)', nilai: (i) => Number(i.quantity || 0) },
+    { label: 'Lokasi', nilai: (i) => locLabel(i) },
+  ] : [
+    { label: 'Kode barang', nilai: (i) => i.material_code || i.sku || '' },
+    { label: 'Nama barang', nilai: (i) => i.material_name || '' },
+    { label: 'Kategori', nilai: (i) => i.category_name || '' },
+    { label: 'Warna', nilai: (i) => i.color_name || '' },
+    { label: 'Opsi', nilai: (i) => i.option_name || '' },
+    { label: 'Ukuran', nilai: (i) => i.size_code || '' },
+    { label: 'Jenis', nilai: (i) => jenisLabel(i) },
+    { label: 'Jumlah', nilai: (i) => Number(i.quantity || 0) },
+    { label: 'Tersedia', nilai: (i) => Number(i.available_quantity || 0) },
+    { label: 'Dicadangkan', nilai: (i) => Number(i.reserved_quantity || 0) },
+    { label: 'Satuan', nilai: (i) => i.unit || '' },
+    { label: 'Lokasi', nilai: (i) => locLabel(i) },
+  ];
 
   const facets = data.facets || {};
   const clients = facets.clients || [];
@@ -153,13 +161,51 @@ export default function UnifiedInventoryModule() {
   const isOpen = (item) => detail && (detail.stock_key || detail.material_id) === (item.stock_key || item.material_id)
     && (detail.location_id || '') === (item.location_id || '');
 
+  const bisaRiwayat = (i) => (titipan ? !!i.movements : !i.no_stock_row);
+  const bukaRiwayat = (i) => { if (bisaRiwayat(i)) setDetail(i); };
+  const tombolRiwayat = (i, testId) => (
+    <Button size="icon-sm" variant="ghost" disabled={!bisaRiwayat(i)} onClick={() => setDetail(i)}
+      title="Riwayat mutasi" aria-label="Riwayat mutasi" data-testid={testId}><History /></Button>
+  );
+  const qtyCls = (v) => `tabular-nums md:whitespace-nowrap ${Number(v) < 0 ? 'text-[hsl(var(--danger-text))]' : ''}`;
+  const kolomTitipan = [
+    { kunci: 'artikel', label: 'Artikel', hp: 'judul', isi: (i) => (
+      <div className={`min-w-0 ${isOpen(i) ? 'text-[hsl(var(--primary))]' : ''}`} data-testid={`inv-row-${i.material_code || i.stock_key}`}>
+        <p className="font-medium md:whitespace-nowrap">{i.artikel_code || '—'}</p>
+        {i.material_name && <p className="text-xs text-muted-foreground">{i.material_name}</p>}
+      </div>) },
+    { kunci: 'klien', label: 'Klien', hp: 'keterangan', isi: (i) => i.owner_client_name || '—' },
+    { kunci: 'kode', label: 'Kode barang', isi: (i) => <span className="md:whitespace-nowrap">{i.material_code || '—'}</span> },
+    { kunci: 'varian', label: 'Warna · ukuran', isi: (i) => <span className="text-sm">{i.color_name || '—'}{i.size_code ? <span className="text-muted-foreground"> · {i.size_code}</span> : null}</span> },
+    { kunci: 'qty', label: 'Jumlah (pcs)', rata: 'kanan', isi: (i) => <span className={qtyCls(i.quantity)}>{fmtNum(i.quantity)}</span> },
+    { kunci: 'lokasi', label: 'Lokasi', isi: (i) => <span className="text-sm text-muted-foreground md:whitespace-nowrap" title={locLabel(i)}>{locCode(i)}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (i) => tombolRiwayat(i, `inv-history-${i.material_code || i.stock_key}`) },
+  ];
+  const kolomDa = [
+    { kunci: 'kode', label: 'Kode barang', hp: 'keterangan', isi: (i) => (
+      <span className="md:whitespace-nowrap" data-testid={`inv-row-${i.material_code || i.material_id}`}>{i.material_code || i.sku || '—'}</span>) },
+    { kunci: 'nama', label: 'Nama barang', hp: 'judul', isi: (i) => (
+      <div className={`min-w-0 md:max-w-[20rem] ${isOpen(i) ? 'text-[hsl(var(--primary))]' : ''}`}>
+        <p className="font-medium">{i.material_name || '—'}</p>
+        {i.category_name && <p className="text-xs text-muted-foreground">{i.category_name}</p>}
+      </div>) },
+    { kunci: 'varian', label: 'Warna · ukuran · opsi', isi: (i) => (
+      <span className="text-sm">{i.color_name || '—'}{i.size_code ? <span className="text-muted-foreground"> · {i.size_code}</span> : null}{i.option_name ? <span className="text-muted-foreground"> · {i.option_name}</span> : null}</span>) },
+    { kunci: 'jenis', label: 'Jenis', isi: (i) => <span className="text-sm">{jenisLabel(i)}</span> },
+    { kunci: 'qty', label: 'Jumlah', rata: 'kanan', isi: (i) => <span className={qtyCls(i.quantity)}>{fmtNum(i.quantity)} {i.unit}</span> },
+    { kunci: 'tersedia', label: 'Tersedia', rata: 'kanan', isi: (i) => <span className="tabular-nums md:whitespace-nowrap">{fmtNum(i.available_quantity)} {i.unit}</span> },
+    { kunci: 'cadang', label: 'Dicadangkan', rata: 'kanan', isi: (i) => <span className="tabular-nums">{fmtNum(i.reserved_quantity)}</span> },
+    { kunci: 'lokasi', label: 'Lokasi', isi: (i) => <span className="text-sm text-muted-foreground md:whitespace-nowrap" title={locLabel(i)}>{locCode(i)}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (i) => tombolRiwayat(i, `view-movements-${i.material_code || i.material_id}`) },
+  ];
+
   return (
     <PageLayout
       testId="inv-stock-list"
       title="Daftar stok"
       subtitle="Stok per barang dan lokasi. Penyesuaian stok dilakukan di tab Penyesuaian."
       filters={<>
-        <div className="relative w-72 max-w-full">
+        <div className="relative w-full sm:w-64">
           <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8 h-9"
             placeholder={titipan ? 'Cari klien, artikel, kode barang…' : 'Cari kode barang, nama, warna, lokasi…'}
@@ -220,10 +266,11 @@ export default function UnifiedInventoryModule() {
         )}
       </>}
       tools={<>
+        <TombolUnduh namaBerkas={titipan ? 'stok-titipan-klien' : 'stok-barang'} namaLembar="Stok" baris={items}
+          ambilSemua={ambilSemua} kolom={kolomUnduh} testId="inv-export" />
         <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="inv-refresh">
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
-        <Button variant="outline" onClick={handleExport} data-testid="inv-export"><Download className="w-4 h-4" />Unduh CSV</Button>
       </>}
       summary={<>
         {error && <Notice tone="danger" icon={AlertTriangle} title="Gagal memuat data" testId="inv-error">{error}</Notice>}
@@ -233,22 +280,27 @@ export default function UnifiedInventoryModule() {
             Masuk saat Terima &amp; QC dari CMT, keluar saat Kirim hasil ke klien.
           </Notice>
         )}
-        {Number(totals.rows || 0) > 0 && (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <StatTile testId="inv-kpi-rows" label={titipan ? 'Barang klien' : 'Baris stok'} value={fmtNum(totals.rows)} />
-            <StatTile testId="inv-kpi-qty" label={titipan ? 'Jumlah titipan (pcs)' : 'Jumlah stok'} value={fmtNum(totals.quantity)} />
-            {titipan ? (
-              <StatTile testId="inv-kpi-clients" label="Klien" value={fmtNum(totals.clients)} />
-            ) : (
-              <StatTile testId="inv-kpi-available" label="Tersedia" value={fmtNum(totals.available)}
-                sub={`dicadangkan ${fmtNum(totals.reserved)}`} />
-            )}
-            {!titipan && (
-              <StatTile testId="inv-kpi-negative" label="Baris minus" value={fmtNum(totals.negative_rows)}
-                accent={Number(totals.negative_rows || 0) > 0 ? 'danger' : 'muted'}
-                sub={Number(totals.negative_rows || 0) > 0 ? 'perlu opname' : undefined} />
-            )}
+        {/* Verifikasi 8 Nov 2026: `totals` dari server = SEMUA baris hasil saringan (bukan halaman). "Jumlah stok",
+            "Tersedia", "Dicadangkan" untuk stok DA DIHAPUS — menjumlah pcs + kg + m + pack jadi satu angka (−1 di DB uji)
+            yang tidak berarti apa-apa. Titipan klien selalu pcs → jumlahnya tetap ditampilkan. */}
+        {titipan && Number(totals.rows || 0) > 0 && (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <StatTile testId="inv-kpi-rows" label="Barang klien" value={fmtNum(totals.rows)} sub="Baris artikel × warna × ukuran sesuai saringan." />
+            <StatTile testId="inv-kpi-qty" label="Jumlah titipan (pcs)" value={fmtNum(totals.quantity)} sub="Total pcs titipan sesuai saringan." />
+            <StatTile testId="inv-kpi-clients" label="Klien" value={fmtNum(totals.clients)} sub="Klien maklon yang punya titipan." />
           </div>
+        )}
+        {!titipan && !loading && Number(totals.rows || 0) > 0 && (
+          <p className="text-sm text-muted-foreground" data-testid="inv-ringkas">
+            <span className="font-medium text-foreground tabular-nums">{fmtNum(totals.rows)}</span> baris sesuai saringan
+            {includeZero ? ' (termasuk barang yang belum punya stok)' : ''}.
+          </p>
+        )}
+        {!titipan && Number(totals.negative_rows || 0) > 0 && (
+          <Notice tone="danger" icon={AlertTriangle} testId="inv-kpi-negative"
+            title={`${fmtNum(totals.negative_rows)} baris stok minus`}>
+            Stok tercatat kurang dari 0 — periksa di tab Stok minus lalu lakukan opname.
+          </Notice>
         )}
       </>}
       detail={detail && <MovementsPanel item={detail} titipan={titipan} onClose={() => setDetail(null)} />}
@@ -258,85 +310,25 @@ export default function UnifiedInventoryModule() {
         </div>
       )}
     >
-      <GlassCard className="p-0 overflow-hidden">
-        {loading && !items.length ? (
-          <div className="p-4 text-sm text-muted-foreground"><RefreshCw className="w-4 h-4 animate-spin inline mr-2" />Memuat stok…</div>
-        ) : items.length === 0 ? (
-          <div data-testid="inv-empty">
+      {loading && !items.length ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat stok…</p>
+      ) : (
+        <TabelData kolom={titipan ? kolomTitipan : kolomDa} baris={items} onKlikBaris={bukaRiwayat}
+          kunci={(i) => (titipan ? i.stock_key : `${i.id || i.material_id || 'baris'}-${i.location_id || ''}`)}
+          testId={titipan ? 'inv-table-titipan' : 'inv-table-da'}
+          kosong={<div data-testid="inv-empty">
             {filtered ? (
               <EmptyState icon={Package} title="Tidak ada stok yang cocok dengan saringan"
                 description="Ubah atau hapus penyaring untuk melihat barang lain."
-                action={<Button variant="outline" size="sm" onClick={resetFilters}>Tampilkan semua</Button>} />
+                action={<Button variant="outline" onClick={resetFilters}>Tampilkan semua</Button>} />
             ) : titipan ? (
               <EmptyState icon={Package} title="Belum ada barang titipan klien"
                 description="Barang jadi klien maklon tercatat di sini setelah Terima & QC dari CMT selesai." />
             ) : (
               <EmptyState icon={Package} title="Belum ada stok" description="Stok tercatat dari penerimaan barang, produksi, atau opname." />
             )}
-          </div>
-        ) : titipan ? (
-          <Table data-testid="inv-table-titipan">
-            <TableHeader><TableRow>
-              <TableHead>Klien</TableHead><TableHead>Artikel</TableHead><TableHead>Kode barang</TableHead>
-              <TableHead>Warna · ukuran</TableHead>
-              <TableHead className="text-right">Jumlah (pcs)</TableHead><TableHead>Lokasi</TableHead>
-              <TableHead className="w-12"><span className="sr-only">Riwayat</span></TableHead>
-            </TableRow></TableHeader>
-            <TableBody>
-              {items.map((i) => (
-                <TableRow key={i.stock_key} data-testid={`inv-row-${i.material_code || i.stock_key}`}
-                  className={isOpen(i) ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
-                  <TableCell>{i.owner_client_name || '—'}</TableCell>
-                  <TableCell>
-                    <span className="block whitespace-nowrap">{i.artikel_code || '—'}</span>
-                    {i.material_name && <span className="block text-xs text-muted-foreground">{i.material_name}</span>}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap">{i.material_code || '—'}</TableCell>
-                  <TableCell className="text-sm">{i.color_name || '—'}{i.size_code ? <span className="text-muted-foreground"> · {i.size_code}</span> : null}</TableCell>
-                  <TableCell className={`text-right tabular-nums ${Number(i.quantity) < 0 ? 'text-[hsl(var(--destructive))]' : ''}`}>{fmtNum(i.quantity)}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground whitespace-nowrap" title={locLabel(i)}>{locCode(i)}</TableCell>
-                  <TableCell className="text-right">
-                    <Button size="icon" variant="ghost" disabled={!i.movements} onClick={() => setDetail(i)}
-                      title="Riwayat mutasi" aria-label="Riwayat mutasi"
-                      data-testid={`inv-history-${i.material_code || i.stock_key}`}><History className="w-4 h-4" /></Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        ) : (
-          <Table data-testid="inv-table-da">
-            <TableHeader><TableRow>
-              <TableHead>Kode barang</TableHead><TableHead>Nama barang</TableHead><TableHead>Kategori</TableHead>
-              <TableHead>Warna · ukuran · opsi</TableHead><TableHead>Jenis</TableHead>
-              <TableHead className="text-right">Jumlah</TableHead><TableHead className="text-right">Tersedia</TableHead>
-              <TableHead className="text-right">Dicadangkan</TableHead><TableHead>Lokasi</TableHead>
-              <TableHead className="w-12"><span className="sr-only">Riwayat</span></TableHead>
-            </TableRow></TableHeader>
-            <TableBody>
-              {items.map((i, idx) => (
-                <TableRow key={`${i.id || i.material_id || 'row'}-${i.location_id || ''}-${idx}`}
-                  data-testid={`inv-row-${i.material_code || i.material_id}`} className={isOpen(i) ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
-                  <TableCell className="whitespace-nowrap">{i.material_code || i.sku || '—'}</TableCell>
-                  <TableCell>{i.material_name || '—'}</TableCell>
-                  <TableCell className="text-sm">{i.category_name || '—'}</TableCell>
-                  <TableCell className="text-sm">{i.color_name || '—'}{i.size_code ? <span className="text-muted-foreground"> · {i.size_code}</span> : null}{i.option_name ? <span className="text-muted-foreground"> · {i.option_name}</span> : null}</TableCell>
-                  <TableCell className="text-sm">{jenisLabel(i)}</TableCell>
-                  <TableCell className={`text-right tabular-nums whitespace-nowrap ${Number(i.quantity) < 0 ? 'text-[hsl(var(--destructive))]' : ''}`}>{fmtNum(i.quantity)} {i.unit}</TableCell>
-                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtNum(i.available_quantity)} {i.unit}</TableCell>
-                  <TableCell className="text-right tabular-nums">{fmtNum(i.reserved_quantity)}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground whitespace-nowrap" title={locLabel(i)}>{locCode(i)}</TableCell>
-                  <TableCell className="text-right">
-                    <Button size="icon" variant="ghost" disabled={i.no_stock_row} onClick={() => setDetail(i)}
-                      title="Riwayat mutasi" aria-label="Riwayat mutasi"
-                      data-testid={`view-movements-${i.material_code || i.material_id}`}><History className="w-4 h-4" /></Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </GlassCard>
+          </div>} />
+      )}
     </PageLayout>
   );
 }
@@ -377,7 +369,18 @@ function MovementsPanel({ item, titipan, onClose }) {
     ? `${item.owner_client_name || 'Klien maklon'} · ${item.material_name || ''} · saldo ${fmtNum(balance ?? item.quantity)} pcs`
     : `${item.material_name || ''} · ${locLabel(item)} · jumlah ${fmtNum(item.quantity)} ${item.unit || ''}`;
   return (
-    <DetailPanel title={title} description={description} onClose={onClose} testId="inv-movements-panel">
+    <DetailPanel title={title} description={description} onClose={onClose} testId="inv-movements-panel"
+      actions={rows.length > 0 ? (
+        <TombolUnduh namaBerkas={`riwayat-${item.material_code || item.artikel_code || 'stok'}`} namaLembar="Riwayat" baris={rows}
+          testId="inv-movements-unduh" kolom={[
+            { label: 'Tanggal', nilai: (m) => fmtDate(m.created_at) },
+            { label: 'Jenis', nilai: (m) => m.jenis_label || '' },
+            { label: 'Jumlah', nilai: (m) => Number(m.qty || 0) },
+            { label: 'Dokumen', nilai: (m) => m.dokumen || '' },
+            { label: titipan ? 'PO' : 'Dari → ke', nilai: (m) => (titipan ? m.po_number : m.dari_ke) || '' },
+            { label: 'Catatan', nilai: (m) => m.notes || '' },
+          ]} />
+      ) : null}>
       {loading ? (
         <div className="text-sm text-muted-foreground"><RefreshCw className="w-4 h-4 animate-spin inline mr-2" />Memuat riwayat…</div>
       ) : rows.length === 0 ? (
