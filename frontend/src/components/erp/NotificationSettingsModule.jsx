@@ -117,22 +117,15 @@ export default function NotificationSettingsModule({ token }) {
         </Button>
       </>}>
       <Notice tone="info" title="Yang tidak bisa dibatasi">
-        Peran superadmin, admin, dan owner selalu menerima semua kategori. Kategori <b>Untuk Saya</b> juga selalu
-        aktif karena berisi notifikasi yang dialamatkan langsung ke orangnya (tugas, cuti, persetujuan miliknya).
-        Setiap pengguna dapat membisukan kategori lain untuk dirinya sendiri (ikon gerigi di lonceng), tetapi tidak
-        bisa membuka kategori yang ditutup di sini.
+        Superadmin, admin, dan owner selalu menerima semua kategori; kategori <b>Untuk Saya</b> selalu aktif. Pengguna
+        bisa membisukan kategori lain untuk dirinya (gerigi di lonceng), tetapi tidak bisa membuka kategori yang ditutup di sini.
       </Notice>
 
-      <GlassCard className="flex flex-wrap items-center gap-3 p-4" data-testid="notif-retention-card">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-foreground">
-            Masa simpan notifikasi: <span className="tabular-nums" data-testid="notif-retention-value">{tersimpan} hari</span>
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Pemberitahuan yang sudah dibaca dan tindakan yang sudah selesai dihapus otomatis setelah masa ini (dicek tiap
-            hari pukul 02.30). Notifikasi Perlu Tindakan yang masih terbuka tidak pernah dihapus.
-          </p>
-        </div>
+      <GlassCard className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3" data-testid="notif-retention-card">
+        <p className="min-w-0 flex-1 text-sm text-foreground">
+          Masa simpan notifikasi: <span className="font-medium tabular-nums" data-testid="notif-retention-value">{data ? `${tersimpan} hari` : '—'}</span>
+          <span className="hidden text-muted-foreground sm:inline"> · yang sudah dibaca/selesai dihapus otomatis setelah masa ini.</span>
+        </p>
         <Button variant="outline" size="sm" onClick={() => { setRetention(tersimpan); setFormSimpan(true); }}
           disabled={!data} data-testid="notif-retention-edit">
           <Pencil />Ubah masa simpan
@@ -193,6 +186,10 @@ export default function NotificationSettingsModule({ token }) {
         keterangan="Centang peran yang belum disimpan ikut tersimpan bersama masa simpan ini."
         galat={!retentionValid ? `Isi ${RETENTION_MIN}–${RETENTION_MAX} hari.` : null}
         onSimpan={async () => { if (await save()) setFormSimpan(false); }}>
+        <p className="text-sm text-muted-foreground">
+          Pemberitahuan yang sudah dibaca dan tindakan yang sudah selesai dihapus otomatis setelah jumlah hari ini (dicek
+          tiap hari pukul 02.30). Notifikasi Perlu Tindakan yang masih terbuka tidak pernah dihapus.
+        </p>
         <Isian label="Jumlah hari" wajib htmlFor="notif-retention-days"
           petunjuk={`${RETENTION_MIN}–${RETENTION_MAX} hari. Bawaan 90 hari.`}>
           <Input id="notif-retention-days" type="number" inputMode="numeric" min={RETENTION_MIN} max={RETENTION_MAX} step={1}

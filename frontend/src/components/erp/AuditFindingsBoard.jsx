@@ -80,7 +80,7 @@ export default function AuditFindingsBoard() {
           { key: 'diterima', label: 'Diterima', count: hitung('diterima') },
           { key: 'terbuka', label: 'Terbuka', count: hitung('terbuka') },
         ]} />
-        <SmartNativeSelect value={portal} onChange={(e) => setPortal(e.target.value)} className="w-full sm:w-44" aria-label="Portal"
+        <SmartNativeSelect value={portal} onChange={(e) => setPortal(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-44" aria-label="Portal"
           data-testid="audit-filter-portal">
           {['Semua', ...portals].map((p) => (
             <option key={p} value={p}>{p === 'Semua' ? 'Semua portal' : `${namaPortal(p)} (${data.by_portal[p]})`}</option>

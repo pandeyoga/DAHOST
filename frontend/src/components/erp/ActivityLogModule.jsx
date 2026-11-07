@@ -185,17 +185,17 @@ export default function ActivityLogModule({ token }) {
           <Input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Cari rincian, pengguna, modul"
             className="pl-8" data-testid="activity-log-search" />
         </div>
-        <SmartNativeSelect value={filterModule} onChange={(e) => setFilterModule(e.target.value)} className="w-full sm:w-48"
+        <SmartNativeSelect value={filterModule} onChange={(e) => setFilterModule(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-48"
           aria-label="Modul" data-testid="activity-log-module-filter">
           <option value="">Semua modul</option>
           {semuaModul.map((m) => <option key={m} value={m}>{labelModul(m)}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterUser} onChange={(e) => setFilterUser(e.target.value)} className="w-full sm:w-52"
+        <SmartNativeSelect value={filterUser} onChange={(e) => setFilterUser(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-52"
           aria-label="Pengguna" data-testid="activity-log-user-filter">
           <option value="">Semua pengguna</option>
           {users.map((u) => <option key={u.id} value={u.id}>{`${u.name} - ${u.email}`}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterAction} onChange={(e) => setFilterAction(e.target.value)} className="w-full sm:w-44"
+        <SmartNativeSelect value={filterAction} onChange={(e) => setFilterAction(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-44"
           aria-label="Aksi" data-testid="activity-log-action-filter">
           <option value="">Semua aksi</option>
           {actions.map((a) => <option key={a} value={a}>{labelAksi(a)}</option>)}

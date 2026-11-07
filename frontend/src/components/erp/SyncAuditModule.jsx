@@ -36,7 +36,7 @@ const SEV = {
   CRITICAL: { label: 'Kritis', tone: 'danger' },
   HIGH: { label: 'Tinggi', tone: 'warning' },
   MED: { label: 'Sedang', tone: 'info' },
-  INFO: { label: 'Info', tone: 'muted' },
+  INFO: { label: 'Catatan', tone: 'muted' },
 };
 const sev = (k) => SEV[k] || SEV.INFO;
 
@@ -66,7 +66,7 @@ const METRIC_LABEL = {
   stock_dangling_location: 'Baris stok lokasi hilang',
   rules_checked: 'Aturan diperiksa', broken_rules: 'Aturan rusak', empty_link_rules: 'Tautan tak pernah diisi',
 };
-const labelMetrik = (k) => METRIC_LABEL[k] || (k.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()));
+const labelMetrik = (k, bagian) => (bagian === 'D' && k === 'lines' ? 'Baris opname' : METRIC_LABEL[k]) || (k.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()));
 const nilaiMetrik = (k, v) => {
   if (typeof v !== 'number') return String(v);
   if (k.endsWith('_pct')) return `${v.toLocaleString('id-ID', { maximumFractionDigits: 1 })}%`;
@@ -79,10 +79,14 @@ const GANTI = [
   [/\s*lewat SSOT core\/catalog_stock/g, ' dari sumber stok resmi'],
   [/\bSSOT\b/g, 'sumber data resmi'],
   [/\bfulfillment\b/g, 'pemenuhan pesanan'],
+  [/option_code\s*=\s*['"]NA['"]/g, 'kode opsi "NA"'],
+  [/\boption_code\b/g, 'kode opsi'],
+  // "marketing_catalog_items.variant_id kosong di SELURUH 682 dokumen (item katalog → varian)"
+  [/\b[a-z0-9_]+\.[a-z0-9_]+ kosong di SELURUH (\d+) dokumen \(([^)]+)\)/g, 'Tautan $2 kosong di seluruh $1 dokumen'],
 ];
 const manusiawi = (s) => GANTI.reduce((t, [re, ke]) => t.replace(re, ke), String(s || ''));
 
-function MetricGrid({ metrics }) {
+function MetricGrid({ metrics, bagian }) {
   const entries = Object.entries(metrics || {}).filter(
     ([, v]) => typeof v === 'number' || typeof v === 'string');
   if (!entries.length) return null;
@@ -90,7 +94,7 @@ function MetricGrid({ metrics }) {
     <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3 lg:grid-cols-4">
       {entries.map(([k, v]) => (
         <div key={k} className="min-w-0">
-          <dt className="text-xs text-muted-foreground">{labelMetrik(k)}</dt>
+          <dt className="text-xs text-muted-foreground">{labelMetrik(k, bagian)}</dt>
           <dd className="text-sm font-semibold tabular-nums text-foreground">{nilaiMetrik(k, v)}</dd>
         </div>
       ))}
@@ -121,7 +125,7 @@ function TabelPerbaikan({ repairs, onRan }) {
     if (apply) {
       const ok = await confirmDialog({
         title: 'Terapkan perbaikan ini?',
-        body: `${manusiawi(repair.label)}. Hasil pratinjau: ${hasil[repair.action]?.message || '—'}`,
+        body: `${manusiawi(repair.label)}. Hasil pratinjau: ${manusiawi(hasil[repair.action]?.message) || '—'}`,
         confirmLabel: 'Terapkan',
       });
       if (!ok) return;
@@ -144,7 +148,7 @@ function TabelPerbaikan({ repairs, onRan }) {
             <p className="text-xs text-muted-foreground">{manusiawi(r.explain)}</p>
           </div>) },
         { kunci: 'hasil', label: 'Hasil pratinjau', isi: (r) => (hasil[r.action]
-          ? <p className="text-sm md:max-w-[18rem]" data-testid={`repair-result-${r.action}`}>{hasil[r.action].message}</p>
+          ? <p className="text-sm md:max-w-[18rem]" data-testid={`repair-result-${r.action}`}>{manusiawi(hasil[r.action].message)}</p>
           : <span className="text-sm text-muted-foreground">Belum dipratinjau</span>) },
         { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
           <div className="flex justify-end gap-2">
@@ -191,16 +195,6 @@ export default function SyncAuditModule({ onNavigate }) {
     <PageLayout testId="sync-audit-module" title="Sinkronisasi data"
       subtitle="Memeriksa apakah data yang saling menunjuk memang tersambung: Marketing → Gudang, Katalog → Master FG, Varian → Stok, Opname → Master."
       tools={<>
-        {onNavigate && (
-          <>
-            <Button variant="outline" onClick={() => onNavigate('sku-bridge')} data-testid="audit-goto-bridge">
-              <Link2 />Jembatan SKU<ArrowRight />
-            </Button>
-            <Button variant="outline" onClick={() => onNavigate('fulfillment')} data-testid="audit-goto-fulfillment">
-              <Boxes />Antrean gudang<ArrowRight />
-            </Button>
-          </>
-        )}
         <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Periksa ulang" aria-label="Periksa ulang"
           data-testid="refresh-audit">
           <RefreshCw className={loading ? 'animate-spin' : ''} />
@@ -209,8 +203,7 @@ export default function SyncAuditModule({ onNavigate }) {
       summary={report && (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="audit-verdict">
           <StatTile label="Skor sinkron" value={score} suffix="/ 100" accent={v.tone === 'danger' ? 'danger' : v.tone}
-            sub={<><StatusBadge status={report.verdict} label={v.text} tone={v.tone} testId="verdict-badge" />
-              <span className="ml-1">Turun 25 per temuan kritis, 10 per tinggi, 3 per sedang.</span></>} />
+            sub={<StatusBadge status={report.verdict} label={v.text} tone={v.tone} testId="verdict-badge" />} />
           <StatTile label="Temuan kritis" value={fmt(sc.CRITICAL)} accent={sc.CRITICAL ? 'danger' : 'default'} sub="Tautan rusak yang harus segera diperbaiki" />
           <StatTile label="Temuan tinggi" value={fmt(sc.HIGH)} accent={sc.HIGH ? 'warning' : 'default'} sub="Data tidak bisa dihitung dengan benar" />
           <StatTile label="Temuan sedang" value={fmt(sc.MED)} sub={`Ditambah ${fmt(sc.INFO)} catatan info`} />
@@ -223,13 +216,28 @@ export default function SyncAuditModule({ onNavigate }) {
           action={{ label: 'Periksa ulang', onClick: load }} />
       ) : (
         <>
-          <p className="text-xs text-muted-foreground">Diperiksa {report.generated_at ? formatDateTimeID(report.generated_at) : '—'}.</p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+              Diperiksa {report.generated_at ? formatDateTimeID(report.generated_at) : '—'}. Skor turun 25 per temuan kritis,
+              10 per tinggi, 3 per sedang.
+            </p>
+            {onNavigate && (
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={() => onNavigate('sku-bridge')} data-testid="audit-goto-bridge">
+                  <Link2 />Jembatan SKU<ArrowRight />
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => onNavigate('fulfillment')} data-testid="audit-goto-fulfillment">
+                  <Boxes />Antrean gudang<ArrowRight />
+                </Button>
+              </div>
+            )}
+          </div>
 
           <Bagian judul={`Temuan (${fmt(findings.length)})`} testId="audit-findings-section"
             alat={findings.length > 0 && (
               <TombolUnduh namaBerkas="sinkronisasi-data-temuan" namaLembar="Temuan" baris={findings} testId="sync-findings-unduh"
                 kolom={[
-                  { label: 'Tingkat', nilai: (f) => sev(f.severity).label }, { label: 'Temuan', nilai: (f) => f.text },
+                  { label: 'Tingkat', nilai: (f) => sev(f.severity).label }, { label: 'Temuan', nilai: (f) => manusiawi(f.text) },
                   { label: 'Bagian', nilai: (f) => `${f.section}. ${f.section_title}` }, { label: 'Kode', nilai: (f) => f.code },
                 ]} />
             )}>
@@ -238,7 +246,7 @@ export default function SyncAuditModule({ onNavigate }) {
                 Tidak ada ketidaksinkronan yang terdeteksi.</p>}
               kolom={[
                 { kunci: 'sev', label: 'Tingkat', hp: 'keterangan', isi: (f) => <StatusBadge status={f.severity} label={sev(f.severity).label} tone={sev(f.severity).tone} /> },
-                { kunci: 'text', label: 'Temuan', hp: 'judul', isi: (f) => <p className="text-sm md:max-w-[40rem]">{f.text}</p> },
+                { kunci: 'text', label: 'Temuan', hp: 'judul', isi: (f) => <p className="text-sm md:max-w-[40rem]">{manusiawi(f.text)}</p> },
                 { kunci: 'bagian', label: 'Bagian', isi: (f) => <span className="text-sm text-muted-foreground">{f.section}. {f.section_title} · {f.code}</span> },
                 { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (f) => (f.action === 'sku_bridge' && onNavigate ? (
                   <Button size="sm" variant="outline" onClick={() => onNavigate('sku-bridge')} data-testid={`finding-action-${f.code}`}>
@@ -261,7 +269,7 @@ export default function SyncAuditModule({ onNavigate }) {
                       { label: 'Terisi', nilai: (r) => r.filled }, { label: 'Rusak', nilai: (r) => r.dangling },
                     ]} />
                 )}>
-                <MetricGrid metrics={sec.metrics} />
+                <MetricGrid metrics={sec.metrics} bagian={key} />
                 {rujukan.length > 0 && (
                   <TabelData baris={rujukan} kunci={(r) => `${r.collection}.${r.field}`} testId="sync-rujukan"
                     kolom={[
