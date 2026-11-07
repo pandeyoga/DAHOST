@@ -5,7 +5,7 @@
  * BPJS per lembaga, PPh21, pembatalan dua langkah) TIDAK berubah:
  *  • cetakan PageLayout (dulu kepala bergaya kartu + kotak "Langkah Berikutnya" yang memakan tempat → tautan
  *    "Jurnal gaji" di baris alat);
- *  • daftar = TabelData + unduh Excel/CSV; aksi baris dulu 10+ ikon/huruf kecil tanpa label (💸, BK, BT, P, ×) →
+ *  • daftar = TabelData + unduh Excel/CSV; aksi baris dulu 10+ ikon/huruf kecil tanpa label (ikon uang, BK, BT, P, ×) →
  *    paling banyak 1 tombol berlabel + menu "Lainnya" berlabel lengkap;
  *  • rincian run = DetailPopup; semua form (buat run, bayar gaji, bayar BPJS/PPh21, finalisasi, pembatalan,
  *    penyesuaian slip) = FormPopup standar; tanggal = DatePicker.
