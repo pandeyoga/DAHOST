@@ -253,8 +253,8 @@ export default function RahazaMaterialsModule({ token }) {
   ];
 
   const opsiSaring = [
-    { key: '', label: 'Semua', count: jumlah.semua ?? undefined },
-    { key: 'menipis', label: 'Stok menipis', count: jumlah.menipis ?? undefined },
+    { key: '', label: 'Semua', count: jumlah.semua == null ? undefined : Number(jumlah.semua).toLocaleString('id-ID') },
+    { key: 'menipis', label: 'Stok menipis', count: jumlah.menipis == null ? undefined : Number(jumlah.menipis).toLocaleString('id-ID') },
   ];
 
   return (
@@ -270,16 +270,15 @@ export default function RahazaMaterialsModule({ token }) {
           <Input value={cari} onChange={(e) => setCari(e.target.value)} placeholder="Cari kode atau nama"
             className="pl-8" data-testid="mat-search" />
         </div>
-        <SmartNativeSelect value={filterType} onChange={(e) => setFilterType(e.target.value)} className="w-48"
+        <SmartNativeSelect value={filterType} onChange={(e) => setFilterType(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-48"
           searchable={false} aria-label="Jenis" data-testid="mat-filter-type">
           <option value="">Bahan &amp; aksesoris</option>
           <option value="bahan">Bahan</option>
           <option value="aksesoris">Aksesoris</option>
         </SmartNativeSelect>
         <FilterChips options={opsiSaring} value={filterLowStock ? 'menipis' : ''} hideWhenEmpty={false}
-          onChange={(k) => setFilterLowStock(k === 'menipis')} testId="mat-filter-low-stock" ariaLabel="Penyaring stok" />
-      </>}
-      tools={<>
+          onChange={(k) => setFilterLowStock(k === 'menipis')} testId="mat-filter-low-stock" ariaLabel="Penyaring stok" className="w-full sm:w-auto" />
+        <div className="ml-auto flex shrink-0 items-center gap-2">
         <TombolUnduh namaBerkas={filterLowStock ? 'bahan-aksesoris-stok-menipis' : 'bahan-aksesoris'} namaLembar="Bahan & aksesoris"
           baris={rows} ambilSemua={ambilSemua} testId="mat-unduh"
           kolom={[
@@ -296,6 +295,7 @@ export default function RahazaMaterialsModule({ token }) {
         <Button variant="outline" size="icon" onClick={muatUlang} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
           <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
+        </div>
       </>}
       footer={pagination && pagination.total_pages > 1 ? <PaginationBar pagination={pagination} onPageChange={setPage} /> : null}>
       {loading && rows.length === 0 ? (

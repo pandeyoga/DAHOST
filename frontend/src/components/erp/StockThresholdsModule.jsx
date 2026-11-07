@@ -318,22 +318,21 @@ export default function StockThresholdsModule({ token, onNavigate }) {
           <Input value={cari} onChange={e => setCari(e.target.value)} placeholder="Cari kode atau nama"
             className="pl-8" data-testid="threshold-search" />
         </div>
-        <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)} className="w-40"
+        <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-40"
           searchable={false} aria-label="Jenis" data-testid="threshold-filter-type">
           <option value="">Semua jenis</option>
           <option value="bahan">Bahan</option>
           <option value="aksesoris">Aksesoris</option>
           <option value="fg">Produk jadi</option>
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="w-52"
+        <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-52"
           searchable={false} aria-label="Status ambang" data-testid="threshold-filter-status">
           <option value="all">Semua status</option>
           <option value="missing">Belum ada ambang</option>
           <option value="set">Sudah ada ambang</option>
           <option value="low">Sedang rendah / kritis</option>
         </SmartNativeSelect>
-      </>}
-      tools={<>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
         <Button variant="link" onClick={() => goto('wh-shopping-list')} data-testid="threshold-goto-shopping">
           <ShoppingCart />Belanja mingguan
         </Button>
@@ -357,6 +356,7 @@ export default function StockThresholdsModule({ token, onNavigate }) {
           data-testid="threshold-refresh">
           <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
+        </div>
       </>}
       summary={summary ? (
         <div className="space-y-4">
@@ -402,11 +402,11 @@ export default function StockThresholdsModule({ token, onNavigate }) {
                   </TableHead>
                   <TableHead>Barang</TableHead>
                   <TableHead className="text-right">Stok</TableHead>
+                  <TableHead>Status</TableHead>
                   <TableHead className="text-right">Min stok</TableHead>
                   <TableHead className="text-right">Titik pesan ulang</TableHead>
-                  <TableHead>Dasar</TableHead>
                   <TableHead>Usulan (pemakaian nyata)</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead>Dasar</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -422,13 +422,21 @@ export default function StockThresholdsModule({ token, onNavigate }) {
                         <Checkbox checked={isSel} onCheckedChange={() => toggle(r.material_id)} aria-label={`Centang ${r.code}`}
                           data-testid={`threshold-check-${r.code}`} />
                       </TableCell>
-                      <TableCell className="min-w-[14rem]">
+                      <TableCell className="min-w-[12rem]">
                         <div className="tabular-nums text-xs text-muted-foreground">{r.code}</div>
                         <div className="text-foreground">{r.name}</div>
                         <div className="text-xs text-muted-foreground">{jenisLabel(r.type)} · {r.unit}</div>
                       </TableCell>
                       <TableCell className="text-right tabular-nums whitespace-nowrap">
                         {fmt(r.onhand)} {r.unit}
+                      </TableCell>
+                      <TableCell>
+                        <span data-testid={`threshold-status-${r.code}`}>
+                          <StatusBadge status={r.status} label={meta.label} tone={meta.tone} />
+                        </span>
+                        {r.shortage > 0 && (
+                          <span className="mt-0.5 block text-xs text-muted-foreground">kurang {fmt(r.shortage)} {r.unit}</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         <Input type="number" step="0.01" min="0" value={valueOf(r, 'min_stock_qty')}
@@ -441,27 +449,6 @@ export default function StockThresholdsModule({ token, onNavigate }) {
                           onChange={e => setEdit(r.material_id, 'reorder_point', e.target.value)}
                           placeholder="0" className="ml-auto h-8 w-24 text-right" aria-label={`Titik pesan ulang ${r.code}`}
                           data-testid={`threshold-rp-${r.code}`} />
-                      </TableCell>
-                      <TableCell className="min-w-[12rem] text-xs" data-testid={`threshold-basis-${r.code}`}>
-                        {r.threshold_basis ? (
-                          <>
-                            <StatusBadge status="dasar" label={labelDasar(r.threshold_basis)} tone="default" />
-                            {r.threshold_basis_note && (
-                              <span className="mt-0.5 block line-clamp-2 text-muted-foreground" title={r.threshold_basis_note}>
-                                {r.threshold_basis_note}
-                              </span>
-                            )}
-                            {r.threshold_set_by && (
-                              <span className="block text-muted-foreground">
-                                oleh {r.threshold_set_by} · {formatDateID(r.threshold_set_at)}
-                              </span>
-                            )}
-                          </>
-                        ) : (
-                          <span className="text-muted-foreground">
-                            {r.has_threshold ? 'diisi sebelum jejak dasar dicatat' : 'belum diisi'}
-                          </span>
-                        )}
                       </TableCell>
                       <TableCell className="min-w-[12rem] text-xs">
                         {s.no_usage_data ? (
@@ -480,12 +467,25 @@ export default function StockThresholdsModule({ token, onNavigate }) {
                           </div>
                         )}
                       </TableCell>
-                      <TableCell>
-                        <span data-testid={`threshold-status-${r.code}`}>
-                          <StatusBadge status={r.status} label={meta.label} tone={meta.tone} />
-                        </span>
-                        {r.shortage > 0 && (
-                          <span className="mt-0.5 block text-xs text-muted-foreground">kurang {fmt(r.shortage)} {r.unit}</span>
+                      <TableCell className="min-w-[10rem] text-xs" data-testid={`threshold-basis-${r.code}`}>
+                        {r.threshold_basis ? (
+                          <>
+                            <StatusBadge status="dasar" label={labelDasar(r.threshold_basis)} tone="default" />
+                            {r.threshold_basis_note && (
+                              <span className="mt-0.5 block line-clamp-2 text-muted-foreground" title={r.threshold_basis_note}>
+                                {r.threshold_basis_note}
+                              </span>
+                            )}
+                            {r.threshold_set_by && (
+                              <span className="block text-muted-foreground">
+                                oleh {r.threshold_set_by} · {formatDateID(r.threshold_set_at)}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-muted-foreground">
+                            {r.has_threshold ? 'diisi sebelum jejak dasar dicatat' : 'belum diisi'}
+                          </span>
                         )}
                       </TableCell>
                     </TableRow>

@@ -171,6 +171,7 @@ export default function MasterDataCRUD({
             columns={fullColumns}
             data={rows}
             searchKeys={columns.map(c => c.key)}
+            pageSize={25}
           />
         </div>
       )}

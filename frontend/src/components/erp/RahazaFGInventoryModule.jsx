@@ -238,7 +238,7 @@ export default function RahazaFGInventoryModule({ token }) {
         subtitle="Stok barang jadi dari produksi internal dan Customer PO, beserta pengeluarannya."
         actions={<Button onClick={() => bukaForm()} data-testid="fg-issue-btn"><MinusCircle />Keluarkan stok</Button>}
         filters={<>
-          <FilterChips value={activeTab} onChange={setActiveTab} hideWhenEmpty={false} testId="fg-tab" ariaLabel="Tampilan"
+          <FilterChips value={activeTab} onChange={setActiveTab} hideWhenEmpty={false} testId="fg-tab" ariaLabel="Tampilan" className="w-full sm:w-auto"
             options={[
               { key: 'stock', label: 'Stok' },
               { key: 'matrix', label: 'Matriks ukuran × warna' },
@@ -252,12 +252,12 @@ export default function RahazaFGInventoryModule({ token }) {
                 data-testid="fg-search" />
             </div>
           )}
-        </>}
-        tools={<>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
           {unduh}
           <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} disabled={loading}>
             <RefreshCw className={loading ? 'animate-spin' : ''} />
           </Button>
+          </div>
         </>}
         summary={activeTab !== 'matrix' ? (
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

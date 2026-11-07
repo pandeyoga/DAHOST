@@ -207,7 +207,7 @@ export default function FGStockMatrixView({ token, onCellAction }) {
           <Input placeholder="Cari model, warna, atau SKU" className="pl-8" value={search}
             onChange={e => setSearch(e.target.value)} data-testid="fg-matrix-search" />
         </div>
-        <SmartNativeSelect value={filterModel} onChange={e => setFilterModel(e.target.value)} className="w-48"
+        <SmartNativeSelect value={filterModel} onChange={e => setFilterModel(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-48"
           aria-label="Model" data-testid="fg-matrix-model-filter">
           <option value="all">Semua model</option>
           {models.map(m => <option key={m} value={m}>{m}</option>)}

@@ -199,7 +199,7 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
           </Button>
         }
         filters={<>
-          <FilterChips value={tab} onChange={setTab} hideWhenEmpty={false} testId="shopping-tab" ariaLabel="Tampilan"
+          <FilterChips value={tab} onChange={setTab} hideWhenEmpty={false} testId="shopping-tab" ariaLabel="Tampilan" className="w-full sm:w-auto"
             options={[{ key: 'list', label: 'Perlu dibeli' }, { key: 'history', label: 'PR dari layar ini' }]} />
           {tab === 'list' && <>
             <div className="relative w-full sm:w-64">
@@ -207,7 +207,7 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
               <Input value={cari} onChange={e => setCari(e.target.value)} placeholder="Cari kode atau nama"
                 className="pl-8" data-testid="shopping-search" />
             </div>
-            <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)} className="w-48"
+            <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-48"
               searchable={false} aria-label="Jenis" data-testid="shopping-filter-type">
               <option value="">Semua jenis</option>
               <option value="bahan">Bahan (kain/benang)</option>
@@ -219,8 +219,7 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
               Sembunyikan yang sudah ber-PR
             </label>
           </>}
-        </>}
-        tools={<>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
           {tab === 'list' ? (
             <TombolUnduh namaBerkas={`belanja-mingguan${week?.iso ? `-${week.iso}` : ''}`} namaLembar="Belanja mingguan" baris={rows}
               testId="shopping-unduh"
@@ -256,6 +255,7 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
             data-testid="shopping-refresh">
             <RefreshCw className={loading ? 'animate-spin' : ''} />
           </Button>
+          </div>
         </>}
         summary={tab === 'list' && summary ? (
           <div className="space-y-4">
@@ -263,7 +263,7 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
               <StatTile label="Perlu dibeli minggu ini" value={num(summary.need_buy)} testId="shopping-stat-need_buy"
                 sub={`${num(summary.critical || 0)} kritis · ${num(summary.with_supplier || 0)} punya supplier`} />
               <StatTile label="Perkiraan nilai belanja" value={rp(summary.est_total_value)} testId="shopping-stat-value"
-                sub="dari harga supplier / HPP pembelian; barang tanpa harga tidak dihitung" />
+                sub="harga supplier / HPP pembelian" />
               <StatTile label="Belum berharga" value={num(summary.unvalued_count)} testId="shopping-stat-unvalued"
                 accent={summary.unvalued_count ? 'warning' : 'default'} sub="tidak masuk perkiraan nilai" />
               <StatTile label="Belum berambang" value={num(summary.without_threshold)} testId="shopping-stat-no_threshold"
@@ -273,22 +273,22 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
               {week ? `Minggu ${week.week} · ${week.label}` : 'Menghitung minggu…'}
             </p>
             {summary.without_threshold > 0 && (
-              <Notice tone="warning" icon={AlertTriangle} testId="shopping-threshold-notice"
-                action={<Button variant="outline" size="sm" onClick={() => goto('wh-master', 'thresholds')}
-                  data-testid="shopping-goto-thresholds">Isi ambang massal</Button>}>
-                {summary.without_threshold_note}
+              <Notice tone="warning" icon={AlertTriangle} testId="shopping-threshold-notice">
+                <p>{String(summary.without_threshold_note || '').replace(/\bBELUM\b/g, 'belum')}</p>
+                <Button variant="outline" size="sm" className="mt-2" onClick={() => goto('wh-master', 'thresholds')}
+                  data-testid="shopping-goto-thresholds">Isi ambang massal</Button>
               </Notice>
             )}
             {lastPR && (
               <Notice tone="success" icon={CheckCircle2} testId="shopping-pr-result"
-                title={`${lastPR.request_number} dibuat sebagai draf · ${(lastPR.items || []).length} barang · ${rp(lastPR.total_estimated)}`}
-                action={<Button variant="outline" size="sm" onClick={() => goto('proc-requests')} data-testid="shopping-open-pr">
-                  Buka Permintaan Pengadaan</Button>}>
+                title={`${lastPR.request_number} dibuat sebagai draf · ${(lastPR.items || []).length} barang · ${rp(lastPR.total_estimated)}`}>
                 {!!(lastPR.skipped || []).length && (
-                  <span className="text-xs">
+                  <p className="text-xs">
                     {lastPR.skipped.length} barang dilewati: {lastPR.skipped.map(s => `${s.code || s.material_id} (${s.reason})`).join('; ')}
-                  </span>
+                  </p>
                 )}
+                <Button variant="outline" size="sm" className="mt-2" onClick={() => goto('proc-requests')} data-testid="shopping-open-pr">
+                  Buka Permintaan Pengadaan</Button>
               </Notice>
             )}
           </div>
@@ -318,6 +318,7 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
                       aria-label="Pilih semua barang yang belum ber-PR" data-testid="shopping-select-all" />
                   </TableHead>
                   <TableHead>Barang</TableHead>
+                  <TableHead>Status</TableHead>
                   <TableHead className="text-right">Stok</TableHead>
                   <TableHead className="text-right">Ambang</TableHead>
                   <TableHead className="text-right">Kurang</TableHead>
@@ -325,7 +326,6 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
                   <TableHead className="text-right">Harga</TableHead>
                   <TableHead className="text-right">Perkiraan total</TableHead>
                   <TableHead>Supplier</TableHead>
-                  <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -338,10 +338,20 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
                         <Checkbox checked={isSel} disabled={r.already_requested} onCheckedChange={() => toggle(r.material_id)}
                           aria-label={`Pilih ${r.code}`} data-testid={`shopping-check-${r.code}`} />
                       </TableCell>
-                      <TableCell className="min-w-[14rem]">
+                      <TableCell className="min-w-[11rem]">
                         <div className="tabular-nums text-xs text-muted-foreground">{r.code}</div>
                         <div className="text-foreground">{r.name}</div>
                         <div className="text-xs text-muted-foreground">{jenisLabel(r.type)} · {r.base_uom}</div>
+                      </TableCell>
+                      <TableCell>
+                        {r.already_requested ? (
+                          <span data-testid={`shopping-pr-flag-${r.code}`} title={`Dibuat ${String((r.pr || {}).created_at || '').slice(0, 10)}`}>
+                            <StatusBadge status="ber-pr" label={(r.pr || {}).number || 'Sudah diminta'} tone="info" />
+                          </span>
+                        ) : (
+                          <StatusBadge status={r.stock_status} label={meta.label} tone={meta.tone} />
+                        )}
+                        {!r.valued && <span className="mt-0.5 block text-xs text-[hsl(var(--warning-text))]">belum berharga</span>}
                       </TableCell>
                       <TableCell className="text-right tabular-nums whitespace-nowrap">{num(r.onhand)} {r.base_uom}</TableCell>
                       <TableCell className="text-right tabular-nums whitespace-nowrap">
@@ -378,7 +388,7 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
                       <TableCell className="text-right tabular-nums font-medium whitespace-nowrap" data-testid={`shopping-total-${r.code}`}>
                         {r.valued ? rp(r.est_total) : '—'}
                       </TableCell>
-                      <TableCell className="min-w-[10rem] text-sm">
+                      <TableCell className="min-w-[9rem] text-sm">
                         {r.supplier ? (
                           <>
                             <span className="text-foreground">{r.supplier.name}</span>
@@ -391,16 +401,6 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
                         ) : (
                           <span className="text-xs text-muted-foreground">belum ada daftar harga</span>
                         )}
-                      </TableCell>
-                      <TableCell>
-                        {r.already_requested ? (
-                          <span data-testid={`shopping-pr-flag-${r.code}`} title={`Dibuat ${String((r.pr || {}).created_at || '').slice(0, 10)}`}>
-                            <StatusBadge status="ber-pr" label={(r.pr || {}).number || 'Sudah diminta'} tone="info" />
-                          </span>
-                        ) : (
-                          <StatusBadge status={r.stock_status} label={meta.label} tone={meta.tone} />
-                        )}
-                        {!r.valued && <span className="mt-0.5 block text-xs text-[hsl(var(--warning-text))]">belum berharga</span>}
                       </TableCell>
                     </TableRow>
                   );

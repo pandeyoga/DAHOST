@@ -143,14 +143,14 @@ export default function MaterialCostHistoryModule({ token }) {
     <PageLayout testId="cost-history-page" title="Riwayat harga"
       subtitle="Setiap perubahan HPP rata-rata bergerak — dari pembelian, hasil cutting, dan koreksi manual."
       filters={<>
-        <SmartNativeSelect value={selectedId} onChange={e => setSelectedId(e.target.value)} className="w-64"
+        <SmartNativeSelect value={selectedId} onChange={e => setSelectedId(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-64"
           searchable aria-label="Barang" data-testid="cost-material-list" disabled={loadingMats && !mats.length}>
           <option value="">Semua perubahan terbaru</option>
           {mats.map(m => (
             <option key={m.material_id} value={m.material_id}>{`${m.code} — ${m.name} (${m.changes} kali)`}</option>
           ))}
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)} className="w-44"
+        <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-44"
           searchable={false} aria-label="Jenis" data-testid="cost-filter-type">
           <option value="">Semua jenis</option>
           <option value="bahan">Bahan (kain/benang)</option>
@@ -163,8 +163,7 @@ export default function MaterialCostHistoryModule({ token }) {
           <Checkbox checked={onlyChanged} onCheckedChange={(v) => setOnlyChanged(!!v)} data-testid="cost-only-changed" />
           Hanya yang pernah berubah harga
         </label>
-      </>}
-      tools={<>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
         <TombolUnduh namaBerkas={selected ? `riwayat-harga-${selected.code}` : 'riwayat-harga'} namaLembar="Riwayat harga"
           baris={items} testId="cost-history-unduh"
           kolom={[
@@ -184,6 +183,7 @@ export default function MaterialCostHistoryModule({ token }) {
           title="Muat ulang" aria-label="Muat ulang" data-testid="cost-history-refresh">
           <RefreshCw className={memuat ? 'animate-spin' : ''} />
         </Button>
+        </div>
       </>}
       summary={selectedId ? (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="cost-detail-summary">
@@ -264,8 +264,8 @@ export default function MaterialCostHistoryModule({ token }) {
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <span>
           Harga barang tidak pernah diketik di modul mana pun — ia lahir dari penerimaan pembelian (rata-rata bergerak).
-          Baris bersumber <em>Hasil cutting</em> adalah nilai potongan yang lahir saat kain dipotong, dan <em>Koreksi manual</em>
-          hanya bisa dilakukan di layar Valuasi.
+          Baris bersumber <em>Hasil cutting</em> adalah nilai potongan yang lahir saat kain dipotong, dan{' '}
+          <em>Koreksi manual</em> hanya bisa dilakukan di layar Valuasi.
         </span>
       </p>
       {selected && (
