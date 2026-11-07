@@ -12,6 +12,12 @@
  *   2. Tahapan Lifecycle — posisi antrean Draft → Menunggu → Disetujui → Naik Produksi.
  *   3. Ringkasan angka dalam tile kecil (bukan kartu raksasa).
  *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, 4 kartu angka StatTile (+ satu kalimat), antrean & riwayat &
+ * posisi style = tabel standar yang bisa diunduh (posisi style berhalaman 25, disaring lewat pil tahap — dulu 7 kotak
+ * HURUF BESAR), detail & pembanding revisi = popup standar, keputusan = popup form (Setujui hijau, Tolak merah),
+ * tanpa warna mentah / kode status di layar. Kartu "Style aktif" (selalu 0: status itu tidak dipakai alur sekarang)
+ * tidak ditampilkan.
+ *
  * Endpoint approval-nya sudah ada sejak lama tapi tidak pernah dipakai UI:
  *   POST /api/dewi/rnd/styles/{id}/owner-approve · /owner-reject
  *   POST /api/dewi/rnd/sample-requests/{id}/approve · /reject
@@ -20,48 +26,44 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  FlaskConical, RefreshCw, CheckCircle2, XCircle, Clock, ArrowRight,
-  Palette, Layers, Calculator, Ruler, Activity, Database, Loader2, Inbox,
-  Eye, History, ImageOff, Paperclip, ThumbsUp, ThumbsDown, GitCompare,
-  ListTree, Mail, Send,
+  RefreshCw, CheckCircle2, XCircle, ArrowRight, Loader2, Eye, ImageOff, Paperclip, GitCompare, Send,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { GlassCard } from '@/components/ui/glass';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
-} from '@/components/ui/dialog';
-import { PageHeader } from './moduleAtoms';
+import FilterChips from '@/components/ui/filter-chips';
+import PaginationLite from '@/components/ui/pagination-lite';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { Isian } from '@/components/ui/form-popup';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { cn } from '@/lib/utils';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
 import RnDRevisionCompare, { authImageUrl } from './RnDRevisionCompare';
 import { RnDCompletenessBoard } from './RnDCompletenessBoard';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
-const KIND_STYLE = {
-  style: { icon: Palette, cls: 'bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/30' },
-  sample: { icon: FlaskConical, cls: 'bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/30' },
-  tech_pack: { icon: Ruler, cls: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30' },
+const KIND_TONE = { style: 'primary', sample: 'info', tech_pack: 'success' };
+const SLA_LABEL = {
+  baru: { label: 'baru', tone: 'muted' },
+  'perlu perhatian': { label: 'perlu perhatian', tone: 'warning' },
+  terlambat: { label: 'terlambat', tone: 'danger' },
 };
-
-const SLA_STYLE = {
-  baru: 'bg-muted text-muted-foreground border-border',
-  'perlu perhatian': 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
-  terlambat: 'bg-destructive/15 text-destructive border-destructive/30',
+// Nada tahap lifecycle (7 langkah) — dipakai tabel "Posisi tiap style".
+const STAGE_TONE = {
+  draft: 'muted', pending_owner_review: 'warning', approved_for_launch: 'info', techpack: 'primary',
+  pattern: 'primary', sample: 'info', promoted: 'success',
 };
-
-// Warna tahap lifecycle (7 langkah) — dipakai tabel "Posisi Tiap Style".
-const STAGE_CLS = {
-  draft: 'bg-muted text-muted-foreground border-border',
-  pending_owner_review: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
-  approved_for_launch: 'bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/30',
-  techpack: 'bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/30',
-  pattern: 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border-indigo-500/30',
-  sample: 'bg-teal-500/15 text-teal-600 dark:text-teal-400 border-teal-500/30',
-  promoted: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
+const NAMA_SUMBER = {
+  dewi_rnd_styles: 'Style RnD', dewi_rnd_sample_requests: 'Permintaan sample', dewi_rnd_tech_packs: 'Tech pack',
+  dewi_rnd_patterns: 'Pola',
 };
+const kalimat = (s) => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t; };
 
 const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
 
@@ -160,571 +162,455 @@ export default function RnDPortalDashboard({ token, onNavigate }) {
   };
 
   const items = pending?.items || [];
+  const [tahap, setTahap] = useState('');
+  const [hal, setHal] = useState(1);
+  const PER_HAL = 25;
+  const semuaStyle = lifecycle?.styles || [];
+  const styleTersaring = tahap ? semuaStyle.filter((r) => r.stage === tahap) : semuaStyle;
+  const styleTampil = styleTersaring.slice((hal - 1) * PER_HAL, hal * PER_HAL);
+  const stages = lifecycle?.stages || pending?.funnel || [];
+  const bukaKeputusan = (it, action) => { setDecision({ item: it, action }); setNotes(''); };
 
   return (
-    <div className="space-y-4" data-testid="rnd-approval-cockpit">
-      <PageHeader
-        icon={FlaskConical}
-        title="Ringkasan & Approval RnD"
-        subtitle="Layar keputusan: apa yang menunggu persetujuan manajemen, sudah menunggu berapa lama, dan apa langkah berikutnya."
-        testId="rnd-cockpit-header"
-        actions={(
-          <Button variant="outline" size="sm" onClick={load} data-testid="rnd-refresh">
-            <RefreshCw className={loading ? 'animate-spin' : ''} /> Muat ulang
-          </Button>
-        )}
-      />
-
-      {/* ── 0. Papan kelengkapan data produk (owner 2026-09-12) ─────────── */}
-      <RnDCompletenessBoard token={token} onNavigate={onNavigate} />
-
-      {/* ── 1. Antrean keputusan ─────────────────────────────────────────── */}
-      <GlassCard className="p-4" hover={false}>
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <Inbox className="h-4 w-4 text-primary" /> Antrean Keputusan
-            </h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Bola ada di manajemen. Setujui atau tolak langsung dari sini.
-            </p>
+    <PageLayout
+      testId="rnd-approval-cockpit"
+      headerTestId="rnd-cockpit-header"
+      title="Ringkasan RnD"
+      subtitle="Yang menunggu keputusan manajemen, sudah berapa lama, dan langkah berikutnya."
+      actions={onNavigate ? (
+        <Button variant="outline" onClick={() => onNavigate('rnd-styles')} data-testid="rnd-open-styles">Buka style RnD<ArrowRight /></Button>
+      ) : null}
+      tools={(
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid="rnd-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      )}
+      summary={(
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="rnd-kpis">
+            <StatTile testId="rnd-kpi-Menunggu" label="Menunggu keputusan" value={loading && !pending ? '…' : fmtNum(items.length)}
+              accent={pending?.overdue > 0 ? 'danger' : items.length ? 'warning' : 'default'}
+              sub={pending?.overdue > 0 ? `${fmtNum(pending.overdue)} terlambat (≥ ${pending?.thresholds?.stale_days ?? 7} hari)` : 'Style, sample, dan tech pack'} />
+            <StatTile testId="rnd-kpi-Total Style" label="Total style" value={fmtNum(kpi.total_styles)} sub={`${fmtNum(kpi.total_variants)} varian`} />
+            <StatTile testId="rnd-kpi-Sample" label="Sample" value={fmtNum(kpi.total_samples)} sub={`${fmtNum(kpi.approved_samples)} disetujui`} />
+            <StatTile testId="rnd-kpi-Tech Pack" label="Tech pack" value={fmtNum(lifecycle?.totals?.tech_packs)}
+              sub={`${fmtNum(lifecycle?.totals?.tech_packs_approved)} disetujui`} />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Revisi {fmtNum(kpi.total_revisions)} · pola {fmtNum(kpi.total_patterns)} · HPP tersimpan {fmtNum(kpi.total_hpp)}
             {pending?.thresholds && (
-              <p className="mt-1 text-[11px] text-muted-foreground" data-testid="rnd-sla-threshold-note">
-                Ambang aktif: kuning ≥ {pending.thresholds.attention_days} hari · merah ≥{' '}
-                {pending.thresholds.stale_days} hari — diatur owner di Portal Manajemen →
-                Ringkasan Bisnis → Ambang Peringatan.
-              </p>
+              <span data-testid="rnd-sla-threshold-note">
+                {' · '}tanda kuning ≥ {pending.thresholds.attention_days} hari, merah ≥ {pending.thresholds.stale_days} hari (diatur di Ringkasan Bisnis › Atur ambang)
+              </span>
             )}
+          </p>
+        </div>
+      )}
+    >
+      {/* ── 1. Antrean keputusan ─────────────────────────────────────────── */}
+      <GlassCard className="space-y-3 p-4" data-konten-utama="">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <p className="text-base font-semibold text-foreground">Antrean keputusan</p>
+            <p className="text-sm text-muted-foreground">Setujui atau tolak langsung dari sini; klik baris untuk detail dan foto.</p>
           </div>
           <div className="flex items-center gap-2">
-            <Badge variant={items.length ? 'default' : 'secondary'} className="text-[11px]"
-                   data-testid="rnd-pending-count">
-              {items.length} menunggu
-            </Badge>
+            <span className="text-sm text-muted-foreground" data-testid="rnd-pending-count">{fmtNum(items.length)} menunggu</span>
             {pending?.overdue > 0 && (
-              <Badge variant="outline" className="border-destructive/40 text-[11px] text-destructive"
-                     data-testid="rnd-overdue-count">
-                {pending.overdue} terlambat (&ge;{pending?.thresholds?.stale_days ?? 7} hari)
-              </Badge>
+              <span data-testid="rnd-overdue-count">
+                <StatusBadge status="terlambat" label={`${fmtNum(pending.overdue)} terlambat`} tone="danger" />
+              </span>
             )}
+            <TombolUnduh namaBerkas="rnd-antrean-keputusan" namaLembar="Antrean keputusan" baris={items} testId="rnd-pending-unduh"
+              kolom={[
+                { label: 'Jenis', nilai: (it) => it.kind_label },
+                { label: 'Kode', nilai: (it) => it.code },
+                { label: 'Judul', nilai: (it) => it.title },
+                { label: 'Keterangan', nilai: (it) => it.subtitle || '' },
+                { label: 'Diajukan oleh', nilai: (it) => it.requested_by || '' },
+                { label: 'Menunggu (hari)', nilai: (it) => it.age_days },
+                { label: 'Status tunggu', nilai: (it) => SLA_LABEL[it.sla]?.label || it.sla || '' },
+                { label: 'Langkah berikutnya', nilai: (it) => it.next_step || '' },
+              ]} />
           </div>
         </div>
 
         {loading && !pending ? (
-          <div className="space-y-2">
-            {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-16 rounded-lg" />)}
-          </div>
+          <div className="space-y-2">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-12 rounded-lg" />)}</div>
         ) : items.length === 0 ? (
-          <div className="py-10 text-center" data-testid="rnd-pending-empty">
-            <CheckCircle2 className="mx-auto mb-2 h-8 w-8 text-emerald-600 dark:text-emerald-400" />
-            <p className="text-sm font-medium text-foreground">Tidak ada yang menunggu keputusan</p>
-            <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
-              Item muncul di sini ketika staf RnD mengirim style untuk direview
-              (status <span className="font-mono">pending_owner_review</span>), mengajukan
-              permintaan sample, atau menyiapkan tech pack.
-            </p>
-          </div>
+          <EmptyState icon={CheckCircle2} className="py-8" testId="rnd-pending-empty" title="Tidak ada yang menunggu keputusan"
+            description="Item muncul di sini ketika staf RnD mengirim style untuk ditinjau, mengajukan permintaan sample, atau menyiapkan tech pack." />
         ) : (
-          <ul className="space-y-2" data-testid="rnd-pending-list">
-            {items.map((it) => {
-              const K = KIND_STYLE[it.kind] || KIND_STYLE.style;
-              const Icon = K.icon;
-              return (
-                <li key={`${it.kind}-${it.id}`}
-                    className="rounded-lg border border-border p-3"
+          <div className="overflow-x-auto" data-testid="rnd-pending-list">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Dokumen</TableHead>
+                  <TableHead className="hidden md:table-cell">Diajukan oleh</TableHead>
+                  <TableHead>Menunggu</TableHead>
+                  <TableHead className="text-right"><span className="sr-only">Aksi</span></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((it) => (
+                  <TableRow key={`${it.kind}-${it.id}`} className="cursor-pointer" onClick={() => setDetail(it)}
                     data-testid={`rnd-pending-${it.kind}-${it.id}`}>
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="mb-1 flex flex-wrap items-center gap-2">
-                        <span className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium ${K.cls}`}>
-                          <Icon className="h-3 w-3" /> {it.kind_label}
-                        </span>
-                        <span className="font-mono text-[11px] text-muted-foreground">{it.code}</span>
-                        <span className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] ${SLA_STYLE[it.sla]}`}>
-                          <Clock className="h-3 w-3" /> menunggu {it.age_days} hari · {it.sla}
-                        </span>
+                    <TableCell className="whitespace-normal">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <StatusBadge status={it.kind} label={it.kind_label} tone={KIND_TONE[it.kind] || 'default'} />
+                        <span className="text-xs text-muted-foreground">{it.code}</span>
+                        {it.images?.length > 0 && <span className="text-xs text-muted-foreground">{it.images.length} foto</span>}
                       </div>
-                      <p className="truncate text-sm font-semibold text-foreground">{it.title}</p>
-                      <p className="truncate text-xs text-muted-foreground">{it.subtitle}</p>
-                      <p className="mt-1 text-[11px] text-muted-foreground/80">
-                        Diajukan oleh <span className="font-medium text-foreground/80">{it.requested_by}</span>
-                        {' · '}{it.next_step}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <Button variant="ghost" size="sm" onClick={() => setDetail(it)}
-                              data-testid={`rnd-detail-${it.id}`}>
-                        <Eye /> Detail
-                        {it.images?.length > 0 && (
-                          <span className="ml-1 rounded bg-foreground/10 px-1 text-[10px]">
-                            {it.images.length} foto
-                          </span>
-                        )}
-                      </Button>
-                      {it.reject_url && (
-                        <Button variant="outline" size="sm" disabled={busy === it.id}
-                                onClick={() => { setDecision({ item: it, action: 'reject' }); setNotes(''); }}
-                                data-testid={`rnd-reject-${it.id}`}
-                                className="border-destructive/40 text-destructive hover:bg-destructive/10">
-                          <XCircle /> Tolak
+                      <p className="mt-0.5 font-medium text-foreground">{it.title}</p>
+                      <p className="text-xs text-muted-foreground">{it.subtitle}{it.next_step ? ` · ${it.next_step}` : ''}</p>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">{it.requested_by}</TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      <StatusBadge status={it.sla} label={`${fmtNum(it.age_days)} hari · ${SLA_LABEL[it.sla]?.label || it.sla}`} tone={SLA_LABEL[it.sla]?.tone || 'muted'} />
+                    </TableCell>
+                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                      <div className="inline-flex flex-wrap justify-end gap-2">
+                        <Button variant="ghost" size="icon-sm" onClick={() => setDetail(it)} title="Lihat detail" aria-label="Lihat detail"
+                          data-testid={`rnd-detail-${it.id}`}>
+                          <Eye />
                         </Button>
-                      )}
-                      <Button size="sm" disabled={busy === it.id}
-                              onClick={() => { setDecision({ item: it, action: 'approve' }); setNotes(''); }}
-                              data-testid={`rnd-approve-${it.id}`}>
-                        {busy === it.id ? <Loader2 className="animate-spin" /> : <CheckCircle2 />} Setujui
-                      </Button>
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+                        {it.reject_url && (
+                          <Button variant="destructive" size="sm" disabled={busy === it.id} onClick={() => bukaKeputusan(it, 'reject')}
+                            data-testid={`rnd-reject-${it.id}`}>
+                            <XCircle />Tolak
+                          </Button>
+                        )}
+                        <Button variant="success" size="sm" disabled={busy === it.id} onClick={() => bukaKeputusan(it, 'approve')}
+                          data-testid={`rnd-approve-${it.id}`}>
+                          {busy === it.id ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}Setujui
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         )}
       </GlassCard>
 
-      {/* ── 2. Tahapan lifecycle (7 langkah) ─────────────────────────────── */}
-      <GlassCard className="p-4" hover={false}>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h3 className="text-sm font-semibold text-foreground">Tahapan Lifecycle Style</h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Draft → Menunggu Keputusan → Disetujui → Tech Pack → Pola &amp; Marking → Sample → Naik Produksi.
-              Satu style menempati satu tahap terjauh yang sudah dicapai.
+      {/* ── 2. Tahapan & posisi tiap style (pil tahap menyaring tabel) ───── */}
+      <GlassCard className="space-y-3 p-4" data-testid="rnd-lifecycle-card">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-base font-semibold text-foreground">Posisi tiap style</p>
+            <p className="text-sm text-muted-foreground">
+              Draf → menunggu keputusan → disetujui → tech pack → pola → sample → naik produksi. Satu style menempati tahap terjauh yang sudah dicapai.
             </p>
+            {lifecycle?.totals && (
+              <p className="mt-1 text-xs text-muted-foreground" data-testid="rnd-lifecycle-totals">
+                {fmtNum(lifecycle.totals.tech_packs)} tech pack ({fmtNum(lifecycle.totals.tech_packs_approved)} disetujui) ·
+                {' '}{fmtNum(lifecycle.totals.samples)} sample · {fmtNum(lifecycle.totals.sample_pics)} PIC · {fmtNum(lifecycle.totals.patterns)} pola
+              </p>
+            )}
           </div>
-          {lifecycle?.totals && (
-            <div className="flex flex-wrap items-center gap-1.5" data-testid="rnd-lifecycle-totals">
-              <Badge variant="outline" className="text-[11px]">
-                {fmtNum(lifecycle.totals.tech_packs)} tech pack ({fmtNum(lifecycle.totals.tech_packs_approved)} disetujui)
-              </Badge>
-              <Badge variant="outline" className="text-[11px]">
-                {fmtNum(lifecycle.totals.samples)} sample · {fmtNum(lifecycle.totals.sample_pics)} PIC
-              </Badge>
-              <Badge variant="outline" className="text-[11px]">
-                {fmtNum(lifecycle.totals.patterns)} pola
-              </Badge>
-            </div>
-          )}
+          <TombolUnduh namaBerkas="rnd-posisi-style" namaLembar="Posisi style" baris={styleTersaring} testId="rnd-lifecycle-unduh"
+            kolom={[
+              { label: 'Kode', nilai: (r) => r.style_code },
+              { label: 'Nama', nilai: (r) => r.style_name },
+              { label: 'Tahap', nilai: (r) => r.stage_label },
+              { label: 'Menunggu (hari)', nilai: (r) => r.waiting_days || 0 },
+              { label: 'Varian', nilai: (r) => r.variants || 0 },
+              { label: 'Foto', nilai: (r) => r.photos || 0 },
+              { label: 'Tech pack', nilai: (r) => (r.techpack?.count ? `${r.techpack.version || '-'} · ${r.techpack.status || 'draf'}` : 'Belum ada') },
+              { label: 'Pola', nilai: (r) => r.patterns || 0 },
+              { label: 'Sample', nilai: (r) => (r.sample?.count ? `${r.sample.code || '-'} · ${r.sample.status || '-'} · PIC ${r.sample.pic || '(belum ditentukan)'}` : 'Belum ada') },
+              { label: 'HPP', nilai: (r) => r.hpp || 0 },
+              { label: 'Langkah berikutnya', nilai: (r) => r.next_action || '' },
+            ]} />
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7" data-testid="rnd-funnel">
-          {(lifecycle?.stages || pending?.funnel || []).map((f, idx) => (
-            <div key={f.key} className="rounded-lg border border-border px-3 py-2"
-                 data-testid={`rnd-funnel-${f.key}`}>
-              <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                {idx > 0 && <ArrowRight className="h-3 w-3 opacity-50" />} {f.stage}
-              </div>
-              <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{fmtNum(f.count)}</p>
-              <p className="text-[10px] text-muted-foreground">{f.hint}</p>
-            </div>
-          ))}
-        </div>
-      </GlassCard>
-
-      {/* ── 2b. Posisi tiap style (granular: tech pack, pola, sample + PIC) ── */}
-      <GlassCard className="p-4" hover={false} data-testid="rnd-lifecycle-card">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <ListTree className="h-4 w-4 text-primary" /> Posisi Tiap Style
-            </h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Terlihat style mana tersendat di tahap apa — termasuk versi tech pack dan siapa pembuat sample-nya.
-            </p>
-          </div>
-          <Badge variant="secondary" className="text-[11px]" data-testid="rnd-lifecycle-count">
-            {fmtNum(lifecycle?.total_styles)} style
-          </Badge>
-        </div>
+        {stages.length > 0 && (
+          <FilterChips testId="rnd-funnel" ariaLabel="Saring tahap" hideWhenEmpty={false} value={tahap}
+            onChange={(k) => { setTahap(k); setHal(1); }}
+            options={[{ key: '', label: 'Semua', count: lifecycle?.total_styles ?? semuaStyle.length },
+              ...stages.map((f) => ({ key: f.key, label: kalimat(f.stage), count: f.count }))]} />
+        )}
         {!lifecycle ? (
           <Skeleton className="h-28 rounded-lg" />
-        ) : (lifecycle.styles || []).length === 0 ? (
-          <p className="py-8 text-center text-xs text-muted-foreground" data-testid="rnd-lifecycle-empty">
-            Belum ada style RnD. Setelah staf RnD membuat style, posisinya muncul di sini.
+        ) : styleTersaring.length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground" data-testid="rnd-lifecycle-empty">
+            {semuaStyle.length ? 'Tidak ada style di tahap ini.' : 'Belum ada style RnD. Setelah staf RnD membuat style, posisinya muncul di sini.'}
           </p>
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-max text-xs" data-testid="rnd-lifecycle-table">
-              <thead className="bg-[var(--glass-bg)]">
-                <tr>
-                  {['STYLE', 'TAHAP SEKARANG', 'VARIAN', 'FOTO', 'TECH PACK', 'POLA',
-                    'SAMPLE (PIC)', 'HPP', 'LANGKAH BERIKUTNYA'].map((h) => (
-                    <th key={h} className="px-3 py-2 text-left font-semibold text-muted-foreground">{h}</th>
+          <>
+            <div className="overflow-x-auto">
+              <Table data-testid="rnd-lifecycle-table">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Style</TableHead>
+                    <TableHead>Tahap</TableHead>
+                    <TableHead className="hidden text-right xl:table-cell">Varian</TableHead>
+                    <TableHead className="hidden text-right xl:table-cell">Foto</TableHead>
+                    <TableHead className="hidden lg:table-cell">Tech pack</TableHead>
+                    <TableHead className="hidden lg:table-cell">Sample (PIC)</TableHead>
+                    <TableHead className="hidden md:table-cell">Langkah berikutnya</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {styleTampil.map((r) => (
+                    <TableRow key={r.id} data-testid={`rnd-lifecycle-row-${r.id}`}>
+                      <TableCell className="whitespace-nowrap"><span className="mr-2 text-xs text-muted-foreground">{r.style_code}</span>{r.style_name}</TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        <StatusBadge status={r.stage} label={r.stage_label} tone={STAGE_TONE[r.stage] || 'default'} />
+                        {r.waiting_days > 0 && <span className="ml-1 text-xs text-muted-foreground">{r.waiting_days} hari</span>}
+                      </TableCell>
+                      <TableCell className="hidden text-right tabular-nums xl:table-cell">{fmtNum(r.variants)}</TableCell>
+                      <TableCell className="hidden text-right tabular-nums xl:table-cell">{fmtNum(r.photos)}</TableCell>
+                      <TableCell className="hidden lg:table-cell">
+                        {r.techpack?.count ? `${r.techpack.version || '-'} · ${r.techpack.status || 'draf'}` : <span className="text-muted-foreground">Belum ada</span>}
+                      </TableCell>
+                      <TableCell className="hidden lg:table-cell">
+                        {r.sample?.count ? `${r.sample.code || '-'} · ${r.sample.status || '-'} · PIC ${r.sample.pic || '(belum ditentukan)'}`
+                          : <span className="text-muted-foreground">Belum ada</span>}
+                      </TableCell>
+                      <TableCell className="hidden max-w-[280px] whitespace-normal text-muted-foreground md:table-cell">{r.next_action}</TableCell>
+                    </TableRow>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
-                {lifecycle.styles.map((r) => (
-                  <tr key={r.id} className="border-t border-border hover:bg-[var(--glass-bg-hover)]"
-                      data-testid={`rnd-lifecycle-row-${r.id}`}>
-                    <td className="px-3 py-2">
-                      <span className="font-mono text-foreground/80">{r.style_code}</span>
-                      <span className="ml-2 text-muted-foreground">{r.style_name}</span>
-                    </td>
-                    <td className="px-3 py-2">
-                      <span className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium ${
-                        STAGE_CLS[r.stage] || STAGE_CLS.draft}`}>
-                        {r.stage_label}
-                      </span>
-                      {r.waiting_days > 0 && (
-                        <span className="ml-1 text-[10px] text-muted-foreground">{r.waiting_days} hari</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 tabular-nums text-muted-foreground">{fmtNum(r.variants)}</td>
-                    <td className="px-3 py-2 tabular-nums text-muted-foreground">{fmtNum(r.photos)}</td>
-                    <td className="px-3 py-2 text-muted-foreground">
-                      {r.techpack?.count
-                        ? `${r.techpack.version || '-'} · ${r.techpack.status || 'draft'}`
-                        : <span className="text-amber-600 dark:text-amber-400">belum ada</span>}
-                    </td>
-                    <td className="px-3 py-2 tabular-nums text-muted-foreground">{fmtNum(r.patterns)}</td>
-                    <td className="px-3 py-2 text-muted-foreground">
-                      {r.sample?.count ? (
-                        <>
-                          <span className="font-mono">{r.sample.code || '-'}</span>
-                          <span className="ml-1">· {r.sample.status || '-'}</span>
-                          <span className="ml-1 text-foreground/70">
-                            · PIC {r.sample.pic || '(belum ditentukan)'}
-                          </span>
-                        </>
-                      ) : <span className="text-amber-600 dark:text-amber-400">belum ada</span>}
-                    </td>
-                    <td className="px-3 py-2 tabular-nums text-muted-foreground">{fmtNum(r.hpp)}</td>
-                    <td className="max-w-[260px] px-3 py-2 text-muted-foreground">{r.next_action}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </TableBody>
+              </Table>
+            </div>
+            {styleTersaring.length > PER_HAL && (
+              <PaginationLite page={hal} totalPages={Math.ceil(styleTersaring.length / PER_HAL)} total={styleTersaring.length}
+                pageSize={PER_HAL} onPageChange={setHal} />
+            )}
+          </>
         )}
       </GlassCard>
 
-      {/* ── 2c. Rapor keputusan mingguan ─────────────────────────────────── */}
-      <GlassCard className="p-4" hover={false} data-testid="rnd-weekly-card">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+      {/* ── 3. Rapor keputusan mingguan ─────────────────────────────────── */}
+      <GlassCard className="space-y-3 p-4" data-testid="rnd-weekly-card">
+        <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <Mail className="h-4 w-4 text-primary" /> Rapor Keputusan Mingguan
-            </h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Dikirim otomatis setiap <span className="font-medium text-foreground/80">Senin 08:00 WIB</span> sebagai
-              notifikasi ke manajemen: style disetujui, ditolak, dan yang menunggu terlalu lama
-              (&gt;{weekly?.stale_days ?? 7} hari).
+            <p className="text-base font-semibold text-foreground">Rapor keputusan mingguan</p>
+            <p className="text-sm text-muted-foreground">
+              Dikirim otomatis setiap Senin pukul 08.00 WIB ke manajemen: style disetujui, ditolak, dan yang menunggu lebih dari {weekly?.stale_days ?? 7} hari.
             </p>
           </div>
-          <Button size="sm" variant="outline" onClick={sendWeeklyReport} disabled={sending || !weekly}
-                  data-testid="rnd-weekly-send">
-            {sending ? <Loader2 className="animate-spin" /> : <Send />} Kirim sekarang
+          <Button variant="outline" onClick={sendWeeklyReport} disabled={sending || !weekly} data-testid="rnd-weekly-send">
+            {sending ? <Loader2 className="animate-spin" /> : <Send />}Kirim sekarang
           </Button>
         </div>
         {!weekly ? (
           <Skeleton className="h-20 rounded-lg" />
         ) : (
           <>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4" data-testid="rnd-weekly-counts">
-              {[
-                ['Disetujui', weekly.counts?.approved, 'emerald'],
-                ['Ditolak', weekly.counts?.rejected, 'destructive'],
-                ['Masih Menunggu', weekly.counts?.pending, 'muted'],
-                ['Menunggu Terlalu Lama', weekly.counts?.stale, 'amber'],
-              ].map(([label, val]) => (
-                <div key={label} className="rounded-lg border border-border px-3 py-2"
-                     data-testid={`rnd-weekly-${label}`}>
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
-                  <p className="mt-1 text-xl font-bold tabular-nums text-foreground">{fmtNum(val)}</p>
-                </div>
-              ))}
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="rnd-weekly-counts">
+              <StatTile testId="rnd-weekly-Disetujui" label="Disetujui" value={fmtNum(weekly.counts?.approved)} />
+              <StatTile testId="rnd-weekly-Ditolak" label="Ditolak" value={fmtNum(weekly.counts?.rejected)} />
+              <StatTile testId="rnd-weekly-Masih Menunggu" label="Masih menunggu" value={fmtNum(weekly.counts?.pending)} />
+              <StatTile testId="rnd-weekly-Menunggu Terlalu Lama" label="Menunggu terlalu lama" value={fmtNum(weekly.counts?.stale)}
+                accent={weekly.counts?.stale ? 'warning' : 'default'} />
             </div>
-            <p className="mt-2 text-[11px] text-muted-foreground">
-              Periode rapor: {weekly.period_from} → {weekly.period_to} · pekan {weekly.week_key}
-            </p>
+            <p className="text-xs text-muted-foreground">Periode rapor: {weekly.period_from} s.d. {weekly.period_to} · pekan {weekly.week_key}</p>
             {(weekly.stale || []).length > 0 && (
-              <ul className="mt-2 space-y-1" data-testid="rnd-weekly-stale-list">
-                {weekly.stale.slice(0, 5).map((r) => (
-                  <li key={r.id}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs">
-                    <span className="font-medium text-foreground">
-                      <span className="font-mono">{r.style_code}</span>
-                      <span className="ml-2 font-normal text-muted-foreground">{r.style_name}</span>
-                    </span>
-                    <span className="text-muted-foreground">
-                      menunggu {r.age_days} hari · diajukan {r.requested_by}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <Table data-testid="rnd-weekly-stale-list">
+                <TableHeader>
+                  <TableRow><TableHead>Style menunggu terlalu lama</TableHead><TableHead className="text-right">Menunggu</TableHead><TableHead className="hidden sm:table-cell">Diajukan oleh</TableHead></TableRow>
+                </TableHeader>
+                <TableBody>
+                  {weekly.stale.slice(0, 5).map((r) => (
+                    <TableRow key={r.id}>
+                      <TableCell><span className="mr-2 text-xs text-muted-foreground">{r.style_code}</span>{r.style_name}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.age_days} hari</TableCell>
+                      <TableCell className="hidden sm:table-cell">{r.requested_by}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             )}
           </>
         )}
       </GlassCard>
 
-      {/* ── 3. Ringkasan angka (tile kecil) ──────────────────────────────── */}
-      <GlassCard className="p-4" hover={false}>
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-foreground">Ringkasan RnD</h3>
-          {onNavigate && (
-            <Button variant="ghost" size="sm" onClick={() => onNavigate('rnd-styles')}
-                    data-testid="rnd-open-styles">
-              Buka Style RnD <ArrowRight />
-            </Button>
-          )}
-        </div>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6" data-testid="rnd-kpis">
-          {[
-            ['Total Style', kpi.total_styles, Palette],
-            ['Style Aktif', kpi.active_styles, CheckCircle2],
-            ['Varian', kpi.total_variants, Layers],
-            ['Sample', kpi.total_samples, FlaskConical],
-            ['Sample Disetujui', kpi.approved_samples, CheckCircle2],
-            ['Revisi', kpi.total_revisions, Activity],
-            ['Pola', kpi.total_patterns, Ruler],
-            ['HPP Tersimpan', kpi.total_hpp, Calculator],
-          ].map(([label, val, Icon]) => (
-            <div key={label} className="rounded-lg border border-border px-3 py-2"
-                 data-testid={`rnd-kpi-${label}`}>
-              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                <Icon className="h-3 w-3" /> {label}
-              </div>
-              <p className="mt-1 text-xl font-bold tabular-nums text-foreground">{fmtNum(val)}</p>
-            </div>
-          ))}
-        </div>
-      </GlassCard>
-
       {/* ── 4. Riwayat keputusan ─────────────────────────────────────────── */}
-      <GlassCard className="p-4" hover={false} data-testid="rnd-history-card">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <GlassCard className="space-y-3 p-4" data-testid="rnd-history-card">
+        <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <History className="h-4 w-4 text-primary" /> Riwayat Keputusan
-            </h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Siapa menyetujui atau menolak, kapan, dan apa alasannya.
+            <p className="text-base font-semibold text-foreground">Riwayat keputusan</p>
+            <p className="text-sm text-muted-foreground">
+              Siapa menyetujui atau menolak, kapan, dan alasannya · {fmtNum(history?.approved)} disetujui · {fmtNum(history?.rejected)} ditolak.
             </p>
           </div>
-          <div className="flex items-center gap-1.5">
-            <Badge variant="outline" className="border-emerald-500/40 text-[11px] text-emerald-600 dark:text-emerald-400">
-              {history?.approved || 0} disetujui
-            </Badge>
-            <Badge variant="outline" className="border-destructive/40 text-[11px] text-destructive">
-              {history?.rejected || 0} ditolak
-            </Badge>
-          </div>
+          <TombolUnduh namaBerkas="rnd-riwayat-keputusan" namaLembar="Riwayat keputusan" baris={history?.items || []} testId="rnd-history-unduh"
+            kolom={[
+              { label: 'Jenis', nilai: (r) => r.kind_label },
+              { label: 'Kode', nilai: (r) => r.code },
+              { label: 'Judul', nilai: (r) => r.title },
+              { label: 'Hasil', nilai: (r) => (r.result === 'approved' ? 'Disetujui' : 'Ditolak') + (r.promoted ? ' · naik produksi' : '') },
+              { label: 'Diputuskan oleh', nilai: (r) => r.decided_by || '' },
+              { label: 'Tanggal', nilai: (r) => (r.decided_at ? new Date(r.decided_at).toLocaleString('id-ID') : '') },
+              { label: 'Alasan / catatan', nilai: (r) => r.notes || '' },
+            ]} />
         </div>
         {!history ? (
           <Skeleton className="h-24 rounded-lg" />
         ) : (history.items || []).length === 0 ? (
-          <p className="py-8 text-center text-xs text-muted-foreground" data-testid="rnd-history-empty">
-            Belum ada keputusan tercatat. Setiap persetujuan/penolakan dari layar ini akan muncul di sini
-            beserta nama pemutus dan alasannya.
+          <p className="py-6 text-center text-sm text-muted-foreground" data-testid="rnd-history-empty">
+            Belum ada keputusan tercatat. Setiap persetujuan/penolakan dari layar ini muncul di sini beserta nama pemutus dan alasannya.
           </p>
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-max text-xs" data-testid="rnd-history-table">
-              <thead className="bg-[var(--glass-bg)]">
-                <tr>
-                  {['JENIS', 'KODE', 'JUDUL', 'HASIL', 'DIPUTUSKAN OLEH', 'TANGGAL', 'ALASAN / CATATAN'].map((h) => (
-                    <th key={h} className="px-3 py-2 text-left font-semibold text-muted-foreground">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
+          <div className="overflow-x-auto">
+            <Table data-testid="rnd-history-table">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Dokumen</TableHead>
+                  <TableHead>Hasil</TableHead>
+                  <TableHead className="hidden md:table-cell">Diputuskan oleh</TableHead>
+                  <TableHead className="hidden sm:table-cell">Tanggal</TableHead>
+                  <TableHead className="hidden lg:table-cell">Alasan / catatan</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {history.items.map((r) => (
-                  <tr key={`${r.kind}-${r.id}`} className="border-t border-border hover:bg-[var(--glass-bg-hover)]"
-                      data-testid={`rnd-history-${r.id}`}>
-                    <td className="px-3 py-2 text-muted-foreground">{r.kind_label}</td>
-                    <td className="px-3 py-2 font-mono text-foreground/80">{r.code}</td>
-                    <td className="max-w-[220px] truncate px-3 py-2 text-foreground">{r.title}</td>
-                    <td className="px-3 py-2">
-                      <span className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium ${
-                        r.result === 'approved'
-                          ? 'border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                          : 'border-destructive/30 bg-destructive/15 text-destructive'}`}>
-                        {r.result === 'approved' ? <ThumbsUp className="h-3 w-3" /> : <ThumbsDown className="h-3 w-3" />}
-                        {r.result === 'approved' ? 'Disetujui' : 'Ditolak'}
-                      </span>
-                      {r.promoted && (
-                        <span className="ml-1 rounded border border-border px-1 text-[10px] text-muted-foreground">
-                          naik produksi
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-foreground/80">{r.decided_by || '-'}</td>
-                    <td className="px-3 py-2 text-muted-foreground">
-                      {r.decided_at ? new Date(r.decided_at).toLocaleString('id-ID') : '-'}
-                    </td>
-                    <td className="max-w-[280px] px-3 py-2 text-muted-foreground">{r.notes || '—'}</td>
-                  </tr>
+                  <TableRow key={`${r.kind}-${r.id}`} data-testid={`rnd-history-${r.id}`}>
+                    <TableCell className="whitespace-normal">
+                      <span className="text-xs text-muted-foreground">{r.kind_label} · {r.code}</span>
+                      <span className="block max-w-[240px] truncate text-foreground" title={r.title}>{r.title}</span>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      <StatusBadge status={r.result} label={r.result === 'approved' ? 'Disetujui' : 'Ditolak'} tone={r.result === 'approved' ? 'success' : 'danger'} />
+                      {r.promoted && <span className="ml-1 text-xs text-muted-foreground">naik produksi</span>}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">{r.decided_by || '—'}</TableCell>
+                    <TableCell className="hidden whitespace-nowrap sm:table-cell">{r.decided_at ? new Date(r.decided_at).toLocaleString('id-ID') : '—'}</TableCell>
+                    <TableCell className="hidden max-w-[280px] whitespace-normal text-muted-foreground lg:table-cell">{r.notes || '—'}</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         )}
       </GlassCard>
 
-      {/* ── Jejak sumber ─────────────────────────────────────────────────── */}
+      {/* ── 5. Kelengkapan data produk (owner 2026-09-12) ─────────────────── */}
+      <RnDCompletenessBoard token={token} onNavigate={onNavigate} />
+
       {pending?.sources?.length > 0 && (
-        <div className="rounded-lg border border-border bg-[var(--glass-bg)] px-3 py-2"
-             data-testid="rnd-source-trace">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <Database className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="text-[11px] font-semibold text-muted-foreground">Sumber data:</span>
-            {pending.sources.map((s) => (
-              <span key={s.collection} title={s.note || ''}
-                    className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                <span className="font-mono">{s.collection}</span>
-                <span className="ml-1 font-semibold text-foreground">{fmtNum(s.count)}</span>
-              </span>
-            ))}
-          </div>
-        </div>
+        <p className="text-xs text-muted-foreground" data-testid="rnd-source-trace">
+          Sumber data: {pending.sources.map((s) => `${NAMA_SUMBER[s.collection] || 'Data lain'} ${fmtNum(s.count)}`).join(' · ')}.
+        </p>
       )}
 
-      {/* ── Dialog detail item (spesifikasi + foto) ───────────────────────── */}
-      <Dialog open={!!detail} onOpenChange={(v) => { if (!v) setDetail(null); }}>
-        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-2xl" data-testid="rnd-detail-dialog">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              {detail?.title}
-              <span className="font-mono text-xs font-normal text-muted-foreground">{detail?.code}</span>
-            </DialogTitle>
-            <DialogDescription>
-              {detail?.kind_label} · diajukan oleh {detail?.requested_by} · menunggu {detail?.age_days} hari
-            </DialogDescription>
-          </DialogHeader>
+      {/* ── Detail item (spesifikasi + foto) — popup ─────────────────────── */}
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} testId="rnd-detail-dialog"
+          judul={`${detail.title}${detail.code ? ` · ${detail.code}` : ''}`}
+          keterangan={`${detail.kind_label} · diajukan oleh ${detail.requested_by} · menunggu ${detail.age_days} hari`}
+          aksi={(
+            <>
+              {detail.reject_url && (
+                <Button size="sm" variant="destructive" data-testid="rnd-detail-reject" onClick={() => bukaKeputusan(detail, 'reject')}>
+                  <XCircle />Tolak
+                </Button>
+              )}
+              <Button size="sm" variant="success" data-testid="rnd-detail-approve" onClick={() => bukaKeputusan(detail, 'approve')}>
+                <CheckCircle2 />Setujui
+              </Button>
+            </>
+          )}>
+          <dl className="grid grid-cols-1 gap-x-6 divide-y divide-[var(--glass-border)] sm:grid-cols-2 sm:divide-y-0">
+            {Object.entries(detail.detail || {}).map(([k, v]) => (
+              <BarisDetail key={k} label={kalimat(k)}>
+                {v === null || v === undefined || v === '' ? '—'
+                  : (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) ? new Date(v).toLocaleString('id-ID') : String(v))}
+              </BarisDetail>
+            ))}
+          </dl>
 
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
-              {Object.entries(detail?.detail || {}).map(([k, v]) => (
-                <div key={k} className="rounded-md border border-border px-3 py-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{k}</p>
-                  <p className="mt-0.5 break-words text-xs text-foreground">
-                    {v === null || v === undefined || v === '' ? '-'
-                      : (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)
-                        ? new Date(v).toLocaleString('id-ID') : String(v))}
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            <div>
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs font-semibold text-foreground">
-                  Foto / Gambar Desain ({detail?.images?.length || 0})
-                </p>
-                {detail?.kind === 'style' && (
-                  <Button variant="outline" size="sm" data-testid="rnd-detail-compare"
-                          onClick={() => setCompareStyleId(detail.id)}>
-                    <GitCompare /> Bandingkan Revisi
-                    {detail?.revisions_count > 0 && (
-                      <span className="ml-1 rounded bg-foreground/10 px-1 text-[10px]">
-                        {detail.revisions_count}
-                      </span>
-                    )}
-                  </Button>
-                )}
-              </div>
-              {(detail?.images || []).length === 0 ? (
-                <div className="flex items-center gap-2 rounded-md border border-dashed border-border px-3 py-4 text-xs text-muted-foreground"
-                     data-testid="rnd-detail-no-image">
-                  <ImageOff className="h-4 w-4" />
-                  Belum ada gambar dilampirkan pada dokumen ini. Staf RnD dapat menambahkannya di modul RnD.
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" data-testid="rnd-detail-images">
-                  {detail.images.map((img, i) => (
-                    <a key={i} href={authImageUrl(img.url, token)} target="_blank" rel="noreferrer"
-                       className="group overflow-hidden rounded-lg border border-border"
-                       title={img.caption || 'Buka gambar'}>
-                      <img src={authImageUrl(img.url, token)} alt={img.caption || `Gambar ${i + 1}`}
-                           loading="lazy"
-                           className="h-32 w-full object-cover transition-transform duration-200 group-hover:scale-105" />
-                      {img.caption && (
-                        <p className="truncate px-2 py-1 text-[10px] text-muted-foreground">{img.caption}</p>
-                      )}
-                    </a>
-                  ))}
-                </div>
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-medium text-foreground">Foto / gambar desain ({detail.images?.length || 0})</p>
+              {detail.kind === 'style' && (
+                <Button variant="outline" size="sm" data-testid="rnd-detail-compare" onClick={() => setCompareStyleId(detail.id)}>
+                  <GitCompare />Bandingkan revisi{detail.revisions_count > 0 ? ` (${detail.revisions_count})` : ''}
+                </Button>
               )}
             </div>
+            {(detail.images || []).length === 0 ? (
+              <p className="flex items-center gap-2 rounded-md border border-dashed border-[var(--glass-border)] px-3 py-4 text-sm text-muted-foreground"
+                data-testid="rnd-detail-no-image">
+                <ImageOff className="h-4 w-4" />Belum ada gambar dilampirkan. Staf RnD dapat menambahkannya di modul RnD.
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" data-testid="rnd-detail-images">
+                {detail.images.map((img, i) => (
+                  <a key={i} href={authImageUrl(img.url, token)} target="_blank" rel="noreferrer"
+                    className="group overflow-hidden rounded-lg border border-[var(--glass-border)]" title={img.caption || 'Buka gambar'}>
+                    <img src={authImageUrl(img.url, token)} alt={img.caption || `Gambar ${i + 1}`} loading="lazy"
+                      className="h-32 w-full object-cover transition-transform duration-200 group-hover:scale-105" />
+                    {img.caption && <p className="truncate px-2 py-1 text-xs text-muted-foreground">{img.caption}</p>}
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
 
-            {detail?.attachment_url && (
-              <a href={authImageUrl(detail.attachment_url, token)} target="_blank" rel="noreferrer"
-                 className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-xs text-foreground hover:bg-[var(--glass-bg-hover)]"
-                 data-testid="rnd-detail-attachment">
-                <Paperclip className="h-3.5 w-3.5" />
-                {detail.attachment_name || 'Buka lampiran / tech pack'}
+          {detail.attachment_url && (
+            <Button variant="outline" size="sm" asChild data-testid="rnd-detail-attachment">
+              <a href={authImageUrl(detail.attachment_url, token)} target="_blank" rel="noreferrer">
+                <Paperclip />{detail.attachment_name || 'Buka lampiran / tech pack'}
               </a>
-            )}
-
-            <p className="rounded-md bg-[var(--glass-bg)] px-3 py-2 text-xs text-muted-foreground">
-              Langkah berikutnya: {detail?.next_step}
-            </p>
-          </div>
-
-          <DialogFooter>
-            {detail?.reject_url && (
-              <Button variant="outline" data-testid="rnd-detail-reject"
-                      className="border-destructive/40 text-destructive hover:bg-destructive/10"
-                      onClick={() => { setDecision({ item: detail, action: 'reject' }); setNotes(''); }}>
-                <XCircle /> Tolak
-              </Button>
-            )}
-            <Button data-testid="rnd-detail-approve"
-                    onClick={() => { setDecision({ item: detail, action: 'approve' }); setNotes(''); }}>
-              <CheckCircle2 /> Setujui
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Dialog keputusan ─────────────────────────────────────────────── */}
-      <Dialog open={!!decision} onOpenChange={(v) => { if (!v) { setDecision(null); setNotes(''); } }}>
-        <DialogContent data-testid="rnd-decision-dialog">
-          <DialogHeader>
-            <DialogTitle>
-              {decision?.action === 'approve' ? 'Setujui' : 'Tolak'} {decision?.item?.kind_label}
-            </DialogTitle>
-            <DialogDescription>
-              {decision?.item?.code} — {decision?.item?.title}
-              {decision?.action === 'approve' && decision?.item?.next_step
-                ? ` · ${decision.item.next_step}` : ''}
-            </DialogDescription>
-          </DialogHeader>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-muted-foreground" htmlFor="rnd-notes">
-              {decision?.action === 'reject'
-                ? `Alasan penolakan${decision?.item?.reject_requires_notes ? ' (wajib)' : ' (opsional)'}`
-                : 'Catatan persetujuan (opsional)'}
-            </label>
-            <Textarea id="rnd-notes" value={notes} rows={3} data-testid="rnd-decision-notes"
-                      onChange={(e) => setNotes(e.target.value)}
-                      placeholder={decision?.action === 'reject'
-                        ? 'cth. proporsi lengan perlu diperbaiki, bahan terlalu tebal untuk musim ini'
-                        : 'cth. lanjutkan ke pembuatan sample'} />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setDecision(null); setNotes(''); }}
-                    data-testid="rnd-decision-cancel">Batal</Button>
-            <Button onClick={submitDecision} disabled={!!busy}
-                    data-testid="rnd-decision-submit"
-                    className={decision?.action === 'reject'
-                      ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90' : ''}>
-              {busy ? <Loader2 className="animate-spin" /> : (
-                decision?.action === 'approve' ? <CheckCircle2 /> : <XCircle />)}
-              {decision?.action === 'approve' ? 'Setujui' : 'Tolak'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      {/* ── Pembanding revisi style (dibuka dari dialog detail) ──────────── */}
-      {compareStyleId && (
-        <RnDRevisionCompare
-          token={token}
-          styleId={compareStyleId}
-          onClose={() => setCompareStyleId(null)}
-        />
+          )}
+          <p className="text-sm text-muted-foreground">Langkah berikutnya: {detail.next_step}</p>
+        </DetailPopup>
       )}
-    </div>
+
+      {/* ── Keputusan setujui/tolak — popup form pendek ─────────────────── */}
+      <PopupKeputusan decision={decision} notes={notes} setNotes={setNotes} busy={!!busy}
+        onBatal={() => { setDecision(null); setNotes(''); }} onKirim={submitDecision} />
+
+      {/* ── Pembanding revisi style (dibuka dari detail) ─────────────────── */}
+      {compareStyleId && (
+        <RnDRevisionCompare token={token} styleId={compareStyleId} onClose={() => setCompareStyleId(null)} />
+      )}
+    </PageLayout>
+  );
+}
+
+/**
+ * Popup keputusan bergaya FormPopup "pendek" (kepala · isi · kaki Batal + aksi). Ditulis di sini karena tombol aksinya
+ * harus merah untuk "Tolak" (FormPopup selalu hijau) — warna sesuai Standar UI/UX v2 (Setujui hijau, Tolak merah).
+ */
+function PopupKeputusan({ decision, notes, setNotes, busy, onBatal, onKirim }) {
+  const tolak = decision?.action === 'reject';
+  const kirim = (e) => { e.preventDefault(); if (!busy) onKirim(); };
+  return (
+    <Dialog open={!!decision} onOpenChange={(v) => { if (!v && !busy) onBatal(); }}>
+      <DialogContent data-testid="rnd-decision-dialog"
+        className={cn('flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-lg',
+          'max-sm:left-0 max-sm:top-0 max-sm:h-[100dvh] max-sm:max-h-none max-sm:max-w-none',
+          'max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none')}>
+        <form onSubmit={kirim} className="flex min-h-0 flex-1 flex-col">
+          <div className="border-b border-[var(--glass-border)] px-5 py-4 pr-12">
+            <DialogTitle className="text-base font-semibold">{tolak ? 'Tolak' : 'Setujui'} {decision?.item?.kind_label?.toLowerCase()}</DialogTitle>
+            <DialogDescription className="mt-1 text-sm text-muted-foreground">
+              {decision?.item?.code} — {decision?.item?.title}
+              {!tolak && decision?.item?.next_step ? ` · ${decision.item.next_step}` : ''}
+            </DialogDescription>
+          </div>
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+            <Isian htmlFor="rnd-notes" wajib={tolak && !!decision?.item?.reject_requires_notes}
+              label={tolak ? 'Alasan penolakan' : 'Catatan persetujuan'}
+              petunjuk={tolak ? (decision?.item?.reject_requires_notes ? 'Wajib diisi.' : 'Opsional.') : 'Opsional.'}>
+              <Textarea id="rnd-notes" value={notes} rows={3} data-testid="rnd-decision-notes" onChange={(e) => setNotes(e.target.value)}
+                placeholder={tolak ? 'Mis. proporsi lengan perlu diperbaiki, bahan terlalu tebal untuk musim ini' : 'Mis. lanjutkan ke pembuatan sample'} />
+            </Isian>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[var(--glass-border)] px-5 py-3">
+            <Button type="button" variant="outline" onClick={onBatal} disabled={busy} data-testid="rnd-decision-cancel">Batal</Button>
+            <Button type="submit" variant={tolak ? 'destructive' : 'success'} disabled={busy} data-testid="rnd-decision-submit">
+              {busy ? <Loader2 className="animate-spin" /> : (tolak ? <XCircle /> : <CheckCircle2 />)}
+              {tolak ? 'Tolak' : 'Setujui'}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

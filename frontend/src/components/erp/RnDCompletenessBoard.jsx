@@ -1,7 +1,17 @@
+/**
+ * Papan kelengkapan data produk (Ringkasan RnD — Portal Manajemen & Portal RnD).
+ * Standar UI/UX v2 (8 Nov 2026): satu kartu, pil penyaring per kriteria (dengan jumlah model kurang; dulu 7 kartu
+ * kecil HURUF BESAR), tabel standar + unduh Excel/CSV (semua model hasil saringan), ikon centang/silang warna token,
+ * tombol standar (dulu <button> polos). Fitur tetap: saring per kriteria, lompat ke layar pengisian, tampilkan semua.
+ */
 import { useEffect, useState, useMemo } from 'react';
-import { ClipboardCheck, ArrowUpRight, CheckCircle2, XCircle } from 'lucide-react';
+import { ArrowUpRight, CheckCircle2, XCircle } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
+import FilterChips from '@/components/ui/filter-chips';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 // Tujuan navigasi per jenis kekurangan (hub + tab)
@@ -9,6 +19,7 @@ const TARGET = {
   bom: ['rnd-master-product-hub', 'bom'], accessories: ['rnd-master-product-hub', 'bom'], hpp: ['rnd-master-product-hub', 'bom'],
   techpack: ['rnd-design-hub', 'techpack'], photo: ['rnd-master-product-hub', 'models'], weight: ['rnd-master-product-hub', 'models'], sop: ['rnd-master-product-hub', 'models'],
 };
+const kalimat = (s) => { const t = String(s || '').toLowerCase(); return t.charAt(0).toUpperCase() + t.slice(1); };
 
 export function RnDCompletenessBoard({ token, onNavigate }) {
   const [data, setData] = useState(null);
@@ -20,11 +31,11 @@ export function RnDCompletenessBoard({ token, onNavigate }) {
       .then((r) => (r.ok ? r.json() : null)).then(setData).catch(() => setData(null));
   }, [token]);
 
-  const rows = useMemo(() => {
+  const semuaBaris = useMemo(() => {
     if (!data) return [];
-    const r = filter === 'all' ? data.rows.filter((x) => x.missing.length) : data.rows.filter((x) => x.missing.includes(filter));
-    return showAll ? r : r.slice(0, 12);
-  }, [data, filter, showAll]);
+    return filter === 'all' ? data.rows.filter((x) => x.missing.length) : data.rows.filter((x) => x.missing.includes(filter));
+  }, [data, filter]);
+  const rows = showAll ? semuaBaris : semuaBaris.slice(0, 12);
 
   const go = (key, modelId) => {
     const [hub, tab] = TARGET[key] || ['rnd-master-product-hub', 'models'];
@@ -34,69 +45,94 @@ export function RnDCompletenessBoard({ token, onNavigate }) {
 
   if (!data) return <Skeleton className="h-40 rounded-xl" />;
   const pct = data.total_models ? Math.round((100 * data.complete_models) / data.total_models) : 0;
+  const opsi = [
+    { key: 'all', label: 'Semua kekurangan', count: data.rows.filter((x) => x.missing.length).length },
+    ...data.checks.map((c) => ({ key: c.key, label: kalimat(c.label), count: data.missing_counts[c.key] || 0 })),
+  ];
 
   return (
-    <GlassCard className="p-5 space-y-4" data-testid="rnd-completeness-board">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h3 className="flex items-center gap-2 text-sm font-semibold"><ClipboardCheck className="h-4 w-4 text-primary" /> Papan Kelengkapan Data Produk</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            <span className="font-mono" data-testid="rnd-completeness-summary">{data.complete_models}/{data.total_models}</span> model lengkap ({pct}%). Klik kartu untuk melihat model yang kurang, klik panah untuk langsung ke layar pengisiannya.
-            {data.discontinued_models > 0 && <span className="ml-1 text-muted-foreground/80" data-testid="rnd-completeness-discontinued">· {data.discontinued_models} model dihentikan (semua SKU nonaktif) tidak dihitung kurang.</span>}
+    <GlassCard className="space-y-3 p-4" data-testid="rnd-completeness-board">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-base font-semibold text-foreground">Kelengkapan data produk</p>
+          <p className="text-sm text-muted-foreground">
+            <span className="font-medium text-foreground tabular-nums" data-testid="rnd-completeness-summary">{data.complete_models}/{data.total_models}</span>{' '}
+            model lengkap ({pct}%). Pilih kriteria untuk melihat model yang kurang; klik silang untuk langsung mengisinya.
+            {data.discontinued_models > 0 && (
+              <span className="ml-1" data-testid="rnd-completeness-discontinued">
+                {data.discontinued_models} model dihentikan (semua SKU nonaktif) tidak dihitung kurang.
+              </span>
+            )}
           </p>
         </div>
-        <button onClick={() => setFilter('all')} className={`text-xs px-3 py-1 rounded-full border border-[var(--glass-border)] ${filter === 'all' ? 'bg-primary/15 text-primary' : 'text-muted-foreground'}`} data-testid="rnd-completeness-filter-all">Semua kekurangan</button>
+        <TombolUnduh namaBerkas={`kelengkapan-produk-${filter}`} namaLembar="Kelengkapan produk" baris={semuaBaris}
+          testId="rnd-completeness-unduh"
+          kolom={[
+            { label: 'Kode', nilai: (r) => r.code },
+            { label: 'Model', nilai: (r) => r.name },
+            { label: 'Kategori', nilai: (r) => r.category || '' },
+            ...data.checks.map((c) => ({ label: kalimat(c.label), nilai: (r) => (r.flags[c.key] ? 'Lengkap' : 'Kurang') })),
+            { label: 'Skor (%)', nilai: (r) => r.score },
+          ]} />
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
-        {data.checks.map((c) => {
-          const n = data.missing_counts[c.key] || 0;
-          return (
-            <button key={c.key} onClick={() => setFilter(c.key)}
-              className={`text-left rounded-lg border p-3 transition-colors ${filter === c.key ? 'border-primary/50 bg-primary/10' : 'border-[var(--glass-border)] hover:bg-foreground/5'}`}
-              data-testid={`rnd-completeness-card-${c.key}`}>
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{c.label}</div>
-              <div className={`text-xl font-bold font-mono ${n ? 'text-amber-400' : 'text-emerald-400'}`}>{n}</div>
-              <div className="text-[10px] text-muted-foreground">{n ? 'model kurang' : 'semua lengkap'}</div>
-            </button>
-          );
-        })}
-      </div>
-      <div className="overflow-auto max-h-[46vh]">
-        <table className="w-full text-sm" data-testid="rnd-completeness-table">
-          <thead className="sticky top-0 bg-[var(--card-surface)] text-[10px] uppercase text-muted-foreground">
-            <tr className="border-b border-[var(--glass-border)]">
-              <th className="py-2 px-2 text-left">Model</th><th className="py-2 px-2 text-left">Kategori</th>
-              {data.checks.map((c) => <th key={c.key} className="py-2 px-1 text-center whitespace-nowrap">{c.label}</th>)}
-              <th className="py-2 px-2 text-right">Skor</th><th className="py-2 px-2" />
-            </tr>
-          </thead>
-          <tbody>
+      <FilterChips options={opsi} value={filter} onChange={(k) => { setFilter(k); setShowAll(false); }} hideWhenEmpty={false}
+        ariaLabel="Kriteria kelengkapan" testId="rnd-completeness-filter" />
+      <div className="max-h-[46vh] overflow-auto">
+        <Table data-testid="rnd-completeness-table">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Model</TableHead>
+              <TableHead className="hidden md:table-cell">Kategori</TableHead>
+              {data.checks.map((c) => <TableHead key={c.key} className="hidden whitespace-nowrap text-center lg:table-cell">{kalimat(c.label)}</TableHead>)}
+              <TableHead className="text-right">Skor</TableHead>
+              <TableHead><span className="sr-only">Aksi</span></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {rows.map((r) => (
-              <tr key={r.model_id} className="border-b border-[var(--glass-border)] hover:bg-foreground/5" data-testid={`rnd-completeness-row-${r.code}`}>
-                <td className="py-1.5 px-2 whitespace-nowrap"><span className="font-mono text-xs text-muted-foreground mr-2">{r.code}</span>{r.name}</td>
-                <td className="py-1.5 px-2 text-xs text-muted-foreground">{r.category}</td>
+              <TableRow key={r.model_id} data-testid={`rnd-completeness-row-${r.code}`}>
+                <TableCell className="whitespace-nowrap">
+                  <span className="mr-2 text-xs text-muted-foreground">{r.code}</span>{r.name}
+                  <span className="block text-xs text-muted-foreground lg:hidden">
+                    Kurang: {r.missing.map((k) => kalimat(data.checks.find((c) => c.key === k)?.label || k)).join(', ') || '—'}
+                  </span>
+                </TableCell>
+                <TableCell className="hidden text-muted-foreground md:table-cell">{r.category}</TableCell>
                 {data.checks.map((c) => (
-                  <td key={c.key} className="py-1.5 px-1 text-center">
-                    {r.flags[c.key] ? <CheckCircle2 className="h-4 w-4 text-emerald-400 inline" /> : (
-                      <button onClick={() => go(c.key, r.model_id)} title={`Isi ${c.label} untuk ${r.code}`} data-testid={`rnd-completeness-fix-${r.code}-${c.key}`}>
-                        <XCircle className="h-4 w-4 text-rose-400 inline hover:scale-110 transition-transform" />
-                      </button>
+                  <TableCell key={c.key} className="hidden text-center lg:table-cell">
+                    {r.flags[c.key] ? (
+                      <CheckCircle2 className="inline h-4 w-4 text-[hsl(var(--success-text))]" aria-label="Lengkap" />
+                    ) : (
+                      <Button variant="ghost" size="icon-sm" onClick={() => go(c.key, r.model_id)} title={`Isi ${c.label} untuk ${r.code}`}
+                        aria-label={`Isi ${c.label} untuk ${r.code}`} data-testid={`rnd-completeness-fix-${r.code}-${c.key}`}>
+                        <XCircle className="text-[hsl(var(--danger-text))]" />
+                      </Button>
                     )}
-                    {c.key === 'bom' && r.variants_without_bom > 0 && <div className="text-[9px] text-amber-400">{r.variants_without_bom}/{r.variants} varian</div>}
-                  </td>
+                    {c.key === 'bom' && r.variants_without_bom > 0 && (
+                      <span className="block text-xs text-[hsl(var(--warning-text))]">{r.variants_without_bom}/{r.variants} varian</span>
+                    )}
+                  </TableCell>
                 ))}
-                <td className="py-1.5 px-2 text-right font-mono text-xs">{r.score}%</td>
-                <td className="py-1.5 px-2 text-right">
-                  <button onClick={() => go(r.missing[0] || 'bom', r.model_id)} className="text-primary hover:underline text-xs inline-flex items-center gap-1" data-testid={`rnd-completeness-go-${r.code}`}>isi <ArrowUpRight className="h-3 w-3" /></button>
-                </td>
-              </tr>
+                <TableCell className="text-right tabular-nums">{r.score}%</TableCell>
+                <TableCell className="text-right">
+                  <Button variant="link" size="sm" onClick={() => go(r.missing[0] || 'bom', r.model_id)} data-testid={`rnd-completeness-go-${r.code}`}>
+                    Isi<ArrowUpRight />
+                  </Button>
+                </TableCell>
+              </TableRow>
             ))}
-            {rows.length === 0 && <tr><td colSpan={data.checks.length + 4} className="py-6 text-center text-xs text-muted-foreground">Tidak ada model yang kurang pada kriteria ini 🎉</td></tr>}
-          </tbody>
-        </table>
+            {rows.length === 0 && (
+              <TableRow><TableCell colSpan={data.checks.length + 4} className="py-6 text-center text-sm text-muted-foreground">
+                Tidak ada model yang kurang pada kriteria ini.
+              </TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
       </div>
-      {!showAll && data.rows.filter((x) => filter === 'all' ? x.missing.length : x.missing.includes(filter)).length > 12 && (
-        <button onClick={() => setShowAll(true)} className="text-xs text-primary hover:underline" data-testid="rnd-completeness-more">Tampilkan semua model…</button>
+      {!showAll && semuaBaris.length > 12 && (
+        <Button variant="link" size="sm" className="px-0" onClick={() => setShowAll(true)} data-testid="rnd-completeness-more">
+          Tampilkan semua {semuaBaris.length} model
+        </Button>
       )}
     </GlassCard>
   );
