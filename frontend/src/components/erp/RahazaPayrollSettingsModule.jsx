@@ -469,7 +469,7 @@ export default function RahazaPayrollSettingsModule({ token }) {
 
       {/* ── BONUS KEHADIRAN ──────────────────────────────────────────────── */}
       <FormPopup open={edit === 'bonus'} onClose={tutup} ukuran="panjang" judul={SEKSI_JUDUL.bonus} testId="ps-bonus-form"
-        keterangan="Bonus dibayar lewat template Tunjangan yang dipilih di bawah. Bonus hangus bila salah satu aturan aktif terlampaui, dan selalu hangus bila tidak ada hari hadir."
+        keterangan="Bonus dibayar lewat tunjangan yang dipilih di bawah. Bonus hangus bila salah satu aturan aktif terlampaui, dan selalu hangus bila tidak ada hari hadir."
         menyimpan={saving === 'bonus'} galat={galat}
         onSimpan={() => save('bonus', 'payroll-settings/attendance-bonus', bonus)}>
         <Check label="Terapkan aturan hangus" checked={bonus.enabled} testId="ps-bonus-enabled"

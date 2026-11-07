@@ -498,7 +498,7 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
           <Plus />Buat proses gaji
         </Button>
       </>}
-      filters={<FilterChips options={opsiStatus} value={saringStatus} onChange={setSaringStatus} testId="pr-status" ariaLabel="Status run" />}
+      filters={runs.length > 0 && <FilterChips options={opsiStatus} value={saringStatus} onChange={setSaringStatus} testId="pr-status" ariaLabel="Status run" />}
       tools={<>
         {/* RC-FLOW-UX Alur 6 — Payroll → Jurnal Gaji (GL); dulu kotak "Langkah Berikutnya" */}
         {typeof onNavigate === 'function' && (
