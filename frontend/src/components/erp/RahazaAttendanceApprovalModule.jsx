@@ -1,10 +1,12 @@
 /**
- * RahazaAttendanceApprovalModule — antrean pemeriksaan absen selfie oleh HR (tab "Approval Absen").
+ * RahazaAttendanceApprovalModule — antrean pemeriksaan absen selfie oleh HR (tab "Persetujuan absen").
  *
  * Tahap 2 (2026-11-06):
  * · Foto selfie masuk & pulang TAMPIL saat HR memeriksa (dulu tidak ada fotonya sama sekali).
  * · Cetakan PageLayout; rincian dibuka di halaman (DetailPanel), bukan popup.
  * · Tanggal yang sudah masuk gaji final ditolak server dengan pesan (koreksi lewat pengajuan koreksi).
+ * Standar UI/UX v2 (8 Nov 2026): rincian = popup (DetailPanel), tabel standar + unduh Excel/CSV,
+ * tombol Setujui hijau / Tolak merah.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
@@ -13,7 +15,8 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout, { DetailPanel } from './layout/PageLayout';
 import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
@@ -106,10 +109,33 @@ export default function RahazaAttendanceApprovalModule({ token }) {
 
   const { page, setPage, totalPages, total, paged } = useClientPagination(records, 10);
   const pendingCount = records.filter((r) => r.approval_status === 'pending').length;
+  const buka = (rec) => { setSelected(rec); setNotes(''); setMsg(null); };
+  const kolom = [
+    { kunci: 'karyawan', label: 'Karyawan', hp: 'judul', isi: (rec) => (
+      <div className="min-w-0">
+        <p className="font-medium text-foreground">{rec.employee_name || '-'}</p>
+        <p className="text-xs text-muted-foreground">{rec.employee_code}{rec.department ? ` · ${rec.department}` : ''}</p>
+      </div>) },
+    { kunci: 'tanggal', label: 'Tanggal', isi: (rec) => <span className="whitespace-nowrap">{fmtDate(rec.date)}</span> },
+    { kunci: 'jam', label: 'Masuk / pulang', isi: (rec) => <span className="tabular-nums">{fmtTime(rec.clock_in)} / {fmtTime(rec.clock_out)}</span> },
+    { kunci: 'foto', label: 'Foto', hp: false, isi: (rec) => (rec.photo_selfie_url ? (
+      <img src={withFileAuth(`${BACKEND}${rec.photo_selfie_url}`)} alt="Selfie masuk"
+        className="h-10 w-10 rounded-[var(--radius-sm)] border border-[var(--glass-border)] object-cover" />
+    ) : <span className="text-xs text-muted-foreground">—</span>) },
+    { kunci: 'lokasi', label: 'Lokasi', isi: (rec) => <span className="text-sm">{geoText(rec)}</span> },
+    { kunci: 'status', label: pendingCount > 0 ? `Status (${pendingCount} menunggu)` : 'Status', isi: (rec) => (
+      <StatusBadge status={rec.approval_status} label={APPROVAL[rec.approval_status]?.label}
+        tone={APPROVAL[rec.approval_status]?.tone} />) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (rec) => (
+      <Button size="sm" variant={rec.approval_status === 'pending' ? 'default' : 'outline'}
+        onClick={() => buka(rec)} data-testid={`att-approval-open-${rec.id}`}>
+        {rec.approval_status === 'pending' ? 'Periksa' : 'Lihat'}
+      </Button>) },
+  ];
 
   return (
     <PageLayout
-      title="Approval absen"
+      title="Persetujuan absen"
       subtitle="Periksa foto selfie dan lokasi absen karyawan, lalu setujui atau tolak."
       filters={(
         <>
@@ -124,11 +150,26 @@ export default function RahazaAttendanceApprovalModule({ token }) {
           <PeriodPicker value={period} onChange={setPeriod} testId="att-approval-period" />
         </>
       )}
-      tools={(
-        <Button variant="outline" size="icon" onClick={loadRecords} title="Muat ulang" aria-label="Muat ulang">
-          <RefreshCw className="w-4 h-4" />
+      tools={(<>
+        <TombolUnduh namaBerkas="persetujuan-absen" namaLembar="Persetujuan absen" baris={records} testId="att-approval-unduh"
+          kolom={[
+            { label: 'Kode karyawan', nilai: (r) => r.employee_code || '' },
+            { label: 'Nama karyawan', nilai: (r) => r.employee_name || '' },
+            { label: 'Departemen', nilai: (r) => r.department || '' },
+            { label: 'Tanggal', nilai: (r) => fmtDate(r.date) },
+            { label: 'Masuk', nilai: (r) => fmtTime(r.clock_in) },
+            { label: 'Pulang', nilai: (r) => fmtTime(r.clock_out) },
+            { label: 'Metode', nilai: (r) => METHOD[r.attendance_method] || 'Selfie' },
+            { label: 'Lokasi', nilai: (r) => geoText(r) },
+            { label: 'Terlambat (menit)', nilai: (r) => Number(r.late_minutes) || 0 },
+            { label: 'Status', nilai: (r) => APPROVAL[r.approval_status]?.label || r.approval_status || '' },
+            { label: 'Diperiksa oleh', nilai: (r) => r.approval_by_name || '' },
+            { label: 'Catatan', nilai: (r) => r.approval_notes || '' },
+          ]} />
+        <Button variant="outline" size="icon" onClick={loadRecords} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
-      )}
+      </>)}
       summary={msg && (
         <Notice tone={msg.tone} action={<Button size="sm" variant="ghost" onClick={() => setMsg(null)}>Tutup</Button>}>
           {msg.text}
@@ -141,7 +182,7 @@ export default function RahazaAttendanceApprovalModule({ token }) {
           onClose={() => setSelected(null)}
           testId="att-approval-detail"
         >
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <SelfiePhoto url={selected.photo_selfie_url} label={`Selfie masuk · ${fmtTime(selected.clock_in)}`}
               testId="att-approval-photo-in" />
             <SelfiePhoto url={selected.photo_selfie_out_url} label={`Selfie pulang · ${fmtTime(selected.clock_out)}`}
@@ -159,16 +200,16 @@ export default function RahazaAttendanceApprovalModule({ token }) {
                   data-testid="att-approval-notes" />
               </div>
               {selected.approval_status === 'pending' ? (
-                <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => decide(false)} disabled={busy} data-testid="att-approval-reject">
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="destructive" onClick={() => decide(false)} disabled={busy} data-testid="att-approval-reject">
                     <XCircle className="w-4 h-4" /> Tolak
                   </Button>
-                  <Button onClick={() => decide(true)} disabled={busy} data-testid="att-approval-approve">
+                  <Button variant="success" onClick={() => decide(true)} disabled={busy} data-testid="att-approval-approve">
                     {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Setujui
                   </Button>
                 </div>
               ) : (
-                <p className="text-xs text-muted-foreground">
+                <p className="text-sm text-muted-foreground">
                   {APPROVAL[selected.approval_status]?.label || selected.approval_status}
                   {selected.approval_by_name ? ` oleh ${selected.approval_by_name}` : ''}
                   {selected.approval_notes ? ` — "${selected.approval_notes}"` : ''}
@@ -178,57 +219,16 @@ export default function RahazaAttendanceApprovalModule({ token }) {
           </div>
         </DetailPanel>
       )}
-      footer={<PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}
+      footer={records.length > 0 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}
       testId="att-approval-page"
     >
       {loading ? (
-        <div className="flex items-center justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+        <p className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Memuat antrean absen…</p>
       ) : records.length === 0 ? (
         <EmptyState icon={ClipboardCheck} title="Tidak ada absen untuk penyaring ini"
           description={statusFilter === 'pending' ? 'Semua absen sudah diperiksa.' : 'Ubah status atau periode.'} />
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Karyawan</TableHead>
-              <TableHead>Tanggal</TableHead>
-              <TableHead>Masuk / pulang</TableHead>
-              <TableHead>Foto</TableHead>
-              <TableHead>Lokasi</TableHead>
-              <TableHead>Status {pendingCount > 0 ? `(${pendingCount} menunggu)` : ''}</TableHead>
-              <TableHead className="text-right">Aksi</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {paged.map((rec) => (
-              <TableRow key={rec.id} data-testid={`att-approval-row-${rec.id}`}>
-                <TableCell>
-                  <div className="font-medium">{rec.employee_name || '-'}</div>
-                  <div className="text-xs text-muted-foreground">{rec.employee_code} · {rec.department}</div>
-                </TableCell>
-                <TableCell className="whitespace-nowrap">{fmtDate(rec.date)}</TableCell>
-                <TableCell className="tabular-nums">{fmtTime(rec.clock_in)} / {fmtTime(rec.clock_out)}</TableCell>
-                <TableCell>
-                  {rec.photo_selfie_url ? (
-                    <img src={withFileAuth(`${BACKEND}${rec.photo_selfie_url}`)} alt="Selfie masuk"
-                      className="w-10 h-10 rounded-[var(--radius-sm)] object-cover border border-[var(--glass-border)]" />
-                  ) : <span className="text-xs text-muted-foreground">-</span>}
-                </TableCell>
-                <TableCell className="text-xs">{geoText(rec)}</TableCell>
-                <TableCell>
-                  <StatusBadge status={rec.approval_status} label={APPROVAL[rec.approval_status]?.label}
-                    tone={APPROVAL[rec.approval_status]?.tone} />
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button size="sm" variant={rec.approval_status === 'pending' ? 'default' : 'outline'}
-                    onClick={() => { setSelected(rec); setNotes(''); setMsg(null); }} data-testid={`att-approval-open-${rec.id}`}>
-                    {rec.approval_status === 'pending' ? 'Periksa' : 'Lihat'}
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <TabelData kolom={kolom} baris={paged} onKlikBaris={buka} testId="att-approval-table" />
       )}
     </PageLayout>
   );

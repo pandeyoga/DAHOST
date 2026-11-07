@@ -1,92 +1,109 @@
 /**
- * RahazaAutoAttendanceModule — Manajemen Absen Otomatis (HR Admin View)
- * 
- * Tab 1: Konfigurasi (geofence, face threshold, office location)
- * Tab 2: Biometrik Devices (WebAuthn per karyawan)
- * Tab 3: Device Fingerprint Fisik (ZKTeco/Fingerspot)
- * Tab 4: Live Feed Absen Otomatis
+ * RahazaAutoAttendanceModule — absen otomatis karyawan (Portal SDM › Absensi).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): dulu satu tab hub berisi 4 tab buatan sendiri (tab di dalam tab, ikon emoji,
+ * judul ganda "PORTAL SDM › KEHADIRAN"). Sekarang keempat bagian dinaikkan jadi tab hub "Absensi"
+ * (`hubs/HRAttendanceHub.jsx`) dan masing-masing memakai cetakan PageLayout:
+ *   • AbsenOtomatisHariIni     — absen otomatis hari ini (dulu "Live Feed": kartu berulang → tabel + unduh)
+ *   • MesinSidikJari           — mesin ZKTeco/Fingerspot + impor file ekspor (form → popup standar)
+ *   • BiometrikHP              — sidik jari / Face ID HP karyawan (tabel + unduh)
+ *   • PengaturanAbsenOtomatis  — zona kantor, kebijakan, GPS, ambang wajah (ringkasan + form popup)
+ * Fitur, panggilan API, dan data yang dikirim tidak berubah.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { confirmDialog } from '@/components/ui/confirm-dialog';
 import axios from 'axios';
+import {
+  AlertTriangle, Fingerprint, LocateFixed, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2, Upload, Wifi,
+} from 'lucide-react';
+import { toast } from 'sonner';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
-import { todayWIB } from '@/lib/waktu';
-import FingerprintImportPanel from './hr/FingerprintImportPanel';
+import { todayWIB, parseServerTime } from '@/lib/waktu';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
+import { Slider } from '@/components/ui/slider';
+import { GlassCard } from '@/components/ui/glass';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { BarisDetail } from '@/components/ui/detail-popup';
+import { formatTanggalID } from '@/components/ui/date-picker';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
+import FingerprintImportPanel from './hr/FingerprintImportPanel';
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
+const TZ = 'Asia/Jakarta';
 
-export default function RahazaAutoAttendanceModule({ token }) {
-  const [activeTab, setActiveTab] = useState('config');
-  const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
+const useHeaders = (token) => useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
+function Memuat({ teks = 'Memuat…' }) {
+  return <p className="py-10 text-center text-sm text-muted-foreground">{teks}</p>;
+}
+
+function MuatUlang({ onClick, memuat }) {
   return (
-    <div className="p-6 space-y-5">
-      {/* Header */}
-      <div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-          <span>PORTAL SDM</span><span>›</span><span>KEHADIRAN</span>
-        </div>
-        <h2 className="text-2xl font-bold flex items-center gap-2">
-          <span>🤖</span> Absen Otomatis
-        </h2>
-        <p className="text-muted-foreground text-sm mt-1">Kelola metode absen otomatis: Selfie+AI, Biometrik WebAuthn, dan Device Fingerprint Fisik</p>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex gap-1 bg-muted/40 p-1 rounded-xl w-fit flex-wrap">
-        {[
-          { id: 'config', label: '⚙️ Konfigurasi' },
-          { id: 'webauthn', label: '🖐️ Biometrik' },
-          { id: 'device', label: '🔌 Device Fisik' },
-          { id: 'live', label: '📋 Live Feed' },
-        ].map(t => (
-          <button key={t.id} onClick={() => setActiveTab(t.id)}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-              activeTab === t.id ? 'bg-white shadow text-foreground' : 'text-muted-foreground hover:text-foreground'
-            }`}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {activeTab === 'config' && <ConfigTab headers={headers} token={token} />}
-      {activeTab === 'webauthn' && <WebAuthnTab headers={headers} token={token} />}
-      {activeTab === 'device' && <DeviceTab headers={headers} token={token} />}
-      {activeTab === 'live' && <LiveFeedTab headers={headers} token={token} />}
-    </div>
+    <Button variant="outline" size="icon" onClick={onClick} disabled={memuat} title="Muat ulang" aria-label="Muat ulang">
+      <RefreshCw className={memuat ? 'animate-spin' : ''} />
+    </Button>
   );
 }
 
-// ─── Tab 1: Konfigurasi ────────────────────────────────────────────────────────
-// FASE 16 — dua bug nyata diperbaiki di sini:
-//  1. Kolom Latitude/Longitude MEMBACA `office_lat`/`office_lng` tapi MENULIS
-//     `lat`/`lng` ⇒ angka yang diketik tidak pernah tampil (kolom terasa beku)
-//     dan HR mengira fitur geofence rusak.
-//  2. Tidak ada cara praktis mengisi koordinat → sekarang ada tombol
-//     "Pakai lokasi saya sekarang" (navigator.geolocation) + tautan Google Maps.
+// Tanggal/jam dari server: tanpa zona = UTC (lihat parseServerTime). Ditampilkan dalam WIB.
+const fmtTanggal = (v) => {
+  const d = parseServerTime(v);
+  if (!d) return '—';
+  try { return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', timeZone: TZ }); } catch { return '—'; }
+};
+const fmtWaktu = (v) => {
+  const d = parseServerTime(v);
+  if (!d) return '—';
+  try { return d.toLocaleString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: TZ }); } catch { return '—'; }
+};
+const fmtJam = (v) => {
+  const d = parseServerTime(v);
+  if (!d) return '—';
+  try { return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: TZ }); } catch { return '—'; }
+};
+
+// ─── Pengaturan absen otomatis ────────────────────────────────────────────────
+// FASE 16 — dua bug nyata diperbaiki di sini (tetap berlaku):
+//  1. Kolom Latitude/Longitude MEMBACA `office_lat`/`office_lng` tapi dulu MENULIS `lat`/`lng`.
+//  2. Tombol "Pakai lokasi saya sekarang" (navigator.geolocation) + tautan Google Maps.
 // Ditambah: sakelar KEBIJAKAN WAJIB (selfie & lokasi) sesuai keputusan user.
-function ConfigTab({ headers }) {
+const yaTidak = (v) => (v !== false ? 'Ya' : 'Tidak');
+
+export function PengaturanAbsenOtomatis({ token }) {
+  const headers = useHeaders(token);
   const [config, setConfig] = useState(null);
-  const [form, setForm] = useState({});
+  const [gagal, setGagal] = useState('');
+  const [form, setForm] = useState(null);       // null = popup tertutup
   const [saving, setSaving] = useState(false);
   const [locating, setLocating] = useState(false);
-  const [msg, setMsg] = useState(null);
+  const [lokasiMsg, setLokasiMsg] = useState(null);
+  const [galat, setGalat] = useState('');
 
   const load = useCallback(async () => {
+    setGagal('');
     try {
       const r = await axios.get(`${BACKEND}/api/rahaza/attendance/auto-config`, { headers });
-      setConfig(r.data); setForm(r.data);
-    } catch (e) { console.error(e); }
+      setConfig(r.data);
+    } catch (e) { setGagal(e.response?.data?.detail || 'Pengaturan absen otomatis gagal dimuat.'); }
   }, [headers]);
 
   useEffect(() => { load(); }, [load]);
 
-  const setField = (patch) => setForm(f => ({ ...f, ...patch }));
+  const setField = (patch) => setForm((f) => ({ ...f, ...patch }));
+  const buka = () => { setForm({ ...config }); setGalat(''); setLokasiMsg(null); };
 
   const useMyLocation = () => {
     if (!navigator.geolocation) {
-      setMsg({ type: 'error', text: 'Browser ini tidak mendukung deteksi lokasi.' });
+      setLokasiMsg({ tone: 'danger', text: 'Peramban ini tidak bisa membaca lokasi.' });
       return;
     }
     setLocating(true);
@@ -96,11 +113,11 @@ function ConfigTab({ headers }) {
           office_lat: Number(p.coords.latitude.toFixed(6)),
           office_lng: Number(p.coords.longitude.toFixed(6)),
         });
-        setMsg({ type: 'success', text: `Koordinat terisi dari lokasi Anda (akurasi ±${Math.round(p.coords.accuracy)} m). Jangan lupa Simpan.` });
+        setLokasiMsg({ tone: 'success', text: `Koordinat terisi dari lokasi Anda (akurasi ±${Math.round(p.coords.accuracy)} m). Jangan lupa simpan.` });
         setLocating(false);
       },
       (err) => {
-        setMsg({ type: 'error', text: `Gagal membaca lokasi: ${err.message}. Isi manual dari Google Maps.` });
+        setLokasiMsg({ tone: 'danger', text: `Gagal membaca lokasi: ${err.message}. Isi manual dari Google Maps.` });
         setLocating(false);
       },
       { enableHighAccuracy: true, timeout: 10000 },
@@ -108,7 +125,7 @@ function ConfigTab({ headers }) {
   };
 
   const save = async () => {
-    setSaving(true); setMsg(null);
+    setSaving(true); setGalat('');
     try {
       await axios.put(`${BACKEND}/api/rahaza/attendance/auto-config`, {
         office_name: form.office_name,
@@ -123,168 +140,157 @@ function ConfigTab({ headers }) {
         gps_max_accuracy_m: form.gps_max_accuracy_m,
         clock_out_window_hours: form.clock_out_window_hours,
       }, { headers });
-      setMsg({ type: 'success', text: 'Konfigurasi berhasil disimpan.' });
+      toast.success('Pengaturan absen otomatis disimpan.');
+      setForm(null);
       await load();
     } catch (e) {
-      setMsg({ type: 'error', text: e.response?.data?.detail || 'Gagal menyimpan' });
+      setGalat(e.response?.data?.detail || 'Gagal menyimpan');
     } finally { setSaving(false); }
   };
 
-  if (!config) return <div className="text-center py-10"><div className="animate-spin rounded-full h-7 w-7 border-b-2 border-primary mx-auto" /></div>;
-
-  const notConfigured = form.office_lat == null || form.office_lng == null;
+  const c = config || {};
+  const belumDiatur = c.office_lat == null || c.office_lng == null;
+  const peta = (lat, lng) => `https://www.google.com/maps?q=${lat},${lng}`;
+  const f = form || {};
 
   return (
-    <div className="space-y-4 max-w-2xl" data-testid="attendance-config-tab">
-      {msg && (
-        <div data-testid="attendance-config-msg"
-          className={`rounded-lg px-4 py-3 text-sm ${msg.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
-          {msg.text}
+    <PageLayout testId="attendance-config-tab" title="Pengaturan absen otomatis"
+      subtitle="Zona kantor, kebijakan selfie dan lokasi, serta ambang kecocokan wajah untuk absen lewat HP."
+      actions={config && <Button onClick={buka} data-testid="cfg-edit"><Pencil />Ubah pengaturan</Button>}
+      summary={<>
+        {gagal && <Notice tone="danger">{gagal}</Notice>}
+        {config && belumDiatur && c.require_geofence !== false && (
+          <Notice tone="warning" icon={AlertTriangle} testId="attendance-config-warning"
+            title="Koordinat kantor belum diisi, padahal lokasi diwajibkan">
+            Selama kosong, karyawan tidak bisa absen (mereka melihat pesan &quot;Lokasi kantor belum diatur&quot;).
+            Buka Ubah pengaturan lalu tekan &quot;Pakai lokasi saya sekarang&quot; saat Anda di kantor.
+          </Notice>
+        )}
+      </>}>
+      {!config && !gagal ? <Memuat /> : config && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <GlassCard className="p-4" hover={false}>
+            <p className="text-base font-semibold text-foreground">Zona kantor</p>
+            <dl className="mt-2 divide-y divide-[var(--glass-border)]">
+              <BarisDetail label="Nama kantor">{c.office_name || '—'}</BarisDetail>
+              <BarisDetail label="Koordinat">
+                {belumDiatur ? <span className="text-muted-foreground">Belum diisi</span> : (
+                  <span>
+                    <span className="tabular-nums">{c.office_lat}, {c.office_lng}</span>{' · '}
+                    <a className="text-primary underline-offset-4 hover:underline" target="_blank" rel="noreferrer"
+                      href={peta(c.office_lat, c.office_lng)}>Lihat di Google Maps</a>
+                  </span>
+                )}
+              </BarisDetail>
+              <BarisDetail label="Radius">{c.geofence_radius_m ?? 300} meter</BarisDetail>
+              <BarisDetail label="Umur lokasi maks.">{c.gps_max_age_s ?? 60} detik</BarisDetail>
+              <BarisDetail label="Akurasi GPS terburuk">{c.gps_max_accuracy_m ?? 100} meter</BarisDetail>
+              <BarisDetail label="Jendela absen pulang">{c.clock_out_window_hours ?? 6} jam sesudah jam pulang shift</BarisDetail>
+            </dl>
+          </GlassCard>
+          <GlassCard className="p-4" hover={false}>
+            <p className="text-base font-semibold text-foreground">Kebijakan absen</p>
+            <dl className="mt-2 divide-y divide-[var(--glass-border)]">
+              <BarisDetail label="Selfie wajib">{yaTidak(c.require_selfie)}
+                <span className="block text-xs text-muted-foreground">Absen tanpa foto ditolak. Foto disimpan sebagai bukti untuk HR.</span>
+              </BarisDetail>
+              <BarisDetail label="Lokasi wajib">{yaTidak(c.require_geofence)}
+                <span className="block text-xs text-muted-foreground">Absen di luar radius kantor ditolak.</span>
+              </BarisDetail>
+              <BarisDetail label="Kecocokan wajah min.">{Math.round((c.face_match_threshold || 0.65) * 100)}%
+                <span className="block text-xs text-muted-foreground">Selfie di bawah angka ini masuk antrean Persetujuan absen. Saran: 60–70%.</span>
+              </BarisDetail>
+            </dl>
+          </GlassCard>
         </div>
       )}
 
-      {notConfigured && form.require_geofence !== false && (
-        <div data-testid="attendance-config-warning"
-          className="rounded-lg px-4 py-3 text-sm bg-amber-50 text-amber-800 border border-amber-300">
-          ⚠️ Koordinat kantor belum diisi, padahal verifikasi lokasi diwajibkan.
-          <strong> Selama ini kosong, karyawan TIDAK BISA absen</strong> (mereka akan melihat pesan
-          &quot;Lokasi kantor belum diatur&quot;). Tekan &quot;Pakai lokasi saya sekarang&quot; saat Anda berada di kantor.
+      <FormPopup open={form !== null} onClose={() => setForm(null)} ukuran="panjang" onSimpan={save} menyimpan={saving}
+        judul="Ubah pengaturan absen otomatis" keterangan="Berlaku untuk semua karyawan yang absen lewat HP."
+        labelSimpan="Simpan pengaturan" galat={galat} testId="cfg-form">
+        <p className="text-base font-semibold text-foreground">Zona kantor</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Nama kantor" htmlFor="cfg-office-name">
+            <Input id="cfg-office-name" data-testid="cfg-office-name" value={f.office_name || ''}
+              onChange={(e) => setField({ office_name: e.target.value })} />
+          </Isian>
+          <Isian label="Radius (meter)" htmlFor="cfg-radius">
+            <Input id="cfg-radius" data-testid="cfg-radius" type="number" value={f.geofence_radius_m ?? 300} min={10} max={20000}
+              onChange={(e) => setField({ geofence_radius_m: parseInt(e.target.value, 10) })} />
+          </Isian>
+          <Isian label="Garis lintang kantor" htmlFor="cfg-lat">
+            <Input id="cfg-lat" data-testid="cfg-lat" type="number" step="any" value={f.office_lat ?? ''} placeholder="-6.2088"
+              onChange={(e) => setField({ office_lat: e.target.value === '' ? null : parseFloat(e.target.value) })} />
+          </Isian>
+          <Isian label="Garis bujur kantor" htmlFor="cfg-lng">
+            <Input id="cfg-lng" data-testid="cfg-lng" type="number" step="any" value={f.office_lng ?? ''} placeholder="106.8456"
+              onChange={(e) => setField({ office_lng: e.target.value === '' ? null : parseFloat(e.target.value) })} />
+          </Isian>
         </div>
-      )}
-
-      <div className="bg-card border rounded-xl p-5 space-y-5">
-        <h3 className="font-semibold flex items-center gap-2">📍 Geofence (Zona Kantor)</h3>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1" htmlFor="cfg-office-name">Nama Kantor</label>
-            <input id="cfg-office-name" data-testid="cfg-office-name" type="text" value={form.office_name || ''}
-              onChange={e => setField({ office_name: e.target.value })}
-              className="w-full border rounded-lg px-3 py-2 text-sm bg-background" />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1" htmlFor="cfg-radius">Radius (meter)</label>
-            <input id="cfg-radius" data-testid="cfg-radius" type="number" value={form.geofence_radius_m ?? 300} min={10} max={20000}
-              onChange={e => setField({ geofence_radius_m: parseInt(e.target.value, 10) })}
-              className="w-full border rounded-lg px-3 py-2 text-sm bg-background" />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1" htmlFor="cfg-lat">Latitude Kantor</label>
-            <input id="cfg-lat" data-testid="cfg-lat" type="number" step="any"
-              value={form.office_lat ?? ''} placeholder="-6.2088"
-              onChange={e => setField({ office_lat: e.target.value === '' ? null : parseFloat(e.target.value) })}
-              className="w-full border rounded-lg px-3 py-2 text-sm bg-background" />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1" htmlFor="cfg-lng">Longitude Kantor</label>
-            <input id="cfg-lng" data-testid="cfg-lng" type="number" step="any"
-              value={form.office_lng ?? ''} placeholder="106.8456"
-              onChange={e => setField({ office_lng: e.target.value === '' ? null : parseFloat(e.target.value) })}
-              className="w-full border rounded-lg px-3 py-2 text-sm bg-background" />
-          </div>
-        </div>
-
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={useMyLocation} disabled={locating}
-            data-testid="cfg-use-my-location"
-            className="border rounded-lg px-3 py-2 text-sm font-medium hover:bg-muted disabled:opacity-50">
-            {locating ? '⏳ Membaca lokasi…' : '📍 Pakai lokasi saya sekarang'}
-          </button>
-          {form.office_lat != null && form.office_lng != null && (
-            <a className="text-xs text-primary underline" target="_blank" rel="noreferrer"
-              href={`https://www.google.com/maps?q=${form.office_lat},${form.office_lng}`}>
-              Lihat titik ini di Google Maps
-            </a>
+          <Button type="button" variant="outline" onClick={useMyLocation} disabled={locating} data-testid="cfg-use-my-location">
+            <LocateFixed />{locating ? 'Membaca lokasi…' : 'Pakai lokasi saya sekarang'}
+          </Button>
+          {f.office_lat != null && f.office_lng != null && (
+            <a className="text-sm text-primary underline-offset-4 hover:underline" target="_blank" rel="noreferrer"
+              href={peta(f.office_lat, f.office_lng)}>Lihat titik ini di Google Maps</a>
           )}
         </div>
+        {lokasiMsg && <Notice tone={lokasiMsg.tone} testId="attendance-config-msg">{lokasiMsg.text}</Notice>}
+        <p className="text-xs text-muted-foreground">Cara lain: buka Google Maps, klik kanan titik kantor, lalu salin angka lintang dan bujurnya ke kolom di atas.</p>
 
-        <div className="border-t pt-4 space-y-3">
-          <h4 className="font-semibold text-sm">Kebijakan Absen (berlaku untuk semua karyawan)</h4>
-          <label className="flex items-start gap-3 text-sm cursor-pointer">
-            <input type="checkbox" data-testid="cfg-require-selfie" className="w-4 h-4 mt-0.5"
-              checked={form.require_selfie !== false}
-              onChange={e => setField({ require_selfie: e.target.checked })} />
-            <span>
-              <strong>Selfie wajib</strong>
-              <span className="block text-xs text-muted-foreground">Absen tanpa foto akan ditolak. Foto disimpan sebagai bukti dan bisa dibuka HR.</span>
-            </span>
-          </label>
-          <label className="flex items-start gap-3 text-sm cursor-pointer">
-            <input type="checkbox" data-testid="cfg-require-geofence" className="w-4 h-4 mt-0.5"
-              checked={form.require_geofence !== false}
-              onChange={e => setField({ require_geofence: e.target.checked })} />
-            <span>
-              <strong>Lokasi wajib (di dalam radius kantor)</strong>
-              <span className="block text-xs text-muted-foreground">Absen di luar radius ditolak, bukan sekadar &quot;menunggu approval&quot;.</span>
-            </span>
-          </label>
+        <p className="text-base font-semibold text-foreground">Kebijakan absen</p>
+        <label className="flex items-start gap-3 text-sm" htmlFor="cfg-require-selfie">
+          <Switch id="cfg-require-selfie" data-testid="cfg-require-selfie" checked={f.require_selfie !== false}
+            onCheckedChange={(v) => setField({ require_selfie: v })} />
+          <span>Selfie wajib
+            <span className="block text-xs text-muted-foreground">Absen tanpa foto ditolak. Foto disimpan sebagai bukti dan bisa dibuka HR.</span>
+          </span>
+        </label>
+        <label className="flex items-start gap-3 text-sm" htmlFor="cfg-require-geofence">
+          <Switch id="cfg-require-geofence" data-testid="cfg-require-geofence" checked={f.require_geofence !== false}
+            onCheckedChange={(v) => setField({ require_geofence: v })} />
+          <span>Lokasi wajib (di dalam radius kantor)
+            <span className="block text-xs text-muted-foreground">Absen di luar radius ditolak, bukan sekadar menunggu persetujuan.</span>
+          </span>
+        </label>
+        <div className="grid gap-4 sm:grid-cols-3" data-testid="cfg-gps-rules">
+          <Isian label="Umur lokasi maks. (detik)" htmlFor="cfg-gps-age" petunjuk="Lokasi lebih tua dari ini ditolak.">
+            <Input id="cfg-gps-age" data-testid="cfg-gps-age" type="number" min={10} max={600} value={f.gps_max_age_s ?? 60}
+              onChange={(e) => setField({ gps_max_age_s: parseInt(e.target.value, 10) })} />
+          </Isian>
+          <Isian label="Akurasi GPS terburuk (m)" htmlFor="cfg-gps-acc" petunjuk="Bacaan kurang akurat diminta coba lagi.">
+            <Input id="cfg-gps-acc" data-testid="cfg-gps-acc" type="number" min={10} max={2000} value={f.gps_max_accuracy_m ?? 100}
+              onChange={(e) => setField({ gps_max_accuracy_m: parseInt(e.target.value, 10) })} />
+          </Isian>
+          <Isian label="Jendela absen pulang (jam)" htmlFor="cfg-out-window" petunjuk="Pulang lewat tengah malam masih menutup absen kemarin.">
+            <Input id="cfg-out-window" data-testid="cfg-out-window" type="number" min={0} max={24} step="0.5" value={f.clock_out_window_hours ?? 6}
+              onChange={(e) => setField({ clock_out_window_hours: parseFloat(e.target.value) })} />
+          </Isian>
         </div>
 
-        <div className="border-t pt-4 grid grid-cols-1 md:grid-cols-3 gap-4" data-testid="cfg-gps-rules">
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1" htmlFor="cfg-gps-age">Umur maksimum lokasi (detik)</label>
-            <input id="cfg-gps-age" data-testid="cfg-gps-age" type="number" min={10} max={600}
-              value={form.gps_max_age_s ?? 60} onChange={e => setField({ gps_max_age_s: parseInt(e.target.value, 10) })}
-              className="w-full border rounded-lg px-3 py-2 text-sm bg-background" />
-            <span className="text-[11px] text-muted-foreground">Lokasi dibaca saat tombol ditekan; lebih tua dari ini ditolak.</span>
+        <p className="text-base font-semibold text-foreground">Kecocokan wajah</p>
+        <Isian label={`Kecocokan wajah minimum: ${Math.round((f.face_match_threshold || 0.65) * 100)}%`}
+          petunjuk="Selfie di bawah angka ini masuk antrean Persetujuan absen. Saran: 60–70%.">
+          <Slider min={0} max={100} step={5} value={[Math.round((f.face_match_threshold || 0.65) * 100)]}
+            onValueChange={([v]) => setField({ face_match_threshold: v / 100 })} aria-label="Kecocokan wajah minimum"
+            className="py-2" data-testid="cfg-face-threshold" />
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>0% (longgar)</span><span>100% (sangat ketat)</span>
           </div>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1" htmlFor="cfg-gps-acc">Akurasi GPS terburuk (meter)</label>
-            <input id="cfg-gps-acc" data-testid="cfg-gps-acc" type="number" min={10} max={2000}
-              value={form.gps_max_accuracy_m ?? 100} onChange={e => setField({ gps_max_accuracy_m: parseInt(e.target.value, 10) })}
-              className="w-full border rounded-lg px-3 py-2 text-sm bg-background" />
-            <span className="text-[11px] text-muted-foreground">Bacaan yang kurang akurat diminta Coba lagi.</span>
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1" htmlFor="cfg-out-window">Jendela absen pulang (jam)</label>
-            <input id="cfg-out-window" data-testid="cfg-out-window" type="number" min={0} max={24} step="0.5"
-              value={form.clock_out_window_hours ?? 6} onChange={e => setField({ clock_out_window_hours: parseFloat(e.target.value) })}
-              className="w-full border rounded-lg px-3 py-2 text-sm bg-background" />
-            <span className="text-[11px] text-muted-foreground">Absen pulang lewat tengah malam masih menutup absen kemarin selama ini sesudah jam pulang shift.</span>
-          </div>
-        </div>
-
-        <div className="bg-blue-50 border border-blue-200 text-blue-700 text-xs px-3 py-2 rounded-lg">
-          💡 Alternatif: buka Google Maps → klik-kanan titik kantor → salin angka lat/lng ke kolom di atas.
-        </div>
-      </div>
-
-      <div className="bg-card border rounded-xl p-5 space-y-4">
-        <h3 className="font-semibold flex items-center gap-2">🤖 AI Face Recognition</h3>
-        <div>
-          <label className="text-sm font-medium block mb-2">
-            Minimum Confidence Wajah: <span className="text-primary font-bold">{Math.round((form.face_match_threshold || 0.65) * 100)}%</span>
-          </label>
-          <input
-            type="range" min={0} max={100} step={5}
-            value={Math.round((form.face_match_threshold || 0.65) * 100)}
-            onChange={e => setForm({...form, face_match_threshold: parseInt(e.target.value) / 100})}
-            className="w-full accent-primary"
-          />
-          <div className="flex justify-between text-xs text-muted-foreground mt-1">
-            <span>0% (Tidak ketat)</span>
-            <span>100% (Sangat ketat)</span>
-          </div>
-        </div>
-        <div className="bg-muted/40 rounded-lg px-3 py-2 text-xs text-muted-foreground">
-          Selfie dengan confidence di bawah threshold ini akan masuk approval queue HR. Rekomendasi: 60-70%.
-        </div>
-      </div>
-
-      <button onClick={save} disabled={saving} data-testid="cfg-save"
-        className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 px-6 py-2.5 rounded-xl font-semibold text-sm transition-colors">
-        {saving ? 'Menyimpan...' : '💾 Simpan Konfigurasi'}
-      </button>
-    </div>
+        </Isian>
+      </FormPopup>
+    </PageLayout>
   );
 }
 
-// ─── Tab 2: WebAuthn Biometrik ────────────────────────────────────────────────
-function WebAuthnTab({ headers }) {
+// ─── Biometrik HP (WebAuthn) ──────────────────────────────────────────────────
+export function BiometrikHP({ token }) {
+  const headers = useHeaders(token);
   const [devices, setDevices] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(false);
   const [revoking, setRevoking] = useState(null);
-  const [msg, setMsg] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -295,103 +301,81 @@ function WebAuthnTab({ headers }) {
       ]);
       setDevices(d.data || []);
       setEmployees(Array.isArray(e.data) ? e.data : (e.data?.items || e.data?.rows || e.data?.data || []));
-    } catch (e) { console.error(e); }
+    } catch (e) { toast.error('Data biometrik gagal dimuat.'); }
     finally { setLoading(false); }
   }, [headers]);
 
   useEffect(() => { load(); }, [load]);
 
   const revoke = async (id) => {
-    if (!(await confirmDialog({ title: 'Cabut data biometrik ini?', danger: true }))) return;
+    if (!(await confirmDialog({ title: 'Cabut data biometrik ini?', body: 'Karyawan harus mendaftar ulang di HP-nya untuk absen dengan sidik jari atau Face ID.', confirmLabel: 'Cabut', danger: true }))) return;
     setRevoking(id);
     try {
       await axios.delete(`${BACKEND}/api/rahaza/attendance/webauthn/devices/${id}`, { headers });
-      setMsg({ type: 'success', text: 'Credential dicabut.' });
+      toast.success('Data biometrik dicabut.');
       await load();
-    } catch (e) { setMsg({ type: 'error', text: 'Gagal mencabut credential.' }); }
+    } catch (e) { toast.error('Gagal mencabut data biometrik.'); }
     finally { setRevoking(null); }
   };
 
-  const empMap = Object.fromEntries(employees.map(e => [e.id, e]));
-
-  const fmtDate = (d) => { if (!d) return '-'; try { return new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return d; } };
-
+  const empMap = useMemo(() => Object.fromEntries(employees.map((e) => [e.id, e])), [employees]);
+  const emp = (d) => empMap[d.employee_id] || {};
   const { page, setPage, totalPages, total, paged } = useClientPagination(devices, 10);
+
+  const kolom = [
+    { kunci: 'karyawan', label: 'Karyawan', hp: 'judul', isi: (d) => (
+      <div className="min-w-0"><p className="font-medium text-foreground">{emp(d).name || d.employee_id}</p>
+        <p className="text-xs text-muted-foreground">{emp(d).employee_code || '—'}</p></div>) },
+    { kunci: 'device', label: 'Nama perangkat', isi: (d) => d.device_name || 'Perangkat' },
+    { kunci: 'dibuat', label: 'Terdaftar', isi: (d) => <span className="whitespace-nowrap">{fmtTanggal(d.created_at)}</span> },
+    { kunci: 'dipakai', label: 'Terakhir dipakai', isi: (d) => <span className="whitespace-nowrap">{fmtTanggal(d.last_used_at)}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (d) => (
+      <Button size="sm" variant="outline" onClick={() => revoke(d.id)} disabled={revoking === d.id}>
+        <Trash2 />{revoking === d.id ? 'Mencabut…' : 'Cabut'}
+      </Button>) },
+  ];
+
   return (
-    <div className="space-y-4">
-      {msg && (
-        <div className={`rounded-lg px-4 py-3 text-sm ${msg.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
-          {msg.text} <button onClick={() => setMsg(null)} className="ml-2 opacity-60">✕</button>
-        </div>
+    <PageLayout testId="attendance-webauthn-tab" title="Biometrik HP"
+      subtitle="Sidik jari / Face ID yang didaftarkan karyawan di HP-nya untuk absen."
+      tools={<>
+        <TombolUnduh namaBerkas="biometrik-absen" namaLembar="Biometrik" baris={devices} testId="webauthn-unduh"
+          kolom={[
+            { label: 'Kode karyawan', nilai: (d) => emp(d).employee_code || '' },
+            { label: 'Nama karyawan', nilai: (d) => emp(d).name || d.employee_id },
+            { label: 'Nama perangkat', nilai: (d) => d.device_name || 'Perangkat' },
+            { label: 'Terdaftar', nilai: (d) => fmtTanggal(d.created_at) },
+            { label: 'Terakhir dipakai', nilai: (d) => fmtTanggal(d.last_used_at) },
+          ]} />
+        <MuatUlang onClick={load} memuat={loading} />
+      </>}
+      footer={devices.length > 0 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}>
+      {loading && devices.length === 0 ? <Memuat /> : (
+        <TabelData kolom={kolom} baris={paged} testId="webauthn-table"
+          kosong={<EmptyState icon={Fingerprint} title="Belum ada biometrik terdaftar"
+            description="Karyawan mendaftarkan sidik jari atau Face ID sendiri di halaman absen pada HP-nya." />} />
       )}
-
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold">Credential Biometrik Terdaftar</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">Fingerprint/Face ID/Touch ID per karyawan. Karyawan dapat mendaftarkan di <code className="bg-muted px-1 rounded">/absen</code></p>
-        </div>
-        <button onClick={load} className="text-sm text-primary hover:underline">🔄 Refresh</button>
-      </div>
-
-      {loading ? (
-        <div className="text-center py-10"><div className="animate-spin rounded-full h-7 w-7 border-b-2 border-primary mx-auto" /></div>
-      ) : devices.length === 0 ? (
-        <div className="bg-muted/30 rounded-xl p-8 text-center text-muted-foreground">
-          <div className="text-4xl mb-3">🖐️</div>
-          <p className="font-medium">Belum ada biometrik terdaftar</p>
-          <p className="text-sm mt-1">Karyawan dapat mendaftarkan fingerprint/Face ID di halaman <strong>/absen</strong></p>
-        </div>
-      ) : (
-        <div className="bg-card border rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="border-b bg-muted/20">
-              <tr>
-                <th className="px-4 py-3 text-left text-muted-foreground font-medium">Karyawan</th>
-                <th className="px-4 py-3 text-left text-muted-foreground font-medium">Nama Device</th>
-                <th className="px-4 py-3 text-left text-muted-foreground font-medium">Terdaftar</th>
-                <th className="px-4 py-3 text-left text-muted-foreground font-medium">Terakhir Dipakai</th>
-                <th className="px-4 py-3 text-left text-muted-foreground font-medium">Aksi</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paged.map(d => {
-                const emp = empMap[d.employee_id] || {};
-                return (
-                  <tr key={d.id} className="border-b hover:bg-muted/20">
-                    <td className="px-4 py-3">
-                      <div className="font-medium">{emp.name || d.employee_id}</div>
-                      <div className="text-xs text-muted-foreground">{emp.employee_code || '-'}</div>
-                    </td>
-                    <td className="px-4 py-3">{d.device_name || 'Device'}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{fmtDate(d.created_at)}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{fmtDate(d.last_used_at)}</td>
-                    <td className="px-4 py-3">
-                      <button onClick={() => revoke(d.id)} disabled={revoking === d.id}
-                        className="text-xs bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-2.5 py-1 rounded-lg transition-colors disabled:opacity-50">
-                        {revoking === d.id ? '...' : 'Cabut'}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
-        </div>
-      )}
-    </div>
+    </PageLayout>
   );
 }
 
-// ─── Tab 3: ZKTeco Device ──────────────────────────────────────────────────────
-function DeviceTab({ headers }) {
+// ─── Mesin sidik jari (ZKTeco/Fingerspot) ─────────────────────────────────────
+const FORM_MESIN = { name: '', ip: '', port: 4370, password: 0, timezone: 8, enabled: true };
+const STATUS_SINKRON = {
+  success: { label: 'Berhasil', tone: 'success' },
+  success_simulator: { label: 'Uji simulator', tone: 'info' },
+  error: { label: 'Gagal', tone: 'danger' },
+};
+
+export function MesinSidikJari({ token }) {
+  const headers = useHeaders(token);
   const [devices, setDevices] = useState([]);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(null);
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: '', ip: '', port: 4370, password: 0, timezone: 8, enabled: true });
+  const [form, setForm] = useState(null);         // null = popup tertutup
   const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState(null);
+  const [galat, setGalat] = useState('');
+  const [impor, setImpor] = useState(false);
   const [syncResults, setSyncResults] = useState({});
 
   const load = useCallback(async () => {
@@ -399,289 +383,237 @@ function DeviceTab({ headers }) {
     try {
       const r = await axios.get(`${BACKEND}/api/rahaza/devices/zkteco`, { headers });
       setDevices(r.data || []);
-    } catch (e) { console.error(e); }
+    } catch (e) { toast.error('Daftar mesin gagal dimuat.'); }
     finally { setLoading(false); }
   }, [headers]);
 
   useEffect(() => { load(); }, [load]);
 
   const saveDevice = async () => {
-    if (!form.name || !form.ip) { setMsg({ type: 'error', text: 'Nama dan IP wajib diisi.' }); return; }
-    setSaving(true);
+    if (!form.name || !form.ip) { setGalat('Nama dan alamat IP wajib diisi.'); return; }
+    setSaving(true); setGalat('');
     try {
       await axios.post(`${BACKEND}/api/rahaza/devices/zkteco`, form, { headers });
-      setMsg({ type: 'success', text: 'Device berhasil ditambahkan.' });
-      setShowForm(false);
-      setForm({ name: '', ip: '', port: 4370, password: 0, timezone: 8, enabled: true });
+      toast.success('Mesin ditambahkan.');
+      setForm(null);
       await load();
-    } catch (e) { setMsg({ type: 'error', text: e.response?.data?.detail || 'Gagal menyimpan' }); }
+    } catch (e) { setGalat(e.response?.data?.detail || 'Gagal menyimpan'); }
     finally { setSaving(false); }
   };
 
-  const deleteDevice = async (id) => {
-    if (!(await confirmDialog({ title: 'Hapus perangkat ini?', danger: true }))) return;
+  const deleteDevice = async (d) => {
+    if (!(await confirmDialog({ title: 'Hapus mesin ini?', body: `"${d.name}" dihapus dari daftar. Data absen yang sudah masuk tetap ada.`, confirmLabel: 'Hapus', danger: true }))) return;
     try {
-      await axios.delete(`${BACKEND}/api/rahaza/devices/zkteco/${id}`, { headers });
+      await axios.delete(`${BACKEND}/api/rahaza/devices/zkteco/${d.id}`, { headers });
+      toast.success('Mesin dihapus.');
       await load();
-    } catch (e) { setMsg({ type: 'error', text: 'Gagal menghapus' }); }
+    } catch (e) { toast.error('Gagal menghapus'); }
   };
 
   const syncDevice = async (id, simulator = false) => {
-    setSyncing(id); setSyncResults(prev => ({...prev, [id]: null}));
+    setSyncing(id); setSyncResults((prev) => ({ ...prev, [id]: null }));
     try {
       const r = await axios.post(`${BACKEND}/api/rahaza/devices/zkteco/${id}/sync`, { simulator }, { headers });
-      setSyncResults(prev => ({...prev, [id]: { ok: true, data: r.data }}));
+      setSyncResults((prev) => ({ ...prev, [id]: { ok: true, data: r.data } }));
       await load();
     } catch (e) {
-      const err = e.response?.data?.detail || 'Gagal sync';
-      setSyncResults(prev => ({...prev, [id]: { ok: false, error: err }}));
+      const err = e.response?.data?.detail || 'Sinkron gagal';
+      setSyncResults((prev) => ({ ...prev, [id]: { ok: false, error: err } }));
     } finally { setSyncing(null); }
   };
 
+  const setF = (patch) => setForm((f) => ({ ...f, ...patch }));
+  const statusSinkron = (d) => STATUS_SINKRON[d.last_sync_status];
+
+  const kolom = [
+    { kunci: 'mesin', label: 'Mesin', hp: 'judul', isi: (d) => {
+      const hasil = syncResults[d.id];
+      return (
+        <div className="min-w-0">
+          <p className="font-medium text-foreground">{d.name}</p>
+          <p className="text-xs text-muted-foreground tabular-nums">{d.ip}:{d.port}{d.password ? ' · bersandi' : ''}</p>
+          {d.last_error && <p className="text-xs text-[hsl(var(--danger-text))]">{d.last_error}</p>}
+          {hasil && (
+            <p className={`text-xs ${hasil.ok ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--danger-text))]'}`}>
+              {hasil.ok ? `${hasil.data?.message || 'Sinkron berhasil'} (${hasil.data?.synced || 0} data)` : hasil.error}
+            </p>
+          )}
+        </div>
+      );
+    } },
+    { kunci: 'aktif', label: 'Aktif', isi: (d) => <StatusBadge status={d.enabled ? 'aktif' : 'nonaktif'} label={d.enabled ? 'Aktif' : 'Nonaktif'} tone={d.enabled ? 'success' : 'muted'} /> },
+    { kunci: 'sinkron', label: 'Sinkron terakhir', isi: (d) => <span className="whitespace-nowrap">{d.last_sync_at ? fmtWaktu(d.last_sync_at) : 'Belum pernah'}</span> },
+    { kunci: 'data', label: 'Data terakhir', rata: 'kanan', isi: (d) => <span className="tabular-nums">{d.last_sync_records || 0}</span> },
+    { kunci: 'status', label: 'Hasil', isi: (d) => (statusSinkron(d)
+      ? <StatusBadge status={d.last_sync_status} label={statusSinkron(d).label} tone={statusSinkron(d).tone} />
+      : <span className="text-muted-foreground">—</span>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (d) => (
+      <div className="flex items-center justify-end gap-1">
+        <Button size="sm" variant="outline" onClick={() => syncDevice(d.id, false)} disabled={syncing === d.id}>
+          <RefreshCw className={syncing === d.id ? 'animate-spin' : ''} />{syncing === d.id ? 'Menyinkron…' : 'Sinkron'}
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="icon-sm" variant="ghost" aria-label="Lainnya" title="Lainnya"><MoreHorizontal /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => syncDevice(d.id, true)} disabled={syncing === d.id}>
+              <Wifi className="mr-2 h-4 w-4" />Uji dengan simulator
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => deleteDevice(d)} className="text-[hsl(var(--danger-text))]">
+              <Trash2 className="mr-2 h-4 w-4" />Hapus mesin
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>) },
+  ];
+
   return (
-    <div className="space-y-4">
-      {msg && (
-        <div className={`rounded-lg px-4 py-3 text-sm ${msg.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
-          {msg.text} <button onClick={() => setMsg(null)} className="ml-2 opacity-60">✕</button>
-        </div>
+    <PageLayout testId="attendance-device-tab" title="Mesin sidik jari"
+      subtitle="Mesin ZKTeco/Fingerspot di kantor. Bila server tidak menjangkau mesin, unggah file ekspornya."
+      actions={<>
+        <Button variant="outline" onClick={() => { setForm({ ...FORM_MESIN }); setGalat(''); }} data-testid="device-add"><Plus />Tambah mesin</Button>
+        <Button onClick={() => setImpor(true)} data-testid="fingerprint-open"><Upload />Impor file mesin</Button>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="mesin-sidik-jari" namaLembar="Mesin" baris={devices} testId="device-unduh"
+          kolom={[
+            { label: 'Nama', nilai: (d) => d.name },
+            { label: 'Alamat IP', nilai: (d) => d.ip },
+            { label: 'Port', nilai: (d) => d.port },
+            { label: 'Aktif', nilai: (d) => (d.enabled ? 'Aktif' : 'Nonaktif') },
+            { label: 'Sinkron terakhir', nilai: (d) => (d.last_sync_at ? fmtWaktu(d.last_sync_at) : 'Belum pernah') },
+            { label: 'Data terakhir', nilai: (d) => d.last_sync_records || 0 },
+            { label: 'Hasil', nilai: (d) => statusSinkron(d)?.label || '' },
+            { label: 'Galat terakhir', nilai: (d) => d.last_error || '' },
+          ]} />
+        <MuatUlang onClick={load} memuat={loading} />
+      </>}
+      summary={<p className="text-sm text-muted-foreground">
+        Sinkron langsung hanya bisa bila server menjangkau mesin di jaringan kantor. Bila tidak, pakai Impor file mesin.
+      </p>}>
+      {loading && devices.length === 0 ? <Memuat /> : (
+        <TabelData kolom={kolom} baris={devices} testId="device-table"
+          kosong={<EmptyState icon={Fingerprint} title="Belum ada mesin"
+            description="Tambah mesin ZKTeco/Fingerspot untuk sinkron langsung, atau impor file ekspor dari mesin." />} />
       )}
 
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold">Device Fingerprint Fisik (ZKTeco/Fingerspot)</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Sinkron langsung hanya bisa bila server menjangkau mesin di jaringan kantor. Bila tidak, pakai unggah file ekspor di bawah.
-          </p>
-        </div>
-        <button onClick={() => setShowForm(!showForm)}
-          className="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-xl text-sm font-medium transition-colors">
-          + Tambah Device
-        </button>
-      </div>
-
-      {/* Add Form */}
-      {showForm && (
-        <div className="bg-card border rounded-xl p-5 space-y-4">
-          <h4 className="font-medium">Tambah Device Baru</h4>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Nama Device *</label>
-              <input type="text" value={form.name} onChange={e => setForm({...form, name: e.target.value})}
-                placeholder="Mesin Absen Lantai 1"
-                className="w-full border rounded-lg px-3 py-2 text-sm bg-background" />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">IP Address *</label>
-              <input type="text" value={form.ip} onChange={e => setForm({...form, ip: e.target.value})}
-                placeholder="192.168.1.100"
-                className="w-full border rounded-lg px-3 py-2 text-sm bg-background" />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Port</label>
-              <input type="number" value={form.port} onChange={e => setForm({...form, port: parseInt(e.target.value)})}
-                className="w-full border rounded-lg px-3 py-2 text-sm bg-background" />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Password Device</label>
-              <input type="number" value={form.password} onChange={e => setForm({...form, password: parseInt(e.target.value)})}
-                placeholder="0 jika tidak ada"
-                className="w-full border rounded-lg px-3 py-2 text-sm bg-background" />
-            </div>
+      <FormPopup open={form !== null} onClose={() => setForm(null)} ukuran="pendek" onSimpan={saveDevice} menyimpan={saving}
+        judul="Tambah mesin sidik jari" keterangan="Mesin harus satu jaringan dengan server agar bisa disinkron langsung."
+        galat={galat} testId="device-form">
+        {form && <>
+          <Isian label="Nama mesin" wajib htmlFor="dev-name">
+            <Input id="dev-name" value={form.name} onChange={(e) => setF({ name: e.target.value })} placeholder="Mesin absen lantai 1" />
+          </Isian>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Isian label="Alamat IP" wajib htmlFor="dev-ip">
+              <Input id="dev-ip" value={form.ip} onChange={(e) => setF({ ip: e.target.value })} placeholder="192.168.1.100" />
+            </Isian>
+            <Isian label="Port" htmlFor="dev-port">
+              <Input id="dev-port" type="number" value={form.port} onChange={(e) => setF({ port: parseInt(e.target.value, 10) })} />
+            </Isian>
           </div>
-          <div className="flex items-center gap-3">
-            <label className="text-sm text-muted-foreground">Aktif?</label>
-            <input type="checkbox" checked={form.enabled}
-              onChange={e => setForm({...form, enabled: e.target.checked})} className="w-4 h-4" />
-          </div>
-          <div className="bg-amber-50 border border-amber-200 text-amber-700 text-xs px-3 py-2 rounded-lg">
-            ⚠️ Device harus terhubung ke jaringan yang sama. Untuk testing tanpa hardware, gunakan mode Simulator.
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => setShowForm(false)} className="px-4 py-2 border rounded-xl text-sm hover:bg-muted/20">Batal</button>
-            <button onClick={saveDevice} disabled={saving}
-              className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 px-4 py-2 rounded-xl text-sm font-semibold">
-              {saving ? 'Menyimpan...' : 'Simpan'}
-            </button>
-          </div>
-        </div>
-      )}
+          <Isian label="Sandi mesin" htmlFor="dev-pass" petunjuk="Isi 0 bila mesin tidak bersandi.">
+            <Input id="dev-pass" type="number" value={form.password} onChange={(e) => setF({ password: parseInt(e.target.value, 10) })} />
+          </Isian>
+          <label className="flex items-center gap-3 text-sm" htmlFor="dev-enabled">
+            <Switch id="dev-enabled" checked={form.enabled} onCheckedChange={(v) => setF({ enabled: v })} />
+            <span>Aktif</span>
+          </label>
+          <p className="text-xs text-muted-foreground">Untuk mencoba tanpa mesin, simpan lalu pilih Lainnya › Uji dengan simulator.</p>
+        </>}
+      </FormPopup>
 
       {/* Tahap 2 (2026-11-06): jalur utama — unggah file ekspor mesin */}
-      <FingerprintImportPanel headers={headers} />
-
-      {/* Device List */}
-      {loading ? (
-        <div className="text-center py-10"><div className="animate-spin rounded-full h-7 w-7 border-b-2 border-primary mx-auto" /></div>
-      ) : devices.length === 0 ? (
-        <div className="bg-muted/30 rounded-xl p-8 text-center text-muted-foreground">
-          <div className="text-4xl mb-3">🔌</div>
-          <p className="font-medium">Belum ada device dikonfigurasi</p>
-          <p className="text-sm mt-1">Tambah device ZKTeco/Fingerspot untuk sync data absen</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {devices.map(d => (
-            <div key={d.id} className="bg-card border rounded-xl p-4">
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className={`w-3 h-3 rounded-full ${d.enabled ? 'bg-green-400' : 'bg-muted'}`} />
-                  <div>
-                    <div className="font-semibold">{d.name}</div>
-                    <div className="text-xs text-muted-foreground">{d.ip}:{d.port} {d.password ? '(pwd protected)' : ''}</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => syncDevice(d.id, true)} disabled={syncing === d.id}
-                    className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50">
-                    {syncing === d.id ? '⏳' : '🧪'} Simulator
-                  </button>
-                  <button onClick={() => syncDevice(d.id, false)} disabled={syncing === d.id}
-                    className="text-xs bg-green-50 hover:bg-green-100 text-green-600 border border-green-200 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50">
-                    {syncing === d.id ? '⏳ Syncing...' : '🔄 Sync'}
-                  </button>
-                  <button onClick={() => deleteDevice(d.id)}
-                    className="text-xs bg-red-50 hover:bg-red-100 text-red-500 border border-red-200 px-2.5 py-1.5 rounded-lg transition-colors">
-                    🗑️
-                  </button>
-                </div>
-              </div>
-
-              <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                <div className="bg-muted/30 rounded-lg p-2 text-center">
-                  <div className="text-muted-foreground">Last Sync</div>
-                  <div className="font-medium">{d.last_sync_at ? new Date(d.last_sync_at).toLocaleString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Belum pernah'}</div>
-                </div>
-                <div className="bg-muted/30 rounded-lg p-2 text-center">
-                  <div className="text-muted-foreground">Records Terakhir</div>
-                  <div className="font-medium">{d.last_sync_records || 0}</div>
-                </div>
-                <div className="bg-muted/30 rounded-lg p-2 text-center">
-                  <div className="text-muted-foreground">Status</div>
-                  <div className={`font-medium ${
-                    d.last_sync_status === 'success' || d.last_sync_status === 'success_simulator' ? 'text-green-600' :
-                    d.last_sync_status === 'error' ? 'text-red-500' : 'text-muted-foreground'
-                  }`}>
-                    {d.last_sync_status === 'success' ? '✓ OK' : d.last_sync_status === 'success_simulator' ? '🧪 Sim' : d.last_sync_status === 'error' ? '✗ Error' : '-'}
-                  </div>
-                </div>
-              </div>
-
-              {d.last_error && (
-                <div className="mt-2 bg-red-50 border border-red-200 text-red-600 text-xs px-3 py-2 rounded-lg">
-                  ✗ {d.last_error}
-                </div>
-              )}
-
-              {syncResults[d.id] && (
-                <div className={`mt-2 text-xs px-3 py-2 rounded-lg border ${
-                  syncResults[d.id].ok
-                    ? 'bg-green-50 border-green-200 text-green-700'
-                    : 'bg-red-50 border-red-200 text-red-600'
-                }`}>
-                  {syncResults[d.id].ok
-                    ? `✓ ${syncResults[d.id].data?.message || 'Sync berhasil'} (${syncResults[d.id].data?.synced || 0} records)`
-                    : `✗ ${syncResults[d.id].error}`}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+      <FingerprintImportPanel open={impor} onClose={() => setImpor(false)} headers={headers} />
+    </PageLayout>
   );
 }
 
-// ─── Tab 4: Live Feed ──────────────────────────────────────────────────────────
-function LiveFeedTab({ headers }) {
+// ─── Absen otomatis hari ini ──────────────────────────────────────────────────
+const METODE = {
+  selfie_geo_ai: 'Selfie + AI',
+  webauthn: 'Biometrik HP',
+  device_zkteco: 'Mesin sidik jari',
+  manual: 'Manual',
+};
+const PERSETUJUAN = {
+  auto_approved: { label: 'Otomatis', tone: 'success' },
+  approved: { label: 'Disetujui', tone: 'success' },
+  pending: { label: 'Menunggu', tone: 'warning' },
+};
+const persetujuan = (r) => PERSETUJUAN[r.approval_status] || { label: 'Ditolak', tone: 'danger' };
+const lokasi = (r) => (r.geo_status === 'in_range' ? 'Di area kantor' : r.geo_status === 'out_of_range' ? 'Di luar area' : '—');
+const wajah = (r) => (r.face_match_status === 'checked' ? `${Math.round((r.face_match_score || 0) * 100)}%` : '—');
+
+export function AbsenOtomatisHariIni({ token }) {
+  const headers = useHeaders(token);
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(false);
   const [methodFilter, setMethodFilter] = useState('auto');
+  const today = todayWIB();
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const today = todayWIB();
-      const params = new URLSearchParams({ status: 'all', from_date: today, to_date: today });
+      const hari = todayWIB();
+      const params = new URLSearchParams({ status: 'all', from_date: hari, to_date: hari });
       const r = await axios.get(`${BACKEND}/api/rahaza/attendance/approvals?${params}`, { headers });
       let data = r.data || [];
       if (methodFilter === 'auto') {
-        data = data.filter(r => r.attendance_method && r.attendance_method !== 'manual' && r.source !== 'supervisor');
+        data = data.filter((x) => x.attendance_method && x.attendance_method !== 'manual' && x.source !== 'supervisor');
       }
       setRecords(data);
-    } catch (e) { console.error(e); }
+    } catch (e) { toast.error('Absen hari ini gagal dimuat.'); }
     finally { setLoading(false); }
   }, [methodFilter, headers]);
 
   useEffect(() => { load(); }, [load]);
 
-  const fmtTime = (ts) => { try { return new Date(ts).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }); } catch { return '-'; } };
-
-  const methodLabel = {
-    selfie_geo_ai: '📸 Selfie+AI',
-    webauthn: '🖐️ Biometrik',
-    device_zkteco: '🔌 Device',
-    manual: '📝 Manual',
-  };
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(records, 15);
+  const kolom = [
+    { kunci: 'karyawan', label: 'Karyawan', hp: 'judul', isi: (r) => r.employee_name || r.employee_id },
+    { kunci: 'metode', label: 'Metode', hp: 'keterangan', isi: (r) => METODE[r.attendance_method] || 'Manual' },
+    { kunci: 'lokasi', label: 'Lokasi', isi: lokasi },
+    { kunci: 'wajah', label: 'Kecocokan wajah', rata: 'kanan', isi: (r) => <span className="tabular-nums">{wajah(r)}</span> },
+    { kunci: 'masuk', label: 'Masuk', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtJam(r.clock_in)}</span> },
+    { kunci: 'pulang', label: 'Pulang', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.clock_out ? fmtJam(r.clock_out) : '—'}</span> },
+    { kunci: 'status', label: 'Status', isi: (r) => <StatusBadge status={r.approval_status} label={persetujuan(r).label} tone={persetujuan(r).tone} /> },
+  ];
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold">Live Feed Absen Hari Ini</h3>
-          <p className="text-xs text-muted-foreground">{new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <SmartNativeSelect value={methodFilter} onChange={e => setMethodFilter(e.target.value)} searchable={false}
-            data-testid="auto-att-method-filter" className="border rounded-lg px-2.5 h-9 text-sm bg-background">
-            <option value="auto">Hanya absen otomatis</option>
-            <option value="all">Semua metode</option>
-          </SmartNativeSelect>
-          <button onClick={load} className="bg-primary/10 hover:bg-primary/20 text-primary px-3 py-1.5 rounded-lg text-sm">🔄</button>
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="text-center py-10"><div className="animate-spin rounded-full h-7 w-7 border-b-2 border-primary mx-auto" /></div>
-      ) : records.length === 0 ? (
-        <div className="bg-muted/30 rounded-xl p-8 text-center text-muted-foreground">
-          <div className="text-4xl mb-3">📋</div>
-          <p>Belum ada absen otomatis hari ini</p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {records.map(r => (
-            <div key={r.id} className="bg-card border rounded-xl px-4 py-3 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="text-xl">
-                  {r.attendance_method === 'selfie_geo_ai' ? '📸' :
-                   r.attendance_method === 'webauthn' ? '🖐️' :
-                   r.attendance_method === 'device_zkteco' ? '🔌' : '📝'}
-                </div>
-                <div>
-                  <div className="font-medium text-sm">{r.employee_name || r.employee_id}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {methodLabel[r.attendance_method] || 'Manual'} ·
-                    {r.geo_status === 'in_range' ? ' 📍 Dalam Zona' : r.geo_status === 'out_of_range' ? ' ⚠️ Luar Zona' : ''}
-                    {r.face_match_status === 'checked' ? ` · 🤖 ${Math.round((r.face_match_score || 0) * 100)}%` : ''}
-                  </div>
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="font-semibold text-green-600">{fmtTime(r.clock_in)}</div>
-                {r.clock_out && <div className="text-orange-500 text-xs">{fmtTime(r.clock_out)}</div>}
-                <div className={`text-xs mt-0.5 ${
-                  r.approval_status === 'auto_approved' || r.approval_status === 'approved' ? 'text-green-600' :
-                  r.approval_status === 'pending' ? 'text-yellow-600' : 'text-red-500'
-                }`}>
-                  {r.approval_status === 'auto_approved' ? '✓ Auto' :
-                   r.approval_status === 'approved' ? '✓ Disetujui' :
-                   r.approval_status === 'pending' ? '⏳ Pending' : '✗ Ditolak'}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+    <PageLayout testId="attendance-live-tab" title="Absen otomatis hari ini"
+      subtitle="Absen lewat selfie, biometrik HP, dan mesin sidik jari pada hari ini."
+      filters={<>
+        <SmartNativeSelect value={methodFilter} onChange={(e) => setMethodFilter(e.target.value)} searchable={false}
+          data-testid="auto-att-method-filter" className="h-9 w-52" aria-label="Metode absen">
+          <option value="auto">Hanya absen otomatis</option>
+          <option value="all">Semua metode</option>
+        </SmartNativeSelect>
+        <span className="text-sm text-muted-foreground">{formatTanggalID(today)}</span>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas={`absen-otomatis-${today}`} namaLembar="Absen hari ini" baris={records} testId="live-unduh"
+          kolom={[
+            { label: 'Karyawan', nilai: (r) => r.employee_name || r.employee_id },
+            { label: 'Metode', nilai: (r) => METODE[r.attendance_method] || 'Manual' },
+            { label: 'Lokasi', nilai: lokasi },
+            { label: 'Kecocokan wajah', nilai: wajah },
+            { label: 'Masuk', nilai: (r) => fmtJam(r.clock_in) },
+            { label: 'Pulang', nilai: (r) => (r.clock_out ? fmtJam(r.clock_out) : '') },
+            { label: 'Status', nilai: (r) => persetujuan(r).label },
+          ]} />
+        <MuatUlang onClick={load} memuat={loading} />
+      </>}
+      footer={records.length > 0 && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
+      {loading && records.length === 0 ? <Memuat /> : (
+        <TabelData kolom={kolom} baris={paged} testId="live-table"
+          kosong={<EmptyState icon={Fingerprint} title={methodFilter === 'auto' ? 'Belum ada absen otomatis hari ini' : 'Belum ada absen hari ini'}
+            description="Absen lewat selfie, biometrik HP, atau mesin sidik jari akan tampil di sini." />} />
       )}
-    </div>
+    </PageLayout>
   );
 }
+
+/** Bawaan: tab "Absen otomatis" (id lama `hr-auto-attendance` diarahkan ke tab ini). */
+export default AbsenOtomatisHariIni;
