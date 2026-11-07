@@ -1,7 +1,7 @@
 /**
- * Asset Management — Shared utilities
- * Extracted from AssetManagementPortal.jsx (Phase 1 refactor)
+ * Manajemen Aset — fungsi bantu bersama (panggilan API, format angka/tanggal, unduhan semua halaman).
  */
+import { formatDateID, formatDateTimeID, formatPercent } from '@/lib/format';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -26,14 +26,42 @@ export async function apicall(method, path, token, body) {
   return data;
 }
 
+/** "Rp 1.234.567"; kosong → "—". */
 export function fmtCurrency(v) {
-  if (!v && v !== 0) return '-';
+  if (!v && v !== 0) return '—';
   return 'Rp ' + Number(v).toLocaleString('id-ID');
 }
 
+/** "04 Nov 2026" (dibaca dalam WIB); kosong → "—". */
 export function fmtDate(s) {
-  if (!s) return '-';
-  return new Date(s).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatDateID(s);
+}
+
+/** "04 Nov 2026, 08.30" (WIB). */
+export function fmtDateTime(s) {
+  return formatDateTimeID(s);
+}
+
+/** "45,3%" (koma desimal). */
+export function fmtPersen(v, digits = 1) {
+  return formatPercent(v, digits);
+}
+
+/** Angka uang mentah untuk berkas unduhan (tetap angka di Excel). */
+export const angka = (v) => (v === null || v === undefined || v === '' ? '' : Number(v) || 0);
+
+/**
+ * Ambil SEMUA halaman dari daftar berhalaman server ({ items, pagination: { total_pages } }) untuk unduhan.
+ * `ambilHalaman(page)` mengembalikan respons satu halaman.
+ */
+export async function ambilSemuaHalaman(ambilHalaman, batas = 100) {
+  const semua = [];
+  for (let page = 1; page <= batas; page += 1) {
+    const d = await ambilHalaman(page);
+    semua.push(...(d?.items || []));
+    if (!d?.pagination || page >= (d.pagination.total_pages || 1)) break;
+  }
+  return semua;
 }
 
 // Re-export API base for components that need it directly (e.g., multipart/file uploads)

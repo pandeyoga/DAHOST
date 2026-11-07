@@ -1,101 +1,129 @@
 /**
- * AssetsTab — Asset list with search/filter/pagination
- * Extracted from AssetManagementPortal.jsx during Phase 4 refactor.
+ * AssetsTab — daftar aset (cari, saring status, halaman server).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): penyaring satu baris (cari 16 rem + status), tabel TabelData (kartu ringkas
+ * di HP), klik baris → detail popup, unduh Excel/CSV SEMUA aset hasil saringan (bukan hanya halaman ini),
+ * paginasi di kaki. Tombol "Cari" dihapus: daftar sudah dimuat ulang otomatis saat kata dicari/status diganti
+ * (Enter dan ikon muat ulang tetap ada).
  */
+import { Plus, RefreshCw, Search, MoreHorizontal, ScanLine, Upload, ShoppingCart, TrendingDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, RefreshCw, ChevronRight } from 'lucide-react';
-import { STATUS_CONFIG } from '../constants';
-import { fmtCurrency } from '../utils';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import PaginationLite from '@/components/ui/pagination-lite';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import PageLayout from '../../layout/PageLayout';
+import { EmptyState } from '../../moduleAtoms';
+import { STATUS_CONFIG, STATUS_FILTER_OPTIONS } from '../constants';
+import { angka, ambilSemuaHalaman, fmtCurrency } from '../utils';
 import { StatusBadge } from '../components/StatusBadge';
+
+/**
+ * Tombol halaman aset: 1 tombol utama "Tambah aset" + menu "Lainnya" (pindai, impor, permintaan pengadaan,
+ * penyusutan massal). Dulu enam tombol berderet di kepala halaman.
+ */
+export function AksiAset({ onTambahAset, onScan, onImpor, onBuatPR, onDepresiasiMassal }) {
+  return (
+    <>
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" data-testid="asset-more-btn"><MoreHorizontal />Lainnya</Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={onScan} data-testid="scan-asset-btn">
+            <ScanLine className="mr-2 h-4 w-4" />Pindai label aset
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onImpor} data-testid="bulk-import-btn">
+            <Upload className="mr-2 h-4 w-4" />Impor aset dari CSV/Excel
+          </DropdownMenuItem>
+          {onBuatPR && (
+            <DropdownMenuItem onSelect={onBuatPR} data-testid="add-pr-btn">
+              <ShoppingCart className="mr-2 h-4 w-4" />Buat permintaan pengadaan
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem onSelect={onDepresiasiMassal} data-testid="batch-depr-btn">
+            <TrendingDown className="mr-2 h-4 w-4" />Posting penyusutan massal
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Button onClick={onTambahAset} data-testid="add-asset-btn"><Plus />Tambah aset</Button>
+    </>
+  );
+}
+
+const nilaiBuku = (a) => (a.purchase_cost || 0) - (a.accumulated_depreciation || 0);
 
 export function AssetsTab({
   assetSearch, setAssetSearch,
   assetStatus, setAssetStatus,
   assets, loading, assetPagination,
-  loadAssets, onAssetClick,
+  loadAssets, fetchAssetPage, onAssetClick,
+  onTambahAset, onScan, onImpor, onDepresiasiMassal,
 }) {
+  const halaman = assetPagination?.page || 1;
+  const kolomUnduh = [
+    { label: 'No. aset', nilai: (a) => a.asset_number },
+    { label: 'Nama', nilai: (a) => a.name },
+    { label: 'Kategori', nilai: (a) => a.category_name || '' },
+    { label: 'Harga beli', nilai: (a) => angka(a.purchase_cost) },
+    { label: 'Akumulasi penyusutan', nilai: (a) => angka(a.accumulated_depreciation || 0) },
+    { label: 'Nilai buku', nilai: (a) => angka(nilaiBuku(a)) },
+    { label: 'Status', nilai: (a) => STATUS_CONFIG[a.status]?.label || a.status },
+    { label: 'Ditugaskan ke', nilai: (a) => a.assigned_to_name || '' },
+    { label: 'Lokasi', nilai: (a) => a.location || '' },
+    { label: 'Departemen', nilai: (a) => a.department || '' },
+  ];
+
   return (
-    <>
-      <div className="flex items-center gap-2 mb-3">
-        <div className="relative flex-1 max-w-sm">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Cari aset..." className="pl-8" value={assetSearch}
+    <PageLayout testId="asset-list" title="Aset" subtitle="Daftar aset perusahaan."
+      actions={<AksiAset onTambahAset={onTambahAset} onScan={onScan} onImpor={onImpor} onDepresiasiMassal={onDepresiasiMassal} />}
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Cari nama, nomor, no. seri" className="pl-8" value={assetSearch}
             onChange={e => setAssetSearch(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && loadAssets()}
             data-testid="asset-search-input" />
         </div>
-        <Select value={assetStatus || 'all'} onValueChange={v => setAssetStatus(v === 'all' ? '' : v)}>
-          <SelectTrigger className="w-40" data-testid="asset-status-select"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Semua Status</SelectItem>
-            <SelectItem value="active">Aktif</SelectItem>
-            <SelectItem value="on_loan">Dipinjam</SelectItem>
-            <SelectItem value="in_maintenance">Pemeliharaan</SelectItem>
-            <SelectItem value="lost">Hilang</SelectItem>
-            <SelectItem value="disposed">Dilepas</SelectItem>
-          </SelectContent>
-        </Select>
-        <Button size="sm" onClick={() => loadAssets()} data-testid="asset-search-btn">
-          <RefreshCw size={14} className="mr-1" /> Cari
+        <SmartNativeSelect value={assetStatus} onChange={e => setAssetStatus(e.target.value)} searchable={false}
+          className="w-44" aria-label="Status aset" data-testid="asset-status-select">
+          {STATUS_FILTER_OPTIONS.map(o => <option key={o.value || 'semua'} value={o.value}>{o.label}</option>)}
+        </SmartNativeSelect>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="daftar-aset" namaLembar="Aset" baris={assets} kolom={kolomUnduh} testId="asset-unduh"
+          ambilSemua={() => ambilSemuaHalaman(fetchAssetPage)} />
+        <Button variant="outline" size="icon" onClick={() => loadAssets(halaman)} disabled={loading}
+          title="Muat ulang" aria-label="Muat ulang" data-testid="asset-search-btn">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
-      </div>
-
-      <div className="rounded-xl border overflow-hidden">
-        <table className="w-full" data-testid="asset-table">
-          <thead className="bg-muted/40">
-            <tr>
-              {['No. Aset','Nama','Kategori','Harga Beli','NBV','Status','Ditugaskan ke',''].map(h => (
-                <th key={h} className="text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide px-3 py-2.5">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {loading ? (
-              <tr><td colSpan={8} className="text-center py-8 text-muted-foreground text-sm">Memuat...</td></tr>
-            ) : assets.length === 0 ? (
-              <tr><td colSpan={8} className="text-center py-8 text-muted-foreground text-sm">Tidak ada aset ditemukan</td></tr>
-            ) : (
-              assets.map(a => (
-                <tr key={a.id} className="hover:bg-muted/30 cursor-pointer transition-colors"
-                  onClick={() => onAssetClick?.(a)}
-                  data-testid={`asset-row-${a.id}`}>
-                  <td className="px-3 py-2.5 text-xs font-mono text-muted-foreground">{a.asset_number}</td>
-                  <td className="px-3 py-2.5 text-sm font-medium">{a.name}</td>
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">{a.category_name}</td>
-                  <td className="px-3 py-2.5 text-sm">{fmtCurrency(a.purchase_cost)}</td>
-                  <td className="px-3 py-2.5 text-sm text-emerald-600 font-medium">
-                    {fmtCurrency((a.purchase_cost || 0) - (a.accumulated_depreciation || 0))}
-                  </td>
-                  <td className="px-3 py-2.5"><StatusBadge status={a.status} configMap={STATUS_CONFIG} /></td>
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">{a.assigned_to_name || '-'}</td>
-                  <td className="px-3 py-2.5">
-                    <Button variant="ghost" size="icon" className="h-7 w-7">
-                      <ChevronRight size={14} />
-                    </Button>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {assetPagination.total > 0 && (
-        <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
-          <span>Total: {assetPagination.total} aset</span>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" disabled={assetPagination.page <= 1}
-              onClick={() => loadAssets(assetPagination.page - 1)}
-              data-testid="asset-page-prev">Sebelumnya</Button>
-            <span className="self-center">{assetPagination.page} / {assetPagination.total_pages}</span>
-            <Button variant="outline" size="sm" disabled={assetPagination.page >= assetPagination.total_pages}
-              onClick={() => loadAssets(assetPagination.page + 1)}
-              data-testid="asset-page-next">Selanjutnya</Button>
-          </div>
-        </div>
+      </>}
+      footer={assetPagination?.total > 0 ? (
+        <PaginationLite page={halaman} totalPages={assetPagination.total_pages} total={assetPagination.total}
+          pageSize={assetPagination.page_size || 20} onPageChange={(p) => loadAssets(p)} />
+      ) : null}>
+      {loading && assets.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat aset…</p>
+      ) : (
+        <TabelData baris={assets} onKlikBaris={onAssetClick} testId="asset-table"
+          kosong={<EmptyState
+            title={assetSearch || assetStatus ? 'Tidak ada aset yang cocok' : 'Belum ada aset terdaftar'}
+            description={assetSearch || assetStatus ? 'Ubah kata pencarian atau pilihan status.'
+              : 'Daftarkan aset lewat tombol "Tambah aset", atau impor dari berkas CSV/Excel.'} />}
+          kolom={[
+            { kunci: 'no', label: 'No. aset', hp: 'keterangan', isi: (a) => <span className="tabular-nums text-muted-foreground">{a.asset_number}</span> },
+            { kunci: 'nama', label: 'Nama', hp: 'judul', isi: (a) => <span className="font-medium">{a.name}</span> },
+            { kunci: 'kategori', label: 'Kategori', isi: (a) => a.category_name || '—' },
+            { kunci: 'harga', label: 'Harga beli', rata: 'kanan', isi: (a) => <span className="tabular-nums">{fmtCurrency(a.purchase_cost)}</span> },
+            { kunci: 'nbv', label: 'Nilai buku', rata: 'kanan', isi: (a) => <span className="tabular-nums">{fmtCurrency(nilaiBuku(a))}</span> },
+            { kunci: 'status', label: 'Status', isi: (a) => <StatusBadge status={a.status} configMap={STATUS_CONFIG} /> },
+            { kunci: 'pemegang', label: 'Ditugaskan ke', isi: (a) => a.assigned_to_name || '—' },
+          ]} />
       )}
-    </>
+    </PageLayout>
   );
 }
