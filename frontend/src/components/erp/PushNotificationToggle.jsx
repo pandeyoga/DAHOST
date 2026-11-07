@@ -74,7 +74,7 @@ export default function PushNotificationToggle({ headers }) {
           setStatus('not_configured');
           toast({
             title: 'Web Push belum dikonfigurasi di server.',
-            description: 'Admin perlu menjalankan scripts/gen_local_secrets.py lalu restart backend.',
+            description: 'Hubungi admin sistem untuk mengaktifkan notifikasi dorong di server.',
             variant: 'destructive',
           });
           setLoading(false);
@@ -172,14 +172,14 @@ export default function PushNotificationToggle({ headers }) {
                                          <Bell className="w-5 h-5" />}
             </div>
             <div>
-              <p className="text-sm font-medium">Notifikasi Browser</p>
+              <p className="text-sm font-medium">Notifikasi browser</p>
               <p className="text-xs text-muted-foreground mt-0.5">
                 {status === 'subscribed'   ? 'Aktif — menerima notifikasi ERP' :
                  status === 'unsubscribed' ? 'Nonaktif — klik untuk mengaktifkan' :
                  status === 'denied'       ? 'Diblokir — aktifkan di pengaturan browser' :
-                 status === 'unsupported'  ? 'Browser tidak mendukung push notification' :
-                 status === 'not_configured' ? 'Server belum dikonfigurasi (VAPID kosong)' :
-                 status === 'checking'     ? 'Memeriksa status...' : ''}
+                 status === 'unsupported'  ? 'Browser tidak mendukung notifikasi dorong' :
+                 status === 'not_configured' ? 'Server belum diatur untuk notifikasi dorong' :
+                 status === 'checking'     ? 'Memeriksa status…' : ''}
               </p>
             </div>
           </div>
@@ -225,12 +225,11 @@ export default function PushNotificationToggle({ headers }) {
           {status === 'not_configured' && (
             <div className="text-xs text-[hsl(var(--warning-text))] space-y-1" data-testid="push-not-configured">
               <p className="flex items-center gap-1 font-medium">
-                <ServerOff className="w-3.5 h-3.5" /> Web Push belum dikonfigurasi di server.
+                <ServerOff className="w-3.5 h-3.5" /> Notifikasi dorong belum diaktifkan di server.
               </p>
-              <p className="text-muted-foreground">
-                Admin: jalankan <code className="text-foreground">python3 scripts/gen_local_secrets.py</code> lalu
-                <code className="text-foreground"> sudo supervisorctl restart backend</code>.
-                Web Push tidak memerlukan akun pihak ketiga — kuncinya dibuat sendiri (VAPID).
+              <p className="text-muted-foreground"
+                title="Admin: jalankan python3 scripts/gen_local_secrets.py lalu sudo supervisorctl restart backend (kunci VAPID dibuat sendiri, tanpa akun pihak ketiga).">
+                Hubungi admin sistem untuk mengaktifkannya. Tidak memerlukan akun pihak ketiga.
               </p>
               <Button size="sm" variant="outline" onClick={checkStatus} disabled={loading}
                       data-testid="btn-push-recheck">
