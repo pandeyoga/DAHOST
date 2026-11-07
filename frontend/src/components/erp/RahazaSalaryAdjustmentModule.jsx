@@ -298,7 +298,7 @@ export default function RahazaSalaryAdjustmentModule({ token, user }) {
         <Notice tone="info" title="Menampilkan 100 usulan terbaru.">Usulan yang lebih lama tidak ikut dimuat dan tidak ikut dihitung.</Notice>
       )}
       {loading && adjustments.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat usulan…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat usulan…</p>
       ) : (
         <TabelData kolom={kolom} baris={paged} onKlikBaris={setDetail} testId="adj-table"
           kosong={<EmptyState testId="adj-empty-state"

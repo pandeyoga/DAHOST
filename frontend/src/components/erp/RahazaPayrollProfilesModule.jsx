@@ -172,7 +172,7 @@ export default function RahazaPayrollProfilesModule({ token }) {
       )}
 
       {loading && profiles.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat profil gaji…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat profil gaji…</p>
       ) : (
         <TabelData kolom={kolom} baris={paged} onKlikBaris={bukaUbah} testId="pp-table"
           kosong={<EmptyState title={profiles.length ? 'Tidak ada profil yang cocok' : 'Belum ada profil gaji'}
@@ -242,10 +242,10 @@ function ProfileEditor({ open, profile, employees, processes, isNew, takenIds = 
       </Isian>
       <div className="grid gap-4 sm:grid-cols-2">
         <Isian label={`Tarif dasar (Rp per ${satuan})`}>
-          <MoneyInput glass value={state.base_rate || 0} onChange={e => update('base_rate', e.target.value)} data-testid="pp-edit-base-rate" />
+          <MoneyInput value={state.base_rate || 0} onChange={e => update('base_rate', e.target.value)} data-testid="pp-edit-base-rate" />
         </Isian>
         <Isian label="Tarif lembur (Rp per jam)" petunjuk="0 = memakai aturan cadangan di Pengaturan.">
-          <MoneyInput glass value={state.overtime_rate || 0} onChange={e => update('overtime_rate', e.target.value)} data-testid="pp-edit-ot-rate" />
+          <MoneyInput value={state.overtime_rate || 0} onChange={e => update('overtime_rate', e.target.value)} data-testid="pp-edit-ot-rate" />
         </Isian>
       </div>
       {!isNew && (
@@ -276,7 +276,7 @@ function ProfileEditor({ open, profile, employees, processes, isNew, takenIds = 
                     {processes.map(p => <option key={p.id} value={p.id}>{`${p.code} · ${p.name}`}</option>)}
                   </SmartNativeSelect>
                 </div>
-                <MoneyInput placeholder="Rp per pcs" value={r.rate} onChange={e => updateProcRate(i, 'rate', Number(e.target.value))} glass className="w-32" />
+                <MoneyInput placeholder="Rp per pcs" value={r.rate} onChange={e => updateProcRate(i, 'rate', Number(e.target.value))} className="w-32" />
                 <Button type="button" variant="ghost" size="icon" onClick={() => removeProcRate(i)} title="Hapus tarif proses" aria-label="Hapus tarif proses">
                   <Trash2 />
                 </Button>

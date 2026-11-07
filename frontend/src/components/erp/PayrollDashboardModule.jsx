@@ -122,7 +122,7 @@ export default function PayrollDashboardModule({ token, headers }) {
       ))}
 
       {muatAwal ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat dasbor penggajian…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat dasbor penggajian…</p>
       ) : (
         <div className="space-y-2">
           {history.length > 0 && <p className="text-sm font-medium text-foreground">Riwayat run terakhir (maksimal 12)</p>}

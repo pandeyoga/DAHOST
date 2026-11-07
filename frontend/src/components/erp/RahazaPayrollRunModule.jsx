@@ -528,7 +528,7 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
       {error && !creating && <Notice tone="danger" icon={AlertTriangle} title={error} testId="pr-error" />}
 
       {loading && runs.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat proses gaji…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat proses gaji…</p>
       ) : (
         <TabelData kolom={kolom} baris={paged} onKlikBaris={(r) => openRun(r.id)} testId="pr-table"
           kosong={<EmptyState title={runs.length ? 'Tidak ada run dengan status ini' : 'Belum ada proses gaji'}
@@ -987,13 +987,11 @@ function AdjustCell({ slip, onSave }) {
         keterangan={`Bruto sistem ${fmtIDR(slip.gross_before_adjustment ?? (Number(slip.gross_pay || 0) - curAdd))}. BPJS dan PPh21 tidak dihitung ulang.`}>
         <div className="grid gap-4 sm:grid-cols-2">
           <Isian label="Penyesuaian pendapatan (Rp)" petunjuk="Minus = mengurangi pendapatan.">
-            <MoneyInput unstyled allowNegative value={earning} onChange={e => setEarning(Number(e.target.value))}
-              className="h-9 w-full rounded-md border border-[var(--glass-border)] bg-[var(--input-surface)] px-3 text-sm tabular-nums"
+            <MoneyInput allowNegative value={earning} onChange={e => setEarning(Number(e.target.value))}
               data-testid={`payslip-adjust-earning-${slipId}`} />
           </Isian>
           <Isian label="Potongan tambahan (Rp)" petunjuk="Nol atau lebih.">
-            <MoneyInput unstyled value={ded} onChange={e => setDed(Number(e.target.value))}
-              className="h-9 w-full rounded-md border border-[var(--glass-border)] bg-[var(--input-surface)] px-3 text-sm tabular-nums"
+            <MoneyInput value={ded} onChange={e => setDed(Number(e.target.value))}
               data-testid={`payslip-adjust-amount-${slipId}`} />
           </Isian>
         </div>
@@ -1005,9 +1003,9 @@ function AdjustCell({ slip, onSave }) {
                   <span className="min-w-0 flex-1 truncate" title={l.label}>{l.label}</span>
                   {NON_EDITABLE(l.type)
                     ? <span className="tabular-nums text-muted-foreground">{fmtIDR(l.amount)} (wajib)</span>
-                    : <MoneyInput unstyled value={l.amount}
+                    : <MoneyInput value={l.amount}
                         onChange={e => setLines(ls => ls.map(x => x.index === l.index ? { ...x, amount: Math.min(Number(e.target.value), x.original) } : x))}
-                        className="h-8 w-32 rounded-md border border-[var(--glass-border)] bg-[var(--input-surface)] px-2 text-sm tabular-nums"
+                        className="h-8 w-32"
                         data-testid={`payslip-adjust-line-${slipId}-${l.index}`} />}
                 </div>
               ))}

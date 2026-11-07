@@ -176,7 +176,7 @@ export default function RahazaPayrollAllowancesModule({ token }) {
       footer={baris.length > 10 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}
     >
       {loading && items.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat tunjangan…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat tunjangan…</p>
       ) : (
         <TabelData kolom={kolom} baris={paged} kunci={(it) => it.allowance_id} onKlikBaris={setEditDialog} testId="allowances-table"
           kosong={<EmptyState title={items.length ? 'Tidak ada tunjangan yang cocok' : 'Belum ada tunjangan tetap'}
