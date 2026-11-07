@@ -18,46 +18,50 @@
  *   · pic_user_id/name        — PIC toko (boleh diisi sejak pembuatan)
  *   · needs_owner_review      — penanda BD-5 (owner wajib mengoreksi data seed)
  *
- * Aturan UI repo (plan.md): setiap daftar record = TABEL (default) + KARTU
- * (alternatif) dengan kolom informasi penuh + paginasi 10/halaman.
+ * Aturan UI repo (plan.md): setiap daftar record = TABEL (default) + KARTU (alternatif).
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout; tabel berisi kolom penting (15 → 8), kolom lain + semua aksi
+ * di popup rincian; form = FormPopup; arsip/hapus lewat confirmDialog; unduh Excel/CSV (dulu CSV dengan
+ * kolom grup/shop id/piutang/gudang yang selalu kosong karena nama field salah).
  */
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  Store, Plus, RefreshCw, Pencil, Archive, Loader2, UserCheck, Table2, LayoutGrid,
-  Search, Landmark, Wallet, Receipt, Warehouse, Hash, BadgeCheck, AlertTriangle,
-  Link2, Scale, X, Star, Calculator, ClipboardCheck, Trash2,
+  Store, Plus, RefreshCw, Pencil, Archive, Loader2, Search, BadgeCheck, AlertTriangle,
+  X, Star, Calculator, ClipboardCheck, Trash2, Eye, MoreHorizontal,
 } from 'lucide-react';
-import { GlassCard, GlassPanel, GlassInput, GlassTable } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
 import AccountAssignView from './marketing/AccountAssignView';
 import { isStoreScopedUser, NO_STORE_HINT, canManageStores, canDeleteStores } from './marketing/NoStoreScopeNotice';
 import { usePlatformBalances } from './finance/PlatformBalanceCards';
 import { formatRupiah } from '@/lib/format';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel,
 } from '@/components/ui/select';
 import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import ViewToggle from '@/components/ui/view-toggle';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
-import { PageHeader, StatTile, EmptyState } from './moduleAtoms';
+import PageLayout, { Toolbar } from './layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import { toast } from 'sonner';
-// F10 (sesi #10) — master toko dipakai lintas divisi (Finance/Gudang) ⇒ bisa diunduh.
-import ExportCsvButton from '@/components/ui/export-csv-button';
+// F10 (sesi #10) — master toko dipakai lintas divisi (Finance/Gudang) ⇒ bisa diunduh (Excel + CSV).
+import TombolUnduh from '@/components/ui/tombol-unduh';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
 const PLATFORMS = [
   { value: 'shopee', label: 'Shopee' },
-  { value: 'tiktokshop', label: 'TikTokShop' },
+  { value: 'tiktokshop', label: 'TikTok Shop' },
   { value: 'tokopedia', label: 'Tokopedia' },
 ];
 
@@ -76,54 +80,39 @@ const STATUSES = [
 
 /** Label pendek basis omzet untuk kolom tabel (label panjang dipakai di form). */
 const BASIS_SHORT = {
-  produk_setelah_diskon: 'Produk (stlh diskon)',
-  order_amount: 'Order Amount',
+  produk_setelah_diskon: 'Produk (setelah diskon)',
+  order_amount: 'Nilai pesanan',
 };
 
-const platformColors = {
-  shopee: 'bg-orange-500/10 text-orange-400 border-orange-500/30',
-  tiktokshop: 'bg-pink-500/10 text-pink-400 border-pink-500/30',
-  // 2026-11-02 (No.10) — 3 toko seed tersimpan `tiktok`; platform yang sama dengan `tiktokshop`.
-  tiktok: 'bg-pink-500/10 text-pink-400 border-pink-500/30',
-  tokopedia: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
-};
 // 2026-11-02 (No.10b) — nilai pemilih "buat akun pendapatan sendiri untuk toko ini".
 const AUTO_REVENUE = '__auto__';
 
-const statusColors = {
-  active: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
-  inactive: 'bg-muted/20 text-muted-foreground border-border/40',
-  suspended: 'bg-red-500/10 text-red-400 border-red-500/30',
-};
-
 const statusLabel = (s) => (STATUSES.find(x => x.value === s)?.label || s || '—');
 const groupLabel = (g) => (GROUPS.find(x => x.value === g)?.label || (g || '—'));
+// 2026-11-02 (No.10) — 3 toko seed tersimpan `tiktok`; platform yang sama dengan `tiktokshop`.
 const platformLabel = (p) => (PLATFORMS.find(x => x.value === p)?.label
-  || (p === 'tiktok' ? 'TikTokShop' : p) || '—');
+  || (p === 'tiktok' ? 'TikTok Shop' : p) || '—');
 
-/** Sel tabel untuk kode COA: kode (mono) + nama akun kecil di bawahnya. */
+/** Sel tabel untuk kode akun keuangan: kode + nama akun kecil di bawahnya. */
 function CoaCell({ code, name, testId, fallback }) {
   if (!code) {
     return (
-      <span className="text-xs italic text-amber-500/90 whitespace-nowrap" data-testid={testId}>
-        belum ditautkan
+      <span className="text-sm text-[hsl(var(--warning-text))] md:whitespace-nowrap" data-testid={testId}>
+        Belum ditautkan
       </span>
     );
   }
   return (
-    <div className="min-w-[150px]" data-testid={testId}>
-      <div className="font-mono text-xs text-foreground flex items-center gap-1">
+    <div className="min-w-0" data-testid={testId}>
+      <div className="flex items-center gap-1 text-sm text-foreground">
         {code}
         {fallback && (
-          <span
-            className="text-[9px] font-semibold uppercase tracking-wide px-1 py-px rounded bg-amber-500/15 text-amber-500 border border-amber-500/30"
-            title="Memakai akun penampung platform — ganti ke akun khusus toko bila sudah ada"
-          >
-            penampung
+          <span title="Memakai akun penampung platform — ganti ke akun khusus toko bila sudah ada">
+            <StatusBadge status="penampung" label="Penampung" tone="warning" />
           </span>
         )}
       </div>
-      {name && <div className="text-[11px] text-muted-foreground truncate max-w-[190px]" title={name}>{name}</div>}
+      {name && <div className="max-w-[14rem] truncate text-xs text-muted-foreground" title={name}>{name}</div>}
     </div>
   );
 }
@@ -144,15 +133,15 @@ function HealthStars({ score, grade, label, breakdown, testId }) {
     ? `${label} — skor ${score}/100\n${detail}`
     : 'Belum ada data penjualan 30 hari terakhir — impor pesanan atau isi rekap harian dulu';
   return (
-    <div className="min-w-[110px]" data-testid={testId} title={title}>
+    <div className="min-w-[6.5rem]" data-testid={testId} title={title}>
       <div className="flex items-center gap-0.5">
         {[1, 2, 3, 4, 5].map(i => (
           <Star key={i} size={12}
-            className={has && i <= grade ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground/35'} />
+            className={has && i <= grade ? 'fill-[hsl(var(--warning))] text-[hsl(var(--warning))]' : 'text-muted-foreground/40'} />
         ))}
-        {has && <span className="ml-1 text-xs font-bold tabular-nums">{grade}</span>}
+        {has && <span className="ml-1 text-xs font-semibold tabular-nums">{grade}</span>}
       </div>
-      <div className="text-[10px] text-muted-foreground truncate">
+      <div className="truncate text-xs text-muted-foreground">
         {has ? label : 'Belum ada data'}
       </div>
     </div>
@@ -165,6 +154,7 @@ function HealthStars({ score, grade, label, breakdown, testId }) {
 function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, users }) {
   const isEdit = !!account;
   const [submitting, setSubmitting] = useState(false);
+  const [galat, setGalat] = useState('');
   const [form, setForm] = useState({
     account_code: '',
     account_name: '',
@@ -191,6 +181,7 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
 
   useEffect(() => {
     if (!open) return;
+    setGalat('');
     if (account) {
       setForm({
         account_code: account.account_code || '',
@@ -257,21 +248,21 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
   const selectedRevName = (revenueOptions.find(o => o.code === form.coa_revenue_code) || {}).name || '';
   const revenueIsCatchAll = /lain[\s-]*lain/i.test(selectedRevName);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async () => {
     if (!form.account_name.trim()) {
-      toast.error('Nama akun wajib diisi');
+      setGalat('Nama akun wajib diisi.');
       return;
     }
     if (!isEdit && !form.account_code.trim()) {
-      toast.error('Kode akun wajib diisi');
+      setGalat('Kode akun wajib diisi.');
       return;
     }
     if (!form.coa_revenue_code) {
-      toast.error('Akun Pendapatan wajib dipilih — supaya omzet toko punya alamat jurnal');
+      setGalat('Akun pendapatan wajib dipilih — supaya omzet toko punya alamat jurnal.');
       return;
     }
 
+    setGalat('');
     setSubmitting(true);
     try {
       const shared = {
@@ -323,305 +314,204 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
       onOpenChange(false);
       if (onSaved) onSaved();
     } catch (err) {
-      toast.error(err.message);
+      setGalat(err.message);
     } finally {
       setSubmitting(false);
     }
   };
 
+  const judulBagian = 'pt-1 text-sm font-semibold text-foreground';
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto" data-testid="account-form-dialog">
-        <DialogHeader>
-          <DialogTitle>{isEdit ? `Edit Akun — ${account?.account_name || ''}` : 'Tambah Akun Toko Baru'}</DialogTitle>
-          <DialogDescription>
-            {isEdit
-              ? 'Perbarui identitas toko, PIC, dan tautan Finance (akun pendapatan · rekening pencairan · piutang).'
-              : 'Daftarkan toko marketplace. Akun piutang (anak 1-1303) dan akun pendapatan khusus toko ini dibuat otomatis.'}
-          </DialogDescription>
-        </DialogHeader>
+    <FormPopup open={open} onClose={() => onOpenChange(false)} ukuran="panjang" onSimpan={handleSubmit}
+      menyimpan={submitting} galat={galat} testId="account-form-dialog"
+      labelSimpan={isEdit ? 'Simpan perubahan' : 'Buat akun'}
+      judul={isEdit ? `Ubah akun — ${account?.account_name || ''}` : 'Tambah akun toko'}
+      keterangan={isEdit
+        ? 'Identitas toko, PIC, dan tautan Keuangan (akun pendapatan, rekening pencairan, piutang).'
+        : 'Daftarkan toko marketplace. Akun piutang dan akun pendapatan khusus toko ini dibuat otomatis.'}>
+      {/* ── Identitas toko ─────────────────────────────────────────── */}
+      <p className={judulBagian}>Identitas toko</p>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        {!isEdit && (
+          <Isian label="Kode akun" wajib htmlFor="acc-code" petunjuk="Kode unik (otomatis huruf besar)">
+            <Input id="acc-code" value={form.account_code}
+              onChange={e => setForm(f => ({ ...f, account_code: e.target.value.toUpperCase() }))}
+              placeholder="TIKTOK-OUTFIT" data-testid="acc-code-input" />
+          </Isian>
+        )}
+        <Isian label="Nama akun" wajib htmlFor="acc-name">
+          <Input id="acc-name" value={form.account_name}
+            onChange={e => setForm(f => ({ ...f, account_name: e.target.value }))}
+            placeholder="TikTok Outfit Boutique" data-testid="acc-name-input" />
+        </Isian>
+        {!isEdit && (
+          <Isian label="Platform" wajib>
+            <Select value={form.platform} onValueChange={handlePlatformChange}>
+              <SelectTrigger data-testid="acc-platform-select"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {PLATFORMS.map(p => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </Isian>
+        )}
+        <Isian label="Grup">
+          <Select value={form.group} onValueChange={v => setForm(f => ({ ...f, group: v }))}>
+            <SelectTrigger data-testid="acc-group-select"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {GROUPS.map(g => <SelectItem key={g.value} value={g.value}>{g.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </Isian>
+        <Isian label="Username platform" htmlFor="acc-username">
+          <Input id="acc-username" value={form.username}
+            onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
+            placeholder="outfit.boutique" data-testid="acc-username-input" />
+        </Isian>
+        {isEdit && (
+          <Isian label="Status">
+            <Select value={form.status} onValueChange={v => setForm(f => ({ ...f, status: v }))}>
+              <SelectTrigger data-testid="acc-status-select"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {STATUSES.map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </Isian>
+        )}
+        <Isian label="PIC (penanggung jawab)"
+          petunjuk="Hanya pengguna Portal Toko. Tugas otomatis (input sales, peringatan kesehatan toko) diberikan ke PIC ini.">
+          <Select
+            value={form.pic_user_id || 'none'}
+            onValueChange={v => setForm(f => ({ ...f, pic_user_id: v === 'none' ? '' : v }))}
+          >
+            <SelectTrigger data-testid="acc-pic-select" className="h-auto min-h-9 whitespace-normal text-left [&>span]:line-clamp-2"><SelectValue placeholder="Pilih PIC…" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Tidak ada PIC</SelectItem>
+              {form.pic_user_id && !users.some(u => u.id === form.pic_user_id) && (
+                <SelectItem value={form.pic_user_id}>
+                  {account?.pic_user_name || 'PIC tersimpan'}
+                  <span className="text-muted-foreground text-xs ml-1">(tanpa akses Portal Toko)</span>
+                </SelectItem>
+              )}
+              {users.map(u => (
+                <SelectItem key={u.id} value={u.id}>
+                  {u.name || u.email}
+                  <span className="text-muted-foreground text-xs ml-1">({u.role})</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Isian>
+      </div>
 
-        <form onSubmit={handleSubmit} className="space-y-5">
-          {/* ── Identitas toko ─────────────────────────────────────────── */}
-          <div className="space-y-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              <Store size={12} className="text-primary" /> Identitas Toko
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      {/* ── Tautan Keuangan (F0.7) ──────────────────────────────────── */}
+      <p className={`${judulBagian} border-t border-[var(--glass-border)] pt-4`}>Tautan Keuangan — alamat jurnal toko</p>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <Isian label="Akun pendapatan" wajib
+          petunjuk={form.coa_revenue_code === AUTO_REVENUE
+            ? `Akun pendapatan khusus toko ini dibuat otomatis di kelompok ${platformLabel(form.platform)} saat disimpan.`
+            : 'Omzet toko ini dibukukan ke akun tersebut (mis. 4-1122 TikTok Outfit Boutique).'}>
+          <Select
+            value={form.coa_revenue_code || undefined}
+            onValueChange={v => setForm(f => ({ ...f, coa_revenue_code: v }))}
+          >
+            <SelectTrigger data-testid="acc-coa-revenue-select" className="h-auto min-h-9 whitespace-normal text-left [&>span]:line-clamp-2">
+              <SelectValue placeholder="Pilih akun pendapatan…" />
+            </SelectTrigger>
+            <SelectContent className="max-h-72">
               {!isEdit && (
-                <div>
-                  <Label htmlFor="acc-code">Kode Akun <span className="text-red-400">*</span></Label>
-                  <GlassInput
-                    id="acc-code"
-                    value={form.account_code}
-                    onChange={e => setForm(f => ({ ...f, account_code: e.target.value.toUpperCase() }))}
-                    placeholder="TIKTOK-OUTFIT"
-                    data-testid="acc-code-input"
-                    required
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">Kode unik (otomatis huruf besar)</p>
-                </div>
+                <SelectGroup>
+                  <SelectLabel>Otomatis (disarankan)</SelectLabel>
+                  <SelectItem value={AUTO_REVENUE} data-testid="acc-coa-revenue-auto">
+                    Akun baru otomatis: Penjualan – {form.account_name.trim() || 'nama toko'}
+                  </SelectItem>
+                </SelectGroup>
               )}
-              <div>
-                <Label htmlFor="acc-name">Nama Akun <span className="text-red-400">*</span></Label>
-                <GlassInput
-                  id="acc-name"
-                  value={form.account_name}
-                  onChange={e => setForm(f => ({ ...f, account_name: e.target.value }))}
-                  placeholder="TikTok Outfit Boutique"
-                  data-testid="acc-name-input"
-                  required
-                />
-              </div>
-              {!isEdit && (
-                <div>
-                  <Label>Platform <span className="text-red-400">*</span></Label>
-                  <Select value={form.platform} onValueChange={handlePlatformChange}>
-                    <SelectTrigger data-testid="acc-platform-select"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {PLATFORMS.map(p => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
+              {revRecommended.length > 0 && (
+                <SelectGroup>
+                  <SelectLabel>Disarankan untuk {platformLabel(form.platform)}</SelectLabel>
+                  {revRecommended.map(o => (
+                    <SelectItem key={o.code} value={o.code}>{o.code} · {o.name}</SelectItem>
+                  ))}
+                </SelectGroup>
               )}
-              <div>
-                <Label>Grup</Label>
-                <Select value={form.group} onValueChange={v => setForm(f => ({ ...f, group: v }))}>
-                  <SelectTrigger data-testid="acc-group-select"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {GROUPS.map(g => <SelectItem key={g.value} value={g.value}>{g.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="acc-username">Username Platform</Label>
-                <GlassInput
-                  id="acc-username"
-                  value={form.username}
-                  onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
-                  placeholder="outfit.boutique"
-                  data-testid="acc-username-input"
-                />
-              </div>
-              {isEdit && (
-                <div>
-                  <Label>Status</Label>
-                  <Select value={form.status} onValueChange={v => setForm(f => ({ ...f, status: v }))}>
-                    <SelectTrigger data-testid="acc-status-select"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {STATUSES.map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
+              {revOthers.length > 0 && (
+                <SelectGroup>
+                  <SelectLabel>Akun penjualan lain</SelectLabel>
+                  {revOthers.map(o => (
+                    <SelectItem key={o.code} value={o.code}>{o.code} · {o.name}</SelectItem>
+                  ))}
+                </SelectGroup>
               )}
-              <div>
-                <Label className="flex items-center gap-1.5">
-                  <UserCheck size={13} className="text-primary" /> PIC (Penanggung Jawab)
-                </Label>
-                <Select
-                  value={form.pic_user_id || 'none'}
-                  onValueChange={v => setForm(f => ({ ...f, pic_user_id: v === 'none' ? '' : v }))}
-                >
-                  <SelectTrigger data-testid="acc-pic-select"><SelectValue placeholder="Pilih PIC..." /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">— Tidak ada PIC —</SelectItem>
-                    {form.pic_user_id && !users.some(u => u.id === form.pic_user_id) && (
-                      <SelectItem value={form.pic_user_id}>
-                        {account?.pic_user_name || 'PIC tersimpan'}
-                        <span className="text-muted-foreground text-xs ml-1">(tanpa akses Portal Toko)</span>
-                      </SelectItem>
-                    )}
-                    {users.map(u => (
-                      <SelectItem key={u.id} value={u.id}>
-                        {u.name || u.email}
-                        <span className="text-muted-foreground text-xs ml-1">({u.role})</span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Hanya pengguna yang punya akses Portal Toko. Tugas otomatis (input sales, peringatan
-                  kesehatan toko, template tugas) diberikan ke PIC ini.
-                </p>
-              </div>
-            </div>
+            </SelectContent>
+          </Select>
+        </Isian>
+        <Isian label="Basis omzet" petunjuk="Angka yang dihitung sebagai omzet toko saat impor pesanan.">
+          <Select value={form.revenue_basis} onValueChange={v => setForm(f => ({ ...f, revenue_basis: v }))}>
+            <SelectTrigger data-testid="acc-revenue-basis-select" className="h-auto min-h-9 whitespace-normal text-left [&>span]:line-clamp-2"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {basisOptions.map(o => (
+                <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Isian>
+      </div>
+      {revenueIsCatchAll && (
+        <Notice tone="warning" icon={AlertTriangle} testId="acc-coa-revenue-catchall-hint">
+          Ini <b>akun penampung</b> bersama, bukan akun khusus toko ini. Ganti bila akun toko sudah dibuat di
+          Portal Keuangan › Bagan akun.
+        </Notice>
+      )}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <Isian label="Rekening pencairan" petunjuk="Diatur Keuangan di Portal Keuangan › Saldo & pencairan marketplace.">
+          <div className="flex min-h-9 items-center rounded-md border border-[var(--glass-border)] px-3 py-1.5 text-sm"
+            data-testid="acc-coa-cash-readonly">
+            {form.coa_cash_code
+              ? <span>{form.coa_cash_code} · {(cashOptions.find(o => o.code === form.coa_cash_code) || {}).name || ''}</span>
+              : <span className="text-[hsl(var(--warning-text))]">Belum ditautkan</span>}
           </div>
+        </Isian>
+        <Isian label="Akun saldo platform (piutang toko)"
+          petunjuk="Dibuat otomatis sebagai anak 1-1303. Dana yang dilepas platform masuk ke akun ini dan berkurang saat ditarik ke rekening pencairan. Saldonya = uang toko yang masih di platform.">
+          <p className="text-sm">
+            {account?.ar_account_code
+              ? <span className="text-foreground" data-testid="acc-ar-account-code">{account.ar_account_code}</span>
+              : <span className="text-muted-foreground">Terbentuk saat toko disimpan</span>}
+          </p>
+        </Isian>
+      </div>
 
-          {/* ── Tautan Finance (F0.7) ──────────────────────────────────── */}
-          <div className="space-y-3 rounded-[var(--radius-md)] border border-[var(--glass-border)] bg-[var(--card-surface)] p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              <Landmark size={12} className="text-primary" /> Tautan Finance — alamat jurnal toko
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <Label className="flex items-center gap-1.5">
-                  <Receipt size={13} className="text-primary" />
-                  Akun Pendapatan <span className="text-red-400">*</span>
-                </Label>
-                <Select
-                  value={form.coa_revenue_code || undefined}
-                  onValueChange={v => setForm(f => ({ ...f, coa_revenue_code: v }))}
-                >
-                  <SelectTrigger data-testid="acc-coa-revenue-select">
-                    <SelectValue placeholder="Pilih akun pendapatan..." />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-72">
-                    {!isEdit && (
-                      <SelectGroup>
-                        <SelectLabel>Otomatis (disarankan)</SelectLabel>
-                        <SelectItem value={AUTO_REVENUE} data-testid="acc-coa-revenue-auto">
-                          Buat akun baru: Penjualan – {form.account_name.trim() || 'nama toko'}
-                        </SelectItem>
-                      </SelectGroup>
-                    )}
-                    {revRecommended.length > 0 && (
-                      <SelectGroup>
-                        <SelectLabel>Disarankan untuk {platformLabel(form.platform)}</SelectLabel>
-                        {revRecommended.map(o => (
-                          <SelectItem key={o.code} value={o.code}>{o.code} · {o.name}</SelectItem>
-                        ))}
-                      </SelectGroup>
-                    )}
-                    {revOthers.length > 0 && (
-                      <SelectGroup>
-                        <SelectLabel>Akun penjualan lain</SelectLabel>
-                        {revOthers.map(o => (
-                          <SelectItem key={o.code} value={o.code}>{o.code} · {o.name}</SelectItem>
-                        ))}
-                      </SelectGroup>
-                    )}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {form.coa_revenue_code === AUTO_REVENUE
-                    ? `Akun pendapatan khusus toko ini dibuat otomatis di kelompok ${platformLabel(form.platform)} saat disimpan.`
-                    : 'Omzet toko ini dibukukan ke akun tersebut (mis. 4-1122 TikTok Outfit Boutique).'}
-                </p>
-                {revenueIsCatchAll && (
-                  <p className="text-xs text-amber-500 mt-1 flex items-start gap-1" data-testid="acc-coa-revenue-catchall-hint">
-                    <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                    <span>
-                      Ini <b>akun penampung</b> bersama, bukan akun khusus toko ini.
-                      Ganti bila akun toko sudah dibuat di Portal Keuangan → COA.
-                    </span>
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <Label className="flex items-center gap-1.5">
-                  <Wallet size={13} className="text-primary" />
-                  Rekening Pencairan
-                </Label>
-                <div className="h-9 flex items-center px-3 rounded-md border border-[var(--glass-border)] bg-muted/20 text-sm"
-                  data-testid="acc-coa-cash-readonly">
-                  {form.coa_cash_code
-                    ? <span><span className="font-mono">{form.coa_cash_code}</span> · {(cashOptions.find(o => o.code === form.coa_cash_code) || {}).name || ''}</span>
-                    : <span className="italic text-amber-500/90">belum ditautkan</span>}
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Diatur oleh Finance di Portal Keuangan → Saldo &amp; Pencairan Marketplace.
-                </p>
-              </div>
-
-              <div>
-                <Label className="flex items-center gap-1.5">
-                  <Scale size={13} className="text-primary" /> Basis Omzet
-                </Label>
-                <Select
-                  value={form.revenue_basis}
-                  onValueChange={v => setForm(f => ({ ...f, revenue_basis: v }))}
-                >
-                  <SelectTrigger data-testid="acc-revenue-basis-select"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {basisOptions.map(o => (
-                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Menentukan angka mana yang dihitung sebagai omzet toko saat impor pesanan.
-                </p>
-              </div>
-            </div>
-
-            <div className="text-xs text-muted-foreground border-t border-[var(--glass-border)] pt-2 flex items-start gap-1.5">
-              <Link2 size={13} className="text-primary mt-0.5 shrink-0" />
-              <span>
-                <b className="text-foreground">Akun Saldo Platform (Piutang Toko)</b> — dibuat otomatis sebagai anak 1-1303:{' '}
-                {account?.ar_account_code
-                  ? <span className="font-mono text-foreground" data-testid="acc-ar-account-code">{account.ar_account_code}</span>
-                  : <span className="italic">terbentuk saat toko disimpan</span>}
-                . Dana yang dilepas platform masuk ke akun ini (Dr) dan berkurang saat ditarik ke Rekening Pencairan (Cr).
-                Saldonya = uang toko yang masih di platform.
-              </span>
-            </div>
-          </div>
-
-          {/* ── Data platform ──────────────────────────────────────────── */}
-          <div className="space-y-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              <Warehouse size={12} className="text-primary" /> Data Platform (untuk impor Seller Center)
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <Label htmlFor="acc-warehouse">Nama Gudang di Platform</Label>
-                <GlassInput
-                  id="acc-warehouse"
-                  value={form.platform_warehouse_name}
-                  onChange={e => setForm(f => ({ ...f, platform_warehouse_name: e.target.value }))}
-                  placeholder="Outfit Boutique"
-                  data-testid="acc-warehouse-input"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Persis seperti di kolom &quot;Warehouse Name&quot; pada ekspor pesanan.
-                </p>
-              </div>
-              <div>
-                <Label htmlFor="acc-shopid" className="flex items-center gap-1.5">
-                  <Hash size={13} className="text-primary" /> Shop ID Platform
-                </Label>
-                <GlassInput
-                  id="acc-shopid"
-                  value={form.platform_shop_id}
-                  onChange={e => setForm(f => ({ ...f, platform_shop_id: e.target.value }))}
-                  placeholder="7495123456789"
-                  data-testid="acc-shopid-input"
-                />
-              </div>
-            </div>
-            <div className="flex items-center justify-between rounded-[var(--radius-sm)] border border-[var(--glass-border)] px-3 py-2">
-              <div>
-                <p className="text-sm text-foreground">Integrasi API platform</p>
-                <p className="text-xs text-muted-foreground">Aktifkan bila toko ini sudah tersambung API resmi.</p>
-              </div>
-              <Switch
-                checked={form.has_api_integration}
-                onCheckedChange={v => setForm(f => ({ ...f, has_api_integration: v }))}
-                data-testid="acc-api-switch"
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={submitting} data-testid="acc-submit-btn">
-              {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              {isEdit ? 'Simpan Perubahan' : 'Buat Akun'}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+      {/* ── Data platform ──────────────────────────────────────────── */}
+      <p className={`${judulBagian} border-t border-[var(--glass-border)] pt-4`}>Data platform (untuk impor Seller Center)</p>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <Isian label="Nama gudang di platform" htmlFor="acc-warehouse"
+          petunjuk='Persis seperti kolom "Warehouse Name" pada ekspor pesanan.'>
+          <Input id="acc-warehouse" value={form.platform_warehouse_name}
+            onChange={e => setForm(f => ({ ...f, platform_warehouse_name: e.target.value }))}
+            placeholder="Outfit Boutique" data-testid="acc-warehouse-input" />
+        </Isian>
+        <Isian label="Shop ID platform" htmlFor="acc-shopid">
+          <Input id="acc-shopid" value={form.platform_shop_id}
+            onChange={e => setForm(f => ({ ...f, platform_shop_id: e.target.value }))}
+            placeholder="7495123456789" data-testid="acc-shopid-input" />
+        </Isian>
+      </div>
+      <label className="flex items-center justify-between gap-3 text-sm" htmlFor="acc-api">
+        <span>
+          <span className="block text-foreground">Integrasi API platform</span>
+          <span className="block text-xs text-muted-foreground">Aktifkan bila toko ini sudah tersambung API resmi.</span>
+        </span>
+        <Switch id="acc-api" checked={form.has_api_integration}
+          onCheckedChange={v => setForm(f => ({ ...f, has_api_integration: v }))} data-testid="acc-api-switch" />
+      </label>
+    </FormPopup>
   );
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // MODUL UTAMA
 // ════════════════════════════════════════════════════════════════════════════
-function AccountManagementBase({ token, onNavigate }) {
+function AccountManagementBase({ token, onAksi, onScoring }) {
   const [loading, setLoading] = useState(true);
   const [accounts, setAccounts] = useState([]);
   const [coa, setCoa] = useState({});
@@ -633,8 +523,7 @@ function AccountManagementBase({ token, onNavigate }) {
   const [viewMode, setViewMode] = useState('table');   // 'table' (default) | 'cards'
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editAccount, setEditAccount] = useState(null);
-  const [archiveTarget, setArchiveTarget] = useState(null);
-  const [deleteTarget, setDeleteTarget] = useState(null);   // hapus permanen (super admin)
+  const [detail, setDetail] = useState(null);
   const [reviewingId, setReviewingId] = useState(null);
   const [scoring, setScoring] = useState(false);
 
@@ -725,7 +614,7 @@ function AccountManagementBase({ token, onNavigate }) {
     });
   }, [accounts, search, onlyReview, onlyNoPic]);
 
-  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(filtered, 10);
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(filtered, 25);
 
   const stats = useMemo(() => ({
     total: accounts.length,
@@ -738,16 +627,29 @@ function AccountManagementBase({ token, onNavigate }) {
   const handleEdit = (acc) => { setEditAccount(acc); setDialogOpen(true); };
   const handleCreate = () => { setEditAccount(null); setDialogOpen(true); };
 
-  const handleArchive = async () => {
-    if (!archiveTarget) return;
+  // Tombol kepala halaman (Tambah akun, Hitung ulang skor) ada di cetakan induk — handler diteruskan lewat ref
+  // supaya identitasnya stabil (tidak memicu render berulang).
+  const aksiRef = useRef({});
+  useEffect(() => { onScoring?.(scoring); }, [scoring, onScoring]);
+  useEffect(() => {
+    onAksi?.({ create: () => aksiRef.current.create?.(), recompute: () => aksiRef.current.recompute?.() });
+  }, [onAksi]);
+
+  const handleArchive = async (acc) => {
+    const ok = await confirmDialog({
+      title: 'Arsipkan akun?',
+      body: `${acc.account_name} menjadi nonaktif. Data akun, riwayat penjualan, dan tautan akun keuangan tidak dihapus.`,
+      confirmLabel: 'Arsipkan', danger: true,
+    });
+    if (!ok) return;
     try {
-      const res = await fetch(`${API}/api/marketing/accounts/${archiveTarget.id}`, {
+      const res = await fetch(`${API}/api/marketing/accounts/${acc.id}`, {
         method: 'DELETE', headers,
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.detail || 'Gagal mengarsipkan akun');
       toast.success('Akun diarsipkan (status nonaktif)');
-      setArchiveTarget(null);
+      setDetail(null);
       fetchAccounts();
     } catch (e) {
       toast.error(e.message);
@@ -755,20 +657,26 @@ function AccountManagementBase({ token, onNavigate }) {
   };
 
   /** Hapus permanen — server menolak (409) bila toko sudah punya data; alasannya ditampilkan apa adanya. */
-  const handleDeletePermanent = async () => {
-    if (!deleteTarget) return;
+  const handleDeletePermanent = async (acc) => {
+    const ok = await confirmDialog({
+      title: 'Hapus toko permanen?',
+      body: `${acc.account_code} · ${acc.account_name} dihapus dan tidak bisa dikembalikan. Hanya bisa untuk toko yang belum `
+        + 'punya data (pesanan, katalog, sales, jurnal, dan lainnya); bila sudah ada, sistem menolak dan menyebut datanya. '
+        + 'Akun penjualan dan piutang yang dibuat otomatis untuk toko ini ikut dinonaktifkan di Bagan Akun.',
+      confirmLabel: 'Hapus permanen', danger: true,
+    });
+    if (!ok) return;
     try {
-      const res = await fetch(`${API}/api/marketing/accounts/${deleteTarget.id}/permanent`, {
+      const res = await fetch(`${API}/api/marketing/accounts/${acc.id}/permanent`, {
         method: 'DELETE', headers,
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.detail || 'Gagal menghapus toko');
       toast.success(body.message || 'Toko dihapus permanen');
-      setDeleteTarget(null);
+      setDetail(null);
       fetchAccounts();
     } catch (e) {
       toast.error(e.message, { duration: 10000 });
-      setDeleteTarget(null);
     }
   };
 
@@ -808,6 +716,8 @@ function AccountManagementBase({ token, onNavigate }) {
     }
   };
 
+  aksiRef.current = { create: handleCreate, recompute: recomputeHealth };
+
   const resetFilters = () => {
     setFilter({ platform: 'all', status: 'all', group: 'all' });
     setSearch('');
@@ -815,457 +725,302 @@ function AccountManagementBase({ token, onNavigate }) {
     setOnlyNoPic(false);
   };
 
+  const serverFilterAktif = filter.platform !== 'all' || filter.status !== 'all' || filter.group !== 'all';
   const activeFilterCount =
     (filter.platform !== 'all' ? 1 : 0) + (filter.status !== 'all' ? 1 : 0) +
     (filter.group !== 'all' ? 1 : 0) + (search ? 1 : 0) + (onlyReview ? 1 : 0) + (onlyNoPic ? 1 : 0);
 
-  // ── Baris tabel ───────────────────────────────────────────────────────────
-  const renderRow = (acc, i) => (
-    <tr
-      key={acc.id}
-      className={`border-b border-[var(--glass-border)] last:border-0 hover:bg-muted/30 transition-colors ${i % 2 === 0 ? '' : 'bg-muted/10'}`}
-      data-testid={`acc-row-${acc.account_code}`}
-    >
-      <td className="px-3 py-2.5 align-top">
-        <div className="font-mono text-xs text-foreground whitespace-nowrap">{acc.account_code}</div>
-        <div className="flex flex-wrap gap-1 mt-1">
-          {acc.is_demo && (
-            <span className="text-[9px] uppercase font-semibold px-1 py-px rounded bg-muted/30 text-muted-foreground border border-border/40">demo</span>
-          )}
-          {acc.needs_owner_review && (
-            <span
-              className="text-[9px] uppercase font-semibold px-1 py-px rounded bg-amber-500/15 text-amber-500 border border-amber-500/30"
-              title="Data hasil seed — owner perlu mengoreksi nama/PIC/rekening (BD-5)"
-              data-testid={`acc-review-badge-${acc.account_code}`}
-            >
-              perlu ditinjau
-            </span>
-          )}
-        </div>
-      </td>
-      <td className="px-3 py-2.5 align-top">
-        <div className="font-medium text-sm text-foreground max-w-[190px] truncate" title={acc.account_name}>
-          {acc.account_name}
-        </div>
-      </td>
-      <td className="px-3 py-2.5 align-top">
-        <Badge variant="outline" className={platformColors[acc.platform]}>{platformLabel(acc.platform)}</Badge>
-      </td>
-      <td className="px-3 py-2.5 align-top text-xs text-muted-foreground whitespace-nowrap">{groupLabel(acc.group)}</td>
-      <td className="px-3 py-2.5 align-top text-xs font-mono text-muted-foreground">{acc.username || '—'}</td>
-      <td className="px-3 py-2.5 align-top">
-        <Badge variant="outline" className={statusColors[acc.status]}>{statusLabel(acc.status)}</Badge>
-      </td>
-      <td className="px-3 py-2.5 align-top text-xs">
-        {acc.pic_user_name
-          ? <span className="text-foreground flex items-center gap-1"><UserCheck size={11} className="text-primary shrink-0" />{acc.pic_user_name}</span>
-          : <span className="italic text-amber-500/90">belum ada PIC</span>}
-      </td>
-      <td className="px-3 py-2.5 align-top">
-        <CoaCell
-          code={acc.coa_revenue_code}
-          name={coaNameMap[acc.coa_revenue_code]}
-          fallback={isCatchAll(acc.coa_revenue_code)}
-          testId={`acc-coa-rev-${acc.account_code}`}
-        />
-      </td>
-      <td className="px-3 py-2.5 align-top">
-        <CoaCell code={acc.coa_cash_code} name={coaNameMap[acc.coa_cash_code]} testId={`acc-coa-cash-${acc.account_code}`} />
-      </td>
-      <td className="px-3 py-2.5 align-top">
-        {acc.ar_account_code
-          ? (
-            <div className="whitespace-nowrap">
-              <span className="font-mono text-xs text-foreground" data-testid={`acc-ar-${acc.account_code}`}>{acc.ar_account_code}</span>
-              <div className="text-[11px] tabular-nums text-emerald-600" data-testid={`acc-platform-balance-${acc.account_code}`}>
-                {formatRupiah(balanceMap[acc.id]?.balance || 0)}
-              </div>
-            </div>
-          )
-          : <span className="text-xs italic text-amber-500/90">belum terbentuk</span>}
-      </td>
-      <td className="px-3 py-2.5 align-top text-xs text-foreground whitespace-nowrap">{basisLabel(acc.revenue_basis)}</td>
-      <td className="px-3 py-2.5 align-top text-xs text-muted-foreground">{acc.platform_warehouse_name || '—'}</td>
-      <td className="px-3 py-2.5 align-top text-xs font-mono text-muted-foreground">{acc.platform_shop_id || '—'}</td>
-      <td className="px-3 py-2.5 align-top"><HealthStars score={acc.health_score} grade={acc.health_grade} label={acc.health_label}
-          breakdown={acc.health_breakdown} testId={`acc-health-${acc.account_code}`} /></td>
-      <td className="px-3 py-2.5 align-top sticky right-0 bg-[hsl(var(--card))] border-l border-[var(--glass-border)]">
-        <div className="flex items-center justify-end gap-1">
-          {canManageStores() && acc.needs_owner_review && (
-            <Button
-              size="icon" variant="ghost" className="h-7 w-7 text-emerald-500 hover:bg-emerald-500/10"
-              title="Tandai sudah ditinjau owner"
-              onClick={() => markReviewed(acc)}
-              disabled={reviewingId === acc.id}
-              data-testid={`mark-reviewed-${acc.account_code}`}
-            >
-              {reviewingId === acc.id ? <Loader2 size={12} className="animate-spin" /> : <BadgeCheck size={13} />}
-            </Button>
-          )}
-          {canManageStores() && (<>
-            <Button
-              size="icon" variant="ghost" className="h-7 w-7"
-              title="Edit akun" onClick={() => handleEdit(acc)}
-              data-testid={`edit-acc-${acc.account_code}`}
-            >
-              <Pencil size={12} />
-            </Button>
-            <Button
-              size="icon" variant="ghost" className="h-7 w-7 text-red-400 hover:bg-red-500/10"
-              title="Arsipkan akun" onClick={() => setArchiveTarget(acc)}
-              data-testid={`archive-acc-${acc.account_code}`}
-            >
-              <Archive size={12} />
-            </Button>
-          </>)}
-          {canDeleteStores() && (
-            <Button
-              size="icon-sm" variant="ghost" className="text-destructive hover:bg-destructive/10"
-              title="Hapus permanen (hanya toko yang belum punya data)" onClick={() => setDeleteTarget(acc)}
-              data-testid={`delete-acc-${acc.account_code}`}
-            >
-              <Trash2 size={12} />
-            </Button>
-          )}
-        </div>
-      </td>
-    </tr>
-  );
+  const saldo = (acc) => (acc.ar_account_code ? Number(balanceMap[acc.id]?.balance || 0) : null);
 
-  // ── Kartu ─────────────────────────────────────────────────────────────────
+  // ── semua aksi satu toko (menu "Lainnya" di baris & tombol di popup detail) ──
+  const aksiToko = (acc) => {
+    if (!canManageStores()) return [];
+    const out = [];
+    out.push({ key: 'edit', label: 'Ubah akun', icon: Pencil, testId: `edit-acc-${acc.account_code}`, run: () => handleEdit(acc) });
+    if (acc.needs_owner_review) {
+      out.push({ key: 'review', label: 'Tandai sudah ditinjau', icon: BadgeCheck, testId: `mark-reviewed-${acc.account_code}`,
+        disabled: reviewingId === acc.id, run: () => markReviewed(acc) });
+    }
+    out.push({ key: 'archive', label: 'Arsipkan akun', icon: Archive, testId: `archive-acc-${acc.account_code}`, bahaya: true,
+      run: () => handleArchive(acc) });
+    if (canDeleteStores()) {
+      out.push({ key: 'delete', label: 'Hapus permanen', icon: Trash2, testId: `delete-acc-${acc.account_code}`, bahaya: true,
+        run: () => handleDeletePermanent(acc) });
+    }
+    return out;
+  };
+
+  const menuAksi = (acc, kecuali = []) => {
+    const daftar = aksiToko(acc).filter(a => !kecuali.includes(a.key));
+    if (!daftar.length) return null;
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="icon-sm" variant="ghost" aria-label="Aksi lain" title="Aksi lain" data-testid={`acc-more-${acc.account_code}`}>
+            <MoreHorizontal />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {daftar.map((a, i) => (
+            <Fragment key={a.key}>
+              {a.bahaya && !daftar[i - 1]?.bahaya && <DropdownMenuSeparator />}
+              <DropdownMenuItem onSelect={() => a.run()} disabled={a.disabled} data-testid={a.testId}
+                className={a.bahaya ? 'text-[hsl(var(--danger-text))]' : undefined}>
+                <a.icon className="mr-2 h-4 w-4" />{a.label}
+              </DropdownMenuItem>
+            </Fragment>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  };
+
+  const kolom = [
+    { kunci: 'toko', label: 'Toko', hp: 'judul', isi: (acc) => (
+      <div className="min-w-0 md:max-w-[16rem]" data-testid={`acc-row-${acc.account_code}`}>
+        <p className="truncate font-medium text-foreground" title={acc.account_name}>{acc.account_name}</p>
+        <p className="text-xs text-muted-foreground">
+          {acc.account_code}
+          {acc.is_demo ? ' · contoh' : ''}
+        </p>
+      </div>) },
+    { kunci: 'platform', label: 'Platform', hp: 'keterangan', isi: (acc) => platformLabel(acc.platform) },
+    { kunci: 'status', label: 'Status', isi: (acc) => (
+      <div className="flex flex-wrap gap-1">
+        <StatusBadge status={acc.status} label={statusLabel(acc.status)}
+          tone={acc.status === 'active' ? 'success' : acc.status === 'suspended' ? 'danger' : 'muted'} />
+        {acc.needs_owner_review && (
+          <span title="Data hasil seed — owner perlu mengoreksi nama/PIC/rekening" data-testid={`acc-review-badge-${acc.account_code}`}>
+            <StatusBadge status="tinjau" label="Perlu ditinjau" tone="warning" />
+          </span>
+        )}
+      </div>) },
+    { kunci: 'pic', label: 'PIC', isi: (acc) => (acc.pic_user_name
+      ? <span className="text-sm">{acc.pic_user_name}</span>
+      : <span className="text-sm text-[hsl(var(--warning-text))]">Belum ada PIC</span>) },
+    { kunci: 'pendapatan', label: 'Akun pendapatan', isi: (acc) => (
+      <CoaCell code={acc.coa_revenue_code} name={coaNameMap[acc.coa_revenue_code]}
+        fallback={isCatchAll(acc.coa_revenue_code)} testId={`acc-coa-rev-${acc.account_code}`} />) },
+    { kunci: 'saldo', label: 'Saldo platform', rata: 'kanan', isi: (acc) => (acc.ar_account_code
+      ? <span className="tabular-nums md:whitespace-nowrap" data-testid={`acc-platform-balance-${acc.account_code}`}
+          title={`Akun piutang toko ${acc.ar_account_code}`}>{formatRupiah(saldo(acc))}</span>
+      : <span className="text-sm text-[hsl(var(--warning-text))]">Belum terbentuk</span>) },
+    { kunci: 'skor', label: 'Skor', isi: (acc) => (
+      <HealthStars score={acc.health_score} grade={acc.health_grade} label={acc.health_label}
+        breakdown={acc.health_breakdown} testId={`acc-health-${acc.account_code}`} />) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (acc) => (
+      <div className="flex items-center justify-end gap-1">
+        <Button size="sm" variant="outline" onClick={() => setDetail(acc)} data-testid={`acc-detail-${acc.account_code}`}>
+          <Eye />Rincian
+        </Button>
+        {menuAksi(acc)}
+      </div>) },
+  ];
+
+  const unduhKolom = [
+    { label: 'Kode', nilai: (a) => a.account_code },
+    { label: 'Nama akun', nilai: (a) => a.account_name },
+    { label: 'Platform', nilai: (a) => platformLabel(a.platform) },
+    { label: 'Grup', nilai: (a) => groupLabel(a.group) },
+    { label: 'Username', nilai: (a) => a.username || '' },
+    { label: 'Status', nilai: (a) => statusLabel(a.status) },
+    { label: 'Perlu ditinjau', nilai: (a) => (a.needs_owner_review ? 'Ya' : 'Tidak') },
+    { label: 'PIC', nilai: (a) => a.pic_user_name || '' },
+    { label: 'Akun pendapatan', nilai: (a) => a.coa_revenue_code || '' },
+    { label: 'Nama akun pendapatan', nilai: (a) => coaNameMap[a.coa_revenue_code] || '' },
+    { label: 'Rekening pencairan', nilai: (a) => a.coa_cash_code || '' },
+    { label: 'Akun piutang toko', nilai: (a) => a.ar_account_code || '' },
+    { label: 'Saldo platform', nilai: (a) => (saldo(a) === null ? '' : saldo(a)) },
+    { label: 'Basis omzet', nilai: (a) => basisLabel(a.revenue_basis) },
+    { label: 'Gudang platform', nilai: (a) => a.platform_warehouse_name || '' },
+    { label: 'Shop ID', nilai: (a) => a.platform_shop_id || '' },
+    { label: 'Skor sehat (1–5)', nilai: (a) => (a.health_grade ?? '') },
+  ];
+
+  // ── Kartu (tampilan alternatif) ───────────────────────────────────────────
   const renderCard = (acc) => (
-    <GlassCard key={acc.id} className="p-4" data-testid={`acc-card-${acc.account_code}`}>
-      <div className="flex items-start justify-between mb-3 gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="font-semibold text-foreground text-sm truncate" title={acc.account_name}>{acc.account_name}</div>
-          <div className="text-xs text-muted-foreground font-mono">{acc.account_code}</div>
+    <GlassCard key={acc.id} className="space-y-3 p-4" data-testid={`acc-card-${acc.account_code}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-foreground" title={acc.account_name}>{acc.account_name}</p>
+          <p className="text-xs text-muted-foreground">{acc.account_code} · {platformLabel(acc.platform)}</p>
         </div>
-        <HealthStars score={acc.health_score} grade={acc.health_grade} label={acc.health_label}
-          breakdown={acc.health_breakdown} />
+        <HealthStars score={acc.health_score} grade={acc.health_grade} label={acc.health_label} breakdown={acc.health_breakdown} />
       </div>
-
-      <div className="flex flex-wrap items-center gap-1.5 mb-3">
-        <Badge variant="outline" className={platformColors[acc.platform]}>{platformLabel(acc.platform)}</Badge>
-        <Badge variant="outline" className={statusColors[acc.status]}>{statusLabel(acc.status)}</Badge>
-        <Badge variant="outline" className="text-xs">{groupLabel(acc.group)}</Badge>
-        {acc.is_demo && <Badge variant="outline" className="text-xs text-muted-foreground">demo</Badge>}
-        {acc.needs_owner_review && (
-          <Badge variant="outline" className="text-xs bg-amber-500/10 text-amber-500 border-amber-500/30">
-            perlu ditinjau
-          </Badge>
-        )}
-      </div>
-
-      <dl className="space-y-1.5 text-xs">
-        <div className="flex items-start gap-2">
-          <dt className="w-[104px] shrink-0 text-muted-foreground">Username</dt>
-          <dd className="font-mono text-foreground truncate">{acc.username || '—'}</dd>
-        </div>
-        <div className="flex items-start gap-2">
-          <dt className="w-[104px] shrink-0 text-muted-foreground">PIC</dt>
-          <dd className={acc.pic_user_name ? 'text-foreground' : 'italic text-amber-500/90'}>
-            {acc.pic_user_name || 'belum ada PIC'}
-          </dd>
-        </div>
-        <div className="flex items-start gap-2">
-          <dt className="w-[104px] shrink-0 text-muted-foreground">Pendapatan</dt>
-          <dd className="min-w-0">
-            <CoaCell
-              code={acc.coa_revenue_code}
-              name={coaNameMap[acc.coa_revenue_code]}
-              fallback={isCatchAll(acc.coa_revenue_code)}
-            />
-          </dd>
-        </div>
-        <div className="flex items-start gap-2">
-          <dt className="w-[104px] shrink-0 text-muted-foreground">Pencairan</dt>
-          <dd className="min-w-0"><CoaCell code={acc.coa_cash_code} name={coaNameMap[acc.coa_cash_code]} /></dd>
-        </div>
-        <div className="flex items-start gap-2">
-          <dt className="w-[104px] shrink-0 text-muted-foreground">Saldo platform</dt>
-          <dd className="min-w-0 truncate">
-            <span className="font-mono text-foreground">{acc.ar_account_code || '—'}</span>
-            {acc.ar_account_code ? <span className="ml-1 text-emerald-600 tabular-nums">{formatRupiah(balanceMap[acc.id]?.balance || 0)}</span> : null}
-          </dd>
-        </div>
-        <div className="flex items-start gap-2">
-          <dt className="w-[104px] shrink-0 text-muted-foreground">Basis omzet</dt>
-          <dd className="text-foreground">{basisLabel(acc.revenue_basis)}</dd>
-        </div>
-        <div className="flex items-start gap-2">
-          <dt className="w-[104px] shrink-0 text-muted-foreground">Gudang platform</dt>
-          <dd className="text-foreground truncate">{acc.platform_warehouse_name || '—'}</dd>
-        </div>
-        <div className="flex items-start gap-2">
-          <dt className="w-[104px] shrink-0 text-muted-foreground">Shop ID</dt>
-          <dd className="font-mono text-foreground truncate">{acc.platform_shop_id || '—'}</dd>
-        </div>
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+        <dt className="text-muted-foreground">Status</dt><dd>{statusLabel(acc.status)}</dd>
+        <dt className="text-muted-foreground">PIC</dt>
+        <dd className={acc.pic_user_name ? '' : 'text-[hsl(var(--warning-text))]'}>{acc.pic_user_name || 'Belum ada PIC'}</dd>
+        <dt className="text-muted-foreground">Pendapatan</dt><dd>{acc.coa_revenue_code || '—'}</dd>
+        <dt className="text-muted-foreground">Saldo platform</dt>
+        <dd className="tabular-nums">{acc.ar_account_code ? formatRupiah(saldo(acc)) : '—'}</dd>
       </dl>
-
-      {canManageStores() && (
-      <div className="flex items-center gap-2 pt-3 mt-3 border-t border-[var(--glass-border)]">
-        <Button size="sm" variant="outline" className="flex-1" onClick={() => handleEdit(acc)} data-testid={`edit-acc-card-${acc.account_code}`}>
-          <Pencil className="w-3 h-3 mr-1" /> Edit
+      <div className="flex items-center justify-between gap-2 border-t border-[var(--glass-border)] pt-3">
+        <Button size="sm" variant="outline" onClick={() => setDetail(acc)} data-testid={`edit-acc-card-${acc.account_code}`}>
+          <Eye />Rincian
         </Button>
-        {acc.needs_owner_review && (
-          <Button
-            size="sm" variant="outline" className="text-emerald-500 hover:bg-emerald-500/10"
-            onClick={() => markReviewed(acc)} disabled={reviewingId === acc.id}
-            data-testid={`mark-reviewed-card-${acc.account_code}`}
-          >
-            {reviewingId === acc.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <BadgeCheck className="w-3 h-3" />}
-          </Button>
-        )}
-        <Button
-          size="sm" variant="outline" className="text-red-400 hover:bg-red-500/10"
-          onClick={() => setArchiveTarget(acc)} data-testid={`archive-acc-card-${acc.account_code}`}
-        >
-          <Archive className="w-3 h-3" />
-        </Button>
-        {canDeleteStores() && (
-          <Button
-            size="sm" variant="outline" className="text-destructive hover:bg-destructive/10"
-            title="Hapus permanen (hanya toko yang belum punya data)"
-            onClick={() => setDeleteTarget(acc)} data-testid={`delete-acc-card-${acc.account_code}`}
-          >
-            <Trash2 className="w-3 h-3" />
-          </Button>
-        )}
+        {menuAksi(acc)}
       </div>
-      )}
     </GlassCard>
   );
 
+  const kosong = (
+    // 2026-11-05: staf berlingkup toko yang belum memegang toko diberi tahu SEBAB & jalan keluarnya.
+    <EmptyState
+      icon={Store}
+      title={accounts.length === 0
+        ? (isStoreScopedUser() ? 'Belum ada toko yang Anda pegang' : 'Belum ada akun toko')
+        : 'Tidak ada akun yang cocok dengan saringan'}
+      description={accounts.length === 0
+        ? (isStoreScopedUser() ? NO_STORE_HINT : 'Tambahkan toko marketplace pertama beserta tautan Keuangannya.')
+        : 'Ubah kata pencarian atau bersihkan saringan untuk melihat toko lain.'}
+      testId="accounts-empty-state"
+      action={accounts.length === 0 && isStoreScopedUser() ? null : accounts.length === 0 ? (
+        canManageStores() && (
+          <Button onClick={handleCreate} data-testid="create-first-account-btn"><Plus />Tambah akun pertama</Button>
+        )
+      ) : (
+        <Button variant="outline" onClick={resetFilters}>Bersihkan saringan</Button>
+      )}
+    />
+  );
+
   return (
-    <div className="space-y-5" data-testid="account-management-module">
-      <PageHeader
-        icon={Store}
-        eyebrow="Portal Marketing · Master Toko"
-        title="Manajemen Akun Toko"
-        subtitle="Kelola toko Shopee · TikTokShop · Tokopedia beserta PIC dan tautan Finance (pendapatan, pencairan, piutang)"
-        actions={
-          <div className="flex items-center gap-2">
-            <Button onClick={fetchAccounts} variant="outline" size="sm" data-testid="refresh-accounts-btn">
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat ulang
-            </Button>
-            {/* 2026-11-05: menambah/mengubah toko hanya owner/admin/SPV/manager (PIC toko dulu bisa membuat toko dobel) */}
-            {canManageStores() && (<>
-              <Button onClick={recomputeHealth} variant="outline" size="sm" disabled={scoring}
-                data-testid="recompute-health-btn">
-                {scoring ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                  : <Calculator className="w-3.5 h-3.5 mr-1.5" />} Hitung Ulang Skor
-              </Button>
-              <Button
-                onClick={() => (onNavigate ? onNavigate('marketing-account-review')
-                  : (window.location.hash = 'marketing-account-review'))}
-                variant="outline" size="sm" data-testid="open-bulk-review-btn">
-                <ClipboardCheck className="w-3.5 h-3.5 mr-1.5" /> Koreksi Data Toko
-              </Button>
-              <Button onClick={handleCreate} size="sm" data-testid="create-account-btn">
-                <Plus className="w-3.5 h-3.5 mr-1.5" /> Tambah Akun
-              </Button>
-            </>)}
+    <>
+      <Toolbar
+        filters={<>
+          <div className="relative w-full sm:w-64">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input className="pl-8" placeholder="Kode, nama, username, akun, shop ID" value={search}
+              onChange={e => setSearch(e.target.value)} data-testid="acc-search-input" />
           </div>
-        }
-      />
-
-      {/* Ringkasan */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <StatTile label="Total Toko" value={stats.total} testId="stat-total-accounts" />
-        <StatTile
-          label="Aktif" value={stats.active} accent="success" testId="stat-active-accounts"
-          onClick={() => setFilter(f => ({ ...f, status: 'active' }))} hint="Filter status aktif"
-        />
-        <StatTile
-          label="Tanpa PIC" value={stats.noPic} accent={stats.noPic ? 'warning' : 'default'} testId="stat-nopic-accounts"
-          onClick={() => { setOnlyNoPic(v => !v); setOnlyReview(false); }} hint="Toko tanpa penanggung jawab"
-        />
-        <StatTile
-          label="Perlu Ditinjau" value={stats.review} accent={stats.review ? 'warning' : 'default'} testId="stat-review-accounts"
-          onClick={() => { setOnlyReview(v => !v); setOnlyNoPic(false); }} hint="Data seed belum dikoreksi owner"
-        />
-        <StatTile
-          label="Tanpa Akun Pendapatan" value={stats.noCoa}
-          accent={stats.noCoa ? 'danger' : 'success'} testId="stat-nocoa-accounts"
-        />
-      </div>
-
-      {/* Filter + pengalih tampilan */}
-      <GlassPanel className="p-4">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex rounded-md border border-[var(--glass-border)] overflow-hidden self-end">
-            <button
-              type="button" onClick={() => setViewMode('table')} data-testid="view-mode-table-btn"
-              className={`px-3 py-2 text-xs font-medium inline-flex items-center gap-1.5 transition-colors ${viewMode === 'table' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted/40'}`}
-            >
-              <Table2 size={13} /> Tabel
-            </button>
-            <button
-              type="button" onClick={() => setViewMode('cards')} data-testid="view-mode-cards-btn"
-              className={`px-3 py-2 text-xs font-medium inline-flex items-center gap-1.5 transition-colors ${viewMode === 'cards' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted/40'}`}
-            >
-              <LayoutGrid size={13} /> Kartu
-            </button>
-          </div>
-
-          <ExportCsvButton
-            filename="master-toko-marketing"
-            testId="accounts-export-csv"
-            className="h-9 self-end"
-            head={['Kode', 'Nama akun', 'Platform', 'Grup', 'Username', 'Status', 'PIC',
-              'Shop ID', 'Kode COA piutang', 'Gudang']}
-            rows={(filtered || []).map((a) => [a.account_code, a.account_name, a.platform,
-              a.group_name || a.account_group || '', a.username, a.status,
-              a.pic_user_name || '', a.shop_id || '',
-              a.ar_coa_code || a.coa_code || '', a.warehouse_code || a.warehouse_id || ''])}
-          />
-
-          <div className="flex-1 min-w-[200px]">
-            <Label className="text-xs">Cari</Label>
-            <div className="relative">
-              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <GlassInput
-                className="pl-8"
-                placeholder="Kode, nama, username, kode COA, gudang, shop id..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                data-testid="acc-search-input"
-              />
-            </div>
-          </div>
-
-          <div className="min-w-[150px]">
-            <Label className="text-xs">Platform</Label>
-            <Select value={filter.platform} onValueChange={v => setFilter(f => ({ ...f, platform: v }))}>
-              <SelectTrigger data-testid="filter-platform"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Semua Platform</SelectItem>
-                {PLATFORMS.map(p => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="min-w-[150px]">
-            <Label className="text-xs">Status</Label>
-            <Select value={filter.status} onValueChange={v => setFilter(f => ({ ...f, status: v }))}>
-              <SelectTrigger data-testid="filter-status"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Semua Status</SelectItem>
-                {STATUSES.map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="min-w-[150px]">
-            <Label className="text-xs">Grup</Label>
-            <Select value={filter.group} onValueChange={v => setFilter(f => ({ ...f, group: v }))}>
-              <SelectTrigger data-testid="filter-group"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Semua Grup</SelectItem>
-                {GROUPS.map(g => <SelectItem key={g.value} value={g.value}>{g.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-
+          <SmartNativeSelect className="w-40" value={filter.platform} data-testid="filter-platform"
+            onChange={e => setFilter(f => ({ ...f, platform: e.target.value }))}>
+            <option value="all">Semua platform</option>
+            {PLATFORMS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </SmartNativeSelect>
+          <SmartNativeSelect className="w-40" value={filter.status} data-testid="filter-status"
+            onChange={e => setFilter(f => ({ ...f, status: e.target.value }))}>
+            <option value="all">Semua status</option>
+            {STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </SmartNativeSelect>
+          <SmartNativeSelect className="w-40" value={filter.group} data-testid="filter-group"
+            onChange={e => setFilter(f => ({ ...f, group: e.target.value }))}>
+            <option value="all">Semua grup</option>
+            {GROUPS.map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
+          </SmartNativeSelect>
           {activeFilterCount > 0 && (
-            <Button variant="outline" size="sm" onClick={resetFilters} data-testid="reset-filters-btn">
-              <X className="w-3.5 h-3.5 mr-1" /> Bersihkan ({activeFilterCount})
+            <Button variant="link" size="sm" onClick={resetFilters} data-testid="reset-filters-btn">
+              <X />Bersihkan ({activeFilterCount})
             </Button>
           )}
+        </>}
+        tools={<>
+          <TombolUnduh namaBerkas="master-toko-marketing" namaLembar="Toko" baris={filtered} kolom={unduhKolom}
+            testId="accounts-export-csv" />
+          <ViewToggle value={viewMode === 'cards' ? 'grid' : 'table'} onChange={(v) => setViewMode(v === 'grid' ? 'cards' : 'table')}
+            testId="view-mode" />
+          <Button variant="outline" size="icon" onClick={fetchAccounts} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+            data-testid="refresh-accounts-btn">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
+          </Button>
+        </>} />
 
-          <div className="flex items-center text-sm text-muted-foreground ml-auto">
-            Tampil: <span className="text-foreground font-semibold mx-1">{filtered.length}</span>
-            dari {accounts.length} toko
-          </div>
-        </div>
-
+      {/* Ringkasan satu kalimat — dihitung dari daftar toko yang dimuat (ikut saringan platform/status/grup bila
+          dipakai). Dulu 5 kartu; dua di antaranya tombol saring — kini tautan di kalimat ini. */}
+      <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted-foreground" data-testid="acc-ringkasan">
+        <span data-testid="stat-total-accounts"><b className="text-foreground">{stats.total}</b> toko{serverFilterAktif ? ' (sesuai saringan)' : ''}</span>
+        <span>· <b className="text-foreground">{stats.active}</b> aktif ·</span>
+        <Button variant="link" size="sm" className="h-auto p-0" data-testid="stat-nopic-accounts" aria-pressed={onlyNoPic}
+          onClick={() => { setOnlyNoPic(v => !v); setOnlyReview(false); }}
+          title={onlyNoPic ? 'Klik lagi untuk melihat semua' : 'Tampilkan toko tanpa penanggung jawab'}>
+          <span className={stats.noPic ? 'text-[hsl(var(--warning-text))]' : ''}>{stats.noPic} tanpa PIC</span>
+        </Button>
+        <span>·</span>
+        <Button variant="link" size="sm" className="h-auto p-0" data-testid="stat-review-accounts" aria-pressed={onlyReview}
+          onClick={() => { setOnlyReview(v => !v); setOnlyNoPic(false); }}
+          title={onlyReview ? 'Klik lagi untuk melihat semua' : 'Data seed yang belum dikoreksi owner'}>
+          <span className={stats.review ? 'text-[hsl(var(--warning-text))]' : ''}>{stats.review} perlu ditinjau</span>
+        </Button>
+        <span>·</span>
+        <span data-testid="stat-nocoa-accounts" title="Omzetnya belum punya alamat jurnal"
+          className={stats.noCoa ? 'text-[hsl(var(--danger-text))]' : ''}>{stats.noCoa} tanpa akun pendapatan</span>
         {(onlyReview || onlyNoPic) && (
-          <div className="flex flex-wrap gap-2 mt-3">
-            {onlyReview && (
-              <Badge variant="outline" className="bg-amber-500/10 text-amber-500 border-amber-500/30 cursor-pointer" onClick={() => setOnlyReview(false)}>
-                <AlertTriangle size={11} className="mr-1" /> Hanya &quot;perlu ditinjau&quot; · klik untuk hapus
-              </Badge>
-            )}
-            {onlyNoPic && (
-              <Badge variant="outline" className="bg-amber-500/10 text-amber-500 border-amber-500/30 cursor-pointer" onClick={() => setOnlyNoPic(false)}>
-                <UserCheck size={11} className="mr-1" /> Hanya tanpa PIC · klik untuk hapus
-              </Badge>
-            )}
-          </div>
+          <span className="flex flex-wrap items-center gap-1.5" data-testid="acc-quick-filter">
+            <span>— menampilkan {filtered.length} dari {accounts.length} toko</span>
+            {onlyReview && <StatusBadge status="tinjau" label="Hanya perlu ditinjau" tone="warning" />}
+            {onlyNoPic && <StatusBadge status="nopic" label="Hanya tanpa PIC" tone="warning" />}
+            <Button variant="link" size="sm" className="h-auto p-0" onClick={() => { setOnlyReview(false); setOnlyNoPic(false); }}>
+              Tampilkan semua
+            </Button>
+          </span>
         )}
-      </GlassPanel>
+      </p>
 
       {/* Daftar */}
-      {loading ? (
+      {loading && accounts.length === 0 ? (
         <div className="space-y-2" data-testid="accounts-loading">
           {[1, 2, 3, 4, 5, 6].map(i => <Skeleton key={i} className="h-12" />)}
         </div>
-      ) : filtered.length === 0 ? (
-        <GlassCard className="p-4">
-          {/* 2026-11-05: staf berlingkup toko yang belum memegang toko diberi tahu SEBAB & jalan keluarnya —
-              dulu tampil "Belum ada akun toko · Tambah Akun Pertama" seolah tokonya belum dibuat. */}
-          <EmptyState
-            icon={Store}
-            title={accounts.length === 0
-              ? (isStoreScopedUser() ? 'Belum ada toko yang Anda pegang' : 'Belum ada akun toko')
-              : 'Tidak ada akun yang cocok dengan filter'}
-            description={accounts.length === 0
-              ? (isStoreScopedUser() ? NO_STORE_HINT : 'Tambahkan toko marketplace pertama beserta tautan Finance-nya.')
-              : 'Ubah kata pencarian atau bersihkan filter untuk melihat toko lain.'}
-            testId="accounts-empty-state"
-            action={accounts.length === 0 && isStoreScopedUser() ? null : accounts.length === 0 ? (
-              <Button size="sm" onClick={handleCreate} data-testid="create-first-account-btn">
-                <Plus className="w-4 h-4 mr-2" /> Tambah Akun Pertama
-              </Button>
-            ) : (
-              <Button size="sm" variant="outline" onClick={resetFilters}>Bersihkan Filter</Button>
-            )}
-          />
-        </GlassCard>
       ) : viewMode === 'table' ? (
-        <GlassTable data-testid="accounts-table-wrap">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm" data-testid="accounts-table">
-              <thead>
-                <tr className="border-b border-[var(--glass-border)] bg-muted/40">
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">Kode</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">Nama Akun</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">Platform</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">Grup</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">Username</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">Status</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">PIC</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">Akun Pendapatan</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">Rekening Pencairan</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap"
-                    title="Akun piutang toko (anak 1-1303) — saldonya = dana yang masih di platform dan bisa ditarik ke bank">Saldo Platform (Piutang Toko)</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">Basis Omzet</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">Gudang Platform</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">Shop ID</th>
-                  <th className="px-3 py-2.5 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">Skor</th>
-                  <th className="px-3 py-2.5 text-right text-[10px] font-semibold text-muted-foreground uppercase tracking-wider sticky right-0 bg-[hsl(var(--card))] border-l border-[var(--glass-border)]">Aksi</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paged.map((acc, i) => renderRow(acc, i))}
-              </tbody>
-            </table>
-          </div>
-          <PaginationLite
-            page={page} totalPages={totalPages} total={total} pageSize={pageSize}
-            onPageChange={setPage} className="px-3"
-          />
-        </GlassTable>
-      ) : (
-        <div data-testid="accounts-cards">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {paged.map(acc => renderCard(acc))}
-          </div>
-          <PaginationLite
-            page={page} totalPages={totalPages} total={total} pageSize={pageSize}
-            onPageChange={setPage} className="mt-3"
-          />
+        <div data-testid="accounts-table-wrap">
+          <TabelData kolom={kolom} baris={paged} onKlikBaris={setDetail} testId="accounts-table" kosong={kosong} />
         </div>
+      ) : filtered.length === 0 ? kosong : (
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3" data-testid="accounts-cards">
+          {paged.map(acc => renderCard(acc))}
+        </div>
+      )}
+      <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
+
+      {/* Rincian satu toko (popup) — semua kolom & aksi */}
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} judul={detail.account_name} testId="account-detail"
+          keterangan={`${detail.account_code} · ${platformLabel(detail.platform)} · grup ${groupLabel(detail.group)}`}
+          status={<>
+            <StatusBadge status={detail.status} label={statusLabel(detail.status)}
+              tone={detail.status === 'active' ? 'success' : detail.status === 'suspended' ? 'danger' : 'muted'} />
+            {detail.needs_owner_review && <StatusBadge status="tinjau" label="Perlu ditinjau" tone="warning" />}
+          </>}
+          aksi={canManageStores() ? <>
+            <Button size="sm" variant="outline" onClick={() => { const a = detail; setDetail(null); handleEdit(a); }}
+              data-testid="account-detail-edit"><Pencil />Ubah</Button>
+            {detail.needs_owner_review && (
+              <Button size="sm" variant="success" onClick={() => markReviewed(detail)} disabled={reviewingId === detail.id}
+                data-testid="account-detail-reviewed">
+                {reviewingId === detail.id ? <Loader2 className="animate-spin" /> : <BadgeCheck />}Tandai sudah ditinjau
+              </Button>
+            )}
+            {menuAksi(detail, ['edit', 'review'])}
+          </> : null}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Username platform">{detail.username || '—'}</BarisDetail>
+            <BarisDetail label="PIC">{detail.pic_user_name || <span className="text-[hsl(var(--warning-text))]">Belum ada PIC</span>}</BarisDetail>
+            <BarisDetail label="Akun pendapatan">
+              <CoaCell code={detail.coa_revenue_code} name={coaNameMap[detail.coa_revenue_code]} fallback={isCatchAll(detail.coa_revenue_code)} />
+            </BarisDetail>
+            <BarisDetail label="Rekening pencairan">
+              <CoaCell code={detail.coa_cash_code} name={coaNameMap[detail.coa_cash_code]} />
+            </BarisDetail>
+            <BarisDetail label="Saldo platform (piutang toko)">
+              {detail.ar_account_code
+                ? <span><span data-testid={`acc-ar-${detail.account_code}`}>{detail.ar_account_code}</span> · <span className="tabular-nums">{formatRupiah(saldo(detail))}</span></span>
+                : <span className="text-[hsl(var(--warning-text))]">Belum terbentuk</span>}
+            </BarisDetail>
+            <BarisDetail label="Basis omzet">{basisLabel(detail.revenue_basis)}</BarisDetail>
+            <BarisDetail label="Gudang di platform">{detail.platform_warehouse_name || '—'}</BarisDetail>
+            <BarisDetail label="Shop ID platform">{detail.platform_shop_id || '—'}</BarisDetail>
+            <BarisDetail label="Integrasi API">{detail.credentials?.has_api_integration ? 'Tersambung' : 'Belum'}</BarisDetail>
+            <BarisDetail label="Skor sehat">
+              <HealthStars score={detail.health_score} grade={detail.health_grade} label={detail.health_label} breakdown={detail.health_breakdown} />
+              {detail.health_breakdown && Object.keys(detail.health_breakdown).length > 0 && (
+                <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                  {Object.values(detail.health_breakdown).map((b) => <li key={b.label}>{b.label}: {b.score}/{b.max}</li>)}
+                </ul>
+              )}
+            </BarisDetail>
+          </dl>
+        </DetailPopup>
       )}
 
       <AccountFormDialog
@@ -1277,79 +1032,57 @@ function AccountManagementBase({ token, onNavigate }) {
         coa={coa}
         users={users}
       />
-
-      <AlertDialog open={!!archiveTarget} onOpenChange={(o) => !o && setArchiveTarget(null)}>
-        <AlertDialogContent data-testid="archive-confirm-dialog">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Arsipkan Akun?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Akun <b>{archiveTarget?.account_name}</b> akan berstatus nonaktif.
-              Data akun, riwayat penjualan, dan tautan COA tidak dihapus.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Batal</AlertDialogCancel>
-            <AlertDialogAction onClick={handleArchive} className="bg-red-500 hover:bg-red-600" data-testid="confirm-archive-btn">
-              Arsipkan
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
-        <AlertDialogContent data-testid="delete-confirm-dialog">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Hapus toko permanen?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Toko <b>{deleteTarget?.account_code} · {deleteTarget?.account_name}</b> akan dihapus dan tidak bisa
-              dikembalikan. Hanya bisa untuk toko yang belum punya data (pesanan, katalog, sales, jurnal, dan lainnya);
-              bila sudah ada, sistem menolak dan menyebut datanya. Akun Penjualan dan Piutang yang dibuat otomatis
-              untuk toko ini ikut dinonaktifkan di Bagan Akun (akun buatan sistem tidak dihapus).
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Batal</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeletePermanent} className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              data-testid="confirm-delete-btn">
-              Hapus permanen
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+    </>
   );
 }
 
 
 // ════════════════════════════════════════════════════════════════════════════
-// F6.4 (2026-08-13) — SATU PINTU, DUA TAMPILAN
-// "Daftar Toko" (yang sudah ada) + "Assign Staf" (menetapkan pemegang toko).
-// Dibungkus di sini, BUKAN sebagai menu baru: menu terpisah untuk hal yang
-// dikerjakan di layar yang sama melahirkan pintu kembar (dan guardrail navigasi
-// `check_nav_map` memang menolaknya).
+// F6.4 (2026-08-13) — SATU PINTU: "Daftar toko" + pemegang toko (per toko · per staf · riwayat).
+// Dibungkus di sini, BUKAN sebagai menu baru (pintu kembar ditolak guardrail `check_nav_map`).
+// Standar UI/UX v2: satu baris tab (dulu tombol buatan + tab kedua di dalamnya), cetakan PageLayout.
 // ════════════════════════════════════════════════════════════════════════════
+const TAB_AKUN = [
+  { key: 'daftar', label: 'Daftar toko' },
+  { key: 'toko', label: 'Pemegang per toko' },
+  { key: 'staf', label: 'Pemegang per staf' },
+  { key: 'riwayat', label: 'Riwayat pemegang' },
+];
+
 export default function AccountManagementModule(props) {
   const [tab, setTab] = useState('daftar');
+  const [scoring, setScoring] = useState(false);
+  const [aksi, setAksi] = useState(null);   // {create, recompute} dari daftar toko
+  const { onNavigate } = props;
+  const actions = tab === 'daftar' && canManageStores() && aksi ? (<>
+    {/* 2026-11-05: menambah/mengubah toko hanya owner/admin/SPV/manager */}
+    <Button onClick={aksi.recompute} variant="outline" disabled={scoring} data-testid="recompute-health-btn"
+      title="Hitung ulang skor sehat 1–5 dari data 30 hari terakhir">
+      {scoring ? <Loader2 className="animate-spin" /> : <Calculator />}Hitung ulang skor
+    </Button>
+    <Button variant="outline" data-testid="open-bulk-review-btn"
+      onClick={() => (onNavigate ? onNavigate('marketing-account-review') : (window.location.hash = 'marketing-account-review'))}>
+      <ClipboardCheck />Koreksi data toko
+    </Button>
+    <Button onClick={aksi.create} data-testid="create-account-btn"><Plus />Tambah akun</Button>
+  </>) : null;
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap gap-1.5 px-4 pt-4 lg:px-6" data-testid="accounts-tabs">
-        {[['daftar', 'Daftar Toko'], ['assign', 'Assign Staf']].map(([v, l]) => (
-          <button key={v} type="button" onClick={() => setTab(v)}
-            data-testid={`accounts-tab-${v}`}
-            className={`px-3 py-1.5 rounded-md text-xs font-semibold border ${tab === v
-              ? 'bg-primary text-primary-foreground border-primary'
-              : 'bg-background text-foreground border-border hover:bg-muted/50'}`}>
-            {l}
-          </button>
-        ))}
-      </div>
-      {tab === 'daftar' ? (
-        <AccountManagementBase {...props} />
-      ) : (
-        <div className="px-4 pb-6 lg:px-6">
-          <AccountAssignView token={props.token} />
-        </div>
-      )}
-    </div>
+    <PageLayout testId="account-management-module" title="Kelola akun"
+      subtitle="Toko Shopee, TikTok Shop, dan Tokopedia beserta PIC, pemegang, dan tautan Keuangannya."
+      actions={actions}>
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList className="h-auto max-w-full justify-start gap-1 max-sm:flex-nowrap max-sm:overflow-x-auto sm:flex-wrap"
+          data-testid="accounts-tabs">
+          {TAB_AKUN.map(t => (
+            <TabsTrigger key={t.key} value={t.key} className="shrink-0" data-testid={`accounts-tab-${t.key === 'daftar' ? 'daftar' : `assign-${t.key}`}`}>
+              {t.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+      {tab === 'daftar'
+        ? <AccountManagementBase {...props} onAksi={setAksi} onScoring={setScoring} />
+        : <AccountAssignView token={props.token} view={tab} />}
+    </PageLayout>
   );
 }
