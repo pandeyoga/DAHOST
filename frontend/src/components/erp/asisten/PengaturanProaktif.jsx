@@ -17,11 +17,11 @@ import { AlertCircle, Brain, BellRing, CalendarClock, History, Loader2, MessageS
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { GlassCard } from '@/components/ui/glass';
 import { Input } from '@/components/ui/input';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { formatDateTimeID } from '@/lib/format';
 import { parseServerTime } from '@/lib/waktu';
 import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
@@ -109,10 +109,22 @@ function RiwayatJalan({ riwayat, pengguna, user, onNavigate, memuat, onMuatUlang
           <p className="text-sm font-medium text-foreground">Riwayat jalan terakhir</p>
           <p className="text-xs text-muted-foreground">Jalan terjadwal dan manual, terbaru di atas.</p>
         </div>
-        <Button variant="outline" size="icon" onClick={onMuatUlang} title="Muat ulang" aria-label="Muat ulang riwayat"
-          data-testid="ai-set-proaktif-muat-ulang">
-          <RefreshCw className={memuat ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          <TombolUnduh namaBerkas="riwayat-asisten-proaktif" namaLembar="Riwayat jalan" baris={rows} testId="ai-set-proaktif-unduh"
+            kolom={[
+              { label: 'Waktu', nilai: (r) => formatDateTimeID(parseServerTime(r.waktu)) },
+              { label: 'Jadwal', nilai: (r) => r.judul },
+              { label: 'Rincian', nilai: (r) => [r.rincian, r.jumlah].filter((x) => x !== null && x !== undefined && x !== '').join(' · ') },
+              { label: 'Untuk', nilai: (r) => nama(r.userId) },
+              { label: 'Pemicu', nilai: (r) => r.pemicu },
+              { label: 'Status', nilai: (r) => r.statusLabel },
+              { label: 'Alasan', nilai: (r) => r.alasan || '' },
+            ]} />
+          <Button variant="outline" size="icon" onClick={onMuatUlang} title="Muat ulang" aria-label="Muat ulang riwayat"
+            data-testid="ai-set-proaktif-muat-ulang">
+            <RefreshCw className={memuat ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+          </Button>
+        </div>
       </div>
       {rows.length === 0 ? (
         <EmptyState icon={History} className="py-6" testId="ai-set-proaktif-riwayat-kosong" title="Riwayat masih kosong"
@@ -276,7 +288,7 @@ export default function PengaturanProaktif({ form, setField, galat = {}, tersimp
   };
 
   return (
-    <GlassCard className="space-y-4 p-5" data-testid="ai-set-proaktif">
+    <section className="space-y-4 border-t border-[var(--glass-border)] pt-4" data-testid="ai-set-proaktif">
       <div className="flex items-center gap-3">
         <BellRing className="h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
         <div>
@@ -315,6 +327,6 @@ export default function PengaturanProaktif({ form, setField, galat = {}, tersimp
           Tombol "Jalankan sekarang" hanya tersedia untuk owner dan super admin.
         </p>
       )}
-    </GlassCard>
+    </section>
   );
 }

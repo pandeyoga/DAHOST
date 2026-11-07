@@ -1,42 +1,46 @@
+/**
+ * Monitor AI (Portal Manajemen) — biaya & pemakaian AI per fitur, status AI, galat terakhir, anggaran, pengaturan.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout (muat ulang di `tools`), tab rata kiri, kartu angka StatTile (angka
+ * dicek terhadap /api/ai/usage/* dan koleksi rahaza_ai_usage_logs), semua tabel bisa diunduh Excel/CSV, nama fitur
+ * tampil sebagai label (bukan kode program), status pakai StatusBadge, pengaturan diubah lewat popup form panjang
+ * (tab Pengaturan menampilkan ringkasan yang tersimpan). Fitur, API, dan aturan simpan tidak berubah.
+ */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
 import { MoneyInput } from '@/components/ui/money-input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { BarisDetail } from '@/components/ui/detail-popup';
+import { formatDateTimeID } from '@/lib/format';
 import { toast } from 'sonner';
-import { StatTile } from './moduleAtoms';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 // Asisten AI (layar2) — Tahap D: bagian "Asisten AI proaktif" (ingatan, briefing, peringatan, laporan mingguan).
 import PengaturanProaktif from './asisten/PengaturanProaktif';
 import { bacaPengaturanProaktif, susunPengaturanProaktif } from './asisten/adapterTahapCD';
 import {
-  DollarSign, Activity, AlertTriangle, CheckCircle2, RefreshCw, Loader2,
-  TrendingUp, Zap, Clock, Brain, BarChart3, List, Sparkles, Settings, Save, Power, ClipboardCheck
+  AlertTriangle, RefreshCw, Loader2, Power, Settings, Sparkles, ClipboardCheck,
 } from 'lucide-react';
 
-const HEALTH_COLOR = {
-  healthy: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
-  monitor: 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30',
-  warning: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
-  critical: 'bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30',
-  // 2026-11-02: status jujur saat AI mati / dimatikan / gagal
-  offline: 'bg-slate-500/15 text-slate-700 dark:text-slate-300 border-slate-500/40',
-  disabled: 'bg-slate-500/15 text-slate-700 dark:text-slate-300 border-slate-500/40',
-  error: 'bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30',
+// Status kesehatan AI → label + nada StatusBadge (dulu kotak berwarna mentah).
+const HEALTH = {
+  healthy: { label: 'Sehat', tone: 'success' },
+  monitor: { label: 'Pantau', tone: 'info' },
+  warning: { label: 'Peringatan', tone: 'warning' },
+  critical: { label: 'Kritis', tone: 'danger' },
+  offline: { label: 'AI mati', tone: 'muted' },
+  disabled: { label: 'Dimatikan admin', tone: 'muted' },
+  error: { label: 'Banyak galat', tone: 'danger' },
 };
-
-const HEALTH_LABEL = {
-  healthy: 'Sehat',
-  monitor: 'Pantau',
-  warning: 'Peringatan',
-  critical: 'Kritis',
-  offline: 'AI Mati',
-  disabled: 'Dimatikan Admin',
-  error: 'Banyak Galat',
-};
+const TIER_LABEL = { executive: 'Eksekutif', standard: 'Standar', light: 'Ringan' };
+const PERIODE = [1, 7, 14, 30, 90];
 
 function fmtUSD(v) {
   if (v == null) return '$0.0000';
@@ -47,6 +51,8 @@ function fmtNum(v) {
   if (v == null) return '0';
   return Number(v).toLocaleString('id-ID');
 }
+
+const waktuLog = (v) => (v ? formatDateTimeID(new Date(v)) : '—');
 
 // 2026-11-08 (Asisten AI Tahap A): token prompt caching & pencarian web dicatat backend (`cache_read_tokens`,
 // `cache_write_tokens`, `web_search_requests`). Ditampilkan hanya bila ringkasan membawanya (data lama tanpa field).
@@ -64,13 +70,21 @@ function bacaBatasTindakan(v) {
   return n <= BATAS_TINDAKAN_MAKS ? n : null;
 }
 
-function CacheWebTiles({ data, testId }) {
-  if (!adaCache(data)) return null;
+/** Rincian cache & pencarian web sebagai keterangan kartu Token (dulu 3 kartu tambahan). */
+function subCache(d) {
+  if (!adaCache(d)) return undefined;
+  return `${fmtNum(d.cache_read_tokens)} dibaca dari cache · ${fmtNum(d.cache_write_tokens)} ditulis ke cache · ${fmtNum(d.web_search_requests)} pencarian web`;
+}
+
+/** Judul bagian + tombol unduh di kanan (tabel di dalam tab). */
+function KepalaBagian({ judul, keterangan, children }) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3" data-testid={testId}>
-      <StatTile label="Token dibaca dari cache" value={fmtNum(data.cache_read_tokens)} sub="tarif ±10% token masuk biasa" testId={`${testId}-baca`} />
-      <StatTile label="Token ditulis ke cache" value={fmtNum(data.cache_write_tokens)} sub="tarif ±125% token masuk biasa" testId={`${testId}-tulis`} />
-      <StatTile label="Pencarian web" value={fmtNum(data.web_search_requests)} sub="$10 per 1.000 pencarian" testId={`${testId}-web`} />
+    <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className="min-w-0">
+        <p className="text-base font-semibold text-foreground">{judul}</p>
+        {keterangan && <p className="text-sm text-muted-foreground">{keterangan}</p>}
+      </div>
+      {children && <div className="flex items-center gap-2">{children}</div>}
     </div>
   );
 }
@@ -159,18 +173,18 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
   }));
 
   const saveSettings = useCallback(async () => {
-    if (!form) return;
+    if (!form) return false;
     const batasTindakan = bacaBatasTindakan(form.asisten_batas_tindakan_harian);
     if (batasTindakan === null) {
       toast.error(`Batas tindakan per hari harus angka bulat 0–${BATAS_TINDAKAN_MAKS}.`);
-      return;
+      return false;
     }
     // Asisten AI (layar2) — Tahap D: jam JJ:MM wajib sah sebelum PUT
     const proaktif = susunPengaturanProaktif(form);
     setGalatProaktif(proaktif.galat);
     if (!proaktif.ok) {
       toast.error(proaktif.pesan);
-      return;
+      return false;
     }
     setSavingSettings(true);
     try {
@@ -191,16 +205,18 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
       });
       const data = await r.json();
       if (r.ok && data?.success) {
-        toast.success('Setting AI berhasil disimpan');
+        toast.success('Pengaturan AI disimpan.');
         await Promise.all([fetchSettings(), fetchToday()]);
+        return true;
       } else {
-        toast.error(data?.detail || 'Gagal menyimpan setting AI');
+        toast.error(data?.detail || 'Pengaturan AI gagal disimpan.');
       }
     } catch (e) {
-      toast.error('Gagal menyimpan setting AI');
+      toast.error('Pengaturan AI gagal disimpan.');
     } finally {
       setSavingSettings(false);
     }
+    return false;
   }, [BASE, headers, form, fetchSettings, fetchToday]);
 
   const refreshAll = useCallback(() => {
@@ -211,413 +227,453 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
 
   useEffect(() => { refreshAll(); }, [refreshAll]);
 
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Brain className="w-6 h-6 text-violet-500" /> AI Usage Monitor
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Monitor biaya & pemakaian AI Claude (Anthropic) per fitur. Status AI, galat terakhir & anggaran.
-          </p>
-        </div>
-        <Button onClick={refreshAll} disabled={loading} size="sm" data-testid="ai-usage-refresh">
-          {loading ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1" />} Refresh
-        </Button>
-      </div>
+  // Nama fitur → label manusia (kode program seperti "rahaza-daily-summary" hanya di keterangan arahkan-kursor).
+  const grupFitur = useMemo(() => {
+    const m = new Map();
+    (summary?.by_feature || []).forEach((f) => { if (f.feature && f.group) m.set(f.feature, f.group); });
+    logs.forEach((l) => { if (l.feature && l.feature_group) m.set(l.feature, l.feature_group); });
+    return m;
+  }, [summary, logs]);
+  const labelFitur = useCallback((feature, group) => {
+    const grup = settings?.feature_groups || [];
+    const g = group || grupFitur.get(feature);
+    const cocok = grup.find((x) => x.key === feature) || grup.find((x) => x.key === g)
+      || grup.find((x) => String(feature || '').startsWith(`${x.key}-`));
+    return cocok?.label || feature || '—';
+  }, [settings, grupFitur]);
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid grid-cols-4 w-full md:w-[640px]">
-          <TabsTrigger value="today" data-testid="ai-usage-tab-today"><Zap className="w-4 h-4 mr-1.5" /> Hari Ini</TabsTrigger>
-          <TabsTrigger value="summary" data-testid="ai-usage-tab-summary"><BarChart3 className="w-4 h-4 mr-1.5" /> Summary</TabsTrigger>
-          <TabsTrigger value="logs" data-testid="ai-usage-tab-logs"><List className="w-4 h-4 mr-1.5" /> Logs</TabsTrigger>
-          <TabsTrigger value="settings" data-testid="ai-usage-tab-settings"><Settings className="w-4 h-4 mr-1.5" /> Pengaturan</TabsTrigger>
+  const [bukaSetelan, setBukaSetelan] = useState(false);
+  const simpanSetelan = async () => { if (await saveSettings()) setBukaSetelan(false); };
+  const batalSetelan = () => { setBukaSetelan(false); fetchSettings(); };
+
+  const pilihanFitur = Array.from(new Set(logs.map((l) => l.feature).concat(summary?.by_feature?.map((f) => f.feature) || []))).filter(Boolean);
+  const kesehatan = HEALTH[today?.health] || { label: today?.health || '—', tone: 'muted' };
+  const fiturMati = (settings?.disabled_features || []).map((k) => labelFitur(k));
+  const maxHari = Math.max(...(summary?.by_day || []).map((x) => x.cost_usd), 0.0001);
+
+  return (
+    <PageLayout
+      testId="ai-usage-monitor"
+      title="Monitor AI"
+      subtitle="Biaya dan pemakaian AI per fitur, status AI, galat terakhir, dan anggaran."
+      tools={(
+        <Button variant="outline" size="icon" onClick={refreshAll} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="ai-usage-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      )}
+    >
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+        <TabsList className="h-auto w-auto flex-wrap justify-start">
+          <TabsTrigger value="today" data-testid="ai-usage-tab-today">Hari ini</TabsTrigger>
+          <TabsTrigger value="summary" data-testid="ai-usage-tab-summary">Ringkasan periode</TabsTrigger>
+          <TabsTrigger value="logs" data-testid="ai-usage-tab-logs">Catatan panggilan</TabsTrigger>
+          <TabsTrigger value="settings" data-testid="ai-usage-tab-settings">Pengaturan</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="today" className="mt-4 space-y-4">
+        <TabsContent value="today" className="mt-0 space-y-4">
           {!today ? (
-            <GlassCard className="p-6 text-center text-sm text-muted-foreground"><Loader2 className="w-4 h-4 inline animate-spin mr-2" /> Memuat...</GlassCard>
+            <p className="py-10 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Memuat…</p>
           ) : (
             <>
-              <GlassCard className={`p-6 border ${HEALTH_COLOR[today.health]}`}>
-                <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <h3 className="text-base font-semibold flex items-center gap-2">
-                      <Activity className="w-4 h-4" /> Status Hari Ini ({today.date})
-                    </h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {today.total_calls} calls · {fmtNum(today.total_tokens)} tokens · {fmtUSD(today.total_cost_usd)}
-                    </p>
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="ai-usage-today-tiles">
+                <StatTile label="Panggilan AI" value={fmtNum(today.total_calls)} sub={`Biaya ${fmtUSD(today.total_cost_usd)}`}
+                  testId="ai-usage-today-calls" />
+                <StatTile label="Berhasil" value={fmtNum(today.successful_calls)} accent="success" sub="Dijawab AI" />
+                <StatTile label="Gagal" value={fmtNum(today.failed_calls)} accent={today.failed_calls > 0 ? 'warning' : 'default'}
+                  sub="Ditolak atau galat (mis. kunci API kosong)" />
+                <StatTile label="Token" value={fmtNum(today.total_tokens)} sub={subCache(today) || 'Token masuk + keluar'}
+                  testId="ai-usage-today-cache" />
+              </div>
+
+              <GlassCard className="space-y-3 p-4" data-testid="ai-usage-status">
+                <KepalaBagian judul={`Status hari ini (${today.date})`}
+                  keterangan={`${fmtNum(today.total_calls)} panggilan · ${fmtNum(today.total_tokens)} token · ${fmtUSD(today.total_cost_usd)}`}>
+                  <StatusBadge status={today.health} label={kesehatan.label} tone={kesehatan.tone} testId="ai-usage-health" />
+                </KepalaBagian>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Anggaran harian {fmtUSD(today.daily_budget_usd)}</span>
+                    <span className="font-medium tabular-nums">{String(today.budget_used_pct).replace('.', ',')}% terpakai</span>
                   </div>
-                  <Badge className={HEALTH_COLOR[today.health]} variant="outline">
-                    {HEALTH_LABEL[today.health] || today.health}
-                  </Badge>
+                  <Progress value={Math.min(today.budget_used_pct, 100)} className="h-2" />
                 </div>
-                <div className="mb-1 flex items-center justify-between text-xs">
-                  <span>Budget Harian: {fmtUSD(today.daily_budget_usd)}</span>
-                  <span className="font-semibold">{today.budget_used_pct}% terpakai</span>
-                </div>
-                <Progress value={Math.min(today.budget_used_pct, 100)} className="h-2" />
                 {/* K29 (2026-11-02): batas bulanan dari tab Pengaturan ikut dipantau */}
                 {today.monthly_budget_usd != null && (
-                  <>
-                    <div className="mt-3 mb-1 flex items-center justify-between text-xs" data-testid="ai-usage-monthly">
-                      <span>Budget Bulanan: {fmtUSD(today.month_cost_usd)} / {fmtUSD(today.monthly_budget_usd)}</span>
-                      <span className="font-semibold">{today.monthly_used_pct}% terpakai</span>
+                  <div className="space-y-1" data-testid="ai-usage-monthly">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Anggaran bulanan {fmtUSD(today.month_cost_usd)} dari {fmtUSD(today.monthly_budget_usd)}</span>
+                      <span className="font-medium tabular-nums">{String(today.monthly_used_pct).replace('.', ',')}% terpakai</span>
                     </div>
                     <Progress value={Math.min(today.monthly_used_pct || 0, 100)} className="h-2" />
-                  </>
+                  </div>
                 )}
                 {today.ai_available === false && (
-                  <div className="mt-3 p-2 rounded bg-slate-500/10 border border-slate-500/30 text-xs flex items-start gap-1.5" data-testid="ai-usage-offline">
-                    <Power className="w-4 h-4 mt-0.5" />
-                    <span>{today.ai_status?.message || 'Fitur AI belum aktif.'}</span>
-                  </div>
+                  <Notice tone="info" icon={Power} testId="ai-usage-offline">{today.ai_status?.message || 'Fitur AI belum aktif.'}</Notice>
                 )}
                 {today.health === 'critical' && (
-                  <div className="mt-3 p-2 rounded bg-red-500/10 border border-red-500/30 text-xs text-red-600 dark:text-red-400 flex items-start gap-1.5">
-                    <AlertTriangle className="w-4 h-4 mt-0.5" />
-                    <span>Budget harian/bulanan terlampaui. Fitur AI akan menolak panggilan baru. Naikkan batas di tab Pengaturan.</span>
-                  </div>
+                  <Notice tone="danger" icon={AlertTriangle}>
+                    Anggaran harian/bulanan terlampaui. Fitur AI menolak panggilan baru. Naikkan batas di tab Pengaturan.
+                  </Notice>
                 )}
                 {today.recent_error_count > 0 && (
-                  <div className="mt-3 p-2 rounded bg-amber-500/10 border border-amber-500/30 text-xs" data-testid="ai-usage-recent-errors">
-                    <p className="font-medium mb-1">{today.recent_error_count} galat AI dalam 24 jam terakhir</p>
+                  <Notice tone="warning" icon={AlertTriangle} testId="ai-usage-recent-errors"
+                    title={`${today.recent_error_count} galat AI dalam 24 jam terakhir`}>
                     <ul className="space-y-0.5">
                       {(today.recent_errors || []).slice(0, 5).map((e) => (
-                        <li key={e.code}>{e.count}× — {e.message || e.code}</li>
+                        <li key={e.code}>{e.count}× — {e.message || 'Galat tanpa keterangan'}</li>
                       ))}
                     </ul>
-                  </div>
+                  </Notice>
                 )}
               </GlassCard>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <StatCard label="Total Calls" value={fmtNum(today.total_calls)} icon={Activity} color="blue" />
-                <StatCard label="Success" value={fmtNum(today.successful_calls)} icon={CheckCircle2} color="emerald" />
-                <StatCard label="Failed" value={fmtNum(today.failed_calls)} icon={AlertTriangle} color="amber" />
-                <StatCard label="Tokens" value={fmtNum(today.total_tokens)} icon={Zap} color="indigo" />
-              </div>
-              <CacheWebTiles data={today} testId="ai-usage-today-cache" />
 
-              {today.top_features?.length > 0 ? (
-                <GlassCard className="p-6">
-                  <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><TrendingUp className="w-4 h-4 text-violet-500" /> Top Features (Hari Ini)</h3>
-                  <div className="space-y-2">
-                    {today.top_features.map((f, i) => {
-                      const pct = today.total_cost_usd > 0 ? (f.cost_usd / today.total_cost_usd * 100) : 0;
-                      return (
-                        <div key={i} className="p-3 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)]">
-                          <div className="flex items-center justify-between mb-1">
-                            <div>
-                              <span className="font-medium text-sm">{f.feature}</span>
-                              <span className="text-xs text-muted-foreground ml-2">{f.calls} call{f.calls > 1 ? 's' : ''}</span>
-                            </div>
-                            <span className="text-sm font-semibold text-violet-600 dark:text-violet-400">{fmtUSD(f.cost_usd)}</span>
-                          </div>
-                          <Progress value={pct} className="h-1" />
-                        </div>
-                      );
-                    })}
-                  </div>
-                </GlassCard>
-              ) : (
-                <GlassCard className="p-8 text-center text-sm text-muted-foreground">
-                  <Sparkles className="w-8 h-8 mx-auto mb-2 opacity-40" />
-                  Belum ada AI call hari ini. Gunakan fitur AI (Daily Summary, AI Quote, dll) untuk melihat statistik.
-                </GlassCard>
-              )}
+              <GlassCard className="space-y-3 p-4">
+                <KepalaBagian judul="Fitur terbanyak hari ini" keterangan="Biaya per fitur dan porsinya dari biaya hari ini.">
+                  <TombolUnduh namaBerkas="ai-fitur-hari-ini" namaLembar="Fitur hari ini" baris={today.top_features || []}
+                    testId="ai-usage-top-unduh"
+                    kolom={[
+                      { label: 'Fitur', nilai: (f) => labelFitur(f.feature) },
+                      { label: 'Panggilan', nilai: (f) => f.calls },
+                      { label: 'Biaya (USD)', nilai: (f) => f.cost_usd },
+                    ]} />
+                </KepalaBagian>
+                {today.top_features?.length > 0 ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Fitur</TableHead>
+                        <TableHead className="text-right">Panggilan</TableHead>
+                        <TableHead className="text-right">Biaya</TableHead>
+                        <TableHead className="hidden w-48 sm:table-cell">Porsi biaya</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {today.top_features.map((f) => {
+                        const pct = today.total_cost_usd > 0 ? (f.cost_usd / today.total_cost_usd * 100) : 0;
+                        return (
+                          <TableRow key={f.feature}>
+                            <TableCell className="font-medium" title={f.feature}>{labelFitur(f.feature)}</TableCell>
+                            <TableCell className="text-right tabular-nums">{fmtNum(f.calls)}</TableCell>
+                            <TableCell className="text-right tabular-nums">{fmtUSD(f.cost_usd)}</TableCell>
+                            <TableCell className="hidden sm:table-cell"><Progress value={pct} className="h-1.5" /></TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                ) : (
+                  <EmptyState icon={Sparkles} className="py-8" title="Belum ada panggilan AI hari ini"
+                    description="Statistik muncul setelah fitur AI (Asisten AI, ringkasan harian, dll.) dipakai." />
+                )}
+              </GlassCard>
             </>
           )}
         </TabsContent>
 
-        <TabsContent value="summary" className="mt-4 space-y-4">
-          <GlassCard className="p-4 flex items-center gap-3">
-            <span className="text-sm font-medium">Periode:</span>
-            <Select value={String(period)} onValueChange={(v) => setPeriod(Number(v))}>
-              <SelectTrigger className="w-32" data-testid="ai-usage-period"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1">1 hari</SelectItem>
-                <SelectItem value="7">7 hari</SelectItem>
-                <SelectItem value="14">14 hari</SelectItem>
-                <SelectItem value="30">30 hari</SelectItem>
-                <SelectItem value="90">90 hari</SelectItem>
-              </SelectContent>
-            </Select>
+        <TabsContent value="summary" className="mt-0 space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <SmartNativeSelect value={String(period)} onChange={(e) => setPeriod(Number(e.target.value))} searchable={false}
+              className="h-9 w-40" aria-label="Periode" data-testid="ai-usage-period">
+              {PERIODE.map((d) => <option key={d} value={String(d)}>{d} hari terakhir</option>)}
+            </SmartNativeSelect>
             {budgets && (
-              <div className="ml-auto flex gap-2 text-xs text-muted-foreground">
-                <span>Daily: {fmtUSD(budgets.daily_usd)}</span>
-                <span>·</span>
-                <span>Monthly: {budgets.month_cost_usd != null ? `${fmtUSD(budgets.month_cost_usd)} / ` : ''}{fmtUSD(budgets.monthly_usd)}</span>
-              </div>
+              <span className="text-sm text-muted-foreground">
+                Anggaran harian {fmtUSD(budgets.daily_usd)} · bulan ini {budgets.month_cost_usd != null ? `${fmtUSD(budgets.month_cost_usd)} dari ` : ''}{fmtUSD(budgets.monthly_usd)}
+              </span>
             )}
-          </GlassCard>
+          </div>
 
           {!summary ? (
-            <GlassCard className="p-6 text-center text-sm text-muted-foreground"><Loader2 className="w-4 h-4 inline animate-spin mr-2" /> Memuat...</GlassCard>
+            <p className="py-10 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Memuat…</p>
           ) : (
             <>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                <StatCard label="Total Cost" value={fmtUSD(summary.overall.total_cost_usd)} icon={DollarSign} color="emerald" />
-                <StatCard label="Total Calls" value={fmtNum(summary.overall.total_calls)} icon={Activity} color="blue" />
-                <StatCard label="Success" value={fmtNum(summary.overall.successful_calls)} icon={CheckCircle2} color="emerald" small />
-                <StatCard label="Failed" value={fmtNum(summary.overall.failed_calls)} icon={AlertTriangle} color="amber" small />
-                <StatCard label="Avg Latency" value={`${fmtNum(summary.overall.avg_latency_ms)}ms`} icon={Clock} color="indigo" small />
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <StatTile label="Total biaya" value={fmtUSD(summary.overall.total_cost_usd)} sub={`${summary.from_date} s.d. ${summary.to_date}`} />
+                <StatTile label="Panggilan AI" value={fmtNum(summary.overall.total_calls)}
+                  sub={`${fmtNum(summary.overall.successful_calls)} berhasil · ${fmtNum(summary.overall.failed_calls)} gagal`} />
+                <StatTile label="Token" value={fmtNum(summary.overall.total_tokens)} sub={subCache(summary.overall) || 'Token masuk + keluar'}
+                  testId="ai-usage-summary-cache" />
+                <StatTile label="Rata-rata waktu respons" value={`${fmtNum(summary.overall.avg_latency_ms)} md`} sub="Milidetik per panggilan" />
               </div>
-              <CacheWebTiles data={summary.overall} testId="ai-usage-summary-cache" />
 
-              {summary.by_feature?.length > 0 && (
-                <GlassCard className="p-6">
-                  <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><BarChart3 className="w-4 h-4 text-violet-500" /> Cost per Feature</h3>
+              <GlassCard className="space-y-3 p-4">
+                <KepalaBagian judul="Biaya per fitur" keterangan={`${summary.period_days} hari terakhir.`}>
+                  <TombolUnduh namaBerkas="ai-biaya-per-fitur" namaLembar="Biaya per fitur" baris={summary.by_feature || []}
+                    testId="ai-usage-fitur-unduh"
+                    kolom={[
+                      { label: 'Fitur', nilai: (f) => labelFitur(f.feature, f.group) },
+                      { label: 'Panggilan', nilai: (f) => f.calls },
+                      { label: 'Berhasil', nilai: (f) => f.successful },
+                      { label: 'Gagal', nilai: (f) => f.failed },
+                      { label: 'Token', nilai: (f) => f.tokens },
+                      { label: 'Rata-rata waktu respons (md)', nilai: (f) => f.avg_latency_ms },
+                      { label: 'Biaya (USD)', nilai: (f) => f.cost_usd },
+                    ]} />
+                </KepalaBagian>
+                {summary.by_feature?.length > 0 ? (
                   <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="text-xs text-muted-foreground border-b border-[var(--glass-border)]">
-                        <tr>
-                          <th className="text-left py-2 px-2">Feature</th>
-                          <th className="text-right py-2 px-2">Calls</th>
-                          <th className="text-right py-2 px-2">Success</th>
-                          <th className="text-right py-2 px-2">Failed</th>
-                          <th className="text-right py-2 px-2">Tokens</th>
-                          <th className="text-right py-2 px-2">Avg Latency</th>
-                          <th className="text-right py-2 px-2">Cost</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {summary.by_feature.map((f, i) => (
-                          <tr key={i} className="border-b border-[var(--glass-border)] hover:bg-[var(--glass)]">
-                            <td className="py-2 px-2 font-medium">{f.feature}</td>
-                            <td className="py-2 px-2 text-right">{fmtNum(f.calls)}</td>
-                            <td className="py-2 px-2 text-right text-emerald-500">{fmtNum(f.successful)}</td>
-                            <td className="py-2 px-2 text-right text-red-500">{fmtNum(f.failed)}</td>
-                            <td className="py-2 px-2 text-right text-muted-foreground">{fmtNum(f.tokens)}</td>
-                            <td className="py-2 px-2 text-right text-muted-foreground">{fmtNum(f.avg_latency_ms)}ms</td>
-                            <td className="py-2 px-2 text-right font-semibold text-violet-600 dark:text-violet-400">{fmtUSD(f.cost_usd)}</td>
-                          </tr>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Fitur</TableHead>
+                          <TableHead className="text-right">Panggilan</TableHead>
+                          <TableHead className="text-right">Berhasil</TableHead>
+                          <TableHead className="text-right">Gagal</TableHead>
+                          <TableHead className="hidden text-right md:table-cell">Token</TableHead>
+                          <TableHead className="hidden text-right md:table-cell">Waktu respons</TableHead>
+                          <TableHead className="text-right">Biaya</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {summary.by_feature.map((f) => (
+                          <TableRow key={f.feature}>
+                            <TableCell className="font-medium" title={f.feature}>{labelFitur(f.feature, f.group)}</TableCell>
+                            <TableCell className="text-right tabular-nums">{fmtNum(f.calls)}</TableCell>
+                            <TableCell className="text-right tabular-nums">{fmtNum(f.successful)}</TableCell>
+                            <TableCell className={`text-right tabular-nums ${f.failed > 0 ? 'text-[hsl(var(--danger-text))]' : ''}`}>{fmtNum(f.failed)}</TableCell>
+                            <TableCell className="hidden text-right tabular-nums text-muted-foreground md:table-cell">{fmtNum(f.tokens)}</TableCell>
+                            <TableCell className="hidden text-right tabular-nums text-muted-foreground md:table-cell">{fmtNum(f.avg_latency_ms)} md</TableCell>
+                            <TableCell className="text-right font-medium tabular-nums">{fmtUSD(f.cost_usd)}</TableCell>
+                          </TableRow>
                         ))}
-                      </tbody>
-                    </table>
+                      </TableBody>
+                    </Table>
                   </div>
-                </GlassCard>
-              )}
+                ) : (
+                  <EmptyState className="py-8" title="Belum ada panggilan AI pada periode ini" />
+                )}
+              </GlassCard>
 
               {summary.by_day?.length > 0 && (
-                <GlassCard className="p-6">
-                  <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><TrendingUp className="w-4 h-4 text-indigo-500" /> Daily Cost Trend</h3>
-                  <div className="space-y-1.5">
-                    {summary.by_day.map((d, i) => {
-                      const maxCost = Math.max(...summary.by_day.map((x) => x.cost_usd), 0.0001);
-                      const pct = (d.cost_usd / maxCost) * 100;
-                      return (
-                        <div key={i} className="flex items-center gap-3">
-                          <span className="text-xs text-muted-foreground w-24 shrink-0">{d.date}</span>
-                          <div className="flex-1 h-5 bg-[var(--glass)] rounded relative">
-                            <div className="h-full rounded bg-gradient-to-r from-violet-500 to-indigo-500" style={{ width: `${pct}%` }} />
-                          </div>
-                          <span className="text-xs font-medium w-20 text-right">{fmtUSD(d.cost_usd)}</span>
-                          <span className="text-xs text-muted-foreground w-12 text-right">{d.calls}c</span>
-                        </div>
-                      );
-                    })}
-                  </div>
+                <GlassCard className="space-y-3 p-4">
+                  <KepalaBagian judul="Biaya per hari" keterangan="Panjang batang = biaya hari itu dibanding hari termahal di periode ini.">
+                    <TombolUnduh namaBerkas="ai-biaya-per-hari" namaLembar="Biaya per hari" baris={summary.by_day}
+                      testId="ai-usage-hari-unduh"
+                      kolom={[
+                        { label: 'Tanggal', nilai: (d) => d.date },
+                        { label: 'Panggilan', nilai: (d) => d.calls },
+                        { label: 'Token', nilai: (d) => d.tokens },
+                        { label: 'Biaya (USD)', nilai: (d) => d.cost_usd },
+                      ]} />
+                  </KepalaBagian>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-28">Tanggal</TableHead>
+                        <TableHead className="hidden sm:table-cell">Biaya relatif</TableHead>
+                        <TableHead className="text-right">Panggilan</TableHead>
+                        <TableHead className="text-right">Biaya</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {summary.by_day.map((d) => (
+                        <TableRow key={d.date}>
+                          <TableCell className="whitespace-nowrap">{d.date}</TableCell>
+                          <TableCell className="hidden sm:table-cell"><Progress value={(d.cost_usd / maxHari) * 100} className="h-1.5" /></TableCell>
+                          <TableCell className="text-right tabular-nums">{fmtNum(d.calls)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{fmtUSD(d.cost_usd)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
                 </GlassCard>
               )}
             </>
           )}
         </TabsContent>
 
-        <TabsContent value="logs" className="mt-4">
-          <GlassCard className="p-4 mb-3 flex items-center gap-3">
-            <span className="text-sm font-medium">Filter Feature:</span>
-            <Select value={logFilter || '__all__'} onValueChange={(v) => setLogFilter(v === '__all__' ? '' : v)}>
-              <SelectTrigger className="w-64" data-testid="ai-usage-log-filter"><SelectValue placeholder="Semua feature" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Semua feature</SelectItem>
-                {Array.from(new Set(logs.map((l) => l.feature).concat(summary?.by_feature?.map((f) => f.feature) || []))).filter(Boolean).map((f) => (
-                  <SelectItem key={f} value={f}>{f}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button size="sm" variant="outline" onClick={fetchLogs}><RefreshCw className="w-3.5 h-3.5 mr-1" /> Refresh</Button>
-            <span className="ml-auto text-xs text-muted-foreground">{logs.length} log entries</span>
-          </GlassCard>
+        <TabsContent value="logs" className="mt-0 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <SmartNativeSelect value={logFilter} onChange={(e) => setLogFilter(e.target.value)} className="h-9 w-56"
+              aria-label="Saring fitur" data-testid="ai-usage-log-filter">
+              <option value="">Semua fitur</option>
+              {pilihanFitur.map((f) => <option key={f} value={f}>{labelFitur(f)}</option>)}
+            </SmartNativeSelect>
+            <span className="text-sm text-muted-foreground">{fmtNum(logs.length)} catatan terakhir (maks. 100)</span>
+            <div className="ml-auto flex items-center gap-2">
+              <TombolUnduh namaBerkas="ai-catatan-panggilan" namaLembar="Catatan panggilan" baris={logs} testId="ai-usage-log-unduh"
+                kolom={[
+                  { label: 'Waktu', nilai: (l) => waktuLog(l.created_at) },
+                  { label: 'Fitur', nilai: (l) => labelFitur(l.feature, l.feature_group) },
+                  { label: 'Model', nilai: (l) => l.model_name || '' },
+                  { label: 'Token', nilai: (l) => l.tokens_total },
+                  { label: 'Waktu respons (md)', nilai: (l) => l.latency_ms },
+                  { label: 'Biaya (USD)', nilai: (l) => l.cost_usd },
+                  { label: 'Status', nilai: (l) => (l.success ? 'Berhasil' : 'Gagal') },
+                  { label: 'Galat', nilai: (l) => l.error || '' },
+                ]} />
+              <Button variant="outline" size="icon" onClick={fetchLogs} title="Muat ulang catatan" aria-label="Muat ulang catatan">
+                <RefreshCw />
+              </Button>
+            </div>
+          </div>
 
           {logs.length === 0 ? (
-            <GlassCard className="p-10 text-center text-sm text-muted-foreground">Belum ada log</GlassCard>
+            <EmptyState title="Belum ada catatan panggilan" description="Catatan muncul setelah fitur AI dipakai." />
           ) : (
-            <GlassCard className="p-3">
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead className="text-muted-foreground border-b border-[var(--glass-border)]">
-                    <tr>
-                      <th className="text-left py-2 px-2">Waktu</th>
-                      <th className="text-left py-2 px-2">Feature</th>
-                      <th className="text-left py-2 px-2">Model</th>
-                      <th className="text-right py-2 px-2">Tokens</th>
-                      <th className="text-right py-2 px-2">Latency</th>
-                      <th className="text-right py-2 px-2">Cost</th>
-                      <th className="text-center py-2 px-2">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {logs.map((l) => (
-                      <tr key={l.id} className="border-b border-[var(--glass-border)] hover:bg-[var(--glass)]">
-                        <td className="py-1.5 px-2 text-muted-foreground">{l.created_at ? new Date(l.created_at).toLocaleString('id-ID') : '—'}</td>
-                        <td className="py-1.5 px-2 font-medium">{l.feature}</td>
-                        <td className="py-1.5 px-2 text-muted-foreground">{l.model_provider}/{l.model_name}</td>
-                        <td className="py-1.5 px-2 text-right">{fmtNum(l.tokens_total)}</td>
-                        <td className="py-1.5 px-2 text-right">{fmtNum(l.latency_ms)}ms</td>
-                        <td className="py-1.5 px-2 text-right font-medium">{fmtUSD(l.cost_usd)}</td>
-                        <td className="py-1.5 px-2 text-center">
-                          {l.success ? (
-                            <Badge className="bg-emerald-500/15 text-emerald-600 border-emerald-500/30" variant="outline">OK</Badge>
-                          ) : (
-                            <Badge className="bg-red-500/15 text-red-600 border-red-500/30" variant="outline" title={l.error || ''}>FAIL</Badge>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+            <GlassCard className="overflow-x-auto p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Waktu</TableHead>
+                    <TableHead>Fitur</TableHead>
+                    <TableHead className="hidden md:table-cell">Model</TableHead>
+                    <TableHead className="hidden text-right sm:table-cell">Token</TableHead>
+                    <TableHead className="hidden text-right md:table-cell">Waktu respons</TableHead>
+                    <TableHead className="text-right">Biaya</TableHead>
+                    <TableHead>Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {logs.map((l) => (
+                    <TableRow key={l.id}>
+                      <TableCell className="whitespace-nowrap text-muted-foreground">{waktuLog(l.created_at)}</TableCell>
+                      <TableCell className="font-medium" title={l.feature}>{labelFitur(l.feature, l.feature_group)}</TableCell>
+                      <TableCell className="hidden text-muted-foreground md:table-cell">{l.model_name}</TableCell>
+                      <TableCell className="hidden text-right tabular-nums sm:table-cell">{fmtNum(l.tokens_total)}</TableCell>
+                      <TableCell className="hidden text-right tabular-nums md:table-cell">{fmtNum(l.latency_ms)} md</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtUSD(l.cost_usd)}</TableCell>
+                      <TableCell title={l.error || ''}>
+                        <StatusBadge status={l.success ? 'berhasil' : 'gagal'} label={l.success ? 'Berhasil' : 'Gagal'} tone={l.success ? 'success' : 'danger'} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </GlassCard>
           )}
         </TabsContent>
 
-        <TabsContent value="settings" className="mt-4 space-y-4">
+        <TabsContent value="settings" className="mt-0 space-y-4">
           {!form ? (
-            <GlassCard className="p-6 text-center text-sm text-muted-foreground"><Loader2 className="w-4 h-4 inline animate-spin mr-2" /> Memuat...</GlassCard>
+            <p className="py-10 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Memuat…</p>
           ) : (
-            <>
-              {/* Master switch */}
-              <GlassCard className="p-5">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <Power className={`w-5 h-5 ${form.ai_enabled ? 'text-emerald-500' : 'text-muted-foreground'}`} />
-                    <div>
-                      <p className="font-semibold text-sm text-foreground">AI Master Switch</p>
-                      <p className="text-xs text-muted-foreground">Nonaktifkan untuk mematikan SEMUA fitur AI sekaligus.</p>
-                    </div>
-                  </div>
-                  <Switch checked={form.ai_enabled} onCheckedChange={(v) => setField('ai_enabled', v)} data-testid="ai-set-master" />
-                </div>
-              </GlassCard>
-
-              {/* Asisten AI Tahap B — tindakan lewat kartu konfirmasi */}
-              <GlassCard className="p-5 space-y-4" data-testid="ai-set-tindakan">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <ClipboardCheck className={`w-5 h-5 ${form.asisten_tindakan_aktif ? 'text-primary' : 'text-muted-foreground'}`} />
-                    <div>
-                      <p className="font-semibold text-sm text-foreground">Tindakan Asisten AI aktif</p>
-                      <p className="text-xs text-muted-foreground">Bila dimatikan, Asisten AI hanya menjawab; usulan perubahan yang menunggu tidak bisa disetujui.</p>
-                    </div>
-                  </div>
-                  <Switch checked={!!form.asisten_tindakan_aktif} onCheckedChange={(v) => setField('asisten_tindakan_aktif', v)}
-                    aria-label="Tindakan Asisten AI aktif" data-testid="ai-set-tindakan-aktif" />
-                </div>
-                <div className="max-w-xs">
-                  <label htmlFor="ai-set-batas-tindakan" className="text-xs text-muted-foreground mb-1 block">Batas tindakan per pengguna per hari</label>
-                  <MoneyInput id="ai-set-batas-tindakan" decimals={0} value={form.asisten_batas_tindakan_harian}
-                    onChange={(e) => setField('asisten_batas_tindakan_harian', e.target.value)} data-testid="ai-set-batas-tindakan" />
-                  <p className="text-xs text-muted-foreground mt-1">Perubahan yang dijalankan Asisten AI untuk satu pengguna dalam sehari. Bawaan {BATAS_TINDAKAN_BAWAAN}.</p>
-                </div>
-              </GlassCard>
-
-              {/* Asisten AI (layar2) — Tahap D: ingatan + briefing/peringatan/laporan mingguan */}
-              <PengaturanProaktif form={form} setField={setField} galat={galatProaktif} tersimpan={settings}
-                user={user} onNavigate={onNavigate} />
-
-              {/* Budgets */}
-              <GlassCard className="p-5 space-y-4">
-                <h3 className="font-semibold text-sm flex items-center gap-2 text-foreground"><DollarSign className="w-4 h-4 text-emerald-500" /> Budget (USD)</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Harian</label>
-                    <MoneyInput decimals={2} value={form.daily_budget_usd}
-                      onChange={(e) => setField('daily_budget_usd', e.target.value)} data-testid="ai-set-daily" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Bulanan</label>
-                    <MoneyInput decimals={2} value={form.monthly_budget_usd}
-                      onChange={(e) => setField('monthly_budget_usd', e.target.value)} data-testid="ai-set-monthly" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Per Fitur / Hari</label>
-                    <MoneyInput decimals={2} value={form.per_feature_daily_usd}
-                      onChange={(e) => setField('per_feature_daily_usd', e.target.value)} data-testid="ai-set-perfeature" />
-                  </div>
-                </div>
-                {settings?.env_defaults && (
-                  <p className="text-xs text-muted-foreground">
-                    Default env: harian ${settings.env_defaults.daily_budget_usd} · bulanan ${settings.env_defaults.monthly_budget_usd}.
-                    Bila budget terlampaui, panggilan AI ditolak otomatis.
-                  </p>
-                )}
-              </GlassCard>
-
-              {/* Default tier */}
-              <GlassCard className="p-5">
-                <h3 className="font-semibold text-sm mb-2 flex items-center gap-2 text-foreground"><Brain className="w-4 h-4 text-violet-500" /> Tier Model Default</h3>
-                <Select value={form.default_tier} onValueChange={(v) => setField('default_tier', v)}>
-                  <SelectTrigger className="w-full md:w-80" data-testid="ai-set-tier"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {(settings?.tiers || []).map(t => (
-                      <SelectItem key={t} value={t}>{t} — {settings?.tier_models?.[t]}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground mt-2">standard = umum (Sonnet), light = klasifikasi/asisten (Sonnet, effort rendah). Opus (executive) dipakai KHUSUS narasi Laporan Eksekutif dan tidak bisa dijadikan default.</p>
-              </GlassCard>
-
-              {/* Feature toggles */}
-              <GlassCard className="p-5">
-                <h3 className="font-semibold text-sm mb-3 flex items-center gap-2 text-foreground"><Zap className="w-4 h-4 text-amber-500" /> Aktif / Nonaktif per Fitur AI</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {(settings?.feature_groups || []).map(g => {
-                    const enabled = !form.disabled_features.includes(g.key);
-                    return (
-                      <div key={g.key} className="flex items-center justify-between p-3 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)]">
-                        <div>
-                          <span className="text-sm text-foreground">{g.label}</span>
-                          <span className="block text-[11px] text-muted-foreground font-mono">{g.key}</span>
-                        </div>
-                        <Switch checked={enabled} onCheckedChange={(v) => toggleFeature(g.key, v)} data-testid={`ai-set-feat-${g.key}`} />
-                      </div>
-                    );
-                  })}
-                </div>
-              </GlassCard>
-
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={fetchSettings} disabled={savingSettings} data-testid="ai-set-reset">Reset</Button>
-                <Button onClick={saveSettings} disabled={savingSettings} data-testid="ai-set-save" className="bg-violet-600 hover:bg-violet-700 text-white">
-                  {savingSettings ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Save className="w-4 h-4 mr-1" />} Simpan Pengaturan
-                </Button>
-              </div>
-            </>
+            <GlassCard className="space-y-3 p-4" data-testid="ai-set-ringkas">
+              <KepalaBagian judul="Pengaturan yang berlaku" keterangan="Ubah lewat tombol di kanan; perubahan berlaku setelah disimpan.">
+                <Button onClick={() => setBukaSetelan(true)} data-testid="ai-set-buka"><Settings />Ubah pengaturan</Button>
+              </KepalaBagian>
+              <dl className="divide-y divide-[var(--glass-border)]">
+                <BarisDetail label="Fitur AI">
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <StatusBadge status={settings?.ai_enabled ? 'aktif' : 'mati'} label={settings?.ai_enabled ? 'Dinyalakan' : 'Dimatikan'}
+                      tone={settings?.ai_enabled ? 'success' : 'muted'} />
+                    {settings?.ai_status?.message && settings?.ai_status?.available === false && (
+                      <span className="text-muted-foreground">{settings.ai_status.message}</span>
+                    )}
+                  </span>
+                </BarisDetail>
+                <BarisDetail label="Tindakan Asisten AI">
+                  {settings?.asisten_tindakan_aktif !== false ? 'Aktif' : 'Dimatikan'} · paling banyak {fmtNum(settings?.asisten_batas_tindakan_harian ?? BATAS_TINDAKAN_BAWAAN)} per pengguna per hari
+                </BarisDetail>
+                <BarisDetail label="Anggaran">
+                  Harian {fmtUSD(settings?.daily_budget_usd)} · bulanan {fmtUSD(settings?.monthly_budget_usd)} · per fitur per hari {fmtUSD(settings?.per_feature_daily_usd)}
+                </BarisDetail>
+                <BarisDetail label="Tingkat model bawaan">{TIER_LABEL[settings?.default_tier] || settings?.default_tier || '—'}</BarisDetail>
+                <BarisDetail label="Fitur dimatikan">{fiturMati.length ? fiturMati.join(', ') : 'Tidak ada — semua fitur AI aktif'}</BarisDetail>
+                <BarisDetail label="Asisten AI proaktif">
+                  Ingatan {settings?.asisten_ingatan_aktif !== false ? 'aktif' : 'mati'}
+                  {' · '}briefing pagi {settings?.asisten_briefing_aktif !== false ? `pukul ${settings?.asisten_briefing_jam || '—'}` : 'mati'}
+                  {' · '}peringatan harian {settings?.asisten_peringatan_aktif !== false ? `pukul ${settings?.asisten_peringatan_jam || '—'}` : 'mati'}
+                  {' · '}laporan mingguan {settings?.asisten_laporan_mingguan_aktif !== false ? `pukul ${settings?.asisten_laporan_mingguan_jam || '—'}` : 'mati'}
+                </BarisDetail>
+              </dl>
+            </GlassCard>
           )}
         </TabsContent>
       </Tabs>
-    </div>
-  );
-}
 
-function StatCard({ label, value, icon: Icon, color, small = false }) {
-  const map = {
-    blue: 'from-blue-500/10 to-cyan-500/10 border-blue-500/20 text-blue-600 dark:text-blue-400',
-    emerald: 'from-emerald-500/10 to-teal-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400',
-    amber: 'from-amber-500/10 to-orange-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400',
-    red: 'from-red-500/10 to-rose-500/10 border-red-500/20 text-red-600 dark:text-red-400',
-    indigo: 'from-indigo-500/10 to-violet-500/10 border-indigo-500/20 text-indigo-600 dark:text-indigo-400',
-  };
-  return (
-    <div className={`p-3 rounded-xl bg-gradient-to-br border ${map[color] || map.blue}`}>
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-xs text-muted-foreground">{label}</span>
-        {Icon && <Icon className="w-4 h-4 opacity-70" />}
-      </div>
-      <div className={`font-bold text-foreground ${small ? 'text-base' : 'text-2xl'}`}>{value}</div>
-    </div>
+      {form && (
+        <FormPopup open={bukaSetelan} onClose={batalSetelan} ukuran="panjang" judul="Ubah pengaturan AI"
+          keterangan="Saklar, anggaran, tingkat model, fitur, dan Asisten AI proaktif. Bila anggaran terlampaui, panggilan AI ditolak otomatis."
+          onSimpan={simpanSetelan} menyimpan={savingSettings} labelSimpan="Simpan pengaturan" testId="ai-set-form">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-foreground">Saklar utama AI</p>
+              <p className="text-xs text-muted-foreground">Matikan untuk menghentikan SEMUA fitur AI sekaligus.</p>
+            </div>
+            <Switch checked={form.ai_enabled} onCheckedChange={(v) => setField('ai_enabled', v)} aria-label="Saklar utama AI" data-testid="ai-set-master" />
+          </div>
+
+          {/* Asisten AI Tahap B — tindakan lewat kartu konfirmasi */}
+          <div className="space-y-3 border-t border-[var(--glass-border)] pt-4" data-testid="ai-set-tindakan">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-2">
+                <ClipboardCheck className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                <div>
+                  <p className="text-sm font-medium text-foreground">Tindakan Asisten AI aktif</p>
+                  <p className="text-xs text-muted-foreground">Bila dimatikan, Asisten AI hanya menjawab; usulan perubahan yang menunggu tidak bisa disetujui.</p>
+                </div>
+              </div>
+              <Switch checked={!!form.asisten_tindakan_aktif} onCheckedChange={(v) => setField('asisten_tindakan_aktif', v)}
+                aria-label="Tindakan Asisten AI aktif" data-testid="ai-set-tindakan-aktif" />
+            </div>
+            <Isian label="Batas tindakan per pengguna per hari" htmlFor="ai-set-batas-tindakan" className="max-w-xs"
+              petunjuk={`Perubahan yang dijalankan Asisten AI untuk satu pengguna dalam sehari. Bawaan ${BATAS_TINDAKAN_BAWAAN}.`}>
+              <MoneyInput id="ai-set-batas-tindakan" decimals={0} value={form.asisten_batas_tindakan_harian}
+                onChange={(e) => setField('asisten_batas_tindakan_harian', e.target.value)} data-testid="ai-set-batas-tindakan" />
+            </Isian>
+          </div>
+
+          {/* Budgets */}
+          <div className="space-y-3 border-t border-[var(--glass-border)] pt-4">
+            <p className="text-sm font-medium text-foreground">Anggaran (USD)</p>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <Isian label="Harian">
+                <MoneyInput decimals={2} value={form.daily_budget_usd}
+                  onChange={(e) => setField('daily_budget_usd', e.target.value)} data-testid="ai-set-daily" />
+              </Isian>
+              <Isian label="Bulanan">
+                <MoneyInput decimals={2} value={form.monthly_budget_usd}
+                  onChange={(e) => setField('monthly_budget_usd', e.target.value)} data-testid="ai-set-monthly" />
+              </Isian>
+              <Isian label="Per fitur per hari">
+                <MoneyInput decimals={2} value={form.per_feature_daily_usd}
+                  onChange={(e) => setField('per_feature_daily_usd', e.target.value)} data-testid="ai-set-perfeature" />
+              </Isian>
+            </div>
+            {settings?.env_defaults && (
+              <p className="text-xs text-muted-foreground">
+                Bawaan server: harian ${settings.env_defaults.daily_budget_usd} · bulanan ${settings.env_defaults.monthly_budget_usd}.
+              </p>
+            )}
+          </div>
+
+          {/* Default tier */}
+          <div className="border-t border-[var(--glass-border)] pt-4">
+            <Isian label="Tingkat model bawaan" htmlFor="ai-set-tier"
+              petunjuk="Standar = umum, Ringan = klasifikasi/asisten (usaha rendah). Eksekutif dipakai KHUSUS narasi Laporan Eksekutif dan tidak bisa dijadikan bawaan.">
+              <SmartNativeSelect id="ai-set-tier" value={form.default_tier} onChange={(e) => setField('default_tier', e.target.value)}
+                searchable={false} className="h-9 w-full sm:w-80" data-testid="ai-set-tier">
+                {(settings?.tiers || []).map((t) => (
+                  <option key={t} value={t}>{TIER_LABEL[t] || t} — {String(settings?.tier_models?.[t] || '').replace(/^anthropic\//, '')}</option>
+                ))}
+              </SmartNativeSelect>
+            </Isian>
+          </div>
+
+          {/* Feature toggles */}
+          <div className="space-y-2 border-t border-[var(--glass-border)] pt-4">
+            <p className="text-sm font-medium text-foreground">Aktif / nonaktif per fitur AI</p>
+            <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
+              {(settings?.feature_groups || []).map((g) => {
+                const enabled = !form.disabled_features.includes(g.key);
+                return (
+                  <label key={g.key} className="flex items-center justify-between gap-3 border-b border-[var(--glass-border)] py-2 text-sm text-foreground">
+                    <span className="min-w-0">{g.label}</span>
+                    <Switch checked={enabled} onCheckedChange={(v) => toggleFeature(g.key, v)} aria-label={g.label} data-testid={`ai-set-feat-${g.key}`} />
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Asisten AI (layar2) — Tahap D: ingatan + briefing/peringatan/laporan mingguan */}
+          <PengaturanProaktif form={form} setField={setField} galat={galatProaktif} tersimpan={settings}
+            user={user} onNavigate={onNavigate} />
+        </FormPopup>
+      )}
+    </PageLayout>
   );
 }

@@ -107,7 +107,7 @@ function DialogIngatan({ buka, awal, maksIsi, onTutup, onSimpan }) {
             </Isian>
             <Isian label="Kategori" htmlFor="ingatan-kategori" petunjuk={contoh}>
               <SmartNativeSelect id="ingatan-kategori" value={kategori} onChange={(e) => setKategori(e.target.value)}
-                searchable={false} className="h-9 w-full" aria-label="Kategori ingatan" data-testid="ingatan-kategori">
+                searchable={false} className="h-9 w-full sm:w-56" aria-label="Kategori ingatan" data-testid="ingatan-kategori">
                 {KATEGORI_INGATAN.map((k) => <option key={k.kunci} value={k.kunci}>{k.label}</option>)}
               </SmartNativeSelect>
             </Isian>
