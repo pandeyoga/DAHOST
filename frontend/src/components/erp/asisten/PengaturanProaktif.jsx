@@ -119,7 +119,7 @@ function RiwayatJalan({ riwayat, pengguna, user, onNavigate, memuat, onMuatUlang
           description="Jalan terjadwal dan manual tampil di sini setelah jadwal pertama berjalan." />
       ) : (
         <div className="overflow-hidden rounded-[var(--radius-sm)] border border-[var(--glass-border)]">
-          <Table className="min-w-0 text-[13px]">
+          <Table className="min-w-0 text-sm">
             <TableHeader>
               <TableRow>
                 <TableHead>Waktu</TableHead>

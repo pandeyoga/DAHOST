@@ -19,17 +19,17 @@ function ItemSesi({ sesi, aktif, onPilih }) {
   const jenis = labelJenisSesi(sesi);
   return (
     <li>
-      <button type="button" onClick={() => onPilih(sesi.id)} aria-current={aktif ? 'true' : undefined}
+      <Button type="button" variant="ghost" onClick={() => onPilih(sesi.id)} aria-current={aktif ? 'true' : undefined}
         title={sesi.judul || 'Percakapan tanpa judul'}
         className={cn(
-          'flex h-9 w-full items-center gap-2 rounded-md pl-2.5 pr-2 text-left text-sm transition-colors',
-          aktif ? 'bg-[hsl(var(--primary)/0.12)] font-medium text-foreground' : 'text-foreground/75 hover:bg-foreground/5 hover:text-foreground',
+          'h-9 w-full justify-start gap-2 pl-2.5 pr-2 text-left font-normal',
+          aktif ? 'bg-[hsl(var(--primary)/0.12)] font-medium text-foreground hover:bg-[hsl(var(--primary)/0.12)]' : 'text-foreground/80',
         )}
         data-testid="asisten-sesi-item" data-aktif={aktif ? '1' : '0'} data-jenis={jenisSesi(sesi) || undefined}>
         <MessageSquare className={cn('h-3.5 w-3.5 shrink-0', aktif ? 'text-primary' : 'text-muted-foreground')} aria-hidden="true" />
         <span className="min-w-0 flex-1 truncate">{sesi.judul || 'Percakapan tanpa judul'}</span>
         {jenis && (
-          <span className="shrink-0 rounded-full bg-[hsl(var(--primary)/0.12)] px-1.5 py-px text-[10px] font-medium text-primary"
+          <span className="shrink-0 rounded-full bg-[hsl(var(--primary)/0.12)] px-1.5 py-px text-xs font-medium text-primary"
             title="Dibuat otomatis oleh Asisten AI" data-testid="asisten-sesi-jenis">
             {jenis}
           </span>
@@ -38,7 +38,7 @@ function ItemSesi({ sesi, aktif, onPilih }) {
           <span className="h-2 w-2 shrink-0 rounded-full bg-[hsl(var(--warning))]" title="Ada tindakan menunggu persetujuan"
             aria-label="Ada tindakan menunggu persetujuan" data-testid="asisten-sesi-menunggu" />
         )}
-      </button>
+      </Button>
     </li>
   );
 }
@@ -73,13 +73,14 @@ export default function RiwayatPercakapan({
           <EmptyState icon={MessageSquare} title="Riwayat gagal dimuat" description={galat} className="px-3 py-8"
             testId="asisten-sesi-galat" />
         ) : kelompok.length === 0 ? (
-          <EmptyState icon={cari ? Search : MessageSquare} className="px-3 py-8" testId="asisten-sesi-kosong"
-            title={cari ? 'Tidak ditemukan' : 'Belum ada percakapan'}
-            description={cari ? 'Coba kata lain dari judul percakapan.' : 'Pertanyaan pertama Anda membuat percakapan baru di sini.'} />
+          // Ringkas (dulu kotak ikon besar yang membuat kolom kiri tampak kosong melompong)
+          <p className="px-2.5 py-3 text-sm text-muted-foreground" data-testid="asisten-sesi-kosong">
+            {cari ? 'Tidak ada percakapan dengan judul itu.' : 'Belum ada percakapan. Pertanyaan pertama Anda tersimpan di sini.'}
+          </p>
         ) : (
           kelompok.map((g) => (
             <section key={g.key} className="pt-2" aria-label={g.label}>
-              <p className="px-2.5 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{g.label}</p>
+              <p className="px-2.5 pb-1 text-xs font-medium text-muted-foreground">{g.label}</p>
               <ul className="space-y-0.5">
                 {g.items.map((s) => <ItemSesi key={s.id} sesi={s} aktif={tampilan === 'chat' && s.id === aktifId} onPilih={onPilih} />)}
               </ul>
