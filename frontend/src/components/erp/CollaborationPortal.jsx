@@ -42,10 +42,14 @@ export default function CollaborationPortal({ user, token, onLogout, onBack }) {
   const [selectedCourseId, setSelectedCourseId] = useState(null);
   const [selectedGroupId, setSelectedGroupId] = useState(null);
 
+  // Perbaikan navigasi: beberapa layar belajar memanggil onNavigate('catalog') (tampilan yang tidak ada → jatuh ke
+  // Spreadsheet) dan onNavigate('course-detail', idKursus) dengan id sebagai teks (dulu id tidak terbaca → rincian kosong).
+  const VIEW_ALIAS = { catalog: 'course-catalog' };
   const handleNavigate = (view, options = {}) => {
-    setActiveView(view);
-    if (options.courseId) setSelectedCourseId(options.courseId);
-    if (options.groupId) setSelectedGroupId(options.groupId);
+    const opt = typeof options === 'string' ? { courseId: options } : (options || {});
+    setActiveView(VIEW_ALIAS[view] || view);
+    if (opt.courseId) setSelectedCourseId(opt.courseId);
+    if (opt.groupId) setSelectedGroupId(opt.groupId);
   };
 
   const renderContent = () => {

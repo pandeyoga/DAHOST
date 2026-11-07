@@ -112,7 +112,7 @@ export default function CourseDetail({ courseId, onBack }) {
       <div className="h-full flex items-center justify-center">
         <div className="text-center space-y-2">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-          <p className="text-sm text-muted-foreground">Loading course...</p>
+          <p className="text-sm text-muted-foreground">Memuat kursus…</p>
         </div>
       </div>
     );
@@ -122,8 +122,8 @@ export default function CourseDetail({ courseId, onBack }) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center">
-          <p className="text-lg font-semibold mb-2">Course not found</p>
-          <Button onClick={onBack}>Back to Catalog</Button>
+          <p className="text-lg font-semibold mb-2">Kursus tidak ditemukan</p>
+          <Button onClick={onBack}>Kembali</Button>
         </div>
       </div>
     );
@@ -135,7 +135,7 @@ export default function CourseDetail({ courseId, onBack }) {
 
   return (
     <div className="h-full overflow-y-auto" data-testid="course-detail-view">
-      <div className="p-6 space-y-6 max-w-7xl mx-auto">
+      <div className="space-y-4 p-4 sm:px-6">
         {/* Header */}
         <div className="flex items-start gap-4">
           <Button variant="ghost" size="sm" onClick={onBack} data-testid="course-detail-back-btn">
@@ -145,7 +145,7 @@ export default function CourseDetail({ courseId, onBack }) {
           <div className="flex-1">
             <div className="flex items-start justify-between">
               <div>
-                <h1 className="text-3xl font-bold mb-2">{course.title}</h1>
+                <p className="text-xl font-semibold text-foreground">{course.title}</p>
                 <div className="flex items-center gap-3 text-sm text-muted-foreground">
                   <Badge variant="secondary">{course.category}</Badge>
                   <div className="flex items-center gap-1">
@@ -158,13 +158,13 @@ export default function CourseDetail({ courseId, onBack }) {
                   </div>
                   <div className="flex items-center gap-1">
                     <Users size={14} />
-                    {course.enrollment_count || 0} students
+                    {course.enrollment_count || 0} peserta
                   </div>
                 </div>
               </div>
               {isEnrolled && (
                 <div className="text-right">
-                  <div className="text-sm text-muted-foreground mb-1">Your Progress</div>
+                  <div className="text-sm text-muted-foreground mb-1">Kemajuan Anda</div>
                   <div className="text-2xl font-bold">{progressPercent}%</div>
                   <Progress value={progressPercent} className="w-32 mt-2" />
                 </div>
@@ -176,27 +176,27 @@ export default function CourseDetail({ courseId, onBack }) {
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
-            <TabsTrigger value="overview" data-testid="tab-overview">Overview</TabsTrigger>
-            <TabsTrigger value="materials" data-testid="tab-materials">Materials</TabsTrigger>
-            <TabsTrigger value="discussion" data-testid="tab-discussion">Discussion</TabsTrigger>
-            <TabsTrigger value="assignments" data-testid="tab-assignments">Assignments</TabsTrigger>
-            <TabsTrigger value="progress" data-testid="tab-progress">Progress</TabsTrigger>
+            <TabsTrigger value="overview" data-testid="tab-overview">Ringkasan</TabsTrigger>
+            <TabsTrigger value="materials" data-testid="tab-materials">Materi</TabsTrigger>
+            <TabsTrigger value="discussion" data-testid="tab-discussion">Diskusi</TabsTrigger>
+            <TabsTrigger value="assignments" data-testid="tab-assignments">Tugas</TabsTrigger>
+            <TabsTrigger value="progress" data-testid="tab-progress">Kemajuan</TabsTrigger>
           </TabsList>
 
           {/* Overview Tab */}
           <TabsContent value="overview" className="mt-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="md:col-span-2 space-y-6">
                 <Card>
                   <CardContent className="pt-6">
-                    <h2 className="text-xl font-semibold mb-4">About This Course</h2>
+                    <p className="text-lg font-semibold mb-4">Tentang kursus ini</p>
                     <p className="text-muted-foreground">{course.description}</p>
                   </CardContent>
                 </Card>
 
                 <Card>
                   <CardContent className="pt-6">
-                    <h2 className="text-xl font-semibold mb-4">What You'll Learn</h2>
+                    <p className="text-lg font-semibold mb-4">Yang akan dipelajari</p>
                     <ul className="space-y-2">
                       {course.materials?.slice(0, 4).map((mat, idx) => (
                         <li key={idx} className="flex items-start gap-2">
@@ -212,22 +212,22 @@ export default function CourseDetail({ courseId, onBack }) {
               <div className="space-y-6">
                 <Card>
                   <CardContent className="pt-6">
-                    <h3 className="font-semibold mb-4">Course Info</h3>
+                    <p className="font-semibold mb-4">Info kursus</p>
                     <div className="space-y-3 text-sm">
                       <div>
-                        <div className="text-muted-foreground">Instructor</div>
+                        <div className="text-muted-foreground">Pengajar</div>
                         <div className="font-medium">{course.instructor}</div>
                       </div>
                       <div>
-                        <div className="text-muted-foreground">Level</div>
+                        <div className="text-muted-foreground">Tingkat</div>
                         <div className="font-medium">{course.level}</div>
                       </div>
                       <div>
-                        <div className="text-muted-foreground">Duration</div>
+                        <div className="text-muted-foreground">Durasi</div>
                         <div className="font-medium">{course.duration_hours} hours</div>
                       </div>
                       <div>
-                        <div className="text-muted-foreground">Materials</div>
+                        <div className="text-muted-foreground">Materi</div>
                         <div className="font-medium">{course.materials?.length || 0} items</div>
                       </div>
                     </div>
@@ -241,17 +241,17 @@ export default function CourseDetail({ courseId, onBack }) {
                     onClick={handleEnroll}
                     data-testid="enroll-course-btn"
                   >
-                    Enroll Now
+                    Daftar sekarang
                   </Button>
                 )}
 
                 {isEnrolled && enrollment.status === 'completed' && (
-                  <Card className="border-green-500">
+                  <Card className="border-[hsl(var(--success)/0.4)]">
                     <CardContent className="pt-6 text-center">
-                      <Award className="text-green-500 mx-auto mb-2" size={48} />
-                      <p className="font-semibold">Course Completed!</p>
+                      <Award className="text-[hsl(var(--success-text))] mx-auto mb-2" size={48} />
+                      <p className="font-semibold">Kursus selesai</p>
                       <Button variant="outline" className="mt-4 w-full">
-                        Download Certificate
+                        Unduh sertifikat
                       </Button>
                     </CardContent>
                   </Card>
@@ -262,12 +262,12 @@ export default function CourseDetail({ courseId, onBack }) {
 
           {/* Materials Tab */}
           <TabsContent value="materials" className="mt-6">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               {/* Material List */}
               <div className="lg:col-span-1">
                 <Card>
                   <CardContent className="pt-6">
-                    <h3 className="font-semibold mb-4">Course Content</h3>
+                    <p className="font-semibold mb-4">Isi kursus</p>
                     <div className="space-y-2">
                       {course.materials?.map((material, idx) => {
                         const isCompleted = material.progress_status === 'completed';
@@ -284,7 +284,7 @@ export default function CourseDetail({ courseId, onBack }) {
                           >
                             <div className="flex items-center gap-3">
                               {isCompleted ? (
-                                <CheckCircle2 size={16} className="text-green-500" />
+                                <CheckCircle2 size={16} className="text-[hsl(var(--success-text))]" />
                               ) : isLocked ? (
                                 <Lock size={16} className="text-muted-foreground" />
                               ) : (
@@ -311,7 +311,7 @@ export default function CourseDetail({ courseId, onBack }) {
                       <div className="space-y-4">
                         <div className="flex items-start justify-between">
                           <div>
-                            <h2 className="text-xl font-semibold mb-2">{selectedMaterial.title}</h2>
+                            <p className="text-lg font-semibold mb-2">{selectedMaterial.title}</p>
                             <Badge variant="outline" className="capitalize">{selectedMaterial.type}</Badge>
                             {selectedMaterial.duration_minutes > 0 && (
                               <Badge variant="outline" className="ml-2">
@@ -320,7 +320,7 @@ export default function CourseDetail({ courseId, onBack }) {
                               </Badge>
                             )}
                             {selectedMaterial.progress_status === 'completed' && (
-                              <Badge className="ml-2 bg-green-500">
+                              <Badge className="ml-2 bg-[hsl(var(--success-strong))]">
                                 <CheckCircle2 size={12} className="mr-1" />
                                 Completed
                               </Badge>
@@ -373,13 +373,13 @@ export default function CourseDetail({ courseId, onBack }) {
                                 data-testid="mark-complete-btn"
                               >
                                 <CheckCircle2 size={16} className="mr-2" />
-                                Mark as Complete
+                                Tandai selesai
                               </Button>
                             )}
                             {selectedMaterial.progress_status === 'completed' && (
-                              <div className="flex items-center gap-2 text-green-600">
+                              <div className="flex items-center gap-2 text-[hsl(var(--success-text))]">
                                 <CheckCircle2 size={16} />
-                                <span className="text-sm font-medium">Completed</span>
+                                <span className="text-sm font-medium">Selesai</span>
                               </div>
                             )}
                           </div>
@@ -389,7 +389,7 @@ export default function CourseDetail({ courseId, onBack }) {
                   </Card>
                 ) : (
                   <Card>
-                    <CardContent className="pt-6 py-12 text-center">
+                    <CardContent className="pt-6 py-10 text-center">
                       <PlayCircle size={48} className="mx-auto mb-3 text-muted-foreground opacity-20" />
                       <p className="text-muted-foreground">Pilih materi untuk mulai belajar</p>
                     </CardContent>
@@ -402,11 +402,11 @@ export default function CourseDetail({ courseId, onBack }) {
           {/* Discussion Tab */}
           <TabsContent value="discussion" className="mt-6">
             <Card>
-              <CardContent className="pt-6 py-12 text-center">
+              <CardContent className="pt-6 py-10 text-center">
                 <MessageSquare size={48} className="mx-auto mb-3 text-muted-foreground opacity-20" />
-                <p className="text-muted-foreground mb-4">Discussion forum coming in Phase 3</p>
+                <p className="text-muted-foreground mb-4">Forum diskusi belum tersedia</p>
                 <p className="text-sm text-muted-foreground">
-                  Course discussions will be integrated with Communication channels
+                  Diskusi kursus nantinya memakai kanal di Pusat komunikasi.
                 </p>
               </CardContent>
             </Card>
@@ -416,21 +416,21 @@ export default function CourseDetail({ courseId, onBack }) {
           <TabsContent value="assignments" className="mt-6">
             {!isEnrolled ? (
               <Card>
-                <CardContent className="pt-6 py-12 text-center">
+                <CardContent className="pt-6 py-10 text-center">
                   <ClipboardList size={48} className="mx-auto mb-3 text-muted-foreground opacity-20" />
-                  <p className="text-muted-foreground">Enroll ke course untuk melihat assignment</p>
+                  <p className="text-muted-foreground">Daftar ke kursus ini untuk melihat tugas</p>
                 </CardContent>
               </Card>
             ) : assignmentsLoading ? (
-              <div className="text-center py-12">
+              <div className="text-center py-10">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-                <p className="text-sm text-muted-foreground mt-2">Loading assignments...</p>
+                <p className="text-sm text-muted-foreground mt-2">Memuat tugas…</p>
               </div>
             ) : assignments.length === 0 ? (
               <Card>
-                <CardContent className="pt-6 py-12 text-center">
+                <CardContent className="pt-6 py-10 text-center">
                   <ClipboardList size={48} className="mx-auto mb-3 text-muted-foreground opacity-20" />
-                  <p className="text-muted-foreground">Belum ada assignment untuk course ini</p>
+                  <p className="text-muted-foreground">Belum ada tugas untuk kursus ini</p>
                 </CardContent>
               </Card>
             ) : (
@@ -440,10 +440,10 @@ export default function CourseDetail({ courseId, onBack }) {
                     <CardContent className="pt-6">
                       <div className="flex items-start justify-between gap-4 mb-3">
                         <div className="flex-1">
-                          <h3 className="font-semibold flex items-center gap-2">
+                          <p className="font-semibold flex items-center gap-2">
                             <ClipboardList size={16} />
                             {assign.title}
-                          </h3>
+                          </p>
                           {assign.description && (
                             <p className="text-sm text-muted-foreground mt-1">{assign.description}</p>
                           )}
@@ -453,8 +453,8 @@ export default function CourseDetail({ courseId, onBack }) {
                         </div>
                         <Badge
                           className={
-                            assign.submission_status === 'graded' ? 'bg-green-500' :
-                            assign.submission_status === 'submitted' ? 'bg-blue-500' : ''
+                            assign.submission_status === 'graded' ? 'bg-[hsl(var(--success-strong))]' :
+                            assign.submission_status === 'submitted' ? 'bg-primary' : ''
                           }
                           variant={assign.submission_status === 'not_submitted' ? 'outline' : 'default'}
                         >
@@ -483,11 +483,11 @@ export default function CourseDetail({ courseId, onBack }) {
 
           {/* Progress Tab */}
           <TabsContent value="progress" className="mt-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Card>
                 <CardContent className="pt-6 text-center">
                   <div className="text-4xl font-bold text-primary mb-2">{progressPercent}%</div>
-                  <p className="text-sm text-muted-foreground">Overall Progress</p>
+                  <p className="text-sm text-muted-foreground">Kemajuan keseluruhan</p>
                   <Progress value={progressPercent} className="mt-4" />
                 </CardContent>
               </Card>
@@ -497,7 +497,7 @@ export default function CourseDetail({ courseId, onBack }) {
                   <div className="text-4xl font-bold mb-2">
                     {enrollment.completed_items || 0}/{course.materials?.length || 0}
                   </div>
-                  <p className="text-sm text-muted-foreground">Items Completed</p>
+                  <p className="text-sm text-muted-foreground">Materi selesai</p>
                 </CardContent>
               </Card>
 
@@ -511,14 +511,14 @@ export default function CourseDetail({ courseId, onBack }) {
                       return avg;
                     })()}
                   </div>
-                  <p className="text-sm text-muted-foreground">Avg Quiz Score</p>
+                  <p className="text-sm text-muted-foreground">Rata-rata nilai kuis</p>
                 </CardContent>
               </Card>
             </div>
 
             <Card className="mt-6">
               <CardContent className="pt-6">
-                <h3 className="font-semibold mb-4">Material Progress</h3>
+                <p className="font-semibold mb-4">Kemajuan per materi</p>
                 <div className="space-y-3">
                   {course.materials?.map((mat) => (
                     <div key={mat.material_id} className="flex items-center gap-3">
@@ -534,7 +534,7 @@ export default function CourseDetail({ courseId, onBack }) {
                         </div>
                       </div>
                       {mat.progress_status === 'completed' ? (
-                        <CheckCircle2 size={20} className="text-green-500" />
+                        <CheckCircle2 size={20} className="text-[hsl(var(--success-text))]" />
                       ) : (
                         <div className="w-5 h-5 rounded-full border-2"></div>
                       )}

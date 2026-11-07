@@ -63,10 +63,10 @@ export default function AssignmentSubmit({ material, existingSubmission, onSubmi
         <CardContent className="pt-6 space-y-3">
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1">
-              <h3 className="font-semibold flex items-center gap-2">
+              <p className="font-semibold flex items-center gap-2">
                 <ClipboardList size={18} />
                 {material.title}
-              </h3>
+              </p>
               {material.description && (
                 <p className="text-sm text-muted-foreground mt-1">{material.description}</p>
               )}
@@ -77,18 +77,18 @@ export default function AssignmentSubmit({ material, existingSubmission, onSubmi
               )}
             </div>
             {isGraded ? (
-              <Badge className="bg-green-500">
+              <Badge className="bg-[hsl(var(--success-strong))]">
                 Graded: {existingSubmission.grade}/{existingSubmission.max_grade || 100}
               </Badge>
             ) : isSubmitted ? (
-              <Badge variant="secondary">Submitted</Badge>
+              <Badge variant="secondary">Sudah dikirim</Badge>
             ) : (
-              <Badge variant="outline">Not submitted</Badge>
+              <Badge variant="outline">Belum dikirim</Badge>
             )}
           </div>
           {isGraded && existingSubmission?.feedback && (
-            <div className="text-sm border-l-4 border-green-500 pl-3 py-1 bg-muted/30">
-              <p className="font-medium">Feedback Instruktur:</p>
+            <div className="text-sm border-l-4 border-[hsl(var(--success)/0.4)] pl-3 py-1 bg-muted/30">
+              <p className="font-medium">Masukan pengajar:</p>
               <p className="text-muted-foreground">{existingSubmission.feedback}</p>
             </div>
           )}
@@ -101,7 +101,7 @@ export default function AssignmentSubmit({ material, existingSubmission, onSubmi
           <Tabs value={submissionType} onValueChange={setSubmissionType}>
             <TabsList>
               <TabsTrigger value="text" data-testid="submission-tab-text">Teks</TabsTrigger>
-              <TabsTrigger value="link" data-testid="submission-tab-link">Link</TabsTrigger>
+              <TabsTrigger value="link" data-testid="submission-tab-link">Tautan</TabsTrigger>
             </TabsList>
 
             <TabsContent value="text" className="space-y-2">
@@ -121,7 +121,7 @@ export default function AssignmentSubmit({ material, existingSubmission, onSubmi
             </TabsContent>
 
             <TabsContent value="link" className="space-y-2">
-              <Label htmlFor="assignment-link">URL Submission</Label>
+              <Label htmlFor="assignment-link">Tautan jawaban</Label>
               <Input
                 id="assignment-link"
                 type="url"
@@ -169,9 +169,9 @@ export default function AssignmentSubmit({ material, existingSubmission, onSubmi
           )}
 
           {isGraded && (
-            <div className="flex items-center gap-2 text-sm text-green-600">
+            <div className="flex items-center gap-2 text-sm text-[hsl(var(--success-text))]">
               <CheckCircle2 size={16} />
-              <span>Assignment sudah di-grade. Tidak bisa di-edit.</span>
+              <span>Tugas sudah dinilai dan tidak bisa diubah.</span>
             </div>
           )}
         </CardContent>

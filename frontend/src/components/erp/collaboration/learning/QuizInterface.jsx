@@ -79,12 +79,12 @@ export default function QuizInterface({ material, onComplete }) {
     return (
       <div className="space-y-6" data-testid="quiz-result-view">
         {/* Score header */}
-        <Card className={result.passed ? 'border-green-500' : 'border-amber-500'}>
+        <Card className={result.passed ? 'border-[hsl(var(--success)/0.4)]' : 'border-[hsl(var(--warning)/0.4)]'}>
           <CardContent className="pt-6 text-center space-y-3">
             {result.passed ? (
-              <Award className="text-green-500 mx-auto" size={64} />
+              <Award className="text-[hsl(var(--success-text))] mx-auto" size={64} />
             ) : (
-              <AlertCircle className="text-amber-500 mx-auto" size={64} />
+              <AlertCircle className="text-[hsl(var(--warning-text))] mx-auto" size={64} />
             )}
             <div>
               <p className="text-sm text-muted-foreground">Skor Anda</p>
@@ -95,7 +95,7 @@ export default function QuizInterface({ material, onComplete }) {
             </div>
             <Badge
               variant="default"
-              className={result.passed ? 'bg-green-500' : 'bg-amber-500'}
+              className={result.passed ? 'bg-[hsl(var(--success-strong))]' : 'bg-[hsl(var(--warning))]'}
               data-testid="quiz-pass-badge"
             >
               {result.passed ? 'LULUS' : `BELUM LULUS (Min: ${result.pass_score})`}
@@ -105,17 +105,17 @@ export default function QuizInterface({ material, onComplete }) {
 
         {/* Detailed results */}
         <div className="space-y-3">
-          <h3 className="font-semibold">Review Jawaban</h3>
+          <p className="font-semibold">Tinjau jawaban</p>
           {result.detailed_results.map((r, idx) => {
             const q = questions[idx];
             return (
-              <Card key={idx} className={r.is_correct ? '' : 'border-red-300'}>
+              <Card key={idx} className={r.is_correct ? '' : 'border-[hsl(var(--destructive)/0.4)]'}>
                 <CardContent className="pt-4 space-y-2">
                   <div className="flex items-start gap-2">
                     {r.is_correct ? (
-                      <CheckCircle2 size={20} className="text-green-500 flex-shrink-0 mt-0.5" />
+                      <CheckCircle2 size={20} className="text-[hsl(var(--success-text))] flex-shrink-0 mt-0.5" />
                     ) : (
-                      <XCircle size={20} className="text-red-500 flex-shrink-0 mt-0.5" />
+                      <XCircle size={20} className="text-[hsl(var(--danger-text))] flex-shrink-0 mt-0.5" />
                     )}
                     <p className="font-medium text-sm">{idx + 1}. {r.question}</p>
                   </div>
@@ -124,8 +124,8 @@ export default function QuizInterface({ material, onComplete }) {
                       const isCorrectChoice = ci === r.correct_index;
                       const isUserChoice = ci === r.user_answer_index;
                       let className = 'p-2 rounded border ';
-                      if (isCorrectChoice) className += 'bg-green-100 dark:bg-green-500/10 border-green-500 ';
-                      else if (isUserChoice && !r.is_correct) className += 'bg-red-100 dark:bg-red-500/10 border-red-500 ';
+                      if (isCorrectChoice) className += 'bg-[hsl(var(--success)/0.1)] dark:bg-[hsl(var(--success-strong))]/10 border-[hsl(var(--success)/0.4)] ';
+                      else if (isUserChoice && !r.is_correct) className += 'bg-[hsl(var(--destructive)/0.1)] dark:bg-[hsl(var(--destructive-strong))]/10 border-[hsl(var(--destructive)/0.4)] ';
                       else className += 'border-transparent text-muted-foreground ';
                       
                       return (
@@ -167,7 +167,7 @@ export default function QuizInterface({ material, onComplete }) {
     <div className="space-y-6" data-testid="quiz-form-view">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="font-semibold">{material.title}</h3>
+          <p className="font-semibold">{material.title}</p>
           <p className="text-sm text-muted-foreground">
             {questions.length} pertanyaan • Pass score: {material.pass_score || 70}
           </p>

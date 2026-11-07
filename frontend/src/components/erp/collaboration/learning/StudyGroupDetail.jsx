@@ -90,7 +90,7 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
 
   if (loading) {
     return (
-      <div className="space-y-4 p-6">
+      <div className="space-y-4 p-4">
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-96 w-full" />
       </div>
@@ -99,10 +99,10 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
 
   if (!group) {
     return (
-      <div className="p-6">
+      <div className="p-4">
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <p className="text-muted-foreground">Study group tidak ditemukan</p>
+          <CardContent className="flex flex-col items-center justify-center py-10">
+            <p className="text-muted-foreground">Kelompok belajar tidak ditemukan</p>
             <Button 
               onClick={() => onNavigate('study-groups')} 
               className="mt-4"
@@ -121,7 +121,7 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
   const isMember = group.members_detail?.some(m => m.id === user.id);
 
   return (
-    <div className="space-y-4 p-6" data-testid="study-group-detail-view">
+    <div className="space-y-4 p-4" data-testid="study-group-detail-view">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -134,10 +134,10 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
-            <h2 className="text-2xl font-bold flex items-center gap-2">
-              <Users className="h-6 w-6 text-purple-600" />
+            <p className="text-lg font-bold flex items-center gap-2">
+              <Users className="h-6 w-6 text-primary" />
               {group.name}
-            </h2>
+            </p>
             {group.course && (
               <p className="text-sm text-muted-foreground flex items-center gap-1 mt-1">
                 <BookOpen className="h-4 w-4" />
@@ -176,12 +176,12 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
       {/* Info Card */}
       <Card>
         <CardContent className="pt-6">
-          <div className="grid md:grid-cols-3 gap-6">
+          <div className="grid md:grid-cols-3 gap-4">
             {/* Description */}
             <div className="md:col-span-2 space-y-3">
               {group.description && (
                 <div>
-                  <h3 className="text-sm font-semibold mb-1">Deskripsi</h3>
+                  <p className="text-sm font-semibold mb-1">Deskripsi</p>
                   <p className="text-sm text-muted-foreground">{group.description}</p>
                 </div>
               )}
@@ -195,10 +195,10 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
 
             {/* Members */}
             <div>
-              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+              <p className="text-sm font-semibold mb-3 flex items-center gap-2">
                 <Users className="h-4 w-4" />
                 Anggota ({group.members_detail?.length || 0})
-              </h3>
+              </p>
               <div className="space-y-2 max-h-32 overflow-y-auto">
                 {group.members_detail?.map((member) => (
                   <div 
@@ -251,7 +251,7 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
               ) : (
                 <div className="p-12 text-center text-muted-foreground">
                   <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>Channel diskusi belum dibuat</p>
+                  <p>Kanal diskusi belum dibuat</p>
                 </div>
               )}
             </CardContent>

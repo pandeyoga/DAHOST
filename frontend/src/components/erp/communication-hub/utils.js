@@ -32,11 +32,11 @@ export function initials(name) {
   return name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
 }
 
-/** Deterministic Tailwind avatar bg-color class based on user id. */
+/** Warna latar avatar tetap per pengguna — Standar UI/UX v2: dari token warna (dulu violet/blue/emerald/… 500). */
 export function avatarColor(id) {
   const colors = [
-    'bg-violet-500', 'bg-blue-500', 'bg-emerald-500', 'bg-amber-500',
-    'bg-rose-500', 'bg-cyan-500', 'bg-indigo-500', 'bg-pink-500',
+    'bg-primary/20', 'bg-[hsl(var(--info)/0.2)]', 'bg-[hsl(var(--success)/0.2)]', 'bg-[hsl(var(--warning)/0.2)]',
+    'bg-[hsl(var(--destructive)/0.15)]', 'bg-primary/10', 'bg-[hsl(var(--info)/0.12)]', 'bg-[hsl(var(--success)/0.12)]',
   ];
   let h = 0;
   const s = id || '';
