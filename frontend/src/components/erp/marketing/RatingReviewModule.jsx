@@ -1,71 +1,75 @@
+/**
+ * Rating & ulasan (Portal Toko) — ulasan produk dari berbagai platform, balasan, dan usulan kategori AI.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, penyaring satu baris (akun aktif kini pilihan di baris
+ * penyaring, dulu bar lebar), 4 StatTile berketerangan (dulu 5 kartu), tabel + unduh Excel/CSV semua baris
+ * (dulu CSV halaman ini saja), detail & form popup, tanggal = DatePicker. Tampilan "Kartu" lama diganti tabel
+ * (di HP otomatis kartu ringkas). Kolom "Balasan" tetap menyebut "belum dibalas" terang-terangan (F10).
+ * Perbaikan ikut: penyaring "Semua …" dulu mengirim nilai spasi ke server.
+ */
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import {
-  Star, Plus, Pencil, Trash2, Sparkles, RefreshCw, CheckCircle2, AlertCircle,
-  Filter, X, Loader2, MessageSquare, ThumbsUp, ThumbsDown, Table2, LayoutGrid
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { todayWIB, toWIBDate } from '@/lib/waktu';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useToast } from '@/hooks/use-toast';
-import { useMarketingAccounts, getPlatformIcon } from '@/hooks/useMarketingAccounts';
-import { useActiveMarketingAccount } from '@/hooks/useActiveMarketingAccount';
-import { ActiveAccountBar } from './ActiveAccountBar';
+import { Star, Plus, Pencil, Trash2, Sparkles, RefreshCw, Loader2, Search, Send } from 'lucide-react';
 import axios from 'axios';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import DatePicker from '@/components/ui/date-picker';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import PaginationLite from '@/components/ui/pagination-lite';
+import { useToast } from '@/hooks/use-toast';
+import { useMarketingAccounts } from '@/hooks/useMarketingAccounts';
+import { useActiveMarketingAccount } from '@/hooks/useActiveMarketingAccount';
+import { todayWIB, toWIBDate } from '@/lib/waktu';
+import { formatDateID } from '@/lib/format';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, StatTile, StatusBadge } from '../moduleAtoms';
+import { getPlatformConfig } from './AccountBadge';
 import { CatalogItemSelect } from './pickers/MarketingPickers';
 import AISuggestionPanel from '../AISuggestionPanel';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
-const PLATFORM_ICONS = { shopee: '🛍️', tiktok: '🎵', tokopedia: '🟢', instagram: '📷' };
-// F10 (2026-08-13) — layar ulasan dulu KARTU-SAJA. Ulasan dibaca untuk MENCARI POLA
-// ("produk mana yang dikeluhkan", "berapa yang belum dibalas"), dan pola hanya
-// terlihat kalau barisnya sejajar. Kolom "Balasan" sengaja menyebut **belum dibalas**
-// secara terbuka — ulasan bintang 1 yang tak terbalas adalah biaya yang tak terlihat.
-const REVIEWS_VIEW_KEY = 'marketing_reviews_view';
-// F10 (sesi #10) — daftar yang tidak bisa diunduh memaksa staf menyalin ulang
-// dengan tangan (sumber salah-ketik). Satu pembuat CSV: `lib/csv.js`.
-import ExportCsvButton from '@/components/ui/export-csv-button';
-
-const REVIEW_HEADS = ['Tanggal', 'Rating', 'Platform', 'Order ID', 'Toko', 'Produk',
-  'Isi ulasan', 'Kategori', 'Status', 'Balasan', 'Aksi'];
 // Tanggal kalender WIB: 'YYYY-MM-DD' dibiarkan, instan (created_at) dibaca dalam WIB.
-const fmtDate = (v) => (v ? (toWIBDate(v) || String(v).slice(0, 10)) : '—');
-const STATUS_CONFIG = {
-  pending:  { label: 'Menunggu', color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ', icon: AlertCircle },
-  reviewed: { label: 'Direspon',  color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ', icon: CheckCircle2 },
+const fmtDate = (v) => {
+  if (!v) return '—';
+  const ymd = toWIBDate(v) || String(v).slice(0, 10);
+  return formatDateID(ymd) || ymd;
 };
+const STATUS_CONFIG = {
+  pending: { label: 'Belum dibalas', tone: 'warning' },
+  reviewed: { label: 'Sudah dibalas', tone: 'success' },
+};
+const labelPlatform = (p) => (getPlatformConfig(p).label !== 'Platform' ? getPlatformConfig(p).label
+  : (p ? String(p).replace(/^./, (x) => x.toUpperCase()) : '—'));
+const StatusUlasan = ({ status }) => (status
+  ? <StatusBadge status={status} label={STATUS_CONFIG[status]?.label || status} tone={STATUS_CONFIG[status]?.tone} />
+  : <span className="text-muted-foreground">—</span>);
 
-function StarRating({ rating, size = 14 }) {
+function StarRating({ rating }) {
   return (
-    <div className="flex items-center gap-0.5">
+    <span className="inline-flex items-center gap-0.5" aria-label={`${rating} bintang`} title={`${rating} bintang`}>
       {[1, 2, 3, 4, 5].map(i => (
-        <Star key={i} size={size} className={i <= rating ? 'fill-[hsl(var(--warning-text))] text-[hsl(var(--warning-text))] ' : 'text-foreground/80 '} />
+        <Star key={i} className={`h-3.5 w-3.5 ${i <= rating ? 'fill-[hsl(var(--warning))] text-[hsl(var(--warning))]' : 'text-muted-foreground/40'}`} />
       ))}
-    </div>
+    </span>
   );
 }
 
-function KPICard({ label, value, sub, color, bg, icon: Icon }) {
+/** Pilihan akun aktif di baris penyaring (pengganti bar akun selebar layar). Sumber & penyimpanan sama: hook akun aktif. */
+function PilihAkun({ accounts = [], activeAccount, onChange, testId = 'pilih-akun' }) {
+  const aktif = accounts.filter((a) => a.status === 'active' || !a.status);
+  const daftar = activeAccount && !aktif.some((a) => a.id === activeAccount.id) ? [activeAccount, ...aktif] : aktif;
   return (
-    <Card className={`${bg} border-0`}>
-      <CardContent className="p-4 flex items-center gap-3">
-        <div className={`p-2 rounded-lg bg-background/60 dark:bg-black/20`}>
-          <Icon size={20} className={color} />
-        </div>
-        <div>
-          <p className="text-xl font-bold leading-tight">{value}</p>
-          <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
-        </div>
-      </CardContent>
-    </Card>
+    <SmartNativeSelect value={activeAccount?.id || ''} className="w-56" data-testid={testId}
+      onChange={(e) => onChange(daftar.find((a) => a.id === e.target.value) || null)}>
+      <option value="">Semua akun toko</option>
+      {daftar.map((a) => <option key={a.id} value={a.id}>{`${a.account_name} · ${labelPlatform(a.platform)}`}</option>)}
+    </SmartNativeSelect>
   );
 }
 
@@ -103,9 +107,7 @@ export default function RatingReviewModule({ token }) {
   const [formLoading, setFormLoading] = useState(false);
 
   const [showDetail, setShowDetail] = useState(null);
-  const [view, setView] = useState(() => {
-    try { return localStorage.getItem(REVIEWS_VIEW_KEY) || 'table'; } catch { return 'table'; }
-  });
+  const [galatForm, setGalatForm] = useState('');
   const [responseText, setResponseText] = useState('');
   const [respondLoading, setRespondLoading] = useState(false);
 
@@ -162,9 +164,6 @@ export default function RatingReviewModule({ token }) {
     fetchReviews(currentPage);
   }, [fetchReviews, currentPage]);
 
-  useEffect(() => {
-    try { localStorage.setItem(REVIEWS_VIEW_KEY, view); } catch { /* penyimpanan diblokir */ }
-  }, [view]);
 
   const openForm = (review = null) => {
     if (review) {
@@ -186,6 +185,7 @@ export default function RatingReviewModule({ token }) {
       setEditTarget(null);
       setForm({ ...EMPTY_FORM, date: todayWIB() });
     }
+    setGalatForm('');
     setShowForm(true);
   };
 
@@ -207,42 +207,44 @@ export default function RatingReviewModule({ token }) {
   };
 
   const handleSave = async () => {
+    setGalatForm('');
     if (!form.account_id) {
-      toast({ title: 'Error', description: 'Wajib pilih Akun / Toko', variant: 'destructive' });
+      setGalatForm('Pilih akun / toko marketplace.');
       return;
     }
     if (!form.order_id || !(form.catalog_item_id || form.product) || !form.review_text) {
-      toast({ title: 'Error', description: 'Order ID, Produk, dan Review wajib diisi', variant: 'destructive' });
+      setGalatForm('Nomor pesanan, produk, dan isi ulasan wajib diisi.');
       return;
     }
     try {
       setFormLoading(true);
       if (editTarget) {
         await axios.put(`${API}/api/marketing/reviews/${editTarget.id}`, form, { headers: authH });
-        toast({ title: 'Berhasil', description: 'Review diperbarui' });
+        toast({ title: 'Berhasil', description: 'Ulasan disimpan.' });
       } else {
         await axios.post(`${API}/api/marketing/reviews`, form, { headers: authH });
-        toast({ title: 'Berhasil', description: 'Review ditambahkan' });
+        toast({ title: 'Berhasil', description: 'Ulasan ditambahkan.' });
       }
       closeForm();
       fetchReviews(currentPage);
       fetchSummary();
     } catch (e) {
-      toast({ title: 'Error', description: e.response?.data?.detail || e.message, variant: 'destructive' });
+      setGalatForm(e.response?.data?.detail || e.message);
     } finally {
       setFormLoading(false);
     }
   };
 
   const handleDelete = async (id) => {
-    if (!(await confirmDialog('Hapus review ini?'))) return;
+    if (!(await confirmDialog({ title: 'Hapus ulasan ini?', body: 'Catatan ulasan dihapus dari daftar.', confirmLabel: 'Hapus', danger: true }))) return;
+    setShowDetail(null);
     try {
       await axios.delete(`${API}/api/marketing/reviews/${id}`, { headers: authH });
-      toast({ title: 'Berhasil', description: 'Review dihapus' });
+      toast({ title: 'Berhasil', description: 'Ulasan dihapus.' });
       fetchReviews(currentPage);
       fetchSummary();
     } catch (e) {
-      toast({ title: 'Error', description: e.response?.data?.detail || e.message, variant: 'destructive' });
+      toast({ title: 'Gagal', description: e.response?.data?.detail || e.message, variant: 'destructive' });
     }
   };
 
@@ -253,12 +255,12 @@ export default function RatingReviewModule({ token }) {
       setAiLoading(reviewId);
       const res = await axios.post(`${API}/api/marketing/reviews/${reviewId}/ai-categorize`, {}, { headers: authH });
       const cat = res.data.ai_suggestion?.values?.category;
-      toast({ title: 'Usulan AI dibuat', description: `Usulan kategori: ${categories.find(c => c.value === cat)?.label || cat || 'N/A'} — tinjau lalu Terima/Ubah/Tolak` });
+      toast({ title: 'Usulan AI dibuat', description: `Usulan kategori: ${categories.find(c => c.value === cat)?.label || cat || '—'} — tinjau lalu terima, ubah, atau tolak` });
       const detailRes = await axios.get(`${API}/api/marketing/reviews/${reviewId}`, { headers: authH });
       setShowDetail(detailRes.data?.data || detailRes.data);
       fetchReviews(currentPage);
     } catch (e) {
-      toast({ title: 'AI Error', description: e.response?.data?.detail || e.message, variant: 'destructive' });
+      toast({ title: 'AI gagal', description: e.response?.data?.detail || e.message, variant: 'destructive' });
     } finally {
       setAiLoading('');
     }
@@ -266,19 +268,19 @@ export default function RatingReviewModule({ token }) {
 
   const handleRespond = async () => {
     if (!responseText) {
-      toast({ title: 'Error', description: 'Response text wajib diisi', variant: 'destructive' });
+      toast({ title: 'Balasan wajib diisi', variant: 'destructive' });
       return;
     }
     try {
       setRespondLoading(true);
       await axios.post(`${API}/api/marketing/reviews/${showDetail.id}/respond`, { response_text: responseText }, { headers: authH });
-      toast({ title: 'Berhasil', description: 'Response terkirim' });
+      toast({ title: 'Berhasil', description: 'Balasan terkirim.' });
       setShowDetail(null);
       setResponseText('');
       fetchReviews(currentPage);
       fetchSummary();
     } catch (e) {
-      toast({ title: 'Error', description: e.response?.data?.detail || e.message, variant: 'destructive' });
+      toast({ title: 'Gagal', description: e.response?.data?.detail || e.message, variant: 'destructive' });
     } finally {
       setRespondLoading(false);
     }
@@ -294,411 +296,224 @@ export default function RatingReviewModule({ token }) {
   };
 
   const s = summary || {};
-  const activeFilters = [filterStatus, filterPlatform, filterRating > 0, filterCategory, searchQuery].filter(Boolean).length;
+  const adaSaring = [filterStatus, filterPlatform, filterRating > 0, filterCategory, searchQuery, activeAccount?.id].filter(Boolean).length > 0;
+  const labelKategori = (r) => r.category_label || categories.find((c) => c.value === r.category)?.label || '—';
+
+  const paramSaring = () => {
+    const params = {};
+    if (filterStatus) params.status = filterStatus;
+    if (filterPlatform) params.platform = filterPlatform;
+    if (filterRating > 0) params.rating = filterRating;
+    if (filterCategory) params.category = filterCategory;
+    if (searchQuery) params.search = searchQuery;
+    if (activeAccount?.id) params.account_id = activeAccount.id;
+    return params;
+  };
+  /** Unduh semua ulasan hasil saringan (dulu hanya 20 baris halaman ini). */
+  const ambilSemua = async () => {
+    const semua = [];
+    for (let p = 1; p <= 200; p += 1) {
+      const res = await axios.get(`${API}/api/marketing/reviews`, { headers: authH, params: { page: p, page_size: 100, ...paramSaring() } });
+      semua.push(...(res.data.data || []));
+      if (p >= (res.data.pagination?.total_pages || 1)) break;
+    }
+    return semua;
+  };
+
+  const tombolAI = (r) => (
+    <Button onClick={() => handleAICategorize(r.id)} variant="ghost" size="icon-sm" disabled={aiLoading === r.id}
+      title="Minta usulan kategori AI" aria-label="Minta usulan kategori AI">
+      {aiLoading === r.id ? <Loader2 className="animate-spin" /> : <Sparkles />}
+    </Button>
+  );
+
+  const kolom = [
+    { kunci: 'tanggal', label: 'Tanggal', hp: 'keterangan', isi: (r) => <span className="tabular-nums md:whitespace-nowrap">{fmtDate(r.date || r.created_at)}</span> },
+    { kunci: 'rating', label: 'Bintang', isi: (r) => <StarRating rating={r.rating} /> },
+    { kunci: 'toko', label: 'Toko', isi: (r) => (
+      <span className="md:whitespace-nowrap">{r.account_name || '—'}<span className="block text-xs text-muted-foreground">{labelPlatform(r.platform)}</span></span>) },
+    { kunci: 'produk', label: 'Produk', hp: 'judul', isi: (r) => <p className="truncate md:max-w-[12rem]" title={r.product}>{r.product || '—'}</p> },
+    { kunci: 'ulasan', label: 'Isi ulasan', isi: (r) => <p className="line-clamp-2 md:max-w-[18rem]" title={r.review_text}>{r.review_text || '—'}</p> },
+    { kunci: 'kategori', label: 'Kategori', isi: (r) => <span className="md:whitespace-nowrap">{labelKategori(r)}</span> },
+    { kunci: 'status', label: 'Balasan', isi: (r) => <StatusUlasan status={r.status} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+      <div className="flex justify-end gap-1">
+        {tombolAI(r)}
+        <Button onClick={() => openForm(r)} variant="ghost" size="icon-sm" title="Ubah ulasan" aria-label="Ubah ulasan"><Pencil /></Button>
+      </div>) },
+  ];
 
   return (
-    <div className="space-y-4" data-testid="rating-review-module">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Rating & Review Management</h1>
-          <p className="text-sm text-muted-foreground mt-1">Kelola review produk dari berbagai platform</p>
+    <PageLayout testId="rating-review-module" title="Rating & ulasan"
+      subtitle="Ulasan produk dari semua platform, balasan, dan kategori keluhan."
+      actions={<Button onClick={() => openForm()} data-testid="reviews-create"><Plus />Tambah ulasan</Button>}
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Cari pesanan atau produk" value={searchQuery} className="pl-8"
+            onChange={e => { setSearchQuery(e.target.value); setCurrentPage(1); }} data-testid="reviews-search" />
         </div>
-        <div className="flex items-center gap-2">
-          <Button onClick={() => fetchReviews(currentPage)} variant="outline" size="sm">
-            <RefreshCw size={14} className="mr-1" />Refresh
-          </Button>
-          <Button onClick={() => openForm()} size="sm">
-            <Plus size={14} className="mr-1" />Tambah Review
-          </Button>
+        <PilihAkun accounts={masterAccounts} activeAccount={activeAccount} testId="reviews-account"
+          onChange={(acc) => { setActiveAccount(acc); setCurrentPage(1); }} />
+        <SmartNativeSelect value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setCurrentPage(1); }} className="w-40" searchable={false}>
+          <option value="">Semua balasan</option>
+          {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+        </SmartNativeSelect>
+        <SmartNativeSelect value={String(filterRating)} onChange={(e) => { setFilterRating(parseInt(e.target.value, 10) || 0); setCurrentPage(1); }}
+          className="w-40" searchable={false}>
+          <option value="0">Semua bintang</option>
+          {[1, 2, 3, 4, 5].map((n) => <option key={n} value={String(n)}>{n} bintang</option>)}
+        </SmartNativeSelect>
+        <SmartNativeSelect value={filterPlatform} onChange={(e) => { setFilterPlatform(e.target.value); setCurrentPage(1); }} className="w-40" searchable={false}>
+          <option value="">Semua platform</option>
+          {platforms.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+        </SmartNativeSelect>
+        <SmartNativeSelect value={filterCategory} onChange={(e) => { setFilterCategory(e.target.value); setCurrentPage(1); }} className="w-48">
+          <option value="">Semua kategori</option>
+          {categories.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+        </SmartNativeSelect>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="rating-ulasan-toko" namaLembar="Ulasan" baris={reviews} ambilSemua={ambilSemua} testId="reviews-export-csv"
+          kolom={[
+            { label: 'Tanggal', nilai: (r) => fmtDate(r.date || r.created_at) },
+            { label: 'Bintang', nilai: (r) => Number(r.rating) || 0 },
+            { label: 'Platform', nilai: (r) => labelPlatform(r.platform) },
+            { label: 'Nomor pesanan', nilai: (r) => r.order_id || '' },
+            { label: 'Toko', nilai: (r) => r.account_name || '' },
+            { label: 'Produk', nilai: (r) => r.product || '' },
+            { label: 'Isi ulasan', nilai: (r) => r.review_text || '' },
+            { label: 'Kategori', nilai: labelKategori },
+            { label: 'Status', nilai: (r) => STATUS_CONFIG[r.status]?.label || r.status || '' },
+            { label: 'Balasan', nilai: (r) => r.response_text || '' },
+          ]} />
+        <Button onClick={() => { fetchReviews(currentPage); fetchSummary(); }} variant="outline" size="icon" title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={(s.total || 0) > 0 && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="reviews-kpi">
+          <StatTile label="Total ulasan" value={s.total || 0} sub={`${s.reviewed || 0} sudah dibalas`}
+            hint="Semua toko yang bisa Anda lihat; tidak ikut pilihan akun & penyaring." />
+          <StatTile label="Rata-rata bintang" value={String(s.avg_rating ?? 0).replace('.', ',')} suffix="/ 5"
+            hint="Rata-rata bintang semua ulasan." />
+          <StatTile label="Bintang rendah (1–2)" value={s.low_rating || 0} accent={(s.low_rating || 0) > 0 ? 'danger' : 'default'}
+            hint="Ulasan bintang 1 atau 2." />
+          <StatTile label="Belum dibalas" value={s.pending || 0} accent={(s.pending || 0) > 0 ? 'warning' : 'default'}
+            hint="Ulasan yang belum diberi balasan." />
         </div>
-      </div>
+      )}
+      footer={pagination && pagination.total_pages > 1 && (
+        <PaginationLite page={currentPage} totalPages={pagination.total_pages} total={pagination.total} pageSize={20}
+          onPageChange={setCurrentPage} />
+      )}>
+      {loading && reviews.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat ulasan…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={reviews} onKlikBaris={(r) => { setShowDetail(r); setResponseText(''); }} testId="reviews-table"
+          kosong={<EmptyState title={adaSaring ? 'Tidak ada ulasan yang cocok' : 'Belum ada ulasan'}
+            description={adaSaring ? 'Ubah saringan, akun, atau kata pencarian.' : 'Catat ulasan pembeli dengan tombol Tambah ulasan.'}
+            action={!adaSaring && <Button onClick={() => openForm()}><Plus />Tambah ulasan</Button>} />} />
+      )}
 
-      {/* KPI Cards */}
-      <ActiveAccountBar accounts={masterAccounts} activeAccount={activeAccount} onAccountChange={acc => { setActiveAccount(acc); setCurrentPage(1); }} hint="Filter review by akun:" />
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <KPICard label="Total Review" value={s.total || 0} color="text-[hsl(var(--primary))]" bg=" " icon={Star} />
-        <KPICard label="Rating Rendah" value={s.low_rating || 0} sub="(1-2 bintang)" color="text-[hsl(var(--danger-text))]" bg=" " icon={ThumbsDown} />
-        <KPICard label="Rata-rata Rating" value={s.avg_rating || 0} color="text-[hsl(var(--warning-text))]" bg=" " icon={Star} />
-        <KPICard label="Menunggu" value={s.pending || 0} color="text-[hsl(var(--warning-text))]" bg=" " icon={AlertCircle} />
-        <KPICard label="Direspon" value={s.reviewed || 0} color="text-[hsl(var(--success-text))]" bg=" " icon={CheckCircle2} />
-      </div>
+      {/* Form ulasan (popup) */}
+      <FormPopup open={showForm} onClose={closeForm} ukuran="panjang" onSimpan={handleSave} menyimpan={formLoading}
+        judul={editTarget ? 'Ubah ulasan' : 'Tambah ulasan'} galat={galatForm} testId="review-form">
+        <Isian label="Akun / toko marketplace" wajib htmlFor="review-account"
+          petunjuk={form.account_id ? `Platform: ${labelPlatform(form.platform)} (otomatis dari akun)` : undefined}>
+          <SmartNativeSelect id="review-account" value={form.account_id || ''} onChange={(e) => handleAccountChange(e.target.value)}
+            data-testid="review-account-select">
+            <option value="">{masterAccounts.length === 0 ? 'Belum ada akun aktif' : 'Pilih akun'}</option>
+            {masterAccounts.map(acc => <option key={acc.id} value={acc.id}>{`${acc.account_name} · ${labelPlatform(acc.platform)}`}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Tanggal">
+            <DatePicker value={form.date || ''} onChange={(v) => setForm({ ...form, date: v })} testId="review-date" />
+          </Isian>
+          <Isian label="Nomor pesanan" wajib htmlFor="review-order">
+            <Input id="review-order" value={form.order_id} onChange={e => setForm({ ...form, order_id: e.target.value })} placeholder="ORD-123456" />
+          </Isian>
+          <Isian label="Bintang" htmlFor="review-rating">
+            <SmartNativeSelect id="review-rating" value={String(form.rating)} searchable={false}
+              onChange={(e) => setForm({ ...form, rating: parseInt(e.target.value, 10) })}>
+              {[1, 2, 3, 4, 5].map(r => <option key={r} value={String(r)}>{r} bintang</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Kategori" htmlFor="review-category">
+            <SmartNativeSelect id="review-category" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+              {categories.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+        </div>
+        {/* F15 — produk DIPILIH dari katalog toko (dulu teks bebas → laporan per produk tidak bisa dijawab). */}
+        <Isian label="Produk" wajib>
+          <CatalogItemSelect
+            token={token} accountId={form.account_id} label=""
+            value={form.catalog_item_id || ''}
+            onChange={(item) => setForm({
+              ...form,
+              catalog_item_id: item?.id || '',
+              product: item?.name || '',
+              sku: item?.sku || '',
+            })}
+            testId="review-item-select" />
+        </Isian>
+        <Isian label="Isi ulasan" wajib htmlFor="review-text">
+          <Textarea id="review-text" value={form.review_text} rows={3} placeholder="Salin isi ulasan pembeli"
+            onChange={e => setForm({ ...form, review_text: e.target.value })} />
+        </Isian>
+        <Isian label="Balasan" petunjuk="Opsional." htmlFor="review-response">
+          <Textarea id="review-response" value={form.response_text} rows={3}
+            onChange={e => setForm({ ...form, response_text: e.target.value })} />
+        </Isian>
+      </FormPopup>
 
-      {/* Filters */}
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Filter size={16} />Filter
-              {activeFilters > 0 && (
-                <Badge variant="secondary" className="ml-1">{activeFilters}</Badge>
-              )}
-            </CardTitle>
-            {activeFilters > 0 && (
-              <Button onClick={clearFilters} variant="ghost" size="sm">
-                <X size={14} className="mr-1" />Clear
-              </Button>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-            <Select value={filterStatus} onValueChange={setFilterStatus}>
-              <SelectTrigger>
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value=" ">Semua Status</SelectItem>
-                <SelectItem value="pending">Menunggu</SelectItem>
-                <SelectItem value="reviewed">Direspon</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={filterPlatform} onValueChange={setFilterPlatform}>
-              <SelectTrigger>
-                <SelectValue placeholder="Platform" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value=" ">Semua Platform</SelectItem>
-                {platforms.map(p => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select value={filterRating.toString()} onValueChange={v => setFilterRating(parseInt(v))}>
-              <SelectTrigger>
-                <SelectValue placeholder="Rating" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0">Semua Rating</SelectItem>
-                <SelectItem value="1">1 Bintang</SelectItem>
-                <SelectItem value="2">2 Bintang</SelectItem>
-                <SelectItem value="3">3 Bintang</SelectItem>
-                <SelectItem value="4">4 Bintang</SelectItem>
-                <SelectItem value="5">5 Bintang</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={filterCategory} onValueChange={setFilterCategory}>
-              <SelectTrigger>
-                <SelectValue placeholder="Kategori" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value=" ">Semua Kategori</SelectItem>
-                {categories.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Input
-              placeholder="Cari order/produk..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Table */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between gap-2">
-            <CardTitle>Daftar Review ({pagination?.total || 0})</CardTitle>
-            <div className="flex rounded-md border border-border overflow-hidden">
-              <button type="button" onClick={() => setView('table')} data-testid="reviews-view-table"
-                className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'table'
-                  ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-                <Table2 size={12} /> Tabel
-              </button>
-              <button type="button" onClick={() => setView('grid')} data-testid="reviews-view-grid"
-                className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'grid'
-                  ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-                <LayoutGrid size={12} /> Kartu
-              </button>
-            </div>
-            <ExportCsvButton
-              filename="rating-ulasan-toko"
-              testId="reviews-export-csv"
-              head={['Tanggal', 'Rating', 'Platform', 'Order ID', 'Toko', 'Produk',
-                'Isi ulasan', 'Kategori', 'Status', 'Balasan']}
-              rows={(reviews || []).map((r) => [fmtDate(r.date || r.created_at), r.rating,
-                r.platform, r.order_id, r.account_name, r.product, r.review_text,
-                r.category_label, r.status, r.response_text])}
-            />
-          </div>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="flex justify-center py-6"><Loader2 className="animate-spin" size={24} /></div>
-          ) : reviews.length === 0 ? (
-            <div className="text-center py-6 text-muted-foreground">Tidak ada review</div>
-          ) : view === 'table' ? (
-            <div className="rounded-lg border border-border overflow-x-auto">
-              <table className="w-full text-xs" data-testid="reviews-table">
-                <thead className="bg-muted/60">
-                  <tr>{REVIEW_HEADS.map((h) => (
-                    <th key={h} className="px-2.5 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
-                  ))}</tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {reviews.map(r => (
-                    <tr key={r.id} className="hover:bg-muted/30" data-testid={`reviews-row-${r.id}`}>
-                      <td className="px-2.5 py-2 whitespace-nowrap">{fmtDate(r.date || r.created_at)}</td>
-                      <td className="px-2.5 py-2"><StarRating rating={r.rating} size={12} /></td>
-                      <td className="px-2.5 py-2 whitespace-nowrap">{PLATFORM_ICONS[r.platform]} {r.platform || '—'}</td>
-                      <td className="px-2.5 py-2 tabular-nums text-xs">{r.order_id || '—'}</td>
-                      <td className="px-2.5 py-2">{r.account_name || '—'}</td>
-                      <td className="px-2.5 py-2 max-w-[200px] truncate" title={r.product}>{r.product || '—'}</td>
-                      <td className="px-2.5 py-2 max-w-[280px] truncate" title={r.review_text}>
-                        {r.review_text || '—'}
-                      </td>
-                      <td className="px-2.5 py-2">{r.category_label || '—'}</td>
-                      <td className="px-2.5 py-2">
-                        {r.status ? (
-                          <Badge className={STATUS_CONFIG[r.status]?.color}>
-                            {STATUS_CONFIG[r.status]?.label || r.status}
-                          </Badge>
-                        ) : '—'}
-                      </td>
-                      <td className="px-2.5 py-2 max-w-[220px] truncate" title={r.response_text}>
-                        {r.response_text || <span className="text-[hsl(var(--warning-text))]">belum dibalas</span>}
-                      </td>
-                      <td className="px-2.5 py-2 whitespace-nowrap text-right">
-                        <Button onClick={() => setShowDetail(r)} variant="ghost" size="sm"
-                          data-testid={`reviews-detail-${r.id}`}><MessageSquare size={14} /></Button>
-                        {aiLoading === r.id ? <Loader2 className="animate-spin inline" size={14} /> : (
-                          <Button onClick={() => handleAICategorize(r.id)} variant="ghost" size="sm"
-                            title="AI Kategorisasi"><Sparkles size={14} /></Button>
-                        )}
-                        <Button onClick={() => openForm(r)} variant="ghost" size="sm"><Pencil size={14} /></Button>
-                        <Button onClick={() => handleDelete(r.id)} variant="ghost" size="sm"><Trash2 size={14} /></Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="space-y-3" data-testid="reviews-grid">
-              {reviews.map(r => (
-                <div key={r.id} className="border rounded-lg p-4 space-y-2 hover:bg-muted/30 transition-colors">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <StarRating rating={r.rating} size={16} />
-                        <span className="text-xs text-muted-foreground">{PLATFORM_ICONS[r.platform]} {r.platform}</span>
-                        <Badge variant="outline" className="text-xs">{r.order_id}</Badge>
-                        <span className="text-xs font-medium">{r.product}</span>
-                        {r.status && <Badge className={STATUS_CONFIG[r.status]?.color}>{STATUS_CONFIG[r.status]?.label}</Badge>}
-                      </div>
-                      <p className="text-sm">{r.review_text}</p>
-                      {r.category_label && (
-                        <Badge variant="secondary" className="text-xs">{r.category_label}</Badge>
-                      )}
-                      {r.response_text && (
-                        <div className="mt-2 p-2 bg-muted rounded-md">
-                          <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                            <MessageSquare size={12} />Response:
-                          </p>
-                          <p className="text-sm">{r.response_text}</p>
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1 ml-2">
-                      <Button onClick={() => setShowDetail(r)} variant="ghost" size="sm">
-                        <MessageSquare size={14} />
-                      </Button>
-                      {aiLoading === r.id ? (
-                        <Loader2 className="animate-spin" size={14} />
-                      ) : (
-                        <Button onClick={() => handleAICategorize(r.id)} variant="ghost" size="sm" title="AI Kategorisasi">
-                          <Sparkles size={14} />
-                        </Button>
-                      )}
-                      <Button onClick={() => openForm(r)} variant="ghost" size="sm">
-                        <Pencil size={14} />
-                      </Button>
-                      <Button onClick={() => handleDelete(r.id)} variant="ghost" size="sm">
-                        <Trash2 size={14} />
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Pagination */}
-          {pagination && pagination.total_pages > 1 && (
-            <div className="flex items-center justify-between mt-4">
-              <p className="text-sm text-muted-foreground">
-                Halaman {pagination.page} dari {pagination.total_pages}
-              </p>
-              <div className="flex gap-1">
-                <Button
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
-                  variant="outline"
-                  size="sm"
-                >
-                  Prev
-                </Button>
-                <Button
-                  onClick={() => setCurrentPage(p => Math.min(pagination.total_pages, p + 1))}
-                  disabled={currentPage === pagination.total_pages}
-                  variant="outline"
-                  size="sm"
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Form Dialog */}
-      <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editTarget ? 'Edit Review' : 'Tambah Review'}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Akun / Toko Marketplace *</Label>
-              <Select value={form.account_id || ''} onValueChange={handleAccountChange}>
-                <SelectTrigger data-testid="review-account-select">
-                  <SelectValue placeholder={masterAccounts.length === 0 ? 'Belum ada akun — buat di Manage Accounts' : 'Pilih akun...'} />
-                </SelectTrigger>
-                <SelectContent>
-                  {masterAccounts.length === 0 && (
-                    <SelectItem value="empty" disabled>Belum ada akun aktif</SelectItem>
-                  )}
-                  {masterAccounts.map(acc => (
-                    <SelectItem key={acc.id} value={acc.id}>
-                      {getPlatformIcon(acc.platform)} {acc.account_name} <span className="text-xs text-muted-foreground ml-1">({acc.platform})</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {form.account_id && (
-                <p className="text-xs text-muted-foreground">
-                  Platform: <strong>{form.platform}</strong> (otomatis dari akun)
-                </p>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Tanggal</Label>
-                <Input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} />
-              </div>
-              <div className="space-y-2">
-                <Label>Order ID *</Label>
-                <Input value={form.order_id} onChange={e => setForm({ ...form, order_id: e.target.value })} placeholder="ORD-123456" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Rating</Label>
-                <Select value={form.rating.toString()} onValueChange={v => setForm({ ...form, rating: parseInt(v) })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {[1, 2, 3, 4, 5].map(r => <SelectItem key={r} value={r.toString()}>{r} Bintang</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Kategori</Label>
-                <Select value={form.category} onValueChange={v => setForm({ ...form, category: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {categories.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Produk *</Label>
-              {/* F15 — produk DIPILIH dari katalog toko. Sebelum ini teks bebas:
-                  "Gamis Daluna Basic" dan "Gamis Daluna basic" jadi dua produk di
-                  laporan, sehingga "produk mana yang paling banyak diretur / paling
-                  buruk ulasannya" tidak bisa dijawab. */}
-              <CatalogItemSelect
-                token={token} accountId={form.account_id} label=""
-                value={form.catalog_item_id || ''}
-                onChange={(item) => setForm({
-                  ...form,
-                  catalog_item_id: item?.id || '',
-                  product: item?.name || '',
-                  sku: item?.sku || '',
-                })}
-                testId="review-item-select" />
-            </div>
-            <div className="space-y-2">
-              <Label>Review Text *</Label>
-              <Textarea value={form.review_text} onChange={e => setForm({ ...form, review_text: e.target.value })} rows={3} placeholder="Isi review..." />
-            </div>
-            <div className="space-y-2">
-              <Label>Response (Opsional)</Label>
-              <Textarea value={form.response_text} onChange={e => setForm({ ...form, response_text: e.target.value })} rows={3} placeholder="Response..." />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button onClick={closeForm} variant="outline" disabled={formLoading}>Batal</Button>
-            <Button onClick={handleSave} disabled={formLoading}>
-              {formLoading && <Loader2 className="animate-spin mr-1" size={14} />}
-              Simpan
+      {/* Detail + balas (popup) */}
+      {showDetail && (
+        <DetailPopup open onClose={() => setShowDetail(null)} testId="review-detail"
+          judul={showDetail.product || 'Ulasan'} status={<StatusUlasan status={showDetail.status} />}
+          keterangan={`${showDetail.account_name || '—'} · ${labelPlatform(showDetail.platform)} · ${fmtDate(showDetail.date || showDetail.created_at)}`}
+          aksi={<>
+            <Button size="sm" variant="outline" onClick={() => handleAICategorize(showDetail.id)} disabled={aiLoading === showDetail.id}>
+              {aiLoading === showDetail.id ? <Loader2 className="animate-spin" /> : <Sparkles />}Minta usulan AI
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Detail + Respond Dialog */}
-      <Dialog open={!!showDetail} onOpenChange={() => setShowDetail(null)}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Detail Review</DialogTitle>
-          </DialogHeader>
-          {showDetail && (
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <StarRating rating={showDetail.rating} size={18} />
-                  <span className="text-sm text-muted-foreground">{PLATFORM_ICONS[showDetail.platform]} {showDetail.platform}</span>
-                </div>
-                <p className="text-sm"><strong>Order:</strong> {showDetail.order_id}</p>
-                <p className="text-sm"><strong>Produk:</strong> {showDetail.product}</p>
-                <p className="text-sm"><strong>Review:</strong> {showDetail.review_text}</p>
-                <p className="text-sm"><strong>Kategori resmi:</strong> {showDetail.category_label || showDetail.category || '—'}</p>
-                {showDetail.ai_suggestion && (
-                  <AISuggestionPanel
-                    suggestion={showDetail.ai_suggestion}
-                    fields={[{ key: 'category', label: 'Kategori', options: categories }]}
-                    decideUrl={`${API}/api/marketing/reviews/${showDetail.id}/ai-suggestion`}
-                    headers={authH}
-                    testId="review-ai-suggestion"
-                    onDecided={async () => {
-                      const res = await axios.get(`${API}/api/marketing/reviews/${showDetail.id}`, { headers: authH });
-                      setShowDetail(res.data?.data || res.data);
-                      fetchReviews(currentPage);
-                    }}
-                  />
-                )}
-                {showDetail.response_text && (
-                  <div className="p-3 bg-muted rounded-md">
-                    <p className="text-xs text-muted-foreground mb-1">Response:</p>
-                    <p className="text-sm">{showDetail.response_text}</p>
-                  </div>
-                )}
-              </div>
-              {showDetail.status === 'pending' && (
-                <div className="space-y-2">
-                  <Label>Kirim Response</Label>
-                  <Textarea value={responseText} onChange={e => setResponseText(e.target.value)} rows={3} placeholder="Tulis response..." />
-                  <Button onClick={handleRespond} disabled={respondLoading} className="w-full">
-                    {respondLoading && <Loader2 className="animate-spin mr-1" size={14} />}
-                    Kirim Response
-                  </Button>
-                </div>
-              )}
+            <Button size="sm" variant="outline" onClick={() => { const r = showDetail; setShowDetail(null); openForm(r); }}><Pencil />Ubah</Button>
+            <Button size="sm" variant="destructive" onClick={() => handleDelete(showDetail.id)}><Trash2 />Hapus</Button>
+          </>}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Bintang"><StarRating rating={showDetail.rating} /></BarisDetail>
+            <BarisDetail label="Nomor pesanan">{showDetail.order_id || '—'}</BarisDetail>
+            <BarisDetail label="Isi ulasan"><span className="whitespace-pre-wrap">{showDetail.review_text || '—'}</span></BarisDetail>
+            <BarisDetail label="Kategori resmi">{labelKategori(showDetail)}</BarisDetail>
+            {showDetail.response_text && <BarisDetail label="Balasan"><span className="whitespace-pre-wrap">{showDetail.response_text}</span></BarisDetail>}
+          </dl>
+          {showDetail.ai_suggestion && (
+            <AISuggestionPanel
+              suggestion={showDetail.ai_suggestion}
+              fields={[{ key: 'category', label: 'Kategori', options: categories }]}
+              decideUrl={`${API}/api/marketing/reviews/${showDetail.id}/ai-suggestion`}
+              headers={authH}
+              testId="review-ai-suggestion"
+              onDecided={async () => {
+                const res = await axios.get(`${API}/api/marketing/reviews/${showDetail.id}`, { headers: authH });
+                setShowDetail(res.data?.data || res.data);
+                fetchReviews(currentPage);
+              }}
+            />
+          )}
+          {showDetail.status === 'pending' && (
+            <div className="space-y-2 border-t border-[var(--glass-border)] pt-3">
+              <label className="text-sm font-medium text-foreground" htmlFor="review-reply">Kirim balasan</label>
+              <Textarea id="review-reply" value={responseText} onChange={e => setResponseText(e.target.value)} rows={3}
+                placeholder="Tulis balasan untuk pembeli…" />
+              <Button variant="success" onClick={handleRespond} disabled={respondLoading || !responseText}>
+                {respondLoading ? <Loader2 className="animate-spin" /> : <Send />}Kirim balasan
+              </Button>
             </div>
           )}
-        </DialogContent>
-      </Dialog>
-    </div>
+        </DetailPopup>
+      )}
+    </PageLayout>
   );
 }
