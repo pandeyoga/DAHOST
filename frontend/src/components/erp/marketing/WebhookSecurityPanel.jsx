@@ -20,6 +20,10 @@ import { Notice, StatusBadge } from '../moduleAtoms';
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
 const LABEL = { tokopedia: 'Tokopedia', shopee: 'Shopee', tiktok: 'TikTok Shop' };
+/** Skema teks yang ditandatangani, dengan nama bagian dalam bahasa staf. */
+const BAGIAN = { webhook_url: 'alamat webhook', raw_body: 'isi kiriman', app_key: 'kunci aplikasi' };
+const skema = (v) => String(v || '—').replace(/\{(\w+)\}/g, (_, k) => `[${BAGIAN[k] || k.replace(/_/g, ' ')}]`);
+const tanpaKurung = (v) => String(v || '').replace(/\s*\([^)]*\)/g, '');
 const ENV_LABEL = { shopee: 'Shopee', tokopedia: 'Tokopedia', tiktok: 'TikTok Shop', shared_fallback: 'Cadangan bersama' };
 
 export default function WebhookSecurityPanel({ headers }) {
@@ -52,11 +56,12 @@ export default function WebhookSecurityPanel({ headers }) {
     { kunci: 'platform', label: 'Platform', hp: 'judul', isi: (r) => <span className="font-medium">{LABEL[r.p] || r.p}</span> },
     { kunci: 'status', label: 'Status', isi: (r) => (
       <StatusBadge status={r.configured ? 'ok' : 'belum'} label={statusLabel(r)} tone={r.configured ? 'success' : 'warning'} />) },
-    { kunci: 'teks', label: 'Teks yang ditandatangani', isi: (r) => <code className="text-xs text-foreground">{r.base_string_scheme}</code> },
+    { kunci: 'teks', label: 'Teks yang ditandatangani', isi: (r) => <span className="text-sm">{skema(r.base_string_scheme)}</span> },
     { kunci: 'header', label: 'Header diterima', isi: (r) => (
-      <span className="text-xs"><code className="text-foreground">{r.canonical_header}</code>
-        {(r.accepted_headers || []).filter((h) => h !== r.canonical_header).length > 0 && (
-          <span className="text-muted-foreground"> · {(r.accepted_headers || []).filter((h) => h !== r.canonical_header).join(', ')}</span>)}
+      <span className="block min-w-0 break-all text-xs">
+        <code className="block text-foreground">{r.canonical_header}</code>
+        {(r.accepted_headers || []).filter((h) => h !== r.canonical_header).map((h) => (
+          <code key={h} className="block text-muted-foreground">{h}</code>))}
       </span>) },
     { kunci: 'toleransi', label: 'Toleransi pengulangan', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.replay_tolerance_sec} detik</span> },
   ];
@@ -103,7 +108,7 @@ export default function WebhookSecurityPanel({ headers }) {
             kolom={[
               { label: 'Platform', nilai: (r) => LABEL[r.p] || r.p },
               { label: 'Status', nilai: statusLabel },
-              { label: 'Teks yang ditandatangani', nilai: (r) => r.base_string_scheme },
+              { label: 'Teks yang ditandatangani', nilai: (r) => skema(r.base_string_scheme) },
               { label: 'Header utama', nilai: (r) => r.canonical_header },
               { label: 'Header diterima', nilai: (r) => (r.accepted_headers || []).join(', ') },
               { label: 'Toleransi pengulangan (detik)', nilai: (r) => r.replay_tolerance_sec },
@@ -128,7 +133,7 @@ export default function WebhookSecurityPanel({ headers }) {
               <p className="font-medium text-foreground">Nama pengaturan di server (untuk tim teknis)</p>
               {Object.entries(data.env_keys).map(([k, arr]) => (
                 <p key={k} className="text-muted-foreground">
-                  {ENV_LABEL[k] || k}: <code className="text-xs text-foreground">{arr.join(' · ')}</code>
+                  {ENV_LABEL[k] || k}: <code className="break-all text-xs text-foreground">{arr.map(tanpaKurung).join(' · ')}</code>
                 </p>
               ))}
             </div>

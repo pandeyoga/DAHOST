@@ -94,11 +94,11 @@ const StatusKomplain = ({ status }) => {
 };
 
 /** Pilihan akun aktif di baris penyaring (pengganti bar akun selebar layar). Sumber & penyimpanan sama: hook akun aktif. */
-function PilihAkun({ accounts = [], activeAccount, onChange, testId = 'pilih-akun' }) {
+function PilihAkun({ accounts = [], activeAccount, onChange, testId = 'pilih-akun', lebar = 'w-56' }) {
   const aktif = accounts.filter((a) => a.status === 'active' || !a.status);
   const daftar = activeAccount && !aktif.some((a) => a.id === activeAccount.id) ? [activeAccount, ...aktif] : aktif;
   return (
-    <SmartNativeSelect value={activeAccount?.id || ''} className="w-56" data-testid={testId}
+    <SmartNativeSelect value={activeAccount?.id || ''} className={lebar} data-testid={testId}
       onChange={(e) => onChange(daftar.find((a) => a.id === e.target.value) || null)}>
       <option value="">Semua akun toko</option>
       {daftar.map((a) => <option key={a.id} value={a.id}>{`${a.account_name} · ${labelPlatform(a.platform)}`}</option>)}
@@ -361,27 +361,27 @@ export default function ComplaintsManagementModule({ token, onNavigate }) {
         </Button>
       )}
       filters={<>
-        <div className="relative w-full sm:w-64">
+        <div className="relative w-full sm:w-52">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder="Cari nomor, keluhan, produk" className="pl-8" value={search} onChange={handleSearchChange}
             data-testid="search-complaints" />
         </div>
-        <PilihAkun accounts={masterAccounts} activeAccount={activeAccount} testId="complaint-account"
+        <PilihAkun accounts={masterAccounts} activeAccount={activeAccount} testId="complaint-account" lebar="w-40"
           onChange={(acc) => { setActiveAccount(acc); setPage(1); }} />
-        <SmartNativeSelect value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} className="w-40" searchable={false}>
+        <SmartNativeSelect value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} className="w-36" searchable={false}>
           <option value="">Semua status</option>
           {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={slaFilter} onChange={(e) => { setSlaFilter(e.target.value); setPage(1); }} className="w-40" searchable={false}
+        <SmartNativeSelect value={slaFilter} onChange={(e) => { setSlaFilter(e.target.value); setPage(1); }} className="w-36" searchable={false}
           data-testid="complaint-sla-filter">
-          <option value="">Semua batas waktu</option>
+          <option value="">Semua tenggat</option>
           {Object.entries(SLA_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={catFilter} onChange={(e) => { setCatFilter(e.target.value); setPage(1); }} className="w-48">
+        <SmartNativeSelect value={catFilter} onChange={(e) => { setCatFilter(e.target.value); setPage(1); }} className="w-40">
           <option value="">Semua kategori</option>
           {Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={platformFilter} onChange={(e) => { setPlatformFilter(e.target.value); setPage(1); }} className="w-40" searchable={false}>
+        <SmartNativeSelect value={platformFilter} onChange={(e) => { setPlatformFilter(e.target.value); setPage(1); }} className="w-36" searchable={false}>
           <option value="">Semua platform</option>
           <option value="shopee">Shopee</option>
           <option value="tiktok">TikTok</option>

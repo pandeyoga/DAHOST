@@ -39,6 +39,12 @@ const JENIS_PERINGATAN = {
   budget_overrun: 'Anggaran terlampaui',
   budget_warning: 'Anggaran hampir habis',
 };
+/** Keterangan platform dalam bahasa staf (keterangan server memuat nama isian program). */
+const CATATAN_PLATFORM = {
+  shopee: 'Butuh akun Shopee Open Platform dengan ID toko dan kredensial mitra.',
+  tiktok: 'Butuh akun mitra TikTok Shop dan akses ke TikTok Open Platform.',
+  tokopedia: 'Butuh akun penjual Tokopedia dan akses ke Tokopedia Seller API.',
+};
 const labelJenis = (types) => (types || []).map((t) => JENIS_PERINGATAN[t] || 'Lainnya').join(', ') || '—';
 
 const DEFAULT_ALERT_SETTINGS = {
@@ -81,7 +87,7 @@ function FormPlatform({ platform, meta, config, onClose, onSave, onDisconnect, o
 
   return (
     <FormPopup open onClose={onClose} judul={`Kunci API ${meta?.name || platform}`} ukuran="pendek"
-      keterangan={meta?.note} onSimpan={handleSave} menyimpan={saving} labelSimpan="Simpan kunci"
+      keterangan={CATATAN_PLATFORM[platform] || meta?.note} onSimpan={handleSave} menyimpan={saving} labelSimpan="Simpan kunci"
       testId={`integration-form-${platform}`}
       aksiKiri={<>
         <Button type="button" variant="outline" onClick={handleTest} disabled={testing || !connected}

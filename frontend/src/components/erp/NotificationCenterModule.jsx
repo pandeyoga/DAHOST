@@ -27,6 +27,7 @@ import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatDateTimeID } from '@/lib/format';
 import HubTabs from './hubs/HubTabs';
+import { JOB_LABEL, namaJobID, ketJobID } from './marketing/MarketingSchedulerModule';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 
@@ -494,12 +495,16 @@ function SchedulerTab({ headers, onRan }) {
 
   const jobs = scheduler?.jobs || [];
   const peta = Object.fromEntries(jobs.map((j) => [j.id, j.description]));
-  const namaJob = (id) => peta[id] || String(id || '').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+  const namaJob = (id) => namaJobID(id, peta[id]);
   const { page, setPage, totalPages, total, paged } = useClientPagination(runs, 10);
   const stRun = (s) => (s === 'success' ? { label: 'Berhasil', tone: 'success' } : s === 'failed' ? { label: 'Gagal', tone: 'danger' } : { label: 'Berjalan', tone: 'warning' });
 
   const kolomJob = [
-    { kunci: 'job', label: 'Job', hp: 'judul', isi: (j) => <p className="line-clamp-2 md:max-w-[34rem]" title={j.description}>{j.description}</p> },
+    { kunci: 'job', label: 'Job', hp: 'judul', isi: (j) => (
+      <div className="min-w-0 md:max-w-[34rem]">
+        <p className="font-medium text-foreground">{namaJobID(j.id, j.description)}</p>
+        {JOB_LABEL[j.id] && <p className="hidden truncate text-xs text-muted-foreground md:block" title={ketJobID(j.id, j.description)}>{ketJobID(j.id, j.description)}</p>}
+      </div>) },
     { kunci: 'jadwal', label: 'Jadwal', isi: (j) => <span className="md:whitespace-nowrap">{j.cron_label}</span> },
     { kunci: 'status', label: 'Status', isi: (j) => <StatusBadge status={j.enabled ? 'aktif' : 'nonaktif'} label={j.enabled ? 'Aktif' : 'Nonaktif'} tone={j.enabled ? 'success' : 'muted'} /> },
     { kunci: 'berikut', label: 'Berikutnya', isi: (j) => <span className="tabular-nums md:whitespace-nowrap">{waktu(j.next_run_at)}</span> },
@@ -522,7 +527,8 @@ function SchedulerTab({ headers, onRan }) {
       tools={<>
         <TombolUnduh namaBerkas="job-terjadwal" namaLembar="Job" baris={jobs} label="Unduh job" testId="notif-job-unduh"
           kolom={[
-            { label: 'Job', nilai: (j) => j.description },
+            { label: 'Job', nilai: (j) => namaJobID(j.id, j.description) },
+            { label: 'Keterangan', nilai: (j) => ketJobID(j.id, j.description) },
             { label: 'Jadwal', nilai: (j) => j.cron_label },
             { label: 'Status', nilai: (j) => (j.enabled ? 'Aktif' : 'Nonaktif') },
             { label: 'Berikutnya', nilai: (j) => waktu(j.next_run_at) },
