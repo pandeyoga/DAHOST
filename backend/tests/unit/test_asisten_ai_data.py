@@ -397,6 +397,52 @@ def test_migrasi_hapus_data_contoh_pratinjau_lalu_tulis(capsys):
     assert again["transaksi"]["marketing_ads_data"]["contoh"] == 0                 # idempoten
 
 
+def test_migrasi_katalog_contoh_hapus_yang_tak_dipakai_cabut_tanda_yang_dipakai(capsys):
+    """Keputusan owner 8 Nov: data contoh dihapus semua — tetapi katalog toko buatan seeder lama yang sudah
+    diisi item asli TIDAK boleh hilang (item asli jadi yatim); tanda contohnya dicabut."""
+    mig = _mig("2026_11_08_hapus_data_contoh_marketing")
+    db = FakeDB()
+    db.marketing_catalogs.docs += [
+        {"id": "kat-dipakai", "name": "Katalog Toko A", "_seed_origin": True},       # berisi item asli
+        {"id": "kat-kosong", "name": "Katalog Toko B", "_seed_origin": True},        # hanya item contoh
+        {"id": "kat-ditaut", "name": "Katalog Toko C", "_seed_origin": True},        # id dirujuk dokumen lain
+        {"id": "kat-asli", "name": "Katalog Asli"}]
+    db.marketing_catalog_items.docs += [
+        {"id": "it-contoh-1", "catalog_id": "kat-dipakai", "_seed_origin": True},
+        {"id": "it-asli-1", "catalog_id": "kat-dipakai", "sku": "X"},
+        {"id": "it-contoh-2", "catalog_id": "kat-kosong", "_seed_origin": True},
+        {"id": "it-contoh-ditaut", "catalog_id": "kat-kosong", "_seed_origin": True}]
+    db.marketing_orders.docs += [{"id": "o1", "items": [{"catalog_item_id": "it-contoh-ditaut", "quantity": 1}]}]
+    db.marketing_ab_experiments.docs += [{"id": "x1", "meta": {"katalog": "kat-ditaut"}}]
+
+    tanpa = run(mig.run(db, apply=True))                       # tanpa opsi: katalog tidak disentuh
+    assert "katalog" not in tanpa and len(db.marketing_catalog_items.docs) == 4
+
+    pre = run(mig.run(db, apply=False, katalog=True))
+    k = pre["katalog"]
+    assert (k["item_contoh"], k["item_ditaut"], k["katalog_contoh"], k["item_dihapus"]) == (3, 1, 3, 0)
+    assert len(db.marketing_catalogs.docs) == 4                # pratinjau tidak menulis
+
+    out = run(mig.run(db, apply=True, katalog=True))
+    k = out["katalog"]
+    assert k["item_dihapus"] == 2 and k["katalog_dicabut_tanda"] == 3 and k["katalog_dihapus"] == 0
+    assert sorted(d["id"] for d in db.marketing_catalog_items.docs) == ["it-asli-1", "it-contoh-ditaut"]
+    kat = {d["id"]: d for d in db.marketing_catalogs.docs}
+    # kat-kosong masih memegang item contoh yang ditaut pesanan → dipakai, tanda dicabut, tidak dihapus
+    assert set(kat) == {"kat-dipakai", "kat-kosong", "kat-ditaut", "kat-asli"}
+    assert not any(d.get("_seed_origin") for d in kat.values())
+
+    # katalog contoh yang benar-benar kosong & tak ditaut → dihapus
+    db.marketing_catalogs.docs += [{"id": "kat-yatim", "_seed_origin": True}]
+    db.marketing_catalog_items.docs += [{"id": "it-yatim", "catalog_id": "kat-yatim", "_seed_origin": True}]
+    out2 = run(mig.run(db, apply=True, katalog=True))
+    assert out2["katalog"]["item_dihapus"] == 1 and out2["katalog"]["katalog_dihapus"] == 1
+    assert "kat-yatim" not in {d["id"] for d in db.marketing_catalogs.docs}
+    again = run(mig.run(db, apply=False, katalog=True))["katalog"]
+    # idempoten: tinggal 1 item contoh yang masih ditaut pesanan (tidak dihapus), tanpa katalog contoh
+    assert (again["item_contoh"], again["item_ditaut"], again["katalog_contoh"]) == (1, 1, 0)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 6. BUG #5 / #6 — ringkasan iklan bersaring tanggal & toko; tanggal campur terbaca
 # ══════════════════════════════════════════════════════════════════════════════
