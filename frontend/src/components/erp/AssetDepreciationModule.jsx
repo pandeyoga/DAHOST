@@ -4,6 +4,9 @@ import { monthOptions } from './finance/PeriodPicker';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { GlassCard } from '@/components/ui/glass';
+import { Checkbox } from '@/components/ui/checkbox';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState, StatusBadge } from './moduleAtoms';
@@ -29,6 +32,7 @@ const RESULT_STATUS = {
  * Penyusutan aset (menu Aset Tetap › Penyusutan).
  * 2026-11-05 (PANDUAN_UI G1/G13): cetakan PageLayout — bulan di toolbar, tombol utama di kepala/baris tab,
  * hasil penyusutan dibuka di panel di atas tabel (dulu kartu-kartu angka + tabel terpisah di bawah).
+ * 2026-11-08 (Standar UI/UX v2): hasil = popup (tabel ui/table + unduh); daftar aset bisa diunduh; kotak centang aplikasi.
  */
 export default function AssetDepreciationModule({ token }) {
   const [period, setPeriod] = useState(thisMonthWIB());
@@ -109,37 +113,46 @@ export default function AssetDepreciationModule({ token }) {
       description={`${result.assets_processed} aset diproses · ${result.posted_count} dicatat ke jurnal · total ${fmt(result.total_depreciation)}`}
       onClose={() => setResult(null)}
       testId="depr-result-panel"
+      actions={result.results?.length > 0 && (
+        <TombolUnduh namaBerkas={`hasil-penyusutan-${result.period || period}`} namaLembar="Hasil penyusutan" baris={result.results} testId="depr-result-unduh"
+          kolom={[
+            { label: 'Status', nilai: (r) => (RESULT_STATUS[r.status] || { label: r.status }).label },
+            { label: 'Kode aset', nilai: (r) => r.asset_code },
+            { label: 'Nama aset', nilai: (r) => r.asset_name },
+            { label: 'Penyusutan', nilai: (r) => Number(r.depr_amount) || 0 },
+            { label: 'No. jurnal', nilai: (r) => r.je_number || '' },
+            { label: 'Keterangan', nilai: (r) => (r.reason && r.reason !== 'OK' ? r.reason : '') },
+          ]} />
+      )}
     >
       {result.results && result.results.length > 0 && (
-        <div className="overflow-x-auto -mx-4">
-          <table className="w-full" data-testid="depr-result-table">
-            <thead>
-              <tr>
-                <th className="text-left">Status</th>
-                <th className="text-left">Kode aset</th>
-                <th className="text-left">Nama aset</th>
-                <th className="text-right">Penyusutan</th>
-                <th className="text-left">No. jurnal</th>
-                <th className="text-left">Keterangan</th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.results.map((r, idx) => {
-                const st = RESULT_STATUS[r.status] || { label: r.status, tone: 'default' };
-                return (
-                  <tr key={idx}>
-                    <td><StatusBadge tone={st.tone} label={st.label} /></td>
-                    <td className="whitespace-nowrap">{r.asset_code}</td>
-                    <td>{r.asset_name}</td>
-                    <td className="text-right tabular-nums">{fmt(r.depr_amount)}</td>
-                    <td className="whitespace-nowrap">{r.je_number || '—'}</td>
-                    <td className="text-xs text-muted-foreground">{r.reason && r.reason !== 'OK' ? r.reason : '—'}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <Table data-testid="depr-result-table">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Status</TableHead>
+              <TableHead>Kode aset</TableHead>
+              <TableHead>Nama aset</TableHead>
+              <TableHead className="text-right">Penyusutan</TableHead>
+              <TableHead>No. jurnal</TableHead>
+              <TableHead>Keterangan</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {result.results.map((r, idx) => {
+              const st = RESULT_STATUS[r.status] || { label: r.status, tone: 'default' };
+              return (
+                <TableRow key={idx}>
+                  <TableCell><StatusBadge tone={st.tone} label={st.label} /></TableCell>
+                  <TableCell className="whitespace-nowrap">{r.asset_code}</TableCell>
+                  <TableCell>{r.asset_name}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(r.depr_amount)}</TableCell>
+                  <TableCell className="whitespace-nowrap">{r.je_number || '—'}</TableCell>
+                  <TableCell className="text-muted-foreground">{r.reason && r.reason !== 'OK' ? r.reason : '—'}</TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
       )}
     </DetailPanel>
   );
@@ -160,11 +173,20 @@ export default function AssetDepreciationModule({ token }) {
           {MONTH_OPTIONS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </SmartNativeSelect>
       }
-      tools={
+      tools={<>
+        <TombolUnduh namaBerkas="aset-disusutkan" namaLembar="Aset" baris={assets} testId="depr-unduh"
+          kolom={[
+            { label: 'Kode', nilai: (a) => a.code },
+            { label: 'Nama aset', nilai: (a) => a.name },
+            { label: 'Kategori', nilai: (a) => catLabel(a.category) },
+            { label: 'Metode', nilai: (a) => METHOD_LABEL[a.depreciation_method] || a.depreciation_method },
+            { label: 'Harga perolehan', nilai: (a) => Number(a.purchase_cost) || 0 },
+            { label: 'Nilai buku', nilai: (a) => Number(a.book_value_current) || 0 },
+          ]} />
         <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchAssets} data-testid="depr-refresh">
           <RefreshCw className="w-4 h-4" />
         </Button>
-      }
+      </>}
       summary={assets.length > 0 && (
         <p className="text-sm text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="text-foreground">
@@ -188,11 +210,9 @@ export default function AssetDepreciationModule({ token }) {
               <thead>
                 <tr>
                   <th className="w-10">
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={selectedAssets.length === assets.length}
-                      onChange={e => e.target.checked ? selectAll() : clearSelection()}
-                      className="w-4 h-4"
+                      onCheckedChange={v => (v ? selectAll() : clearSelection())}
                       aria-label="Pilih semua aset"
                     />
                   </th>
@@ -213,11 +233,9 @@ export default function AssetDepreciationModule({ token }) {
                     data-testid={`depr-asset-row-${a.id}`}
                   >
                     <td>
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         checked={selectedAssets.includes(a.id)}
-                        onChange={() => toggleAsset(a.id)}
-                        className="w-4 h-4"
+                        onCheckedChange={() => toggleAsset(a.id)}
                         onClick={e => e.stopPropagation()}
                         aria-label={`Pilih ${a.name}`}
                       />
