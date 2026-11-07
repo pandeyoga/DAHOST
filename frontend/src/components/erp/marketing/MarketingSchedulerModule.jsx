@@ -1,24 +1,37 @@
+/**
+ * Penjadwal Otomasi (Portal Toko) — status job terjadwal dan riwayat jalannya.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, daftar = tabel (kartu ringkas di HP), detail = popup,
+ * unduh Excel/CSV di setiap tabel, bahasa Indonesia. Tampilan "Kartu" lama (kartu besar per job) diganti tabel.
+ * Waktu riwayat dari server tersimpan UTC tanpa zona → dibaca sebagai UTC lalu ditampilkan WIB.
+ */
 import { useState, useEffect, useCallback } from 'react';
+import { Play, RefreshCw } from 'lucide-react';
 import apiFetch from '@/lib/apiFetch';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Play, RefreshCw, Clock, CheckCircle2, XCircle, Cpu, CalendarClock, Activity, Table2, LayoutGrid } from 'lucide-react';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import { useToast } from '@/hooks/use-toast';
+import { formatDateTimeID } from '@/lib/format';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, StatusBadge } from '../moduleAtoms';
 
-// F10 (2026-08-13) — layar ini KARTU-SAJA. Untuk job terjadwal, yang dicari orang
-// justru perbandingan baris: "job mana yang mati", "kapan jalan berikutnya",
-// "run terakhir gagal atau tidak". Tabel dijadikan tampilan default; Kartu tetap ada.
-const VIEW_KEY = 'marketing_scheduler_view';
-const JOB_HEADS = ['Job', 'Jadwal (cron)', 'Status', 'Jalan berikutnya', 'Aksi'];
-const RUN_HEADS = ['Waktu mulai', 'Job', 'Status', 'Galat'];
-const fmtDT = (v) => (v ? new Date(v).toLocaleString('id-ID') : '—');
-
-function StatusBadge({ enabled, running }) {
-  if (running) return <Badge className="bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)]"><Activity className="h-3 w-3 mr-1" />Berjalan</Badge>;
-  if (enabled) return <Badge className="bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]">Aktif</Badge>;
-  return <Badge variant="secondary">Tidak Aktif</Badge>;
-}
+/** Waktu dari server: bila tanpa zona, dianggap UTC (begitu disimpan penjadwal). */
+const waktu = (v) => {
+  if (!v) return '—';
+  const s = String(v);
+  const d = new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(s) ? s : `${s}Z`);
+  return Number.isNaN(d.getTime()) ? '—' : formatDateTimeID(d);
+};
+const namaJob = (id, peta) => peta[id] || String(id || '').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+const STATUS_RUN = {
+  success: { label: 'Berhasil', tone: 'success' },
+  running: { label: 'Berjalan', tone: 'info' },
+  failed: { label: 'Gagal', tone: 'danger' },
+  error: { label: 'Gagal', tone: 'danger' },
+};
+const statusRun = (s) => STATUS_RUN[s] || { label: s ? 'Gagal' : '—', tone: s ? 'danger' : 'muted' };
 
 export default function MarketingSchedulerModule() {
   const { toast } = useToast();
@@ -27,13 +40,8 @@ export default function MarketingSchedulerModule() {
   const [loading, setLoading] = useState(true);
   const [schedulerRunning, setSchedulerRunning] = useState(false);
   const [runningJob, setRunningJob] = useState(null);
-  const [view, setView] = useState(() => {
-    try { return localStorage.getItem(VIEW_KEY) || 'table'; } catch { return 'table'; }
-  });
-
-  useEffect(() => {
-    try { localStorage.setItem(VIEW_KEY, view); } catch { /* penyimpanan diblokir */ }
-  }, [view]);
+  const [detailJob, setDetailJob] = useState(null);
+  const [detailRun, setDetailRun] = useState(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -46,7 +54,7 @@ export default function MarketingSchedulerModule() {
       setSchedulerRunning(jobsRes.scheduler_running || false);
       setRuns(Array.isArray(runsRes) ? runsRes : []);
     } catch (err) {
-      toast({ title: 'Gagal memuat status scheduler', variant: 'destructive' });
+      toast({ title: 'Gagal memuat status penjadwal', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
@@ -58,186 +66,122 @@ export default function MarketingSchedulerModule() {
     setRunningJob(jobId);
     try {
       await apiFetch(`/dewi/scheduler/jobs/${jobId}/run-now`, { method: 'POST' });
-      toast({ title: `Job "${desc}" berhasil dijalankan ✅` });
+      toast({ title: `Job "${desc}" berhasil dijalankan.` });
       await loadData();
     } catch (err) {
-      toast({ title: 'Job gagal', description: err.message, variant: 'destructive' });
+      toast({ title: 'Job gagal dijalankan', description: err.message, variant: 'destructive' });
     } finally {
       setRunningJob(null);
     }
   };
 
+  const peta = Object.fromEntries(jobs.map((j) => [j.id, j.description]));
+
+  const tombolJalan = (job) => (
+    <Button size="sm" variant="outline" onClick={() => runNow(job.id, job.description)}
+      disabled={runningJob === job.id} data-testid={`run-job-${job.id}`}>
+      {runningJob === job.id ? <RefreshCw className="animate-spin" /> : <Play />}Jalankan sekarang
+    </Button>
+  );
+
+  const kolomJob = [
+    { kunci: 'job', label: 'Job', hp: 'judul', isi: (j) => (
+      <p className="min-w-0 md:max-w-[34rem] line-clamp-2 text-foreground" title={j.description}>{j.description}</p>) },
+    { kunci: 'jadwal', label: 'Jadwal', isi: (j) => <span className="md:whitespace-nowrap">{j.cron_label || '—'}</span> },
+    { kunci: 'status', label: 'Status', isi: (j) => (j.enabled
+      ? <StatusBadge status="aktif" label="Aktif" tone="success" />
+      : <StatusBadge status="nonaktif" label="Nonaktif" tone="muted" />) },
+    { kunci: 'berikut', label: 'Jalan berikutnya', isi: (j) => <span className="md:whitespace-nowrap tabular-nums">{waktu(j.next_run_at)}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: tombolJalan },
+  ];
+
+  const kolomRun = [
+    { kunci: 'mulai', label: 'Waktu mulai', hp: 'keterangan', isi: (r) => <span className="md:whitespace-nowrap tabular-nums">{waktu(r.started_at)}</span> },
+    { kunci: 'job', label: 'Job', hp: 'judul', isi: (r) => (
+      <p className="min-w-0 md:max-w-[28rem] truncate" title={namaJob(r.job_id, peta)}>{namaJob(r.job_id, peta)}</p>) },
+    { kunci: 'status', label: 'Status', isi: (r) => { const s = statusRun(r.status); return <StatusBadge status={r.status} label={s.label} tone={s.tone} />; } },
+    { kunci: 'galat', label: 'Galat', isi: (r) => (r.error
+      ? <span className="block md:max-w-[20rem] truncate text-[hsl(var(--danger-text))]" title={r.error}>{r.error}</span>
+      : <span className="text-muted-foreground">—</span>) },
+  ];
+
   return (
-    <div className="p-4 space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg flex items-center justify-center">
-              <Cpu className="h-4 w-4 text-foreground" />
-            </div>
-            Scheduler & Otomasi
-          </h2>
-          <p className="text-sm text-muted-foreground mt-0.5">Status job terjadwal, task auto-creation, dan file cleanup</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <StatusBadge enabled running={schedulerRunning} />
-          <div className="flex rounded-md border border-border overflow-hidden">
-            <button type="button" onClick={() => setView('table')} data-testid="scheduler-view-table"
-              className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'table'
-                ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-              <Table2 size={12} /> Tabel
-            </button>
-            <button type="button" onClick={() => setView('grid')} data-testid="scheduler-view-grid"
-              className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'grid'
-                ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-              <LayoutGrid size={12} /> Kartu
-            </button>
-          </div>
-          <Button size="sm" variant="outline" onClick={loadData} disabled={loading}>
-            <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} />Refresh
-          </Button>
-        </div>
-      </div>
+    <PageLayout testId="marketing-scheduler" title="Penjadwal otomasi"
+      subtitle="Job terjadwal: pembuatan tugas otomatis, pengingat, dan pembersihan berkas."
+      tools={<>
+        <TombolUnduh namaBerkas="penjadwal-job" namaLembar="Job" baris={jobs} testId="scheduler-unduh-job"
+          label="Unduh job"
+          kolom={[
+            { label: 'Job', nilai: (j) => j.description },
+            { label: 'Jadwal', nilai: (j) => j.cron_label || '' },
+            { label: 'Status', nilai: (j) => (j.enabled ? 'Aktif' : 'Nonaktif') },
+            { label: 'Jalan berikutnya', nilai: (j) => waktu(j.next_run_at) },
+          ]} />
+        <Button variant="outline" size="icon" onClick={loadData} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={!loading && (
+        <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground" data-testid="scheduler-ringkas">
+          {schedulerRunning
+            ? <StatusBadge status="berjalan" label="Penjadwal berjalan" tone="success" />
+            : <StatusBadge status="berhenti" label="Penjadwal berhenti" tone="danger" />}
+          <span>{jobs.length} job terdaftar · {jobs.filter((j) => j.enabled).length} aktif · waktu dalam WIB.</span>
+        </p>
+      )}>
+      {loading && jobs.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat penjadwal…</p>
+      ) : (
+        <TabelData kolom={kolomJob} baris={jobs} onKlikBaris={setDetailJob} testId="scheduler-jobs-table"
+          kosong={<EmptyState title="Tidak ada job terdaftar" description="Job terjadwal muncul di sini setelah server menyalakan penjadwal." />} />
+      )}
 
-      {/* Jobs List */}
-      <div className="space-y-3">
-        <p className="text-xs font-semibold text-muted-foreground ">Registered Jobs ({jobs.length})</p>
-        {loading ? (
-          <div className="text-center py-6 text-sm text-muted-foreground"><RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2" /></div>
-        ) : jobs.length === 0 ? (
-          <div className="text-center py-6 text-muted-foreground text-sm">Tidak ada job terdaftar</div>
-        ) : view === 'table' ? (
-          <div className="rounded-lg border border-border overflow-x-auto bg-background">
-            <table className="w-full text-xs" data-testid="scheduler-jobs-table">
-              <thead className="bg-muted/60"><tr>{JOB_HEADS.map((h) => (
-                <th key={h} className="px-3 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
-              ))}</tr></thead>
-              <tbody className="divide-y divide-border">
-                {jobs.map(job => (
-                  <tr key={job.id} className="hover:bg-muted/30" data-testid={`scheduler-row-${job.id}`}>
-                    <td className="px-3 py-2">
-                      <div className="font-medium text-foreground">{job.description}</div>
-                      <div className="text-xs text-muted-foreground tabular-nums">{job.id}</div>
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap">{job.cron_label || '—'}</td>
-                    <td className="px-3 py-2">
-                      {job.enabled
-                        ? <Badge className="text-xs bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)]">Aktif</Badge>
-                        : <Badge variant="secondary" className="text-xs">Non-aktif</Badge>}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap">{fmtDT(job.next_run_at)}</td>
-                    <td className="px-3 py-2 text-right">
-                      <Button size="sm" variant="outline" onClick={() => runNow(job.id, job.description)}
-                        disabled={runningJob === job.id} data-testid={`run-job-${job.id}`}>
-                        {runningJob === job.id
-                          ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                          : <><Play className="h-3.5 w-3.5 mr-1" />Run Now</>}
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          jobs.map(job => (
-            <Card key={job.id} className="border border-border">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <CalendarClock className="h-4 w-4 text-[hsl(var(--success-text))]" />
-                      <p className="font-medium text-sm">{job.description}</p>
-                      <Badge variant="outline" className="text-xs">{job.cron_label}</Badge>
-                      {job.enabled
-                        ? <Badge className="text-xs bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)]">Aktif</Badge>
-                        : <Badge variant="secondary" className="text-xs">Non-aktif</Badge>
-                      }
-                    </div>
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        Next: {job.next_run_at ? new Date(job.next_run_at).toLocaleString('id-ID') : 'N/A'}
-                      </span>
-                    </div>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => runNow(job.id, job.description)}
-                    disabled={runningJob === job.id}
-                    data-testid={`run-job-${job.id}`}
-                  >
-                    {runningJob === job.id
-                      ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                      : <><Play className="h-3.5 w-3.5 mr-1" />Run Now</>
-                    }
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))
-        )}
-      </div>
-
-      {/* Recent Runs */}
-      <div>
-        <p className="text-xs font-semibold text-muted-foreground mb-3">Run History Terakhir ({runs.length})</p>
-        {runs.length === 0 && !loading && (
-          <div className="text-center py-6 text-sm text-muted-foreground border-2 border-dashed border-border rounded-lg">
-            Belum ada riwayat run
-          </div>
-        )}
-        <div className="space-y-2">
-          {view === 'table' && runs.length > 0 ? (
-            <div className="rounded-lg border border-border overflow-x-auto bg-background">
-              <table className="w-full text-xs" data-testid="scheduler-runs-table">
-                <thead className="bg-muted/60"><tr>{RUN_HEADS.map((h) => (
-                  <th key={h} className="px-3 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
-                ))}</tr></thead>
-                <tbody className="divide-y divide-border">
-                  {runs.map((run, i) => (
-                    <tr key={i} className="hover:bg-muted/30">
-                      <td className="px-3 py-2 whitespace-nowrap">{fmtDT(run.started_at)}</td>
-                      <td className="px-3 py-2 tabular-nums text-xs">{run.job_id}</td>
-                      <td className="px-3 py-2">
-                        <Badge variant={run.status === 'success' ? 'outline' : 'destructive'}
-                          className="text-xs">{run.status}</Badge>
-                      </td>
-                      <td className="px-3 py-2 text-[hsl(var(--danger-text))] max-w-[320px] truncate" title={run.error || ''}>
-                        {run.error || '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : runs.map((run, i) => (
-            <div key={i} className="flex items-center gap-3 py-2 border-b border-border last:border-0 text-sm">
-              <div className="flex-shrink-0">
-                {run.status === 'success'
-                  ? <CheckCircle2 className="h-4 w-4 text-[hsl(var(--success-text))]" />
-                  : <XCircle className="h-4 w-4 text-[hsl(var(--danger-text))]" />
-                }
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-medium text-xs truncate">{run.job_id}</p>
-                {run.error && <p className="text-xs text-[hsl(var(--danger-text))] truncate">{run.error}</p>}
-              </div>
-              <span className="text-xs text-muted-foreground flex-shrink-0">
-                {run.started_at ? new Date(run.started_at).toLocaleString('id-ID') : '-'}
-              </span>
-              <Badge
-                variant={run.status === 'success' ? 'outline' : 'destructive'}
-                className="text-xs flex-shrink-0"
-              >
-                {run.status}
-              </Badge>
-            </div>
-          ))}
+      <section className="space-y-2" data-testid="scheduler-runs">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="flex-1 text-base font-semibold text-foreground">Riwayat jalan · {runs.length} terakhir</p>
+          <TombolUnduh namaBerkas="penjadwal-riwayat" namaLembar="Riwayat" baris={runs} testId="scheduler-unduh-riwayat"
+            kolom={[
+              { label: 'Waktu mulai', nilai: (r) => waktu(r.started_at) },
+              { label: 'Waktu selesai', nilai: (r) => waktu(r.finished_at) },
+              { label: 'Job', nilai: (r) => namaJob(r.job_id, peta) },
+              { label: 'Status', nilai: (r) => statusRun(r.status).label },
+              { label: 'Galat', nilai: (r) => r.error || '' },
+            ]} />
         </div>
-      </div>
-    </div>
+        <TabelData kolom={kolomRun} baris={runs} kunci={(r) => `${r.job_id}-${r.started_at}`} onKlikBaris={setDetailRun}
+          testId="scheduler-runs-table"
+          kosong={!loading && <EmptyState title="Belum ada riwayat jalan" description="Riwayat muncul setelah job pertama dijalankan." />} />
+      </section>
+
+      {detailJob && (
+        <DetailPopup open onClose={() => setDetailJob(null)} judul="Rincian job" testId="scheduler-job-detail"
+          status={detailJob.enabled ? <StatusBadge status="aktif" label="Aktif" tone="success" /> : <StatusBadge status="nonaktif" label="Nonaktif" tone="muted" />}
+          aksi={tombolJalan(detailJob)}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Keterangan">{detailJob.description}</BarisDetail>
+            <BarisDetail label="Jadwal">{detailJob.cron_label || '—'}</BarisDetail>
+            <BarisDetail label="Jalan berikutnya">{waktu(detailJob.next_run_at)}</BarisDetail>
+            <BarisDetail label="Riwayat terakhir">
+              {(() => {
+                const r = runs.find((x) => x.job_id === detailJob.id);
+                return r ? `${waktu(r.started_at)} · ${statusRun(r.status).label}` : 'Tidak ada di 20 riwayat terakhir';
+              })()}
+            </BarisDetail>
+          </dl>
+        </DetailPopup>
+      )}
+      {detailRun && (
+        <DetailPopup open onClose={() => setDetailRun(null)} judul="Rincian riwayat jalan" testId="scheduler-run-detail"
+          status={(() => { const s = statusRun(detailRun.status); return <StatusBadge status={detailRun.status} label={s.label} tone={s.tone} />; })()}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Job">{namaJob(detailRun.job_id, peta)}</BarisDetail>
+            <BarisDetail label="Mulai">{waktu(detailRun.started_at)}</BarisDetail>
+            <BarisDetail label="Selesai">{waktu(detailRun.finished_at)}</BarisDetail>
+            {detailRun.error && <BarisDetail label="Galat"><span className="text-[hsl(var(--danger-text))]">{detailRun.error}</span></BarisDetail>}
+            {detailRun.message && <BarisDetail label="Catatan sistem"><span className="break-words text-muted-foreground">{detailRun.message}</span></BarisDetail>}
+          </dl>
+        </DetailPopup>
+      )}
+    </PageLayout>
   );
 }
