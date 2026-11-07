@@ -5,9 +5,8 @@
  * Tahap 9 (7 Nov 2026, keputusan owner "menu & tampilan dua portal identik"):
  *   • Cetakan PageLayout + TABEL (cari, penyaring buyer & status, halaman) — dulu kartu angka warna-warni,
  *     kartu penyaring, dan satu kartu per artikel.
- *   • Rincian artikel DI HALAMAN (maklon/KatalogArtikelDetail): ringkasan + riwayat sampel, varian SKU,
- *     riwayat harga, templat BOM — dulu dialog "Detail" bertab.
- *   • Artikel baru / ubah juga di halaman (maklon/KatalogArtikelForm).
+ *   • Rincian artikel (maklon/KatalogArtikelDetail): ringkasan + riwayat sampel, varian SKU, riwayat harga, templat BOM.
+ *   • Standar UI/UX v2 (8 Nov 2026): rincian = popup, artikel baru/ubah = FormPopup, tabel bisa diunduh, cari ± 16 rem.
  *   • Panduan produksi (SOP) tetap editor yang sama (ProductionGuideDialog) — dibuka dari rincian artikel.
  *
  *   GET /api/dewi/maklon/buyer-catalog?client_id&status&search · GET /api/dewi/maklon/clients
@@ -15,7 +14,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BookOpen, Plus, RefreshCw, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
+import { Input } from '@/components/ui/input';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
@@ -25,7 +26,7 @@ import { formatRupiah } from '@/lib/format';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice } from './moduleAtoms';
 import ProductionGuideDialog from './ProductionGuideDialog';
-import KatalogArtikelForm from './maklon/KatalogArtikelForm';
+import KatalogArtikelForm, { ARTIKEL_STATUS } from './maklon/KatalogArtikelForm';
 import KatalogArtikelDetail, { ArtikelStatusBadge } from './maklon/KatalogArtikelDetail';
 
 const fmtRp = (v) => formatRupiah(v || 0);
@@ -81,12 +82,12 @@ export default function MaklonBuyerCatalogModule({ token, onNavigate }) {
       subtitle="Artikel klien maklon: spesifikasi, harga bawaan, varian SKU, templat BOM, dan riwayat sampel."
       actions={<Button onClick={() => setPanel({ mode: 'new' })} data-testid="buyer-catalog-add-btn"><Plus className="w-4 h-4" />Artikel baru</Button>}
       filters={<>
-        <div className="relative w-72 max-w-full">
-          <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari kode artikel / kode buyer / nama…"
-            className="pl-8 h-9" data-testid="buyer-catalog-search-input" />
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari kode artikel, kode buyer, nama"
+            className="pl-8" data-testid="buyer-catalog-search-input" />
         </div>
-        <SmartNativeSelect value={clientId} onChange={(e) => setClientId(e.target.value)} className="h-9 w-56 max-w-full"
+        <SmartNativeSelect value={clientId} onChange={(e) => setClientId(e.target.value)} className="h-9 w-48" wrapperClassName="w-48"
           data-testid="buyer-catalog-filter-client" aria-label="Buyer">
           <option value="">Semua buyer</option>
           {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -95,11 +96,22 @@ export default function MaklonBuyerCatalogModule({ token, onNavigate }) {
           options={[{ key: '', label: 'Semua', count: counts.all }, { key: 'active', label: 'Aktif', count: counts.active },
             { key: 'inactive', label: 'Nonaktif', count: counts.inactive }, { key: 'discontinued', label: 'Dihentikan', count: counts.discontinued }]} />
       </>}
-      tools={<Button size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="buyer-catalog-refresh-btn">
-        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-      </Button>}
+      tools={<>
+        <TombolUnduh namaBerkas="katalog-buyer" namaLembar="Katalog buyer" baris={filtered} testId="buyer-catalog-unduh"
+          kolom={[
+            { label: 'Kode artikel', nilai: (it) => it.artikel_code || '' }, { label: 'Kode buyer', nilai: (it) => it.buyer_ref_code || '' },
+            { label: 'Nama produk', nilai: (it) => it.product_name || '' }, { label: 'Buyer', nilai: (it) => it.client_name || '' },
+            { label: 'Kategori', nilai: (it) => it.category || '' }, { label: 'Upah CMT', nilai: (it) => Number(it.default_cmt_price || 0) },
+            { label: 'Harga jasa', nilai: (it) => Number(it.default_selling_price || 0) }, { label: 'Varian', nilai: (it) => (it.variants || []).length },
+            { label: 'Produksi (pcs)', nilai: (it) => Number(it.total_qty_produced || 0) },
+            { label: 'Status', nilai: (it) => ARTIKEL_STATUS[it.status] || it.status || '' },
+          ]} />
+        <Button size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="buyer-catalog-refresh-btn">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </>}
       summary={error && <Notice tone="danger" title="Gagal memuat Katalog Buyer">{error}</Notice>}
-      detail={detail}
+      detail={sopFor ? null : detail /* panduan produksi menggantikan popup rincian sementara (tidak bertumpuk) */}
       footer={filtered.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
       <GlassCard className="p-0 overflow-hidden">
         {loading && !items.length ? (

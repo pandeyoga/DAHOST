@@ -6,6 +6,7 @@ import { Fragment, useCallback, useEffect, useState } from 'react';
 import { AlertCircle, Users } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import PageLayout, { RowDetail, RowToggle } from '../layout/PageLayout';
 import { EmptyState, Notice, StatTile } from '../moduleAtoms';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -15,6 +16,8 @@ import { Badge, LoadingRows, RefreshButton, Section, n, pct } from './pantauShar
 
 const PERIODS = [{ value: '30', label: '30 hari' }, { value: '60', label: '60 hari' }, { value: '90', label: '90 hari' }, { value: '180', label: '6 bulan' }];
 const SLA_META = { good: { label: 'Baik', tone: 'success' }, warning: { label: 'Perlu perhatian', tone: 'warning' }, poor: { label: 'Buruk', tone: 'danger' } };
+// Klien tanpa order selesai tidak bisa dinilai — dulu server menilainya "Buruk" (rate kosong dianggap 0%).
+const slaMeta = (c) => (c.on_time_rate == null ? { label: 'Belum bisa dinilai', tone: 'muted' } : SLA_META[c.sla_status]);
 const ORDER_META = { on_time: { label: 'Tepat waktu', tone: 'success' }, late: { label: 'Terlambat', tone: 'danger' } };
 
 export default function MaklonSlaTab() {
@@ -40,15 +43,28 @@ export default function MaklonSlaTab() {
       filters={<SmartNativeSelect value={days} onChange={(e) => setDays(e.target.value)} searchable={false} className="h-9 w-36" aria-label="Periode" data-testid="sla-period">
         {PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
       </SmartNativeSelect>}
-      tools={<RefreshButton onClick={load} loading={loading} testId="btn-refresh-sla" />}
+      tools={<>
+        <TombolUnduh namaBerkas={`sla-klien-maklon-${days}-hari`} namaLembar="SLA per klien" baris={items} testId="sla-unduh"
+          kolom={[
+            { label: 'Klien', nilai: (c) => c.client_name || '' }, { label: 'Order', nilai: (c) => Number(c.total_orders || 0) },
+            { label: 'Selesai', nilai: (c) => Number(c.completed_orders || 0) }, { label: 'Tepat waktu', nilai: (c) => Number(c.on_time || 0) },
+            { label: 'Terlambat', nilai: (c) => Number(c.late || 0) },
+            { label: 'Ketepatan %', nilai: (c) => (c.on_time_rate == null ? '' : Number(c.on_time_rate)) },
+            { label: 'Rata-rata hari', nilai: (c) => (c.avg_lead_days ? Number(c.avg_lead_days) : '') },
+            { label: 'Status', nilai: (c) => (slaMeta(c) || {}).label || '' },
+          ]} />
+        <RefreshButton onClick={load} loading={loading} testId="btn-refresh-sla" />
+      </>}
       summary={<>
         {error && <Notice tone="danger" icon={AlertCircle}>{error}</Notice>}
         {items.length > 0 && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatTile label="Klien" value={n(meta.total_clients)} />
-            <StatTile label="Order" value={n(meta.total_orders)} />
-            <StatTile label="Tepat waktu" value={meta.overall_on_time_rate == null ? '—' : pct(meta.overall_on_time_rate)} />
-            <StatTile label="Rata-rata lama kerja" value={meta.overall_avg_lead_days ? `${n(meta.overall_avg_lead_days)} hari` : '—'} />
+            <StatTile label="Klien" value={n(meta.total_clients)} sub="Punya order dalam periode ini" />
+            <StatTile label="Order" value={n(meta.total_orders)} sub={`${n(meta.total_completed)} sudah selesai`} />
+            <StatTile label="Tepat waktu" value={meta.overall_on_time_rate == null ? '—' : pct(meta.overall_on_time_rate)}
+              sub={meta.overall_on_time_rate == null ? 'Belum ada order selesai' : 'Dari order yang sudah selesai'} />
+            <StatTile label="Rata-rata lama kerja" value={meta.overall_avg_lead_days ? `${n(meta.overall_avg_lead_days)} hari` : '—'}
+              sub={meta.overall_avg_lead_days ? 'Rata-rata dari rata-rata tiap klien' : 'Belum ada order selesai'} />
           </div>
         )}
       </>}
@@ -79,7 +95,7 @@ export default function MaklonSlaTab() {
                       <TableCell className="text-right tabular-nums">{n(c.late)}</TableCell>
                       <TableCell className="text-right tabular-nums">{c.on_time_rate == null ? '—' : pct(c.on_time_rate)}</TableCell>
                       <TableCell className="text-right tabular-nums">{c.avg_lead_days ? n(c.avg_lead_days) : '—'}</TableCell>
-                      <TableCell><Badge meta={SLA_META[c.sla_status]} /></TableCell>
+                      <TableCell><Badge meta={slaMeta(c)} /></TableCell>
                     </TableRow>
                     {isOpen && <RowDetail colSpan={9}><ClientOrders clientId={c.client_id} days={days} /></RowDetail>}
                   </Fragment>

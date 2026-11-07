@@ -1,5 +1,8 @@
 /**
- * KatalogArtikelDetail — rincian satu artikel Katalog Buyer, DI HALAMAN (DetailPanel).
+ * KatalogArtikelDetail — rincian satu artikel Katalog Buyer (DetailPanel; sejak Standar UI/UX v2 tampil sebagai popup).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): tiap tabel bagian bisa diunduh (Excel/CSV); editor templat BOM = FormPopup panjang
+ * (dulu form di dalam panel); "Hentikan artikel" bertombol merah; ukuran huruf & warna status token.
  *
  * Tahap 9 (7 Nov 2026, PANDUAN_UI G13): pengganti dialog "Detail" (MaklonBuyerCatalogDetailDialog) yang dulu
  * punya 4 tab di dalam popup. Isinya tetap: ringkasan + sampel terkait (riwayat sampel artikel ini, keputusan 9),
@@ -14,7 +17,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BookOpen, Boxes, ClipboardCheck, FlaskConical, History, Pencil, Plus, Power, Save, Search, Sparkles, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { GlassInput } from '@/components/ui/glass';
+import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -78,6 +84,10 @@ function SamplesSection({ catalogId }) {
   const rows = data.samples || [];
   return (
     <Section title="Riwayat sampel" testId="bc-samples"
+      actions={rows.length > 0 && <TombolUnduh namaBerkas="riwayat-sampel-artikel" namaLembar="Sampel" baris={rows} testId="bc-samples-unduh"
+        kolom={[{ label: 'Kode sampel', nilai: (x) => x.sample_code || '' }, { label: 'Ukuran', nilai: (x) => x.target_size || '' },
+          { label: 'Warna', nilai: (x) => x.color_used || '' }, { label: 'Tanggal', nilai: (x) => (x.created_at ? formatDateID(x.created_at) : '') },
+          { label: 'Status', nilai: (x) => (SAMPLE_STATUS[x.status] || [x.status])[0] }]} />}
       hint={rows.length ? `${sum.approved || 0} disetujui · ${sum.in_progress || 0} berjalan · ${sum.rejected || 0} ditolak` : 'Sampel dibuat dari rincian PO maklon dan tercatat di artikel ini.'}>
       {loading ? <p className="text-sm text-muted-foreground">Memuat sampel…</p> : !rows.length ? (
         <EmptyState icon={FlaskConical} title="Belum ada sampel untuk artikel ini" className="py-6" testId="bc-samples-empty"
@@ -154,9 +164,15 @@ function VariantsSection({ catalog }) {
   return (
     <Section title={`Varian SKU (${variants.length})`} testId="bc-variants-tab"
       hint={`Kombinasi warna × ukuran. Format SKU: ${catalog.artikel_code}-WARNA-UKURAN.`}
-      actions={<Button size="sm" variant="outline" onClick={generate} disabled={!canGenerate || busy} data-testid="bc-variant-generate-btn">
-        <Sparkles className="w-3.5 h-3.5" />Buat varian
-      </Button>}>
+      actions={<>
+        {variants.length > 0 && <TombolUnduh namaBerkas={`varian-${catalog.artikel_code}`} namaLembar="Varian" baris={variants} testId="bc-variants-unduh"
+          kolom={[{ label: 'SKU', nilai: (v) => v.sku }, { label: 'Warna', nilai: (v) => v.color || '' }, { label: 'Kode warna', nilai: (v) => v.color_code || '' },
+            { label: 'Ukuran', nilai: (v) => v.size || '' }, { label: 'Kode buyer', nilai: (v) => v.buyer_ref_code || '' },
+            { label: 'Status', nilai: (v) => (v.active === false ? 'Nonaktif' : 'Aktif') }]} />}
+        <Button size="sm" variant="outline" onClick={generate} disabled={!canGenerate || busy} data-testid="bc-variant-generate-btn">
+          <Sparkles className="w-3.5 h-3.5" />Buat varian
+        </Button>
+      </>}>
       {!canGenerate && <Notice tone="warning">Lengkapi pilihan warna & ukuran (Ubah artikel) sebelum membuat varian.</Notice>}
       {loading && !variants.length ? <p className="text-sm text-muted-foreground">Memuat varian…</p> : !variants.length ? (
         <EmptyState icon={Boxes} title="Belum ada varian SKU" className="py-6" description="Klik Buat varian untuk membuat matriks SKU warna × ukuran." />
@@ -173,7 +189,7 @@ function VariantsSection({ catalog }) {
                 <TableCell>
                   {editingId === v.id ? (
                     <span className="flex items-center gap-1">
-                      <GlassInput value={refDraft} onChange={(e) => setRefDraft(e.target.value)} className="h-8 w-36 text-xs" placeholder="Kode buyer"
+                      <Input value={refDraft} onChange={(e) => setRefDraft(e.target.value)} className="h-8 w-36 text-xs" placeholder="Kode buyer"
                         data-testid={`bc-variant-ref-input-${v.sku}`} />
                       <Button size="icon-sm" variant="ghost" onClick={() => saveRef(v)} disabled={busy} title="Simpan" aria-label="Simpan"
                         data-testid={`bc-variant-ref-save-${v.sku}`}><Save className="w-3.5 h-3.5" /></Button>
@@ -218,6 +234,11 @@ function PriceHistorySection({ catalogId }) {
   const t = data.thresholds || {};
   return (
     <Section title="Riwayat harga upah CMT" testId="bc-price-history"
+      actions={rows.length > 0 && <TombolUnduh namaBerkas="riwayat-harga-cmt" namaLembar="Riwayat harga" baris={rows} testId="bc-price-unduh"
+        kolom={[{ label: 'Waktu', nilai: (h) => (h.timestamp ? formatDateTimeID(h.timestamp) : '') },
+          { label: 'Sumber', nilai: (h) => PRICE_EVENT[h.event_type] || h.event_type || '' }, { label: 'PO', nilai: (h) => h.po_number || '' },
+          { label: 'Sebelum', nilai: (h) => Number(h.old_cmt_price || 0) }, { label: 'Sesudah', nilai: (h) => Number(h.new_cmt_price || 0) },
+          { label: 'Oleh', nilai: (h) => h.changed_by_name || '' }, { label: 'Catatan', nilai: (h) => h.note || '' }]} />}
       hint={`Setiap perubahan dari katalog atau PO. Peringatan bila naik/turun ≥${t.warn_pct || 10}%, ditolak ≥${t.block_pct || 25}%.`}>
       {loading ? <p className="text-sm text-muted-foreground">Memuat riwayat…</p> : !rows.length ? (
         <EmptyState icon={History} title="Belum ada perubahan harga" className="py-6" description="Perubahan upah CMT dari katalog atau PO tercatat di sini." />
@@ -235,7 +256,7 @@ function PriceHistorySection({ catalogId }) {
                   <TableCell className="text-sm">{PRICE_EVENT[h.event_type] || h.event_type || '—'}{h.po_number ? <span className="block text-xs text-muted-foreground">{h.po_number}</span> : null}</TableCell>
                   <TableCell className="text-right tabular-nums">{fmtRp(h.old_cmt_price)}</TableCell>
                   <TableCell className="text-right tabular-nums font-medium">{fmtRp(h.new_cmt_price)}</TableCell>
-                  <TableCell className={`text-right tabular-nums ${delta > 0 ? 'text-[hsl(var(--warning))]' : delta < 0 ? 'text-[hsl(var(--success))]' : 'text-muted-foreground'}`}>{fmtPct(pct)}</TableCell>
+                  <TableCell className={`text-right tabular-nums ${delta > 0 ? 'text-[hsl(var(--warning-text))]' : delta < 0 ? 'text-[hsl(var(--success-text))]' : 'text-muted-foreground'}`}>{fmtPct(pct)}</TableCell>
                   <TableCell className="text-xs">{h.changed_by_name || '—'}{h.note ? <span className="block text-muted-foreground">{h.note}</span> : null}</TableCell>
                 </TableRow>
               );
@@ -287,22 +308,24 @@ function BomEditor({ mode, data, catalog, onClose, onSaved }) {
   };
 
   return (
-    <div className="space-y-3" data-testid="bom-template-editor">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <label className="block space-y-1">
-          <span className="text-xs text-muted-foreground">{mode === 'edit' ? `Label versi v${data.version}` : 'Label versi'}</span>
-          <GlassInput value={form.version_label} onChange={(e) => setForm({ ...form, version_label: e.target.value })} placeholder="mis. Bahan awal / Revisi Q3"
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="bom-template-editor" onSimpan={save} menyimpan={saving}
+      judul={mode === 'edit' ? `Ubah templat BOM v${data.version}` : 'Versi templat BOM baru'}
+      keterangan={`${catalog.artikel_code} — ${catalog.product_name}. Material per pcs; pilih dari master, ketik hanya untuk bahan milik klien.`}
+      labelSimpan={mode === 'edit' ? 'Simpan templat' : 'Buat versi'}>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Isian label={mode === 'edit' ? `Label versi v${data.version}` : 'Label versi'} htmlFor="bom-editor-version-label">
+          <Input id="bom-editor-version-label" value={form.version_label} onChange={(e) => setForm({ ...form, version_label: e.target.value })} placeholder="mis. Bahan awal / Revisi Q3"
             data-testid="bom-editor-version-label" />
-        </label>
+        </Isian>
         {mode === 'create' && (
-          <label className="inline-flex items-end gap-2 text-sm cursor-pointer">
-            <input type="checkbox" checked={form.set_active} onChange={(e) => setForm({ ...form, set_active: e.target.checked })}
-              className="h-4 w-4 accent-[hsl(var(--primary))]" data-testid="bom-editor-set-active" />
+          <label className="inline-flex cursor-pointer items-end gap-2 text-sm">
+            <Checkbox checked={form.set_active} onCheckedChange={(v) => setForm({ ...form, set_active: !!v })} data-testid="bom-editor-set-active" />
             Jadikan versi aktif (versi lain dinonaktifkan)
           </label>
         )}
       </div>
-      <Table>
+      <div className="overflow-x-auto">
+      <Table className="min-w-[900px]">
         <TableHeader><TableRow>
           <TableHead>Material (dari master) *</TableHead><TableHead>Disediakan</TableHead><TableHead>Kategori</TableHead>
           <TableHead>Satuan</TableHead><TableHead className="text-right">Qty/pcs</TableHead><TableHead className="text-right">Biaya/satuan</TableHead>
@@ -313,21 +336,21 @@ function BomEditor({ mode, data, catalog, onClose, onSaved }) {
             <TableRow key={idx}>
               <TableCell className="min-w-[220px]">
                 <InlineMaterialPicker token={token} onSelect={(mat) => pickMaster(idx, mat)}>
-                  <Button variant="outline" size="sm" className="w-full justify-start text-xs" data-testid={`bom-mat-${idx}-pick`}>
+                  <Button type="button" variant="outline" size="sm" className="w-full justify-start text-xs" data-testid={`bom-mat-${idx}-pick`}>
                     {m.material_id ? <><span className="tabular-nums text-muted-foreground mr-1">{m.material_code}</span><span className="truncate">{m.material_name}</span></>
                       : <><Search className="w-3 h-3" />Pilih dari master material</>}
                   </Button>
                 </InlineMaterialPicker>
                 {!m.material_id && m.ownership !== 'cv_da_stock' && (
-                  <GlassInput value={m.material_name} onChange={(e) => updateMat(idx, 'material_name', e.target.value)} placeholder="atau ketik bahan milik klien"
+                  <Input value={m.material_name} onChange={(e) => updateMat(idx, 'material_name', e.target.value)} placeholder="atau ketik bahan milik klien"
                     className="h-8 mt-1 text-xs" data-testid={`bom-mat-${idx}-name`} />
                 )}
                 {m.material_id && (
-                  <Button variant="link" size="sm" className="h-auto p-0 text-[11px]" onClick={() => setForm((f) => ({ ...f, materials: f.materials.map((x, i) => (i !== idx ? x : { ...x, material_id: null, material_code: '' })) }))}>
+                  <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setForm((f) => ({ ...f, materials: f.materials.map((x, i) => (i !== idx ? x : { ...x, material_id: null, material_code: '' })) }))}>
                     Lepas tautan master (bahan milik klien)
                   </Button>
                 )}
-                {!m.material_id && m.material_name && <p className="text-[10px] text-[hsl(var(--warning))]">Belum tertaut master — stok tidak bisa dicek</p>}
+                {!m.material_id && m.material_name && <p className="text-xs text-[hsl(var(--warning-text))]">Belum tertaut master — stok tidak bisa dicek</p>}
               </TableCell>
               <TableCell>
                 <SmartNativeSelect value={m.ownership || 'client_provided'} onChange={(e) => updateMat(idx, 'ownership', e.target.value)} searchable={false}
@@ -352,35 +375,31 @@ function BomEditor({ mode, data, catalog, onClose, onSaved }) {
                 )}
               </TableCell>
               <TableCell className="text-right">
-                <GlassInput type="number" step="0.01" value={m.qty_per_pcs} onChange={(e) => updateMat(idx, 'qty_per_pcs', e.target.value)} className="h-8 w-20 text-xs text-right" />
+                <Input type="number" step="0.01" value={m.qty_per_pcs} onChange={(e) => updateMat(idx, 'qty_per_pcs', e.target.value)} className="h-8 w-20 text-xs text-right" />
               </TableCell>
               <TableCell className="text-right">
-                <MoneyInput glass decimals={2} value={m.cost_per_unit} onChange={(e) => updateMat(idx, 'cost_per_unit', e.target.value)} className="h-8 w-24 text-xs text-right" />
+                <MoneyInput decimals={2} value={m.cost_per_unit} onChange={(e) => updateMat(idx, 'cost_per_unit', e.target.value)} className="h-8 w-24 text-xs text-right" />
               </TableCell>
-              <TableCell><GlassInput value={m.supplier} onChange={(e) => updateMat(idx, 'supplier', e.target.value)} placeholder="Pemasok" className="h-8 w-28 text-xs" /></TableCell>
+              <TableCell><Input value={m.supplier} onChange={(e) => updateMat(idx, 'supplier', e.target.value)} placeholder="Pemasok" className="h-8 w-28 text-xs" /></TableCell>
               <TableCell>
-                <Button size="icon-sm" variant="ghost" onClick={() => setForm((f) => ({ ...f, materials: f.materials.filter((_, i) => i !== idx) }))}
+                <Button type="button" size="icon-sm" variant="ghost" onClick={() => setForm((f) => ({ ...f, materials: f.materials.filter((_, i) => i !== idx) }))}
                   title="Hapus baris" aria-label="Hapus baris"><X className="w-3.5 h-3.5" /></Button>
               </TableCell>
             </TableRow>
           ))}
         </TableBody>
       </Table>
+      </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Button size="sm" variant="outline" onClick={() => setForm((f) => ({ ...f, materials: [...f.materials, { ...EMPTY_BOM_LINE }] }))}>
+        <Button type="button" size="sm" variant="outline" onClick={() => setForm((f) => ({ ...f, materials: [...f.materials, { ...EMPTY_BOM_LINE }] }))}>
           <Plus className="w-3.5 h-3.5" />Tambah material
         </Button>
         <p className="text-sm">Biaya per pcs: <span className="font-semibold tabular-nums">{fmtRp(totalCost)}</span></p>
       </div>
-      <label className="block space-y-1">
-        <span className="text-xs text-muted-foreground">Catatan versi</span>
-        <Textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Apa yang berubah di versi ini?" />
-      </label>
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={onClose} disabled={saving}>Batal</Button>
-        <Button onClick={save} disabled={saving} data-testid="bom-editor-save"><Save className="w-4 h-4" />{mode === 'edit' ? 'Simpan templat' : 'Buat versi'}</Button>
-      </div>
-    </div>
+      <Isian label="Catatan versi" htmlFor="bom-editor-notes">
+        <Textarea id="bom-editor-notes" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Apa yang berubah di versi ini?" />
+      </Isian>
+    </FormPopup>
   );
 }
 
@@ -410,12 +429,21 @@ function BomTemplatesSection({ catalog }) {
   return (
     <Section title="Templat BOM" testId="bc-bom-templates"
       hint="Resep material per pcs, bisa beberapa versi; hanya satu versi aktif yang dipakai saat membuat PO."
-      actions={!editor && <Button size="sm" variant="outline" onClick={() => setEditor({ mode: 'create' })} data-testid="bom-template-add-btn">
-        <Plus className="w-3.5 h-3.5" />Versi baru
-      </Button>}>
-      {editor ? (
+      actions={<>
+        {templates.length > 0 && <TombolUnduh namaBerkas={`templat-bom-${catalog.artikel_code}`} namaLembar="Templat BOM" baris={templates} testId="bom-template-unduh"
+          kolom={[{ label: 'Versi', nilai: (t) => `v${t.version}` }, { label: 'Label', nilai: (t) => t.version_label || '' },
+            { label: 'Material', nilai: (t) => Number(t.material_count ?? (t.materials || []).length) },
+            { label: 'Biaya/pcs', nilai: (t) => Number(t.total_cost_per_pcs || 0) },
+            { label: 'Diperbarui', nilai: (t) => (t.updated_at ? formatDateID(t.updated_at) : '') },
+            { label: 'Status', nilai: (t) => (t.is_active ? 'Aktif' : 'Tidak aktif') }, { label: 'Catatan', nilai: (t) => t.notes || '' }]} />}
+        <Button size="sm" variant="outline" onClick={() => setEditor({ mode: 'create' })} data-testid="bom-template-add-btn">
+          <Plus className="w-3.5 h-3.5" />Versi baru
+        </Button>
+      </>}>
+      {editor && (
         <BomEditor mode={editor.mode} data={editor.data} catalog={catalog} onClose={() => setEditor(null)} onSaved={() => { setEditor(null); load(); }} />
-      ) : loading ? <p className="text-sm text-muted-foreground">Memuat templat…</p> : !templates.length ? (
+      )}
+      {loading ? <p className="text-sm text-muted-foreground">Memuat templat…</p> : !templates.length ? (
         <EmptyState icon={ClipboardCheck} title="Belum ada templat BOM" description="Klik Versi baru untuk membuat resep material pertama." className="py-6" />
       ) : (
         <Table>
@@ -481,7 +509,7 @@ export default function KatalogArtikelDetail({ catalog, onClose, onEdit, onSop, 
           </Button>
         )}
         {catalog.status !== 'discontinued' && (
-          <Button variant="outline" size="icon" onClick={discontinue} disabled={busy} title="Hentikan artikel" aria-label="Hentikan artikel"
+          <Button variant="destructive" size="icon" onClick={discontinue} disabled={busy} title="Hentikan artikel" aria-label="Hentikan artikel"
             data-testid={`buyer-catalog-discontinue-${catalog.id}`}><Trash2 className="w-4 h-4" /></Button>
         )}
       </>}>

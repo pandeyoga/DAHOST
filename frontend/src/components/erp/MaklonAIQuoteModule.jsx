@@ -7,17 +7,21 @@
  * `routes/dewi_maklon_quote.py`.
  *
  * Tahap 9 (7 Nov 2026, keputusan owner): "Estimasi AI Maklon" pindah ke Katalog Buyer sebagai tab.
- * Cetakan PageLayout: daftar estimasi = tabel; estimasi baru & rinciannya dibuka DI HALAMAN (DetailPanel).
- * Dulu: judul h1 sendiri, tab Radix di dalam modul, riwayat berupa kartu, rincian di popup, window.confirm.
+ * Cetakan PageLayout: daftar estimasi = tabel (bisa diunduh); rincian = popup (DetailPanel).
+ * Standar UI/UX v2 (8 Nov 2026): estimasi baru = FormPopup panjang; setelah dihitung, rincian estimasi baru langsung
+ * terbuka (hasil yang dulu tampil di bawah form kini di popup rincian). Isian & panggilan server tidak berubah.
  *
  *   POST /api/maklon/ai-quote/generate · GET /api/maklon/ai-quote/history
  *   POST /api/maklon/ai-quote/{id}/accept · DELETE /api/maklon/ai-quote/{id}
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Calculator, CheckCircle2, Loader2, Plus, RefreshCw, Search, Sparkles, Trash2 } from 'lucide-react';
+import { AlertTriangle, Calculator, CheckCircle2, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
+import { Input } from '@/components/ui/input';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -46,13 +50,10 @@ const EMPTY_FORM = {
 };
 const fmtRp = (v) => (v == null ? '—' : formatRupiah(v));
 
+/** Isian standar; tanda * di label → `wajib`. */
 function Field({ label, children, className = '' }) {
-  return (
-    <label className={`block space-y-1 ${className}`}>
-      <span className="text-xs text-muted-foreground">{label}</span>
-      {children}
-    </label>
-  );
+  const wajib = /\*\s*$/.test(label);
+  return <Isian label={label.replace(/\s*\*\s*$/, '')} wajib={wajib} className={className}>{children}</Isian>;
 }
 
 export function QuoteResult({ result }) {
@@ -95,7 +96,7 @@ export function QuoteResult({ result }) {
           <ul className="list-disc pl-4 text-xs space-y-0.5">{res.recommendations.map((r, i) => <li key={i}>{r}</li>)}</ul>
         </Notice>
       )}
-      {res.source && <p className="text-[11px] text-muted-foreground text-right">Sumber hitungan: {SOURCE_LABEL[res.source] || 'Rumus bawaan'}</p>}
+      {res.source && <p className="text-xs text-muted-foreground text-right">Sumber hitungan: {SOURCE_LABEL[res.source] || 'Rumus bawaan'}</p>}
     </div>
   );
 }
@@ -103,13 +104,12 @@ export function QuoteResult({ result }) {
 function NewQuotePanel({ onClose, onCreated }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState(null);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   const generate = async () => {
     if (!form.product_name?.trim()) { toast.error('Nama produk wajib diisi'); return; }
     if (!form.quantity || Number(form.quantity) <= 0) { toast.error('Jumlah harus lebih dari 0'); return; }
-    setBusy(true); setResult(null);
+    setBusy(true);
     try {
       const d = await apiPost('/maklon/ai-quote/generate', {
         ...form, quantity: Number(form.quantity),
@@ -117,7 +117,6 @@ function NewQuotePanel({ onClose, onCreated }) {
         required_lead_time_days: form.required_lead_time_days ? Number(form.required_lead_time_days) : null,
         target_margin_pct: Number(form.target_margin_pct) || 25,
       });
-      setResult(d?.data || null);
       toast.success('Estimasi harga dibuat');
       onCreated(d?.data?.id);
     } catch (e) { toast.error(`Gagal membuat estimasi: ${e.message}`); }
@@ -125,9 +124,10 @@ function NewQuotePanel({ onClose, onCreated }) {
   };
 
   return (
-    <DetailPanel testId="quote-new-panel" onClose={onClose} title="Estimasi harga baru"
-      description="Isi rincian produk; hasilnya tersimpan di daftar estimasi.">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="quote-new-panel" judul="Estimasi harga baru"
+      keterangan="Isi rincian produk; hasilnya tersimpan di daftar estimasi dan rinciannya langsung dibuka. Perhitungan 10–30 detik."
+      onSimpan={generate} menyimpan={busy} labelSimpan="Hitung estimasi">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="sm:col-span-2">
           {/* F14b — artikel yang SUDAH ada di Katalog Buyer dipilih, bukan diketik ulang; artikel baru boleh diketik. */}
           <BuyerCatalogSelect token={getToken()} value={form.buyer_catalog_id} newName={form.product_name} label="Produk / artikel"
@@ -146,10 +146,10 @@ function NewQuotePanel({ onClose, onCreated }) {
             {Object.entries(MARKET_OPTIONS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </SmartNativeSelect>
         </Field>
-        <Field label="Jumlah (pcs) *"><GlassInput type="number" value={form.quantity} onChange={set('quantity')} data-testid="quote-qty" /></Field>
-        <Field label="Target harga per pcs (opsional)"><MoneyInput glass value={form.target_unit_price} onChange={set('target_unit_price')} /></Field>
-        <Field label="Margin (% dari harga jual)"><GlassInput type="number" value={form.target_margin_pct} onChange={set('target_margin_pct')} /></Field>
-        <Field label="Waktu kerja diminta klien (hari)"><GlassInput type="number" value={form.required_lead_time_days} onChange={set('required_lead_time_days')} placeholder="opsional" /></Field>
+        <Field label="Jumlah (pcs) *"><Input type="number" value={form.quantity} onChange={set('quantity')} data-testid="quote-qty" /></Field>
+        <Field label="Target harga per pcs (opsional)"><MoneyInput value={form.target_unit_price} onChange={set('target_unit_price')} /></Field>
+        <Field label="Margin (% dari harga jual)"><Input type="number" value={form.target_margin_pct} onChange={set('target_margin_pct')} /></Field>
+        <Field label="Waktu kerja diminta klien (hari)"><Input type="number" value={form.required_lead_time_days} onChange={set('required_lead_time_days')} placeholder="opsional" /></Field>
         <Field label="Bahan utama disediakan oleh">
           <SmartNativeSelect value={form.fabric_provided_by} onChange={set('fabric_provided_by')} className="w-full h-9" searchable={false}
             data-testid="quote-fabric-provider" aria-label="Bahan utama disediakan oleh">
@@ -157,19 +157,12 @@ function NewQuotePanel({ onClose, onCreated }) {
             <option value="cv_da">CV Dewi Aditya (masuk biaya)</option>
           </SmartNativeSelect>
         </Field>
-        <Field label="Nama klien"><GlassInput value={form.client_name} onChange={set('client_name')} /></Field>
-        <Field label="Bahan" className="lg:col-span-2"><GlassInput value={form.materials} onChange={set('materials')} placeholder="mis. katun combed 30s, 180 gsm" /></Field>
-        <Field label="Finishing" className="lg:col-span-2"><GlassInput value={form.finishing} onChange={set('finishing')} placeholder="mis. sablon + bordir logo" /></Field>
-        <Field label="Catatan tambahan" className="sm:col-span-2 lg:col-span-4"><Textarea rows={2} value={form.additional_notes} onChange={set('additional_notes')} placeholder="Spesifikasi khusus, kemasan, dll." /></Field>
+        <Field label="Nama klien"><Input value={form.client_name} onChange={set('client_name')} /></Field>
+        <Field label="Bahan" className="sm:col-span-2"><Input value={form.materials} onChange={set('materials')} placeholder="mis. katun combed 30s, 180 gsm" /></Field>
+        <Field label="Finishing" className="sm:col-span-2"><Input value={form.finishing} onChange={set('finishing')} placeholder="mis. sablon + bordir logo" /></Field>
+        <Field label="Catatan tambahan" className="sm:col-span-2"><Textarea rows={2} value={form.additional_notes} onChange={set('additional_notes')} placeholder="Spesifikasi khusus, kemasan, dll." /></Field>
       </div>
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={onClose} disabled={busy}>Tutup</Button>
-        <Button onClick={generate} disabled={busy} data-testid="quote-generate-btn">
-          {busy ? <><Loader2 className="w-4 h-4 animate-spin" />Menghitung (10–30 detik)…</> : <><Sparkles className="w-4 h-4" />Hitung estimasi</>}
-        </Button>
-      </div>
-      {result && <QuoteResult result={result} />}
-    </DetailPanel>
+    </FormPopup>
   );
 }
 
@@ -198,7 +191,7 @@ function QuoteDetail({ quote, onClose, onChanged }) {
       description={`${quote.created_at ? formatDateTimeID(quote.created_at) : '—'} · ${quote.created_by_name || '—'}`}
       actions={<>
         {quote.status !== 'accepted' && <Button variant="outline" onClick={accept} disabled={busy} data-testid={`quote-accept-${quote.id}`}><CheckCircle2 className="w-4 h-4" />Tandai diterima</Button>}
-        <Button variant="outline" size="icon" onClick={remove} disabled={busy} title="Hapus estimasi" aria-label="Hapus estimasi" data-testid={`quote-delete-${quote.id}`}><Trash2 className="w-4 h-4" /></Button>
+        <Button variant="destructive" size="icon" onClick={remove} disabled={busy} title="Hapus estimasi" aria-label="Hapus estimasi" data-testid={`quote-delete-${quote.id}`}><Trash2 className="w-4 h-4" /></Button>
       </>}>
       <p className="text-sm text-muted-foreground">
         {CATEGORY_OPTIONS[rq.category] || rq.category || '—'} · {Number(rq.quantity || 0).toLocaleString('id-ID')} pcs · klien {rq.client_name || '—'}
@@ -241,21 +234,35 @@ export default function MaklonAIQuoteModule() {
       subtitle="Perkiraan harga jasa maklon dari rincian produk: HPP, margin, dan waktu kerja."
       actions={<Button onClick={() => setPanel({ mode: 'new' })} data-testid="quote-new-btn"><Plus className="w-4 h-4" />Estimasi baru</Button>}
       filters={<>
-        <div className="relative w-72 max-w-full">
-          <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari produk / klien…" className="pl-8 h-9"
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari produk atau klien" className="pl-8"
             data-testid="quote-search" />
         </div>
         <FilterChips value={status} onChange={setStatus} testId="quote-status" ariaLabel="Status estimasi"
           options={[{ key: '', label: 'Semua', count: counts.all }, { key: 'draft', label: 'Draf', count: counts.draft },
             { key: 'accepted', label: 'Diterima', count: counts.accepted }]} />
       </>}
-      tools={<Button size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="quote-refresh">
-        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-      </Button>}
+      tools={<>
+        <TombolUnduh namaBerkas="estimasi-harga-maklon" namaLembar="Estimasi harga" baris={filtered} testId="quote-unduh"
+          kolom={[
+            { label: 'Waktu', nilai: (q) => (q.created_at ? formatDateTimeID(q.created_at) : '') },
+            { label: 'Produk', nilai: (q) => q.request?.product_name || '' }, { label: 'Klien', nilai: (q) => q.request?.client_name || '' },
+            { label: 'Kategori', nilai: (q) => CATEGORY_OPTIONS[q.request?.category] || q.request?.category || '' },
+            { label: 'Jumlah (pcs)', nilai: (q) => Number(q.request?.quantity || 0) },
+            { label: 'Harga/pcs', nilai: (q) => (q.result?.estimated_unit_price == null ? '' : Number(q.result.estimated_unit_price)) },
+            { label: 'Total', nilai: (q) => (q.result?.estimated_total == null ? '' : Number(q.result.estimated_total)) },
+            { label: 'HPP/pcs', nilai: (q) => (q.result?.hpp_per_pcs == null ? '' : Number(q.result.hpp_per_pcs)) },
+            { label: 'Margin %', nilai: (q) => (q.result?.margin_pct == null ? '' : Number(q.result.margin_pct)) },
+            { label: 'Status', nilai: (q) => (QUOTE_STATUS[q.status] || [q.status || 'Draf'])[0] },
+          ]} />
+        <Button size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="quote-refresh">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </>}
       summary={error && <Notice tone="danger" title="Gagal memuat estimasi">{error}</Notice>}
       detail={panel?.mode === 'new'
-        ? <NewQuotePanel onClose={() => setPanel(null)} onCreated={() => load()} />
+        ? <NewQuotePanel onClose={() => setPanel(null)} onCreated={async (id) => { await load(); setPanel(id ? { mode: 'view', id } : null); }} />
         : current && <QuoteDetail quote={current} onClose={() => setPanel(null)} onChanged={async (id) => { await load(); setPanel(id ? { mode: 'view', id } : null); }} />}
       footer={filtered.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
       <GlassCard className="p-0 overflow-hidden">
