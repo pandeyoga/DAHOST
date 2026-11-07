@@ -101,10 +101,10 @@ export default function MasterProductSelect({
   return (
     <div className={className} data-testid={`${testId}-wrap`}>
       {label && (
-        <Label className="flex items-center gap-1.5 text-xs font-medium">
+        <Label className="flex items-center gap-1.5 text-sm font-medium">
           <Package className="w-3.5 h-3.5 text-muted-foreground" />
           {label}
-          {required && <span className="text-[hsl(var(--destructive))]">*</span>}
+          {required && <span className="text-[hsl(var(--danger-text))]">*</span>}
         </Label>
       )}
 

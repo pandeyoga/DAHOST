@@ -263,7 +263,7 @@ export default function ProductLaunchModule({ token }) {
       {item.cross_price > 0 && <span className="block text-xs text-muted-foreground line-through">{fmtRp(item.cross_price)}</span>}
     </span>);
   const pilihStatus = (item) => (
-    <SmartNativeSelect value={item.status} onChange={(e) => handleStatusChange(item.id, e.target.value)} className="w-40"
+    <SmartNativeSelect value={item.status} onChange={(e) => handleStatusChange(item.id, e.target.value)} className="w-44"
       searchable={false} data-testid={`launch-status-${item.id}`}>
       {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
     </SmartNativeSelect>);
@@ -293,7 +293,7 @@ export default function ProductLaunchModule({ token }) {
           <Input className="pl-8" placeholder="Cari produk" value={search}
             onChange={e => { setSearch(e.target.value); setPage(1); }} data-testid="launch-search" />
         </div>
-        <MarketingAccountSelect token={token} value={filterAccountId} className="w-56"
+        <MarketingAccountSelect token={token} value={filterAccountId} className="w-44"
           onChange={(v) => { setFilterAccountId(v); setPage(1); }} label=""
           includeAll allLabel="Semua toko" required={false} testId="launch-filter-account" />
         <SmartNativeSelect value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }} className="w-44" searchable={false}>
@@ -314,7 +314,7 @@ export default function ProductLaunchModule({ token }) {
             { label: 'Kategori', nilai: (it) => it.category_name || '' },
             { label: 'Bahan', nilai: (it) => it.material || '' },
             { label: 'Tanggal peluncuran', nilai: (it) => tgl(it.launch_date) },
-            { label: 'Harga listing', nilai: (it) => Number(it.listing_price) || 0 },
+            { label: 'Harga tayang', nilai: (it) => Number(it.listing_price) || 0 },
             { label: 'Harga coret', nilai: (it) => Number(it.cross_price) || 0 },
             { label: 'Harga flash sale', nilai: (it) => Number(it.flash_sale_price) || 0 },
             { label: 'Harga resmi master', nilai: (it) => (it.retail_price_master ?? '') },
@@ -391,7 +391,7 @@ export default function ProductLaunchModule({ token }) {
           <dl className="divide-y divide-[var(--glass-border)]">
             <BarisDetail label="Kode master">{labelTertaut(detail)}</BarisDetail>
             <BarisDetail label="Bahan / kategori">{[detail.material, detail.category_name].filter(Boolean).join(' · ') || '—'}</BarisDetail>
-            <BarisDetail label="Harga listing">{fmtRp(detail.listing_price)}</BarisDetail>
+            <BarisDetail label="Harga tayang">{fmtRp(detail.listing_price)}</BarisDetail>
             <BarisDetail label="Harga flash sale">{fmtRp(detail.flash_sale_price)}</BarisDetail>
             <BarisDetail label="Harga coret">{fmtRp(detail.cross_price)}</BarisDetail>
             <BarisDetail label="Harga resmi master">{fmtRp(detail.retail_price_master)}</BarisDetail>
@@ -409,6 +409,7 @@ export default function ProductLaunchModule({ token }) {
       <FormPopup open={showForm} onClose={() => setShowForm(false)} ukuran="panjang" onSimpan={handleSave} menyimpan={formLoading}
         judul={editTarget ? 'Ubah rencana peluncuran' : 'Tambah rencana peluncuran'} galat={galatForm} testId="launch-form"
         labelSimpan={editTarget ? 'Simpan perubahan' : 'Tambah rencana'}>
+        <div className="grid gap-4 sm:grid-cols-2">
         <MarketingAccountSelect token={token} value={form.account_id}
           onChange={(v) => setForm(f => ({ ...f, account_id: v }))} testId="launch-account-select" />
         {/* F14b — SATU pemilih, bukan tiga kotak ketik. Nama, kode, kategori, HPP, dan harga resmi mengikuti master. */}
@@ -426,6 +427,7 @@ export default function ProductLaunchModule({ token }) {
           }))}
           helpText="Daftar ini sama persis dengan daftar di layar Katalog dari Master — satu sumber."
         />
+        </div>
         {/* Dokumen WARISAN: katakan apa adanya, jangan ditebak. */}
         {editTarget && !form.model_id && (
           <Notice tone="warning" icon={AlertTriangle} title="Belum tertaut Master Produk" testId="launch-legacy-warning">
@@ -463,7 +465,7 @@ export default function ProductLaunchModule({ token }) {
             <MoneyInput value={form.original_price} onChange={e => setForm(f => ({...f, original_price: e.target.value}))}
               placeholder="0" data-testid="launch-original-price" />
           </Isian>
-          <Isian label="Harga pasang / listing (Rp)">
+          <Isian label="Harga tayang (Rp)" petunjuk="Harga yang dipasang di toko online.">
             <MoneyInput value={form.listing_price} onChange={e => setForm(f => ({...f, listing_price: e.target.value}))} placeholder="0" />
           </Isian>
           <Isian label="Harga flash sale (Rp)">

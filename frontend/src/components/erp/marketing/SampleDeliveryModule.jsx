@@ -4,7 +4,7 @@
  * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, penyaring satu baris, 4 StatTile berketerangan (dulu 6 kartu),
  * tabel 10 kolom + unduh Excel/CSV semua baris (dulu CSV halaman ini saja; kolom SKU/HPP satuan/ongkir/kurir/resi
  * kini di popup detail & berkas unduhan), detail popup berisi form tindak lanjut, form = FormPopup + DatePicker.
- * Tampilan "Kartu" lama diganti tabel (di HP otomatis kartu ringkas). Kolom "Umur" & "Video" tetap terbuka (F10).
+ * Tampilan "Kartu" lama diganti tabel (di HP otomatis kartu ringkas). Kolom "Video" tetap terbuka; "Umur" (F10) kini baris kedua di kolom Tanggal ("55 hari lalu") supaya tabel muat tanpa geser.
  * Perbaikan ikut: penyaring "Semua …" dulu mengirim nilai spasi ke server.
  */
 import { confirmDialog } from '@/components/ui/confirm-dialog';
@@ -62,7 +62,8 @@ const PROGRESS_STATUS_CONFIG = {
 };
 const JENIS_SAMPLE = { live: 'Live streaming', video: 'Video ulasan' };
 const KURIR = { jnt: 'J&T', spx: 'SPX', sicepat: 'SiCepat' };
-const labelPlatform = (p) => (getPlatformConfig(p).label !== 'Platform' ? getPlatformConfig(p).label
+const NAMA_PLATFORM = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', instagram: 'Instagram', lazada: 'Lazada' };
+const labelPlatform = (p) => NAMA_PLATFORM[String(p || '').toLowerCase()] || (getPlatformConfig(p).label !== 'Platform' ? getPlatformConfig(p).label
   : (p ? String(p).replace(/^./, (x) => x.toUpperCase()) : '—'));
 const Lencana = ({ peta, nilai }) => (nilai
   ? <StatusBadge status={nilai} label={peta[nilai]?.label || nilai} tone={peta[nilai]?.tone} />
@@ -333,22 +334,23 @@ export default function SampleDeliveryModule({ token }) {
   ) : null);
 
   const kolom = [
-    { kunci: 'tanggal', label: 'Tanggal', hp: 'keterangan', isi: (x) => <span className="tabular-nums md:whitespace-nowrap">{fmtDate(x.date || x.created_at)}</span> },
+    { kunci: 'tanggal', label: 'Tanggal', hp: 'keterangan', isi: (x) => (
+      <span className="tabular-nums md:whitespace-nowrap">{fmtDate(x.date || x.created_at)}
+        <span className="block text-xs text-muted-foreground">{ageDays(x.date || x.created_at)} hari lalu</span></span>) },
     { kunci: 'kreator', label: 'Kreator', hp: 'judul', isi: (x) => (
       <span className="md:whitespace-nowrap"><span className="font-medium text-foreground">{x.username || '—'}</span>
         <span className="block text-xs text-muted-foreground">{x.account_name || '—'} · {JENIS_SAMPLE[x.sample_type] || x.sample_type_label || '—'}</span></span>) },
     { kunci: 'produk', label: 'Produk', isi: (x) => (
-      <p className="truncate md:max-w-[13rem]" title={x.product}>{x.product || '—'}
+      <p className="md:max-w-[13rem] md:truncate" title={x.product}>{x.product || '—'}
         {(x.size || x.color) && <span className="text-xs text-muted-foreground"> · {[x.size, x.color].filter(Boolean).join(' ')}</span>}</p>) },
     { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (x) => <span className="tabular-nums">{x.quantity || 0}</span> },
-    { kunci: 'hpp', label: 'Total HPP (Rp)', rata: 'kanan', isi: (x) => <span className="tabular-nums font-medium">{(x.total_hpp || 0).toLocaleString('id-ID')}</span> },
+    { kunci: 'hpp', label: 'HPP (Rp)', rata: 'kanan', isi: (x) => <span className="tabular-nums font-medium">{(x.total_hpp || 0).toLocaleString('id-ID')}</span> },
     { kunci: 'kirim', label: 'Status kirim', isi: (x) => <Lencana peta={SHIPMENT_STATUS_CONFIG} nilai={x.shipment_status} /> },
     { kunci: 'progres', label: 'Tindak lanjut', isi: (x) => <Lencana peta={PROGRESS_STATUS_CONFIG} nilai={x.progress} /> },
     { kunci: 'video', label: 'Video', isi: (x) => (x.video_link ? (
       <a href={x.video_link} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
         className="inline-flex items-center gap-1 text-primary hover:underline"><Video className="h-3.5 w-3.5" />Buka</a>
     ) : <span className="text-[hsl(var(--warning-text))]">belum ada</span>) },
-    { kunci: 'umur', label: 'Umur (hari)', rata: 'kanan', isi: (x) => <span className="tabular-nums">{ageDays(x.date || x.created_at)}</span> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (x) => (
       <div className="flex justify-end gap-1">
         {tombolKirim(x)}
@@ -361,7 +363,7 @@ export default function SampleDeliveryModule({ token }) {
       subtitle="Pengiriman sample ke kreator/KOL, biaya HPP + ongkir, dan hasil tindak lanjutnya."
       actions={<Button onClick={() => openForm()} data-testid="sample-create"><Plus />Tambah sample</Button>}
       filters={<>
-        <div className="relative w-full sm:w-64">
+        <div className="relative w-full sm:w-44">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder="Cari kreator atau produk" value={searchQuery} className="pl-8"
             onChange={e => { setSearchQuery(e.target.value); setCurrentPage(1); }} data-testid="sample-search" />
@@ -369,13 +371,13 @@ export default function SampleDeliveryModule({ token }) {
         {/* F14 — filter per TOKO (biaya sample per toko). */}
         <MarketingAccountSelect token={token} value={filterAccountId}
           onChange={(v) => { setFilterAccountId(v); setCurrentPage(1); }}
-          label="" includeAll allLabel="Semua toko" required={false} className="w-56"
+          label="" includeAll allLabel="Semua toko" required={false} className="w-44"
           testId="sample-filter-account" />
-        <SmartNativeSelect value={filterShipmentStatus} onChange={(e) => { setFilterShipmentStatus(e.target.value); setCurrentPage(1); }} className="w-40" searchable={false}>
+        <SmartNativeSelect value={filterShipmentStatus} onChange={(e) => { setFilterShipmentStatus(e.target.value); setCurrentPage(1); }} className="w-44" searchable={false}>
           <option value="">Semua status kirim</option>
           {Object.entries(SHIPMENT_STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterProgress} onChange={(e) => { setFilterProgress(e.target.value); setCurrentPage(1); }} className="w-44" searchable={false}>
+        <SmartNativeSelect value={filterProgress} onChange={(e) => { setFilterProgress(e.target.value); setCurrentPage(1); }} className="w-48" searchable={false}>
           <option value="">Semua tindak lanjut</option>
           {Object.entries(PROGRESS_STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </SmartNativeSelect>
@@ -443,6 +445,7 @@ export default function SampleDeliveryModule({ token }) {
       {/* Form sample (popup) */}
       <FormPopup open={showForm} onClose={closeForm} ukuran="panjang" onSimpan={handleSave} menyimpan={formLoading}
         judul={editTarget ? 'Ubah sample' : 'Tambah sample'} galat={galatForm} testId="sample-form">
+        <div className="grid gap-4 sm:grid-cols-2">
         <Isian label="Akun / toko marketplace" wajib htmlFor="sample-account"
           petunjuk={form.account_id ? `Platform: ${labelPlatform(form.platform)} (otomatis dari akun)` : 'Toko asal sample.'}>
           <SmartNativeSelect id="sample-account" value={form.account_id || ''} onChange={(e) => handleAccountChange(e.target.value)}
@@ -451,6 +454,23 @@ export default function SampleDeliveryModule({ token }) {
             {masterAccounts.map(acc => <option key={acc.id} value={acc.id}>{`${acc.account_name} · ${labelPlatform(acc.platform)}`}</option>)}
           </SmartNativeSelect>
         </Isian>
+        {/* F15 — produk dari KATALOG toko; SKU, HPP, ukuran & warna ikut master. */}
+        <Isian label="Produk" wajib>
+          <CatalogItemSelect
+            token={token} accountId={form.account_id} label=""
+            value={form.catalog_item_id || ''}
+            onChange={(item) => { setSizeOptions(item?.sizes || []); setColorOptions(item?.colors || []); setForm({
+              ...form,
+              catalog_item_id: item?.id || '',
+              product: item?.name || '',
+              sku: item?.sku || '',
+              hpp: item?.hpp || 0,
+              size: (item?.sizes && item.sizes[0]) || form.size,
+              color: (item?.colors && item.colors[0]) || form.color,
+            }); }}
+            testId="sample-item-select" />
+        </Isian>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Isian label="Tanggal">
             <DatePicker value={form.date || ''} onChange={(v) => setForm({ ...form, date: v })} testId="sample-date" />
@@ -479,22 +499,6 @@ export default function SampleDeliveryModule({ token }) {
             </SmartNativeSelect>
           </Isian>
         </div>
-        {/* F15 — produk dari KATALOG toko; SKU, HPP, ukuran & warna ikut master. */}
-        <Isian label="Produk" wajib>
-          <CatalogItemSelect
-            token={token} accountId={form.account_id} label=""
-            value={form.catalog_item_id || ''}
-            onChange={(item) => { setSizeOptions(item?.sizes || []); setColorOptions(item?.colors || []); setForm({
-              ...form,
-              catalog_item_id: item?.id || '',
-              product: item?.name || '',
-              sku: item?.sku || '',
-              hpp: item?.hpp || 0,
-              size: (item?.sizes && item.sizes[0]) || form.size,
-              color: (item?.colors && item.colors[0]) || form.color,
-            }); }}
-            testId="sample-item-select" />
-        </Isian>
         <div className="grid gap-4 sm:grid-cols-3">
           <Isian label="Ukuran" htmlFor="sample-size">
             <SmartNativeSelect id="sample-size" value={form.size || ''} onChange={(e) => setForm({ ...form, size: e.target.value })}

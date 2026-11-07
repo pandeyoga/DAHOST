@@ -30,8 +30,7 @@ import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import { formatRupiah, formatDateID } from '@/lib/format';
-import { todayWIB, daysAgoWIB } from '@/lib/waktu';
-import PeriodPicker from '../finance/PeriodPicker';
+import PeriodPicker, { periodFromPreset } from '../finance/PeriodPicker';
 import PageLayout from '../layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import ContentKpiDialog from './ContentKpiDialog';
@@ -60,12 +59,35 @@ const SORTS = [
   { v: 'date', l: 'Terbaru' },
 ];
 const STATUS = { draft: ['Draf', 'muted'], scheduled: ['Terjadwal', 'info'], posted: ['Tayang', 'success'], cancelled: ['Batal', 'danger'] };
+/**
+ * Catatan data dari server memuat istilah program & huruf besar penekanan (mis. "(`marketing_orders.creator_id`)",
+ * "'no_target'", "link", "views", "BELUM"). Dirapikan di layar saja — isinya tidak diubah. Dipakai juga oleh
+ * Scorecard kreator.
+ */
+const GANTI_ISTILAH = [
+  [/\s*\(`?[a-z_]+\.[a-z_]+`?\)/g, ''], [/`/g, ''],
+  [/'no_target'/g, '"belum ada target"'], [/'posted'/g, '"tayang"'],
+  [/GMV\/view/g, 'GMV per tayangan'], [/\beng\. rate\b/g, 'tingkat interaksi'], [/\bCVR\b/g, 'konversi'],
+  [/\bAOV\b/g, 'nilai rata-rata pesanan'], [/\bviews\b/g, 'tayangan'], [/\bview\b/g, 'tayangan'],
+  [/\bengagement\b/g, 'interaksi'], [/\blink\b/g, 'tautan'], [/\bdi-assign\b/g, 'ditugaskan'],
+  [/\bmeng-assign\b/g, 'menugaskan'], [/\bassign\b/g, 'penugasan'],
+];
+const SINGKATAN = new Set(['GMV', 'KPI', 'HPP', 'PPN', 'SKU', 'KOL', 'CSV']);
+export function rapikanCatatan(teks) {
+  let s = String(teks || '');
+  GANTI_ISTILAH.forEach(([pola, ganti]) => { s = s.replace(pola, ganti); });
+  // Huruf besar penekanan → huruf biasa (singkatan resmi tetap).
+  s = s.replace(/\b[A-Z]{4,}\b/g, (w) => (SINGKATAN.has(w) ? w : w.toLowerCase()));
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 const StatusKonten = ({ s }) => <StatusBadge status={s} label={(STATUS[s] || [s || '—'])[0]} tone={(STATUS[s] || [])[1]} />;
 
 export default function ContentPerformanceView({ token }) {
-  // 30 hari BERGULIR, bukan "awal bulan": dibuka tanggal 1, rentang awal-bulan
-  // hanya memuat satu hari dan layar tampak kosong padahal data pekan lalu ada.
-  const [periode, setPeriode] = useState(() => ({ preset: 'custom', from: daysAgoWIB(29), to: todayWIB() }));
+  // Bawaan "3 bulan" (bulan ini + 2 bulan lalu), bukan "awal bulan": dibuka tanggal 1, rentang awal-bulan
+  // hanya memuat satu hari dan layar tampak kosong padahal data pekan lalu ada. (8 Nov 2026: dulu 30 hari
+  // bergulir = mode "Pilih tanggal", yang memaksa dua kotak tanggal bawaan browser tampil sejak awal.)
+  const [periode, setPeriode] = useState(() => periodFromPreset('3m'));
   const from = periode.from;
   const to = periode.to;
   const [groupBy, setGroupBy] = useState('content');
@@ -192,7 +214,7 @@ export default function ContentPerformanceView({ token }) {
             data-testid="perf-kpi-state">
             {KPI_STATES.map((x) => <option key={x.v} value={x.v}>{x.l}</option>)}
           </SmartNativeSelect>
-          <SmartNativeSelect value={sort} onChange={(e) => setSort(e.target.value)} className="w-44" searchable={false}
+          <SmartNativeSelect value={sort} onChange={(e) => setSort(e.target.value)} className="w-48" searchable={false}
             data-testid="perf-sort">
             {SORTS.map((x) => <option key={x.v} value={x.v}>{x.l}</option>)}
           </SmartNativeSelect>
@@ -236,9 +258,9 @@ export default function ContentPerformanceView({ token }) {
         <TabelData kolom={kolomKelompok} baris={rows} kunci={(r) => r.key} onKlikBaris={setRincian} testId="perf-table" />
       )}
       {(data?.data_notes || []).length > 0 && (
-        <Notice tone="info" icon={Info} title="Catatan kejujuran data" testId="perf-notes">
+        <Notice tone="info" icon={Info} title="Catatan tentang data" testId="perf-notes">
           <ul className="list-disc space-y-0.5 pl-4">
-            {(data.data_notes || []).map((n, i) => <li key={i}>{n}</li>)}
+            {(data.data_notes || []).map((n, i) => <li key={i}>{rapikanCatatan(n)}</li>)}
           </ul>
         </Notice>
       )}

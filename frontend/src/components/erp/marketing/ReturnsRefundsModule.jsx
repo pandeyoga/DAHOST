@@ -50,8 +50,9 @@ const STATUS_CONFIG = {
   rejected: { label: 'Ditolak', tone: 'danger' },
 };
 const REFUND_TYPE = { full_refund: 'Refund penuh', partial_refund: 'Refund sebagian', exchange: 'Tukar barang', no_refund: 'Tanpa refund' };
-const labelPlatform = (p) => (getPlatformConfig(p).label !== 'Platform' ? getPlatformConfig(p).label
-  : (p ? String(p).replace(/^./, (x) => x.toUpperCase()) : '—'));
+const NAMA_PLATFORM = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', instagram: 'Instagram', lazada: 'Lazada' };
+const labelPlatform = (p) => NAMA_PLATFORM[String(p || '').toLowerCase()] || ((getPlatformConfig(p).label !== 'Platform' ? getPlatformConfig(p).label
+  : (p ? String(p).replace(/^./, (x) => x.toUpperCase()) : '—')));
 const StatusRetur = ({ status }) => (status
   ? <StatusBadge status={status} label={STATUS_CONFIG[status]?.label || status} tone={STATUS_CONFIG[status]?.tone} />
   : <span className="text-muted-foreground">—</span>);
@@ -61,9 +62,9 @@ function PilihAkun({ accounts = [], activeAccount, onChange, testId = 'pilih-aku
   const aktif = accounts.filter((a) => a.status === 'active' || !a.status);
   const daftar = activeAccount && !aktif.some((a) => a.id === activeAccount.id) ? [activeAccount, ...aktif] : aktif;
   return (
-    <SmartNativeSelect value={activeAccount?.id || ''} className="w-56" data-testid={testId}
+    <SmartNativeSelect value={activeAccount?.id || ''} className="w-36" data-testid={testId}
       onChange={(e) => onChange(daftar.find((a) => a.id === e.target.value) || null)}>
-      <option value="">Semua akun toko</option>
+      <option value="">Semua toko</option>
       {daftar.map((a) => <option key={a.id} value={a.id}>{`${a.account_name} · ${labelPlatform(a.platform)}`}</option>)}
     </SmartNativeSelect>
   );
@@ -448,14 +449,14 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
         <Button onClick={() => openForm()} data-testid="returns-create"><Plus />Buat refund</Button>
       </>}
       filters={<>
-        <div className="relative w-full sm:w-64">
+        <div className="relative w-full sm:w-44">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder="Cari pesanan atau produk" value={searchQuery} className="pl-8"
             onChange={e => { setSearchQuery(e.target.value); setCurrentPage(1); }} data-testid="returns-search" />
         </div>
         <PilihAkun accounts={masterAccounts} activeAccount={activeAccount} testId="returns-account"
           onChange={(acc) => { setActiveAccount(acc); setCurrentPage(1); }} />
-        <SmartNativeSelect value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setCurrentPage(1); }} className="w-40" searchable={false}>
+        <SmartNativeSelect value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setCurrentPage(1); }} className="w-36" searchable={false}>
           <option value="">Semua status</option>
           {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </SmartNativeSelect>
@@ -465,7 +466,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
           <option value="tiktok">TikTok</option>
           <option value="tokopedia">Tokopedia</option>
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterReason} onChange={(e) => { setFilterReason(e.target.value); setCurrentPage(1); }} className="w-52">
+        <SmartNativeSelect value={filterReason} onChange={(e) => { setFilterReason(e.target.value); setCurrentPage(1); }} className="w-44">
           <option value="">Semua alasan</option>
           {reasons.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
         </SmartNativeSelect>

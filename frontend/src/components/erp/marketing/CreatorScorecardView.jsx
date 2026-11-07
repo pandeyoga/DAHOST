@@ -39,6 +39,7 @@ import { monthOptions } from '../finance/PeriodPicker';
 import PageLayout from '../layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import { MarketingAccountSelect } from './pickers/MarketingPickers';
+import { rapikanCatatan } from './ContentPerformanceView';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmtRp = formatRupiah;
@@ -270,8 +271,8 @@ export default function CreatorScorecardView({ token, onNavigate }) {
             description={rowsAll.length === 0 ? 'Belum ada kreator aktif pada bulan ini.' : `Tidak ada kreator yang cocok dengan "${query}".`} />} />
       )}
       {(data?.data_notes || []).length > 0 && (
-        <Notice tone="info" icon={Info} title="Catatan kejujuran data" testId="scorecard-notes">
-          <ul className="list-disc space-y-0.5 pl-4">{(data.data_notes || []).map((n, i) => <li key={i}>{n}</li>)}</ul>
+        <Notice tone="info" icon={Info} title="Catatan tentang data" testId="scorecard-notes">
+          <ul className="list-disc space-y-0.5 pl-4">{(data.data_notes || []).map((n, i) => <li key={i}>{rapikanCatatan(n)}</li>)}</ul>
         </Notice>
       )}
 
@@ -296,7 +297,7 @@ export default function CreatorScorecardView({ token, onNavigate }) {
                   sub={`${detail.totals?.with_kpi || 0}/${detail.totals?.contents || 0} konten ber-KPI · target ${detail.target?.revenue == null ? '—' : fmtRp(detail.target.revenue)}`} />
               </div>
               {(detail.data_notes || []).filter((n) => n.startsWith('PERLU KEPUTUSAN')).map((n, i) => (
-                <Notice key={i} tone="warning" icon={AlertTriangle} testId="scorecard-detail-decision">{n.replace(/^PERLU KEPUTUSAN/, 'Perlu keputusan')}</Notice>
+                <Notice key={i} tone="warning" icon={AlertTriangle} testId="scorecard-detail-decision">{rapikanCatatan(n.replace(/^PERLU KEPUTUSAN/, 'Perlu keputusan'))}</Notice>
               ))}
               <FilterChips options={TAB_RINCIAN} value={detailTab} onChange={setDetailTab} hideWhenEmpty={false} testId="scorecard-detail-tab" />
               {detailTab === 'konten' && (
@@ -315,7 +316,7 @@ export default function CreatorScorecardView({ token, onNavigate }) {
                 <p className="text-sm text-[hsl(var(--warning-text))]">Daftar dipotong pada batas aman. Persempit dengan pilihan toko/bulan untuk melihat sisanya.</p>
               )}
               <ul className="list-disc space-y-0.5 pl-4 text-xs text-muted-foreground">
-                {(detail.data_notes || []).filter((n) => !n.startsWith('PERLU KEPUTUSAN')).map((n, i) => <li key={i}>{n}</li>)}
+                {(detail.data_notes || []).filter((n) => !n.startsWith('PERLU KEPUTUSAN')).map((n, i) => <li key={i}>{rapikanCatatan(n)}</li>)}
               </ul>
             </>
           ) : null}

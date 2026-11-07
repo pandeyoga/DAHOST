@@ -48,7 +48,8 @@ const STATUS = {
 };
 const Lencana = ({ s }) => <StatusBadge status={s} label={(STATUS[s] || [s || '—'])[0]} tone={(STATUS[s] || [])[1]} />;
 const TIPE = { new: 'Kreator baru', kontrak: 'Kreator kontrak', continue: 'Kreator lanjutan' };
-const labelPlatform = (p) => (getPlatformConfig(p).label !== 'Platform' ? getPlatformConfig(p).label : (p ? p.charAt(0).toUpperCase() + p.slice(1) : '—'));
+const NAMA_PLATFORM = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', instagram: 'Instagram', lazada: 'Lazada' };
+const labelPlatform = (p) => NAMA_PLATFORM[String(p || '').toLowerCase()] || (getPlatformConfig(p).label !== 'Platform' ? getPlatformConfig(p).label : (p ? p.charAt(0).toUpperCase() + p.slice(1) : '—'));
 
 function KPIBar({ label, value, target, unit = '' }) {
   const pct = target ? Math.min(100, Math.round((value / target) * 100)) : 0;

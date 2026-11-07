@@ -40,7 +40,7 @@ function PilihAkun({ accounts = [], activeAccount, onChange, testId = 'pilih-aku
   return (
     <SmartNativeSelect value={activeAccount?.id || ''} className={lebar} data-testid={testId}
       onChange={(e) => onChange(daftar.find((a) => a.id === e.target.value) || null)}>
-      <option value="">Semua akun toko</option>
+      <option value="">Semua toko</option>
       {daftar.map((a) => <option key={a.id} value={a.id}>{`${a.account_name} · ${labelPlatform(a.platform)}`}</option>)}
     </SmartNativeSelect>
   );

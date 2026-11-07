@@ -58,8 +58,9 @@ const CATEGORY_LABELS = {
   other: 'Lainnya',
 };
 const labelKategori = (c, fallback) => CATEGORY_LABELS[c] || fallback || 'Lainnya';
-const labelPlatform = (p) => getPlatformConfig(p).label !== 'Platform' ? getPlatformConfig(p).label
-  : (p ? String(p).replace(/^./, (x) => x.toUpperCase()) : '—');
+const NAMA_PLATFORM = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', instagram: 'Instagram', lazada: 'Lazada' };
+const labelPlatform = (p) => NAMA_PLATFORM[String(p || '').toLowerCase()] || (getPlatformConfig(p).label !== 'Platform' ? getPlatformConfig(p).label
+  : (p ? String(p).replace(/^./, (x) => x.toUpperCase()) : '—'));
 
 // K28 (2026-11-02): field usulan AI yang bisa Diterima/Diubah (daftar baku = enum server).
 const AI_SUGGESTION_FIELDS = [
@@ -100,7 +101,7 @@ function PilihAkun({ accounts = [], activeAccount, onChange, testId = 'pilih-aku
   return (
     <SmartNativeSelect value={activeAccount?.id || ''} className={lebar} data-testid={testId}
       onChange={(e) => onChange(daftar.find((a) => a.id === e.target.value) || null)}>
-      <option value="">Semua akun toko</option>
+      <option value="">Semua toko</option>
       {daftar.map((a) => <option key={a.id} value={a.id}>{`${a.account_name} · ${labelPlatform(a.platform)}`}</option>)}
     </SmartNativeSelect>
   );
@@ -361,18 +362,18 @@ export default function ComplaintsManagementModule({ token, onNavigate }) {
         </Button>
       )}
       filters={<>
-        <div className="relative w-full sm:w-52">
+        <div className="relative w-full sm:w-44">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder="Cari nomor, keluhan, produk" className="pl-8" value={search} onChange={handleSearchChange}
             data-testid="search-complaints" />
         </div>
-        <PilihAkun accounts={masterAccounts} activeAccount={activeAccount} testId="complaint-account" lebar="w-40"
+        <PilihAkun accounts={masterAccounts} activeAccount={activeAccount} testId="complaint-account" lebar="w-36"
           onChange={(acc) => { setActiveAccount(acc); setPage(1); }} />
         <SmartNativeSelect value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} className="w-36" searchable={false}>
           <option value="">Semua status</option>
           {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={slaFilter} onChange={(e) => { setSlaFilter(e.target.value); setPage(1); }} className="w-36" searchable={false}
+        <SmartNativeSelect value={slaFilter} onChange={(e) => { setSlaFilter(e.target.value); setPage(1); }} className="w-40" searchable={false}
           data-testid="complaint-sla-filter">
           <option value="">Semua tenggat</option>
           {Object.entries(SLA_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
@@ -381,7 +382,7 @@ export default function ComplaintsManagementModule({ token, onNavigate }) {
           <option value="">Semua kategori</option>
           {Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={platformFilter} onChange={(e) => { setPlatformFilter(e.target.value); setPage(1); }} className="w-36" searchable={false}>
+        <SmartNativeSelect value={platformFilter} onChange={(e) => { setPlatformFilter(e.target.value); setPage(1); }} className="w-40" searchable={false}>
           <option value="">Semua platform</option>
           <option value="shopee">Shopee</option>
           <option value="tiktok">TikTok</option>

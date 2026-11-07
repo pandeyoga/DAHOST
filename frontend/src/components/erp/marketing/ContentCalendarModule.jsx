@@ -482,6 +482,7 @@ function ContentCalendarBase({ token }) {
       <FormPopup open={showForm} onClose={() => setShowForm(false)} ukuran="panjang" onSimpan={handleSave} menyimpan={formLoading}
         judul={editTarget ? 'Ubah konten' : 'Tambah konten'} galat={galatForm} testId="content-form"
         labelSimpan={editTarget ? 'Simpan perubahan' : 'Tambah konten'}>
+        <div className="grid gap-4 sm:grid-cols-2">
         <Isian label="Akun / toko marketplace" wajib htmlFor="cc-account"
           petunjuk={form.account_id ? `Platform: ${labelPlatform(form.platform)} (otomatis dari akun terpilih)` : undefined}>
           <SmartNativeSelect id="cc-account" value={form.account_id || ''} onChange={(e) => handleAccountChange(e.target.value)}
@@ -490,6 +491,12 @@ function ContentCalendarBase({ token }) {
             {masterAccounts.map(acc => <option key={acc.id} value={acc.id}>{`${acc.account_name} · ${labelPlatform(acc.platform)}`}</option>)}
           </SmartNativeSelect>
         </Isian>
+        <Isian label="Jenis konten" wajib htmlFor="cc-type">
+          <SmartNativeSelect id="cc-type" value={form.content_type} onChange={(e) => setForm(f => ({...f, content_type: e.target.value}))}>
+            {contentTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Isian label="Tanggal" wajib>
             <DatePicker value={form.date || ''} onChange={(v) => setForm(f => ({...f, date: v}))} testId="content-date" />
@@ -500,11 +507,6 @@ function ContentCalendarBase({ token }) {
             </SmartNativeSelect>
           </Isian>
         </div>
-        <Isian label="Jenis konten" wajib htmlFor="cc-type">
-          <SmartNativeSelect id="cc-type" value={form.content_type} onChange={(e) => setForm(f => ({...f, content_type: e.target.value}))}>
-            {contentTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-          </SmartNativeSelect>
-        </Isian>
         <Isian label="Judul / hook" wajib htmlFor="cc-title">
           <Input id="cc-title" value={form.title} placeholder="Hook atau judul konten yang menarik"
             onChange={e => setForm(f => ({...f, title: e.target.value}))} />

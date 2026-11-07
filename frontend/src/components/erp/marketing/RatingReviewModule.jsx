@@ -44,8 +44,11 @@ const STATUS_CONFIG = {
   pending: { label: 'Belum dibalas', tone: 'warning' },
   reviewed: { label: 'Sudah dibalas', tone: 'success' },
 };
-const labelPlatform = (p) => (getPlatformConfig(p).label !== 'Platform' ? getPlatformConfig(p).label
+const NAMA_PLATFORM = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', instagram: 'Instagram', lazada: 'Lazada' };
+const labelPlatform = (p) => NAMA_PLATFORM[String(p || '').toLowerCase()] || (getPlatformConfig(p).label !== 'Platform' ? getPlatformConfig(p).label
   : (p ? String(p).replace(/^./, (x) => x.toUpperCase()) : '—'));
+// Label kategori dari server bergaya Judul ("Produk Tidak Sesuai Deskripsi") → huruf besar hanya di awal.
+const kalimat = (s) => String(s || '').split(' ').map((w, i) => (i === 0 || /^[A-Z0-9]{2,4}$/.test(w) ? w : w.toLowerCase())).join(' ');
 const StatusUlasan = ({ status }) => (status
   ? <StatusBadge status={status} label={STATUS_CONFIG[status]?.label || status} tone={STATUS_CONFIG[status]?.tone} />
   : <span className="text-muted-foreground">—</span>);
@@ -65,9 +68,9 @@ function PilihAkun({ accounts = [], activeAccount, onChange, testId = 'pilih-aku
   const aktif = accounts.filter((a) => a.status === 'active' || !a.status);
   const daftar = activeAccount && !aktif.some((a) => a.id === activeAccount.id) ? [activeAccount, ...aktif] : aktif;
   return (
-    <SmartNativeSelect value={activeAccount?.id || ''} className="w-56" data-testid={testId}
+    <SmartNativeSelect value={activeAccount?.id || ''} className="w-36" data-testid={testId}
       onChange={(e) => onChange(daftar.find((a) => a.id === e.target.value) || null)}>
-      <option value="">Semua akun toko</option>
+      <option value="">Semua toko</option>
       {daftar.map((a) => <option key={a.id} value={a.id}>{`${a.account_name} · ${labelPlatform(a.platform)}`}</option>)}
     </SmartNativeSelect>
   );
@@ -297,7 +300,7 @@ export default function RatingReviewModule({ token }) {
 
   const s = summary || {};
   const adaSaring = [filterStatus, filterPlatform, filterRating > 0, filterCategory, searchQuery, activeAccount?.id].filter(Boolean).length > 0;
-  const labelKategori = (r) => r.category_label || categories.find((c) => c.value === r.category)?.label || '—';
+  const labelKategori = (r) => kalimat(r.category_label || categories.find((c) => c.value === r.category)?.label) || '—';
 
   const paramSaring = () => {
     const params = {};
@@ -330,11 +333,11 @@ export default function RatingReviewModule({ token }) {
   const kolom = [
     { kunci: 'tanggal', label: 'Tanggal', hp: 'keterangan', isi: (r) => <span className="tabular-nums md:whitespace-nowrap">{fmtDate(r.date || r.created_at)}</span> },
     { kunci: 'rating', label: 'Bintang', isi: (r) => <StarRating rating={r.rating} /> },
-    { kunci: 'toko', label: 'Toko', isi: (r) => (
-      <span className="md:whitespace-nowrap">{r.account_name || '—'}<span className="block text-xs text-muted-foreground">{labelPlatform(r.platform)}</span></span>) },
-    { kunci: 'produk', label: 'Produk', hp: 'judul', isi: (r) => <p className="truncate md:max-w-[12rem]" title={r.product}>{r.product || '—'}</p> },
-    { kunci: 'ulasan', label: 'Isi ulasan', isi: (r) => <p className="line-clamp-2 md:max-w-[18rem]" title={r.review_text}>{r.review_text || '—'}</p> },
-    { kunci: 'kategori', label: 'Kategori', isi: (r) => <span className="md:whitespace-nowrap">{labelKategori(r)}</span> },
+    { kunci: 'produk', label: 'Produk / toko', hp: 'judul', isi: (r) => (
+      <span className="block md:max-w-[13rem]"><span className="block truncate" title={r.product}>{r.product || '—'}</span>
+        <span className="block truncate text-xs text-muted-foreground">{r.account_name || '—'} · {labelPlatform(r.platform)}</span></span>) },
+    { kunci: 'ulasan', label: 'Isi ulasan', isi: (r) => <p className="line-clamp-2 md:max-w-[16rem]" title={r.review_text}>{r.review_text || '—'}</p> },
+    { kunci: 'kategori', label: 'Kategori', isi: (r) => <span className="block md:max-w-[10rem]">{labelKategori(r)}</span> },
     { kunci: 'status', label: 'Balasan', isi: (r) => <StatusUlasan status={r.status} /> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
       <div className="flex justify-end gap-1">
@@ -348,7 +351,7 @@ export default function RatingReviewModule({ token }) {
       subtitle="Ulasan produk dari semua platform, balasan, dan kategori keluhan."
       actions={<Button onClick={() => openForm()} data-testid="reviews-create"><Plus />Tambah ulasan</Button>}
       filters={<>
-        <div className="relative w-full sm:w-64">
+        <div className="relative w-full sm:w-44">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder="Cari pesanan atau produk" value={searchQuery} className="pl-8"
             onChange={e => { setSearchQuery(e.target.value); setCurrentPage(1); }} data-testid="reviews-search" />
@@ -360,7 +363,7 @@ export default function RatingReviewModule({ token }) {
           {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </SmartNativeSelect>
         <SmartNativeSelect value={String(filterRating)} onChange={(e) => { setFilterRating(parseInt(e.target.value, 10) || 0); setCurrentPage(1); }}
-          className="w-40" searchable={false}>
+          className="w-36" searchable={false}>
           <option value="0">Semua bintang</option>
           {[1, 2, 3, 4, 5].map((n) => <option key={n} value={String(n)}>{n} bintang</option>)}
         </SmartNativeSelect>
@@ -368,9 +371,9 @@ export default function RatingReviewModule({ token }) {
           <option value="">Semua platform</option>
           {platforms.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterCategory} onChange={(e) => { setFilterCategory(e.target.value); setCurrentPage(1); }} className="w-48">
+        <SmartNativeSelect value={filterCategory} onChange={(e) => { setFilterCategory(e.target.value); setCurrentPage(1); }} className="w-40">
           <option value="">Semua kategori</option>
-          {categories.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+          {categories.map(c => <option key={c.value} value={c.value}>{kalimat(c.label)}</option>)}
         </SmartNativeSelect>
       </>}
       tools={<>
@@ -419,6 +422,7 @@ export default function RatingReviewModule({ token }) {
       {/* Form ulasan (popup) */}
       <FormPopup open={showForm} onClose={closeForm} ukuran="panjang" onSimpan={handleSave} menyimpan={formLoading}
         judul={editTarget ? 'Ubah ulasan' : 'Tambah ulasan'} galat={galatForm} testId="review-form">
+        <div className="grid gap-4 sm:grid-cols-2">
         <Isian label="Akun / toko marketplace" wajib htmlFor="review-account"
           petunjuk={form.account_id ? `Platform: ${labelPlatform(form.platform)} (otomatis dari akun)` : undefined}>
           <SmartNativeSelect id="review-account" value={form.account_id || ''} onChange={(e) => handleAccountChange(e.target.value)}
@@ -427,6 +431,20 @@ export default function RatingReviewModule({ token }) {
             {masterAccounts.map(acc => <option key={acc.id} value={acc.id}>{`${acc.account_name} · ${labelPlatform(acc.platform)}`}</option>)}
           </SmartNativeSelect>
         </Isian>
+        {/* F15 — produk DIPILIH dari katalog toko (dulu teks bebas → laporan per produk tidak bisa dijawab). */}
+        <Isian label="Produk" wajib>
+          <CatalogItemSelect
+            token={token} accountId={form.account_id} label=""
+            value={form.catalog_item_id || ''}
+            onChange={(item) => setForm({
+              ...form,
+              catalog_item_id: item?.id || '',
+              product: item?.name || '',
+              sku: item?.sku || '',
+            })}
+            testId="review-item-select" />
+        </Isian>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Isian label="Tanggal">
             <DatePicker value={form.date || ''} onChange={(v) => setForm({ ...form, date: v })} testId="review-date" />
@@ -442,23 +460,10 @@ export default function RatingReviewModule({ token }) {
           </Isian>
           <Isian label="Kategori" htmlFor="review-category">
             <SmartNativeSelect id="review-category" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
-              {categories.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+              {categories.map(c => <option key={c.value} value={c.value}>{kalimat(c.label)}</option>)}
             </SmartNativeSelect>
           </Isian>
         </div>
-        {/* F15 — produk DIPILIH dari katalog toko (dulu teks bebas → laporan per produk tidak bisa dijawab). */}
-        <Isian label="Produk" wajib>
-          <CatalogItemSelect
-            token={token} accountId={form.account_id} label=""
-            value={form.catalog_item_id || ''}
-            onChange={(item) => setForm({
-              ...form,
-              catalog_item_id: item?.id || '',
-              product: item?.name || '',
-              sku: item?.sku || '',
-            })}
-            testId="review-item-select" />
-        </Isian>
         <Isian label="Isi ulasan" wajib htmlFor="review-text">
           <Textarea id="review-text" value={form.review_text} rows={3} placeholder="Salin isi ulasan pembeli"
             onChange={e => setForm({ ...form, review_text: e.target.value })} />

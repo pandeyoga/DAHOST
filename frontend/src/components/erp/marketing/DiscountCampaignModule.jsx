@@ -187,7 +187,7 @@ export default function DiscountCampaignModule({ token }) {
     } catch { toast({ title: 'Gagal menghapus kampanye', variant: 'destructive' }); }
   };
 
-  const jenis = (item) => item.discount_type_label || DISCOUNT_TYPE_LABELS[item.discount_type] || item.discount_type;
+  const jenis = (item) => DISCOUNT_TYPE_LABELS[item.discount_type] || item.discount_type_label || item.discount_type;
   const paramSaring = () => {
     const params = {};
     if (filterStatus)   params.status = filterStatus;
@@ -236,15 +236,15 @@ export default function DiscountCampaignModule({ token }) {
       subtitle="Kampanye promo semua platform: flash sale, voucher, bundling, gratis ongkir."
       actions={<Button onClick={openCreate} data-testid="btn-add-discount"><Plus />Buat kampanye</Button>}
       filters={<>
-        <div className="relative w-full sm:w-64">
+        <div className="relative w-full sm:w-44">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input className="pl-8" placeholder="Cari nama kampanye" value={search}
             onChange={e => { setSearch(e.target.value); setPage(1); }} data-testid="discount-search" />
         </div>
-        <MarketingAccountSelect token={token} value={filterAccountId} className="w-56"
+        <MarketingAccountSelect token={token} value={filterAccountId} className="w-44"
           onChange={(v) => { setFilterAccountId(v); setPage(1); }} label=""
           includeAll allLabel="Semua toko" required={false} testId="discount-filter-account" />
-        <SmartNativeSelect value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }} className="w-40" searchable={false}>
+        <SmartNativeSelect value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }} className="w-36" searchable={false}>
           <option value="">Semua status</option>
           {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </SmartNativeSelect>
@@ -253,7 +253,7 @@ export default function DiscountCampaignModule({ token }) {
           {Object.entries(PLATFORM_LABEL).filter(([k]) => k !== 'semua_platform').map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           <option value="semua_platform">Kampanye lintas platform</option>
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterType} onChange={(e) => { setFilterType(e.target.value); setPage(1); }} className="w-44" searchable={false}>
+        <SmartNativeSelect value={filterType} onChange={(e) => { setFilterType(e.target.value); setPage(1); }} className="w-40" searchable={false}>
           <option value="">Semua jenis</option>
           {Object.entries(DISCOUNT_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </SmartNativeSelect>
@@ -330,6 +330,7 @@ export default function DiscountCampaignModule({ token }) {
       <FormPopup open={showForm} onClose={() => setShowForm(false)} ukuran="panjang" onSimpan={handleSave} menyimpan={formLoading}
         judul={editTarget ? 'Ubah kampanye' : 'Buat kampanye baru'} galat={galatForm} testId="discount-form"
         labelSimpan={editTarget ? 'Simpan perubahan' : 'Buat kampanye'}>
+        <div className="grid gap-4 sm:grid-cols-2">
         <Isian label="Nama kampanye" wajib htmlFor="dsc-name">
           <Input id="dsc-name" value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))}
             placeholder="Contoh: Flash sale Harbolnas 12.12" />
@@ -342,6 +343,7 @@ export default function DiscountCampaignModule({ token }) {
             {accounts.map(acc => <option key={acc.id} value={acc.id}>{`${acc.account_name} · ${labelPlatform(acc.platform)}`}</option>)}
           </SmartNativeSelect>
         </Isian>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Isian label="Jenis diskon" htmlFor="dsc-type">
             <SmartNativeSelect id="dsc-type" value={form.discount_type} searchable={false} onChange={(e) => setForm(f => ({...f, discount_type: e.target.value}))}>
