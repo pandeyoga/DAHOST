@@ -12,6 +12,9 @@
  * · Menu "Kehadiran" lama digabung ke sini (satu menu absen).
  *
  * Identitas ditentukan server dari token (employee_id tidak dikirim ⇒ tidak bisa "titip absen").
+ *
+ * Standar UI/UX v2 (8 Nov 2026): jadwal & riwayat = TabelData (kartu ringkas di HP) + unduh Excel/CSV; izin keluar,
+ * kamera selfie, dan koreksi absen = FormPopup (kaki: Batal · Kirim hijau); tanggal koreksi pakai DatePicker.
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import axios from 'axios';
@@ -20,13 +23,13 @@ import {
   CheckCircle2, Timer, Hourglass, XCircle, RotateCcw, CalendarClock, PencilLine,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
-} from '@/components/ui/dialog';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import PageLayout from './layout/PageLayout';
@@ -387,7 +390,7 @@ export default function PortalSayaAbsen({ token, headers: headersProp }) {
         </div>
 
         <Button size="lg" className="w-full"
-          variant={clockMode === 'in' ? 'default' : (clockMode === 'done' ? 'outline' : 'destructive')}
+          variant={clockMode === 'done' ? 'outline' : 'default'}
           onClick={() => startClock(clockMode === 'in' ? 'in' : 'out')}
           disabled={clockMode === 'done' || Boolean(busy) || (clockMode === 'in' && fullDayLeave)
             || (clockMode !== 'in' && outBlocked)}
@@ -486,215 +489,159 @@ export default function PortalSayaAbsen({ token, headers: headersProp }) {
       )}
 
       {/* Jadwal kerja hari ini + 7 hari (Tahap 7) */}
-      <GlassCard className="p-4 space-y-3" data-testid="absen-schedule">
-        <div>
-          <p className="text-base font-semibold">Jadwal kerja 8 hari</p>
-          <p className="text-xs text-muted-foreground">
-            Dari Jadwal Shift HR. Jam masuk shift ini yang dipakai untuk menghitung terlambat.
-          </p>
+      <GlassCard className="space-y-3 p-4" data-testid="absen-schedule">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="text-lg font-semibold text-foreground">Jadwal kerja 8 hari</h3>
+            <p className="text-sm text-muted-foreground">
+              Dari Jadwal Shift HR. Jam masuk shift ini yang dipakai untuk menghitung terlambat.
+            </p>
+          </div>
+          {schedule.length > 0 && (
+            <TombolUnduh namaBerkas="jadwal-kerja-saya" namaLembar="Jadwal" baris={schedule} testId="absen-schedule-unduh" kolom={[
+              { label: 'Tanggal', nilai: (d) => fmtDay(d.date) }, { label: 'Shift', nilai: (d) => (d.shift ? shiftText(d.shift) : '') },
+              { label: 'Keterangan', nilai: (d) => [d.label, d.note].filter(Boolean).join(' · ') },
+            ]} />
+          )}
         </div>
-        {schedule.length === 0 ? (
-          <EmptyState icon={CalendarClock} title="Jadwal belum tersedia"
-            description="Hubungi HR bila shift Anda belum diatur." className="py-6" />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Hari</TableHead>
-                <TableHead>Shift</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {schedule.map((d) => (
-                <TableRow key={d.date} data-testid={`absen-schedule-${d.date}`}>
-                  <TableCell className="whitespace-nowrap">
-                    {fmtDay(d.date)}{d.today ? ' · hari ini' : ''}
-                  </TableCell>
-                  <TableCell className="whitespace-normal">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {d.shift && (
-                        <span className="tabular-nums">{shiftText(d.shift)}</span>
-                      )}
-                      {d.label && (
-                        <StatusBadge status={d.kind} label={d.label} tone={d.kind === 'libur' ? 'muted' : 'info'} />
-                      )}
-                      {!d.shift && !d.label && (
-                        <span className="text-muted-foreground">Shift belum diatur HR</span>
-                      )}
-                    </div>
-                    {d.note && <p className="text-xs text-muted-foreground">{d.note}</p>}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
+        <TabelData baris={schedule} kunci={(d) => d.date} testId="absen-schedule-table"
+          kosong={<EmptyState icon={CalendarClock} title="Jadwal belum tersedia"
+            description="Hubungi HR bila shift Anda belum diatur." className="py-6" />}
+          kolom={[
+            { kunci: 'hari', label: 'Hari', hp: 'judul', isi: (d) => (
+              <span className="whitespace-nowrap" data-testid={`absen-schedule-${d.date}`}>{fmtDay(d.date)}{d.today ? ' · hari ini' : ''}</span>) },
+            { kunci: 'shift', label: 'Shift', isi: (d) => (
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {d.shift && <span className="tabular-nums">{shiftText(d.shift)}</span>}
+                  {d.label && <StatusBadge status={d.kind} label={d.label} tone={d.kind === 'libur' ? 'muted' : 'info'} />}
+                  {!d.shift && !d.label && <span className="text-muted-foreground">Shift belum diatur HR</span>}
+                </div>
+                {d.note && <p className="text-xs text-muted-foreground">{d.note}</p>}
+              </div>) },
+          ]} />
       </GlassCard>
 
       {/* Riwayat 30 hari + koreksi */}
-      <GlassCard className="p-4 space-y-3" data-testid="absen-history">
-        <div>
-          <p className="text-base font-semibold">Riwayat 30 hari</p>
-          <p className="text-xs text-muted-foreground">Jam salah atau lupa absen? Tekan Ajukan koreksi pada tanggalnya.</p>
+      <GlassCard className="space-y-3 p-4" data-testid="absen-history">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="text-lg font-semibold text-foreground">Riwayat 30 hari</h3>
+            <p className="text-sm text-muted-foreground">Jam salah atau lupa absen? Tekan Ajukan koreksi pada tanggalnya.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {history.length > 0 && (
+              <TombolUnduh namaBerkas="riwayat-absen-saya" namaLembar="Riwayat absen" baris={history} testId="absen-history-unduh" kolom={[
+                { label: 'Tanggal', nilai: (r) => fmtDay(r.date) },
+                { label: 'Status', nilai: (r) => `${STATUS_LABEL[r.status] || r.status || '-'}${r.half_day ? ' ½' : ''}` },
+                { label: 'Masuk', nilai: (r) => fmtTime(r.clock_in) }, { label: 'Pulang', nilai: (r) => fmtTime(r.clock_out) },
+                { label: 'Koreksi', nilai: (r) => (corrByDate[r.date] ? (CORR_LABEL[corrByDate[r.date].status] || corrByDate[r.date].status) : '') },
+              ]} />
+            )}
+            <Button variant="outline" onClick={() => openCorrection({ date: daysAgoIso(1) })} data-testid="absen-correct-other">
+              <PencilLine />Koreksi tanggal lain
+            </Button>
+          </div>
         </div>
-        {history.length === 0 ? (
-          <EmptyState icon={CalendarClock} title="Belum ada catatan absen"
-            description="Catatan muncul setelah Anda absen masuk." className="py-6" />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Tanggal</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Masuk</TableHead>
-                <TableHead>Pulang</TableHead>
-                <TableHead className="text-right">Koreksi</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {history.map((r) => {
-                const c = corrByDate[r.date];
-                return (
-                  <TableRow key={r.id || r.date} data-testid={`absen-history-${r.date}`}>
-                    <TableCell className="whitespace-nowrap">{fmtDay(r.date)}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={r.status} label={`${STATUS_LABEL[r.status] || r.status || '-'}${r.half_day ? ' ½' : ''}`}
-                        tone={STATUS_TONE[r.status] || 'info'} />
-                    </TableCell>
-                    <TableCell className="tabular-nums">{fmtTime(r.clock_in)}</TableCell>
-                    <TableCell className="tabular-nums">{fmtTime(r.clock_out)}</TableCell>
-                    <TableCell className="text-right">
-                      {c && (
-                        <StatusBadge status={c.status} label={CORR_LABEL[c.status] || c.status} tone={CORR_TONE[c.status]} />
-                      )}
-                      {(!c || c.status === 'rejected') && (
-                        <Button size="sm" variant="link" onClick={() => openCorrection(r)} data-testid={`absen-correct-${r.date}`}>
-                          <PencilLine className="w-3.5 h-3.5" /> Ajukan koreksi
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        )}
-        <Button size="sm" variant="outline" onClick={() => openCorrection({ date: daysAgoIso(1) })}
-          data-testid="absen-correct-other">
-          <PencilLine className="w-3.5 h-3.5" /> Ajukan koreksi absen tanggal lain
-        </Button>
+        <TabelData baris={history} kunci={(r) => r.id || r.date} testId="absen-history-table"
+          kosong={<EmptyState icon={CalendarClock} title="Belum ada catatan absen"
+            description="Catatan muncul setelah Anda absen masuk." className="py-6" />}
+          kolom={[
+            { kunci: 'tanggal', label: 'Tanggal', hp: 'judul', isi: (r) => (
+              <span className="whitespace-nowrap" data-testid={`absen-history-${r.date}`}>{fmtDay(r.date)}</span>) },
+            { kunci: 'status', label: 'Status', isi: (r) => (
+              <StatusBadge status={r.status} label={`${STATUS_LABEL[r.status] || r.status || '-'}${r.half_day ? ' ½' : ''}`}
+                tone={STATUS_TONE[r.status] || 'info'} />) },
+            { kunci: 'masuk', label: 'Masuk', isi: (r) => <span className="tabular-nums">{fmtTime(r.clock_in)}</span> },
+            { kunci: 'pulang', label: 'Pulang', isi: (r) => <span className="tabular-nums">{fmtTime(r.clock_out)}</span> },
+            { kunci: 'koreksi', label: 'Koreksi', rata: 'kanan', hp: 'aksi', isi: (r) => {
+              const c = corrByDate[r.date];
+              return (
+                <div className="flex flex-wrap items-center justify-end gap-1">
+                  {c && <StatusBadge status={c.status} label={CORR_LABEL[c.status] || c.status} tone={CORR_TONE[c.status]} />}
+                  {(!c || c.status === 'rejected') && (
+                    <Button size="sm" variant="link" onClick={() => openCorrection(r)} data-testid={`absen-correct-${r.date}`}>
+                      <PencilLine />Ajukan koreksi
+                    </Button>
+                  )}
+                </div>
+              );
+            } },
+          ]} />
       </GlassCard>
 
-      {/* Dialog alasan izin keluar */}
-      <Dialog open={izinOpen} onOpenChange={(v) => { setIzinOpen(v); if (!v) setIzinReason(''); }}>
-        <DialogContent data-testid="absen-permit-dialog">
-          <DialogHeader>
-            <DialogTitle>Ajukan izin keluar</DialogTitle>
-            <DialogDescription>
-              Alasan wajib. Anda baru dianggap keluar setelah disetujui atasan/HR, dan durasinya tidak dihitung jam kerja.
-            </DialogDescription>
-          </DialogHeader>
-          <div>
-            <Label htmlFor="izin-reason">Alasan</Label>
-            <Textarea id="izin-reason" rows={3} className="mt-1" placeholder="Contoh: ke klinik, urusan keluarga"
-              value={izinReason} onChange={(e) => setIzinReason(e.target.value)} data-testid="absen-permit-reason" />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIzinOpen(false)} data-testid="absen-permit-cancel">Batal</Button>
-            <Button onClick={() => startSession('izin', izinReason.trim())}
-              disabled={!izinReason.trim() || busy === 'start-izin'} data-testid="absen-permit-confirm">
-              {busy === 'start-izin' && <Loader2 className="w-4 h-4 animate-spin" />} Kirim pengajuan
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Alasan izin keluar (form pendek) */}
+      <FormPopup open={izinOpen} onClose={() => { setIzinOpen(false); setIzinReason(''); }} ukuran="pendek"
+        testId="absen-permit-dialog" judul="Ajukan izin keluar"
+        keterangan="Alasan wajib. Anda baru dianggap keluar setelah disetujui atasan/HR, dan durasinya tidak dihitung jam kerja."
+        onSimpan={() => startSession('izin', izinReason.trim())} menyimpan={busy === 'start-izin'}
+        bisaSimpan={!!izinReason.trim()} labelSimpan="Kirim pengajuan">
+        <Isian label="Alasan" wajib htmlFor="izin-reason">
+          <Textarea id="izin-reason" rows={3} placeholder="Contoh: ke klinik, urusan keluarga"
+            value={izinReason} onChange={(e) => setIzinReason(e.target.value)} data-testid="absen-permit-reason" />
+        </Isian>
+      </FormPopup>
 
-      {/* Dialog kamera — kamera depan saja, tanpa unggah dari galeri */}
-      <Dialog open={camOpen} onOpenChange={(v) => { if (!v) closeCam(); }}>
-        <DialogContent data-testid="absen-camera-dialog">
-          <DialogHeader>
-            <DialogTitle>{camAction === 'in' ? 'Absen masuk' : 'Absen pulang'} — selfie</DialogTitle>
-            <DialogDescription>Foto langsung dari kamera depan sebagai bukti kehadiran; diperiksa HR.</DialogDescription>
-          </DialogHeader>
-          <div className="rounded-[var(--radius-md)] overflow-hidden bg-muted aspect-[3/4] sm:aspect-video flex items-center justify-center">
-            {shot
-              ? <img src={`data:image/jpeg;base64,${shot}`} alt="Pratinjau selfie" className="w-full h-full object-cover"
-                data-testid="absen-selfie-preview" />
-              : <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover"
-                data-testid="absen-camera-video" />}
-          </div>
-          {camError && (
-            <Notice tone="danger" icon={Camera} testId="absen-camera-error"
-              action={(
-                <Button size="sm" variant="outline" onClick={startCam} data-testid="absen-camera-retry">
-                  <RotateCcw className="w-3.5 h-3.5" /> Coba lagi
-                </Button>
-              )}>
-              {camError}
-            </Notice>
-          )}
-          <DialogFooter className="gap-2">
-            {!shot ? (
-              <Button variant="outline" onClick={capture} disabled={Boolean(camError)} data-testid="absen-camera-capture">
-                <Camera className="w-4 h-4" /> Ambil foto
+      {/* Kamera — kamera depan saja, tanpa unggah dari galeri */}
+      <FormPopup open={camOpen} onClose={closeCam} ukuran="pendek" testId="absen-camera-dialog"
+        judul={`${camAction === 'in' ? 'Absen masuk' : 'Absen pulang'} — selfie`}
+        keterangan="Foto langsung dari kamera depan sebagai bukti kehadiran; diperiksa HR."
+        onSimpan={() => send(camAction, shot, fix)} menyimpan={busy === 'send'} bisaSimpan={!!shot && !busy}
+        labelSimpan={camAction === 'in' ? 'Kirim absen masuk' : 'Kirim absen pulang'}
+        aksiKiri={!shot ? (
+          <Button type="button" variant="outline" onClick={capture} disabled={Boolean(camError)} data-testid="absen-camera-capture">
+            <Camera />Ambil foto
+          </Button>
+        ) : (
+          <Button type="button" variant="outline" onClick={() => setShot('')} data-testid="absen-camera-retake">
+            <RotateCcw />Ulangi
+          </Button>
+        )}>
+        <div className="flex aspect-[3/4] items-center justify-center overflow-hidden rounded-[var(--radius-md)] bg-muted sm:aspect-video">
+          {shot
+            ? <img src={`data:image/jpeg;base64,${shot}`} alt="Pratinjau selfie" className="h-full w-full object-cover"
+              data-testid="absen-selfie-preview" />
+            : <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-cover"
+              data-testid="absen-camera-video" />}
+        </div>
+        {camError && (
+          <Notice tone="danger" icon={Camera} testId="absen-camera-error"
+            action={(
+              <Button type="button" size="sm" variant="outline" onClick={startCam} data-testid="absen-camera-retry">
+                <RotateCcw />Coba lagi
               </Button>
-            ) : (
-              <Button variant="outline" onClick={() => setShot('')} data-testid="absen-camera-retake">
-                <RotateCcw className="w-4 h-4" /> Ulangi
-              </Button>
-            )}
-            <Button onClick={() => send(camAction, shot, fix)} disabled={!shot || Boolean(busy)} data-testid="absen-camera-confirm">
-              {busy === 'send' ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              {camAction === 'in' ? 'Kirim absen masuk' : 'Kirim absen pulang'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            )}>
+            {camError}
+          </Notice>
+        )}
+      </FormPopup>
 
-      {/* Dialog koreksi absen (formulir pendek) */}
-      <Dialog open={Boolean(corrOpen)} onOpenChange={(v) => { if (!v) setCorrOpen(null); }}>
-        <DialogContent data-testid="absen-correction-dialog">
-          <DialogHeader>
-            <DialogTitle>Ajukan koreksi absen</DialogTitle>
-            <DialogDescription>
-              Isi jam yang benar. HR memeriksa dulu; bila tanggal itu sudah digaji, selisihnya dibayar di gaji berikutnya.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label htmlFor="corr-date">Tanggal</Label>
-              <GlassInput id="corr-date" type="date" className="mt-1" value={corrOpen || ''} max={todayIso()}
-                onChange={(e) => setCorrOpen(e.target.value)} data-testid="absen-correction-date" />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label htmlFor="corr-in">Jam masuk</Label>
-                <GlassInput id="corr-in" type="time" className="mt-1" value={corrForm.clock_in}
-                  onChange={(e) => setCorrForm((f) => ({ ...f, clock_in: e.target.value }))} data-testid="absen-correction-in" />
-              </div>
-              <div>
-                <Label htmlFor="corr-out">Jam pulang</Label>
-                <GlassInput id="corr-out" type="time" className="mt-1" value={corrForm.clock_out}
-                  onChange={(e) => setCorrForm((f) => ({ ...f, clock_out: e.target.value }))} data-testid="absen-correction-out" />
-              </div>
-            </div>
-            <div>
-              <Label htmlFor="corr-reason">Alasan</Label>
-              <Textarea id="corr-reason" rows={2} className="mt-1" placeholder="Contoh: lupa absen pulang, HP mati"
-                value={corrForm.reason} onChange={(e) => setCorrForm((f) => ({ ...f, reason: e.target.value }))}
-                data-testid="absen-correction-reason" />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCorrOpen(null)}>Batal</Button>
-            <Button onClick={submitCorrection}
-              disabled={busy === 'corr' || !corrForm.reason.trim() || !(corrForm.clock_in || corrForm.clock_out)}
-              data-testid="absen-correction-submit">
-              {busy === 'corr' && <Loader2 className="w-4 h-4 animate-spin" />} Kirim ke HR
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Koreksi absen (formulir pendek) */}
+      <FormPopup open={Boolean(corrOpen)} onClose={() => setCorrOpen(null)} ukuran="pendek" testId="absen-correction-dialog"
+        judul="Ajukan koreksi absen"
+        keterangan="Isi jam yang benar. HR memeriksa dulu; bila tanggal itu sudah digaji, selisihnya dibayar di gaji berikutnya."
+        onSimpan={submitCorrection} menyimpan={busy === 'corr'}
+        bisaSimpan={!!corrForm.reason.trim() && !!(corrForm.clock_in || corrForm.clock_out)} labelSimpan="Kirim ke HR">
+        <Isian label="Tanggal" wajib>
+          <DatePicker value={corrOpen || ''} max={todayIso()} onChange={(v) => setCorrOpen(v || corrOpen)}
+            testId="absen-correction-date" />
+        </Isian>
+        <div className="grid grid-cols-2 gap-3">
+          <Isian label="Jam masuk" htmlFor="corr-in">
+            <Input id="corr-in" type="time" value={corrForm.clock_in}
+              onChange={(e) => setCorrForm((f) => ({ ...f, clock_in: e.target.value }))} data-testid="absen-correction-in" />
+          </Isian>
+          <Isian label="Jam pulang" htmlFor="corr-out">
+            <Input id="corr-out" type="time" value={corrForm.clock_out}
+              onChange={(e) => setCorrForm((f) => ({ ...f, clock_out: e.target.value }))} data-testid="absen-correction-out" />
+          </Isian>
+        </div>
+        <Isian label="Alasan" wajib htmlFor="corr-reason">
+          <Textarea id="corr-reason" rows={2} placeholder="Contoh: lupa absen pulang, HP mati"
+            value={corrForm.reason} onChange={(e) => setCorrForm((f) => ({ ...f, reason: e.target.value }))}
+            data-testid="absen-correction-reason" />
+        </Isian>
+      </FormPopup>
     </PageLayout>
   );
 }
