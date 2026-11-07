@@ -5,10 +5,10 @@ import { Plus, Pencil, Trash2, ListTree } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Switch } from '@/components/ui/switch';
 import { StatusBadge, EmptyState } from './moduleAtoms';
 import PageLayout from './layout/PageLayout';
@@ -176,6 +176,15 @@ export default function EmployeeExpenseGLMappingModule() {
           Pemetaan baru
         </Button>
       }
+      tools={
+        <TombolUnduh namaBerkas="akun-klaim-biaya-karyawan" namaLembar="Akun klaim" baris={mappings} testId="mapping-unduh"
+          kolom={[
+            { label: 'Kategori klaim', nilai: (m) => m.category },
+            { label: 'Kode akun', nilai: (m) => m.gl_account_code },
+            { label: 'Nama akun', nilai: (m) => m.gl_account_name || '' },
+            { label: 'Status', nilai: (m) => (m.is_active === false ? 'Nonaktif' : 'Aktif') },
+          ]} />
+      }
       summary={!loading && (
         <p className="text-sm text-muted-foreground">
           {mappings.length} pemetaan · kategori tanpa pemetaan memakai akun <b className="text-foreground">6-3400 Biaya Perjalanan Dinas</b>.
@@ -238,82 +247,38 @@ export default function EmployeeExpenseGLMappingModule() {
         )}
       </GlassCard>
 
-      {/* Formulir isian pendek */}
-      <Dialog open={showDialog} onOpenChange={setShowDialog}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>
-              {editingMapping ? 'Ubah pemetaan akun' : 'Pemetaan akun baru'}
-            </DialogTitle>
-            <DialogDescription>
-              Kategori klaim karyawan dan akun beban untuk jurnal otomatis.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label htmlFor="category">Kategori klaim</Label>
-              <Input
-                id="category"
-                placeholder="mis. Transportasi, Konsumsi, Akomodasi"
-                value={formData.category}
-                onChange={(e) => setFormData(prev => ({ ...prev, category: e.target.value }))}
-                data-testid="mapping-category-input"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="gl_account">Akun beban</Label>
-              <SmartNativeSelect
-                id="gl_account"
-                className="w-full h-9"
-                value={formData.gl_account_code}
-                onChange={(e) => handleAccountSelect(e.target.value)}
-                data-testid="mapping-account-select"
-              >
-                <option value="">Pilih akun</option>
-                {coaAccounts
-                  .filter(a => a.code.startsWith('6-') || a.code.startsWith('5-'))
-                  .map(acc => (
-                    <option key={acc.code} value={acc.code}>
-                      {acc.code} — {acc.name}
-                    </option>
-                  ))}
-              </SmartNativeSelect>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="gl_name">Nama akun</Label>
-              <Input
-                id="gl_name"
-                value={formData.gl_account_name}
-                onChange={(e) => setFormData(prev => ({ ...prev, gl_account_name: e.target.value }))}
-                placeholder="Nama akun beban"
-                data-testid="mapping-account-name-input"
-              />
-            </div>
-
-            <div className="flex items-center space-x-2">
-              <Switch
-                id="is_active"
-                checked={formData.is_active}
-                onCheckedChange={(checked) => setFormData(prev => ({ ...prev, is_active: checked }))}
-                data-testid="mapping-active-switch"
-              />
-              <Label htmlFor="is_active">Aktif</Label>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDialog(false)}>
-              Batal
-            </Button>
-            <Button onClick={handleSave} data-testid="save-mapping-btn">
-              Simpan
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Formulir isian pendek — popup form standar (2026-11-08, Standar UI/UX v2) */}
+      <FormPopup open={showDialog} onClose={() => setShowDialog(false)} ukuran="pendek" testId="mapping-form"
+        judul={editingMapping ? 'Ubah pemetaan akun' : 'Pemetaan akun baru'}
+        keterangan="Kategori klaim karyawan dan akun beban untuk jurnal otomatis."
+        onSimpan={handleSave}>
+        <Isian label="Kategori klaim" htmlFor="category">
+          <Input id="category" placeholder="mis. Transportasi, Konsumsi, Akomodasi" value={formData.category}
+            onChange={(e) => setFormData(prev => ({ ...prev, category: e.target.value }))} data-testid="mapping-category-input" />
+        </Isian>
+        <Isian label="Akun beban" htmlFor="gl_account">
+          <SmartNativeSelect id="gl_account" className="w-full h-9" value={formData.gl_account_code}
+            onChange={(e) => handleAccountSelect(e.target.value)} data-testid="mapping-account-select">
+            <option value="">Pilih akun</option>
+            {coaAccounts
+              .filter(a => a.code.startsWith('6-') || a.code.startsWith('5-'))
+              .map(acc => (
+                <option key={acc.code} value={acc.code}>
+                  {acc.code} — {acc.name}
+                </option>
+              ))}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Nama akun" htmlFor="gl_name">
+          <Input id="gl_name" value={formData.gl_account_name} placeholder="Nama akun beban"
+            onChange={(e) => setFormData(prev => ({ ...prev, gl_account_name: e.target.value }))} data-testid="mapping-account-name-input" />
+        </Isian>
+        <label className="flex items-center gap-2 text-sm" htmlFor="is_active">
+          <Switch id="is_active" checked={formData.is_active}
+            onCheckedChange={(checked) => setFormData(prev => ({ ...prev, is_active: checked }))} data-testid="mapping-active-switch" />
+          Aktif
+        </label>
+      </FormPopup>
     </PageLayout>
   );
 }
