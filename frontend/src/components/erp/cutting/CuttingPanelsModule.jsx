@@ -7,33 +7,35 @@
  * Layar ini hanya menyaringnya supaya tim cutting/gudang mudah melihat
  * stok potongan per style/warna/size beserta kain asalnya.
  *
- * SESI #32 — DUA HAL YANG DITAMBAHKAN (keluhan pemilik)
- * ----------------------------------------------------
- * 1. **NILAI, bukan cuma qty.** Tiap baris kini menampilkan HPP/pcs, NILAI
- *    persediaan (stok × HPP), dan STATUS nilainya. Potongan yang belum bernilai
- *    (karena harga kain asalnya belum ada) MENGATAKANNYA beserta jalan keluarnya
- *    — dulu ia hanya tampil "-" sehingga tampak seperti barang gratis.
- * 2. **Potongan YATIM bisa dilihat & dibersihkan.** Master potongan dibuat
- *    otomatis saat order cutting dimulai; bila order/kain asalnya sudah tidak
- *    ada, masternya tertinggal jadi sampah di Master Item. Kartu "Potongan
- *    yatim" menampilkan daftarnya + alasannya, dan tombol Bersihkan HANYA
- *    menghapus yang terbukti belum pernah dipakai (0 stok, tanpa kartu stok,
- *    tidak dirujuk dokumen apa pun). Yang masih berstok dipertahankan dan
- *    alasannya disebut — menghapusnya akan membuat stok jadi hantu.
+ * SESI #32: NILAI (HPP/pcs, nilai persediaan, status nilai) + potongan YATIM yang bisa dibersihkan
+ * (hanya yang terbukti belum pernah dipakai).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, tabel standar berhalaman (dulu 596 baris sekaligus) yang bisa
+ * diunduh, Bersihkan = konfirmasi. Status nilai "standar" (biaya standar dari BOM, belum dari cutting nyata)
+ * kini tampil apa adanya — dulu terbaca "belum bernilai" padahal kartu "Belum bernilai" = 0.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  Package, RefreshCw, Search, Scissors, ArrowRight, AlertCircle,
-  AlertTriangle, Trash2, CheckCircle2, Loader2, ShieldAlert,
-} from 'lucide-react';
+import { AlertTriangle, Package, RefreshCw, Scissors, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { GlassCard } from '@/components/ui/glass';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import { cuttingApi, fmtNum, fmtRp, fmtDate } from './cuttingApi';
 
 const VALUE_BADGE = {
-  valued: { text: 'bernilai', cls: 'text-[hsl(var(--success))] ' },
-  unvalued: { text: 'belum bernilai', cls: 'text-[hsl(var(--warning))] ' },
+  valued: { text: 'Bernilai', tone: 'success' },
+  standard: { text: 'Biaya standar', tone: 'info' },
+  unvalued: { text: 'Belum bernilai', tone: 'warning' },
 };
+const statusNilai = (m) => m.value_status || (Number(m.unit_cost || 0) > 0 ? 'valued' : 'unvalued');
+const nilaiBaris = (m) => Number(m.stock_value ?? (Number(m.stock_qty || 0) * Number(m.unit_cost || 0)));
 
 export default function CuttingPanelsModule({ token, onNavigate }) {
   const [rows, setRows] = useState([]);
@@ -41,7 +43,6 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
   const [q, setQ] = useState('');
   const [err, setErr] = useState('');
   const [health, setHealth] = useState(null);
-  const [confirming, setConfirming] = useState(false);
   const [cleaning, setCleaning] = useState(false);
 
   const load = useCallback(async () => {
@@ -68,34 +69,32 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
     const s = q.trim().toLowerCase();
     if (!s) return rows;
     return rows.filter((r) =>
-      [r.code, r.name, r.color, r.style_name, r.style_sku, r.source_material_code,
-        r.cutting_order_number]
+      [r.code, r.name, r.color, r.style_name, r.style_sku, r.source_material_code, r.cutting_order_number]
         .filter(Boolean).some((v) => String(v).toLowerCase().includes(s)));
   }, [rows, q]);
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(filtered, 25);
 
   const totalStock = filtered.reduce((a, r) => a + Number(r.stock_qty || 0), 0);
-  const totalValue = filtered.reduce(
-    (a, r) => a + Number(r.stock_value ?? (Number(r.stock_qty || 0) * Number(r.unit_cost || 0))), 0);
-  const unvaluedCount = filtered.filter(
-    (r) => (r.value_status || (Number(r.unit_cost || 0) > 0 ? 'valued' : 'unvalued')) === 'unvalued').length;
+  const totalValue = filtered.reduce((a, r) => a + nilaiBaris(r), 0);
+  const unvaluedCount = filtered.filter((r) => statusNilai(r) === 'unvalued').length;
+  const standardCount = filtered.filter((r) => statusNilai(r) === 'standard').length;
+  const disaring = !!q.trim();
 
   const orphans = useMemo(() => (health?.items || []).filter((r) => r.orphan), [health]);
   const cleanable = orphans.filter((r) => r.cleanable);
 
   const runCleanup = async () => {
+    if (!(await confirmDialog({
+      title: `Bersihkan ${cleanable.length} master potongan yatim?`,
+      body: 'Hanya master yang belum pernah dipakai (stok 0, tanpa kartu stok, tidak dirujuk dokumen) yang dihapus. Yang masih dipakai dipertahankan.',
+      confirmLabel: 'Ya, bersihkan', danger: true,
+    }))) return;
     setCleaning(true);
     try {
-      const res = await cuttingApi('POST', '/panels/cleanup', token,
-        { ids: cleanable.map((r) => r.id) });
-      if (res.removed) {
-        toast.success(`${res.removed} master potongan yatim dibersihkan.`);
-      } else {
-        toast.info('Tidak ada yang bisa dibersihkan — semuanya masih dipakai.');
-      }
-      if (res.kept) {
-        toast.warning(`${res.kept} dipertahankan karena masih dipakai (lihat alasannya).`);
-      }
-      setConfirming(false);
+      const res = await cuttingApi('POST', '/panels/cleanup', token, { ids: cleanable.map((r) => r.id) });
+      if (res.removed) toast.success(`${res.removed} master potongan yatim dibersihkan.`);
+      else toast.info('Tidak ada yang bisa dibersihkan — semuanya masih dipakai.');
+      if (res.kept) toast.warning(`${res.kept} dipertahankan karena masih dipakai (lihat alasannya).`);
       await load();
     } catch (e) {
       toast.error(`Gagal membersihkan: ${e.message}`);
@@ -104,258 +103,125 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
     }
   };
 
+  const kolom = [
+    { kunci: 'code', label: 'Kode potongan', hp: 'judul', isi: (m) => (
+      <span className="inline-flex flex-wrap items-center gap-1.5">
+        <span className="tabular-nums font-medium text-foreground">{m.code}</span>
+        {m.orphan && <span title={m.orphan_reason_text || 'yatim'}><StatusBadge status="yatim" label="Yatim" tone="warning" /></span>}
+      </span>) },
+    { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (m) => m.name },
+    { kunci: 'varian', label: 'Warna / ukuran', isi: (m) => <span className="text-muted-foreground">{m.color || '—'}{m.size ? ` · ${m.size}` : ''}</span> },
+    { kunci: 'asal', label: 'Kain asal', hp: false, isi: (m) => <span className="tabular-nums text-muted-foreground">{m.source_material_code || '—'}</span> },
+    { kunci: 'order', label: 'Order cutting', hp: false, isi: (m) => <span className="tabular-nums text-muted-foreground">{m.cutting_order_number || '—'}</span> },
+    { kunci: 'stok', label: 'Stok', rata: 'kanan', isi: (m) => <span className="tabular-nums font-medium whitespace-nowrap">{fmtNum(m.stock_qty)} pcs</span> },
+    { kunci: 'hpp', label: 'HPP / pcs', rata: 'kanan', isi: (m) => (Number(m.unit_cost || 0) > 0
+      ? <span className="tabular-nums whitespace-nowrap">{fmtRp(m.unit_cost)}</span>
+      : <span className="text-xs text-muted-foreground">Belum ada</span>) },
+    { kunci: 'nilai', label: 'Nilai', rata: 'kanan', hp: false, isi: (m) => (
+      <span className="tabular-nums font-semibold whitespace-nowrap" data-testid={`cutting-panels-value-${m.code}`}>{fmtRp(nilaiBaris(m))}</span>) },
+    { kunci: 'status', label: 'Status nilai', isi: (m) => {
+      const b = VALUE_BADGE[statusNilai(m)] || VALUE_BADGE.unvalued;
+      return (
+        <span title={m.value_note || (statusNilai(m) === 'unvalued' ? 'Harga kain asalnya belum ada — nilai belum bisa dihitung' : undefined)}>
+          <StatusBadge status={statusNilai(m)} label={b.text} tone={b.tone} />
+        </span>
+      );
+    } },
+    { kunci: 'dibuat', label: 'Dibuat', hp: false, isi: (m) => <span className="whitespace-nowrap text-muted-foreground">{fmtDate(m.created_at)}</span> },
+  ];
+
   return (
-    <div className="space-y-5" data-testid="cutting-panels-module">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-[hsl(var(--success)/0.12)] border border-[hsl(var(--success)/0.25)] grid place-items-center">
-            <Package className="w-5 h-5 text-[hsl(var(--success))] " />
-          </div>
-          <div>
-            <h2 className="text-2xl font-bold text-foreground">Master Potongan</h2>
-            <p className="text-sm text-muted-foreground">
-              Item material hasil cutting (kain pola). Nilainya lahir dari kain yang dipotong —
-              siap dipakai sebagai BOM produksi &amp; dikirim ke CMT.
+    <PageLayout testId="cutting-panels-module" title="Master Potongan"
+      subtitle="Item material hasil cutting (kain pola), siap dipakai sebagai BOM produksi dan dikirim ke CMT."
+      actions={<Button variant="outline" onClick={() => onNavigate?.('cutting-orders')} data-testid="cutting-panels-goto-orders">
+        <Scissors />Order cutting
+      </Button>}
+      filters={<div className="relative w-full sm:w-64">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari kode, style, warna, kain asal"
+          className="pl-8" data-testid="cutting-panels-search" />
+      </div>}
+      tools={<>
+        <TombolUnduh namaBerkas="master-potongan" namaLembar="Master potongan" baris={filtered} testId="cutting-panels-unduh"
+          kolom={[
+            { label: 'Kode potongan', nilai: (m) => m.code }, { label: 'Nama', nilai: (m) => m.name },
+            { label: 'Warna', nilai: (m) => m.color || '' }, { label: 'Ukuran', nilai: (m) => m.size || '' },
+            { label: 'Kain asal', nilai: (m) => m.source_material_code || '' },
+            { label: 'Order cutting', nilai: (m) => m.cutting_order_number || '' },
+            { label: 'Stok (pcs)', nilai: (m) => Number(m.stock_qty || 0) },
+            { label: 'HPP / pcs', nilai: (m) => Number(m.unit_cost || 0) },
+            { label: 'Nilai', nilai: (m) => nilaiBaris(m) },
+            { label: 'Status nilai', nilai: (m) => (VALUE_BADGE[statusNilai(m)] || VALUE_BADGE.unvalued).text },
+            { label: 'Keterangan nilai', nilai: (m) => m.value_note || '' },
+            { label: 'Yatim', nilai: (m) => (m.orphan ? 'Ya' : 'Tidak') },
+            { label: 'Dibuat', nilai: (m) => fmtDate(m.created_at) },
+          ]} />
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="cutting-panels-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={<>
+        {err && <Notice tone="danger" icon={AlertTriangle}>{err}</Notice>}
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile label="Jenis potongan" value={fmtNum(filtered.length)}
+            sub={disaring ? `Sesuai pencarian · dari ${fmtNum(rows.length)}` : 'Semua master potongan aktif'} />
+          <StatTile label="Total stok potongan" value={`${fmtNum(totalStock)} pcs`} sub={disaring ? 'Sesuai pencarian' : 'Semua gudang'} />
+          <StatTile label="Nilai persediaan" value={fmtRp(totalValue)} testId="cutting-panels-total-value"
+            sub="Stok × HPP hasil potong" />
+          <StatTile label="Belum bernilai" value={fmtNum(unvaluedCount)} accent={unvaluedCount ? 'warning' : 'default'}
+            testId="cutting-panels-unvalued-count"
+            sub={standardCount ? `${fmtNum(standardCount)} lain memakai biaya standar BOM` : 'Harga kain asalnya belum ada'} />
+        </div>
+        {orphans.length > 0 && (
+          <Notice tone="warning" icon={AlertTriangle} testId="cutting-panels-orphan-card"
+            title={`${orphans.length} master potongan yatim`}
+            action={<Button variant="destructive" size="sm" onClick={runCleanup} disabled={cleaning || !cleanable.length}
+              title={cleanable.length ? 'Hapus master potongan yang belum pernah dipakai' : 'Tidak ada yang bisa dibersihkan — semuanya masih dipakai'}
+              data-testid="cutting-panels-cleanup-btn">
+              <Trash2 />Bersihkan yang aman ({cleanable.length})
+            </Button>}>
+            <p>
+              Order cutting atau kain asalnya sudah tidak ada (biasanya sisa uji atau order batal). Yang masih berstok
+              tidak dihapus supaya stok tidak jadi hantu; alasannya ada per baris.
             </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={load}
-            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] text-sm text-foreground hover:bg-[var(--nav-pill-active)]"
-            data-testid="cutting-panels-refresh">
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Muat Ulang
-          </button>
-          <button onClick={() => onNavigate?.('cutting-orders')}
-            className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-[hsl(var(--primary))] text-white text-sm"
-            data-testid="cutting-panels-goto-orders">
-            <Scissors className="w-4 h-4" /> Order Cutting
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <GlassCard className="p-4">
-          <p className="text-xs text-muted-foreground">Jenis Potongan</p>
-          <p className="text-2xl font-bold text-foreground mt-1">{fmtNum(filtered.length)}</p>
-        </GlassCard>
-        <GlassCard className="p-4">
-          <p className="text-xs text-muted-foreground">Total Stok Potongan</p>
-          <p className="text-2xl font-bold text-foreground mt-1">{fmtNum(totalStock)} pcs</p>
-        </GlassCard>
-        <GlassCard className="p-4">
-          <p className="text-xs text-muted-foreground">Nilai Persediaan</p>
-          <p className="text-2xl font-bold text-foreground mt-1"
-            data-testid="cutting-panels-total-value">{fmtRp(totalValue)}</p>
-          <p className="text-[11px] text-muted-foreground mt-0.5">stok × HPP hasil potong</p>
-        </GlassCard>
-        <GlassCard className="p-4">
-          <p className="text-xs text-muted-foreground">Belum Bernilai</p>
-          <p className={`text-2xl font-bold mt-1 ${unvaluedCount ? 'text-[hsl(var(--warning))] ' : 'text-foreground'}`}
-            data-testid="cutting-panels-unvalued-count">{fmtNum(unvaluedCount)}</p>
-          <p className="text-[11px] text-muted-foreground mt-0.5">harga kain asalnya belum ada</p>
-        </GlassCard>
-      </div>
-
-      {/* ── POTONGAN YATIM ─────────────────────────────────────────────────── */}
-      {orphans.length > 0 && (
-        <GlassCard className="p-4 border-[hsl(var(--warning)/0.5)] bg-[hsl(var(--warning)/0.7)] "
-          data-testid="cutting-panels-orphan-card">
-          <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="w-5 h-5 text-[hsl(var(--warning))] mt-0.5 shrink-0" />
-              <div>
-                <p className="text-sm font-semibold text-foreground">
-                  {orphans.length} master potongan YATIM
-                </p>
-                <p className="text-xs text-muted-foreground max-w-3xl">
-                  Master potongan dibuat otomatis saat order cutting dimulai. Baris di bawah
-                  sudah kehilangan induknya (order cutting dan/atau kain asalnya tidak ada lagi)
-                  — biasanya sisa alat uji atau order yang dibatalkan.{' '}
-                  <strong className="text-foreground">
-                    Yang masih berstok TIDAK akan dihapus
-                  </strong>{' '}
-                  supaya stok tidak jadi hantu; alasannya disebut per baris.
-                </p>
-              </div>
+            <div className="mt-2 overflow-x-auto">
+              <Table data-testid="cutting-panels-orphan-table">
+                <TableHeader><TableRow>
+                  <TableHead>Kode</TableHead><TableHead>Alasan yatim</TableHead><TableHead>Kain asal</TableHead>
+                  <TableHead className="text-right">Stok</TableHead><TableHead className="text-right">Nilai</TableHead>
+                  <TableHead>Bisa dibersihkan?</TableHead>
+                </TableRow></TableHeader>
+                <TableBody>
+                  {orphans.map((r) => (
+                    <TableRow key={r.id} data-testid={`cutting-panels-orphan-row-${r.code}`}>
+                      <TableCell className="tabular-nums">{r.code}</TableCell>
+                      <TableCell>{r.reason_text}</TableCell>
+                      <TableCell className="tabular-nums text-muted-foreground">{r.source_material_code || '—'}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtNum(r.stock_qty)} {r.unit || 'pcs'}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtRp(r.stock_value)}</TableCell>
+                      <TableCell>{r.cleanable
+                        ? <StatusBadge status="aman" label="Aman dihapus" tone="success" />
+                        : <span className="text-[hsl(var(--warning-text))]">{r.block_reason || 'Masih dipakai'}</span>}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
-            {confirming ? (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-foreground">
-                  Bersihkan {cleanable.length} master?
-                </span>
-                <button onClick={runCleanup} disabled={cleaning || !cleanable.length}
-                  className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-[hsl(var(--destructive))] text-white text-sm disabled:opacity-50"
-                  data-testid="cutting-panels-cleanup-confirm">
-                  {cleaning ? <Loader2 className="w-4 h-4 animate-spin" />
-                    : <CheckCircle2 className="w-4 h-4" />} Ya, bersihkan
-                </button>
-                <button onClick={() => setConfirming(false)}
-                  className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] text-sm text-foreground"
-                  data-testid="cutting-panels-cleanup-cancel">Batal</button>
-              </div>
-            ) : (
-              <button onClick={() => setConfirming(true)} disabled={!cleanable.length}
-                className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-[hsl(var(--warning))] text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                title={cleanable.length ? 'Hapus master potongan yang belum pernah dipakai'
-                  : 'Tidak ada yang bisa dibersihkan — semuanya masih dipakai'}
-                data-testid="cutting-panels-cleanup-btn">
-                <Trash2 className="w-4 h-4" /> Bersihkan yang aman ({cleanable.length})
-              </button>
-            )}
-          </div>
-
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-xs" data-testid="cutting-panels-orphan-table">
-              <thead>
-                <tr className="text-left text-[11px] text-muted-foreground border-b border-[hsl(var(--warning)/0.4)]">
-                  <th className="py-1.5 pr-3 font-medium">Kode</th>
-                  <th className="py-1.5 pr-3 font-medium">Alasan yatim</th>
-                  <th className="py-1.5 pr-3 font-medium">Kain asal</th>
-                  <th className="py-1.5 pr-3 font-medium text-right">Stok</th>
-                  <th className="py-1.5 pr-3 font-medium text-right">Nilai</th>
-                  <th className="py-1.5 font-medium">Bisa dibersihkan?</th>
-                </tr>
-              </thead>
-              <tbody>
-                {orphans.map((r) => (
-                  <tr key={r.id} className="border-b border-[hsl(var(--warning)/0.2)] last:border-0"
-                    data-testid={`cutting-panels-orphan-row-${r.code}`}>
-                    <td className="py-1.5 pr-3 tabular-nums text-foreground">{r.code}</td>
-                    <td className="py-1.5 pr-3 text-foreground/90">{r.reason_text}</td>
-                    <td className="py-1.5 pr-3 tabular-nums text-muted-foreground">
-                      {r.source_material_code || '—'}
-                    </td>
-                    <td className="py-1.5 pr-3 text-right tabular-nums text-foreground">
-                      {fmtNum(r.stock_qty)} {r.unit || 'pcs'}
-                    </td>
-                    <td className="py-1.5 pr-3 text-right tabular-nums text-foreground">
-                      {fmtRp(r.stock_value)}
-                    </td>
-                    <td className="py-1.5">
-                      {r.cleanable ? (
-                        <span className="inline-flex items-center gap-1 text-[hsl(var(--success))] ">
-                          <CheckCircle2 className="w-3 h-3" /> aman dihapus
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-start gap-1 text-[hsl(var(--warning))] ">
-                          <ShieldAlert className="w-3 h-3 mt-0.5 shrink-0" />
-                          <span>{r.block_reason || 'masih dipakai'}</span>
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </GlassCard>
-      )}
-
-      <GlassCard className="p-3">
-        <div className="relative">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input value={q} onChange={(e) => setQ(e.target.value)}
-            placeholder="Cari kode / style / warna / kain asal / nomor order…"
-            className="w-full h-9 pl-9 pr-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
-            data-testid="cutting-panels-search" />
-        </div>
-      </GlassCard>
-
-      {err && (
-        <div className="flex items-center gap-2 p-3 rounded-lg border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-sm text-[hsl(var(--destructive))] ">
-          <AlertCircle className="w-4 h-4" /> {err}
-        </div>
-      )}
-
-      <GlassCard className="p-0 overflow-hidden">
-        {loading && rows.length === 0 ? (
-          <div className="p-6 space-y-2">
-            {[0, 1, 2].map((i) => <div key={i} className="h-9 rounded-lg bg-foreground/5 animate-pulse" />)}
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="p-12 text-center" data-testid="cutting-panels-empty">
-            <Package className="w-10 h-10 mx-auto text-muted-foreground/40" />
-            <p className="mt-3 font-medium text-foreground">Belum ada master potongan</p>
-            <p className="text-sm text-muted-foreground">
-              Item potongan otomatis dibuat saat sebuah order cutting dimulai.
-            </p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm" data-testid="cutting-panels-table">
-              <thead>
-                <tr className="text-left text-xs text-muted-foreground border-b border-[var(--glass-border)] bg-[var(--nav-pill-bg)]">
-                  <th className="px-4 py-2.5 font-medium">Kode Potongan</th>
-                  <th className="px-4 py-2.5 font-medium">Nama</th>
-                  <th className="px-4 py-2.5 font-medium">Warna / Size</th>
-                  <th className="px-4 py-2.5 font-medium">Kain Asal</th>
-                  <th className="px-4 py-2.5 font-medium">Order Cutting</th>
-                  <th className="px-4 py-2.5 font-medium text-right">Stok</th>
-                  <th className="px-4 py-2.5 font-medium text-right">HPP / pcs</th>
-                  <th className="px-4 py-2.5 font-medium text-right">Nilai</th>
-                  <th className="px-4 py-2.5 font-medium">Status Nilai</th>
-                  <th className="px-4 py-2.5 font-medium">Dibuat</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((m) => {
-                  const status = m.value_status
-                    || (Number(m.unit_cost || 0) > 0 ? 'valued' : 'unvalued');
-                  const badge = VALUE_BADGE[status] || VALUE_BADGE.unvalued;
-                  return (
-                    <tr key={m.id} className="border-b border-[var(--glass-border)] last:border-0 hover:bg-[var(--nav-pill-active)]/40"
-                      data-testid={`cutting-panels-row-${m.code}`}>
-                      <td className="px-4 py-2.5 tabular-nums text-xs text-foreground">
-                        {m.code}
-                        {m.orphan && (
-                          <span className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] text-[hsl(var(--warning))] "
-                            title={m.orphan_reason_text || 'yatim'}>
-                            <AlertTriangle className="w-3 h-3" /> yatim
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5 text-foreground">{m.name}</td>
-                      <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                        {m.color || '-'}{m.size ? ` · ${m.size}` : ''}
-                      </td>
-                      <td className="px-4 py-2.5 text-xs">
-                        <span className="inline-flex items-center gap-1 text-muted-foreground">
-                          <span className="tabular-nums">{m.source_material_code || '-'}</span>
-                          <ArrowRight className="w-3 h-3" />
-                          <span className="tabular-nums text-foreground">{m.code}</span>
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 text-xs tabular-nums text-muted-foreground">
-                        {m.cutting_order_number || '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums font-medium text-foreground">
-                        {fmtNum(m.stock_qty)} pcs
-                      </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums text-foreground">
-                        {Number(m.unit_cost || 0) > 0 ? fmtRp(m.unit_cost)
-                          : <span className="text-muted-foreground text-xs">belum ada</span>}
-                      </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-foreground"
-                        data-testid={`cutting-panels-value-${m.code}`}>
-                        {fmtRp(m.stock_value ?? (Number(m.stock_qty || 0) * Number(m.unit_cost || 0)))}
-                      </td>
-                      <td className="px-4 py-2.5 text-xs">
-                        <span className={badge.cls}>{badge.text}</span>
-                        {status === 'unvalued' && (
-                          <span className="block text-[10px] text-muted-foreground max-w-[260px]">
-                            {m.value_note || 'harga kain asalnya belum ada — nilai belum bisa dihitung'}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5 text-xs text-muted-foreground">{fmtDate(m.created_at)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          </Notice>
         )}
-      </GlassCard>
-    </div>
+      </>}
+      footer={filtered.length > pageSize && (
+        <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
+      )}>
+      {loading && rows.length === 0 ? (
+        <div className="space-y-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
+      ) : (
+        <TabelData kolom={kolom} baris={paged} testId="cutting-panels-table"
+          kosong={<EmptyState icon={Package} testId="cutting-panels-empty"
+            title={rows.length ? 'Tidak ada potongan yang cocok' : 'Belum ada master potongan'}
+            description={rows.length ? 'Ubah kata pencarian.' : 'Item potongan otomatis dibuat saat sebuah order cutting dimulai.'} />} />
+      )}
+    </PageLayout>
   );
 }

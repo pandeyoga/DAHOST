@@ -2,6 +2,8 @@
  * cuttingApi — pembungkus fetch untuk Portal Cutting.
  * Semua path memakai prefix /api (ingress Kubernetes merutekan /api/* ke backend).
  */
+import { StatusBadge } from '../moduleAtoms';
+
 const BASE = process.env.REACT_APP_BACKEND_URL || '';
 
 export async function cuttingApi(method, path, token, body) {
@@ -26,20 +28,17 @@ export async function cuttingApi(method, path, token, body) {
   return data;
 }
 
+// Standar UI/UX v2: status memakai StatusBadge (token warna, kontras cukup) — dulu kelas slate/abu buatan sendiri.
 export const STATUS_META = {
-  draft: { label: 'Draft', cls: 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-400/15 dark:text-slate-300 dark:border-slate-400/30' },
-  in_progress: { label: 'Berjalan', cls: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]   ' },
-  completed: { label: 'Selesai', cls: 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]   ' },
-  cancelled: { label: 'Dibatalkan', cls: 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.35)]   ' },
+  draft: { label: 'Draf', tone: 'muted' },
+  in_progress: { label: 'Berjalan', tone: 'warning' },
+  completed: { label: 'Selesai', tone: 'success' },
+  cancelled: { label: 'Dibatalkan', tone: 'danger' },
 };
 
 export function StatusPill({ status }) {
   const m = STATUS_META[status] || STATUS_META.draft;
-  return (
-    <span className={`inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full border ${m.cls}`}>
-      {m.label}
-    </span>
-  );
+  return <StatusBadge status={status} label={m.label} tone={m.tone} />;
 }
 
 export const fmtNum = (n, d = 0) =>

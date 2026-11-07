@@ -11,15 +11,26 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Scissors, Plus, RefreshCw, Search, PlayCircle, CheckCircle2, XCircle,
-  Trash2, Package, ArrowRight, Layers, AlertCircle, Loader2, History,
+  Plus, RefreshCw, Search, PlayCircle, CheckCircle2, XCircle,
+  Trash2, Package, ArrowRight, Layers, AlertCircle, Loader2, History, Scissors, PencilLine,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { GlassCard } from '@/components/ui/glass';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Button } from '@/components/ui/button';
-import Modal from '../Modal';
-import { cuttingApi, StatusPill, fmtNum, fmtRp, fmtDateTime } from './cuttingApi';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup from '@/components/ui/detail-popup';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
+import { cuttingApi, StatusPill, STATUS_META, fmtNum, fmtRp, fmtDateTime } from './cuttingApi';
 import useUomOptions from '../../../hooks/useUomOptions';
 import { UomSelect, UomConversionHint, toBaseQty } from '../uom/UomPicker';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
@@ -52,24 +63,14 @@ const EMPTY_PROG = {
   note: '', roll_id: '', input_uom: '', roll_ids: [],
 };
 
+/** Isian form standar (label · kontrol · petunjuk) — dulu label buatan sendiri. */
 function Field({ label, children, hint, required }) {
-  return (
-    <label className="block">
-      <span className="text-xs font-medium text-foreground/80">
-        {label} {required && <span className="text-[hsl(var(--destructive))]">*</span>}
-      </span>
-      <div className="mt-1">{children}</div>
-      {hint && <span className="text-[11px] text-muted-foreground mt-1 block">{hint}</span>}
-    </label>
-  );
+  return <Isian label={label} wajib={!!required} petunjuk={hint || undefined}>{children}</Isian>;
 }
 
 /** Angka pemakaian bahan: tampilkan apa adanya tanpa nol berekor ("6" bukan "6,0000"). */
 const fmtQtyTrim = (v) =>
   Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 4 });
-
-const inputCls =
-  'w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]';
 
 /** Label varian yang bisa dibedakan: warna · ukuran · SKU (2026-11-07, keluhan owner Order Cutting). */
 const variantLabel = (v) =>
@@ -134,6 +135,8 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [prog, setProg] = useState({ ...EMPTY_PROG });
   const [acting, setActing] = useState(false);
+  // Standar UI/UX v2: form progres = popup sendiri (dulu form di dalam popup detail); detail disembunyikan sementara.
+  const [progOpen, setProgOpen] = useState(false);
   // FASE H-6: gulungan yang masih bersisa untuk kain order ini (dimuat saat detail
   // dibuka). `rollRequired` datang dari server — layar tidak menebak sendiri.
   const [detailRolls, setDetailRolls] = useState({ items: [], roll_required: false, total_remaining: 0, uom: '' });
@@ -489,7 +492,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
   }, [selectedMaterial, form.location_id]);
 
   const submitCreate = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     if (!form.input_material_id) return toast.error('Pilih material kain dulu.');
     if (!form.model_id) return toast.error('Pilih Model/Style dari Master Produk dulu.');
     // 2026-11-02 — No.18(a): backend tidak lagi menebak gudang bila kosong.
@@ -520,6 +523,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
 
   const openDetail = async (id) => {
     setDetailLoading(true);
+    setProgOpen(false);
     setProg({ ...EMPTY_PROG });
     setDetailRolls({ items: [], roll_required: false, total_remaining: 0, uom: '' });
     try {
@@ -617,7 +621,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
   });
 
   const submitProgress = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     if (!(Number(prog.input_consumed) > 0)) return toast.error('Kain terpakai harus > 0.');
     if (!(consumedInOrderUnit > 0)) return toast.error('Sisa kain tidak boleh sama dengan atau melebihi kain yang diambil.');
     if (!(Number(prog.output_qty) > 0)) return toast.error('Jumlah potongan jadi harus > 0.');
@@ -670,6 +674,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
         toast.warning(res.value_warning, { duration: 12000 });
       }
       setProg({ ...EMPTY_PROG });
+      setProgOpen(false);
       await refreshDetail(detail.id);
       await loadMiMissing();
     } catch (e2) {
@@ -691,983 +696,791 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
     }
   };
 
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 25);
+  const stLabel = (s) => (STATUS_META[s] || STATUS_META.draft).label;
+  const kolom = [
+    { kunci: 'nomor', label: 'Nomor', hp: 'judul', isi: (r) => <span className="font-medium tabular-nums whitespace-nowrap">{r.number}</span> },
+    { kunci: 'style', label: 'Style / potongan', hp: 'keterangan', isi: (r) => (
+      <div className="min-w-0">
+        <p className="text-foreground">{r.style_name || '—'}</p>
+        <p className="text-xs tabular-nums text-muted-foreground">{r.output_material_code || 'Kode dibuat saat mulai'}</p>
+      </div>) },
+    { kunci: 'kain', label: 'Kain (input)', isi: (r) => (
+      <div className="min-w-0 md:max-w-[14rem]">
+        <p className="truncate text-sm" title={r.input_material_name}>{r.input_material_name}</p>
+        <p className="text-xs tabular-nums text-muted-foreground">{r.input_material_code}</p>
+      </div>) },
+    { kunci: 'pakai', label: 'Kain terpakai', rata: 'kanan', isi: (r) => (
+      <span className="tabular-nums whitespace-nowrap">{fmtNum(r.consumed_input_qty, 2)} / {fmtNum(r.planned_input_qty, 2)} {r.input_unit}</span>) },
+    { kunci: 'jadi', label: 'Potongan jadi', rata: 'kanan', isi: (r) => (
+      <div className="tabular-nums whitespace-nowrap">
+        <span className="font-medium text-foreground">{fmtNum(r.produced_qty)}</span>
+        <span className="text-muted-foreground"> / {fmtNum(r.planned_output_qty)} pcs</span>
+        <div className="mt-1 h-1 overflow-hidden rounded-full bg-foreground/10">
+          <div className="h-full bg-primary" style={{ width: `${Math.min(r.progress_pct || 0, 100)}%` }} />
+        </div>
+      </div>) },
+    { kunci: 'status', label: 'Status', isi: (r) => <StatusPill status={r.status} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+      <div className="flex justify-end gap-1.5">
+        <Button size="sm" variant="outline" onClick={() => openDetail(r.id)} data-testid={`cutting-detail-${r.number}`}>Rincian</Button>
+        {r.status === 'draft' && (
+          <Button size="icon-sm" variant="ghost" onClick={() => removeDraft(r)} title="Hapus draf" aria-label="Hapus draf"
+            data-testid={`cutting-delete-${r.number}`}>
+            <Trash2 />
+          </Button>
+        )}
+      </div>) },
+  ];
+
   return (
-    <div className="space-y-5" data-testid="cutting-orders-module">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-[hsl(var(--warning)/0.12)] border border-[hsl(var(--warning)/0.25)] grid place-items-center">
-            <Scissors className="w-5 h-5 text-[hsl(var(--warning))] " />
-          </div>
-          <div>
-            <h2 className="text-2xl font-bold text-foreground">Order Cutting</h2>
-            <p className="text-sm text-muted-foreground">
-              Ubah roll kain menjadi kain pola (potongan) — hasilnya jadi material untuk BOM produksi.
-            </p>
-          </div>
+    <PageLayout testId="cutting-orders-module" title="Order Cutting"
+      subtitle="Ubah roll kain menjadi kain pola (potongan) yang jadi material untuk BOM produksi."
+      actions={<Button onClick={openCreate} data-testid="cutting-create-btn"><Plus />Buat cutting</Button>}
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nomor, style, kain, kode potongan"
+            className="pl-8" data-testid="cutting-search-input" />
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={load}
-            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] text-sm text-foreground hover:bg-[var(--nav-pill-active)]"
-            data-testid="cutting-refresh-btn">
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Muat Ulang
-          </button>
-          <button onClick={openCreate}
-            className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-[hsl(var(--primary))] text-white text-sm font-medium hover:opacity-90"
-            data-testid="cutting-create-btn">
-            <Plus className="w-4 h-4" /> Buat Cutting
-          </button>
-        </div>
-      </div>
-
-      {/* Filters */}
-      <GlassCard className="p-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[220px]">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Cari nomor / style / kain / kode potongan…"
-              className={`${inputCls} pl-9`}
-              data-testid="cutting-search-input"
-            />
-          </div>
-          <SmartNativeSelect value={status} onChange={(e) => setStatus(e.target.value)}
-            className={`${inputCls} w-auto min-w-[160px]`} wrapperClassName="w-auto min-w-[160px]"
-            data-testid="cutting-status-filter">
-            <option value="">Semua status</option>
-            <option value="draft">Draft</option>
-            <option value="in_progress">Berjalan</option>
-            <option value="completed">Selesai</option>
-            <option value="cancelled">Dibatalkan</option>
-          </SmartNativeSelect>
-        </div>
-      </GlassCard>
-
-      {err && (
-        <div className="flex items-center gap-2 p-3 rounded-lg border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-sm text-[hsl(var(--destructive))] ">
-          <AlertCircle className="w-4 h-4" /> {err}
-        </div>
+        <SmartNativeSelect value={status} onChange={(e) => setStatus(e.target.value)} searchable={false}
+          className="h-9 w-44" wrapperClassName="w-44" aria-label="Status" data-testid="cutting-status-filter">
+          <option value="">Semua status</option>
+          <option value="draft">Draf</option>
+          <option value="in_progress">Berjalan</option>
+          <option value="completed">Selesai</option>
+          <option value="cancelled">Dibatalkan</option>
+        </SmartNativeSelect>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="order-cutting" namaLembar="Order cutting" baris={rows} testId="cutting-unduh"
+          kolom={[
+            { label: 'Nomor', nilai: (r) => r.number }, { label: 'Style', nilai: (r) => r.style_name || '' },
+            { label: 'Kode potongan', nilai: (r) => r.output_material_code || '' },
+            { label: 'Kain', nilai: (r) => r.input_material_name || '' }, { label: 'Kode kain', nilai: (r) => r.input_material_code || '' },
+            { label: 'Kain terpakai', nilai: (r) => Number(r.consumed_input_qty || 0) },
+            { label: 'Rencana kain', nilai: (r) => Number(r.planned_input_qty || 0) }, { label: 'Satuan kain', nilai: (r) => r.input_unit || '' },
+            { label: 'Potongan jadi (pcs)', nilai: (r) => Number(r.produced_qty || 0) },
+            { label: 'Target (pcs)', nilai: (r) => Number(r.planned_output_qty || 0) },
+            { label: 'Status', nilai: (r) => stLabel(r.status) }, { label: 'Dibuat', nilai: (r) => fmtDateTime(r.created_at) },
+          ]} />
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="cutting-refresh-btn">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={<>
+        {err && <Notice tone="danger" icon={AlertCircle}>{err}</Notice>}
+        {/* FASE H-6b — progres yang kainnya sudah keluar tetapi belum punya dokumen Pengeluaran Material.
+            Menerbitkan dokumen TIDAK memotong stok lagi. */}
+        {miMissing.count > 0 && (
+          <Notice tone="warning" icon={AlertCircle} testId="cutting-mi-missing-panel"
+            title={`${miMissing.count} laporan progres belum punya dokumen Pengeluaran Material`}
+            action={<div className="flex flex-wrap gap-2">
+              <TombolUnduh namaBerkas="progres-tanpa-dokumen" namaLembar="Progres" baris={miMissing.items || []} testId="cutting-mi-unduh"
+                kolom={[
+                  { label: 'Order', nilai: (m) => m.cutting_number || '' }, { label: 'Kode kain', nilai: (m) => m.material_code || '' },
+                  { label: 'Kain', nilai: (m) => m.material_name || '' }, { label: 'Kain keluar', nilai: (m) => Number(m.input_consumed || 0) },
+                  { label: 'Satuan', nilai: (m) => m.unit || '' }, { label: 'Gudang', nilai: (m) => m.location_name || '' },
+                  { label: 'Gulungan', nilai: (m) => (m.roll_numbers || []).join(', ') }, { label: 'Waktu', nilai: (m) => fmtDateTime(m.created_at) },
+                ]} />
+              <Button size="sm" onClick={backfillMiDocs} disabled={miFixing} data-testid="cutting-mi-backfill-btn">
+                {miFixing ? <Loader2 className="animate-spin" /> : <History />}
+                {miFixing ? 'Menerbitkan…' : 'Terbitkan dokumen'}
+              </Button>
+            </div>}>
+            <p>Kain dan gulungannya sudah berkurang, tetapi arus keluarnya belum tampil di Gudang › Pengeluaran Material.
+              Menerbitkan dokumen hanya membuat bukti — <b>stok tidak dipotong lagi</b>.</p>
+            <div className="mt-2 overflow-x-auto">
+              <Table data-testid="cutting-mi-missing-table">
+                <TableHeader><TableRow>
+                  <TableHead>Order</TableHead><TableHead>Kain</TableHead><TableHead className="text-right">Kain keluar</TableHead>
+                  <TableHead>Gudang</TableHead><TableHead>Gulungan</TableHead><TableHead>Waktu</TableHead>
+                </TableRow></TableHeader>
+                <TableBody>
+                  {(miMissing.items || []).slice(0, 8).map((m) => (
+                    <TableRow key={m.progress_id} data-testid={`cutting-mi-missing-row-${m.progress_id}`}>
+                      <TableCell className="tabular-nums">{m.cutting_number || '—'}</TableCell>
+                      <TableCell><span className="tabular-nums">{m.material_code || '—'}</span>
+                        <span className="text-muted-foreground"> · {m.material_name || ''}</span></TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtNum(m.input_consumed, 2)} {m.unit || ''}</TableCell>
+                      <TableCell>{m.location_name || '—'}</TableCell>
+                      <TableCell className="tabular-nums">{(m.roll_numbers || []).join(', ') || '—'}</TableCell>
+                      <TableCell className="whitespace-nowrap">{fmtDateTime(m.created_at)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            {miMissing.count > 8 && (
+              <p className="mt-1.5 text-xs text-muted-foreground">…dan {miMissing.count - 8} lagi. Tombol Terbitkan dokumen menerbitkan semuanya.</p>
+            )}
+          </Notice>
+        )}
+      </>}
+      footer={rows.length > pageSize && (
+        <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
+      )}>
+      {loading && rows.length === 0 ? (
+        <div className="space-y-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
+      ) : (
+        <TabelData kolom={kolom} baris={paged} onKlikBaris={(r) => openDetail(r.id)} testId="cutting-orders-table"
+          kosong={<EmptyState icon={Scissors} testId="cutting-empty-state"
+            title={q || status ? 'Tidak ada order yang cocok' : 'Belum ada order cutting'}
+            description={q || status ? 'Ubah kata pencarian atau status.' : 'Mulai dengan memilih kain dari master material Gudang.'}
+            action={!q && !status && <Button onClick={openCreate}><Plus />Buat cutting</Button>} />} />
       )}
 
-      {/* ── FASE H-6b — PROGRES TANPA DOKUMEN PENGELUARAN MATERIAL ─────────────
-          Kain sudah keluar & gulungan sudah berkurang, tetapi dokumennya belum ada
-          (data sebelum H-6b, atau penerbitan dokumen gagal). Tanpa panel ini arus
-          keluar itu tidak akan pernah muncul di layar Gudang. Menerbitkan dokumen
-          TIDAK memotong stok lagi. */}
-      {miMissing.count > 0 && (
-        <div className="rounded-xl border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)]  p-4"
-          data-testid="cutting-mi-missing-panel">
-          <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div className="flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 text-[hsl(var(--warning))] mt-0.5 flex-shrink-0" />
-              <div>
-                <div className="text-sm font-semibold text-[hsl(var(--warning))] ">
-                  {miMissing.count} laporan progres belum punya dokumen Pengeluaran Material
-                </div>
-                <p className="text-xs text-[hsl(var(--warning)/0.8)] mt-0.5 max-w-2xl">
-                  Kain &amp; gulungannya SUDAH berkurang, tetapi arus keluarnya belum tampil di layar
-                  Gudang → Pengeluaran Material. Menerbitkan dokumen hanya membuat bukti/jejak —
-                  <b> stok tidak dipotong lagi</b>.
-                </p>
-              </div>
-            </div>
-            <button onClick={backfillMiDocs} disabled={miFixing}
-              className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.9)] disabled:opacity-60 text-white text-sm font-medium"
-              data-testid="cutting-mi-backfill-btn">
-              {miFixing ? <Loader2 className="w-4 h-4 animate-spin" /> : <History className="w-4 h-4" />}
-              {miFixing ? 'Menerbitkan…' : 'Terbitkan dokumen'}
-            </button>
-          </div>
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-xs" data-testid="cutting-mi-missing-table">
-              <thead>
-                <tr className="text-left text-[hsl(var(--warning)/0.7)] border-b border-[hsl(var(--warning)/0.5)] ">
-                  <th className="px-2 py-1.5 font-medium">Order</th>
-                  <th className="px-2 py-1.5 font-medium">Kain</th>
-                  <th className="px-2 py-1.5 font-medium text-right">Kain keluar</th>
-                  <th className="px-2 py-1.5 font-medium">Gudang</th>
-                  <th className="px-2 py-1.5 font-medium">Gulungan</th>
-                  <th className="px-2 py-1.5 font-medium">Waktu</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(miMissing.items || []).slice(0, 8).map((m) => (
-                  <tr key={m.progress_id} className="border-b border-[hsl(var(--warning)/0.3)] last:border-0"
-                    data-testid={`cutting-mi-missing-row-${m.progress_id}`}>
-                    <td className="px-2 py-1.5 tabular-nums text-[hsl(var(--warning))] ">{m.cutting_number || '-'}</td>
-                    <td className="px-2 py-1.5 text-[hsl(var(--warning))] ">
-                      <span className="tabular-nums">{m.material_code || '-'}</span>
-                      <span className="text-[hsl(var(--warning)/0.6)] "> · {m.material_name || ''}</span>
-                    </td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-[hsl(var(--warning))] ">
-                      {fmtNum(m.input_consumed, 2)} {m.unit || ''}
-                    </td>
-                    <td className="px-2 py-1.5 text-[hsl(var(--warning)/0.8)] ">{m.location_name || '-'}</td>
-                    <td className="px-2 py-1.5 tabular-nums text-[hsl(var(--warning)/0.8)] ">
-                      {(m.roll_numbers || []).join(', ') || '-'}
-                    </td>
-                    <td className="px-2 py-1.5 text-[hsl(var(--warning)/0.7)] ">{fmtDateTime(m.created_at)}</td>
-                  </tr>
+      {/* ── FORM BUAT CUTTING (popup panjang) ───────────────────────────── */}
+      <FormPopup open={showCreate && !showNewModel} onClose={() => setShowCreate(false)} ukuran="panjang"
+        judul="Buat order cutting" onSimpan={submitCreate} menyimpan={saving} labelSimpan="Simpan draf"
+        keterangan="Kain diambil dari master material Gudang. Item potongan (satuan pcs) dibuat otomatis saat cutting dimulai."
+        testId="cutting-create-form">
+        <Field label="Material kain (input)" required
+          hint={selectedMaterial
+            ? `Total stok ${fmtNum(selectedMaterial.stock_qty, 2)} ${selectedMaterial.unit} · ${selectedMaterial.roll_count} roll aktif`
+            : 'Stok kain disimpan per gudang — pilih kain dulu untuk melihat sebarannya.'}>
+          <label className="mb-1.5 inline-flex cursor-pointer items-center gap-2 text-xs text-muted-foreground" htmlFor="cutting-only-instock">
+            <Checkbox id="cutting-only-instock" checked={onlyInStock} onCheckedChange={(v) => setOnlyInStock(!!v)}
+              data-testid="cutting-only-instock" />
+            Tampilkan hanya kain yang ada stoknya ({materialOptions.length} dari {materials.length})
+          </label>
+          <SmartNativeSelect value={form.input_material_id} onChange={(e) => onPickMaterial(e.target.value)}
+            className="h-9 w-full" searchable searchPlaceholder="Cari kode, nama, atau warna kain…"
+            data-testid="cutting-input-material-select">
+            <option value="">— Pilih kain —</option>
+            {materialOptions.map((m) => (
+              <option key={m.id} value={m.id}>
+                {`${m.code} · ${m.name}`
+                  + (m.color && !String(m.name || '').toLowerCase().includes(String(m.color).toLowerCase()) ? ` · ${m.color}` : '')
+                  + ` — stok ${fmtNum(m.stock_qty, 2)} ${m.unit || ''}`
+                  + (m.best_location_name ? ` @ ${m.best_location_name}` : ' (belum ada stok)')}
+              </option>
+            ))}
+          </SmartNativeSelect>
+        </Field>
+
+        {selectedMaterial && (
+          <Field label="Gudang sumber kain" required
+            hint={stockAtLocation !== null
+              ? `Stok di gudang ini: ${fmtNum(stockAtLocation, 2)} ${selectedMaterial.unit}. Pemotongan stok saat input progres diambil dari gudang ini.`
+              : ''}>
+            <SmartNativeSelect value={form.location_id}
+              onChange={(e) => setForm((f) => ({ ...f, location_id: e.target.value }))}
+              className="h-9 w-full" data-testid="cutting-location-select">
+              <option value="">— Pilih gudang —</option>
+              {(selectedMaterial.stock_locations || []).map((l) => (
+                <option key={l.location_id} value={l.location_id}>
+                  {l.location_name} — stok {fmtNum(l.qty, 2)} {selectedMaterial.unit}
+                </option>
+              ))}
+              {(selectedMaterial.stock_locations || []).length === 0 &&
+                locations.map((l) => (
+                  <option key={l.id} value={l.id}>{l.name} (stok 0)</option>
                 ))}
-              </tbody>
-            </table>
-            {miMissing.count > 8 && (
-              <p className="text-[11px] text-[hsl(var(--warning)/0.7)] mt-1.5">
-                …dan {miMissing.count - 8} lagi. Tombol di atas menerbitkan semuanya.
+            </SmartNativeSelect>
+          </Field>
+        )}
+
+        {selectedMaterial && Number(selectedMaterial.stock_qty || 0) <= 0 && (
+          <Notice tone="warning" icon={AlertCircle}>
+            Kain ini belum punya stok di gudang mana pun. Cutting bisa disimpan sebagai draf, tetapi tidak bisa dimulai
+            sebelum penerimaan barang dicatat di Portal Gudang.
+          </Notice>
+        )}
+
+        {/* ── FASE H-6: gulungan WAJIB untuk kain yang dilacak per gulungan ── */}
+        {selectedMaterial && rollMeta.roll_required && rolls.length > 0 && (
+          <Field label={`Gulungan kain (${rolls.length} tersedia · sisa ${fmtQty(rollMeta.total_remaining)} ${rollMeta.uom})`}
+            hint="Centang gulungan yang akan dipotong. Boleh dipilih sekarang atau saat lapor progres — progres tidak bisa dicatat tanpa menunjuk gulungan.">
+            <div className="max-h-40 divide-y divide-[var(--glass-border)] overflow-y-auto rounded-lg border border-[var(--glass-border)]"
+              data-testid="cutting-roll-picker">
+              {rolls.map((r) => {
+                const checked = form.roll_ids.includes(r.id);
+                const remaining = Number(r.remaining ?? (r.uom === 'kg' ? r.remaining_kg : r.remaining_m) ?? 0);
+                return (
+                  <label key={r.id} className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-foreground/5"
+                    data-testid={`cutting-roll-option-${r.roll_no}`}>
+                    <Checkbox checked={checked}
+                      onCheckedChange={() => setForm((f) => ({
+                        ...f,
+                        roll_ids: checked ? f.roll_ids.filter((x) => x !== r.id) : [...f.roll_ids, r.id],
+                      }))} />
+                    <span className="tabular-nums text-foreground">{r.roll_no}</span>
+                    <span className="text-xs text-muted-foreground">
+                      sisa {fmtQty(remaining)} {r.uom} · {r.color || r.color_lot || '—'}
+                      {r.source_receipt_number ? ` · dari ${r.source_receipt_number}` : ''}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            {form.roll_ids.length > 0 && (
+              <p className="mt-1 text-xs text-muted-foreground" data-testid="cutting-roll-picked-summary">
+                {form.roll_ids.length} gulungan dipilih · sisa terpilih{' '}
+                {fmtQty(rolls.filter((r) => form.roll_ids.includes(r.id))
+                  .reduce((s, r) => s + Number(r.remaining ?? (r.uom === 'kg' ? r.remaining_kg : r.remaining_m) ?? 0), 0))} {rollMeta.uom}
+                {Number(form.planned_input_qty) > 0 && ` · rencana pakai ${fmtQty(form.planned_input_qty)} ${selectedMaterial.unit}`}
               </p>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* Table */}
-      <GlassCard className="p-0 overflow-hidden">
-        {loading && rows.length === 0 ? (
-          <div className="p-6 space-y-2">
-            {[0, 1, 2, 3].map((i) => <div key={i} className="h-9 rounded-lg bg-foreground/5 animate-pulse" />)}
-          </div>
-        ) : rows.length === 0 ? (
-          <div className="p-12 text-center" data-testid="cutting-empty-state">
-            <Scissors className="w-10 h-10 mx-auto text-muted-foreground/40" />
-            <p className="mt-3 font-medium text-foreground">Belum ada order cutting</p>
-            <p className="text-sm text-muted-foreground">Mulai dengan memilih kain dari master material Gudang.</p>
-            <button onClick={openCreate}
-              className="mt-4 inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-[hsl(var(--primary))] text-white text-sm">
-              <Plus className="w-4 h-4" /> Buat Cutting
-            </button>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm" data-testid="cutting-orders-table">
-              <thead>
-                <tr className="text-left text-xs text-muted-foreground border-b border-[var(--glass-border)] bg-[var(--nav-pill-bg)]">
-                  <th className="px-4 py-2.5 font-medium">Nomor</th>
-                  <th className="px-4 py-2.5 font-medium">Style / Potongan</th>
-                  <th className="px-4 py-2.5 font-medium">Kain (input)</th>
-                  <th className="px-4 py-2.5 font-medium text-right">Kain Terpakai</th>
-                  <th className="px-4 py-2.5 font-medium text-right">Potongan Jadi</th>
-                  <th className="px-4 py-2.5 font-medium">Status</th>
-                  <th className="px-4 py-2.5 font-medium text-right">Aksi</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id}
-                    className="border-b border-[var(--glass-border)] last:border-0 hover:bg-[var(--nav-pill-active)]/40 cursor-pointer"
-                    onClick={() => openDetail(r.id)}
-                    data-testid={`cutting-row-${r.number}`}>
-                    <td className="px-4 py-2.5 tabular-nums text-xs text-foreground whitespace-nowrap">{r.number}</td>
-                    <td className="px-4 py-2.5">
-                      <div className="font-medium text-foreground">{r.style_name || '-'}</div>
-                      <div className="text-[11px] text-muted-foreground tabular-nums">
-                        {r.output_material_code || 'kode dibuat saat Mulai'}
-                      </div>
-                    </td>
-                    <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                      {r.input_material_name}<br />
-                      <span className="tabular-nums">{r.input_material_code}</span>
-                    </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-foreground">
-                      {fmtNum(r.consumed_input_qty, 2)} / {fmtNum(r.planned_input_qty, 2)} {r.input_unit}
-                    </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">
-                      <span className="text-foreground font-medium">{fmtNum(r.produced_qty)}</span>
-                      <span className="text-muted-foreground"> / {fmtNum(r.planned_output_qty)} pcs</span>
-                      <div className="h-1 mt-1 rounded-full bg-foreground/10 overflow-hidden">
-                        <div className="h-full bg-[hsl(var(--primary))]"
-                             style={{ width: `${Math.min(r.progress_pct || 0, 100)}%` }} />
-                      </div>
-                    </td>
-                    <td className="px-4 py-2.5"><StatusPill status={r.status} /></td>
-                    <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                      <button onClick={(e) => { e.stopPropagation(); openDetail(r.id); }}
-                        className="text-xs text-[hsl(var(--primary))] hover:underline mr-3">Detail</button>
-                      {r.status === 'draft' && (
-                        <button onClick={(e) => { e.stopPropagation(); removeDraft(r); }}
-                          data-testid={`cutting-delete-${r.number}`}
-                          className="text-xs text-[hsl(var(--destructive))] hover:underline inline-flex items-center gap-1">
-                          <Trash2 className="w-3 h-3" /> Hapus
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          </Field>
         )}
-      </GlassCard>
 
-      {/* ── CREATE MODAL ─────────────────────────────────────────────── */}
-      {showCreate && (
-        <Modal title="Buat Order Cutting" size="xl" onClose={() => setShowCreate(false)}>
-          <form onSubmit={submitCreate} className="space-y-4" data-testid="cutting-create-form">
-            <div className="rounded-lg border border-[var(--glass-border)] bg-[var(--nav-pill-bg)] p-3 text-xs text-muted-foreground flex items-start gap-2">
-              <Layers className="w-4 h-4 mt-0.5 text-[hsl(var(--primary))] shrink-0" />
-              <span>
-                Input diambil dari <b className="text-foreground">master material Gudang</b> (kain / benang).
-                Output otomatis dibuat sebagai <b className="text-foreground">item master baru</b> bertipe potongan
-                (satuan pcs) saat cutting dimulai.
-              </span>
-            </div>
+        {selectedMaterial && rollMeta.roll_required && rolls.length === 0 && (
+          <Notice tone="danger" icon={AlertCircle} testId="cutting-no-rolls-warning">
+            Kain ini <b>belum punya gulungan</b> di sistem, jadi order tidak bisa disimpan — tidak akan bisa dibuktikan
+            gulungan mana yang dipotong. Terbitkan gulungannya dulu di <b>Gudang › Roll Kain › tab “Penerimaan tanpa roll”</b>,
+            atau isi Rincian Roll saat Penerimaan Barang.
+          </Notice>
+        )}
 
-            <Field label="Material Kain (input)" required
-                   hint={selectedMaterial
-                     ? `Total stok ${fmtNum(selectedMaterial.stock_qty, 2)} ${selectedMaterial.unit} · ${selectedMaterial.roll_count} roll aktif`
-                     : 'Stok kain disimpan per gudang — pilih kain dulu untuk melihat sebarannya.'}>
-              <div className="flex items-center gap-2 mb-1.5">
-                <label className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer">
-                  <input type="checkbox" checked={onlyInStock}
-                    onChange={(e) => setOnlyInStock(e.target.checked)}
-                    data-testid="cutting-only-instock" />
-                  Tampilkan hanya kain yang ada stoknya ({materialOptions.length} dari {materials.length})
-                </label>
-              </div>
-              <SmartNativeSelect value={form.input_material_id} onChange={(e) => onPickMaterial(e.target.value)}
-                className={inputCls} searchable searchPlaceholder="Cari kode, nama, atau warna kain…"
-                data-testid="cutting-input-material-select">
-                <option value="">— Pilih kain —</option>
-                {materialOptions.map((m) => (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label={`Rencana pemakaian kain (${selectedMaterial?.unit || 'satuan'})`} required>
+            <Input type="number" step="0.01" min="0" value={form.planned_input_qty}
+              onChange={(e) => setForm((f) => ({ ...f, planned_input_qty: e.target.value }))}
+              data-testid="cutting-planned-input" required />
+          </Field>
+          <Field label="Target potongan (pcs)" required>
+            <Input type="number" step="1" min="0" value={form.planned_output_qty}
+              onChange={(e) => setForm((f) => ({ ...f, planned_output_qty: e.target.value }))}
+              data-testid="cutting-planned-output" required />
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {/* Style/produk DARI MASTER (2026-08-21): BOM (per model+size) & produksi harus tahu potongan milik produk mana. */}
+          <Field label="Model / style (dari Master Produk)" required
+            hint="Wajib dipilih dari master supaya BOM & produksi mengenali produknya.">
+            {/* 2026-11-07: bisa dicari (kode/nama); label memuat ukuran + jumlah warna variannya. */}
+            <div className="flex gap-2">
+              <SmartNativeSelect value={form.model_id}
+                onChange={(e) => onPickModel(e.target.value)}
+                className="h-9 w-full" wrapperClassName="flex-1 min-w-0" searchable
+                searchPlaceholder="Cari kode atau nama model…"
+                data-testid="cutting-model-select">
+                <option value="">— pilih model —</option>
+                {models.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {`${m.code} · ${m.name}`
-                      + (m.color && !String(m.name || '').toLowerCase().includes(String(m.color).toLowerCase()) ? ` · ${m.color}` : '')
-                      + ` — stok ${fmtNum(m.stock_qty, 2)} ${m.unit || ''}`
-                      + (m.best_location_name ? ` @ ${m.best_location_name}` : ' (belum ada stok)')}
+                    {`${m.code ? `${m.code} · ` : ''}${m.name || ''}`
+                      + (modelSummary[m.id] ? ` — ${modelSummary[m.id]}` : ' — belum ada varian')}
                   </option>
                 ))}
               </SmartNativeSelect>
-            </Field>
+              <Button type="button" variant="outline" onClick={openNewModel}
+                className="shrink-0" data-testid="cutting-new-model-btn"><Plus />Model baru</Button>
+            </div>
+          </Field>
+          <Field label="Varian (warna · ukuran · SKU)"
+            hint={form.model_id
+              ? (variants.length
+                ? `${variantOptions.length} varian milik model ini${poLinePicked?.size_id ? ` (ukuran baris PO ${poLinePicked.size || ''})` : ''}.`
+                : 'Model ini belum punya varian — pilih ukuran di bagian BOM di bawah.')
+              : 'Pilih model dulu.'}>
+            <SmartNativeSelect value={form.variant_id}
+              onChange={(e) => onPickVariant(e.target.value)}
+              disabled={!form.model_id || !variants.length}
+              className="h-9 w-full" searchable searchPlaceholder="Cari warna, ukuran, atau SKU…"
+              data-testid="cutting-variant-select">
+              <option value="">{!form.model_id ? '— pilih model dulu —' : (variants.length ? '— pilih warna · ukuran —' : '(model belum punya varian)')}</option>
+              {variantOptions.map((v) => (
+                <option key={v.id} value={v.id}>{variantLabel(v)}</option>
+              ))}
+            </SmartNativeSelect>
+          </Field>
+        </div>
 
-            {selectedMaterial && (
-              <Field label="Gudang Sumber Kain" required
-                     hint={stockAtLocation !== null
-                       ? `Stok di gudang ini: ${fmtNum(stockAtLocation, 2)} ${selectedMaterial.unit}. Pemotongan stok saat input progres diambil dari gudang ini.`
-                       : ''}>
-                <SmartNativeSelect value={form.location_id}
-                  onChange={(e) => setForm((f) => ({ ...f, location_id: e.target.value }))}
-                  className={inputCls} data-testid="cutting-location-select">
-                  <option value="">— Pilih gudang —</option>
-                  {(selectedMaterial.stock_locations || []).map((l) => (
-                    <option key={l.location_id} value={l.location_id}>
-                      {l.location_name} — stok {fmtNum(l.qty, 2)} {selectedMaterial.unit}
-                    </option>
-                  ))}
-                  {(selectedMaterial.stock_locations || []).length === 0 &&
-                    locations.map((l) => (
-                      <option key={l.id} value={l.id}>{l.name} (stok 0)</option>
-                    ))}
-                </SmartNativeSelect>
-              </Field>
-            )}
+        {form.model_id && poLines.length > 0 && (
+          <Field label="Baris PO (opsional)"
+            hint="Tautkan ke baris PO produksi supaya ukuran & BOM per ukuran mengikuti PO, dan kain terpakai mengurangi kebutuhan material PO itu.">
+            <SmartNativeSelect value={form.po_item_id} onChange={(e) => pickPoLine(e.target.value)}
+              className="h-9 w-full" data-testid="cutting-po-line-select">
+              <option value="">— tanpa baris PO —</option>
+              {poLines.map((ln) => (
+                <option key={ln.id} value={ln.id}>
+                  {`${ln.po_number} · ${ln.size || '-'}${ln.color ? ` · ${ln.color}` : ''}${ln.sku ? ` · ${ln.sku}` : ''} · ${fmtNum(ln.qty, 0)} pcs`}
+                </option>
+              ))}
+            </SmartNativeSelect>
+          </Field>
+        )}
 
-            {selectedMaterial && Number(selectedMaterial.stock_qty || 0) <= 0 && (
-              <div className="flex items-start gap-2 p-2.5 rounded-lg border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] text-xs text-[hsl(var(--warning))] ">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                Kain ini belum punya stok di gudang manapun. Cutting bisa disimpan sebagai draft,
-                tetapi tidak bisa dimulai sebelum penerimaan barang dicatat di Portal Gudang.
-              </div>
-            )}
+        {form.model_id && (
+          <p className="text-xs text-muted-foreground" data-testid="cutting-style-preview">
+            Potongan akan tercatat sebagai <strong className="text-foreground">
+              {form.style_name}{form.output_color ? ` · ${form.output_color}` : ''}{form.output_size ? ` · ${form.output_size}` : ''}
+            </strong>{form.style_sku ? ` (kode master ${form.style_sku})` : ''}
+          </p>
+        )}
 
-            {/* ── FASE H-6: gulungan WAJIB untuk kain yang dilacak per gulungan ── */}
-            {selectedMaterial && rollMeta.roll_required && rolls.length > 0 && (
-              <Field label={`Gulungan Kain (${rolls.length} tersedia · sisa ${fmtQty(rollMeta.total_remaining)} ${rollMeta.uom})`}
-                     hint="Centang gulungan yang akan dipotong. Boleh dipilih sekarang atau saat lapor progres — tetapi progres TIDAK bisa dicatat tanpa menunjuk gulungan.">
-                <div className="max-h-40 overflow-y-auto rounded-lg border border-[var(--glass-border)] divide-y divide-[var(--glass-border)]"
-                  data-testid="cutting-roll-picker">
-                  {rolls.map((r) => {
-                    const checked = form.roll_ids.includes(r.id);
-                    const remaining = Number(r.remaining ?? (r.uom === 'kg' ? r.remaining_kg : r.remaining_m) ?? 0);
-                    return (
-                      <label key={r.id} className="flex items-center gap-2 px-3 py-2 text-xs cursor-pointer hover:bg-[var(--nav-pill-active)]/40"
-                        data-testid={`cutting-roll-option-${r.roll_no}`}>
-                        <input type="checkbox" checked={checked}
-                          onChange={() => setForm((f) => ({
-                            ...f,
-                            roll_ids: checked ? f.roll_ids.filter((x) => x !== r.id) : [...f.roll_ids, r.id],
-                          }))} />
-                        <span className="tabular-nums text-foreground">{r.roll_no}</span>
-                        <span className="text-muted-foreground">
-                          sisa {fmtQty(remaining)} {r.uom} · {r.color || r.color_lot || '-'}
-                          {r.source_receipt_number ? ` · dari ${r.source_receipt_number}` : ''}
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-                {form.roll_ids.length > 0 && (
-                  <p className="text-[11px] text-muted-foreground mt-1" data-testid="cutting-roll-picked-summary">
-                    {form.roll_ids.length} gulungan dipilih · sisa terpilih{' '}
-                    {fmtQty(rolls.filter((r) => form.roll_ids.includes(r.id))
-                      .reduce((s, r) => s + Number(r.remaining ?? (r.uom === 'kg' ? r.remaining_kg : r.remaining_m) ?? 0), 0))} {rollMeta.uom}
-                    {Number(form.planned_input_qty) > 0 && ` · rencana pakai ${fmtQty(form.planned_input_qty)} ${selectedMaterial.unit}`}
-                  </p>
+        {/* ── KEBUTUHAN MENURUT BOM (2026-08-23): angka dari BOM model+ukuran; bila tidak cocok, alasannya ditulis. */}
+        {form.model_id && (
+          <GlassCard className="space-y-2 p-3" data-testid="cutting-bom-card">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="inline-flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                <Layers className="h-4 w-4 text-primary" />
+                Kebutuhan menurut BOM
+                {bomLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {bomReq?.has_bom && (
+                  <span className="font-normal text-muted-foreground">
+                    · BOM versi {bomReq.bom_version} ukuran {bomReq.size_code || '—'}
+                  </span>
                 )}
-              </Field>
-            )}
-
-            {selectedMaterial && rollMeta.roll_required && rolls.length === 0 && (
-              <div className="flex items-start gap-2 p-2.5 rounded-lg border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-xs text-[hsl(var(--destructive))] "
-                data-testid="cutting-no-rolls-warning">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>
-                  Kain ini <b>belum punya gulungan</b> di sistem, jadi order tidak bisa disimpan — tidak akan
-                  bisa dibuktikan gulungan mana yang dipotong. Terbitkan gulungannya dulu di
-                  <b> Gudang → Roll Kain → tab “Penerimaan tanpa roll”</b>, atau isi Rincian Roll saat Penerimaan Barang.
-                </span>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Field label={`Rencana Pemakaian Kain (${selectedMaterial?.unit || 'satuan'})`} required>
-                <input type="number" step="0.01" min="0" value={form.planned_input_qty}
-                  onChange={(e) => setForm((f) => ({ ...f, planned_input_qty: e.target.value }))}
-                  className={inputCls} data-testid="cutting-planned-input" required />
-              </Field>
-              <Field label="Target Potongan (pcs)" required>
-                <input type="number" step="1" min="0" value={form.planned_output_qty}
-                  onChange={(e) => setForm((f) => ({ ...f, planned_output_qty: e.target.value }))}
-                  className={inputCls} data-testid="cutting-planned-output" required />
-              </Field>
+              </p>
+              {bomReq?.fabric?.qty_total > 0 && (
+                <Button type="button" size="sm" onClick={useBomQty} data-testid="cutting-use-bom-qty">
+                  Pakai angka BOM ({fmtQtyTrim(bomReq.fabric.qty_total)} {bomReq.fabric.unit})
+                </Button>
+              )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {/* Style/produk DARI MASTER (2026-08-21). Ketikan bebas membuat order
-                  cutting tidak pernah menunjuk model, sehingga BOM (per model+size)
-                  dan produksi tidak bisa tahu potongan ini milik produk yang mana. */}
-              <Field label="Model / Style (dari Master Produk)" required
-                hint="Wajib dipilih dari master supaya BOM & produksi mengenali produknya.">
-                {/* 2026-11-07 (keluhan owner): dulu pilihan bawaan browser — tidak bisa dicari, dan dua model
-                    bernama sama (mis. "Stela celana" M dan XL) tidak bisa dibedakan. Kini bisa dicari
-                    (kode/nama) dan labelnya memuat ukuran + jumlah warna variannya. */}
-                <div className="flex gap-2">
-                  <SmartNativeSelect value={form.model_id}
-                    onChange={(e) => onPickModel(e.target.value)}
-                    className={inputCls} wrapperClassName="flex-1 min-w-0" searchable
-                    searchPlaceholder="Cari kode atau nama model…"
-                    data-testid="cutting-model-select">
-                    <option value="">— pilih model —</option>
-                    {models.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {`${m.code ? `${m.code} · ` : ''}${m.name || ''}`
-                          + (modelSummary[m.id] ? ` — ${modelSummary[m.id]}` : ' — belum ada varian')}
-                      </option>
-                    ))}
-                  </SmartNativeSelect>
-                  <Button type="button" variant="outline" onClick={openNewModel}
-                    className="shrink-0" data-testid="cutting-new-model-btn">+ Model baru</Button>
-                </div>
-              </Field>
-              <Field label="Varian (warna · ukuran · SKU)"
-                hint={form.model_id
-                  ? (variants.length
-                    ? `${variantOptions.length} varian milik model ini${poLinePicked?.size_id ? ` (ukuran baris PO ${poLinePicked.size || ''})` : ''}.`
-                    : 'Model ini belum punya varian — pilih ukuran di kartu BOM di bawah.')
-                  : 'Pilih model dulu.'}>
-                <SmartNativeSelect value={form.variant_id}
-                  onChange={(e) => onPickVariant(e.target.value)}
-                  disabled={!form.model_id || !variants.length}
-                  className={inputCls} searchable searchPlaceholder="Cari warna, ukuran, atau SKU…"
-                  data-testid="cutting-variant-select">
-                  <option value="">{!form.model_id ? '— pilih model dulu —' : (variants.length ? '— pilih warna · ukuran —' : '(model belum punya varian)')}</option>
-                  {variantOptions.map((v) => (
-                    <option key={v.id} value={v.id}>{variantLabel(v)}</option>
-                  ))}
-                </SmartNativeSelect>
-              </Field>
-            </div>
-
-            {form.model_id && poLines.length > 0 && (
-              <Field label="Baris PO (opsional)"
-                hint="Tautkan ke baris PO produksi supaya ukuran & BOM per ukuran mengikuti PO, dan kain terpakai mengurangi kebutuhan material PO itu.">
-                <SmartNativeSelect value={form.po_item_id} onChange={(e) => pickPoLine(e.target.value)}
-                  className={inputCls} data-testid="cutting-po-line-select">
-                  <option value="">— tanpa baris PO —</option>
-                  {poLines.map((ln) => (
-                    <option key={ln.id} value={ln.id}>
-                      {`${ln.po_number} · ${ln.size || '-'}${ln.color ? ` · ${ln.color}` : ''}${ln.sku ? ` · ${ln.sku}` : ''} · ${fmtNum(ln.qty, 0)} pcs`}
+            {/* Ukuran cadangan: model yang BOM-nya ada tapi variannya belum didaftarkan tetap bisa memakai BOM-nya. */}
+            {!variants.length && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">Model ini belum punya varian — pilih ukuran untuk membaca BOM-nya:</span>
+                <SmartNativeSelect value={sizeId} onChange={(e) => pickSize(e.target.value)}
+                  className="h-8 w-48" wrapperClassName="w-48" data-testid="cutting-bom-size-select">
+                  <option value="">— pilih ukuran —</option>
+                  {sizes.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {`${s.code}${s.name && s.name !== s.code ? ` (${s.name})` : ''}${sizesWithBom.has(s.id) ? ' · ada BOM' : ''}`}
                     </option>
                   ))}
                 </SmartNativeSelect>
-              </Field>
-            )}
-
-            {form.model_id && (
-              <div className="text-[11px] text-muted-foreground -mt-1" data-testid="cutting-style-preview">
-                Potongan akan tercatat sebagai <strong className="text-foreground">
-                  {form.style_name}{form.output_color ? ` · ${form.output_color}` : ''}{form.output_size ? ` · ${form.output_size}` : ''}
-                </strong>{form.style_sku ? ` (kode master ${form.style_sku})` : ''}
               </div>
             )}
 
-            {/* ── KEBUTUHAN MENURUT BOM (2026-08-23) ───────────────────────
-                Rencana pemakaian kain tidak lagi ditebak: angkanya datang dari
-                BOM model+ukuran. Bila BOM/satuan/kain tidak cocok, alasannya
-                ditulis apa adanya beserta jalan keluarnya. */}
-            {form.model_id && (
-              <div className="rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg)] p-3"
-                data-testid="cutting-bom-card">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="text-xs font-semibold text-foreground inline-flex items-center gap-1.5">
-                    <Layers className="w-3.5 h-3.5 text-[hsl(var(--primary))]" />
-                    Kebutuhan menurut BOM
-                    {bomLoading && <Loader2 className="w-3 h-3 animate-spin" />}
-                    {bomReq?.has_bom && (
-                      <span className="font-normal text-muted-foreground">
-                        · BOM v{bomReq.bom_version} ukuran {bomReq.size_code || '—'}
+            {bomReq?.has_bom && bomReq.panel && !bomReq.fabric && (
+              <div className="space-y-1 text-xs text-foreground/90" data-testid="cutting-bom-panel">
+                <p>
+                  Potongan yang dihasilkan: <strong>{bomReq.panel.code}</strong>
+                  {Number(bomReq.panel.unit_cost) > 0
+                    ? <span className="text-muted-foreground"> · biaya saat ini {fmtRp(bomReq.panel.unit_cost)}/pcs (rata-rata)</span>
+                    : <span className="text-muted-foreground"> · belum berbiaya — lahir dari kain yang dipotong ÷ pcs jadi</span>}
+                </p>
+                <p className="text-muted-foreground">
+                  BOM memakai potongan (bukan kg kain). Isi <strong>rencana kain</strong> manual; yang menjadi
+                  biaya adalah kain yang <em>benar-benar</em> terpakai saat lapor progres.
+                </p>
+                {bomReq.accessories?.length > 0 && (
+                  <p className="text-muted-foreground" data-testid="cutting-bom-accessories">
+                    Aksesoris yang ikut dibutuhkan:{' '}
+                    {bomReq.accessories.map((a) => (
+                      <span key={a.material_id || a.code} className="mr-2 text-foreground/80">
+                        {a.code || a.name} {fmtQtyTrim(a.qty_per_pcs)} {a.unit}/pcs
                       </span>
-                    )}
-                  </div>
-                  {bomReq?.fabric?.qty_total > 0 && (
-                    <button type="button" onClick={useBomQty}
-                      className="h-7 px-2.5 rounded-lg bg-[hsl(var(--primary))] text-white text-[11px] font-medium"
-                      data-testid="cutting-use-bom-qty">
-                      Pakai angka BOM ({fmtQtyTrim(bomReq.fabric.qty_total)} {bomReq.fabric.unit})
-                    </button>
-                  )}
-                </div>
-
-                {/* Ukuran fallback: model yang BOM-nya ada tapi variannya belum
-                    didaftarkan tetap bisa memakai BOM-nya (dulu jalan buntu). */}
-                {!variants.length && (
-                  <div className="mt-2 flex items-center gap-2 flex-wrap">
-                    <span className="text-[11px] text-muted-foreground">
-                      Model ini belum punya varian — pilih ukuran untuk membaca BOM-nya:
-                    </span>
-                    <SmartNativeSelect value={sizeId} onChange={(e) => pickSize(e.target.value)}
-                      className="h-8 px-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-xs text-foreground w-48"
-                      data-testid="cutting-bom-size-select">
-                      <option value="">— pilih ukuran —</option>
-                      {sizes.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {`${s.code}${s.name && s.name !== s.code ? ` (${s.name})` : ''}${sizesWithBom.has(s.id) ? ' · ada BOM' : ''}`}
-                        </option>
-                      ))}
-                    </SmartNativeSelect>
-                  </div>
-                )}
-
-                {bomReq?.has_bom && bomReq.panel && !bomReq.fabric && (
-                  <div className="mt-2 text-[11px] text-foreground/90 space-y-1" data-testid="cutting-bom-panel">
-                    <div>
-                      Potongan yang dihasilkan: <strong>{bomReq.panel.code}</strong>
-                      {Number(bomReq.panel.unit_cost) > 0
-                        ? <span className="text-muted-foreground"> · biaya saat ini {fmtRp(bomReq.panel.unit_cost)}/pcs (rata-rata)</span>
-                        : <span className="text-muted-foreground"> · belum berbiaya — lahir dari kain yang dipotong ÷ pcs jadi</span>}
-                    </div>
-                    <div className="text-muted-foreground">
-                      BOM memakai potongan (bukan kg kain). Isi <strong>rencana kain</strong> manual; yang menjadi
-                      biaya adalah kain yang <em>benar-benar</em> terpakai saat lapor progres.
-                    </div>
-                    {bomReq.accessories?.length > 0 && (
-                      <div className="text-muted-foreground" data-testid="cutting-bom-accessories">
-                        Aksesoris yang ikut dibutuhkan:{' '}
-                        {bomReq.accessories.map((a) => (
-                          <span key={a.material_id || a.code} className="mr-2 text-foreground/80">
-                            {a.code || a.name} {fmtQtyTrim(a.qty_per_pcs)} {a.unit}/pcs
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {bomReq?.has_bom && bomReq.fabric ? (                  <div className="mt-2 text-[11px] text-foreground/90 space-y-1">
-                    <div data-testid="cutting-bom-fabric">
-                      Kain <strong>{bomReq.fabric.code || bomReq.fabric.name}</strong>:{' '}
-                      <strong>{fmtQtyTrim(bomReq.fabric.qty_per_pcs)} {bomReq.fabric.unit}</strong>/pcs
-                      {Number(form.planned_output_qty) > 0 ? (
-                        <> × {fmtNum(form.planned_output_qty, 0)} pcs ={' '}
-                          <strong className="text-[hsl(var(--primary))]">
-                            {fmtQtyTrim(bomReq.fabric.qty_total)} {bomReq.fabric.unit}
-                          </strong>
-                          {bomReq.fabric.unit_cost > 0 && (
-                            <span className="text-muted-foreground"> · nilai {fmtRp(bomReq.fabric.amount_total)}</span>
-                          )}
-                        </>
-                      ) : (
-                        <span className="text-muted-foreground"> — isi target potongan (pcs) untuk melihat totalnya</span>
-                      )}
-                    </div>
-                    {Number(form.planned_input_qty) > 0 && bomReq.fabric.qty_total > 0 &&
-                      Math.abs(Number(form.planned_input_qty) - bomReq.fabric.qty_total) /
-                        bomReq.fabric.qty_total > 0.1 && (
-                      <div className="text-[hsl(var(--warning))] inline-flex items-start gap-1"
-                        data-testid="cutting-bom-deviation">
-                        <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
-                        Rencana manual {fmtQtyTrim(form.planned_input_qty)} {bomReq.fabric.unit} berbeda
-                        &gt;10% dari kebutuhan BOM {fmtQtyTrim(bomReq.fabric.qty_total)}{' '}
-                        {bomReq.fabric.unit}{' '}
-                        — pastikan memang disengaja (mis. ada penyusutan/marker khusus).
-                      </div>
-                    )}
-                    {bomReq.accessories?.length > 0 && (
-                      <div className="text-muted-foreground" data-testid="cutting-bom-accessories">
-                        Aksesoris yang ikut dibutuhkan:{' '}
-                        {bomReq.accessories.map((a) => (
-                          <span key={a.material_id || a.code} className="mr-2 text-foreground/80">
-                            {a.code || a.name} {fmtQtyTrim(a.qty_per_pcs)} {a.unit}/pcs
-                            {Number(form.planned_output_qty) > 0 && ` (total ${fmtQtyTrim(a.qty_total)} ${a.unit})`}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ) : !bomLoading && !bomReq?.panel && (
-                  <div className="mt-2 text-[11px] text-muted-foreground">
-                    {bomReq?.gaps?.length
-                      ? null
-                      : 'Pilih varian (warna · size) untuk membaca BOM ukuran itu.'}
-                  </div>
-                )}
-
-                {bomReq?.gaps?.length > 0 && (
-                  <ul className="mt-2 space-y-1" data-testid="cutting-bom-gaps">
-                    {bomReq.gaps.map((g, i) => (
-                      <li key={i} className="text-[11px] text-[hsl(var(--warning))] flex items-start gap-1">
-                        <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
-                        <span>
-                          {g.message}
-                          {g.target && g.target !== 'cutting-orders' && (
-                            <button type="button"
-                              onClick={() => (typeof onNavigate === 'function'
-                                ? onNavigate(g.target)
-                                : (window.location.hash = g.target))}
-                              className="ml-1 underline text-[hsl(var(--primary))]"
-                              data-testid={`cutting-bom-fix-${g.code}`}>
-                              {g.action || 'Perbaiki'}
-                            </button>
-                          )}
-                        </span>
-                      </li>
                     ))}
-                  </ul>
-                )}
-
-                {bomReq?.has_bom === false && bomReq?.other_sizes_with_bom?.length > 0 && (
-                  <div className="mt-1 text-[11px] text-muted-foreground">
-                    Ukuran yang SUDAH punya BOM untuk model ini:{' '}
-                    {bomReq.other_sizes_with_bom.map((s) => s.size_code || s.size_id).join(', ')}
-                  </div>
+                  </p>
                 )}
               </div>
             )}
 
-            <Field label="Catatan">
-              <textarea value={form.notes} rows={2}
-                onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-                className={`${inputCls} h-auto py-2`} data-testid="cutting-notes" />
-            </Field>
-
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="outline" onClick={() => setShowCreate(false)}>Batal</Button>
-              <Button type="submit" disabled={saving} data-testid="cutting-submit-create">
-                {saving && <Loader2 className="w-4 h-4 animate-spin" />} Simpan draft
-              </Button>
-            </div>
-          </form>
-        </Modal>
-      )}
-
-      {/* ── MODAL MODEL BARU (master produk) ──────────────────────────── */}
-      {showNewModel && (
-        <Modal title="Model / Style Baru" size="sm" onClose={() => setShowNewModel(false)}>
-          <div className="space-y-3" data-testid="cutting-new-model-modal">
-            <p className="text-xs text-muted-foreground">
-              Model ini akan tersimpan di Master Produk sehingga BOM & produksi bisa memakainya.
-            </p>
-            <Field label="Nama Model / Style" required>
-              <input value={newModel.name} autoFocus
-                onChange={(e) => setNewModel((n) => ({ ...n, name: e.target.value }))}
-                placeholder="mis. Dress Jemina" className={inputCls}
-                data-testid="new-model-name" />
-            </Field>
-            <Field label="Kategori produk" required={!newModel.code.trim()}
-              hint="Kode model dibuat otomatis dari kategori ini (mis. CLN-0001).">
-              <SmartNativeSelect value={newModel.category_id}
-                onChange={(e) => setNewModel((n) => ({ ...n, category_id: e.target.value }))}
-                className={inputCls} data-testid="new-model-category">
-                <option value="">— pilih kategori —</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>{`${c.name}${c.sku_prefix ? ` (${c.sku_prefix})` : ''}`}</option>
-                ))}
-              </SmartNativeSelect>
-            </Field>
-            <Field label="Kode Model (opsional)" hint="Kosongkan supaya dibuat otomatis dari kategori.">
-              <input value={newModel.code}
-                onChange={(e) => setNewModel((n) => ({ ...n, code: e.target.value }))}
-                placeholder="mis. DRS-JMN" className={inputCls}
-                data-testid="new-model-code" />
-            </Field>
-            <div className="flex justify-end gap-2 pt-1">
-              <Button type="button" variant="outline" onClick={() => setShowNewModel(false)}>Batal</Button>
-              <Button type="button" onClick={createModel} disabled={savingModel} data-testid="new-model-submit">
-                {savingModel && <Loader2 className="w-4 h-4 animate-spin" />} Simpan model
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {/* ── DETAIL MODAL ─────────────────────────────────────────────── */}
-      {detail && (
-        <Modal title={`Cutting ${detail.number}`} size="2xl" onClose={() => setDetail(null)}>
-          <div className="space-y-4" data-testid="cutting-detail-panel">
-            {detailLoading && <div className="h-1 bg-[hsl(var(--primary))] animate-pulse rounded" />}
-
-            {/* Ringkas */}
-            <div className="flex flex-wrap items-center gap-3">
-              <StatusPill status={detail.status} />
-              <span className="text-xs text-muted-foreground">Dibuat {fmtDateTime(detail.created_at)} oleh {detail.created_by_name || '-'}</span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <GlassCard className="p-3">
-                <p className="text-[11px] text-muted-foreground">Kain (input)</p>
-                <p className="text-sm font-medium text-foreground mt-0.5">{detail.input_material_name}</p>
-                <p className="text-[11px] tabular-nums text-muted-foreground">{detail.input_material_code}</p>
-                <p className="text-xs mt-2 text-foreground">
-                  Terpakai <b>{fmtNum(detail.consumed_input_qty, 2)}</b> / {fmtNum(detail.planned_input_qty, 2)} {detail.input_unit}
-                </p>
-                <p className="text-[11px] text-muted-foreground">Stok gudang saat ini: {fmtNum(detail.input_stock, 2)} {detail.input_unit}</p>
-                <p className="text-[11px] text-muted-foreground">Gudang sumber: <b className="text-foreground">{detail.location_name || '-'}</b></p>
-                {detailRolls.roll_required && (
-                  <p className="text-[11px] mt-1.5 text-[hsl(var(--primary))] " data-testid="cutting-roll-summary">
-                    {detailRolls.items.length} gulungan bersisa · total {fmtQty(detailRolls.total_remaining)} {detailRolls.uom}
-                  </p>
-                )}
-                {detailRolls.other_location_count > 0 && (
-                  <p className="text-[11px] mt-1 text-[hsl(var(--warning))]" data-testid="cutting-roll-other-location">
-                    {detailRolls.other_location_count} gulungan kain ini ada di gudang lain — tidak bisa dipakai untuk order di gudang ini.
-                  </p>
-                )}
-                {(detail.roll_ids || []).some((r) => Number(r.consumed_qty || 0) > 0) && (
-                  <p className="text-[11px] text-muted-foreground mt-1">
-                    Sudah dipakai:{' '}
-                    {(detail.roll_ids || []).filter((r) => Number(r.consumed_qty || 0) > 0)
-                      .map((r) => `${r.roll_no} (${fmtQty(r.consumed_qty)})`).join(', ')}
-                  </p>
-                )}
-              </GlassCard>
-              <div className="hidden md:flex items-center justify-center">
-                <ArrowRight className="w-5 h-5 text-muted-foreground" />
-              </div>
-              <GlassCard className="p-3">
-                <p className="text-[11px] text-muted-foreground">Potongan (output)</p>
-                <p className="text-sm font-medium text-foreground mt-0.5">
-                  {detail.output_material_name || `${detail.style_name} ${detail.output_color} ${detail.output_size}`}
-                </p>
-                <p className="text-[11px] tabular-nums text-muted-foreground">
-                  {detail.output_material_code || 'kode dibuat saat Mulai'}
-                </p>
-                <p className="text-xs mt-2 text-foreground">
-                  Jadi <b>{fmtNum(detail.produced_qty)}</b> / {fmtNum(detail.planned_output_qty)} pcs
-                </p>
-                <p className="text-[11px] text-muted-foreground">
-                  Stok potongan: {fmtNum(detail.output_stock)} pcs
-                  {detail.output_unit_cost > 0 && ` · HPP ${fmtRp(detail.output_unit_cost)}/pcs`}
-                </p>
-              </GlassCard>
-            </div>
-
-            {/* Aksi status */}
-            <div className="flex flex-wrap gap-2">
-              {detail.status === 'draft' && (
-                <button onClick={() => doAction('/start', {}, 'Cutting dimulai — master potongan dibuat.')}
-                  disabled={acting}
-                  className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-[hsl(var(--primary))] text-white text-sm disabled:opacity-60"
-                  data-testid="cutting-start-btn">
-                  <PlayCircle className="w-4 h-4" /> Mulai Cutting
-                </button>
-              )}
-              {detail.status === 'in_progress' && (
-                <button onClick={() => doAction('/complete', {}, 'Cutting selesai — HPP potongan dihitung.')}
-                  disabled={acting}
-                  className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-[hsl(var(--success))] text-white text-sm disabled:opacity-60"
-                  data-testid="cutting-complete-btn">
-                  <CheckCircle2 className="w-4 h-4" /> Selesaikan
-                </button>
-              )}
-              {(detail.status === 'draft' || detail.status === 'in_progress') && (
-                <button onClick={() => doAction('/cancel', { reason: 'dibatalkan user' }, 'Cutting dibatalkan.')}
-                  disabled={acting}
-                  className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]  text-sm disabled:opacity-60"
-                  data-testid="cutting-cancel-btn">
-                  <XCircle className="w-4 h-4" /> Batalkan
-                </button>
-              )}
-              {detail.status === 'completed' && detail.output_material_code && (
-                <button onClick={() => onNavigate?.('cutting-panels')}
-                  className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-[var(--glass-border)] text-sm text-foreground"
-                  data-testid="cutting-goto-panels">
-                  <Package className="w-4 h-4" /> Lihat Master Potongan
-                </button>
-              )}
-            </div>
-
-            {/* Input progres */}
-            {detail.status === 'in_progress' && (
-              <GlassCard className="p-4">
-                <h4 className="text-sm font-semibold text-foreground mb-1">Input Progres Potong</h4>
-                <p className="text-xs text-muted-foreground mb-3">
-                  Setiap input langsung memotong stok kain, menambah stok potongan, dan mengurangi sisa
-                  gulungan yang ditunjuk{detailRolls.roll_required
-                    ? ' — untuk kain yang dilacak per gulungan, gulungan WAJIB dipilih.'
-                    : '.'}
-                </p>
-                <form onSubmit={submitProgress} className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end"
-                      data-testid="cutting-progress-form">
-                  <Field label={`Kain Terpakai (${effProgUom || detail.input_unit})`} required>
-                    <div className="flex gap-2">
-                      <input type="number" step="0.0001" min="0" value={prog.input_consumed}
-                        onChange={(e) => setProg((p) => ({ ...p, input_consumed: e.target.value }))}
-                        className={inputCls} data-testid="cutting-progress-input" required />
-                      <UomSelect opt={progUomOpt} value={effProgUom} fallbackUnit={detail.input_unit}
-                        onChange={(e) => setProg((p) => ({ ...p, input_uom: e.target.value }))}
-                        testId="cutting-progress-uom" className="w-20 shrink-0" />
-                    </div>
-                    <UomConversionHint opt={progUomOpt} qty={prog.input_consumed} unit={effProgUom}
-                      fallbackUnit={detail.input_unit} className="mt-1" testId="cutting-progress-uom-hint" />
-                  </Field>
-                  <Field label="Potongan Jadi (pcs)" required>
-                    <input type="number" step="1" min="0" value={prog.output_qty}
-                      onChange={(e) => setProg((p) => ({ ...p, output_qty: e.target.value }))}
-                      className={inputCls} data-testid="cutting-progress-output" required />
-                  </Field>
-                  <Field label={`Sisa kain kembali ke stok (${effProgUom || detail.input_unit})`}
-                    hint="Potongan kain yang masih bisa dipakai — kembali ke stok kain pada harga kain, tidak ikut nilai potongan.">
-                    <input type="number" step="0.0001" min="0" value={prog.leftover_qty}
-                      onChange={(e) => setProg((p) => ({ ...p, leftover_qty: e.target.value }))}
-                      className={inputCls} data-testid="cutting-progress-leftover" />
-                  </Field>
-                  <Field label="Limbah" hint="Kain terbuang (bagian dari kain terpakai) — nilainya ikut biaya potongan.">
-                    <div className="flex gap-2">
-                      <input type="number" step="0.0001" min="0" value={prog.waste_qty}
-                        onChange={(e) => setProg((p) => ({ ...p, waste_qty: e.target.value }))}
-                        className={inputCls} data-testid="cutting-progress-waste" />
-                      <UomSelect opt={progUomOpt} value={prog.waste_uom || effProgUom} fallbackUnit={detail.input_unit}
-                        onChange={(e) => setProg((p) => ({ ...p, waste_uom: e.target.value }))}
-                        testId="cutting-progress-waste-uom" className="w-20 shrink-0" />
-                    </div>
-                  </Field>
-                  <button type="submit" disabled={acting || rollBlocking || allocPreview.shortage > 0}
-                    className="h-9 px-4 rounded-lg bg-[hsl(var(--primary))] text-white text-sm font-medium disabled:opacity-60 inline-flex items-center justify-center gap-2"
-                    data-testid="cutting-progress-submit">
-                    {acting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Catat
-                  </button>
-                  {(detailRolls.roll_required || (detail.roll_ids || []).length > 0) && (
-                    <div className="sm:col-span-4">
-                      <Field
-                        label={detailRolls.roll_required ? 'Gulungan yang dipotong (WAJIB)' : 'Gulungan yang dipotong'}
-                        required={detailRolls.roll_required}
-                        hint={detailRolls.items.length
-                          ? 'Centang gulungan yang benar-benar dipotong. Pemakaian dibagi otomatis FIFO (gulungan tertua dulu) dan sisanya langsung berkurang.'
-                          : ''}>
-                        {detailRolls.items.length === 0 ? (
-                          <div className="flex items-start gap-2 p-2.5 rounded-lg border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-xs text-[hsl(var(--destructive))] "
-                            data-testid="cutting-progress-no-rolls">
-                            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                            <span>
-                              Kain ini tidak punya gulungan bersisa. Terbitkan gulungan di{' '}
-                              <b>Gudang → Roll Kain → “Penerimaan tanpa roll”</b>
-                              {onNavigate && (
-                                <button type="button" onClick={() => onNavigate('wms-fabric-rolls')}
-                                  className="ml-1 underline font-medium" data-testid="cutting-goto-rolls">
-                                  buka sekarang →
-                                </button>
-                              )}
-                            </span>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="max-h-40 overflow-y-auto rounded-lg border border-[var(--glass-border)] divide-y divide-[var(--glass-border)]"
-                              data-testid="cutting-progress-roll-picker">
-                              {detailRolls.items.map((r) => {
-                                const checked = (prog.roll_ids || []).includes(r.id);
-                                const remaining = Number(r.remaining ?? (r.uom === 'kg' ? r.remaining_kg : r.remaining_m) ?? 0);
-                                const inPlan = allocPreview.plan.find((p) => p.roll_id === r.id);
-                                return (
-                                  <label key={r.id}
-                                    className={`flex items-center gap-2 px-3 py-2 text-xs cursor-pointer hover:bg-[var(--nav-pill-active)]/40 ${checked ? 'bg-[var(--nav-pill-active)]/30' : ''}`}
-                                    data-testid={`cutting-progress-roll-${r.roll_no}`}>
-                                    <input type="checkbox" checked={checked}
-                                      onChange={() => toggleProgRoll(r.id)}
-                                      data-testid={`cutting-progress-roll-cb-${r.roll_no}`} />
-                                    <span className="tabular-nums text-foreground">{r.roll_no}</span>
-                                    <span className="text-muted-foreground">
-                                      sisa {fmtQty(remaining)} {r.uom}
-                                      {r.color_lot ? ` · lot ${r.color_lot}` : ''}
-                                      {r.source_receipt_number ? ` · dari ${r.source_receipt_number}` : ''}
-                                    </span>
-                                    {inPlan && (
-                                      <span className="ml-auto text-[11px] font-semibold text-[hsl(var(--primary))]">
-                                        pakai {fmtQty(inPlan.qty)} → sisa {fmtQty(inPlan.remaining_after)}
-                                      </span>
-                                    )}
-                                  </label>
-                                );
-                              })}
-                            </div>
-                            {/* Pratinjau alokasi FIFO — supaya tidak ada kejutan setelah ditekan */}
-                            {(prog.roll_ids || []).length > 0 && Number(prog.input_consumed) > 0 && (
-                              <div className={`mt-1.5 text-[11px] px-2.5 py-1.5 rounded-lg border ${
-                                allocPreview.shortage > 0
-                                  ? 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)]   text-[hsl(var(--destructive))] '
-                                  : 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)]   text-[hsl(var(--success))] '}`}
-                                data-testid="cutting-alloc-preview">
-                                {allocPreview.shortage > 0 ? (
-                                  <>Sisa gulungan terpilih kurang {fmtQty(allocPreview.shortage, 3)} {detailRolls.uom} —
-                                     tersedia {fmtQty(allocPreview.available)} untuk {fmtQty(prog.input_consumed)}.
-                                     Pilih gulungan tambahan atau kurangi jumlah pemakaian.</>
-                                ) : (
-                                  <>Rencana: {allocPreview.plan.map((p) => `${p.roll_no} −${fmtQty(p.qty)}`).join(' · ')}</>
-                                )}
-                              </div>
-                            )}
-                            {rollBlocking && (
-                              <p className="mt-1.5 text-[11px] text-[hsl(var(--warning))] " data-testid="cutting-roll-required-hint">
-                                Pilih minimal satu gulungan — progres tidak bisa dicatat tanpa itu.
-                              </p>
-                            )}
-                          </>
-                        )}
-                      </Field>
-                    </div>
+            {bomReq?.has_bom && bomReq.fabric ? (
+              <div className="space-y-1 text-xs text-foreground/90">
+                <p data-testid="cutting-bom-fabric">
+                  Kain <strong>{bomReq.fabric.code || bomReq.fabric.name}</strong>:{' '}
+                  <strong>{fmtQtyTrim(bomReq.fabric.qty_per_pcs)} {bomReq.fabric.unit}</strong>/pcs
+                  {Number(form.planned_output_qty) > 0 ? (
+                    <> × {fmtNum(form.planned_output_qty, 0)} pcs ={' '}
+                      <strong className="text-primary">{fmtQtyTrim(bomReq.fabric.qty_total)} {bomReq.fabric.unit}</strong>
+                      {bomReq.fabric.unit_cost > 0 && (
+                        <span className="text-muted-foreground"> · nilai {fmtRp(bomReq.fabric.amount_total)}</span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground"> — isi target potongan (pcs) untuk melihat totalnya</span>
                   )}
-                  <div className="sm:col-span-2">
-                    <Field label="Catatan">
-                      <input value={prog.note} onChange={(e) => setProg((p) => ({ ...p, note: e.target.value }))}
-                        placeholder="mis. shift pagi" className={inputCls} data-testid="cutting-progress-note" />
-                    </Field>
-                  </div>
-                </form>
-              </GlassCard>
+                </p>
+                {Number(form.planned_input_qty) > 0 && bomReq.fabric.qty_total > 0 &&
+                  Math.abs(Number(form.planned_input_qty) - bomReq.fabric.qty_total) / bomReq.fabric.qty_total > 0.1 && (
+                  <p className="inline-flex items-start gap-1 text-[hsl(var(--warning-text))]" data-testid="cutting-bom-deviation">
+                    <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+                    Rencana manual {fmtQtyTrim(form.planned_input_qty)} {bomReq.fabric.unit} berbeda
+                    lebih dari 10% dari kebutuhan BOM {fmtQtyTrim(bomReq.fabric.qty_total)} {bomReq.fabric.unit}
+                    {' '}— pastikan memang disengaja (mis. ada penyusutan/marker khusus).
+                  </p>
+                )}
+                {bomReq.accessories?.length > 0 && (
+                  <p className="text-muted-foreground" data-testid="cutting-bom-accessories">
+                    Aksesoris yang ikut dibutuhkan:{' '}
+                    {bomReq.accessories.map((a) => (
+                      <span key={a.material_id || a.code} className="mr-2 text-foreground/80">
+                        {a.code || a.name} {fmtQtyTrim(a.qty_per_pcs)} {a.unit}/pcs
+                        {Number(form.planned_output_qty) > 0 && ` (total ${fmtQtyTrim(a.qty_total)} ${a.unit})`}
+                      </span>
+                    ))}
+                  </p>
+                )}
+              </div>
+            ) : !bomLoading && !bomReq?.panel && (
+              <p className="text-xs text-muted-foreground">
+                {bomReq?.gaps?.length ? null : 'Pilih varian (warna · ukuran) untuk membaca BOM ukuran itu.'}
+              </p>
             )}
 
-            {/* Riwayat progres */}
-            <GlassCard className="p-0 overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-[var(--glass-border)] flex items-center gap-2">
-                <History className="w-4 h-4 text-muted-foreground" />
-                <h4 className="text-sm font-semibold text-foreground">Riwayat Progres ({(detail.progress || []).length})</h4>
+            {bomReq?.gaps?.length > 0 && (
+              <ul className="space-y-1" data-testid="cutting-bom-gaps">
+                {bomReq.gaps.map((g, i) => (
+                  <li key={i} className="flex items-start gap-1 text-xs text-[hsl(var(--warning-text))]">
+                    <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+                    <span>
+                      {g.message}
+                      {g.target && g.target !== 'cutting-orders' && (
+                        <Button type="button" variant="link" size="sm" className="ml-1 h-auto p-0 text-xs"
+                          onClick={() => (typeof onNavigate === 'function'
+                            ? onNavigate(g.target)
+                            : (window.location.hash = g.target))}
+                          data-testid={`cutting-bom-fix-${g.code}`}>
+                          {g.action || 'Perbaiki'}
+                        </Button>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {bomReq?.has_bom === false && bomReq?.other_sizes_with_bom?.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Ukuran yang sudah punya BOM untuk model ini:{' '}
+                {bomReq.other_sizes_with_bom.map((s) => s.size_code || s.size_id).join(', ')}
+              </p>
+            )}
+          </GlassCard>
+        )}
+
+        <Field label="Catatan">
+          <Textarea value={form.notes} rows={2}
+            onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+            data-testid="cutting-notes" />
+        </Field>
+      </FormPopup>
+
+      {/* ── FORM MODEL BARU (master produk) — menggantikan form cutting sementara ── */}
+      <FormPopup open={showNewModel} onClose={() => setShowNewModel(false)} ukuran="pendek"
+        judul="Model / style baru" keterangan="Model ini tersimpan di Master Produk sehingga BOM & produksi bisa memakainya."
+        onSimpan={createModel} menyimpan={savingModel} labelSimpan="Simpan model" testId="cutting-new-model-modal">
+        <Field label="Nama model / style" required>
+          <Input value={newModel.name} autoFocus
+            onChange={(e) => setNewModel((n) => ({ ...n, name: e.target.value }))}
+            placeholder="mis. Dress Jemina" data-testid="new-model-name" />
+        </Field>
+        <Field label="Kategori produk" required={!newModel.code.trim()}
+          hint="Kode model dibuat otomatis dari kategori ini (mis. CLN-0001).">
+          <SmartNativeSelect value={newModel.category_id}
+            onChange={(e) => setNewModel((n) => ({ ...n, category_id: e.target.value }))}
+            className="h-9 w-full" data-testid="new-model-category">
+            <option value="">— pilih kategori —</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>{`${c.name}${c.sku_prefix ? ` (${c.sku_prefix})` : ''}`}</option>
+            ))}
+          </SmartNativeSelect>
+        </Field>
+        <Field label="Kode model (opsional)" hint="Kosongkan supaya dibuat otomatis dari kategori.">
+          <Input value={newModel.code}
+            onChange={(e) => setNewModel((n) => ({ ...n, code: e.target.value }))}
+            placeholder="mis. DRS-JMN" data-testid="new-model-code" />
+        </Field>
+      </FormPopup>
+
+      {/* ── RINCIAN ORDER (popup) ─────────────────────────────────────── */}
+      {detail && (
+        <DetailPopup open={!progOpen} onClose={() => setDetail(null)} judul={`Cutting ${detail.number}`} testId="cutting-detail-panel"
+          keterangan={`Dibuat ${fmtDateTime(detail.created_at)} oleh ${detail.created_by_name || '—'}`}
+          status={<StatusPill status={detail.status} />}
+          aksi={<>
+            {detail.status === 'draft' && (
+              <Button size="sm" onClick={() => doAction('/start', {}, 'Cutting dimulai — master potongan dibuat.')}
+                disabled={acting} data-testid="cutting-start-btn"><PlayCircle />Mulai cutting</Button>
+            )}
+            {detail.status === 'in_progress' && (
+              <Button size="sm" onClick={() => setProgOpen(true)} disabled={acting} data-testid="cutting-progress-open">
+                <PencilLine />Catat progres
+              </Button>
+            )}
+            {detail.status === 'in_progress' && (
+              <Button size="sm" variant="success" onClick={() => doAction('/complete', {}, 'Cutting selesai — HPP potongan dihitung.')}
+                disabled={acting} data-testid="cutting-complete-btn"><CheckCircle2 />Selesaikan</Button>
+            )}
+            {(detail.status === 'draft' || detail.status === 'in_progress') && (
+              <Button size="sm" variant="destructive" onClick={() => doAction('/cancel', { reason: 'dibatalkan user' }, 'Cutting dibatalkan.')}
+                disabled={acting} data-testid="cutting-cancel-btn"><XCircle />Batalkan</Button>
+            )}
+            {detail.status === 'completed' && detail.output_material_code && (
+              <Button size="sm" variant="outline" onClick={() => onNavigate?.('cutting-panels')} data-testid="cutting-goto-panels">
+                <Package />Lihat master potongan
+              </Button>
+            )}
+          </>}>
+          {detailLoading && <div className="h-1 animate-pulse rounded bg-primary" />}
+
+          <div className="grid grid-cols-1 items-stretch gap-3 md:grid-cols-[1fr_auto_1fr]">
+            <GlassCard className="p-3">
+              <p className="text-xs text-muted-foreground">Kain (input)</p>
+              <p className="mt-0.5 text-sm font-medium text-foreground">{detail.input_material_name}</p>
+              <p className="text-xs tabular-nums text-muted-foreground">{detail.input_material_code}</p>
+              <p className="mt-2 text-sm text-foreground">
+                Terpakai <b>{fmtNum(detail.consumed_input_qty, 2)}</b> / {fmtNum(detail.planned_input_qty, 2)} {detail.input_unit}
+              </p>
+              <p className="text-xs text-muted-foreground">Stok gudang saat ini: {fmtNum(detail.input_stock, 2)} {detail.input_unit}</p>
+              <p className="text-xs text-muted-foreground">Gudang sumber: <b className="text-foreground">{detail.location_name || '—'}</b></p>
+              {detailRolls.roll_required && (
+                <p className="mt-1.5 text-xs text-primary" data-testid="cutting-roll-summary">
+                  {detailRolls.items.length} gulungan bersisa · total {fmtQty(detailRolls.total_remaining)} {detailRolls.uom}
+                </p>
+              )}
+              {detailRolls.other_location_count > 0 && (
+                <p className="mt-1 text-xs text-[hsl(var(--warning-text))]" data-testid="cutting-roll-other-location">
+                  {detailRolls.other_location_count} gulungan kain ini ada di gudang lain — tidak bisa dipakai untuk order di gudang ini.
+                </p>
+              )}
+              {(detail.roll_ids || []).some((r) => Number(r.consumed_qty || 0) > 0) && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Sudah dipakai:{' '}
+                  {(detail.roll_ids || []).filter((r) => Number(r.consumed_qty || 0) > 0)
+                    .map((r) => `${r.roll_no} (${fmtQty(r.consumed_qty)})`).join(', ')}
+                </p>
+              )}
+            </GlassCard>
+            <div className="hidden items-center justify-center md:flex">
+              <ArrowRight className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <GlassCard className="p-3">
+              <p className="text-xs text-muted-foreground">Potongan (output)</p>
+              <p className="mt-0.5 text-sm font-medium text-foreground">
+                {detail.output_material_name || `${detail.style_name} ${detail.output_color} ${detail.output_size}`}
+              </p>
+              <p className="text-xs tabular-nums text-muted-foreground">{detail.output_material_code || 'Kode dibuat saat mulai'}</p>
+              <p className="mt-2 text-sm text-foreground">
+                Jadi <b>{fmtNum(detail.produced_qty)}</b> / {fmtNum(detail.planned_output_qty)} pcs
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Stok potongan: {fmtNum(detail.output_stock)} pcs
+                {detail.output_unit_cost > 0 && ` · HPP ${fmtRp(detail.output_unit_cost)}/pcs`}
+              </p>
+            </GlassCard>
+          </div>
+
+          {/* Riwayat progres */}
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+                <History className="h-4 w-4 text-muted-foreground" />Riwayat progres ({(detail.progress || []).length})
+              </p>
+              <div className="ml-auto flex flex-wrap gap-2">
                 {/* FASE H-6b — pintu ke daftar arus keluar gudang (dokumen MI). */}
                 {onNavigate && (detail.progress || []).length > 0 && (
-                  <button onClick={() => { setDetail(null); onNavigate('wh-material-issue'); }}
-                    className="ml-auto inline-flex items-center gap-1 h-7 px-2 rounded-lg border border-[var(--glass-border)] text-[11px] text-muted-foreground hover:text-foreground hover:bg-[var(--nav-pill-active)]"
-                    data-testid="cutting-open-material-issue">
-                    <Package className="w-3 h-3" /> Lihat di Pengeluaran Material
-                  </button>
+                  <Button size="sm" variant="outline" onClick={() => { setDetail(null); onNavigate('wh-material-issue'); }}
+                    data-testid="cutting-open-material-issue"><Package />Lihat di Pengeluaran Material</Button>
                 )}
+                <TombolUnduh namaBerkas={`progres-${detail.number}`} namaLembar="Progres" baris={detail.progress || []}
+                  testId="cutting-progress-unduh"
+                  kolom={[
+                    { label: 'Waktu', nilai: (p) => fmtDateTime(p.created_at) },
+                    { label: `Kain (${detail.input_unit || 'satuan'})`, nilai: (p) => Number(p.input_consumed || 0) },
+                    { label: 'Potongan (pcs)', nilai: (p) => Number(p.output_qty || 0) },
+                    { label: 'Sisa ke stok', nilai: (p) => Number(p.leftover_qty || 0) },
+                    { label: 'Limbah', nilai: (p) => Number(p.waste_qty || 0) },
+                    { label: 'Nilai kain keluar', nilai: (p) => Number(p.value_out || 0) },
+                    { label: 'HPP potongan / pcs', nilai: (p) => Number(p.panel_unit_cost_after || 0) },
+                    { label: 'Gulungan dipakai', nilai: (p) => (p.roll_consumption || []).map((rc) => `${rc.roll_no} −${fmtQty(rc.qty)}`).join(', ') },
+                    { label: 'Dokumen keluar', nilai: (p) => p.material_issue_number || 'Belum ada' },
+                    { label: 'Catatan', nilai: (p) => p.note || '' }, { label: 'Oleh', nilai: (p) => p.created_by_name || '' },
+                  ]} />
               </div>
-              {(detail.progress || []).length === 0 ? (
-                <p className="p-6 text-center text-sm text-muted-foreground">Belum ada progres dicatat.</p>
-              ) : (
-                <table className="w-full text-sm" data-testid="cutting-progress-table">
-                  <thead>
-                    <tr className="text-left text-xs text-muted-foreground border-b border-[var(--glass-border)]">
-                      <th className="px-4 py-2 font-medium">Waktu</th>
-                      <th className="px-4 py-2 font-medium text-right">Kain</th>
-                      <th className="px-4 py-2 font-medium text-right">Potongan</th>
-                      <th className="px-4 py-2 font-medium text-right">Sisa ke stok</th>
-                      <th className="px-4 py-2 font-medium text-right">Limbah</th>
-                      {/* SESI #32 — nilai yang BERPINDAH dari kain ke potongan */}
-                      <th className="px-4 py-2 font-medium text-right">Nilai kain keluar</th>
-                      <th className="px-4 py-2 font-medium text-right">HPP potongan</th>
-                      <th className="px-4 py-2 font-medium">Gulungan dipakai</th>
-                      <th className="px-4 py-2 font-medium">Dokumen keluar</th>
-                      <th className="px-4 py-2 font-medium">Catatan</th>
-                      <th className="px-4 py-2 font-medium">Oleh</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+            </div>
+            {(detail.progress || []).length === 0 ? (
+              <p className="py-4 text-center text-sm text-muted-foreground">Belum ada progres dicatat.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table data-testid="cutting-progress-table">
+                  <TableHeader><TableRow>
+                    <TableHead>Waktu</TableHead><TableHead className="text-right">Kain</TableHead>
+                    <TableHead className="text-right">Potongan</TableHead><TableHead className="text-right">Sisa ke stok</TableHead>
+                    <TableHead className="text-right">Limbah</TableHead>
+                    {/* SESI #32 — nilai yang BERPINDAH dari kain ke potongan */}
+                    <TableHead className="text-right">Nilai kain keluar</TableHead><TableHead className="text-right">HPP potongan</TableHead>
+                    <TableHead>Gulungan dipakai</TableHead><TableHead>Dokumen keluar</TableHead>
+                    <TableHead>Catatan</TableHead><TableHead>Oleh</TableHead>
+                  </TableRow></TableHeader>
+                  <TableBody>
                     {(detail.progress || []).map((p) => (
-                      <tr key={p.id} className="border-b border-[var(--glass-border)] last:border-0">
-                        <td className="px-4 py-2 text-xs text-muted-foreground">{fmtDateTime(p.created_at)}</td>
-                        <td className="px-4 py-2 text-right tabular-nums text-foreground">{fmtNum(p.input_consumed, 2)}</td>
-                        <td className="px-4 py-2 text-right tabular-nums text-foreground">{fmtNum(p.output_qty)}</td>
-                        <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{fmtNum(p.leftover_qty || 0, 2)}</td>
-                        <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{fmtNum(p.waste_qty, 2)}</td>
-                        {/* SESI #32 — nilai kain yang keluar & HPP potongan sebelum→sesudah.
-                            Kalau kainnya belum bernilai, alasannya DITULIS (bukan "-"). */}
-                        <td className="px-4 py-2 text-right text-xs"
-                          data-testid={`cutting-progress-value-${p.id}`}>
+                      <TableRow key={p.id}>
+                        <TableCell className="whitespace-nowrap text-muted-foreground">{fmtDateTime(p.created_at)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtNum(p.input_consumed, 2)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtNum(p.output_qty)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-muted-foreground">{fmtNum(p.leftover_qty || 0, 2)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-muted-foreground">{fmtNum(p.waste_qty, 2)}</TableCell>
+                        {/* Kalau kainnya belum bernilai, alasannya DITULIS (bukan "-"). */}
+                        <TableCell className="text-right" data-testid={`cutting-progress-value-${p.id}`}>
                           {Number(p.value_out || 0) > 0 ? (
                             <>
-                              <span className="tabular-nums font-medium text-foreground">
-                                {fmtRp(p.value_out)}
-                              </span>
-                              <span className="block text-[10px] text-muted-foreground">
-                                {fmtRp(p.fabric_unit_cost)}/{detail.input_unit || 'satuan'}
-                              </span>
+                              <span className="font-medium tabular-nums text-foreground">{fmtRp(p.value_out)}</span>
+                              <span className="block text-xs text-muted-foreground">{fmtRp(p.fabric_unit_cost)}/{detail.input_unit || 'satuan'}</span>
                             </>
                           ) : (
-                            <span className="text-[hsl(var(--warning))] text-[11px]">
-                              belum bernilai
-                            </span>
+                            <span className="text-xs text-[hsl(var(--warning-text))]">Belum bernilai</span>
                           )}
-                        </td>
-                        <td className="px-4 py-2 text-right text-xs">
+                        </TableCell>
+                        <TableCell className="text-right">
                           {Number(p.panel_unit_cost_after || 0) > 0 ? (
                             <>
-                              <span className="tabular-nums font-medium text-foreground">
-                                {fmtRp(p.panel_unit_cost_after)}/pcs
-                              </span>
+                              <span className="font-medium tabular-nums text-foreground">{fmtRp(p.panel_unit_cost_after)}/pcs</span>
                               {Number(p.panel_unit_cost_before || 0) > 0
                                 && Number(p.panel_unit_cost_before) !== Number(p.panel_unit_cost_after) && (
-                                <span className="block text-[10px] text-muted-foreground">
-                                  dari {fmtRp(p.panel_unit_cost_before)} (rata-rata bergerak)
-                                </span>
+                                <span className="block text-xs text-muted-foreground">dari {fmtRp(p.panel_unit_cost_before)} (rata-rata bergerak)</span>
                               )}
                             </>
-                          ) : (
-                            <span className="text-muted-foreground">—</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-xs" data-testid={`cutting-progress-rolls-${p.id}`}>
+                          ) : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell data-testid={`cutting-progress-rolls-${p.id}`}>
                           {(p.roll_consumption || []).length ? (
                             <div className="flex flex-wrap gap-1">
                               {p.roll_consumption.map((rc) => (
-                                <span key={rc.roll_id}
-                                  className="tabular-nums text-[10px] px-1.5 py-0.5 rounded-md bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]  border border-[hsl(var(--primary)/0.35)] "
-                                  title={`sisa setelah dipakai: ${fmtQty(rc.remaining_after)}`}>
-                                  {rc.roll_no} −{fmtQty(rc.qty)}
+                                <span key={rc.roll_id} title={`sisa setelah dipakai: ${fmtQty(rc.remaining_after)}`}>
+                                  <StatusBadge status="" label={`${rc.roll_no} −${fmtQty(rc.qty)}`} tone="primary" className="tabular-nums" />
                                 </span>
                               ))}
                             </div>
                           ) : (
-                            <span className="text-muted-foreground">{p.roll_id ? 'tercatat' : '—'}</span>
+                            <span className="text-muted-foreground">{p.roll_id ? 'Tercatat' : '—'}</span>
                           )}
-                        </td>
-                        {/* FASE H-6b — nomor dokumen "Pengeluaran Material" per progres.
-                            Kalau kosong, kainnya sudah keluar tanpa dokumen: itu HARUS
-                            terlihat (bukan strip diam-diam) supaya bisa diterbitkan ulang. */}
-                        <td className="px-4 py-2 text-xs" data-testid={`cutting-progress-mi-${p.id}`}>
-                          {p.material_issue_number ? (
-                            <span className="tabular-nums text-[10px] px-1.5 py-0.5 rounded-md bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]  border border-[hsl(var(--success)/0.35)] "
-                              title="Dokumen Pengeluaran Material yang mencatat arus keluar kain ini">
-                              {p.material_issue_number}
-                            </span>
-                          ) : (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]  border border-[hsl(var(--warning)/0.35)] ">
-                              belum ada
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-xs text-muted-foreground">{p.note || '-'}</td>
-                        <td className="px-4 py-2 text-xs text-muted-foreground">{p.created_by_name || '-'}</td>
-                      </tr>
+                        </TableCell>
+                        {/* FASE H-6b — nomor dokumen "Pengeluaran Material" per progres; kosong HARUS terlihat. */}
+                        <TableCell data-testid={`cutting-progress-mi-${p.id}`}>
+                          {p.material_issue_number
+                            ? <span title="Dokumen Pengeluaran Material yang mencatat arus keluar kain ini">
+                                <StatusBadge status="" label={p.material_issue_number} tone="success" className="tabular-nums" /></span>
+                            : <StatusBadge status="" label="Belum ada" tone="warning" />}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">{p.note || '—'}</TableCell>
+                        <TableCell className="text-muted-foreground">{p.created_by_name || '—'}</TableCell>
+                      </TableRow>
                     ))}
-                  </tbody>
-                </table>
-              )}
-            </GlassCard>
-
-            {detail.notes && (
-              <p className="text-xs text-muted-foreground">Catatan: {detail.notes}</p>
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </div>
-        </Modal>
+
+          {detail.notes && <p className="text-sm text-muted-foreground">Catatan: {detail.notes}</p>}
+        </DetailPopup>
       )}
-    </div>
+
+      {/* ── FORM CATAT PROGRES (popup panjang; rincian disembunyikan sementara) ── */}
+      {detail && detail.status === 'in_progress' && (
+        <FormPopup open={progOpen} onClose={() => setProgOpen(false)} ukuran="panjang" testId="cutting-progress-form"
+          judul={`Catat progres potong · ${detail.number}`}
+          keterangan={`Setiap catatan langsung memotong stok kain, menambah stok potongan, dan mengurangi sisa gulungan yang ditunjuk${detailRolls.roll_required ? ' — untuk kain yang dilacak per gulungan, gulungan wajib dipilih.' : '.'}`}
+          onSimpan={submitProgress} menyimpan={acting} labelSimpan="Catat"
+          bisaSimpan={!rollBlocking && !(allocPreview.shortage > 0)}>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label={`Kain terpakai (${effProgUom || detail.input_unit})`} required>
+              <div className="flex gap-2">
+                <Input type="number" step="0.0001" min="0" value={prog.input_consumed}
+                  onChange={(e) => setProg((p) => ({ ...p, input_consumed: e.target.value }))}
+                  data-testid="cutting-progress-input" required />
+                <UomSelect opt={progUomOpt} value={effProgUom} fallbackUnit={detail.input_unit}
+                  onChange={(e) => setProg((p) => ({ ...p, input_uom: e.target.value }))}
+                  testId="cutting-progress-uom" className="w-24 shrink-0" />
+              </div>
+              <UomConversionHint opt={progUomOpt} qty={prog.input_consumed} unit={effProgUom}
+                fallbackUnit={detail.input_unit} className="mt-1" testId="cutting-progress-uom-hint" />
+            </Field>
+            <Field label="Potongan jadi (pcs)" required>
+              <Input type="number" step="1" min="0" value={prog.output_qty}
+                onChange={(e) => setProg((p) => ({ ...p, output_qty: e.target.value }))}
+                data-testid="cutting-progress-output" required />
+            </Field>
+            <Field label={`Sisa kain kembali ke stok (${effProgUom || detail.input_unit})`}
+              hint="Potongan kain yang masih bisa dipakai — kembali ke stok kain pada harga kain, tidak ikut nilai potongan.">
+              <Input type="number" step="0.0001" min="0" value={prog.leftover_qty}
+                onChange={(e) => setProg((p) => ({ ...p, leftover_qty: e.target.value }))}
+                data-testid="cutting-progress-leftover" />
+            </Field>
+            <Field label="Limbah" hint="Kain terbuang (bagian dari kain terpakai) — nilainya ikut biaya potongan.">
+              <div className="flex gap-2">
+                <Input type="number" step="0.0001" min="0" value={prog.waste_qty}
+                  onChange={(e) => setProg((p) => ({ ...p, waste_qty: e.target.value }))}
+                  data-testid="cutting-progress-waste" />
+                <UomSelect opt={progUomOpt} value={prog.waste_uom || effProgUom} fallbackUnit={detail.input_unit}
+                  onChange={(e) => setProg((p) => ({ ...p, waste_uom: e.target.value }))}
+                  testId="cutting-progress-waste-uom" className="w-24 shrink-0" />
+              </div>
+            </Field>
+          </div>
+          {(detailRolls.roll_required || (detail.roll_ids || []).length > 0) && (
+            <Field
+              label={detailRolls.roll_required ? 'Gulungan yang dipotong (wajib)' : 'Gulungan yang dipotong'}
+              required={detailRolls.roll_required}
+              hint={detailRolls.items.length
+                ? 'Centang gulungan yang benar-benar dipotong. Pemakaian dibagi otomatis FIFO (gulungan tertua dulu) dan sisanya langsung berkurang.'
+                : ''}>
+              {detailRolls.items.length === 0 ? (
+                <Notice tone="danger" icon={AlertCircle} testId="cutting-progress-no-rolls"
+                  action={onNavigate && (
+                    <Button type="button" size="sm" variant="outline" onClick={() => onNavigate('wms-fabric-rolls')} data-testid="cutting-goto-rolls">
+                      Buka sekarang
+                    </Button>
+                  )}>
+                  Kain ini tidak punya gulungan bersisa. Terbitkan gulungan di <b>Gudang › Roll Kain › “Penerimaan tanpa roll”</b>.
+                </Notice>
+              ) : (
+                <>
+                  <div className="max-h-48 divide-y divide-[var(--glass-border)] overflow-y-auto rounded-lg border border-[var(--glass-border)]"
+                    data-testid="cutting-progress-roll-picker">
+                    {detailRolls.items.map((r) => {
+                      const checked = (prog.roll_ids || []).includes(r.id);
+                      const remaining = Number(r.remaining ?? (r.uom === 'kg' ? r.remaining_kg : r.remaining_m) ?? 0);
+                      const inPlan = allocPreview.plan.find((p) => p.roll_id === r.id);
+                      return (
+                        <label key={r.id}
+                          className={`flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-foreground/5 ${checked ? 'bg-primary/5' : ''}`}
+                          data-testid={`cutting-progress-roll-${r.roll_no}`}>
+                          <Checkbox checked={checked} onCheckedChange={() => toggleProgRoll(r.id)}
+                            data-testid={`cutting-progress-roll-cb-${r.roll_no}`} />
+                          <span className="tabular-nums text-foreground">{r.roll_no}</span>
+                          <span className="text-xs text-muted-foreground">
+                            sisa {fmtQty(remaining)} {r.uom}
+                            {r.color_lot ? ` · lot ${r.color_lot}` : ''}
+                            {r.source_receipt_number ? ` · dari ${r.source_receipt_number}` : ''}
+                          </span>
+                          {inPlan && (
+                            <span className="ml-auto text-xs font-semibold text-primary">
+                              pakai {fmtQty(inPlan.qty)} → sisa {fmtQty(inPlan.remaining_after)}
+                            </span>
+                          )}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {/* Pratinjau alokasi FIFO — supaya tidak ada kejutan setelah ditekan */}
+                  {(prog.roll_ids || []).length > 0 && Number(prog.input_consumed) > 0 && (
+                    <p className={`mt-1.5 text-xs ${allocPreview.shortage > 0 ? 'text-[hsl(var(--danger-text))]' : 'text-[hsl(var(--success-text))]'}`}
+                      data-testid="cutting-alloc-preview">
+                      {allocPreview.shortage > 0 ? (
+                        <>Sisa gulungan terpilih kurang {fmtQty(allocPreview.shortage, 3)} {detailRolls.uom} —
+                          tersedia {fmtQty(allocPreview.available)} untuk {fmtQty(prog.input_consumed)}.
+                          Pilih gulungan tambahan atau kurangi jumlah pemakaian.</>
+                      ) : (
+                        <>Rencana: {allocPreview.plan.map((p) => `${p.roll_no} −${fmtQty(p.qty)}`).join(' · ')}</>
+                      )}
+                    </p>
+                  )}
+                  {rollBlocking && (
+                    <p className="mt-1.5 text-xs text-[hsl(var(--warning-text))]" data-testid="cutting-roll-required-hint">
+                      Pilih minimal satu gulungan — progres tidak bisa dicatat tanpa itu.
+                    </p>
+                  )}
+                </>
+              )}
+            </Field>
+          )}
+          <Field label="Catatan">
+            <Input value={prog.note} onChange={(e) => setProg((p) => ({ ...p, note: e.target.value }))}
+              placeholder="mis. shift pagi" data-testid="cutting-progress-note" />
+          </Field>
+        </FormPopup>
+      )}
+    </PageLayout>
   );
 }
