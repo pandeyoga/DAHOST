@@ -21,6 +21,8 @@ import {
 /* ─────────────────────────────────────────────────────────
  * Portal Meta — warna & ikon per portal (konsisten di seluruh aplikasi)
  * ───────────────────────────────────────────────────────── */
+/* Standar UI/UX v2 (8 Nov 2026): satu gaya netral untuk semua portal (dulu 10 warna latar/teks berbeda,
+ * kontras teks rendah). Ikon tetap ungu (primary). */
 export const PORTAL_META = {
   manajemen: {
     name: 'Manajemen',
@@ -29,11 +31,11 @@ export const PORTAL_META = {
     role: 'Direktur, Manager Produksi/Keuangan/HR',
     color: 'sky',
     classes: {
-      text: 'text-sky-500',
-      bg: 'bg-sky-100 dark:bg-sky-500/10',
-      border: 'border-sky-400 dark:border-sky-500/30',
-      ring: 'ring-sky-500/20',
-      dot: 'bg-sky-500',
+      text: 'text-foreground',
+      bg: 'bg-[var(--card-surface)]',
+      border: 'border-[var(--glass-border)]',
+      ring: 'ring-[hsl(var(--primary)/0.2)]',
+      dot: 'bg-primary',
     },
   },
   produksi: {
@@ -43,11 +45,11 @@ export const PORTAL_META = {
     role: 'Supervisor, PPIC, Operator',
     color: 'emerald',
     classes: {
-      text: 'text-emerald-500',
-      bg: 'bg-emerald-100 dark:bg-emerald-500/10',
-      border: 'border-emerald-400 dark:border-emerald-500/30',
-      ring: 'ring-emerald-500/20',
-      dot: 'bg-emerald-500',
+      text: 'text-foreground',
+      bg: 'bg-[var(--card-surface)]',
+      border: 'border-[var(--glass-border)]',
+      ring: 'ring-[hsl(var(--primary)/0.2)]',
+      dot: 'bg-primary',
     },
   },
   gudang: {
@@ -57,11 +59,11 @@ export const PORTAL_META = {
     role: 'Kepala Gudang, Staff Gudang',
     color: 'amber',
     classes: {
-      text: 'text-amber-500',
-      bg: 'bg-amber-100 dark:bg-amber-500/10',
-      border: 'border-amber-400 dark:border-amber-500/30',
-      ring: 'ring-amber-500/20',
-      dot: 'bg-amber-500',
+      text: 'text-foreground',
+      bg: 'bg-[var(--card-surface)]',
+      border: 'border-[var(--glass-border)]',
+      ring: 'ring-[hsl(var(--primary)/0.2)]',
+      dot: 'bg-primary',
     },
   },
   pengadaan: {
@@ -71,11 +73,11 @@ export const PORTAL_META = {
     role: 'Staf & Manajer Pengadaan, Keuangan, Kepala Gudang',
     color: 'indigo',
     classes: {
-      text: 'text-indigo-500',
-      bg: 'bg-indigo-100 dark:bg-indigo-500/10',
-      border: 'border-indigo-400 dark:border-indigo-500/30',
-      ring: 'ring-indigo-500/20',
-      dot: 'bg-indigo-500',
+      text: 'text-foreground',
+      bg: 'bg-[var(--card-surface)]',
+      border: 'border-[var(--glass-border)]',
+      ring: 'ring-[hsl(var(--primary)/0.2)]',
+      dot: 'bg-primary',
     },
   },
   keuangan: {
@@ -85,11 +87,11 @@ export const PORTAL_META = {
     role: 'Finance Staff, Accounting',
     color: 'violet',
     classes: {
-      text: 'text-violet-500',
-      bg: 'bg-violet-100 dark:bg-violet-500/10',
-      border: 'border-violet-400 dark:border-violet-500/30',
-      ring: 'ring-violet-500/20',
-      dot: 'bg-violet-500',
+      text: 'text-foreground',
+      bg: 'bg-[var(--card-surface)]',
+      border: 'border-[var(--glass-border)]',
+      ring: 'ring-[hsl(var(--primary)/0.2)]',
+      dot: 'bg-primary',
     },
   },
   sdm: {
@@ -99,11 +101,11 @@ export const PORTAL_META = {
     role: 'HR Staff',
     color: 'rose',
     classes: {
-      text: 'text-rose-500',
-      bg: 'bg-rose-100 dark:bg-rose-500/10',
-      border: 'border-rose-400 dark:border-rose-500/30',
-      ring: 'ring-rose-500/20',
-      dot: 'bg-rose-500',
+      text: 'text-foreground',
+      bg: 'bg-[var(--card-surface)]',
+      border: 'border-[var(--glass-border)]',
+      ring: 'ring-[hsl(var(--primary)/0.2)]',
+      dot: 'bg-primary',
     },
   },
   qc: {
@@ -113,11 +115,11 @@ export const PORTAL_META = {
     role: 'QC Inspector',
     color: 'fuchsia',
     classes: {
-      text: 'text-fuchsia-500',
-      bg: 'bg-fuchsia-100 dark:bg-fuchsia-500/10',
-      border: 'border-fuchsia-400 dark:border-fuchsia-500/30',
-      ring: 'ring-fuchsia-500/20',
-      dot: 'bg-fuchsia-500',
+      text: 'text-foreground',
+      bg: 'bg-[var(--card-surface)]',
+      border: 'border-[var(--glass-border)]',
+      ring: 'ring-[hsl(var(--primary)/0.2)]',
+      dot: 'bg-primary',
     },
   },
   shift: {
@@ -127,11 +129,11 @@ export const PORTAL_META = {
     role: 'Supervisor Shift',
     color: 'cyan',
     classes: {
-      text: 'text-cyan-500',
-      bg: 'bg-cyan-100 dark:bg-cyan-500/10',
-      border: 'border-cyan-400 dark:border-cyan-500/30',
-      ring: 'ring-cyan-500/20',
-      dot: 'bg-cyan-500',
+      text: 'text-foreground',
+      bg: 'bg-[var(--card-surface)]',
+      border: 'border-[var(--glass-border)]',
+      ring: 'ring-[hsl(var(--primary)/0.2)]',
+      dot: 'bg-primary',
     },
   },
   saya: {
@@ -141,11 +143,11 @@ export const PORTAL_META = {
     role: 'Semua karyawan',
     color: 'pink',
     classes: {
-      text: 'text-pink-500',
-      bg: 'bg-pink-100 dark:bg-pink-500/10',
-      border: 'border-pink-400 dark:border-pink-500/30',
-      ring: 'ring-pink-500/20',
-      dot: 'bg-pink-500',
+      text: 'text-foreground',
+      bg: 'bg-[var(--card-surface)]',
+      border: 'border-[var(--glass-border)]',
+      ring: 'ring-[hsl(var(--primary)/0.2)]',
+      dot: 'bg-primary',
     },
   },
   livehost: {
@@ -155,11 +157,11 @@ export const PORTAL_META = {
     role: 'Admin Marketing, Supervisor LiveHost, Host',
     color: 'teal',
     classes: {
-      text: 'text-teal-500',
-      bg: 'bg-teal-100 dark:bg-teal-500/10',
-      border: 'border-teal-400 dark:border-teal-500/30',
-      ring: 'ring-teal-500/20',
-      dot: 'bg-teal-500',
+      text: 'text-foreground',
+      bg: 'bg-[var(--card-surface)]',
+      border: 'border-[var(--glass-border)]',
+      ring: 'ring-[hsl(var(--primary)/0.2)]',
+      dot: 'bg-primary',
     },
   },
 };
@@ -168,9 +170,9 @@ export const PORTAL_META = {
  * Difficulty levels untuk skenario
  * ───────────────────────────────────────────────────────── */
 export const DIFFICULTY = {
-  pemula: { label: 'Pemula', classes: 'bg-green-100 dark:bg-green-500/15 text-green-600 border-green-400 dark:border-green-500/30' },
-  menengah: { label: 'Menengah', classes: 'bg-amber-100 dark:bg-amber-500/15 text-amber-600 border-amber-400 dark:border-amber-500/30' },
-  lanjut: { label: 'Lanjut', classes: 'bg-red-100 dark:bg-red-500/15 text-red-600 border-red-400 dark:border-red-500/30' },
+  pemula: { label: 'Pemula', classes: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)]' },
+  menengah: { label: 'Menengah', classes: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] border-[hsl(var(--warning)/0.35)]' },
+  lanjut: { label: 'Lanjut', classes: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] border-[hsl(var(--destructive)/0.35)]' },
 };
 
 /* ─────────────────────────────────────────────────────────
@@ -183,10 +185,10 @@ export const OVERVIEW = {
   intro:
     'PT Rahaza ERP adalah platform terpadu untuk mengelola seluruh operasional pabrik garment rajut — dari perencanaan produksi, gudang, keuangan, hingga SDM.',
   highlights: [
-    { icon: Zap, title: 'Real-time', desc: 'Data produksi & stok ter-update otomatis' },
+    { icon: Zap, title: 'Waktu nyata', desc: 'Data produksi & stok diperbarui otomatis' },
     { icon: ListChecks, title: 'Terintegrasi', desc: '5 portal saling terhubung tanpa duplikasi data' },
-    { icon: ShieldAlert, title: 'Audit Trail', desc: 'Setiap perubahan tercatat (siapa, kapan, apa)' },
-    { icon: Sparkles, title: 'AI Assistant', desc: 'Chatbot bantuan & ringkasan laporan otomatis' },
+    { icon: ShieldAlert, title: 'Jejak audit', desc: 'Setiap perubahan tercatat (siapa, kapan, apa)' },
+    { icon: Sparkles, title: 'Asisten AI', desc: 'Tanya jawab bantuan & ringkasan laporan otomatis' },
   ],
   loginSteps: [
     { icon: 'login', text: 'Masuk dengan email & password yang diberikan admin' },
@@ -604,7 +606,7 @@ export const PORTALS_GUIDE = [
   {
     id: 'p-livehost',
     portalKey: 'livehost',
-    title: 'LiveHost Management',
+    title: 'Manajemen LiveHost',
     summary:
       'Modul end-to-end untuk live streaming: jadwal shift, script library, training, performance tracking, dan auto-sync payment ke Finance.',
     sopDownload: {
@@ -743,7 +745,7 @@ export const SCENARIOS = [
         detail: 'Pilih tanggal → assign operator ke Line A.' },
       { portal: 'produksi', title: 'Issue Material', menu: 'Eksekusi › Bulk MI',
         detail: 'Pilih WO → konfirmasi → material keluar dari gudang.' },
-      { portal: 'produksi', title: 'Update Progress', menu: 'WO detail',
+      { portal: 'produksi', title: 'Perbarui progres', menu: 'WO detail',
         detail: 'Operator/supervisor isi qty_produced harian.' },
       { portal: 'qc', title: 'QC Inspeksi', menu: 'QC › Inspect',
         detail: '200 pcs lulus QC → qty_passed_qc = 200.' },
@@ -776,7 +778,7 @@ export const SCENARIOS = [
     steps: [
       { portal: 'qc', title: 'QC Check', menu: 'QC › Inspect',
         detail: '170 lulus, 30 defect (kode: jaitan-lepas).' },
-      { portal: 'produksi', title: 'Update WO', menu: 'WO detail',
+      { portal: 'produksi', title: 'Perbarui WO', menu: 'WO detail',
         detail: 'qty_passed_qc = 170, qty_rework = 30.' },
       { portal: 'produksi', title: 'Tambah Rework', menu: 'Eksekusi › Papan Rework',
         detail: 'Isi WO, qty 30, jenis defect, assign operator rework.' },
@@ -784,7 +786,7 @@ export const SCENARIOS = [
         detail: 'Caption "Defect: jahitan lepas area bahu", tipe defect_evidence.' },
       { portal: 'produksi', title: 'Rework Selesai', menu: 'Papan Rework',
         detail: '28 pcs sukses rework, 2 pcs reject total.' },
-      { portal: 'produksi', title: 'Update Final', menu: 'WO detail',
+      { portal: 'produksi', title: 'Perbarui hasil akhir', menu: 'WO detail',
         detail: 'qty_passed_qc = 198, qty_reject = 2.' },
       { portal: 'shift', title: 'Catat di Handover', menu: 'Shift Handover',
         detail: 'Issues: tipe "kualitas", deskripsi & priority "medium".' },
@@ -1022,7 +1024,7 @@ export const TIPS = {
       'Pakai "Copy dari Kemarin" untuk Assign Lini — hemat waktu',
     ]},
     { icon: 'warehouse', title: 'Gudang', items: [
-      'Receiving harus sertakan material_id — agar stok ter-update otomatis',
+      'Receiving harus sertakan material_id — agar stok diperbarui otomatis',
       'Cek low-stock dashboard tiap pagi — antisipasi shortage',
       'Lakukan opname rutin (mingguan/bulanan) — data tetap akurat',
     ]},
