@@ -1,16 +1,27 @@
+/**
+ * Prediksi karyawan keluar (Portal SDM › AI SDM) — perkiraan risiko resign karyawan dengan AI.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, daftar karyawan = tabel + unduh Excel/CSV (dulu kartu,
+ * diam-diam hanya 20 pertama), detail risiko = DetailPopup, kartu angka StatTile, warna token (dulu hex &
+ * gradien), bahasa Indonesia (High/Medium/Low Risk → risiko tinggi/sedang/rendah).
+ */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { GlassCard } from '@/components/ui/glass';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { DepartmentSelect } from './hrPickers';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Brain, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
-import { AlertTriangle, Sparkles, TrendingDown, Users, Loader2, Brain, Target, UserX, Shield } from 'lucide-react';
-import { IconButton } from '../IconButton';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
+import { Button } from '@/components/ui/button';
+import { GlassCard } from '@/components/ui/glass';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, StatTile, StatusBadge } from '../moduleAtoms';
+import { DepartmentSelect } from './hrPickers';
 
-const RISK_COLOR = { high: '#ef4444', medium: '#f59e0b', low: '#10b981' };
-const RISK_LABEL = { high: 'Tinggi', medium: 'Sedang', low: 'Rendah' };
+const RISIKO = { high: { label: 'Tinggi', tone: 'danger' }, medium: { label: 'Sedang', tone: 'warning' }, low: { label: 'Rendah', tone: 'success' } };
+function Risiko({ level }) {
+  const r = RISIKO[level] || { label: level || '—', tone: 'default' };
+  return <StatusBadge status={level} label={r.label} tone={r.tone} />;
+}
 
 export default function HRAttritionModule({ token }) {
   const [loading, setLoading] = useState(false);
@@ -18,6 +29,7 @@ export default function HRAttritionModule({ token }) {
   const [department, setDepartment] = useState('');
   const [result, setResult] = useState(null);
   const [history, setHistory] = useState([]);
+  const [lihat, setLihat] = useState(null);
 
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
 
@@ -29,7 +41,7 @@ export default function HRAttritionModule({ token }) {
       const data = await r.json();
       setHistory(data?.data || []);
     } catch (e) {
-      toast.error(`Gagal memuat dashboard: ${e.message}`);
+      toast.error(`Gagal memuat ringkasan: ${e.message}`);
     } finally {
       setLoading(false);
     }
@@ -46,7 +58,7 @@ export default function HRAttritionModule({ token }) {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       setResult(data?.data);
-      toast.success('Prediksi selesai!', { icon: <Sparkles className="w-4 h-4" /> });
+      toast.success('Prediksi selesai!', { icon: <Sparkles className="h-4 w-4" /> });
       fetchHistory();
     } catch (e) {
       toast.error(`Prediksi gagal: ${e.message}`);
@@ -55,216 +67,118 @@ export default function HRAttritionModule({ token }) {
     }
   };
 
-  const highRiskCount = result?.analysis?.employees?.filter(e => e.risk_level === 'high').length || 0;
-  const mediumRiskCount = result?.analysis?.employees?.filter(e => e.risk_level === 'medium').length || 0;
-  const lowRiskCount = result?.analysis?.employees?.filter(e => e.risk_level === 'low').length || 0;
+  const emps = result?.analysis?.employees || [];
+  const hitung = (lv) => emps.filter(e => e.risk_level === lv).length;
+  const deptRows = result?.analysis?.department_summary || [];
 
-  const riskDistribution = [
-    { name: 'High Risk', value: highRiskCount, color: RISK_COLOR.high },
-    { name: 'Medium Risk', value: mediumRiskCount, color: RISK_COLOR.medium },
-    { name: 'Low Risk', value: lowRiskCount, color: RISK_COLOR.low },
+  const kolom = [
+    { kunci: 'nama', label: 'Karyawan', hp: 'judul', isi: (e) => (
+      <div><p className="font-medium text-foreground">{e.name}</p><p className="text-xs text-muted-foreground">{e.employee_id}</p></div>) },
+    { kunci: 'dept', label: 'Departemen', isi: (e) => <span className="text-sm">{e.department || '—'}</span> },
+    { kunci: 'skor', label: 'Skor risiko', rata: 'kanan', isi: (e) => <span className="font-semibold tabular-nums">{e.risk_score}</span> },
+    { kunci: 'tingkat', label: 'Tingkat risiko', isi: (e) => <Risiko level={e.risk_level} /> },
   ];
 
   return (
-    <div className="space-y-6 p-6" data-testid="hr-attrition-module">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-500 to-red-600 flex items-center justify-center">
-            <TrendingDown className="w-5 h-5 text-foreground" />
+    <PageLayout testId="hr-attrition-module" title="Prediksi karyawan keluar"
+      subtitle="Perkiraan risiko resign karyawan dengan AI, beserta saran untuk mempertahankannya."
+      actions={
+        <Button onClick={handlePredict} disabled={predicting} data-testid="attrition-predict">
+          {predicting ? <><Loader2 className="animate-spin" />Memprediksi…</> : <><Brain />Prediksi risiko</>}
+        </Button>
+      }
+      filters={
+        <div className="w-full sm:w-56">
+          {/* 2026-11-07 (OR1): dari Struktur Organisasi — dulu daftar tetap berbahasa Inggris yang tidak cocok
+              dengan departemen karyawan (saringan selalu kosong) */}
+          <DepartmentSelect token={token} value={department} onChange={setDepartment}
+            placeholder="Semua departemen" testId="attrition-department" />
+        </div>
+      }
+      tools={<>
+        <TombolUnduh namaBerkas="prediksi-karyawan-keluar" namaLembar="Risiko" baris={emps} testId="attrition-unduh"
+          kolom={[
+            { label: 'Karyawan', nilai: (e) => e.name }, { label: 'ID', nilai: (e) => e.employee_id },
+            { label: 'Departemen', nilai: (e) => e.department || '' }, { label: 'Skor risiko', nilai: (e) => e.risk_score },
+            { label: 'Tingkat risiko', nilai: (e) => RISIKO[e.risk_level]?.label || e.risk_level || '' },
+            { label: 'Faktor risiko', nilai: (e) => (e.risk_factors || []).join('; ') },
+            { label: 'Saran retensi', nilai: (e) => (e.retention_suggestions || []).join('; ') },
+          ]} />
+        <Button variant="outline" size="icon" onClick={fetchHistory} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={result && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile label="Dianalisis" value={emps.length} sub={department ? `Departemen ${department}.` : 'Semua departemen.'} />
+          <StatTile label="Risiko tinggi" value={hitung('high')} accent={hitung('high') ? 'danger' : 'default'} sub="Perlu perhatian segera." />
+          <StatTile label="Risiko sedang" value={hitung('medium')} accent={hitung('medium') ? 'warning' : 'default'} sub="Pantau secara berkala." />
+          <StatTile label="Risiko rendah" value={hitung('low')} sub="Stabil." />
+        </div>
+      )}>
+      {!result ? (
+        <EmptyState title="Belum ada prediksi"
+          description={`Pilih departemen (opsional), lalu klik "Prediksi risiko".${history.length ? ` Sudah ada ${history.length} prediksi tersimpan.` : ''}`} />
+      ) : (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[3fr_2fr]">
+          <TabelData kolom={kolom} baris={emps} kunci={(e) => e.employee_id || e.name} onKlikBaris={setLihat} testId="attrition-employees"
+            kosong={<EmptyState title="Tidak ada karyawan yang dianalisis" />} />
+          <div className="space-y-4">
+            {(result.analysis?.overall_insights || result.analysis?.priority_actions?.length > 0) && (
+              <GlassCard hover={false} className="space-y-3 p-4">
+                <p className="text-base font-semibold text-foreground">Wawasan & langkah prioritas</p>
+                {result.analysis?.overall_insights && <p className="text-sm leading-relaxed text-muted-foreground">{result.analysis.overall_insights}</p>}
+                {result.analysis?.priority_actions?.length > 0 && (
+                  <ol className="list-decimal space-y-1 pl-5 text-sm text-foreground">
+                    {result.analysis.priority_actions.map((pa, i) => <li key={i}>{pa}</li>)}
+                  </ol>
+                )}
+              </GlassCard>
+            )}
+            {deptRows.length > 0 && (
+              <section className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-base font-semibold text-foreground">Per departemen</p>
+                  <TombolUnduh namaBerkas="risiko-per-departemen" namaLembar="Per departemen" baris={deptRows}
+                    kolom={[{ label: 'Departemen', nilai: (d) => d.department }, { label: 'Rata-rata risiko', nilai: (d) => d.avg_risk ?? '' },
+                      { label: 'Risiko tinggi', nilai: (d) => d.high_risk_count ?? 0 }]} />
+                </div>
+                <TabelData baris={deptRows} kunci={(d) => d.department} testId="attrition-departments"
+                  kolom={[
+                    { kunci: 'dept', label: 'Departemen', hp: 'judul', isi: (d) => <span className="font-medium text-foreground">{d.department}</span> },
+                    { kunci: 'avg', label: 'Rata-rata risiko', rata: 'kanan', isi: (d) => <span className="tabular-nums">{d.avg_risk?.toFixed(1) || 0}</span> },
+                    { kunci: 'tinggi', label: 'Risiko tinggi', rata: 'kanan', isi: (d) => <span className="tabular-nums">{d.high_risk_count ?? 0}</span> },
+                  ]} />
+              </section>
+            )}
+          </div>
+        </div>
+      )}
+
+      {lihat && (
+        <DetailPopup open onClose={() => setLihat(null)} judul={lihat.name} keterangan="Rincian risiko keluar"
+          status={<Risiko level={lihat.risk_level} />} testId="attrition-detail">
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="ID karyawan">{lihat.employee_id}</BarisDetail>
+            <BarisDetail label="Departemen">{lihat.department || '—'}</BarisDetail>
+            <BarisDetail label="Skor risiko"><span className="font-semibold tabular-nums">{lihat.risk_score}</span></BarisDetail>
+          </dl>
+          <div>
+            <p className="mb-1 text-sm font-medium text-foreground">Faktor risiko</p>
+            <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+              {(lihat.risk_factors || []).map((rf, j) => <li key={j}>{rf}</li>)}
+              {!lihat.risk_factors?.length && <li>—</li>}
+            </ul>
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Predictive Attrition</h1>
-            <p className="text-sm text-muted-foreground">Prediksi risiko resign karyawan dengan AI</p>
+            <p className="mb-1 text-sm font-medium text-foreground">Saran retensi</p>
+            <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+              {(lihat.retention_suggestions || []).map((rs, j) => <li key={j}>{rs}</li>)}
+              {!lihat.retention_suggestions?.length && <li>—</li>}
+            </ul>
           </div>
-        </div>
-        <IconButton icon={Sparkles} onClick={fetchHistory} disabled={loading} tooltip="Refresh" />
-      </div>
-
-      {/* Control Panel */}
-      <GlassCard className="p-6">
-        <div className="flex items-center gap-4">
-          <div className="flex-1">
-            {/* 2026-11-07 (OR1): dari Struktur Organisasi — dulu daftar tetap berbahasa Inggris yang tidak cocok
-                dengan departemen karyawan (saringan selalu kosong) */}
-            <DepartmentSelect token={token} value={department} onChange={setDepartment}
-              placeholder="Semua departemen" testId="attrition-department" />
-          </div>
-          <Button onClick={handlePredict} disabled={predicting} className="shrink-0">
-            {predicting ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Memprediksi...</> : <><Brain className="w-4 h-4 mr-2" /> Prediksi Attrition</>}
-          </Button>
-        </div>
-      </GlassCard>
-
-      {result && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Risk Summary Cards */}
-          <GlassCard className="p-5 flex items-start gap-4">
-            <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0" style={{ background: `${RISK_COLOR.high}20`, border: `1px solid ${RISK_COLOR.high}35` }}>
-              <AlertTriangle className="w-6 h-6" style={{ color: RISK_COLOR.high }} />
-            </div>
-            <div className="min-w-0">
-              <p className="text-xs text-muted-foreground mb-0.5">High Risk</p>
-              <p className="text-2xl font-bold text-foreground leading-none">{highRiskCount}</p>
-              <p className="text-xs text-muted-foreground mt-1">Perlu perhatian segera</p>
-            </div>
-          </GlassCard>
-
-          <GlassCard className="p-5 flex items-start gap-4">
-            <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0" style={{ background: `${RISK_COLOR.medium}20`, border: `1px solid ${RISK_COLOR.medium}35` }}>
-              <Shield className="w-6 h-6" style={{ color: RISK_COLOR.medium }} />
-            </div>
-            <div className="min-w-0">
-              <p className="text-xs text-muted-foreground mb-0.5">Medium Risk</p>
-              <p className="text-2xl font-bold text-foreground leading-none">{mediumRiskCount}</p>
-              <p className="text-xs text-muted-foreground mt-1">Pantau secara berkala</p>
-            </div>
-          </GlassCard>
-
-          <GlassCard className="p-5 flex items-start gap-4">
-            <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0" style={{ background: `${RISK_COLOR.low}20`, border: `1px solid ${RISK_COLOR.low}35` }}>
-              <Users className="w-6 h-6" style={{ color: RISK_COLOR.low }} />
-            </div>
-            <div className="min-w-0">
-              <p className="text-xs text-muted-foreground mb-0.5">Low Risk</p>
-              <p className="text-2xl font-bold text-foreground leading-none">{lowRiskCount}</p>
-              <p className="text-xs text-muted-foreground mt-1">Stabil & engaged</p>
-            </div>
-          </GlassCard>
-        </div>
+        </DetailPopup>
       )}
-
-      {result && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Employee List */}
-          <GlassCard className="p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Users className="w-5 h-5 text-indigo-500" />
-              <h2 className="text-lg font-semibold text-foreground">Daftar Karyawan</h2>
-            </div>
-            <div className="space-y-2 max-h-[500px] overflow-y-auto">
-              {result.analysis?.employees?.slice(0, 20).map((emp, i) => {
-                const rColor = RISK_COLOR[emp.risk_level] || '#64748b';
-                return (
-                  <Dialog key={i}>
-                    <DialogTrigger asChild>
-                      <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)] hover:bg-[var(--glass-hover)] transition-colors cursor-pointer">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-foreground truncate">{emp.name}</p>
-                          <p className="text-xs text-muted-foreground">{emp.employee_id} • {emp.department}</p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-lg font-bold" style={{ color: rColor }}>{emp.risk_score}</span>
-                          <Badge variant="outline" style={{ borderColor: rColor, color: rColor }}>{RISK_LABEL[emp.risk_level]}</Badge>
-                        </div>
-                      </div>
-                    </DialogTrigger>
-                    <DialogContent className="max-w-2xl">
-                      <DialogHeader>
-                        <DialogTitle>{emp.name} - Detail Risiko Attrition</DialogTitle>
-                      </DialogHeader>
-                      <div className="space-y-4">
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <p className="text-xs text-muted-foreground">ID Karyawan</p>
-                            <p className="text-sm font-medium">{emp.employee_id}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">Departemen</p>
-                            <p className="text-sm font-medium">{emp.department}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">Risk Score</p>
-                            <p className="text-2xl font-bold" style={{ color: rColor }}>{emp.risk_score}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">Risk Level</p>
-                            <Badge style={{ background: rColor }}>{RISK_LABEL[emp.risk_level]}</Badge>
-                          </div>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground mb-2">Faktor Risiko</p>
-                          <ul className="space-y-1">
-                            {emp.risk_factors?.map((rf, j) => (
-                              <li key={j} className="text-xs text-muted-foreground flex items-start gap-2">
-                                <span className="text-amber-500 mt-0.5">•</span>{rf}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground mb-2">Saran Retensi</p>
-                          <ul className="space-y-1">
-                            {emp.retention_suggestions?.map((rs, j) => (
-                              <li key={j} className="text-xs text-muted-foreground flex items-start gap-2">
-                                <span className="text-green-500 mt-0.5">•</span>{rs}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      </div>
-                    </DialogContent>
-                  </Dialog>
-                );
-              })}
-            </div>
-          </GlassCard>
-
-          {/* Insights Panel */}
-          <GlassCard className="p-6 space-y-6">
-            <div>
-              <div className="flex items-center gap-2 mb-4">
-                <Target className="w-5 h-5 text-emerald-500" />
-                <h2 className="text-lg font-semibold text-foreground">Insights & Action Items</h2>
-              </div>
-              {result.analysis?.overall_insights && (
-                <div className="p-4 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)] mb-4">
-                  <p className="text-xs text-muted-foreground leading-relaxed">{result.analysis.overall_insights}</p>
-                </div>
-              )}
-              {result.analysis?.priority_actions && result.analysis.priority_actions.length > 0 && (
-                <div>
-                  <h3 className="text-sm font-semibold text-foreground mb-2">Aksi Prioritas</h3>
-                  <ul className="space-y-2">
-                    {result.analysis.priority_actions.map((pa, i) => (
-                      <li key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
-                        <span className="text-blue-500 font-bold mt-0.5">{i + 1}.</span>{pa}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-
-            {/* Department Summary */}
-            {result.analysis?.department_summary && result.analysis.department_summary.length > 0 && (
-              <div>
-                <h3 className="text-sm font-semibold text-foreground mb-3">Ringkasan per Departemen</h3>
-                <div className="space-y-2">
-                  {result.analysis.department_summary.map((ds, i) => (
-                    <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)]">
-                      <span className="text-xs font-medium text-foreground">{ds.department}</span>
-                      <div className="flex items-center gap-3">
-                        <span className="text-xs text-muted-foreground">Avg Risk: <span className="font-bold">{ds.avg_risk?.toFixed(1) || 0}</span></span>
-                        <Badge variant="outline" style={{ borderColor: RISK_COLOR.high, color: RISK_COLOR.high }}>{ds.high_risk_count} High</Badge>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </GlassCard>
-        </div>
-      )}
-
-      {!result && (
-        <GlassCard className="p-12">
-          <div className="flex flex-col items-center justify-center text-center">
-            <TrendingDown className="w-16 h-16 text-muted-foreground/40 mb-4" />
-            <p className="text-sm text-muted-foreground">Klik "Prediksi Attrition" untuk memulai analisis risiko resign karyawan</p>
-          </div>
-        </GlassCard>
-      )}
-    </div>
+    </PageLayout>
   );
 }

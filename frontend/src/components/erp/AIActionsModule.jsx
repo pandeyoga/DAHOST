@@ -1,41 +1,56 @@
+/**
+ * Tindak lanjut AI (Portal SDM › AI SDM) — rekomendasi AI yang disimpan sebagai tugas dan dipantau sampai selesai.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, daftar tugas = tabel + unduh Excel/CSV (dulu kartu
+ * berulang), status = pil berjumlah, form = FormPopup, hapus = confirmDialog (dulu window.confirm), tenggat =
+ * DatePicker, kartu angka StatTile (dulu 5 kotak berwarna + huruf kapital), bahasa Indonesia.
+ * Pemilih penanggung jawab dulu diam-diam 100 karyawan pertama — kini semua (bisa dicari).
+ */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import {
-  CheckSquare, Plus, Edit2, Trash2, RefreshCw, Search, Clock, AlertTriangle,
-  CheckCircle2, X, Save, Loader2, Calendar, User, Sparkles, Target,
-  Brain, AlertCircle, Flame, Gauge,
-} from 'lucide-react';
+import { CheckCircle2, ChevronDown, Clock, Edit2, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import { todayWIB } from '@/lib/waktu';
+import { formatDateID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
 const STATUS_CFG = {
-  open:        { label: 'Terbuka',    color: 'bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-300',       icon: AlertCircle },
-  in_progress: { label: 'Dikerjakan', color: 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300',     icon: Clock },
-  done:        { label: 'Selesai',    color: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-300', icon: CheckCircle2 },
-  dismissed:   { label: 'Diabaikan',  color: 'bg-muted dark:bg-slate-500/20 text-foreground/70',     icon: X },
+  open:        { label: 'Terbuka',    tone: 'info' },
+  in_progress: { label: 'Dikerjakan', tone: 'warning' },
+  done:        { label: 'Selesai',    tone: 'success' },
+  dismissed:   { label: 'Diabaikan',  tone: 'muted' },
 };
-
 const PRIORITY_CFG = {
-  low:      { label: 'Rendah',  color: 'text-muted-foreground',  icon: Gauge },
-  medium:   { label: 'Sedang',  color: 'text-blue-600 dark:text-blue-400',   icon: Target },
-  high:     { label: 'Tinggi',  color: 'text-amber-700 dark:text-amber-400',  icon: AlertTriangle },
-  critical: { label: 'Kritis',  color: 'text-red-700 dark:text-red-400',    icon: Flame },
+  low:      { label: 'Rendah', tone: 'muted' },
+  medium:   { label: 'Sedang', tone: 'info' },
+  high:     { label: 'Tinggi', tone: 'warning' },
+  critical: { label: 'Kritis', tone: 'danger' },
 };
-
 const SOURCE_CFG = {
-  'daily-summary':    { label: 'Ringkasan Harian',    color: 'bg-purple-100 dark:bg-purple-500/10 text-purple-600 dark:text-purple-300' },
-  'root-cause':       { label: 'Root Cause',          color: 'bg-blue-100 dark:bg-blue-500/10 text-blue-600 dark:text-blue-300' },
-  'predictive-delay': { label: 'Prediksi Delay',      color: 'bg-amber-100 dark:bg-amber-500/10 text-amber-600 dark:text-amber-300' },
-  'chat':             { label: 'AI Chat',             color: 'bg-teal-100 dark:bg-teal-500/10 text-teal-600 dark:text-teal-300' },
-  'manual':           { label: 'Manual',              color: 'bg-muted dark:bg-slate-500/10 text-foreground/70' },
+  'daily-summary':    { label: 'Ringkasan harian' },
+  'root-cause':       { label: 'Akar masalah' },
+  'predictive-delay': { label: 'Prediksi keterlambatan' },
+  'chat':             { label: 'Obrolan AI' },
+  'manual':           { label: 'Manual' },
+};
+const Lencana = ({ cfg, kunci }) => {
+  const c = cfg[kunci] || { label: kunci || '—', tone: 'default' };
+  return <StatusBadge status={kunci} label={c.label} tone={c.tone} />;
 };
 
 export default function AIActionsModule({ token }) {
@@ -83,17 +98,17 @@ export default function AIActionsModule({ token }) {
       : `${API}/api/dewi/ai-actions`;
     const r = await fetch(url, { method: isEdit ? 'PUT' : 'POST', headers, body: JSON.stringify(form) });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) { toast.error(d.detail || 'Gagal simpan'); return; }
-    toast.success(isEdit ? 'Task diupdate' : 'Task dibuat');
+    if (!r.ok) { toast.error(d.detail || 'Gagal menyimpan'); return; }
+    toast.success(isEdit ? 'Tugas disimpan' : 'Tugas dibuat');
     setEditDialog(null);
     load();
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Hapus action item ini?')) return;
+    if (!(await confirmDialog({ title: 'Hapus tugas ini?', confirmLabel: 'Hapus', danger: true }))) return;
     const r = await fetch(`${API}/api/dewi/ai-actions/${id}`, { method: 'DELETE', headers });
-    if (!r.ok) { toast.error('Gagal hapus'); return; }
-    toast.success('Task dihapus');
+    if (!r.ok) { toast.error('Gagal menghapus'); return; }
+    toast.success('Tugas dihapus');
     load();
   };
 
@@ -101,7 +116,7 @@ export default function AIActionsModule({ token }) {
     const r = await fetch(`${API}/api/dewi/ai-actions/${action.action_id}`, {
       method: 'PUT', headers, body: JSON.stringify({ status: newStatus }),
     });
-    if (!r.ok) { toast.error('Gagal update status'); return; }
+    if (!r.ok) { toast.error('Gagal mengubah status'); return; }
     toast.success(`Status: ${STATUS_CFG[newStatus]?.label}`);
     load();
   };
@@ -114,188 +129,114 @@ export default function AIActionsModule({ token }) {
   );
 
   const today = todayWIB();
+  const lewat = (a) => a.due_date && a.due_date < today && !['done', 'dismissed'].includes(a.status);
+  const semua = ['open', 'in_progress', 'done', 'dismissed'].reduce((n, k) => n + (stats[k] || 0), 0);
+
+  const kolom = [
+    { kunci: 'judul', label: 'Tugas', hp: 'judul', isi: (a) => (
+      <div className="min-w-0 md:max-w-[24rem]" data-testid={`action-card-${a.action_id}`}>
+        <p className="font-medium text-foreground">{a.title}</p>
+        {a.description && <p className="hidden truncate text-xs text-muted-foreground md:block" title={a.description}>{a.description}</p>}
+      </div>) },
+    { kunci: 'sumber', label: 'Sumber', isi: (a) => <span className="text-sm">{(SOURCE_CFG[a.source] || SOURCE_CFG.manual).label}</span> },
+    { kunci: 'prioritas', label: 'Prioritas', isi: (a) => <Lencana cfg={PRIORITY_CFG} kunci={a.priority || 'medium'} /> },
+    { kunci: 'pj', label: 'Penanggung jawab', isi: (a) => <span className="text-sm">{a.assignee_name || '—'}</span> },
+    { kunci: 'tenggat', label: 'Tenggat', isi: (a) => (
+      <span className={`text-sm md:whitespace-nowrap ${lewat(a) ? 'font-medium text-[hsl(var(--danger-text))]' : ''}`}>
+        {a.due_date ? formatDateID(a.due_date) : '—'}{lewat(a) ? ' · lewat' : ''}
+      </span>) },
+    { kunci: 'status', label: 'Status', isi: (a) => <Lencana cfg={STATUS_CFG} kunci={a.status} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (a) => (
+      <div className="flex justify-end gap-2">
+        {a.status === 'open' && (
+          <Button size="sm" variant="outline" onClick={() => handleStatusChange(a, 'in_progress')} data-testid={`action-start-${a.action_id}`}>
+            <Clock />Mulai
+          </Button>
+        )}
+        {a.status === 'in_progress' && (
+          <Button size="sm" variant="success" onClick={() => handleStatusChange(a, 'done')} data-testid={`action-done-${a.action_id}`}>
+            <CheckCircle2 />Selesai
+          </Button>
+        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" variant="ghost" aria-label="Aksi lainnya" title="Aksi lainnya">Lainnya<ChevronDown /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {a.status === 'open' && (
+              <DropdownMenuItem onSelect={() => handleStatusChange(a, 'done')}><CheckCircle2 className="mr-2 h-4 w-4" />Tandai selesai</DropdownMenuItem>
+            )}
+            {a.status !== 'dismissed' && a.status !== 'done' && (
+              <DropdownMenuItem onSelect={() => handleStatusChange(a, 'dismissed')} data-testid={`action-dismiss-${a.action_id}`}>
+                <X className="mr-2 h-4 w-4" />Abaikan
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onSelect={() => setEditDialog(a)}><Edit2 className="mr-2 h-4 w-4" />Ubah</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => handleDelete(a.action_id)} className="text-[hsl(var(--danger-text))]">
+              <Trash2 className="mr-2 h-4 w-4" />Hapus
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>) },
+  ];
 
   return (
-    <div className="space-y-6 p-6" data-testid="ai-actions-page">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Brain className="w-6 h-6 text-purple-600 dark:text-purple-400" /> AI Action Items
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Rekomendasi AI yang disimpan sebagai task & di-track sampai selesai
-          </p>
+    <PageLayout testId="ai-actions-page" title="Tindak lanjut AI"
+      subtitle="Rekomendasi AI yang disimpan sebagai tugas dan dipantau sampai selesai."
+      actions={<Button onClick={() => setEditDialog({})} data-testid="ai-actions-add"><Plus />Tugas manual</Button>}
+      filters={<>
+        <FilterChips value={tab} onChange={setTab} hideWhenEmpty={false} testId="ai-actions-status" ariaLabel="Status tugas"
+          options={[
+            { key: 'open', label: 'Terbuka', count: stats.open || 0 },
+            { key: 'in_progress', label: 'Dikerjakan', count: stats.in_progress || 0 },
+            { key: 'done', label: 'Selesai', count: stats.done || 0 },
+            { key: 'dismissed', label: 'Diabaikan', count: stats.dismissed || 0 },
+            { key: 'all', label: 'Semua', count: semua },
+          ]} />
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari tugas" className="pl-8" />
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={load} data-testid="ai-actions-refresh">
-            <RefreshCw className="w-4 h-4 mr-1" /> Refresh
-          </Button>
-          <Button size="sm" onClick={() => setEditDialog({})} data-testid="ai-actions-add">
-            <Plus className="w-4 h-4 mr-1" /> Task Manual
-          </Button>
+        <SmartNativeSelect searchable={false} value={sourceFilter} onChange={e => setSourceFilter(e.target.value)} className="w-48" aria-label="Sumber">
+          <option value="">Semua sumber</option>
+          {Object.entries(SOURCE_CFG).map(([k, c]) => <option key={k} value={k}>{c.label}</option>)}
+        </SmartNativeSelect>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="tindak-lanjut-ai" namaLembar="Tugas" baris={filtered} testId="ai-actions-unduh"
+          kolom={[
+            { label: 'Tugas', nilai: (a) => a.title }, { label: 'Deskripsi', nilai: (a) => a.description || '' },
+            { label: 'Sumber', nilai: (a) => (SOURCE_CFG[a.source] || SOURCE_CFG.manual).label },
+            { label: 'Prioritas', nilai: (a) => PRIORITY_CFG[a.priority]?.label || '' },
+            { label: 'Penanggung jawab', nilai: (a) => a.assignee_name || '' },
+            { label: 'Tenggat', nilai: (a) => (a.due_date ? formatDateID(a.due_date) : '') },
+            { label: 'Status', nilai: (a) => STATUS_CFG[a.status]?.label || a.status || '' },
+            { label: 'Catatan', nilai: (a) => a.notes || '' },
+          ]} />
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid="ai-actions-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile label="Terbuka" value={stats.open || 0} sub="Belum mulai dikerjakan." />
+          <StatTile label="Dikerjakan" value={stats.in_progress || 0} sub="Sedang berjalan." />
+          <StatTile label="Tenggat ≤ 3 hari" value={stats.due_soon || 0} accent={stats.due_soon ? 'warning' : 'default'}
+            sub="Terbuka/dikerjakan, tenggat hari ini sampai 3 hari lagi." />
+          <StatTile label="Lewat tenggat" value={stats.overdue || 0} accent={stats.overdue ? 'danger' : 'default'}
+            sub="Terbuka/dikerjakan, tenggat sudah lewat." />
         </div>
-      </div>
-
-      {/* Stats cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <StatCard label="Terbuka" value={stats.open || 0} icon={AlertCircle} color="text-blue-600 dark:text-blue-400" />
-        <StatCard label="Dikerjakan" value={stats.in_progress || 0} icon={Clock} color="text-amber-700 dark:text-amber-400" />
-        <StatCard label="Selesai" value={stats.done || 0} icon={CheckCircle2} color="text-emerald-600 dark:text-emerald-400" />
-        <StatCard label="Due < 3 Hari" value={stats.due_soon || 0} icon={Calendar} color="text-orange-600 dark:text-orange-400" />
-        <StatCard label="Overdue" value={stats.overdue || 0} icon={Flame} color="text-red-700 dark:text-red-400" />
-      </div>
-
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3 items-center">
-        <div className="relative flex-1 min-w-48">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Cari task..." className="pl-9 h-9" />
-        </div>
-        <Select value={sourceFilter || 'all'} onValueChange={v => setSourceFilter(v === 'all' ? '' : v)}>
-          <SelectTrigger className="w-44 h-9"><SelectValue placeholder="Semua Sumber" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Semua Sumber</SelectItem>
-            {Object.entries(SOURCE_CFG).map(([k, c]) => <SelectItem key={k} value={k}>{c.label}</SelectItem>)}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid grid-cols-5 w-full max-w-xl">
-          <TabsTrigger value="open" className="text-xs">Terbuka</TabsTrigger>
-          <TabsTrigger value="in_progress" className="text-xs">Dikerjakan</TabsTrigger>
-          <TabsTrigger value="done" className="text-xs">Selesai</TabsTrigger>
-          <TabsTrigger value="dismissed" className="text-xs">Diabaikan</TabsTrigger>
-          <TabsTrigger value="all" className="text-xs">Semua</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value={tab} className="mt-4">
-          {loading && (
-            <div className="text-center py-10">
-              <Loader2 className="w-6 h-6 animate-spin mx-auto text-muted-foreground" />
-            </div>
-          )}
-          {!loading && filtered.length === 0 && (
-            <div className="text-center py-16 text-muted-foreground">
-              <Sparkles className="w-10 h-10 mx-auto mb-3 opacity-30" />
-              <p>Belum ada task di kategori ini</p>
-              <p className="text-xs mt-1">Gunakan tombol "Simpan sebagai Task" di AI Insights untuk menyimpan rekomendasi AI.</p>
-            </div>
-          )}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {filtered.map(a => (
-              <ActionCard
-                key={a.action_id}
-                action={a}
-                isOverdue={a.due_date && a.due_date < today && !['done', 'dismissed'].includes(a.status)}
-                onEdit={() => setEditDialog(a)}
-                onDelete={() => handleDelete(a.action_id)}
-                onStatusChange={(s) => handleStatusChange(a, s)}
-              />
-            ))}
-          </div>
-        </TabsContent>
-      </Tabs>
+      }>
+      {loading && items.length === 0 ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat tugas…</p> : (
+        <TabelData kolom={kolom} baris={filtered} kunci={(a) => a.action_id} onKlikBaris={setEditDialog} testId="ai-actions"
+          kosong={<EmptyState title="Belum ada tugas di kategori ini"
+            description='Pakai tombol "Jadikan tugas" di tab Wawasan AI untuk menyimpan rekomendasi AI.' />} />
+      )}
 
       {editDialog !== null && (
-        <ActionDialog
-          initial={editDialog}
-          employees={employees}
-          onSave={handleSave}
-          onClose={() => setEditDialog(null)}
-        />
+        <ActionDialog initial={editDialog} employees={employees} onSave={handleSave} onClose={() => setEditDialog(null)} />
       )}
-    </div>
-  );
-}
-
-function StatCard({ label, value, icon: Icon, color }) {
-  return (
-    <div className="rounded-xl border border-foreground/10 bg-foreground/5 px-4 py-3">
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-muted-foreground uppercase tracking-wide">{label}</span>
-        <Icon className={`w-4 h-4 ${color}`} />
-      </div>
-      <div className={`text-2xl font-bold mt-1 ${color}`}>{value}</div>
-    </div>
-  );
-}
-
-function ActionCard({ action, isOverdue, onEdit, onDelete, onStatusChange }) {
-  const s = STATUS_CFG[action.status] || STATUS_CFG.open;
-  const p = PRIORITY_CFG[action.priority] || PRIORITY_CFG.medium;
-  const src = SOURCE_CFG[action.source] || SOURCE_CFG.manual;
-  const PriIcon = p.icon;
-  const StatIcon = s.icon;
-
-  return (
-    <div className={`rounded-xl border p-4 transition-colors hover:bg-foreground/5 ${isOverdue ? 'border-red-400 dark:border-red-500/30 bg-red-100 dark:bg-red-500/5' : 'border-foreground/10 bg-foreground/5'}`}
-      data-testid={`action-card-${action.action_id}`}>
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 flex-wrap mb-1">
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${src.color}`}>{src.label}</span>
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-1 ${s.color}`}>
-              <StatIcon className="w-3 h-3" /> {s.label}
-            </span>
-            <span className={`text-[10px] flex items-center gap-1 ${p.color}`}>
-              <PriIcon className="w-3 h-3" /> {p.label}
-            </span>
-            {isOverdue && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-300">OVERDUE</span>}
-          </div>
-          <h3 className="font-semibold text-sm leading-tight">{action.title}</h3>
-          {action.description && (
-            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{action.description}</p>
-          )}
-        </div>
-      </div>
-
-      <div className="flex items-center gap-3 text-xs text-muted-foreground mb-3 flex-wrap">
-        {action.assignee_name && (
-          <span className="flex items-center gap-1"><User className="w-3 h-3" /> {action.assignee_name}</span>
-        )}
-        {action.due_date && (
-          <span className={`flex items-center gap-1 ${isOverdue ? 'text-red-700 dark:text-red-400 font-semibold' : ''}`}>
-            <Calendar className="w-3 h-3" /> {action.due_date}
-          </span>
-        )}
-      </div>
-
-      <div className="flex items-center justify-between gap-2 border-t border-foreground/5 pt-2">
-        <div className="flex gap-1">
-          {action.status === 'open' && (
-            <Button size="sm" variant="ghost" className="h-7 text-xs text-amber-700 dark:text-amber-400"
-              onClick={() => onStatusChange('in_progress')}
-              data-testid={`action-start-${action.action_id}`}>
-              <Clock className="w-3 h-3 mr-1" /> Mulai
-            </Button>
-          )}
-          {(action.status === 'open' || action.status === 'in_progress') && (
-            <Button size="sm" variant="ghost" className="h-7 text-xs text-emerald-600 dark:text-emerald-400"
-              onClick={() => onStatusChange('done')}
-              data-testid={`action-done-${action.action_id}`}>
-              <CheckCircle2 className="w-3 h-3 mr-1" /> Selesai
-            </Button>
-          )}
-          {action.status !== 'dismissed' && action.status !== 'done' && (
-            <Button size="sm" variant="ghost" className="h-7 text-xs text-muted-foreground"
-              onClick={() => onStatusChange('dismissed')}
-              data-testid={`action-dismiss-${action.action_id}`}>
-              <X className="w-3 h-3 mr-1" /> Abaikan
-            </Button>
-          )}
-        </div>
-        <div className="flex gap-1">
-          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={onEdit}>
-            <Edit2 className="w-3 h-3" />
-          </Button>
-          <Button size="icon" variant="ghost" className="h-7 w-7 text-red-700 dark:text-red-400" onClick={onDelete}>
-            <Trash2 className="w-3 h-3" />
-          </Button>
-        </div>
-      </div>
-    </div>
+    </PageLayout>
   );
 }
 
@@ -312,8 +253,7 @@ function ActionDialog({ initial, employees, onSave, onClose }) {
   });
   const [saving, setSaving] = useState(false);
 
-  const submit = async (e) => {
-    e.preventDefault();
+  const submit = async () => {
     if (!form.title.trim()) { toast.error('Judul wajib diisi'); return; }
     setSaving(true);
     await onSave(form);
@@ -321,108 +261,51 @@ function ActionDialog({ initial, employees, onSave, onClose }) {
   };
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-md max-h-[92vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{form.action_id ? 'Edit Task' : 'Task AI Baru'}</DialogTitle>
-        </DialogHeader>
-        <form onSubmit={submit} className="space-y-3">
-          <div className="space-y-1">
-            <Label>Judul <span className="text-red-700 dark:text-red-400">*</span></Label>
-            <Input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
-              placeholder="Contoh: Investigasi QC fail rate line A" required data-testid="action-title" />
-          </div>
-
-          <div className="space-y-1">
-            <Label>Deskripsi / Rekomendasi AI</Label>
-            <Textarea value={form.description} rows={4}
-              onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-              placeholder="Paste rekomendasi AI di sini..." />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>Prioritas</Label>
-              <Select value={form.priority} onValueChange={v => setForm(f => ({ ...f, priority: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="low">Rendah</SelectItem>
-                  <SelectItem value="medium">Sedang</SelectItem>
-                  <SelectItem value="high">Tinggi</SelectItem>
-                  <SelectItem value="critical">Kritis</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label>Sumber</Label>
-              <Select value={form.source} onValueChange={v => setForm(f => ({ ...f, source: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="manual">Manual</SelectItem>
-                  <SelectItem value="daily-summary">Ringkasan Harian</SelectItem>
-                  <SelectItem value="root-cause">Root Cause</SelectItem>
-                  <SelectItem value="predictive-delay">Prediksi Delay</SelectItem>
-                  <SelectItem value="chat">AI Chat</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <Label>Penanggung Jawab (Assignee)</Label>
-            <Select value={form.assignee_id || 'none'} onValueChange={v => {
-              const id = v === 'none' ? '' : v;
-              const emp = employees.find(e => e.id === id);
-              setForm(f => ({ ...f, assignee_id: id, assignee_name: emp?.name || '' }));
-            }}>
-              <SelectTrigger><SelectValue placeholder="Pilih karyawan..." /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">— Tidak ditugaskan —</SelectItem>
-                {employees.slice(0, 100).map(e => (
-                  <SelectItem key={e.id} value={e.id}>{`${e.employee_code} — ${e.name}`}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-1">
-            <Label>Batas Waktu (opsional)</Label>
-            <Input type="date" value={form.due_date}
-              onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} />
-          </div>
-
-          {form.action_id && (
-            <div className="space-y-1">
-              <Label>Status</Label>
-              <Select value={form.status} onValueChange={v => setForm(f => ({ ...f, status: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="open">Terbuka</SelectItem>
-                  <SelectItem value="in_progress">Dikerjakan</SelectItem>
-                  <SelectItem value="done">Selesai</SelectItem>
-                  <SelectItem value="dismissed">Diabaikan</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-
-          <div className="space-y-1">
-            <Label>Catatan</Label>
-            <Textarea value={form.notes} rows={2}
-              onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
-          </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>
-              <X className="w-4 h-4 mr-1" /> Batal
-            </Button>
-            <Button type="submit" disabled={saving} data-testid="action-save">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
-              Simpan
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open onClose={onClose} ukuran="panjang" onSimpan={submit} menyimpan={saving} testId="ai-action-form"
+      judul={form.action_id ? 'Ubah tugas' : 'Tugas AI baru'}>
+      <Isian label="Judul" wajib htmlFor="ai-act-judul">
+        <Input id="ai-act-judul" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+          placeholder="Contoh: Selidiki rasio gagal QC line A" required data-testid="action-title" />
+      </Isian>
+      <Isian label="Deskripsi / rekomendasi AI" htmlFor="ai-act-desk">
+        <Textarea id="ai-act-desk" value={form.description} rows={4} placeholder="Tempel rekomendasi AI di sini"
+          onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+      </Isian>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Prioritas">
+          <SmartNativeSelect searchable={false} value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}>
+            {Object.entries(PRIORITY_CFG).map(([k, c]) => <option key={k} value={k}>{c.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Sumber">
+          <SmartNativeSelect searchable={false} value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))}>
+            {Object.entries(SOURCE_CFG).map(([k, c]) => <option key={k} value={k}>{c.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Penanggung jawab">
+          <SmartNativeSelect value={form.assignee_id || ''} searchable onChange={e => {
+            const id = e.target.value;
+            const emp = employees.find(x => x.id === id);
+            setForm(f => ({ ...f, assignee_id: id, assignee_name: emp?.name || '' }));
+          }}>
+            <option value="">— Tidak ditugaskan —</option>
+            {employees.map(e => <option key={e.id} value={e.id}>{`${e.employee_code} — ${e.name}`}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Tenggat (opsional)">
+          <DatePicker value={form.due_date} onChange={v => setForm(f => ({ ...f, due_date: v }))} placeholder="Tanpa tenggat" testId="ai-act-tenggat" />
+        </Isian>
+        {form.action_id && (
+          <Isian label="Status">
+            <SmartNativeSelect searchable={false} value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
+              {Object.entries(STATUS_CFG).map(([k, c]) => <option key={k} value={k}>{c.label}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+        )}
+      </div>
+      <Isian label="Catatan" htmlFor="ai-act-catatan">
+        <Textarea id="ai-act-catatan" value={form.notes} rows={2} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+      </Isian>
+    </FormPopup>
   );
 }

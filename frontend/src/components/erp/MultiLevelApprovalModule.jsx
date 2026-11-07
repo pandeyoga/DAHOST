@@ -1,10 +1,29 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import SmartNativeSelect from '@/components/ui/smart-native-select';
+/**
+ * Approval Bertingkat (Portal SDM) — persetujuan bertingkat lintas departemen.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, daftar = tabel (kartu ringkas di HP) + unduh Excel/CSV,
+ * detail = popup (catatan, Setujui hijau, Tolak merah), kartu angka StatTile dengan keterangan, bahasa Indonesia.
+ * Dulu: kartu besar berulang (tiga kolom), kotak warna-warni, <select>/<button> buatan sendiri,
+ * daftar "Semua" diam-diam hanya 50 ajuan pertama (kini berhalaman, unduhan = semua baris).
+ */
+import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
-import { CheckCircle, XCircle, Clock, ChevronRight, RefreshCw, User, Calendar, Layers, ExternalLink } from 'lucide-react';
+import { CheckCircle, ExternalLink, RefreshCw, XCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import PaginationLite from '@/components/ui/pagination-lite';
+import HubTabs from './hubs/HubTabs';
+import { formatDateID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
+const UKURAN_HALAMAN = 50;
 
 // Map approval type → module ID untuk link-back
 const DOMAIN_MODULE_MAP = {
@@ -18,164 +37,53 @@ const DOMAIN_MODULE_MAP = {
   asset_purchase:    'fin-assets',
 };
 
-const STATUS_CONFIG = {
-  pending:   { label: 'Menunggu',   color: 'text-amber-700 dark:text-amber-400',   bg: 'bg-amber-50 dark:bg-amber-400/10',   border: 'border-amber-300 dark:border-amber-400/20',   icon: Clock },
-  approved:  { label: 'Disetujui',  color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-400/10', border: 'border-emerald-300 dark:border-emerald-400/20', icon: CheckCircle },
-  rejected:  { label: 'Ditolak',    color: 'text-red-700 dark:text-red-400',     bg: 'bg-red-50 dark:bg-red-400/10',     border: 'border-red-300 dark:border-red-400/20',     icon: XCircle },
-  cancelled: { label: 'Dibatalkan', color: 'text-muted-foreground dark:text-zinc-400',    bg: 'bg-muted dark:bg-zinc-500/10',    border: 'border-border dark:border-zinc-500/20',    icon: XCircle },
+const STATUS = {
+  pending:   { label: 'Menunggu',   tone: 'warning' },
+  approved:  { label: 'Disetujui',  tone: 'success' },
+  rejected:  { label: 'Ditolak',    tone: 'danger' },
+  cancelled: { label: 'Dibatalkan', tone: 'muted' },
+  skipped:   { label: 'Dilewati',   tone: 'muted' },
 };
+const labelStatus = (s) => (STATUS[s] || { label: s || '—' }).label;
+function Status({ status }) {
+  const c = STATUS[status] || { label: status || '—', tone: 'default' };
+  return <StatusBadge status={status} label={c.label} tone={c.tone} />;
+}
 
 const TYPE_LABELS = {
-  leave: 'Cuti', overtime: 'Lembur', salary_adjustment: 'Penyesuaian Gaji',
-  expense: 'Expense Claim', purchase_order: 'Purchase Order',
-  material_return: 'Return Material', resignation: 'Resignasi',
-  asset_purchase: 'Pembelian Aset',
+  leave: 'Cuti', overtime: 'Lembur', salary_adjustment: 'Penyesuaian gaji',
+  expense: 'Klaim biaya', purchase_order: 'PO pembelian',
+  material_return: 'Retur material', resignation: 'Pengunduran diri',
+  asset_purchase: 'Pembelian aset',
+};
+const labelJenis = (t) => TYPE_LABELS[t] || 'Lainnya';
+
+// Data tambahan ajuan: kunci program → label yang dipahami staf (kunci teknis disembunyikan).
+const META_LABEL = {
+  priority: 'Prioritas', amount: 'Jumlah', total_amount: 'Jumlah', days: 'Jumlah hari', reason: 'Alasan',
+  note: 'Catatan', start_date: 'Mulai', end_date: 'Selesai', department: 'Departemen', employee_name: 'Karyawan',
+};
+const META_SEMBUNYI = new Set(['link_module']);
+const labelMeta = (k) => META_LABEL[k] || (String(k).charAt(0).toUpperCase() + String(k).slice(1)).replace(/_/g, ' ');
+const nilaiMeta = (k, v) => {
+  if (k === 'priority') return v === 'urgent' ? 'Mendesak' : v === 'normal' ? 'Biasa' : String(v);
+  if (v === null || v === undefined || v === '') return '—';
+  if (typeof v === 'object') return Array.isArray(v) ? v.join(', ') : Object.entries(v).map(([a, b]) => `${a}: ${b}`).join(' · ');
+  if (typeof v === 'boolean') return v ? 'Ya' : 'Tidak';
+  return String(v);
 };
 
-// ── Status Badge ──────────────────────────────────────────────────────────────
-function StatusBadge({ status }) {
-  const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.pending;
-  const Icon = cfg.icon;
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${cfg.color} ${cfg.bg} ${cfg.border}`}>
-      <Icon size={11} /> {cfg.label}
-    </span>
-  );
-}
+const tanggal = (d) => (d ? formatDateID(d) : '—');
+const tahap = (it) => {
+  if (!it.levels?.length) return '—';
+  const aktif = it.levels.find((l) => l.status === 'pending');
+  return `${it.current_level || 0}/${it.max_level || it.levels.length}${aktif ? ` · ${aktif.label}` : ''}`;
+};
 
-// ── Level Timeline (horizontal steps) ────────────────────────────────────────
-function LevelTimeline({ levels }) {
-  return (
-    <div className="flex items-start gap-0">
-      {levels.map((lv, i) => {
-        const isDone   = lv.status === 'approved';
-        const isActive = lv.status === 'pending';
-        const isRej    = lv.status === 'rejected' || lv.status === 'skipped';
-        return (
-          <div key={lv.level} className="flex items-center">
-            <div className="flex flex-col items-center">
-              <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 ${
-                isDone   ? 'bg-emerald-500 border-emerald-500 text-foreground' :
-                isActive ? 'bg-amber-400 border-amber-400 text-foreground animate-pulse' :
-                isRej    ? 'bg-red-500 border-red-500 text-foreground' :
-                           'bg-muted border-border text-muted-foreground dark:text-zinc-400'
-              }`}>
-                {isDone ? '✓' : isRej ? '✗' : lv.level}
-              </div>
-              <span className="text-[10px] text-muted-foreground/60 dark:text-zinc-500 mt-0.5 max-w-[60px] text-center leading-tight">{lv.label}</span>
-            </div>
-            {i < levels.length - 1 && (
-              <div className={`w-8 h-0.5 mb-4 ${
-                isDone ? 'bg-emerald-500' : isRej ? 'bg-red-500' : 'bg-muted-foreground/30'
-              }`} />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ── Approval Card ─────────────────────────────────────────────────────────────
-function ApprovalCard({ item, onApprove, onReject, onView, isManager, onModuleChange }) {
-  const [note, setNote]       = useState('');
-  const [acting, setActing]   = useState(false);
-  const [showNote, setShowNote] = useState(false);
-
-  const handleAction = async (action) => {
-    setActing(true);
-    const ok = await (action === 'approve' ? onApprove : onReject)(item.id, note);
-    setActing(false);
-    if (!ok) return;
-    setShowNote(false);
-    setNote('');
-  };
-
-  return (
-    <div className="bg-foreground/5 border border-foreground/10 rounded-xl p-4 hover:border-foreground/20 transition-all" data-testid={`approval-card-${item.id}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-medium px-2 py-0.5 rounded bg-muted text-foreground/80 border border-foreground/10">
-              {TYPE_LABELS[item.type] || item.type}
-            </span>
-            <StatusBadge status={item.status} />
-            {item.meta?.priority === 'urgent' && (
-              <span className="text-xs font-bold text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-400/10 px-2 py-0.5 rounded border border-red-300 dark:border-red-400/20">URGENT</span>
-            )}
-          </div>
-          <h3 className="font-semibold text-foreground mt-1.5 text-sm leading-tight">{item.subject || item.ref_code}</h3>
-          <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground/60 dark:text-zinc-500">
-            <span className="flex items-center gap-1"><User size={11} />{item.requester_name}</span>
-            <span className="flex items-center gap-1"><Calendar size={11} />{new Date(item.created_at).toLocaleDateString('id-ID')}</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-1">
-          {onModuleChange && DOMAIN_MODULE_MAP[item.type] && (
-            <button
-              onClick={() => onModuleChange(DOMAIN_MODULE_MAP[item.type])}
-              title="Buka di Modul Terkait"
-              data-testid={`approval-openmodule-${item.id}`}
-              className="p-1.5 text-blue-600 dark:text-blue-400 hover:text-blue-600 dark:text-blue-300 rounded hover:bg-blue-50 dark:bg-blue-400/10"
-            >
-              <ExternalLink size={14} />
-            </button>
-          )}
-          <button onClick={() => onView(item)} data-testid={`approval-view-${item.id}`} className="p-1.5 text-muted-foreground/60 dark:text-zinc-400 hover:text-foreground rounded hover:bg-foreground/5">
-            <ChevronRight size={16} />
-          </button>
-        </div>
-      </div>
-
-      {item.levels?.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-foreground/5">
-          <p className="text-[10px] text-muted-foreground/60 mb-1.5">Alur Persetujuan</p>
-          <LevelTimeline levels={item.levels} currentLevel={item.current_level} />
-        </div>
-      )}
-
-      {isManager && item.status === 'pending' && (
-        <div className="mt-3 pt-3 border-t border-foreground/5">
-          {showNote && (
-            <textarea
-              value={note} onChange={e => setNote(e.target.value)}
-              placeholder="Catatan (opsional)..."
-              data-testid={`approval-note-${item.id}`}
-              className="w-full text-xs bg-foreground/5 border border-foreground/10 rounded-lg p-2 resize-none focus:outline-none focus:border-blue-500/50 text-foreground placeholder-muted-foreground mb-2"
-              rows={2}
-            />
-          )}
-          <div className="flex gap-2">
-            <button
-              onClick={() => setShowNote(!showNote)} disabled={acting}
-              data-testid={`approval-note-toggle-${item.id}`}
-              className="text-xs text-muted-foreground/60 dark:text-zinc-400 hover:text-foreground px-2 py-1 rounded border border-foreground/10 hover:bg-foreground/5"
-            >
-              {showNote ? 'Tutup' : 'Catatan'}
-            </button>
-            <button onClick={() => handleAction('reject')} disabled={acting}
-              data-testid={`approval-reject-${item.id}`}
-              className="flex-1 flex items-center justify-center gap-1 text-xs font-medium text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-400/10 hover:bg-red-50 dark:bg-red-400/20 px-3 py-1.5 rounded-lg border border-red-300 dark:border-red-400/20 disabled:opacity-50">
-              <XCircle size={13} /> Tolak
-            </button>
-            <button onClick={() => handleAction('approve')} disabled={acting}
-              data-testid={`approval-approve-${item.id}`}
-              className="flex-1 flex items-center justify-center gap-1 text-xs font-medium text-foreground bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 rounded-lg disabled:opacity-50">
-              {acting ? <RefreshCw size={13} className="animate-spin" /> : <CheckCircle size={13} />}
-              Setujui
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Detail Modal ──────────────────────────────────────────────────────────────
-function DetailModal({ item, onClose, onApprove, onReject, isManager, onModuleChange }) {
-  const [note, setNote]     = useState('');
+// ── Detail (popup) ────────────────────────────────────────────────────────────
+function DetailAjuan({ item, onClose, onApprove, onReject, isManager, onModuleChange }) {
+  const [note, setNote] = useState('');
   const [acting, setActing] = useState(false);
-  if (!item) return null;
 
   const handleAction = async (action) => {
     setActing(true);
@@ -183,106 +91,72 @@ function DetailModal({ item, onClose, onApprove, onReject, isManager, onModuleCh
     setActing(false);
     if (ok) onClose();
   };
+  const meta = Object.entries(item.meta || {}).filter(([k]) => !META_SEMBUNYI.has(k));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/50 p-4">
-      <div className="bg-card border border-foreground/10 rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col shadow-2xl" data-testid="approval-detail-modal">
-        {/* Modal header */}
-        <div className="flex items-center justify-between p-5 border-b border-foreground/10">
-          <div>
-            <h2 className="text-base font-semibold text-foreground">{item.subject}</h2>
-            <p className="text-xs text-muted-foreground/60 dark:text-zinc-500 mt-0.5">{item.ref_code} • {item.chain_name}</p>
-          </div>
-          <div className="flex items-center gap-1">
-            {onModuleChange && DOMAIN_MODULE_MAP[item.type] && (
-              <button
-                onClick={() => { onClose(); onModuleChange(DOMAIN_MODULE_MAP[item.type]); }}
-                data-testid="approval-detail-openentity"
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-400/10 hover:bg-blue-50 dark:bg-blue-400/20 rounded-lg border border-blue-300 dark:border-blue-400/20 mr-1"
-              >
-                <ExternalLink size={12} /> Lihat Entitas Asli
-              </button>
-            )}
-            <button onClick={onClose} data-testid="approval-detail-close" className="p-2 text-muted-foreground/60 dark:text-zinc-400 hover:text-foreground rounded-lg hover:bg-foreground/5">✕</button>
-          </div>
-        </div>
+    <DetailPopup open onClose={onClose} testId="approval-detail-modal"
+      judul={item.subject || item.ref_code || 'Ajuan'}
+      keterangan={[item.ref_code, item.chain_name].filter(Boolean).join(' · ')}
+      status={<Status status={item.status} />}
+      aksi={onModuleChange && DOMAIN_MODULE_MAP[item.type] ? (
+        <Button size="sm" variant="outline" data-testid="approval-detail-openentity"
+          onClick={() => { onClose(); onModuleChange(DOMAIN_MODULE_MAP[item.type]); }}>
+          <ExternalLink />Lihat data asli
+        </Button>) : null}>
+      <dl className="divide-y divide-[var(--glass-border)]">
+        <BarisDetail label="Jenis">{labelJenis(item.type)}</BarisDetail>
+        <BarisDetail label="Pemohon">{item.requester_name || '—'}</BarisDetail>
+        <BarisDetail label="Diajukan">{tanggal(item.created_at)}</BarisDetail>
+        {meta.map(([k, v]) => <BarisDetail key={k} label={labelMeta(k)}>{nilaiMeta(k, v)}</BarisDetail>)}
+      </dl>
 
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          {/* Meta */}
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div><p className="text-xs text-muted-foreground/60 dark:text-zinc-500">Tipe</p><p className="font-medium text-foreground">{TYPE_LABELS[item.type] || item.type}</p></div>
-            <div><p className="text-xs text-muted-foreground/60 dark:text-zinc-500">Status</p><StatusBadge status={item.status} /></div>
-            <div><p className="text-xs text-muted-foreground/60 dark:text-zinc-500">Pemohon</p><p className="font-medium text-foreground">{item.requester_name}</p></div>
-            <div><p className="text-xs text-muted-foreground/60 dark:text-zinc-500">Tanggal</p><p className="font-medium text-foreground">{new Date(item.created_at).toLocaleDateString('id-ID')}</p></div>
-          </div>
-
-          {/* Level detail */}
-          <div>
-            <p className="text-xs text-muted-foreground/60 dark:text-zinc-500 mb-2">Alur Persetujuan ({item.current_level}/{item.max_level})</p>
-            <div className="space-y-2">
-              {item.levels?.map(lv => (
-                <div key={lv.level} className={`flex items-center gap-3 p-2.5 rounded-lg border ${
-                  lv.status === 'approved' ? 'bg-emerald-50 dark:bg-emerald-400/5 border-emerald-400/15' :
-                  lv.status === 'pending'  ? 'bg-amber-50 dark:bg-amber-400/10 border-amber-300 dark:border-amber-400/20' :
-                  lv.status === 'rejected' ? 'bg-red-50 dark:bg-red-400/5 border-red-400/15' :
-                  'bg-foreground/5 border-foreground/5'
-                }`}>
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
-                    lv.status === 'approved' ? 'bg-emerald-500 text-foreground' :
-                    lv.status === 'pending'  ? 'bg-amber-400 text-foreground' :
-                    lv.status === 'rejected' ? 'bg-red-500 text-foreground' :
-                    'bg-muted-foreground/30 text-muted-foreground dark:text-zinc-400'
-                  }`}>{lv.status === 'approved' ? '✓' : lv.status === 'rejected' ? '✗' : lv.level}</div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-foreground">{lv.label}</p>
-                    {lv.approver_name && <p className="text-[11px] text-muted-foreground/60 dark:text-zinc-500">{lv.approver_name}</p>}
-                    {lv.note && <p className="text-[11px] text-muted-foreground/60 dark:text-zinc-500 italic">&ldquo;{lv.note}&rdquo;</p>}
-                  </div>
-                  {lv.actioned_at && <span className="text-[10px] text-muted-foreground/60">{new Date(lv.actioned_at).toLocaleDateString('id-ID')}</span>}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {item.meta && Object.keys(item.meta).length > 0 && (
-            <div>
-              <p className="text-xs text-muted-foreground/60 dark:text-zinc-500 mb-1">Data Tambahan</p>
-              <pre className="text-xs bg-foreground/5 border border-foreground/10 rounded-lg p-2 overflow-x-auto text-foreground/80">{JSON.stringify(item.meta, null, 2)}</pre>
-            </div>
-          )}
-        </div>
-
-        {isManager && item.status === 'pending' && (
-          <div className="p-5 border-t border-foreground/10">
-            <textarea
-              value={note} onChange={e => setNote(e.target.value)}
-              placeholder="Catatan (opsional)..."
-              data-testid="approval-detail-note"
-              className="w-full text-sm bg-foreground/5 border border-foreground/10 rounded-xl p-3 resize-none focus:outline-none focus:border-blue-500/50 text-foreground placeholder-muted-foreground mb-3"
-              rows={2}
-            />
-            <div className="flex gap-2">
-              <button onClick={() => handleAction('reject')} disabled={acting}
-                data-testid="approval-detail-reject"
-                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-400/10 hover:bg-red-50 dark:bg-red-400/20 border border-red-300 dark:border-red-400/20 disabled:opacity-50">
-                <XCircle size={15} /> Tolak
-              </button>
-              <button onClick={() => handleAction('approve')} disabled={acting}
-                data-testid="approval-detail-approve"
-                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium text-foreground bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50">
-                {acting ? <RefreshCw size={15} className="animate-spin" /> : <CheckCircle size={15} />} Setujui
-              </button>
-            </div>
-          </div>
-        )}
+      <div>
+        <p className="mb-2 text-sm font-medium text-foreground">
+          Alur persetujuan ({item.current_level || 0}/{item.max_level || item.levels?.length || 0})
+        </p>
+        <ol className="divide-y divide-[var(--glass-border)] rounded-lg border border-[var(--glass-border)]">
+          {(item.levels || []).map((lv) => (
+            <li key={lv.level} className="flex items-start gap-3 px-3 py-2">
+              <span className="w-6 shrink-0 text-sm font-semibold tabular-nums text-muted-foreground">{lv.level}.</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-foreground">{lv.label}</p>
+                {lv.approver_name && <p className="text-xs text-muted-foreground">{lv.approver_name}</p>}
+                {lv.note && <p className="text-xs italic text-muted-foreground">&ldquo;{lv.note}&rdquo;</p>}
+              </div>
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                <Status status={lv.status} />
+                {lv.actioned_at && <span className="text-xs text-muted-foreground">{tanggal(lv.actioned_at)}</span>}
+              </div>
+            </li>
+          ))}
+          {!item.levels?.length && <li className="px-3 py-2 text-sm text-muted-foreground">Ajuan ini tidak memiliki tahapan.</li>}
+        </ol>
       </div>
-    </div>
+
+      {isManager && item.status === 'pending' && (
+        <div className="space-y-2 border-t border-[var(--glass-border)] pt-4">
+          <label htmlFor="approval-detail-note" className="block text-sm font-medium text-foreground">Catatan (opsional)</label>
+          <Textarea id="approval-detail-note" value={note} onChange={(e) => setNote(e.target.value)} rows={2}
+            placeholder="Alasan atau pesan untuk pemohon" data-testid="approval-detail-note" />
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="destructive" onClick={() => handleAction('reject')} disabled={acting} data-testid="approval-detail-reject">
+              <XCircle />Tolak
+            </Button>
+            <Button variant="success" onClick={() => handleAction('approve')} disabled={acting} data-testid="approval-detail-approve">
+              {acting ? <RefreshCw className="animate-spin" /> : <CheckCircle />}Setujui
+            </Button>
+          </div>
+        </div>
+      )}
+    </DetailPopup>
   );
 }
 
 // ── Main Module ───────────────────────────────────────────────────────────────
 export default function MultiLevelApprovalModule({ user, onModuleChange }) {
   const [requests, setRequests]       = useState([]);
+  const [totalRequests, setTotalRequests] = useState(0);
+  const [page, setPage]               = useState(1);
   const [myPending, setMyPending]     = useState([]);
   const [summary, setSummary]         = useState(null);
   const [chains, setChains]           = useState([]);
@@ -291,6 +165,7 @@ export default function MultiLevelApprovalModule({ user, onModuleChange }) {
   const [filterStatus, setFilterStatus] = useState('');
   const [filterType, setFilterType]   = useState('');
   const [selectedItem, setSelectedItem] = useState(null);
+  const [actingId, setActingId]       = useState(null);
   const token   = localStorage.getItem('erp_token');
   const headers = { Authorization: `Bearer ${token}` };
   const isManager = ['superadmin','admin','owner','manager','hr'].includes((user?.role||'').toLowerCase());
@@ -299,20 +174,27 @@ export default function MultiLevelApprovalModule({ user, onModuleChange }) {
     setLoading(true);
     try {
       const [pendRes, allRes, sumRes, chainRes] = await Promise.all([
-        axios.get(`${API}/api/approvals/pending`,  { headers }),
-        axios.get(`${API}/api/approvals/requests`, { headers, params: { status: filterStatus || undefined, type: filterType || undefined } }),
+        axios.get(`${API}/api/approvals/pending`,  { headers, params: { limit: 200 } }),
+        axios.get(`${API}/api/approvals/requests`, { headers, params: {
+          status: filterStatus || undefined, type: filterType || undefined,
+          limit: UKURAN_HALAMAN, skip: (page - 1) * UKURAN_HALAMAN } }),
         axios.get(`${API}/api/approvals/summary`,  { headers }),
         axios.get(`${API}/api/approvals/chains`,   { headers }),
       ]);
       setMyPending(pendRes.data?.data  || []);
       setRequests(allRes.data?.data    || []);
+      setTotalRequests(allRes.data?.total ?? (allRes.data?.data || []).length);
       setSummary(sumRes.data?.data     || null);
       setChains(chainRes.data?.data    || []);
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      toast.error('Gagal memuat data persetujuan. Coba muat ulang.');
+    }
     finally { setLoading(false); }
-  }, [filterStatus, filterType]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filterStatus, filterType, page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(1); }, [filterStatus, filterType]);
 
   // 2026-11-08: server kini menolak peran yang bukan penyetuju level aktif dan menolak penyetujuan ajuan
   // sendiri (403). Dulu galat tidak ditangkap: tombol macet tanpa pesan apa pun.
@@ -329,148 +211,178 @@ export default function MultiLevelApprovalModule({ user, onModuleChange }) {
   };
   const handleApprove = (id, note) => decide(id, note, 'approve');
   const handleReject  = (id, note) => decide(id, note, 'reject');
+  const putuskanCepat = async (item, action) => {
+    setActingId(item.id);
+    await decide(item.id, '', action);
+    setActingId(null);
+  };
 
-  const displayItems = tab === 'pending' ? myPending : requests;
+  const seedChains = async () => {
+    try {
+      await axios.post(`${API}/api/approvals/seed-missing-chains`, {}, { headers });
+      toast.success('Alur bawaan dipasang.');
+      load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Gagal memasang alur bawaan.');
+    }
+  };
 
-  const SEL = 'bg-foreground/5 border border-foreground/10 text-foreground text-sm rounded-lg px-3 py-1.5 focus:outline-none [&>option]:bg-card';
+  // Tab "Perlu tindakan" disaring di layar (data dari /pending); tab "Semua ajuan" disaring di server.
+  const pendingTampil = myPending
+    .filter((it) => !filterStatus || it.status === filterStatus)
+    .filter((it) => !filterType || it.type === filterType);
+  const displayItems = tab === 'pending' ? pendingTampil : requests;
+
+  const ambilSemuaAjuan = async () => {
+    const semua = [];
+    for (let skip = 0; skip < 20000; skip += 200) {
+      const r = await axios.get(`${API}/api/approvals/requests`, { headers, params: {
+        status: filterStatus || undefined, type: filterType || undefined, limit: 200, skip } });
+      const d = r.data?.data || [];
+      semua.push(...d);
+      if (d.length < 200 || semua.length >= (r.data?.total ?? 0)) break;
+    }
+    return semua;
+  };
+
+  const kolomUnduhAjuan = [
+    { label: 'Nomor', nilai: (it) => it.ref_code || '' },
+    { label: 'Perihal', nilai: (it) => it.subject || '' },
+    { label: 'Jenis', nilai: (it) => labelJenis(it.type) },
+    { label: 'Alur', nilai: (it) => it.chain_name || '' },
+    { label: 'Pemohon', nilai: (it) => it.requester_name || '' },
+    { label: 'Diajukan', nilai: (it) => tanggal(it.created_at) },
+    { label: 'Tahap', nilai: (it) => tahap(it) },
+    { label: 'Status', nilai: (it) => labelStatus(it.status) },
+  ];
+
+  const kolomAjuan = [
+    { kunci: 'perihal', label: 'Ajuan', hp: 'judul', isi: (it) => (
+      <div className="min-w-0 md:max-w-[24rem]">
+        <p className="truncate font-medium text-foreground" title={it.subject || it.ref_code}>
+          {it.subject || it.ref_code}
+          {it.meta?.priority === 'urgent' && <StatusBadge className="ml-2 align-middle" status="urgent" label="Mendesak" tone="danger" />}
+        </p>
+        {it.ref_code && it.subject && <p className="truncate text-xs text-muted-foreground">{it.ref_code}</p>}
+      </div>) },
+    { kunci: 'jenis', label: 'Jenis', isi: (it) => <span className="text-sm">{labelJenis(it.type)}</span> },
+    { kunci: 'pemohon', label: 'Pemohon', isi: (it) => <span className="text-sm">{it.requester_name || '—'}</span> },
+    { kunci: 'tanggal', label: 'Diajukan', isi: (it) => <span className="text-sm md:whitespace-nowrap">{tanggal(it.created_at)}</span> },
+    { kunci: 'tahap', label: 'Tahap', isi: (it) => <span className="text-sm">{tahap(it)}</span> },
+    { kunci: 'status', label: 'Status', isi: (it) => <Status status={it.status} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (isManager && it.status === 'pending' ? (
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="destructive" disabled={actingId === it.id} onClick={() => putuskanCepat(it, 'reject')}
+          data-testid={`approval-reject-${it.id}`}><XCircle />Tolak</Button>
+        <Button size="sm" variant="success" disabled={actingId === it.id} onClick={() => putuskanCepat(it, 'approve')}
+          data-testid={`approval-approve-${it.id}`}>
+          {actingId === it.id ? <RefreshCw className="animate-spin" /> : <CheckCircle />}Setujui
+        </Button>
+      </div>) : (
+      <Button size="sm" variant="outline" onClick={() => setSelectedItem(it)} data-testid={`approval-view-${it.id}`}>Rincian</Button>)) },
+  ];
+
+  const kolomAlur = [
+    { kunci: 'nama', label: 'Alur', hp: 'judul', isi: (ch) => <span className="font-medium text-foreground">{ch.name}</span> },
+    { kunci: 'jenis', label: 'Jenis', isi: (ch) => <span className="text-sm">{labelJenis(ch.type)}</span> },
+    { kunci: 'tahapan', label: 'Tahapan', isi: (ch) => (
+      <span className="text-sm">{(ch.levels || []).map((lv) => lv.label).join(' → ') || '—'}</span>) },
+    { kunci: 'status', label: 'Status', isi: (ch) => (ch.is_active
+      ? <StatusBadge status="active" label="Aktif" tone="success" />
+      : <StatusBadge status="inactive" label="Nonaktif" tone="muted" />) },
+  ];
+
+  const unduh = tab === 'chains' ? (
+    <TombolUnduh namaBerkas="alur-persetujuan" namaLembar="Alur" baris={chains} testId="approval-unduh"
+      kolom={[
+        { label: 'Alur', nilai: (ch) => ch.name },
+        { label: 'Jenis', nilai: (ch) => labelJenis(ch.type) },
+        { label: 'Tahapan', nilai: (ch) => (ch.levels || []).map((lv) => lv.label).join(' → ') },
+        { label: 'Status', nilai: (ch) => (ch.is_active ? 'Aktif' : 'Nonaktif') },
+      ]} />
+  ) : tab === 'all' ? (
+    <TombolUnduh namaBerkas="semua-ajuan-persetujuan" namaLembar="Ajuan" baris={requests} ambilSemua={ambilSemuaAjuan}
+      kolom={kolomUnduhAjuan} testId="approval-unduh" />
+  ) : (
+    <TombolUnduh namaBerkas="ajuan-perlu-tindakan" namaLembar="Perlu tindakan" baris={pendingTampil}
+      kolom={kolomUnduhAjuan} testId="approval-unduh" />
+  );
+
+  const totalPages = Math.max(1, Math.ceil(totalRequests / UKURAN_HALAMAN));
+
+  const filterBar = (
+    <>
+      <SmartNativeSelect value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}
+        data-testid="approval-filter-status" className="w-40">
+        <option value="">Semua status</option>
+        <option value="pending">Menunggu</option>
+        <option value="approved">Disetujui</option>
+        <option value="rejected">Ditolak</option>
+        <option value="cancelled">Dibatalkan</option>
+      </SmartNativeSelect>
+      <SmartNativeSelect value={filterType} onChange={(e) => setFilterType(e.target.value)}
+        data-testid="approval-filter-type" className="w-44">
+        <option value="">Semua jenis</option>
+        {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+      </SmartNativeSelect>
+    </>
+  );
+  const alat = (
+    <>
+      {unduh}
+      <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+        data-testid="approval-refresh-btn">
+        <RefreshCw className={loading ? 'animate-spin' : ''} />
+      </Button>
+    </>
+  );
+  const ringkasan = summary && (
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="approval-summary">
+      <StatTile testId="approval-stat-my-pending" label="Menunggu keputusan saya" value={summary.my_pending_count ?? 0}
+        accent={summary.my_pending_count ? 'warning' : 'default'}
+        sub="Ajuan yang tahap aktifnya menunggu peran Anda." />
+      <StatTile testId="approval-stat-total-pending" label="Semua yang menunggu" value={summary.total_pending ?? 0}
+        sub="Semua ajuan berstatus menunggu, semua jenis." />
+      <StatTile testId="approval-stat-approved-today" label="Disetujui hari ini" value={summary.approved_today ?? 0}
+        sub="Ajuan yang selesai disetujui sejak pukul 00.00 WIB." />
+      <StatTile testId="approval-stat-active-chains" label="Alur aktif" value={chains.length}
+        sub="Alur persetujuan yang sedang dipakai." />
+    </div>
+  );
+  const memuatAwal = loading && !summary;
+  const tabelAjuan = memuatAwal ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat ajuan…</p> : (
+    <TabelData kolom={kolomAjuan} baris={displayItems} onKlikBaris={setSelectedItem} testId="approval-list"
+      kosong={<EmptyState testId="approval-empty-state"
+        title={tab === 'pending' ? 'Tidak ada ajuan yang menunggu keputusan Anda' : 'Tidak ada ajuan'}
+        description={filterStatus || filterType ? 'Ubah saringan status atau jenis.' : 'Ajuan baru akan muncul di sini.'} />} />
+  );
 
   return (
-    <div className="p-4 md:p-6 space-y-5" data-testid="multi-level-approval-module">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-base font-bold text-foreground flex items-center gap-2">
-            <Layers className="text-blue-600 dark:text-blue-400" size={20} /> Approval Multi-Level
-          </h1>
-          <p className="text-sm text-muted-foreground/60 dark:text-zinc-500 mt-0.5">Kelola persetujuan bertingkat lintas departemen</p>
-        </div>
-        <button onClick={load} data-testid="approval-refresh-btn" className="p-2 text-muted-foreground/60 dark:text-zinc-500 hover:text-foreground rounded-lg hover:bg-foreground/5 border border-foreground/10">
-          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-        </button>
-      </div>
-
-      {/* Summary cards */}
-      {summary && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="approval-summary">
-          {[
-            { key: 'my-pending',      label: 'Pending Saya',      val: summary.my_pending_count,                color: 'text-amber-700 dark:text-amber-400',   bg: 'bg-amber-50 dark:bg-amber-400/10',   border: 'border-amber-300 dark:border-amber-400/20' },
-            { key: 'total-pending',   label: 'Total Pending',     val: summary.total_pending,                   color: 'text-blue-600 dark:text-blue-400',    bg: 'bg-blue-50 dark:bg-blue-400/10',    border: 'border-blue-300 dark:border-blue-400/20' },
-            { key: 'approved-today',  label: 'Disetujui Hari Ini',val: summary.approved_today,                  color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-400/10', border: 'border-emerald-300 dark:border-emerald-400/20' },
-            { key: 'active-chains',   label: 'Chain Aktif',       val: chains.filter(c=>c.is_active).length,    color: 'text-purple-600 dark:text-purple-400',  bg: 'bg-purple-50 dark:bg-purple-400/10',  border: 'border-purple-300 dark:border-purple-400/20' },
-          ].map(s => (
-            <div key={s.key} data-testid={`approval-stat-${s.key}`} className={`${s.bg} border ${s.border} rounded-xl p-3`}>
-              <p className={`text-2xl font-bold ${s.color}`}>{s.val ?? 0}</p>
-              <p className="text-xs text-muted-foreground/60 dark:text-zinc-500 mt-0.5">{s.label}</p>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Tabs */}
-      <div className="flex gap-1 bg-foreground/5 border border-foreground/10 rounded-xl p-1 w-fit">
-        {[
-          { key: 'pending', label: 'Perlu Tindakan' },
-          { key: 'all',     label: 'Semua Request' },
-          { key: 'chains',  label: 'Konfigurasi Chain' },
-        ].map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)}
-            data-testid={`approval-tab-${t.key}`}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              tab === t.key ? 'bg-blue-600 text-foreground' : 'text-muted-foreground/60 dark:text-zinc-400 hover:text-foreground hover:bg-foreground/5'
-            }`}>
-            {t.label}
-            {t.key === 'pending' && myPending.length > 0 && (
-              <span className="ml-1.5 bg-red-500 text-foreground text-[10px] rounded-full px-1.5 py-0.5">{myPending.length}</span>
-            )}
-          </button>
-        ))}
-      </div>
-
-      {/* Filter bar */}
-      {tab !== 'chains' && (
-        <div className="flex gap-2 flex-wrap">
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} data-testid="approval-filter-status" className={SEL}>
-            <option value="">Semua Status</option>
-            <option value="pending">Pending</option>
-            <option value="approved">Disetujui</option>
-            <option value="rejected">Ditolak</option>
-            <option value="cancelled">Dibatalkan</option>
-          </select>
-          <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)} data-testid="approval-filter-type" className={SEL}>
-            <option value="">Semua Tipe</option>
-            {Object.entries(TYPE_LABELS).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
-          </SmartNativeSelect>
-        </div>
-      )}
-
-      {/* Content */}
-      {loading ? (
-        <div className="flex items-center justify-center py-20 text-muted-foreground/60 dark:text-zinc-500">
-          <RefreshCw size={24} className="animate-spin text-blue-600 dark:text-blue-400" />
-          <span className="ml-3">Memuat...</span>
-        </div>
-      ) : tab === 'chains' ? (
-        <div className="space-y-3" data-testid="approval-chains-list">
-          {chains.map(ch => (
-            <div key={ch.id} data-testid={`approval-chain-${ch.id}`} className="bg-foreground/5 border border-foreground/10 rounded-xl p-4 hover:border-foreground/20 transition-all">
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-400/10 text-blue-600 dark:text-blue-400 border border-blue-300 dark:border-blue-400/20">
-                      {TYPE_LABELS[ch.type] || ch.type}
-                    </span>
-                    {!ch.is_active && <span className="text-xs text-muted-foreground/60 dark:text-zinc-500">Non-aktif</span>}
-                  </div>
-                  <h3 className="font-medium text-foreground mt-1">{ch.name}</h3>
-                  <div className="flex items-center gap-1 mt-1.5">
-                    {ch.levels?.map((lv, i) => (
-                      <React.Fragment key={lv.level}>
-                        <span className="text-xs px-2 py-0.5 bg-muted rounded text-foreground/80 border border-foreground/10">{lv.label}</span>
-                        {i < ch.levels.length - 1 && <ChevronRight size={12} className="text-muted-foreground/60" />}
-                      </React.Fragment>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
-          {chains.length === 0 && (
-            <div className="text-center py-10 text-muted-foreground/60 dark:text-zinc-500">
-              <Layers size={32} className="mx-auto mb-2 opacity-30" />
-              <p className="text-sm">
-                Belum ada chain.{' '}
-                <button
-                  onClick={async () => { await axios.post(`${API}/api/approvals/seed-missing-chains`, {}, { headers }); load(); }}
-                  data-testid="approval-seed-chains-btn"
-                  className="text-blue-600 dark:text-blue-400 hover:text-blue-600 dark:text-blue-300 underline"
-                >
-                  Seed default chains
-                </button>
-              </p>
-            </div>
-          )}
-        </div>
-      ) : displayItems.length === 0 ? (
-        <div className="text-center py-20 text-muted-foreground/60" data-testid="approval-empty-state">
-          <CheckCircle size={40} className="mx-auto mb-3 opacity-30" />
-          <p className="text-base font-medium text-muted-foreground/60 dark:text-zinc-400">Tidak ada approval yang perlu ditindaklanjuti</p>
-          <p className="text-sm mt-1">Semua bersih ✓</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-testid="approval-list">
-          {displayItems.map(item => (
-            <ApprovalCard
-              key={item.id} item={item}
-              onApprove={handleApprove} onReject={handleReject}
-              onView={setSelectedItem} isManager={isManager}
-              onModuleChange={onModuleChange}
-            />
-          ))}
-        </div>
-      )}
+    <div data-testid="multi-level-approval-module">
+      <HubTabs hubId="approval-multilevel" title="Persetujuan bertingkat"
+        subtitle="Ajuan yang perlu disetujui berjenjang, dari atasan langsung sampai direktur."
+        value={tab} onValueChange={setTab}
+        tabs={[
+          { key: 'pending', label: `Perlu tindakan${myPending.length ? ` (${myPending.length})` : ''}`, Component: IsiTab,
+            props: { filters: filterBar, tools: alat, summary: ringkasan, children: tabelAjuan } },
+          { key: 'all', label: 'Semua ajuan', Component: IsiTab,
+            props: { filters: filterBar, tools: alat, summary: ringkasan, children: tabelAjuan,
+              footer: totalRequests > UKURAN_HALAMAN ? (
+                <PaginationLite page={page} totalPages={totalPages} total={totalRequests} pageSize={UKURAN_HALAMAN} onPageChange={setPage} />
+              ) : null } },
+          { key: 'chains', label: 'Alur persetujuan', Component: IsiTab,
+            props: { tools: alat, summary: ringkasan, children: memuatAwal
+              ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat alur…</p>
+              : (
+                <TabelData kolom={kolomAlur} baris={chains} testId="approval-chains-list"
+                  kosong={<EmptyState title="Belum ada alur persetujuan"
+                    description="Pasang alur bawaan (cuti, lembur, klaim biaya, PO, retur material, aset) lalu sesuaikan bila perlu."
+                    action={<Button onClick={seedChains} data-testid="approval-seed-chains-btn">Pasang alur bawaan</Button>} />} />
+              ) } },
+        ]} />
 
       {selectedItem && (
-        <DetailModal
+        <DetailAjuan
           item={selectedItem} onClose={() => setSelectedItem(null)}
           onApprove={handleApprove} onReject={handleReject}
           isManager={isManager} onModuleChange={onModuleChange}
@@ -478,4 +390,9 @@ export default function MultiLevelApprovalModule({ user, onModuleChange }) {
       )}
     </div>
   );
+}
+
+/** Isi satu tab: cetakan PageLayout di dalam hub (judul hub di atas, alat ke baris penyaring/tab). */
+function IsiTab({ filters, tools, summary, footer, children }) {
+  return <PageLayout filters={filters} tools={tools} summary={summary} footer={footer}>{children}</PageLayout>;
 }

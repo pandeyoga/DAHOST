@@ -1,37 +1,35 @@
 /**
- * HRApprovalInboxModule — Unified HR Approval Inbox
+ * HRApprovalInboxModule — Inbox SDM (kotak masuk persetujuan SDM terpadu)
  * Phase 26 — P2 Workflow Consolidation #2
  *
- * Single inbox where Managers / HR see all pending HR requests:
- *   - Cuti / Izin
- *   - Lembur
- *   - Penyesuaian Gaji
- *   - Resignasi
+ * Satu tempat untuk semua permohonan SDM yang menunggu keputusan: cuti/izin, lembur, penyesuaian gaji,
+ * pengunduran diri, absensi, koreksi absen, perubahan data.
  *
- * Each card has Approve & Reject actions. Click card → drawer with full detail.
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, daftar = tabel (kartu ringkas di HP) + unduh Excel/CSV,
+ * detail = popup, setujui = form popup (Setujui hijau), tolak = konfirmasi dengan alasan (merah),
+ * penyaring jenis = pil satu baris, kartu angka StatTile.
+ * Perbaikan angka: kartu & pil dulu menghitung baris yang DIMUAT (paling banyak 50 per jenis) — kini dari
+ * /api/hr/inbox/summary (hitungan penuh); daftar dimuat sampai 200 per jenis.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import {
-  Inbox, Filter, RefreshCw, Calendar, Clock, DollarSign, UserMinus,
-  CheckCircle2, XCircle, Search, AlertTriangle, User, Building2,
-  Briefcase, FileText, ChevronRight, Sparkles, CalendarCheck, UserCog,
-} from 'lucide-react';
-import { GlassCard } from '@/components/ui/glass';
+import { CalendarCheck, CheckCircle2, ChevronRight, RefreshCw, Search, XCircle } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { toast } from 'sonner';
-import { motion, AnimatePresence } from 'framer-motion';
-import { PageHeader } from './moduleAtoms';
-import { EmptyState } from './EmptyState';
-import { Skeleton } from '@/components/ui/skeleton';
-import { formatNumber } from '@/lib/format';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { formatNumber, formatDateTimeID } from '@/lib/format';
 import { withFileAuth } from '@/lib/fileUrl';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
+const BATAS_PER_JENIS = 200;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 function fmtRp(v) {
@@ -41,182 +39,136 @@ function fmtRp(v) {
   const sign = n < 0 ? '-' : (n > 0 ? '+' : '');
   return `${sign}Rp ${formatNumber(Math.abs(n))}`;
 }
-function fmtNum(v) { return Number(v || 0).toLocaleString('id-ID'); }
-function fmtDate(v) {
-  if (!v) return '—';
-  try {
-    const d = new Date(v);
-    if (isNaN(d.getTime())) return v;
-    return d.toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-  } catch { return v; }
-}
+const fmtDate = (v) => (v ? formatDateTimeID(v, { fallback: String(v) }) : '—');
 
 const TYPE_META = {
-  leave:             { label: 'Cuti / Izin',       icon: Calendar,      color: 'violet',  bgClass: 'bg-violet-100 dark:bg-violet-500/15 text-violet-600 dark:text-violet-300 border-violet-400 dark:border-violet-400/30' },
-  overtime:          { label: 'Lembur',            icon: Clock,         color: 'amber',   bgClass: 'bg-amber-100 dark:bg-amber-500/15 text-amber-600 dark:text-amber-300 border-amber-400 dark:border-amber-400/30' },
-  salary_adjustment: { label: 'Penyesuaian Gaji',  icon: DollarSign,    color: 'emerald', bgClass: 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border-emerald-400 dark:border-emerald-400/30' },
-  resignation:       { label: 'Resignasi',         icon: UserMinus,     color: 'red',     bgClass: 'bg-red-100 dark:bg-red-500/15 text-red-600 dark:text-red-300 border-red-400 dark:border-red-400/30' },
-  attendance:        { label: 'Approval Absensi',  icon: CalendarCheck, color: 'blue',    bgClass: 'bg-blue-100 dark:bg-blue-500/15 text-blue-600 dark:text-blue-300 border-blue-400 dark:border-blue-400/30' },
+  leave:                 { label: 'Cuti / izin',       tone: 'info' },
+  overtime:              { label: 'Lembur',            tone: 'warning' },
+  salary_adjustment:     { label: 'Penyesuaian gaji',  tone: 'primary' },
+  resignation:           { label: 'Pengunduran diri',  tone: 'danger' },
+  attendance:            { label: 'Persetujuan absen', tone: 'info' },
   // Tahap 2 (2026-11-06): pengajuan koreksi absen dari Portal Saya
-  attendance_correction: { label: 'Koreksi Absen', icon: CalendarCheck, color: 'warning', bgClass: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.3)]' },
+  attendance_correction: { label: 'Koreksi absen',     tone: 'warning' },
   // HR1 (2026-11-07): perubahan No. HP / alamat / kontak darurat dari Portal Saya › Profil
-  employee_data_change: { label: 'Perubahan Data', icon: UserCog, color: 'primary', bgClass: 'bg-[hsl(var(--primary)/0.12)] text-primary border-[hsl(var(--primary)/0.3)]' },
+  employee_data_change:  { label: 'Perubahan data',    tone: 'primary' },
 };
 const KIND_LABEL = { cuti: 'Cuti', izin: 'Izin', sakit: 'Sakit' };
+const SUB_STATUS = { draft: 'Draf', pending_manager: 'Menunggu atasan', pending_hr: 'Menunggu SDM' };
+const labelJenis = (t) => TYPE_META[t]?.label || 'Lainnya';
 
 function TypeBadge({ type }) {
-  const m = TYPE_META[type] || { label: type, bgClass: 'bg-foreground/10 text-foreground/70 border-foreground/20' };
-  const Icon = m.icon || FileText;
-  return (
-    <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${m.bgClass}`}>
-      <Icon className="w-3 h-3" /> {m.label}
-    </span>
-  );
+  const m = TYPE_META[type] || { label: 'Lainnya', tone: 'default' };
+  return <StatusBadge status={type} label={m.label} tone={m.tone} />;
 }
 
-// ─── Detail Drawer ────────────────────────────────────────────────────────
-function ItemDetailDrawer({ item, open, onClose, onApprove, onReject }) {
-  if (!item) return null;
+// ─── Detail (popup) ───────────────────────────────────────────────────────
+function Lampiran({ url }) {
+  return <a className="text-primary underline" href={withFileAuth(`${API}${url}`)} target="_blank" rel="noreferrer">Buka lampiran</a>;
+}
+
+function ItemDetail({ item, onClose, onApprove, onReject }) {
   const meta = item.meta || {};
   const raw = item.raw || {};
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl bg-card border-foreground/10">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <TypeBadge type={item.type} />
-            <span className="text-foreground">{item.title || '—'}</span>
-          </DialogTitle>
-        </DialogHeader>
+    <DetailPopup open onClose={onClose} testId="hr-inbox-detail"
+      judul={item.title || '—'} status={<TypeBadge type={item.type} />}
+      keterangan={`Dari ${item.requester_name || '—'}${item.requester_dept ? ` · ${item.requester_dept}` : ''}`}
+      aksi={<>
+        <Button size="sm" variant="destructive" data-testid="hr-inbox-reject-confirm" onClick={() => onReject(item)}>
+          <XCircle />Tolak
+        </Button>
+        <Button size="sm" variant="success" data-testid="hr-inbox-approve-confirm" onClick={() => onApprove(item)}>
+          <CheckCircle2 />Setujui
+        </Button>
+      </>}>
+      <div>
+        <p className="mb-1 text-sm font-medium text-foreground">Pemohon</p>
+        <dl className="divide-y divide-[var(--glass-border)]">
+          <BarisDetail label="Nama">{item.requester_name || '—'}</BarisDetail>
+          <BarisDetail label="Kode">{item.requester_code || '—'}</BarisDetail>
+          <BarisDetail label="Departemen">{item.requester_dept || '—'}</BarisDetail>
+          <BarisDetail label="Diajukan">{fmtDate(item.submitted_at)}</BarisDetail>
+        </dl>
+      </div>
 
-        <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
-          {/* Requester */}
-          <GlassCard className="p-4">
-            <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
-              <User className="w-3 h-3" /> Pemohon
-            </h4>
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div><span className="text-muted-foreground">Nama: </span><span className="text-foreground">{item.requester_name || '—'}</span></div>
-              <div><span className="text-muted-foreground">Kode: </span><span className="text-foreground font-mono">{item.requester_code || '—'}</span></div>
-              <div><span className="text-muted-foreground">Departemen: </span><span className="text-foreground">{item.requester_dept || '—'}</span></div>
-              <div><span className="text-muted-foreground">Diajukan: </span><span className="text-foreground text-xs">{fmtDate(item.submitted_at)}</span></div>
-            </div>
-          </GlassCard>
+      <div>
+        <p className="mb-1 text-sm font-medium text-foreground">Rincian permohonan</p>
+        <dl className="divide-y divide-[var(--glass-border)]">
+          {item.type === 'leave' && <>
+            <BarisDetail label="Jenis cuti">{meta.leave_type || '—'}</BarisDetail>
+            <BarisDetail label="Periode">{`${meta.from_date || '—'} → ${meta.to_date || '—'} (${meta.total_days ?? '—'} hari)`}</BarisDetail>
+            <BarisDetail label="Dibayar">{meta.is_paid ? 'Ya' : 'Tidak'}</BarisDetail>
+            {meta.half_day && <BarisDetail label="Setengah hari">{String(meta.half_day)}</BarisDetail>}
+            {meta.approval_level && <BarisDetail label="Tingkat persetujuan">{meta.approval_level}</BarisDetail>}
+            {meta.attachment_url && <BarisDetail label="Lampiran"><Lampiran url={meta.attachment_url} /></BarisDetail>}
+            {meta.pay_decision_suggestion && (
+              <BarisDetail label="Usulan bayar">
+                {`${meta.pay_decision_suggestion.decision === 'paid' ? 'Dibayar' : 'Tidak dibayar'} — ${meta.pay_decision_suggestion.reason}`}
+              </BarisDetail>
+            )}
+          </>}
+          {item.type === 'overtime' && <>
+            <BarisDetail label="Tanggal">{meta.date || '—'}</BarisDetail>
+            <BarisDetail label="Jam">{`${meta.start_time || '—'} – ${meta.end_time || '—'}`}</BarisDetail>
+            <BarisDetail label="Durasi">{`${meta.hours ?? '—'} jam`}</BarisDetail>
+            <BarisDetail label="Pengali tarif">{meta.rate_multiplier != null ? `${meta.rate_multiplier}×` : '—'}</BarisDetail>
+          </>}
+          {item.type === 'salary_adjustment' && <>
+            <BarisDetail label="Jenis">{meta.adjustment_type || '—'}</BarisDetail>
+            <BarisDetail label="Nilai lama">{fmtRp(meta.old_value)}</BarisDetail>
+            <BarisDetail label="Nilai baru">{fmtRp(meta.new_value)}</BarisDetail>
+            <BarisDetail label="Selisih">
+              <span className={meta.delta >= 0 ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--danger-text))]'}>{fmtRp(meta.delta)}</span>
+            </BarisDetail>
+            <BarisDetail label="Berlaku mulai">{meta.effective_date || '—'}</BarisDetail>
+            <BarisDetail label="Tahap">{SUB_STATUS[meta.sub_status] || meta.sub_status || '—'}</BarisDetail>
+          </>}
+          {item.type === 'resignation' && <>
+            <BarisDetail label="Posisi">{meta.position || '—'}</BarisDetail>
+            <BarisDetail label="Tanggal efektif">{meta.resignation_effective_date || '—'}</BarisDetail>
+            <BarisDetail label="Hari kerja terakhir">{meta.last_working_date || '—'}</BarisDetail>
+          </>}
+          {item.type === 'attendance' && <>
+            <BarisDetail label="Tanggal absen">{meta.date || '—'}</BarisDetail>
+            <BarisDetail label="Jam masuk">{meta.check_in_time || '—'}</BarisDetail>
+            <BarisDetail label="Jam pulang">{meta.check_out_time || '—'}</BarisDetail>
+            {meta.work_hours != null && <BarisDetail label="Jam kerja">{`${meta.work_hours} jam`}</BarisDetail>}
+            {meta.attendance_type && <BarisDetail label="Cara absen">{meta.attendance_type}</BarisDetail>}
+            {meta.location && (
+              <BarisDetail label="Lokasi">
+                {typeof meta.location === 'string' ? meta.location
+                  : [meta.location.lat, meta.location.lng].filter((v) => v != null).join(', ') || '—'}
+              </BarisDetail>
+            )}
+            {meta.face_match != null && <BarisDetail label="Kecocokan wajah">{`${Math.round((Number(meta.face_match) || 0) * 100)}%`}</BarisDetail>}
+            {meta.geo_distance_m != null && <BarisDetail label="Jarak ke kantor">{`${meta.geo_distance_m} m`}</BarisDetail>}
+          </>}
+          {item.type === 'attendance_correction' && <>
+            <BarisDetail label="Tanggal">{meta.date || '—'}</BarisDetail>
+            <BarisDetail label="Diminta">
+              {[meta.requested?.clock_in && `masuk ${meta.requested.clock_in}`, meta.requested?.clock_out && `pulang ${meta.requested.clock_out}`,
+                meta.requested?.status && `status ${meta.requested.status}`].filter(Boolean).join(', ') || '—'}
+            </BarisDetail>
+            {meta.locked && <BarisDetail label="Catatan">Tanggal ini sudah digaji — bila disetujui, selisihnya jadi penyesuaian di gaji berikutnya.</BarisDetail>}
+            {meta.attachment_url && <BarisDetail label="Lampiran"><Lampiran url={meta.attachment_url} /></BarisDetail>}
+          </>}
+          {item.type !== 'employee_data_change' && <BarisDetail label="Alasan">{item.reason || raw.reason || '—'}</BarisDetail>}
+        </dl>
+        {item.type === 'employee_data_change' && <DataChanges changes={meta.changes} />}
+      </div>
 
-          {/* Type-specific meta */}
-          <GlassCard className="p-4">
-            <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
-              <FileText className="w-3 h-3" /> Detail Permohonan
-            </h4>
-            <div className="space-y-2 text-sm">
-              {item.type === 'leave' && (
-                <>
-                  <Row label="Jenis Cuti" value={meta.leave_type || '—'} />
-                  <Row label="Periode" value={`${meta.from_date} → ${meta.to_date} (${meta.total_days} hari)`} />
-                  <Row label="Paid?" value={meta.is_paid ? '✓ Ya' : '✗ Tidak'} />
-                  {meta.half_day && <Row label="Setengah Hari" value={meta.half_day} />}
-                  {meta.attachment_url && (
-                    <Row label="Lampiran" value={<a className="text-blue-600 dark:text-blue-300 underline" href={withFileAuth(`${API}${meta.attachment_url}`)} target="_blank" rel="noreferrer">Lihat dokumen</a>} />
-                  )}
-                </>
-              )}
-              {item.type === 'overtime' && (
-                <>
-                  <Row label="Tanggal" value={meta.date} />
-                  <Row label="Jam" value={`${meta.start_time} - ${meta.end_time}`} />
-                  <Row label="Durasi" value={`${meta.hours} jam`} />
-                  <Row label="Rate Multiplier" value={`${meta.rate_multiplier}x`} />
-                </>
-              )}
-              {item.type === 'salary_adjustment' && (
-                <>
-                  <Row label="Jenis" value={meta.adjustment_type || '—'} />
-                  <Row label="Nilai Lama" value={fmtRp(meta.old_value)} />
-                  <Row label="Nilai Baru" value={fmtRp(meta.new_value)} />
-                  <Row label="Selisih" value={<span className={meta.delta >= 0 ? 'text-green-600 dark:text-green-300' : 'text-red-600 dark:text-red-300'}>{fmtRp(meta.delta)}</span>} />
-                  <Row label="Effective Date" value={meta.effective_date || '—'} />
-                  <Row label="Sub-status" value={meta.sub_status || '—'} />
-                </>
-              )}
-              {item.type === 'resignation' && (
-                <>
-                  <Row label="Posisi" value={meta.position || '—'} />
-                  <Row label="Tanggal Efektif" value={meta.resignation_effective_date || '—'} />
-                  <Row label="Last Working Date" value={meta.last_working_date || '—'} />
-                </>
-              )}
-              {item.type === 'attendance' && (
-                <>
-                  <Row label="Tanggal Absen" value={meta.date || '—'} />
-                  <Row label="Clock-In" value={meta.check_in_time || '—'} />
-                  <Row label="Clock-Out" value={meta.check_out_time || '—'} />
-                  {meta.work_hours != null && (
-                    <Row label="Jam Kerja" value={`${meta.work_hours} jam`} />
-                  )}
-                  {meta.attendance_type && (
-                    <Row label="Tipe" value={meta.attendance_type} />
-                  )}
-                  {meta.location && (
-                    <Row label="Lokasi" value={typeof meta.location === 'string' ? meta.location : JSON.stringify(meta.location)} />
-                  )}
-                  {meta.face_match != null && (
-                    <Row label="Face Match" value={`${Math.round((Number(meta.face_match) || 0) * 100)}%`} />
-                  )}
-                  {meta.geo_distance_m != null && (
-                    <Row label="Jarak ke Kantor" value={`${meta.geo_distance_m} m`} />
-                  )}
-                  {/* Tahap 2: foto selfie TAMPIL saat diperiksa (dulu hanya tautan, dan sering kosong) */}
-                  {(meta.photo_url || meta.photo_out_url) && (
-                    <div className="grid grid-cols-2 gap-2 pt-1" data-testid="hr-inbox-selfie">
-                      {[['Selfie masuk', meta.photo_url], ['Selfie pulang', meta.photo_out_url]].filter(([, u]) => u).map(([lbl, u]) => (
-                        <a key={lbl} href={withFileAuth(`${API}${u}`)} target="_blank" rel="noreferrer" title={lbl}>
-                          <img src={withFileAuth(`${API}${u}`)} alt={lbl} className="w-full aspect-[3/4] object-cover rounded-[var(--radius-md)] border border-[var(--glass-border)]" />
-                          <span className="text-[11px] text-muted-foreground">{lbl}</span>
-                        </a>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-              {item.type === 'leave' && meta.attachment_url && (
-                <Row label="Lampiran" value={<a className="text-primary underline" href={withFileAuth(`${API}${meta.attachment_url}`)} target="_blank" rel="noreferrer">Buka lampiran</a>} />
-              )}
-              {item.type === 'leave' && meta.pay_decision_suggestion && (
-                <Row label="Usulan bayar" value={`${meta.pay_decision_suggestion.decision === 'paid' ? 'Dibayar' : 'Tidak dibayar'} — ${meta.pay_decision_suggestion.reason}`} multiline />
-              )}
-              {item.type === 'attendance_correction' && (
-                <>
-                  <Row label="Tanggal" value={meta.date || '—'} />
-                  <Row label="Diminta" value={[meta.requested?.clock_in && `masuk ${meta.requested.clock_in}`, meta.requested?.clock_out && `pulang ${meta.requested.clock_out}`, meta.requested?.status && `status ${meta.requested.status}`].filter(Boolean).join(', ') || '—'} />
-                  {meta.locked && <Row label="Catatan" value="Tanggal ini sudah digaji — bila disetujui, selisihnya jadi penyesuaian di gaji berikutnya." multiline />}
-                  {meta.attachment_url && <Row label="Lampiran" value={<a className="text-primary underline" href={withFileAuth(`${API}${meta.attachment_url}`)} target="_blank" rel="noreferrer">Buka lampiran</a>} />}
-                </>
-              )}
-              {item.type === 'employee_data_change' && <DataChanges changes={meta.changes} />}
-              {item.type !== 'employee_data_change' && <Row label="Alasan" value={item.reason || raw.reason || '—'} multiline />}
-            </div>
-          </GlassCard>
+      {/* Tahap 2: foto selfie TAMPIL saat diperiksa (dulu hanya tautan, dan sering kosong) */}
+      {item.type === 'attendance' && (meta.photo_url || meta.photo_out_url) && (
+        <div className="grid max-w-md grid-cols-2 gap-2" data-testid="hr-inbox-selfie">
+          {[['Selfie masuk', meta.photo_url], ['Selfie pulang', meta.photo_out_url]].filter(([, u]) => u).map(([lbl, u]) => (
+            <a key={lbl} href={withFileAuth(`${API}${u}`)} target="_blank" rel="noreferrer" title={lbl}>
+              <img src={withFileAuth(`${API}${u}`)} alt={lbl} className="aspect-[3/4] w-full rounded-[var(--radius-md)] border border-[var(--glass-border)] object-cover" />
+              <span className="text-xs text-muted-foreground">{lbl}</span>
+            </a>
+          ))}
         </div>
-
-        <DialogFooter className="flex flex-row gap-2 sm:justify-end">
-          <Button
-            data-testid="hr-inbox-reject-confirm"
-            variant="outline"
-            className="border-red-400 dark:border-red-400/30 text-red-600 dark:text-red-300 hover:bg-red-100 dark:bg-red-500/10"
-            onClick={() => onReject(item)}
-          >
-            <XCircle className="w-4 h-4 mr-1.5" /> Tolak
-          </Button>
-          <Button
-            data-testid="hr-inbox-approve-confirm"
-            className="bg-green-600 hover:bg-green-500"
-            onClick={() => onApprove(item)}
-          >
-            <CheckCircle2 className="w-4 h-4 mr-1.5" /> Setujui
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      )}
+    </DetailPopup>
   );
 }
 
@@ -226,11 +178,11 @@ function DataChanges({ changes = [] }) {
     <div className="space-y-1.5" data-testid="hr-inbox-data-changes">
       {changes.map((c) => (
         <div key={c.field} className="text-sm" data-testid={`hr-inbox-change-${c.field}`}>
-          <div className="text-muted-foreground text-xs">{c.label}</div>
+          <div className="text-xs text-muted-foreground">{c.label}</div>
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="line-through text-muted-foreground">{c.old || '(kosong)'}</span>
-            <ChevronRight className="w-3 h-3 text-muted-foreground" aria-hidden="true" />
-            <span className="text-foreground font-medium">{c.new || '(dikosongkan)'}</span>
+            <span className="text-muted-foreground line-through">{c.old || '(kosong)'}</span>
+            <ChevronRight className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
+            <span className="font-medium text-foreground">{c.new || '(dikosongkan)'}</span>
           </div>
         </div>
       ))}
@@ -238,69 +190,7 @@ function DataChanges({ changes = [] }) {
   );
 }
 
-function Row({ label, value, multiline = false }) {
-  return (
-    <div className={`flex ${multiline ? 'flex-col' : 'flex-row justify-between'} gap-1`}>
-      <span className="text-muted-foreground">{label}:</span>
-      <span className={`text-foreground ${multiline ? 'mt-0.5 italic' : 'text-right'}`}>{value || '—'}</span>
-    </div>
-  );
-}
-
-// ─── Reject Reason Dialog ─────────────────────────────────────────────────
-function RejectDialog({ open, item, onClose, onConfirm }) {
-  const [reason, setReason] = useState('');
-  const [busy, setBusy] = useState(false);
-  useEffect(() => { if (!open) setReason(''); }, [open]);
-  if (!item) return null;
-  const submit = async () => {
-    if (!reason.trim()) {
-      toast.error('Alasan wajib diisi');
-      return;
-    }
-    setBusy(true);
-    try {
-      await onConfirm(item, reason.trim());
-      onClose();
-    } finally { setBusy(false); }
-  };
-  return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v && !busy) onClose(); }}>
-      <DialogContent className="max-w-md bg-card border-foreground/10">
-        <DialogHeader>
-          <DialogTitle className="text-red-600 dark:text-red-300 flex items-center gap-2">
-            <XCircle className="w-5 h-5" /> Tolak Permohonan
-          </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <div className="text-xs text-muted-foreground">
-            <span className="text-foreground">{item.title}</span> dari{' '}
-            <span className="text-foreground">{item.requester_name || '—'}</span>
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs text-foreground/70">Alasan Penolakan <span className="text-red-700 dark:text-red-400">*</span></label>
-            <Textarea
-              data-testid="hr-inbox-reject-reason"
-              value={reason}
-              onChange={e => setReason(e.target.value)}
-              rows={4}
-              placeholder="Tulis alasan penolakan..."
-              className="bg-foreground/5 border-foreground/10 text-sm resize-none"
-            />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={busy} className="text-muted-foreground">Batal</Button>
-          <Button onClick={submit} disabled={busy || !reason.trim()} className="bg-red-600 hover:bg-red-500" data-testid="hr-inbox-reject-submit">
-            {busy ? 'Memproses...' : 'Konfirmasi Tolak'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ─── Approve Confirmation Dialog ──────────────────────────────────────────
+// ─── Setujui (form popup) ─────────────────────────────────────────────────
 function ApproveDialog({ open, item, onClose, onConfirm }) {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -319,124 +209,35 @@ function ApproveDialog({ open, item, onClose, onConfirm }) {
     } finally { setBusy(false); }
   };
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v && !busy) onClose(); }}>
-      <DialogContent className="max-w-md bg-card border-foreground/10">
-        <DialogHeader>
-          <DialogTitle className="text-green-600 dark:text-green-300 flex items-center gap-2">
-            <CheckCircle2 className="w-5 h-5" /> Setujui Permohonan
-          </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <div className="text-xs text-muted-foreground">
-            <span className="text-foreground">{item.title}</span> dari{' '}
-            <span className="text-foreground">{item.requester_name || '—'}</span>
+    <FormPopup open={open} onClose={onClose} ukuran="pendek" onSimpan={submit} menyimpan={busy}
+      judul="Setujui permohonan" labelSimpan="Setujui" testId="hr-inbox-approve-form"
+      keterangan={`${item.title} dari ${item.requester_name || '—'}`}>
+      {item.type === 'employee_data_change' && <DataChanges changes={item.meta?.changes} />}
+      {isLeave && (
+        <Isian label="Pembayaran" petunjuk={finalStep
+          ? `Usulan sistem: ${item.meta?.pay_decision_suggestion?.reason || '—'}`
+          : 'Persetujuan tingkat 1 — diteruskan ke SDM.'}>
+          <div className="space-y-2" data-testid="hr-inbox-pay-decision">
+            <p className="text-sm text-muted-foreground">
+              {KIND_LABEL[item.meta?.leave_kind] || 'Cuti'} · {item.reason || 'tanpa alasan'}
+              {item.meta?.attachment_url && <> · <a className="text-primary underline" href={withFileAuth(`${API}${item.meta.attachment_url}`)} target="_blank" rel="noreferrer">Buka lampiran</a></>}
+            </p>
+            {finalStep && (
+              <div className="flex gap-2">
+                <Button type="button" size="sm" variant={pay === 'paid' ? 'default' : 'outline'} onClick={() => setPay('paid')}
+                  aria-pressed={pay === 'paid'} data-testid="hr-inbox-pay-paid">Dibayar</Button>
+                <Button type="button" size="sm" variant={pay === 'unpaid' ? 'default' : 'outline'} onClick={() => setPay('unpaid')}
+                  aria-pressed={pay === 'unpaid'} data-testid="hr-inbox-pay-unpaid">Tidak dibayar</Button>
+              </div>
+            )}
           </div>
-          {item.type === 'employee_data_change' && <DataChanges changes={item.meta?.changes} />}
-          {isLeave && (
-            <div className="space-y-1.5" data-testid="hr-inbox-pay-decision">
-              <p className="text-xs text-foreground/70">
-                {KIND_LABEL[item.meta?.leave_kind] || 'Cuti'} · {item.reason || 'tanpa alasan'}
-              </p>
-              {item.meta?.attachment_url && (
-                <a className="text-xs text-primary underline" href={withFileAuth(`${API}${item.meta.attachment_url}`)} target="_blank" rel="noreferrer">Buka lampiran</a>
-              )}
-              {finalStep ? (
-                <>
-                  <div className="flex gap-2">
-                    <Button type="button" size="sm" variant={pay === 'paid' ? 'default' : 'outline'} onClick={() => setPay('paid')}
-                      data-testid="hr-inbox-pay-paid">Dibayar</Button>
-                    <Button type="button" size="sm" variant={pay === 'unpaid' ? 'default' : 'outline'} onClick={() => setPay('unpaid')}
-                      data-testid="hr-inbox-pay-unpaid">Tidak dibayar</Button>
-                  </div>
-                  <p className="text-[11px] text-muted-foreground">Usulan sistem: {item.meta?.pay_decision_suggestion?.reason}</p>
-                </>
-              ) : (
-                <p className="text-[11px] text-muted-foreground">Persetujuan tingkat 1 — diteruskan ke HR.</p>
-              )}
-            </div>
-          )}
-          <div className="space-y-1.5">
-            <label className="text-xs text-foreground/70">Catatan (opsional)</label>
-            <Textarea
-              data-testid="hr-inbox-approve-note"
-              value={note}
-              onChange={e => setNote(e.target.value)}
-              rows={3}
-              placeholder="Tambahkan catatan untuk pemohon..."
-              className="bg-foreground/5 border-foreground/10 text-sm resize-none"
-            />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={busy} className="text-muted-foreground">Batal</Button>
-          <Button onClick={submit} disabled={busy} className="bg-green-600 hover:bg-green-500" data-testid="hr-inbox-approve-submit">
-            {busy ? 'Memproses...' : 'Konfirmasi Setujui'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ─── Inbox Item Card ──────────────────────────────────────────────────────
-function InboxItemCard({ item, onView, onApprove, onReject }) {
-  const meta = TYPE_META[item.type] || {};
-  const Icon = meta.icon || FileText;
-  return (
-    <motion.div
-      data-testid={`hr-inbox-item-${item.id}`}
-      initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
-      whileHover={{ scale: 1.005 }}
-      className="p-3 rounded-lg bg-foreground/[0.03] border border-foreground/[0.08] hover:bg-foreground/[0.06] hover:border-violet-400 dark:border-violet-400/30 cursor-pointer group"
-      onClick={() => onView(item)}
-    >
-      <div className="flex items-start gap-3">
-        <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${meta.bgClass}`}>
-          <Icon className="w-5 h-5" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <TypeBadge type={item.type} />
-            <span className="text-sm font-semibold text-foreground truncate">{item.title}</span>
-          </div>
-          <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
-            <span className="flex items-center gap-1"><User className="w-3 h-3" />{item.requester_name || '—'}</span>
-            {item.requester_dept && <span className="flex items-center gap-1"><Building2 className="w-3 h-3" />{item.requester_dept}</span>}
-            <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{fmtDate(item.submitted_at)}</span>
-          </div>
-          {item.period && (
-            <div className="text-xs text-foreground/70 mt-1.5">
-              <span className="text-muted-foreground">Periode:</span> {item.period}
-            </div>
-          )}
-          {item.reason && (
-            <div className="text-xs text-muted-foreground mt-1 italic truncate" title={item.reason}>
-              "{item.reason}"
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <Button
-            size="sm"
-            variant="outline"
-            className="border-red-400 dark:border-red-400/30 text-red-600 dark:text-red-300 hover:bg-red-100 dark:bg-red-500/10 h-7 text-xs px-2"
-            data-testid={`hr-inbox-reject-btn-${item.id}`}
-            onClick={(e) => { e.stopPropagation(); onReject(item); }}
-          >
-            <XCircle className="w-3 h-3 mr-1" /> Tolak
-          </Button>
-          <Button
-            size="sm"
-            className="bg-green-600 hover:bg-green-500 h-7 text-xs px-2"
-            data-testid={`hr-inbox-approve-btn-${item.id}`}
-            onClick={(e) => { e.stopPropagation(); onApprove(item); }}
-          >
-            <CheckCircle2 className="w-3 h-3 mr-1" /> Setujui
-          </Button>
-          <ChevronRight className="w-4 h-4 text-muted-foreground/50 group-hover:text-violet-600 dark:text-violet-400" />
-        </div>
-      </div>
-    </motion.div>
+        </Isian>
+      )}
+      <Isian label="Catatan (opsional)" htmlFor="hr-inbox-approve-note">
+        <Textarea id="hr-inbox-approve-note" data-testid="hr-inbox-approve-note" value={note}
+          onChange={(e) => setNote(e.target.value)} rows={3} placeholder="Tambahkan catatan untuk pemohon" />
+      </Isian>
+    </FormPopup>
   );
 }
 
@@ -446,17 +247,20 @@ export default function HRApprovalInboxModule({ token, onNavigate }) {
 
   const [items, setItems] = useState([]);
   const [counts, setCounts] = useState({});
+  const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('all');
   const [search, setSearch] = useState('');
   const [viewItem, setViewItem] = useState(null);
   const [approveItem, setApproveItem] = useState(null);
-  const [rejectItem, setRejectItem] = useState(null);
 
   const fetchInbox = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch(`${API}/api/hr/inbox`, { headers });
+      const [r, rs] = await Promise.all([
+        fetch(`${API}/api/hr/inbox?limit_per_type=${BATAS_PER_JENIS}`, { headers }),
+        fetch(`${API}/api/hr/inbox/summary`, { headers }),
+      ]);
       if (!r.ok) {
         const e = await r.json().catch(() => ({}));
         toast.error(e.detail || 'Gagal memuat inbox');
@@ -465,8 +269,9 @@ export default function HRApprovalInboxModule({ token, onNavigate }) {
       const data = await r.json();
       setItems(data.items || []);
       setCounts(data.counts || {});
+      setSummary(rs.ok ? await rs.json().catch(() => null) : null);
     } catch (e) {
-      toast.error('Network error: ' + e.message);
+      toast.error('Gagal terhubung ke server: ' + e.message);
     } finally {
       setLoading(false);
     }
@@ -498,8 +303,8 @@ export default function HRApprovalInboxModule({ token, onNavigate }) {
         body: JSON.stringify({ note: note || undefined, ...extra }),
       });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.detail || 'Gagal approve');
-      toast.success(`${TYPE_META[item.type]?.label || item.type} disetujui`);
+      if (!r.ok) throw new Error(data.detail || 'Gagal menyetujui');
+      toast.success(`${labelJenis(item.type)} disetujui`);
       setViewItem(null);
       fetchInbox();
     } catch (e) {
@@ -515,8 +320,8 @@ export default function HRApprovalInboxModule({ token, onNavigate }) {
         body: JSON.stringify({ reason }),
       });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.detail || 'Gagal reject');
-      toast.success(`${TYPE_META[item.type]?.label || item.type} ditolak`);
+      if (!r.ok) throw new Error(data.detail || 'Gagal menolak');
+      toast.success(`${labelJenis(item.type)} ditolak`);
       setViewItem(null);
       fetchInbox();
     } catch (e) {
@@ -524,158 +329,144 @@ export default function HRApprovalInboxModule({ token, onNavigate }) {
     }
   };
 
-  // semua jenis (dulu hanya 4 jenis → koreksi absen & perubahan data tidak ikut "Semua")
-  const total = Object.values(counts).reduce((a, n) => a + (Number(n) || 0), 0);
+  // Tolak = konfirmasi merah dengan alasan wajib (dulu dialog sendiri).
+  const mintaTolak = async (item) => {
+    const alasan = await confirmDialog({
+      title: 'Tolak permohonan ini?',
+      body: `${item.title || 'Permohonan'} dari ${item.requester_name || '—'}. Alasan dikirim ke pemohon.`,
+      input: { label: 'Alasan penolakan (wajib)', placeholder: 'Tulis alasan penolakan' },
+      confirmLabel: 'Tolak', danger: true,
+    });
+    if (!alasan) return;
+    await doReject(item, alasan);
+  };
+
+  // Hitungan penuh dari /summary; bila gagal dimuat, jatuh ke jumlah baris yang dimuat.
+  const hitung = (k) => (summary ? Number(summary[k] || 0) : Number(counts[k] || 0));
+  const total = summary ? Number(summary.total_pending || 0)
+    : Object.values(counts).reduce((a, n) => a + (Number(n) || 0), 0);
+  const terpotong = Object.keys(TYPE_META).filter((k) => hitung(k) > Number(counts[k] || 0));
+
+  const opsi = [
+    { key: 'all', label: 'Semua jenis', count: total },
+    ...Object.entries(TYPE_META).map(([k, m]) => ({ key: k, label: m.label, count: hitung(k) })),
+  ];
+
+  const kolom = [
+    { kunci: 'judul', label: 'Permohonan', hp: 'judul', isi: (i) => (
+      <div className="min-w-0 md:max-w-[22rem]" data-testid={`hr-inbox-item-${i.id}`}>
+        <p className="truncate font-medium text-foreground" title={i.title}>{i.title || '—'}</p>
+        {i.reason && <p className="hidden truncate text-xs text-muted-foreground md:block" title={i.reason}>{i.reason}</p>}
+      </div>) },
+    { kunci: 'jenis', label: 'Jenis', isi: (i) => <TypeBadge type={i.type} /> },
+    { kunci: 'pemohon', label: 'Pemohon', isi: (i) => (
+      <div className="min-w-0">
+        <p className="text-sm">{i.requester_name || '—'}</p>
+        {i.requester_dept && <p className="text-xs text-muted-foreground">{i.requester_dept}</p>}
+      </div>) },
+    { kunci: 'periode', label: 'Periode', isi: (i) => <span className="text-sm">{i.period || '—'}</span> },
+    { kunci: 'diajukan', label: 'Diajukan', isi: (i) => <span className="text-sm md:whitespace-nowrap">{fmtDate(i.submitted_at)}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (i) => (
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="destructive" data-testid={`hr-inbox-reject-btn-${i.id}`} onClick={() => mintaTolak(i)}>
+          <XCircle />Tolak
+        </Button>
+        <Button size="sm" variant="success" data-testid={`hr-inbox-approve-btn-${i.id}`} onClick={() => setApproveItem(i)}>
+          <CheckCircle2 />Setujui
+        </Button>
+      </div>) },
+  ];
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Inbox Approval SDM"
-        subtitle="Pusat persetujuan terpadu — Cuti, Lembur, Penyesuaian Gaji, Resignasi, dan Approval Absensi dalam satu tempat."
-        icon={Inbox}
-        actions={
-          <div className="flex items-center gap-2">
-            {/* RC-IA T-4: optional cross-link — hr-inbox (approval absensi) → hr-attendance-hub (kelola lengkap).
-                Kedua modul dipertahankan by-design; link ini hanya jalan pintas navigasi. */}
-            {onNavigate && (
-              <Button
-                variant="outline" size="sm"
-                onClick={() => onNavigate('hr-attendance-hub', { tab: 'approval' })}
-                className="gap-1.5 text-xs border-blue-400/40 text-blue-600 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-500/10"
-                data-testid="hr-inbox-attendance-hub-link"
-                title="Buka Attendance Hub (absensi manual, otomatis & approval)"
-              >
-                <CalendarCheck className="w-3.5 h-3.5" /> Attendance Hub
-                <ChevronRight className="w-3.5 h-3.5" />
-              </Button>
-            )}
-            <Button variant="ghost" size="sm" onClick={fetchInbox} disabled={loading} className="text-muted-foreground hover:text-foreground" data-testid="hr-inbox-refresh">
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            </Button>
-          </div>
-        }
-      />
-
-      {/* KPI cards */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-        <StatCard label="Total Pending" value={total} icon={Inbox} tone="violet" />
-        <StatCard label="Cuti / Izin" value={counts.leave || 0} icon={Calendar} tone="violet" testId="kpi-leave" />
-        <StatCard label="Lembur" value={counts.overtime || 0} icon={Clock} tone="amber" testId="kpi-overtime" />
-        <StatCard label="Penyesuaian Gaji" value={counts.salary_adjustment || 0} icon={DollarSign} tone="emerald" testId="kpi-salary" />
-        <StatCard label="Resignasi" value={counts.resignation || 0} icon={UserMinus} tone="red" testId="kpi-resignation" />
-        <StatCard label="Approval Absensi" value={counts.attendance || 0} icon={CalendarCheck} tone="blue" testId="kpi-attendance" />
-      </div>
-
-      {/* Filter + Search */}
-      <GlassCard className="p-4 space-y-4">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <Tabs value={tab} onValueChange={setTab}>
-            <TabsList className="bg-foreground/5 flex-wrap h-auto p-1">
-              <TabsTrigger value="all" data-testid="hr-inbox-tab-all">Semua ({total})</TabsTrigger>
-              <TabsTrigger value="leave" data-testid="hr-inbox-tab-leave">Cuti ({counts.leave || 0})</TabsTrigger>
-              <TabsTrigger value="overtime" data-testid="hr-inbox-tab-overtime">Lembur ({counts.overtime || 0})</TabsTrigger>
-              <TabsTrigger value="salary_adjustment" data-testid="hr-inbox-tab-salary">Gaji ({counts.salary_adjustment || 0})</TabsTrigger>
-              <TabsTrigger value="resignation" data-testid="hr-inbox-tab-resignation">Resignasi ({counts.resignation || 0})</TabsTrigger>
-              <TabsTrigger value="attendance" data-testid="hr-inbox-tab-attendance">Absensi ({counts.attendance || 0})</TabsTrigger>
-              <TabsTrigger value="attendance_correction" data-testid="hr-inbox-tab-correction">Koreksi absen ({counts.attendance_correction || 0})</TabsTrigger>
-              <TabsTrigger value="employee_data_change" data-testid="hr-inbox-tab-data-change">Perubahan data ({counts.employee_data_change || 0})</TabsTrigger>
-            </TabsList>
-          </Tabs>
-          <div className="flex items-center bg-foreground/5 border border-foreground/10 rounded-md px-3 min-w-[220px]">
-            <Search className="w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder="Cari nama / departemen / alasan..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="bg-transparent border-0 focus-visible:ring-0 text-sm"
-              data-testid="hr-inbox-search"
-            />
-          </div>
+    <PageLayout testId="hr-inbox-module" title="Inbox SDM"
+      subtitle="Semua permohonan SDM yang menunggu keputusan: cuti, lembur, gaji, absensi, dan perubahan data."
+      actions={onNavigate && (
+        /* RC-IA T-4: jalan pintas ke hub absensi (kelola lengkap). Kedua modul dipertahankan by-design. */
+        <Button variant="outline" onClick={() => onNavigate('hr-attendance-hub', { tab: 'approval' })}
+          data-testid="hr-inbox-attendance-hub-link" title="Buka menu Absensi (absen manual, otomatis, dan persetujuan)">
+          <CalendarCheck />Buka absensi
+        </Button>
+      )}
+      filters={<>
+        {/* 8 jenis sebagai pil memakan dua baris → satu pilihan ringkas berisi jumlah per jenis */}
+        <SmartNativeSelect searchable={false} value={tab} onChange={(e) => setTab(e.target.value)} className="w-56"
+          aria-label="Jenis permohonan" data-testid="hr-inbox-tab">
+          {opsi.map((o) => <option key={o.key} value={o.key}>{`${o.label} (${o.count})`}</option>)}
+        </SmartNativeSelect>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Cari nama, departemen, alasan" value={search} onChange={(e) => setSearch(e.target.value)}
+            className="pl-8" data-testid="hr-inbox-search" />
         </div>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="inbox-sdm" namaLembar="Permohonan" baris={filtered} testId="hr-inbox-unduh"
+          kolom={[
+            { label: 'Permohonan', nilai: (i) => i.title || '' },
+            { label: 'Jenis', nilai: (i) => labelJenis(i.type) },
+            { label: 'Pemohon', nilai: (i) => i.requester_name || '' },
+            { label: 'Kode', nilai: (i) => i.requester_code || '' },
+            { label: 'Departemen', nilai: (i) => i.requester_dept || '' },
+            { label: 'Periode', nilai: (i) => i.period || '' },
+            { label: 'Diajukan', nilai: (i) => fmtDate(i.submitted_at) },
+            { label: 'Alasan', nilai: (i) => i.reason || '' },
+          ]} />
+        <Button variant="outline" size="icon" onClick={fetchInbox} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="hr-inbox-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile label="Semua menunggu" value={formatNumber(total)} accent={total ? 'warning' : 'default'}
+            sub="Semua permohonan SDM yang belum diputuskan." />
+          <StatTile testId="kpi-leave" label="Cuti / izin" value={formatNumber(hitung('leave'))}
+            sub="Menunggu atasan atau SDM." />
+          <StatTile testId="kpi-overtime" label="Lembur" value={formatNumber(hitung('overtime'))}
+            sub="Ajuan lembur yang menunggu." />
+          <StatTile testId="kpi-attendance" label="Absensi & koreksi" value={formatNumber(hitung('attendance') + hitung('attendance_correction'))}
+            sub="Absen di luar aturan dan koreksi absen." />
+        </div>
+      }>
+      {/* RC-IA T-4: tautan kontekstual saat melihat persetujuan absen */}
+      {tab === 'attendance' && onNavigate && (
+        <Notice tone="info" icon={CalendarCheck} testId="hr-inbox-attendance-crosslink-note"
+          action={<Button variant="outline" size="sm" onClick={() => onNavigate('hr-attendance-hub', { tab: 'approval' })}
+            data-testid="hr-inbox-attendance-hub-link-inline">Buka absensi<ChevronRight /></Button>}>
+          Persetujuan absen juga tersedia di menu Absensi — lengkap dengan absen manual dan otomatis.
+        </Notice>
+      )}
+      {terpotong.length > 0 && (
+        <Notice tone="warning" testId="hr-inbox-terpotong">
+          Daftar menampilkan {BATAS_PER_JENIS} permohonan terbaru per jenis. Jumlah di kartu dan pil adalah hitungan penuh.
+        </Notice>
+      )}
 
-        {/* RC-IA T-4: contextual cross-link only when viewing the attendance approval tab */}
-        {tab === 'attendance' && onNavigate && (
-          <div className="flex items-center justify-between gap-2 rounded-lg border border-blue-400/30 bg-blue-50 dark:bg-blue-500/10 px-3 py-2 text-xs text-blue-700 dark:text-blue-300" data-testid="hr-inbox-attendance-crosslink-note">
-            <span className="flex items-center gap-1.5"><CalendarCheck className="w-3.5 h-3.5 flex-shrink-0" /> Approval absensi juga tersedia di <b>Attendance Hub</b> — lengkap dengan absensi manual & otomatis.</span>
-            <Button variant="ghost" size="sm" onClick={() => onNavigate('hr-attendance-hub', { tab: 'approval' })} className="h-6 px-2 text-xs text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-500/20 flex-shrink-0" data-testid="hr-inbox-attendance-hub-link-inline">
-              Buka Hub <ChevronRight className="w-3 h-3 ml-0.5" />
-            </Button>
-          </div>
-        )}
+      {loading && items.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat permohonan…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={filtered} kunci={(i) => `${i.type}-${i.id}`} onKlikBaris={setViewItem}
+          testId="hr-inbox-list"
+          kosong={<EmptyState testId="hr-inbox-empty" title="Tidak ada permohonan yang menunggu"
+            description={search ? 'Ubah kata pencarian.'
+              : tab === 'all' ? 'Semua permohonan sudah diproses.' : `Tidak ada permohonan ${labelJenis(tab).toLowerCase()} yang menunggu.`} />} />
+      )}
 
-        {/* List */}
-        {loading ? (
-          <div className="flex items-center justify-center h-40">
-            <div className="space-y-2 w-full">{Array.from({length:4}).map((_,i)=><Skeleton key={i} className="h-14 rounded-lg"/>)}</div>
-          </div>
-        ) : filtered.length === 0 ? (
-          <EmptyState
-            icon={Sparkles}
-            title="Tidak ada approval pending"
-            description={tab === 'all' ? 'Semua permohonan sudah diproses 🎉' : `Tidak ada permohonan ${TYPE_META[tab]?.label || tab} yang pending.`}
-            data-testid="hr-inbox-empty"
-          />
-        ) : (
-          <div className="space-y-2">
-            <AnimatePresence>
-              {filtered.map(item => (
-                <InboxItemCard
-                  key={`${item.type}-${item.id}`}
-                  item={item}
-                  onView={setViewItem}
-                  onApprove={setApproveItem}
-                  onReject={setRejectItem}
-                />
-              ))}
-            </AnimatePresence>
-          </div>
-        )}
-      </GlassCard>
+      {viewItem && (
+        <ItemDetail
+          item={viewItem}
+          onClose={() => setViewItem(null)}
+          onApprove={(it) => { setViewItem(null); setApproveItem(it); }}
+          onReject={(it) => { setViewItem(null); mintaTolak(it); }}
+        />
+      )}
 
-      {/* Detail Drawer */}
-      <ItemDetailDrawer
-        item={viewItem}
-        open={!!viewItem}
-        onClose={() => setViewItem(null)}
-        onApprove={(it) => { setViewItem(null); setApproveItem(it); }}
-        onReject={(it) => { setViewItem(null); setRejectItem(it); }}
-      />
-
-      {/* Approve Confirm Dialog */}
       <ApproveDialog
         item={approveItem}
         open={!!approveItem}
         onClose={() => setApproveItem(null)}
         onConfirm={doApprove}
       />
-
-      {/* Reject Dialog */}
-      <RejectDialog
-        item={rejectItem}
-        open={!!rejectItem}
-        onClose={() => setRejectItem(null)}
-        onConfirm={doReject}
-      />
-    </div>
+    </PageLayout>
   );
 }
-
-function StatCard({ label, value, icon: Icon, tone = 'slate', testId }) {
-  const toneMap = {
-    violet:  'text-violet-600 dark:text-violet-300 bg-violet-100 dark:bg-violet-500/10 border-violet-300 dark:border-violet-400/20',
-    amber:   'text-amber-600 dark:text-amber-300 bg-amber-100 dark:bg-amber-500/10 border-amber-300 dark:border-amber-400/20',
-    emerald: 'text-emerald-600 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-500/10 border-emerald-300 dark:border-emerald-400/20',
-    red:     'text-red-600 dark:text-red-300 bg-red-100 dark:bg-red-500/10 border-red-300 dark:border-red-400/20',
-    slate:   'text-foreground/70 bg-foreground/5 border-foreground/10',
-  };
-  const klass = toneMap[tone] || toneMap.slate;
-  return (
-    <GlassCard className="p-3" data-testid={testId}>
-      <div className={`flex items-center gap-2 text-xs text-muted-foreground mb-1`}>
-        {Icon && <Icon className="w-3 h-3" />} {label}
-      </div>
-      <div className={`text-2xl font-bold ${klass.split(' ')[0]}`}>{fmtNum(value)}</div>
-    </GlassCard>
-  );
-}
-
