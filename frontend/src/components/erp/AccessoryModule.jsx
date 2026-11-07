@@ -713,7 +713,7 @@ function RequestInternalTab({ token, items, title, subtitle }) {
       });
       setShow(false); setLines([{ acc_id:'', qty_requested:1, unit:'pcs', notes:'' }]);
       setForm({ divisi:'', requester_employee_id:'', purpose:'', needed_by:'', items:[] });
-      setMsg(`Request ${res.request_code || ''} dibuat & menunggu persetujuan.`);
+      setMsg(`Permintaan ${res.request_code || ''} dibuat & menunggu persetujuan.`);
       load();
     } catch(e) { setFormErr(e.message); }
     finally { setSaving(false); }
@@ -725,10 +725,10 @@ function RequestInternalTab({ token, items, title, subtitle }) {
     try {
       if (status === 'Approved') {
         await api('POST', `/api/dewi/accessory-requests/${id}/allocate`, token, { notes });
-        setMsg('Request disetujui. Klik “Serahkan” untuk mengeluarkan barang & memotong stok.');
+        setMsg('Permintaan disetujui. Klik “Serahkan” untuk mengeluarkan barang & memotong stok.');
       } else if (status === 'Rejected') {
         await api('POST', `/api/dewi/accessory-requests/${id}/reject`, token, { reason: notes || 'Ditolak admin aksesoris' });
-        setMsg('Request ditolak. Stok tidak berubah.');
+        setMsg('Permintaan ditolak. Stok tidak berubah.');
       } else if (status === 'Issued') {
         const res = await api('POST', `/api/dewi/accessory-requests/${id}/deliver`, token, { notes });
         const n = (res.issued_items || []).length;
@@ -1067,7 +1067,7 @@ function PurchaseRequestTab({ token, items, title, subtitle, ringkasan }) {
         )}
         {pr.status === 'Submitted' && !pr.can_approve && (
           <span className="max-w-[16rem] text-right text-xs leading-snug text-muted-foreground" data-testid={`pr-blocked-${pr.id}`}>
-            {pr.blocked_reason || 'Menunggu approver yang berhak.'}
+            {pr.blocked_reason || 'Menunggu penyetuju yang berhak.'}
           </span>
         )}
         {/* 2026-11-06 (Tahap 2): PR lama yang sudah disetujui/dipesan diteruskan ke Pengadaan

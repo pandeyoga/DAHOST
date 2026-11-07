@@ -69,7 +69,7 @@ const labelStatusPO = (s) => PO_STATUS_LABEL[s]
 const GRADE_TONE = { 'A+': 'success', A: 'success', B: 'info', C: 'warning', D: 'danger' };
 function GradeBadge({ grade }) {
   if (!grade || grade === '-') return <span className="text-sm text-muted-foreground">—</span>;
-  return <StatusBadge status={`grade-${grade}`} label={`Grade ${grade}`} tone={GRADE_TONE[grade] || 'muted'} />;
+  return <StatusBadge status={`grade-${grade}`} label={`Nilai ${grade}`} tone={GRADE_TONE[grade] || 'muted'} />;
 }
 
 function ActiveBadge({ active }) {
@@ -592,7 +592,7 @@ function SupplierDetail({ token, supplierId, materials, onClose, onChanged, onEd
               sub={sc.on_time_rate == null ? 'Belum ada data tanggal terima' : `${fmtNum(sc.on_time_samples ?? 0)} penerimaan dinilai`} />
           </div>
           <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="text-muted-foreground">Grade kualitas:</span>
+            <span className="text-muted-foreground">Nilai kualitas:</span>
             <GradeBadge grade={sc.quality_grade} />
             {sup.rating_manual && (
               <span className="inline-flex items-center gap-1 text-[hsl(var(--warning-text))]">
