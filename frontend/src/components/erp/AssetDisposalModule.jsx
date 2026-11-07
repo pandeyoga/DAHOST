@@ -215,7 +215,7 @@ export default function AssetDisposalModule({ token }) {
       {disposalTarget && (
         <FormPopup open onClose={() => setDisposalTarget(null)} ukuran="pendek" testId="disposal-dialog"
           judul={`Lepaskan aset ${disposalTarget.name}`} keterangan="Jurnal laba/rugi pelepasan dicatat otomatis."
-          onSimpan={dispose} labelSimpan="Lepaskan aset">
+          onSimpan={dispose} labelSimpan="Lepaskan aset" warnaSimpan="destructive">
           <dl className="divide-y divide-[var(--glass-border)]">
             <BarisDetail label="Kode">{disposalTarget.code}</BarisDetail>
             <BarisDetail label="Harga perolehan"><span className="tabular-nums">{fmt(disposalTarget.purchase_cost)}</span></BarisDetail>

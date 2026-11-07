@@ -199,7 +199,7 @@ export default function BadDebtWriteOffModule({ token }) {
       {writeOffTarget && (
         <FormPopup open onClose={() => setWriteOffTarget(null)} ukuran="pendek" testId="bd-writeoff-dialog"
           judul="Hapus buku piutang macet" keterangan="Jurnal beban piutang tak tertagih dicatat otomatis."
-          onSimpan={() => writeOff(writeOffTarget)} labelSimpan="Catat hapus buku"
+          onSimpan={() => writeOff(writeOffTarget)} labelSimpan="Hapus buku" warnaSimpan="destructive"
           bisaSimpan={!!writeOffTarget.reason && writeOffTarget.reason.length >= 10}>
           <Notice tone="danger" icon={AlertTriangle}
             title="Piutang faktur ini dihapus dari buku.">

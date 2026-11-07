@@ -503,7 +503,7 @@ export default function FixedAssetsModule({ token }) {
       {disposeOpen && selected && (
         <FormPopup open onClose={() => setDisposeOpen(false)} ukuran="pendek" testId="fa-dispose-form"
           judul={`Lepaskan aset ${selected.code}`} keterangan="Jurnal pelepasan dibuat otomatis; laba/rugi pelepasan dihitung dari nilai buku."
-          onSimpan={disposeAsset} labelSimpan="Lepaskan aset" bisaSimpan={!!disposeForm.disposal_date}>
+          onSimpan={disposeAsset} labelSimpan="Lepaskan aset" warnaSimpan="destructive" bisaSimpan={!!disposeForm.disposal_date}>
           <Isian label="Tanggal pelepasan" wajib>
             <DatePicker value={disposeForm.disposal_date} onChange={v => setDisposeForm(f => ({ ...f, disposal_date: v }))} testId="fa-dispose-date" />
           </Isian>
