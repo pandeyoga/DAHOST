@@ -1092,6 +1092,7 @@ function AuditTrailTab({ token }) {
       <div className="space-y-2">
         <p className="text-sm font-medium text-foreground">Rincian penyesuaian ({fmt(page.total)})</p>
         <TabelData kolom={kolom} baris={items} testId="audit-table"
+          kunci={(r) => r.id || `${r.session_id || r.session_ref}|${r.fg_code}|${r.timestamp}|${r.direction}|${r.qty}`}
           kosong={<EmptyState title={loading ? 'Memuat…' : 'Tidak ada penyesuaian pada saringan ini'}
             description={loading ? undefined : 'Penyesuaian muncul setelah hasil opname disetujui.'} />} />
       </div>
