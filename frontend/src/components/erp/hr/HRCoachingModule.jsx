@@ -1,32 +1,89 @@
+/**
+ * Coaching AI (Portal SDM › AI SDM) — rencana coaching personal berbasis AI untuk pengembangan karyawan.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, form = FormPopup (dulu panel besar di halaman), rencana =
+ * DetailPopup, riwayat = tabel + unduh Excel/CSV (dulu kartu, diam-diam 10 dari 20 terakhir — kini sampai 200),
+ * tanpa gradien/emoji, warna token, bahasa Indonesia (SMART goals → sasaran SMART, milestone → tonggak).
+ */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { GlassCard } from '@/components/ui/glass';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { RefreshCw, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
-import { Target, Sparkles, AlertTriangle, Loader2, Award, TrendingUp, Calendar, Lightbulb } from 'lucide-react';
-import { IconButton } from '../IconButton';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup from '@/components/ui/detail-popup';
+import { formatDateID } from '@/lib/format';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, StatusBadge } from '../moduleAtoms';
 
 const FOCUS_OPTIONS = [
-  { value: 'performance', label: 'Peningkatan Kinerja' },
+  { value: 'performance', label: 'Peningkatan kinerja' },
   { value: 'leadership', label: 'Kepemimpinan' },
-  { value: 'technical', label: 'Skill Teknis' },
+  { value: 'technical', label: 'Keahlian teknis' },
   { value: 'communication', label: 'Komunikasi' },
-  { value: 'time_management', label: 'Manajemen Waktu' },
+  { value: 'time_management', label: 'Manajemen waktu' },
   { value: 'overall', label: 'Keseluruhan' },
 ];
+const labelFokus = (v) => FOCUS_OPTIONS.find(o => o.value === v)?.label || v || '—';
+
+function Bagian({ judul, children }) {
+  return <div><p className="mb-1 text-sm font-medium text-foreground">{judul}</p>{children}</div>;
+}
+
+/** Isi satu rencana coaching (dipakai untuk hasil baru dan riwayat). */
+function IsiRencana({ plan = {}, employee }) {
+  return (
+    <>
+      {employee && <p className="text-sm text-muted-foreground">{[employee.name, employee.job_title, employee.department].filter(Boolean).join(' · ')}</p>}
+      {plan.employee_summary && <Bagian judul="Ringkasan situasi"><p className="text-sm leading-relaxed text-muted-foreground">{plan.employee_summary}</p></Bagian>}
+      {plan.key_development_areas?.length > 0 && (
+        <Bagian judul="Area pengembangan utama">
+          <div className="flex flex-wrap gap-1.5">{plan.key_development_areas.map((a, i) => <StatusBadge key={i} status="area" label={a} tone="default" />)}</div>
+        </Bagian>
+      )}
+      {plan.smart_goals?.length > 0 && (
+        <Bagian judul="Sasaran SMART">
+          <TabelData baris={plan.smart_goals} kunci={(g) => g.goal} testId="coaching-goals"
+            kolom={[
+              { kunci: 'goal', label: 'Sasaran', hp: 'judul', isi: (g) => <span className="text-sm">{g.goal}</span> },
+              { kunci: 'waktu', label: 'Waktu', isi: (g) => <span className="text-sm">{g.timeline || '—'}</span> },
+              { kunci: 'ukur', label: 'Cara mengukur', isi: (g) => <span className="text-sm">{g.measurement || '—'}</span> },
+            ]} />
+        </Bagian>
+      )}
+      {plan.weekly_actions?.length > 0 && (
+        <Bagian judul="Langkah mingguan">
+          <ol className="list-decimal space-y-1 pl-5 text-sm text-muted-foreground">{plan.weekly_actions.map((w, i) => <li key={i}>{w}</li>)}</ol>
+        </Bagian>
+      )}
+      {plan.recommended_trainings?.length > 0 && (
+        <Bagian judul="Pelatihan yang disarankan">
+          <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">{plan.recommended_trainings.map((t, i) => <li key={i}>{t}</li>)}</ul>
+        </Bagian>
+      )}
+      {plan.manager_support && <Bagian judul="Dukungan atasan"><p className="text-sm text-muted-foreground">{plan.manager_support}</p></Bagian>}
+      {plan.milestones?.length > 0 && (
+        <Bagian judul="Tonggak">
+          <ul className="space-y-1 text-sm text-muted-foreground">{plan.milestones.map((m, i) => <li key={i}><span className="font-medium text-foreground">Bulan {m.month}:</span> {m.target}</li>)}</ul>
+        </Bagian>
+      )}
+      {plan.motivational_message && <p className="text-sm italic text-muted-foreground">"{plan.motivational_message}"</p>}
+    </>
+  );
+}
 
 export default function HRCoachingModule({ token }) {
   const [employees, setEmployees] = useState([]);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [bukaForm, setBukaForm] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
   const [result, setResult] = useState(null);
+  const [lihat, setLihat] = useState(null);
   const [formData, setFormData] = useState({ focus: 'overall', goals: '' });
 
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
@@ -47,7 +104,7 @@ export default function HRCoachingModule({ token }) {
 
   const fetchHistory = useCallback(async () => {
     try {
-      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/hr/ai/coaching/history`, { headers });
+      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/hr/ai/coaching/history?limit=200`, { headers });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       setHistory(data?.data || []);
@@ -77,260 +134,75 @@ export default function HRCoachingModule({ token }) {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       setResult(data?.data);
-      toast.success('Coaching plan berhasil dibuat!', { icon: <Sparkles className="w-4 h-4" /> });
+      setBukaForm(false);
+      toast.success('Rencana coaching berhasil dibuat!', { icon: <Sparkles className="h-4 w-4" /> });
       fetchHistory();
     } catch (e) {
-      toast.error(`Gagal membuat coaching plan: ${e.message}`);
+      toast.error(`Gagal membuat rencana coaching: ${e.message}`);
     } finally {
       setGenerating(false);
     }
   };
 
+  const kolom = [
+    { kunci: 'nama', label: 'Karyawan', hp: 'judul', isi: (h) => <span className="font-medium text-foreground">{h.employee_name || '—'}</span> },
+    { kunci: 'judul', label: 'Rencana', isi: (h) => <span className="text-sm">{h.plan?.coaching_title || '—'}</span> },
+    { kunci: 'fokus', label: 'Fokus', isi: (h) => <span className="text-sm">{labelFokus(h.focus)}</span> },
+    { kunci: 'tgl', label: 'Dibuat', isi: (h) => <span className="text-sm md:whitespace-nowrap">{formatDateID(h.generated_at)}</span> },
+  ];
+
   return (
-    <div className="space-y-6 p-6" data-testid="hr-coaching-module">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center">
-            <Target className="w-5 h-5 text-foreground" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Performance Coaching AI</h1>
-            <p className="text-sm text-muted-foreground">Rencana coaching personal berbasis AI untuk pengembangan karyawan</p>
-          </div>
-        </div>
-        <IconButton icon={Sparkles} onClick={fetchEmployees} disabled={loading} tooltip="Refresh" />
-      </div>
+    <PageLayout testId="hr-coaching-module" title="Coaching AI"
+      subtitle="Rencana coaching personal berbasis AI untuk pengembangan karyawan."
+      actions={<Button onClick={() => setBukaForm(true)} data-testid="coaching-new"><Sparkles />Buat rencana coaching</Button>}
+      tools={<>
+        <TombolUnduh namaBerkas="riwayat-coaching" namaLembar="Riwayat" baris={history} testId="coaching-unduh"
+          kolom={[
+            { label: 'Karyawan', nilai: (h) => h.employee_name || '' }, { label: 'Rencana', nilai: (h) => h.plan?.coaching_title || '' },
+            { label: 'Fokus', nilai: (h) => labelFokus(h.focus) }, { label: 'Dibuat', nilai: (h) => formatDateID(h.generated_at) },
+            { label: 'Sasaran', nilai: (h) => (h.plan?.smart_goals || []).map(g => g.goal).join('; ') },
+          ]} />
+        <Button variant="outline" size="icon" onClick={() => { fetchEmployees(); fetchHistory(); }} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}>
+      <TabelData kolom={kolom} baris={history} kunci={(h) => h.id || `${h.employee_id}-${h.generated_at}`} onKlikBaris={setLihat} testId="coaching-history"
+        kosong={<EmptyState title="Belum ada rencana coaching" description='Klik "Buat rencana coaching", pilih karyawan dan fokusnya.'
+          action={<Button onClick={() => setBukaForm(true)}><Sparkles />Buat rencana coaching</Button>} />} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Form Panel */}
-        <GlassCard className="p-6 space-y-4">
-          <div className="flex items-center gap-2 mb-4">
-            <Sparkles className="w-5 h-5 text-emerald-500" />
-            <h2 className="text-lg font-semibold text-foreground">Pilih Karyawan & Fokus Coaching</h2>
-          </div>
-
-          <div className="space-y-4">
-            <div>
-              <Label>Karyawan</Label>
-              <Select value={selectedEmployee || ''} onValueChange={setSelectedEmployee}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Pilih karyawan..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {employees.map(e => (
-                    <SelectItem key={e.id || e.employee_code} value={e.id || e.employee_code}>
-                      {e.name} - {e.department || 'N/A'} ({e.job_title || 'N/A'})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Label>Fokus Coaching</Label>
-              <Select value={formData.focus} onValueChange={v => setFormData({ ...formData, focus: v })}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {FOCUS_OPTIONS.map(opt => (
-                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Label>Tujuan Spesifik (Opsional)</Label>
-              <Textarea
-                placeholder="Misal: Meningkatkan produktivitas 20% dalam 3 bulan, Mengurangi error QC..."
-                value={formData.goals}
-                onChange={e => setFormData({ ...formData, goals: e.target.value })}
-                rows={3}
-              />
-            </div>
-
-            <Button onClick={handleGenerate} disabled={generating || !selectedEmployee} className="w-full">
-              {generating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Membuat Plan...</> : <><Sparkles className="w-4 h-4 mr-2" /> Generate Coaching Plan</>}
-            </Button>
-          </div>
-        </GlassCard>
-
-        {/* Result Panel */}
-        <GlassCard className="p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Award className="w-5 h-5 text-amber-500" />
-            <h2 className="text-lg font-semibold text-foreground">Coaching Plan</h2>
-          </div>
-
-          {result ? (
-            <div className="space-y-4 max-h-[600px] overflow-y-auto">
-              {/* Title */}
-              {result.plan?.coaching_title && (
-                <div className="p-4 rounded-xl bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border border-emerald-300 dark:border-emerald-500/20">
-                  <h3 className="text-lg font-bold text-foreground">{result.plan.coaching_title}</h3>
-                  {result.employee && (
-                    <p className="text-xs text-muted-foreground mt-1">{result.employee.name} • {result.employee.job_title} • {result.employee.department}</p>
-                  )}
-                </div>
-              )}
-
-              {/* Summary */}
-              {result.plan?.employee_summary && (
-                <div>
-                  <h4 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-2">
-                    <Lightbulb className="w-4 h-4 text-amber-500" /> Ringkasan Situasi
-                  </h4>
-                  <p className="text-xs text-muted-foreground leading-relaxed">{result.plan.employee_summary}</p>
-                </div>
-              )}
-
-              {/* Development Areas */}
-              {result.plan?.key_development_areas && result.plan.key_development_areas.length > 0 && (
-                <div>
-                  <h4 className="text-sm font-semibold text-foreground mb-2">Area Pengembangan Kunci</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {result.plan.key_development_areas.map((area, i) => (
-                      <Badge key={i} variant="outline" className="text-xs">{area}</Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* SMART Goals */}
-              {result.plan?.smart_goals && result.plan.smart_goals.length > 0 && (
-                <div>
-                  <h4 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-2">
-                    <Target className="w-4 h-4 text-blue-500" /> SMART Goals
-                  </h4>
-                  <div className="space-y-2">
-                    {result.plan.smart_goals.map((sg, i) => (
-                      <div key={i} className="p-3 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)]">
-                        <p className="text-xs font-medium text-foreground mb-1">{sg.goal}</p>
-                        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                          <span>⏱️ {sg.timeline}</span>
-                          <span>📊 {sg.measurement}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Weekly Actions */}
-              {result.plan?.weekly_actions && result.plan.weekly_actions.length > 0 && (
-                <div>
-                  <h4 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-indigo-500" /> Aksi Mingguan
-                  </h4>
-                  <ul className="space-y-1">
-                    {result.plan.weekly_actions.map((wa, i) => (
-                      <li key={i} className="text-xs text-muted-foreground flex items-start gap-2">
-                        <span className="text-indigo-500 font-bold mt-0.5">W{i + 1}.</span>{wa}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* Recommended Trainings */}
-              {result.plan?.recommended_trainings && result.plan.recommended_trainings.length > 0 && (
-                <div>
-                  <h4 className="text-sm font-semibold text-foreground mb-2">Rekomendasi Training</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {result.plan.recommended_trainings.map((rt, i) => (
-                      <Badge key={i} variant="secondary" className="text-xs">{rt}</Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Manager Support */}
-              {result.plan?.manager_support && (
-                <div className="p-3 rounded-lg bg-amber-100 dark:bg-amber-500/10 border border-amber-300 dark:border-amber-500/20">
-                  <h4 className="text-xs font-semibold text-foreground mb-1">Dukungan Manager</h4>
-                  <p className="text-xs text-muted-foreground">{result.plan.manager_support}</p>
-                </div>
-              )}
-
-              {/* Milestones */}
-              {result.plan?.milestones && result.plan.milestones.length > 0 && (
-                <div>
-                  <h4 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-green-500" /> Milestones
-                  </h4>
-                  <div className="space-y-2">
-                    {result.plan.milestones.map((ms, i) => (
-                      <div key={i} className="flex items-start gap-2">
-                        <Badge className="shrink-0">Bulan {ms.month}</Badge>
-                        <p className="text-xs text-muted-foreground">{ms.target}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Motivational Message */}
-              {result.plan?.motivational_message && (
-                <div className="p-4 rounded-lg bg-gradient-to-br from-blue-500/10 to-indigo-500/10 border border-blue-300 dark:border-blue-500/20">
-                  <p className="text-xs text-foreground italic leading-relaxed">"{result.plan.motivational_message}"</p>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center h-64 text-center">
-              <Target className="w-12 h-12 text-muted-foreground/40 mb-3" />
-              <p className="text-sm text-muted-foreground">Pilih karyawan dan klik "Generate Coaching Plan" untuk membuat rencana coaching personal</p>
-            </div>
-          )}
-        </GlassCard>
-      </div>
-
-      {/* History */}
-      <GlassCard className="p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <Calendar className="w-5 h-5 text-indigo-500" />
-          <h2 className="text-lg font-semibold text-foreground">Riwayat Coaching Plans</h2>
-        </div>
-        {history.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-8">Belum ada riwayat coaching plan</p>
-        ) : (
-          <div className="space-y-2">
-            {history.slice(0, 10).map((h, i) => (
-              <Dialog key={i}>
-                <DialogTrigger asChild>
-                  <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)] hover:bg-[var(--glass-hover)] transition-colors cursor-pointer">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">{h.employee_name}</p>
-                      <p className="text-xs text-muted-foreground">Fokus: {h.focus} • {new Date(h.generated_at).toLocaleDateString('id-ID')}</p>
-                    </div>
-                    <Badge variant="outline">Lihat Plan</Badge>
-                  </div>
-                </DialogTrigger>
-                <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
-                  <DialogHeader>
-                    <DialogTitle>{h.plan?.coaching_title || 'Coaching Plan'}</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4">
-                    {h.plan?.employee_summary && <p className="text-sm text-muted-foreground">{h.plan.employee_summary}</p>}
-                    {h.plan?.smart_goals && (
-                      <div>
-                        <h4 className="text-sm font-semibold mb-2">Goals</h4>
-                        <ul className="space-y-1">
-                          {h.plan.smart_goals.map((g, j) => (
-                            <li key={j} className="text-xs">• {g.goal}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                </DialogContent>
-              </Dialog>
+      <FormPopup open={bukaForm} onClose={() => setBukaForm(false)} ukuran="pendek" onSimpan={handleGenerate} menyimpan={generating}
+        bisaSimpan={!!selectedEmployee} labelSimpan="Buat rencana" judul="Rencana coaching baru" testId="coaching-form"
+        keterangan="AI menyusun sasaran, langkah mingguan, dan pelatihan berdasarkan data karyawan.">
+        <Isian label="Karyawan" wajib>
+          <SmartNativeSelect value={selectedEmployee || ''} onChange={(e) => setSelectedEmployee(e.target.value || null)} searchable>
+            <option value="">Pilih karyawan…</option>
+            {employees.map(e => (
+              <option key={e.id || e.employee_code} value={e.id || e.employee_code}>{e.name} - {e.department || 'tanpa departemen'} ({e.job_title || 'tanpa jabatan'})</option>
             ))}
-          </div>
-        )}
-      </GlassCard>
-    </div>
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Fokus coaching">
+          <SmartNativeSelect searchable={false} value={formData.focus} onChange={(e) => setFormData({ ...formData, focus: e.target.value })}>
+            {FOCUS_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Tujuan khusus (opsional)" htmlFor="coaching-tujuan">
+          <Textarea id="coaching-tujuan" rows={3} value={formData.goals} onChange={(e) => setFormData({ ...formData, goals: e.target.value })}
+            placeholder="Misal: naikkan produktivitas 20% dalam 3 bulan, kurangi kesalahan QC" />
+        </Isian>
+      </FormPopup>
+
+      {result && (
+        <DetailPopup open onClose={() => setResult(null)} judul={result.plan?.coaching_title || 'Rencana coaching'} testId="coaching-result">
+          <IsiRencana plan={result.plan} employee={result.employee} />
+        </DetailPopup>
+      )}
+      {lihat && (
+        <DetailPopup open onClose={() => setLihat(null)} judul={lihat.plan?.coaching_title || 'Rencana coaching'} testId="coaching-history-detail"
+          keterangan={`${lihat.employee_name || ''} · fokus ${labelFokus(lihat.focus).toLowerCase()} · ${formatDateID(lihat.generated_at)}`}>
+          <IsiRencana plan={lihat.plan} />
+        </DetailPopup>
+      )}
+    </PageLayout>
   );
 }
