@@ -14,19 +14,34 @@
  *   • Scrap (Buang)      → write-off (jurnal kerugian bila barang sudah bernilai)
  *
  * Sumber data: /api/wms/quarantine (+ /summary, /location, /reject-categories)
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout; tab buatan → pil penyaring; kartu angka StatTile
+ * (kartu "Qty tertahan" disembunyikan: menjumlah satuan berbeda); tabel + unduhan; aksi baris maks 2
+ * (sisanya "Lainnya" & popup detail); form lepas/scrap/manual = FormPopup; detail baris = DetailPopup.
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Button } from '@/components/ui/button';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { materialOptionLabel } from '@/lib/materialFields';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { toast } from 'sonner';
 import {
-  ShieldAlert, RefreshCw, Search, X, PackageCheck, Undo2, Trash2,
-  AlertTriangle, Clock, Boxes, Banknote, Info, CheckCircle2, PackagePlus,
-  ShieldOff, Lock,
+  RefreshCw, Search, PackageCheck, Undo2, Trash2, Info, PackagePlus,
+  ShieldOff, Lock, MoreHorizontal,
 } from 'lucide-react';
-import { EmptyState } from './EmptyState';
-import { Skeleton } from '@/components/ui/skeleton';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import { PurchaseReturnCreateModal } from './procurement/PurchaseReturnModule';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
@@ -52,37 +67,44 @@ const fmtDate = (iso) => {
 const SOURCE_LABEL = {
   goods_receipt: 'Penerimaan (GR)',
   grn_inspection: 'Re-inspeksi QC',
-  manual: 'Temuan Gudang',
+  manual: 'Temuan gudang',
 };
+const sourceLabel = (t) => SOURCE_LABEL[t] || t || '-';
 
-function Stat({ icon: Icon, label, value, hint, tone = 'violet' }) {
-  const tones = {
-    violet: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.05)] border-[hsl(var(--primary)/0.2)]',
-    amber: 'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.05)] border-[hsl(var(--warning)/0.2)]',
-    red: 'text-[hsl(var(--destructive))]  bg-[hsl(var(--destructive)/0.05)] border-[hsl(var(--destructive)/0.2)]',
-    emerald: 'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.05)] border-[hsl(var(--success)/0.2)]',
-  };
+/** Kotak status ketersediaan satu item (dipakai di tabel & popup detail). */
+function TandaBlokir({ it }) {
   return (
-    <div className={`rounded-xl border p-3 ${tones[tone]}`}>
-      <div className="flex items-center gap-2 mb-1">
-        <Icon className="w-4 h-4" />
-        <span className="text-xs text-muted-foreground">{label}</span>
-      </div>
-      <div className="text-2xl font-bold leading-tight">{value}</div>
-      {hint && <div className="text-[11px] text-muted-foreground mt-0.5">{hint}</div>}
-    </div>
+    <span className="inline-flex flex-wrap gap-1">
+      {Number(it.legacy_return_qty || 0) > 0 && (
+        <span title="Retur ke pemasok sebelum ada dokumen Retur Pembelian — belum tercatat penyelesaiannya (tukar / nota debit / refund). Selesaikan manual bersama Keuangan."
+          data-testid={`quarantine-legacy-return-${it.id}`}>
+          <StatusBadge tone="primary" label={`Retur lama tanpa penyelesaian · ${fmtNum(it.legacy_return_qty)} ${it.unit}`} />
+        </span>
+      )}
+      {it.availability_blocked === false ? (
+        <span title={`Barang reject ini MASIH terhitung tersedia sebanyak ${fmtNum(it.availability_shortfall)} ${it.unit} — bisa ikut dipakai produksi atau terkirim ke pembeli.`}
+          data-testid={`quarantine-unblocked-badge-${it.id}`}>
+          <StatusBadge tone="danger" label="Tidak terblokir" />
+        </span>
+      ) : it.status === 'open' ? (
+        <span title="Ketersediaan terblokir penuh — barang ini tidak bisa dipakai produksi/penjualan."
+          data-testid={`quarantine-blocked-badge-${it.id}`}>
+          <StatusBadge tone="success" label="Terblokir" />
+        </span>
+      ) : null}
+    </span>
   );
 }
 
 function ActionModal({ item, action, locations, quarantineLoc, onClose, onSubmit }) {
   const CONF = {
     release: {
-      title: 'Lepas ke Stok', color: 'bg-[hsl(var(--success))]',
+      title: 'Lepas ke stok', label: 'Lepas ke stok',
       desc: 'Barang lolos re-inspeksi / sudah di-rework. Stok akan kembali TERSEDIA di lokasi tujuan.',
       needLoc: true,
     },
     scrap: {
-      title: 'Scrap (Buang)', color: 'bg-[hsl(var(--destructive))]',
+      title: 'Scrap (buang)', label: 'Scrap barang',
       desc: 'Barang dibuang. Bila barang sudah masuk nilai persediaan, jurnal kerugian (write-off) akan di-posting otomatis.',
       needLoc: false,
     },
@@ -114,98 +136,52 @@ function ActionModal({ item, action, locations, quarantineLoc, onClose, onSubmit
   };
 
   return (
-    <div className="fixed inset-0 bg-foreground/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-[var(--card-surface)] rounded-2xl shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between mb-3">
-          <div>
-            <h3 className="text-lg font-bold">{CONF.title}</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">{item.material_code} · {item.material_name}</p>
-          </div>
-          <button onClick={onClose} className="p-1 hover:bg-foreground/5 rounded"><X className="w-4 h-4" /></button>
-        </div>
-
-        <div className="text-xs bg-[var(--glass-bg)] border border-border rounded-lg px-3 py-2 mb-3 text-muted-foreground">
-          {CONF.desc}
-        </div>
-
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">
-              Qty ({item.unit}) — sisa karantina {fmtNum(item.remaining_qty)}
-            </label>
-            <input type="number" min="0" step="0.01" value={qty} onChange={(e) => setQty(e.target.value)}
-              className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
-              data-testid="quarantine-action-qty" />
-          </div>
-
-          {CONF.needLoc && (
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Lokasi Tujuan *</label>
-              <SmartNativeSelect value={toLoc} onChange={(e) => setToLoc(e.target.value)}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
-                data-testid="quarantine-action-location">
-                <option value="">— Pilih lokasi tujuan —</option>
-                {locations.map((l) => <option key={l.id} value={l.id}>{l.code ? `${l.code} · ` : ''}{l.name || l.code}</option>)}
-              </SmartNativeSelect>
-              <p className="text-[11px] text-muted-foreground mt-1">
-                Lokasi karantina ({quarantineLoc?.name || 'Area Karantina QC'}) tidak bisa dipilih sebagai tujuan.
-              </p>
-            </div>
-          )}
-
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Catatan</label>
-            <textarea rows="2" value={notes} onChange={(e) => setNotes(e.target.value)}
-              className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
-              placeholder="Alasan / keterangan tindak lanjut..." data-testid="quarantine-action-notes" />
-          </div>
-
-          {lateReceipt && (
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">
-                Harga satuan (Rp) — bawaan harga GR/PO; harga potongan hanya diketik Keuangan
-              </label>
-              <input type="number" min="0" step="any" value={price} onChange={(e) => setPrice(e.target.value)}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
-                data-testid="quarantine-action-price" />
-            </div>
-          )}
-
-          {!item.valued && action !== 'release' && (
-            <div className="text-[11px] text-muted-foreground bg-[var(--glass-bg)] border border-border rounded-lg px-3 py-2">
-              <Info className="w-3 h-3 inline mr-1" />
-              Barang ini <strong>belum masuk nilai persediaan</strong> (reject saat penerimaan tidak ditagihkan supplier),
-              jadi tidak ada jurnal keuangan yang dibuat.
-            </div>
-          )}
-          {lateReceipt && (
-            <div className="text-[11px] text-muted-foreground bg-[var(--glass-bg)] border border-border rounded-lg px-3 py-2">
-              <Info className="w-3 h-3 inline mr-1" />
-              Dicatat sebagai <strong>penerimaan susulan</strong> pada GR {item.source?.number || ''}: Persediaan (Dr) /
-              Hutang Belum Ditagih GRNI (Cr) sebesar qty × harga, HPP rata-rata diperbarui, dan qty ini
-              bisa ditagih pemasok lewat Tagihan dari GR.
-            </div>
-          )}
-          {!item.valued && action === 'release' && !lateReceipt && (
-            <div className="text-[11px] text-muted-foreground bg-[var(--glass-bg)] border border-border rounded-lg px-3 py-2">
-              <Info className="w-3 h-3 inline mr-1" />
-              Barang akan <strong>dikapitalisasi</strong> ke nilai persediaan (jurnal penyesuaian otomatis).
-            </div>
-          )}
-
-          {err && <div className="text-sm text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.15)]  rounded-lg px-3 py-2">{err}</div>}
-        </div>
-
-        <div className="flex justify-end gap-2 mt-5">
-          <button onClick={onClose} className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
-          <button onClick={submit} disabled={busy}
-            className={`px-4 py-2 ${CONF.color} text-white rounded-lg text-sm hover:brightness-110 disabled:opacity-50`}
-            data-testid="quarantine-action-submit">
-            {busy ? 'Memproses...' : CONF.title}
-          </button>
-        </div>
-      </div>
-    </div>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="quarantine-action"
+      judul={CONF.title} keterangan={`${item.material_code} · ${item.material_name}`}
+      onSimpan={submit} menyimpan={busy} galat={err} labelSimpan={CONF.label}>
+      <p className="text-sm text-muted-foreground">{CONF.desc}</p>
+      <Isian label={`Qty (${item.unit})`} wajib htmlFor="q-act-qty" petunjuk={`Sisa karantina ${fmtNum(item.remaining_qty)} ${item.unit}.`}>
+        <Input id="q-act-qty" type="number" min="0" step="0.01" value={qty} onChange={(e) => setQty(e.target.value)}
+          data-testid="quarantine-action-qty" />
+      </Isian>
+      {CONF.needLoc && (
+        <Isian label="Lokasi tujuan" wajib htmlFor="q-act-lokasi"
+          petunjuk={`Lokasi karantina (${quarantineLoc?.name || 'Area Karantina QC'}) tidak bisa dipilih sebagai tujuan.`}>
+          <SmartNativeSelect id="q-act-lokasi" value={toLoc} onChange={(e) => setToLoc(e.target.value)} data-testid="quarantine-action-location">
+            <option value="">— Pilih lokasi tujuan —</option>
+            {locations.map((l) => <option key={l.id} value={l.id}>{l.code ? `${l.code} · ` : ''}{l.name || l.code}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+      )}
+      <Isian label="Catatan" htmlFor="q-act-catatan">
+        <Textarea id="q-act-catatan" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)}
+          placeholder="Alasan / keterangan tindak lanjut…" data-testid="quarantine-action-notes" />
+      </Isian>
+      {lateReceipt && (
+        <Isian label="Harga satuan (Rp)" htmlFor="q-act-harga" petunjuk="Bawaan harga GR/PO; harga potongan hanya diketik Keuangan.">
+          <Input id="q-act-harga" type="number" min="0" step="any" value={price} onChange={(e) => setPrice(e.target.value)}
+            data-testid="quarantine-action-price" />
+        </Isian>
+      )}
+      {!item.valued && action !== 'release' && (
+        <Notice tone="info" icon={Info}>
+          Barang ini <strong>belum masuk nilai persediaan</strong> (reject saat penerimaan tidak ditagihkan supplier),
+          jadi tidak ada jurnal keuangan yang dibuat.
+        </Notice>
+      )}
+      {lateReceipt && (
+        <Notice tone="info" icon={Info}>
+          Dicatat sebagai <strong>penerimaan susulan</strong> pada GR {item.source?.number || ''}: Persediaan (Dr) /
+          Hutang Belum Ditagih GRNI (Cr) sebesar qty × harga, HPP rata-rata diperbarui, dan qty ini
+          bisa ditagih pemasok lewat Tagihan dari GR.
+        </Notice>
+      )}
+      {!item.valued && action === 'release' && !lateReceipt && (
+        <Notice tone="info" icon={Info}>
+          Barang akan <strong>dikapitalisasi</strong> ke nilai persediaan (jurnal penyesuaian otomatis).
+        </Notice>
+      )}
+    </FormPopup>
   );
 }
 
@@ -239,58 +215,42 @@ function ManualModal({ token, locations, onClose, onSaved }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-foreground/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-[var(--card-surface)] rounded-2xl shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-lg font-bold mb-1">Karantina Manual</h3>
-        <p className="text-xs text-muted-foreground mb-4">Pindahkan stok yang sudah ada di gudang ke Karantina QC (mis. ditemukan rusak saat penyimpanan).</p>
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Material *</label>
-            <SmartNativeSelect value={form.material_id} onChange={(e) => setForm({ ...form, material_id: e.target.value })}
-              className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="quarantine-manual-material">
-              <option value="">— pilih material —</option>
-              {materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
-            </SmartNativeSelect>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Qty *</label>
-              <input type="number" min="0" step="0.01" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="quarantine-manual-qty" />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Lokasi Asal *</label>
-              <SmartNativeSelect value={form.from_location_id} onChange={(e) => setForm({ ...form, from_location_id: e.target.value })}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="quarantine-manual-location">
-                <option value="">— pilih lokasi asal —</option>
-                {locations.map((l) => <option key={l.id} value={l.id}>{`${l.code ? `${l.code} · ` : ''}${l.name || l.code}`}</option>)}
-              </SmartNativeSelect>
-            </div>
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Alasan</label>
-            <SmartNativeSelect value={form.reason_code} onChange={(e) => setForm({ ...form, reason_code: e.target.value })}
-              className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="quarantine-manual-reason">
-              <option value="">— pilih alasan —</option>
-              {reasons.map((r) => <option key={r.code} value={r.code}>{r.label}</option>)}
-            </SmartNativeSelect>
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Catatan</label>
-            <textarea rows="2" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="quarantine-manual-notes" />
-          </div>
-          {err && <div className="text-sm text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.15)]  rounded-lg px-3 py-2">{err}</div>}
-        </div>
-        <div className="flex justify-end gap-2 mt-5">
-          <button onClick={onClose} className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
-          <button onClick={save} disabled={busy} className="px-4 py-2 bg-primary text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50"
-            data-testid="quarantine-manual-submit">
-            {busy ? 'Menyimpan...' : 'Karantina'}
-          </button>
-        </div>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="quarantine-manual"
+      judul="Karantina manual"
+      keterangan="Pindahkan stok yang sudah ada di gudang ke Karantina QC (mis. ditemukan rusak saat penyimpanan)."
+      onSimpan={save} menyimpan={busy} galat={err} labelSimpan="Karantina">
+      <Isian label="Material" wajib htmlFor="q-man-material">
+        <SmartNativeSelect id="q-man-material" value={form.material_id} onChange={(e) => setForm({ ...form, material_id: e.target.value })}
+          data-testid="quarantine-manual-material">
+          <option value="">— pilih material —</option>
+          {materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
+        </SmartNativeSelect>
+      </Isian>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Qty" wajib htmlFor="q-man-qty">
+          <Input id="q-man-qty" type="number" min="0" step="0.01" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })}
+            data-testid="quarantine-manual-qty" />
+        </Isian>
+        <Isian label="Lokasi asal" wajib htmlFor="q-man-lokasi">
+          <SmartNativeSelect id="q-man-lokasi" value={form.from_location_id} onChange={(e) => setForm({ ...form, from_location_id: e.target.value })}
+            data-testid="quarantine-manual-location">
+            <option value="">— pilih lokasi asal —</option>
+            {locations.map((l) => <option key={l.id} value={l.id}>{`${l.code ? `${l.code} · ` : ''}${l.name || l.code}`}</option>)}
+          </SmartNativeSelect>
+        </Isian>
       </div>
-    </div>
+      <Isian label="Alasan" htmlFor="q-man-alasan">
+        <SmartNativeSelect id="q-man-alasan" value={form.reason_code} onChange={(e) => setForm({ ...form, reason_code: e.target.value })}
+          data-testid="quarantine-manual-reason">
+          <option value="">— pilih alasan —</option>
+          {reasons.map((r) => <option key={r.code} value={r.code}>{r.label}</option>)}
+        </SmartNativeSelect>
+      </Isian>
+      <Isian label="Catatan" htmlFor="q-man-catatan">
+        <Textarea id="q-man-catatan" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
+          data-testid="quarantine-manual-notes" />
+      </Isian>
+    </FormPopup>
   );
 }
 
@@ -305,7 +265,8 @@ export default function QuarantineModule({ token: tokenProp }) {
   const [err, setErr] = useState('');
   const [modal, setModal] = useState(null);     // {item, action}
   const [showManual, setShowManual] = useState(false);
-  const [toast, setToast] = useState('');
+  const [detail, setDetail] = useState(null);
+  const [reasonLabels, setReasonLabels] = useState({});   // kode alasan reject → label staf
   // "Perlu Tindakan Manual" = hanya item yang ketersediaannya BELUM terblokir,
   // yaitu barang reject yang MASIH terhitung tersedia dan bisa ikut dipakai
   // produksi / terkirim ke pembeli. Dulu kegagalan blokir hanya tercatat di log
@@ -336,30 +297,35 @@ export default function QuarantineModule({ token: tokenProp }) {
     (async () => {
       try { setLocInfo(await api('GET', '/api/wms/quarantine/location', token)); }
       catch { /* noop */ }
+      try {
+        const cats = await api('GET', '/api/wms/quarantine/reject-categories', token);
+        setReasonLabels(Object.fromEntries((Array.isArray(cats) ? cats : []).map((c) => [c.code, c.label])));
+      } catch { /* label alasan gagal dimuat — kode tetap tampil */ }
     })();
   }, [token]);
 
   const storageLocs = useMemo(() => (locInfo?.storage_locations || []), [locInfo]);
+  const alasan = (code) => reasonLabels[code] || code;
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return items;
     return items.filter((it) => `${it.material_code} ${it.material_name} ${it.source?.number || ''} ${it.source?.supplier_name || ''}`.toLowerCase().includes(q));
   }, [items, search]);
-  const pg = useClientPagination(filtered, 10);
+  const pg = useClientPagination(filtered, 25);
 
   const doAction = async (payload) => {
     const { item, action } = modal;
     const path = action === 'release' ? 'release' : 'scrap';
     const res = await api('POST', `/api/wms/quarantine/${item.id}/${path}`, token, payload);
     setModal(null);
+    setDetail(null);
     const p = res.posting || {};
     const jeMsg = p.je_number ? ` · jurnal ${p.je_number} di-posting`
       : (p.skipped ? ' · tanpa jurnal keuangan' : (p.ok === false ? ` · jurnal GAGAL: ${p.error || ''}` : ''));
     const lateMsg = res.late_receipt ? ` · penerimaan susulan @ ${fmtRp(res.unit_price)} (bisa ditagih)` : '';
-    setToast(`${action === 'release' ? 'Dilepas ke stok' : 'Di-scrap'} ${fmtNum(payload.qty)} ${item.unit}${jeMsg}${lateMsg}`);
+    toast.success(`${action === 'release' ? 'Dilepas ke stok' : 'Di-scrap'} ${fmtNum(payload.qty)} ${item.unit}${jeMsg}${lateMsg}`, { duration: 6000 });
     load();
-    setTimeout(() => setToast(''), 6000);
   };
 
   const dispLabel = (d) => {
@@ -375,304 +341,253 @@ export default function QuarantineModule({ token: tokenProp }) {
     setRetrying(it.id); setErr('');
     try {
       const res = await api('POST', `/api/wms/quarantine/${it.id}/retry-block`, token);
-      setToast(res.pesan || 'Blokir ketersediaan berhasil dipasang ulang.');
+      toast.success(res.pesan || 'Blokir ketersediaan berhasil dipasang ulang.', { duration: 6000 });
+      setDetail(null);
       await load();
-      setTimeout(() => setToast(''), 6000);
     } catch (e) { setErr(e.message); }
     finally { setRetrying(''); }
   };
 
   const unblockedCount = Number(summary?.unblocked_items || 0);
   const unblockedQty = Number(summary?.unblocked_qty || 0);
+  // Penyaring tampilan (dulu tiga tab buatan bergaris bawah) — urutan & perilaku sama.
+  const tampilan = legacyOnly ? 'legacy' : needsAction ? 'needs' : 'all';
+  const pilihTampilan = (k) => {
+    if (k === 'legacy') { setNeedsAction(false); setLegacyOnly(true); }
+    else if (k === 'needs') { setStatus('open'); setLegacyOnly(false); setNeedsAction(true); }
+    else { setNeedsAction(false); setLegacyOnly(false); }
+  };
+  const adaData = summary && (Number(summary.open_items || 0) + Number(summary.closed_items || 0)) > 0;
+
+  // Dari popup detail: popup detail ditutup dulu, lalu form tindak lanjut dibuka (tidak ada dua popup bertumpuk).
+  const buka = (fn, dariDetail) => () => { if (dariDetail) setDetail(null); fn(); };
+  const tombolLepas = (it, dariDetail = false) => (
+    <Button size="sm" variant="success" onClick={buka(() => setModal({ item: it, action: 'release' }), dariDetail)}
+      data-testid={`quarantine-release-${it.id}`}>
+      <PackageCheck />Lepas
+    </Button>
+  );
+  const tombolBlokir = (it) => (
+    <Button size="sm" variant="destructive" onClick={() => retryBlock(it)} disabled={retrying === it.id}
+      title="Pasang ulang blokir ketersediaan agar barang reject ini tidak terhitung tersedia"
+      data-testid={`quarantine-retry-block-${it.id}`}>
+      <ShieldOff />{retrying === it.id ? 'Memblokir…' : 'Coba blokir ulang'}
+    </Button>
+  );
+  const aksiBaris = (it) => {
+    if (it.status !== 'open') {
+      return (
+        <div className="text-right text-xs text-muted-foreground" data-testid={`quarantine-history-${it.id}`}>
+          {(it.dispositions || []).map((d) => <div key={d.id}>{dispLabel(d)} {fmtNum(d.qty)} · {d.by || '-'}</div>)}
+        </div>
+      );
+    }
+    const blokirDulu = it.availability_blocked === false;
+    return (
+      <div className="flex items-center justify-end gap-1.5">
+        {blokirDulu ? tombolBlokir(it) : tombolLepas(it)}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="icon-sm" variant="outline" aria-label="Tindak lanjut lainnya" title="Tindak lanjut lainnya"
+              data-testid={`quarantine-more-${it.id}`}>
+              <MoreHorizontal />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {blokirDulu && (
+              <DropdownMenuItem onSelect={() => setModal({ item: it, action: 'release' })} data-testid={`quarantine-release-${it.id}`}>
+                <PackageCheck className="mr-2 h-4 w-4" />Lepas ke stok
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onSelect={() => setRtpItem(it)} data-testid={`quarantine-return-${it.id}`}>
+              <Undo2 className="mr-2 h-4 w-4" />Buat retur pembelian
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setModal({ item: it, action: 'scrap' })} data-testid={`quarantine-scrap-${it.id}`}
+              className="text-[hsl(var(--danger-text))]">
+              <Trash2 className="mr-2 h-4 w-4" />Scrap (buang)
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    );
+  };
+
+  const kolom = [
+    { kunci: 'material', label: 'Material', hp: 'judul', isi: (it) => (
+      <div className="min-w-0" data-testid={`quarantine-row-${it.id}`}>
+        <p className="font-medium">{it.material_name || '-'}</p>
+        <p className="text-xs tabular-nums text-muted-foreground">{it.material_code}</p>
+        <div className="mt-1"><TandaBlokir it={it} /></div>
+      </div>) },
+    { kunci: 'sumber', label: 'Sumber', hp: 'keterangan', isi: (it) => (
+      <div className="text-sm">
+        <div>{sourceLabel(it.source?.type)}</div>
+        {(it.source?.number || it.source?.supplier_name) && (
+          <div className="text-xs text-muted-foreground">{[it.source?.number, it.source?.supplier_name].filter(Boolean).join(' · ')}</div>
+        )}
+      </div>) },
+    { kunci: 'alasan', label: 'Alasan', isi: (it) => ((it.reject_reasons || []).length === 0
+      ? <span className="text-muted-foreground">-</span>
+      : <div className="text-sm">{(it.reject_reasons || []).map((r, i) => <div key={i}>{alasan(r.code)}{r.qty ? ` · ${fmtNum(r.qty)}` : ''}</div>)}</div>) },
+    { kunci: 'qty', label: 'Qty reject', rata: 'kanan', isi: (it) => <span className="tabular-nums">{fmtNum(it.qty)} <span className="text-xs text-muted-foreground">{it.unit}</span></span> },
+    { kunci: 'sisa', label: 'Sisa', rata: 'kanan', isi: (it) => <span className="font-medium tabular-nums">{fmtNum(it.remaining_qty)}</span> },
+    { kunci: 'nilai', label: 'Nilai', rata: 'kanan', isi: (it) => (
+      <div className="text-sm">
+        {Number(it.unit_cost || 0) > 0 ? <span className="tabular-nums">{fmtRp(it.value)}</span> :
+          <span className="text-[hsl(var(--warning-text))]" title="Harga satuan material belum diisi — jurnal keuangan akan dilewati">harga belum diisi</span>}
+        <div className="text-xs text-muted-foreground">{it.valued ? 'sudah bernilai' : 'belum bernilai'}</div>
+      </div>) },
+    { kunci: 'umur', label: 'Umur', rata: 'kanan', isi: (it) => (
+      <div className="text-sm">
+        <span className={Number(it.age_days) >= 14 ? 'font-medium text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}>{fmtNum(it.age_days)} hari</span>
+        <div className="text-xs text-muted-foreground">{fmtDate(it.created_at)}</div>
+      </div>) },
+    { kunci: 'aksi', label: 'Tindak lanjut', rata: 'kanan', hp: 'aksi', isi: aksiBaris },
+  ];
 
   return (
-    <div className="space-y-5">
-      {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold flex items-center gap-2">
-            <ShieldAlert className="w-5 h-5 text-[hsl(var(--warning))] " /> Karantina QC
-          </h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            Barang <strong>reject QC</strong> ditahan di sini — stok tercatat tapi <strong>diblokir</strong> (tidak bisa dipakai produksi/penjualan)
-            sampai ada keputusan: lepas ke stok, buat Retur Pembelian, atau scrap.
-          </p>
-          {locInfo && (
-            <p className="text-xs text-muted-foreground mt-1">
-              Lokasi: <span className="tabular-nums">{locInfo.code}</span> · {locInfo.name}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => setShowManual(true)}
-            className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg text-sm hover:bg-foreground/5"
-            data-testid="quarantine-manual-btn">
-            <PackagePlus className="w-4 h-4" /> Karantina Manual
-          </button>
-          <button onClick={load} className="p-2 border border-border rounded-lg hover:bg-foreground/5" data-testid="quarantine-refresh">
-            <RefreshCw className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
-      {toast && (
-        <div className="text-sm text-[hsl(var(--success))] bg-[hsl(var(--success)/0.15)]  border border-[hsl(var(--success)/0.2)] rounded-lg px-4 py-2 flex items-center gap-2"
-          data-testid="quarantine-toast">
-          <CheckCircle2 className="w-4 h-4" /> {toast}
-        </div>
-      )}
-
-      {/* PERINGATAN MERAH — barang reject yang ketersediaannya BELUM terblokir.
-          Ini keadaan paling berbahaya di modul ini: barang cacat masih terhitung
-          TERSEDIA (`available = qty − reserved`), jadi bisa ikut dipilih untuk
-          produksi atau DIKIRIM KE PEMBELI. Penanda `quarantine/blocked` pada baris
-          stok hanya menyembunyikannya dari dropdown, tidak menghalangi perhitungan. */}
-      {unblockedCount > 0 && (
-        <div className="rounded-xl border-2 border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.15)] px-4 py-3"
-          data-testid="quarantine-unblocked-banner">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <ShieldOff className="w-6 h-6 text-[hsl(var(--destructive))] shrink-0 mt-0.5" />
-              <div>
-                <div className="font-bold text-[hsl(var(--destructive))] ">
-                  Ketersediaan BELUM terblokir — {fmtNum(unblockedCount)} item karantina ({fmtNum(unblockedQty)} unit)
-                </div>
-                <p className="text-sm text-[hsl(var(--destructive)/0.9)] mt-1 max-w-3xl">
-                  Barang <strong>REJECT</strong> ini masih terhitung sebagai stok <strong>TERSEDIA</strong>, sehingga
-                  bisa ikut dipilih untuk produksi atau <strong>terkirim ke pembeli</strong>. Perlu tindakan manual:
-                  tekan <em>Coba Blokir Ulang</em> pada barisnya. Bila tetap gagal, stok fisik di lokasi karantina
-                  kemungkinan lebih kecil dari qty karantina — lakukan opname/koreksi stok dulu.
-                </p>
-                {(summary?.unblocked_groups || []).length > 0 && (
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    {(summary.unblocked_groups || []).map((g) => (
-                      <span key={`${g.material_id}-${g.location_id}`}
-                        className="px-2 py-0.5 rounded-full text-xs bg-[hsl(var(--destructive)/0.2)] text-[hsl(var(--destructive))]  tabular-nums">
-                        {g.material_code || g.material_id} · belum terblokir {fmtNum(g.shortfall)} {g.unit}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-            {!needsAction && (
-              <button onClick={() => { setStatus('open'); setNeedsAction(true); }}
-                className="px-3 py-2 text-sm bg-[hsl(var(--destructive))] text-white rounded-lg hover:brightness-110 whitespace-nowrap"
-                data-testid="quarantine-show-needs-action">
-                Lihat daftar
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* KPI */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Stat icon={Boxes} label="Item Tertahan" value={fmtNum(summary?.open_items)} tone="amber"
-          hint={`${fmtNum(summary?.closed_items)} sudah selesai`} />
-        <Stat icon={ShieldAlert} label="Qty Tertahan" value={fmtNum(summary?.open_qty)} tone="violet"
-          hint="stok diblokir (available 0)" />
-        <Stat icon={Banknote} label="Nilai Tertahan" value={fmtRp(summary?.open_value)} tone="red"
-          hint={`${fmtNum(summary?.valued_items)} sudah bernilai · ${fmtNum(summary?.unvalued_items)} belum`} />
-        <Stat icon={Clock} label="Tertua" value={`${fmtNum(summary?.oldest_age_days)} hari`} tone="emerald"
-          hint={`${fmtNum(summary?.dispositions_total)} tindak lanjut tercatat`} />
-      </div>
-
-      {/* by reason */}
-      {summary && Object.keys(summary.by_reason || {}).length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-muted-foreground">Alasan reject:</span>
-          {Object.entries(summary.by_reason).map(([code, qty]) => (
-            <span key={code} className="px-2 py-0.5 rounded-full text-xs bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] ">
-              {code} · {fmtNum(qty)}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Tab: semua vs hanya yang perlu tindakan manual */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-border">
-        <button onClick={() => { setNeedsAction(false); setLegacyOnly(false); }}
-          className={`px-3 py-2 text-sm font-medium -mb-px border-b-2 ${!needsAction && !legacyOnly
-            ? 'border-[hsl(var(--primary)/0.35)] text-[hsl(var(--primary))] '
-            : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-          data-testid="quarantine-tab-all">
-          Semua Item Karantina
-        </button>
-        {/* 2026-11-02 (K11): retur supplier lama (sebelum dokumen Retur Pembelian) — diselesaikan manual */}
-        <button onClick={() => { setNeedsAction(false); setLegacyOnly(true); }}
-          className={`px-3 py-2 text-sm font-medium -mb-px border-b-2 ${legacyOnly
-            ? 'border-[hsl(var(--primary)/0.35)] text-[hsl(var(--primary))] '
-            : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-          data-testid="quarantine-tab-legacy-returns">
-          Retur Lama Tanpa Penyelesaian
-        </button>
-        <button onClick={() => { setStatus('open'); setLegacyOnly(false); setNeedsAction(true); }}
-          className={`px-3 py-2 text-sm font-medium -mb-px border-b-2 flex items-center gap-2 ${needsAction
-            ? 'border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))] '
-            : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-          data-testid="quarantine-tab-needs-action">
-          Perlu Tindakan Manual
-          <span className={`px-1.5 py-0.5 rounded-full text-[11px] font-bold ${unblockedCount > 0
-            ? 'bg-[hsl(var(--destructive))] text-white'
-            : 'bg-foreground/10 text-muted-foreground'}`} data-testid="quarantine-needs-action-badge">
-            {fmtNum(unblockedCount)}
-          </span>
-        </button>
-      </div>
-
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 bg-[var(--card-surface)] flex-1 min-w-48">
-          <Search className="w-4 h-4 text-muted-foreground" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari kode/nama material, no. GR, supplier..."
-            className="flex-1 bg-transparent text-sm focus:outline-none" data-testid="quarantine-search" />
-          {search && <button onClick={() => setSearch('')}><X className="w-4 h-4 text-muted-foreground" /></button>}
-        </div>
-        <SmartNativeSelect value={status} onChange={(e) => setStatus(e.target.value)} disabled={needsAction}
-          className="border border-border rounded-lg px-3 py-2 bg-[var(--card-surface)] text-sm disabled:opacity-50" data-testid="quarantine-status-filter">
-          <option value="open">Masih Tertahan</option>
-          <option value="closed">Sudah Selesai</option>
-          <option value="all">Semua</option>
+    <PageLayout testId="quarantine-module" title="Karantina QC"
+      subtitle="Barang reject QC ditahan & diblokir sampai dilepas, diretur ke pemasok, atau di-scrap."
+      actions={<Button onClick={() => setShowManual(true)} data-testid="quarantine-manual-btn"><PackagePlus />Karantina manual</Button>}
+      filters={<>
+        <FilterChips value={tampilan} onChange={pilihTampilan} hideWhenEmpty={false} testId="quarantine-tab"
+          options={[
+            { key: 'all', label: 'Semua item karantina' },
+            { key: 'legacy', label: 'Retur lama tanpa penyelesaian' },
+            { key: 'needs', label: 'Perlu tindakan manual', count: unblockedCount },
+          ]} />
+        <SmartNativeSelect value={status} onChange={(e) => setStatus(e.target.value)} disabled={needsAction || legacyOnly}
+          className="w-full sm:w-44" data-testid="quarantine-status-filter" aria-label="Status karantina">
+          <option value="open">Masih tertahan</option>
+          <option value="closed">Sudah selesai</option>
+          <option value="all">Semua status</option>
         </SmartNativeSelect>
-      </div>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari material, no. GR, supplier"
+            className="pl-8" data-testid="quarantine-search" />
+        </div>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="karantina-qc" namaLembar="Karantina QC" baris={filtered} testId="quarantine-unduh"
+          kolom={[
+            { label: 'Kode material', nilai: (it) => it.material_code },
+            { label: 'Material', nilai: (it) => it.material_name },
+            { label: 'Sumber', nilai: (it) => sourceLabel(it.source?.type) },
+            { label: 'No. dokumen', nilai: (it) => it.source?.number || '' },
+            { label: 'Pemasok', nilai: (it) => it.source?.supplier_name || '' },
+            { label: 'Alasan', nilai: (it) => (it.reject_reasons || []).map((r) => `${alasan(r.code)}${r.qty ? ` ${r.qty}` : ''}`).join('; ') },
+            { label: 'Satuan', nilai: (it) => it.unit },
+            { label: 'Qty reject', nilai: (it) => Number(it.qty || 0) },
+            { label: 'Sisa', nilai: (it) => Number(it.remaining_qty || 0) },
+            { label: 'Nilai (Rp)', nilai: (it) => (Number(it.unit_cost || 0) > 0 ? Number(it.value || 0) : '') },
+            { label: 'Bernilai', nilai: (it) => (it.valued ? 'Sudah' : 'Belum') },
+            { label: 'Ketersediaan', nilai: (it) => (it.availability_blocked === false ? 'Tidak terblokir' : it.status === 'open' ? 'Terblokir' : '') },
+            { label: 'Umur (hari)', nilai: (it) => Number(it.age_days || 0) },
+            { label: 'Masuk karantina', nilai: (it) => fmtDate(it.created_at) },
+            { label: 'Status', nilai: (it) => (it.status === 'open' ? 'Masih tertahan' : 'Sudah selesai') },
+          ]} />
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="quarantine-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={<>
+        {/* PERINGATAN MERAH — barang reject yang ketersediaannya BELUM terblokir: masih terhitung TERSEDIA
+            (`available = qty − reserved`), jadi bisa ikut dipilih untuk produksi atau DIKIRIM KE PEMBELI. */}
+        {unblockedCount > 0 && (
+          <Notice tone="danger" icon={ShieldOff} testId="quarantine-unblocked-banner"
+            title={`Ketersediaan belum terblokir — ${fmtNum(unblockedCount)} item karantina (${fmtNum(unblockedQty)} unit)`}
+            action={!needsAction && (
+              <Button size="sm" variant="destructive" onClick={() => pilihTampilan('needs')} data-testid="quarantine-show-needs-action">
+                Lihat daftar
+              </Button>
+            )}>
+            Barang reject ini masih terhitung stok tersedia, sehingga bisa ikut dipilih untuk produksi atau terkirim ke
+            pembeli. Tekan <em>Coba blokir ulang</em> pada barisnya. Bila tetap gagal, stok fisik di lokasi karantina
+            kemungkinan lebih kecil dari qty karantina — lakukan opname/koreksi stok dulu.
+            {(summary?.unblocked_groups || []).length > 0 && (
+              <span className="mt-1 block tabular-nums">
+                {(summary.unblocked_groups || []).map((g) => `${g.material_code || g.material_id} · belum terblokir ${fmtNum(g.shortfall)} ${g.unit}`).join(' · ')}
+              </span>
+            )}
+          </Notice>
+        )}
+        {adaData && (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <StatTile label="Item tertahan" value={fmtNum(summary?.open_items)} testId="quarantine-stat-items"
+              sub={`${fmtNum(summary?.closed_items)} item sudah selesai`} />
+            <StatTile label="Nilai tertahan" value={fmtRp(summary?.open_value)} testId="quarantine-stat-value"
+              sub={`Sisa × harga satuan · ${fmtNum(summary?.valued_items)} sudah bernilai, ${fmtNum(summary?.unvalued_items)} belum`} />
+            <StatTile label="Item tertua" value={`${fmtNum(summary?.oldest_age_days)} hari`} testId="quarantine-stat-oldest"
+              sub="Umur item terlama yang masih tertahan" />
+            <StatTile label="Tindak lanjut tercatat" value={fmtNum(summary?.dispositions_total)} testId="quarantine-stat-dispositions"
+              sub="Lepas, retur, dan scrap sejak awal" />
+          </div>
+        )}
+        {summary && Object.keys(summary.by_reason || {}).length > 0 && (
+          <p className="text-sm text-muted-foreground" data-testid="quarantine-by-reason">
+            Alasan reject (sisa tertahan): {Object.entries(summary.by_reason).map(([code, qty]) => `${alasan(code)} ${fmtNum(qty)}`).join(' · ')}
+          </p>
+        )}
+        {locInfo && (
+          <p className="text-xs text-muted-foreground">Lokasi karantina: <span className="tabular-nums">{locInfo.code}</span> · {locInfo.name}</p>
+        )}
+      </>}
+      footer={<>
+        {pg.total > 0 && <PaginationLite page={pg.page} totalPages={pg.totalPages} total={pg.total} pageSize={pg.pageSize} onPageChange={pg.setPage} />}
+        <p className="text-xs text-muted-foreground">
+          Cara kerja: saat Penerimaan Barang dikonfirmasi diterima, qty yang diterima masuk stok normal dan qty reject
+          otomatis masuk Karantina QC. Bila reject baru ditemukan setelah barang masuk, pakai re-inspeksi QC pada GR
+          (opsi lanjutkan meski sudah diterima) — stok otomatis dipindah ke karantina.
+        </p>
+      </>}>
+      {err && <Notice tone="danger" title={err} />}
 
-      {err && <div className="text-sm text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.15)]  rounded-lg px-4 py-2">{err}</div>}
+      {loading && items.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat karantina…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={pg.paged} onKlikBaris={setDetail} testId="quarantine-table"
+          kosong={needsAction ? (
+            <EmptyState icon={Lock} title="Semua barang karantina sudah terblokir"
+              description="Tidak ada barang reject yang masih terhitung tersedia: seluruh stok karantina tidak bisa dipakai produksi maupun dikirim ke pembeli." />
+          ) : (
+            <EmptyState icon={PackageCheck} title={search ? 'Tidak ada item yang cocok' : 'Tidak ada barang di karantina'}
+              description={search ? 'Ubah kata pencarian.' : 'Qty reject dari penerimaan barang akan otomatis muncul di sini.'} />
+          )} />
+      )}
 
-      {/* Table */}
-      <div className="bg-[var(--card-surface)] rounded-xl border border-border overflow-x-auto">
-        <table className="w-full text-sm min-w-[900px]">
-          <thead className="bg-[var(--glass-bg)] border-b border-border">
-            <tr>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">Material</th>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">Sumber</th>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">Alasan</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">Qty Reject</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">Sisa</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">Nilai</th>
-              <th className="text-center px-4 py-3 text-muted-foreground font-medium">Umur</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">Tindak Lanjut</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              Array.from({ length: 4 }).map((_, i) => (
-                <tr key={i}>{[...Array(8)].map((__, j) => <td key={j} className="px-3 py-2.5"><Skeleton className="h-4" /></td>)}</tr>
-              ))
-            ) : filtered.length === 0 ? (
-              <tr><td colSpan="8">
-                {needsAction ? (
-                  <EmptyState icon={Lock} title="Semua barang karantina sudah terblokir"
-                    description="Tidak ada barang reject yang masih terhitung tersedia. Ini keadaan yang benar: seluruh stok karantina sudah dipastikan tidak bisa dipakai produksi maupun dikirim ke pembeli." />
-                ) : (
-                  <EmptyState icon={PackageCheck} title="Tidak ada barang di karantina"
-                    description="Bagus! Semua barang reject QC sudah ditindaklanjuti. Qty reject dari penerimaan barang akan otomatis muncul di sini." />
-                )}
-              </td></tr>
-            ) : pg.paged.map((it) => (
-              <tr key={it.id} className="border-b border-border hover:bg-foreground/[0.02]" data-testid={`quarantine-row-${it.id}`}>
-                <td className="px-4 py-3">
-                  <div className="font-medium">{it.material_name || '-'}</div>
-                  <div className="tabular-nums text-xs text-muted-foreground">{it.material_code}</div>
-                  {Number(it.legacy_return_qty || 0) > 0 && (
-                    <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[11px] bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] "
-                      title="Retur ke pemasok sebelum ada dokumen Retur Pembelian — belum tercatat penyelesaiannya (tukar / nota debit / refund). Selesaikan manual bersama Keuangan."
-                      data-testid={`quarantine-legacy-return-${it.id}`}>
-                      <Undo2 className="w-3 h-3" /> Retur lama tanpa penyelesaian · {fmtNum(it.legacy_return_qty)} {it.unit}
-                    </span>
-                  )}
-                  {it.availability_blocked === false ? (
-                    <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[11px] font-bold bg-[hsl(var(--destructive))] text-white"
-                      title={`Barang reject ini MASIH terhitung tersedia sebanyak ${fmtNum(it.availability_shortfall)} ${it.unit} — bisa ikut dipakai produksi atau terkirim ke pembeli.`}
-                      data-testid={`quarantine-unblocked-badge-${it.id}`}>
-                      <ShieldOff className="w-3 h-3" /> TIDAK TERBLOKIR
-                    </span>
-                  ) : it.status === 'open' ? (
-                    <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[11px] bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] "
-                      title="Ketersediaan terblokir penuh — barang ini tidak bisa dipakai produksi/penjualan."
-                      data-testid={`quarantine-blocked-badge-${it.id}`}>
-                      <Lock className="w-3 h-3" /> terblokir
-                    </span>
-                  ) : null}
-                </td>
-                <td className="px-4 py-3 text-xs">
-                  <div>{SOURCE_LABEL[it.source?.type] || it.source?.type || '-'}</div>
-                  {it.source?.number && <div className="text-muted-foreground">{it.source.number}</div>}
-                  {it.source?.supplier_name && <div className="text-muted-foreground">{it.source.supplier_name}</div>}
-                </td>
-                <td className="px-4 py-3 text-xs">
-                  {(it.reject_reasons || []).length === 0 ? <span className="text-muted-foreground">-</span> :
-                    (it.reject_reasons || []).map((r, i) => (
-                      <div key={i} className="text-[hsl(var(--warning))] ">{r.code} {r.qty ? `· ${fmtNum(r.qty)}` : ''}</div>
-                    ))}
-                </td>
-                <td className="px-4 py-3 text-right">{fmtNum(it.qty)} <span className="text-xs text-muted-foreground">{it.unit}</span></td>
-                <td className="px-4 py-3 text-right font-semibold">{fmtNum(it.remaining_qty)}</td>
-                <td className="px-4 py-3 text-right text-xs">
-                  {Number(it.unit_cost || 0) > 0 ? fmtRp(it.value) :
-                    <span className="text-[hsl(var(--warning))] " title="Harga satuan material belum diisi — jurnal keuangan akan dilewati">harga belum diisi</span>}
-                  <div className="text-muted-foreground">{it.valued ? 'sudah bernilai' : 'belum bernilai'}</div>
-                </td>
-                <td className="px-4 py-3 text-center text-xs">
-                  <span className={Number(it.age_days) >= 14 ? 'text-[hsl(var(--destructive))]  font-medium' : 'text-muted-foreground'}>
-                    {fmtNum(it.age_days)} hari
-                  </span>
-                  <div className="text-muted-foreground">{fmtDate(it.created_at)}</div>
-                </td>
-                <td className="px-4 py-3">
-                  {it.status === 'open' ? (
-                    <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                      {it.availability_blocked === false && (
-                        <button onClick={() => retryBlock(it)} disabled={retrying === it.id}
-                          className="px-2.5 py-1.5 text-xs bg-[hsl(var(--destructive))] text-white rounded-lg hover:brightness-110 flex items-center gap-1 disabled:opacity-60"
-                          title="Pasang ulang blokir ketersediaan agar barang reject ini tidak terhitung tersedia"
-                          data-testid={`quarantine-retry-block-${it.id}`}>
-                          <ShieldOff className="w-3.5 h-3.5" />
-                          {retrying === it.id ? 'Memblokir...' : 'Coba Blokir Ulang'}
-                        </button>
-                      )}
-                      <button onClick={() => setModal({ item: it, action: 'release' })}
-                        className="px-2.5 py-1.5 text-xs bg-[hsl(var(--success))] text-white rounded-lg hover:brightness-110 flex items-center gap-1"
-                        data-testid={`quarantine-release-${it.id}`}>
-                        <PackageCheck className="w-3.5 h-3.5" /> Lepas
-                      </button>
-                      <button onClick={() => setRtpItem(it)}
-                        className="px-2.5 py-1.5 text-xs bg-[hsl(var(--primary))] text-white rounded-lg hover:brightness-110 flex items-center gap-1"
-                        title="Dokumen Retur Pembelian: tukar barang / potong tagihan / refund / diterima dengan diskon / dimusnahkan"
-                        data-testid={`quarantine-return-${it.id}`}>
-                        <Undo2 className="w-3.5 h-3.5" /> Buat Retur Pembelian
-                      </button>
-                      <button onClick={() => setModal({ item: it, action: 'scrap' })}
-                        className="px-2.5 py-1.5 text-xs border border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]  rounded-lg hover:bg-[hsl(var(--destructive)/0.1)]  flex items-center gap-1"
-                        data-testid={`quarantine-scrap-${it.id}`}>
-                        <Trash2 className="w-3.5 h-3.5" /> Scrap
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="text-right text-xs text-muted-foreground" data-testid={`quarantine-history-${it.id}`}>
-                      {(it.dispositions || []).map((d) => (
-                        <div key={d.id}>
-                          {dispLabel(d)} {fmtNum(d.qty)} · {d.by || '-'}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {pg.total > 0 && <PaginationLite page={pg.page} totalPages={pg.totalPages} total={pg.total} pageSize={pg.pageSize} onPageChange={pg.setPage} />}
-
-      <div className="text-xs text-muted-foreground flex items-start gap-2 bg-[var(--glass-bg)] border border-border rounded-lg px-4 py-3">
-        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-[hsl(var(--warning))] " />
-        <span>
-          <strong>Cara kerja:</strong> saat Penerimaan Barang (GR) diset <em>received</em>, qty <em>accepted</em> masuk stok normal dan qty <em>reject</em>
-          otomatis masuk Karantina QC. Bila reject baru ditemukan setelah barang masuk, gunakan re-inspeksi QC pada GR
-          (opsi <em>lanjutkan meski sudah diterima</em>) — stok akan otomatis dipindahkan ke karantina.
-        </span>
-      </div>
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} testId="quarantine-detail"
+          judul={`${detail.material_code} · ${detail.material_name || '-'}`}
+          status={<StatusBadge tone={detail.status === 'open' ? 'warning' : 'muted'} label={detail.status === 'open' ? 'Masih tertahan' : 'Sudah selesai'} />}
+          aksi={detail.status === 'open' ? <>
+            {detail.availability_blocked === false && tombolBlokir(detail)}
+            {tombolLepas(detail, true)}
+            <Button size="sm" variant="outline" onClick={buka(() => setRtpItem(detail), true)}><Undo2 />Buat retur pembelian</Button>
+            <Button size="sm" variant="destructive" onClick={buka(() => setModal({ item: detail, action: 'scrap' }), true)}><Trash2 />Scrap</Button>
+          </> : null}>
+          <TandaBlokir it={detail} />
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Sumber">{sourceLabel(detail.source?.type)}{detail.source?.number ? ` · ${detail.source.number}` : ''}</BarisDetail>
+            <BarisDetail label="Pemasok">{detail.source?.supplier_name || '—'}</BarisDetail>
+            <BarisDetail label="Alasan reject">
+              {(detail.reject_reasons || []).length ? (detail.reject_reasons || []).map((r) => `${alasan(r.code)}${r.qty ? ` · ${fmtNum(r.qty)}` : ''}`).join('; ') : '—'}
+            </BarisDetail>
+            <BarisDetail label="Qty reject">{fmtNum(detail.qty)} {detail.unit}</BarisDetail>
+            <BarisDetail label="Sisa karantina">{fmtNum(detail.remaining_qty)} {detail.unit}</BarisDetail>
+            <BarisDetail label="Nilai">
+              {Number(detail.unit_cost || 0) > 0 ? fmtRp(detail.value) : 'Harga satuan belum diisi'} · {detail.valued ? 'sudah bernilai' : 'belum bernilai'}
+            </BarisDetail>
+            <BarisDetail label="Masuk karantina">{fmtDate(detail.created_at)} · {fmtNum(detail.age_days)} hari</BarisDetail>
+            {(detail.dispositions || []).length > 0 && (
+              <BarisDetail label="Tindak lanjut">
+                {(detail.dispositions || []).map((d) => <div key={d.id}>{dispLabel(d)} {fmtNum(d.qty)} · {d.by || '-'}</div>)}
+              </BarisDetail>
+            )}
+          </dl>
+        </DetailPopup>
+      )}
 
       {modal && (
         <ActionModal item={modal.item} action={modal.action} locations={storageLocs} quarantineLoc={locInfo}
@@ -686,11 +601,11 @@ export default function QuarantineModule({ token: tokenProp }) {
         <PurchaseReturnCreateModal token={token} quarantineItem={rtpItem} onClose={() => setRtpItem(null)}
           onSaved={(doc) => {
             setRtpItem(null);
-            setToast(`Retur Pembelian ${doc?.rtp_number || ''} dibuat (Draft) — kirim/proses dari layar Retur Pembelian (Portal Pengadaan).`);
+            setDetail(null);
+            toast.success(`Retur Pembelian ${doc?.rtp_number || ''} dibuat (draf) — kirim/proses dari layar Retur Pembelian (Portal Pengadaan).`, { duration: 8000 });
             load();
-            setTimeout(() => setToast(''), 8000);
           }} />
       )}
-    </div>
+    </PageLayout>
   );
 }
