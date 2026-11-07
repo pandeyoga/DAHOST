@@ -5,13 +5,16 @@
  * KPI membaca field hantu (selalu 0), dan "Jadwal Auto-Run" tidak pernah menjalankan apa pun. Semua itu dihapus.
  * Dasbor kini HANYA membaca run gaji sungguhan; run dibuat, dihitung ulang, difinalisasi, dan dibayar di tab
  * Proses Gaji. Cetakan PageLayout (PANDUAN_UI G1).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): kartu angka diberi keterangan sumbernya (ringkasan run hanya periode tahun ini —
+ * `GET /api/payroll/automation/dashboard`), riwayat = TabelData (kartu ringkas di HP) + unduh Excel/CSV.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, BarChart3, Info, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Info, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { GlassCard } from '@/components/ui/glass';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatDateID, formatRupiah } from '@/lib/format';
 import PageLayout from './layout/PageLayout';
@@ -25,6 +28,7 @@ function payLabel(r) {
   if (r.status !== 'finalized') return '—';
   return r.payment_status === 'paid' ? 'Dibayar' : 'Belum dibayar';
 }
+const periode = (r) => `${formatDateID(r.period_from)} – ${formatDateID(r.period_to)}`;
 
 export default function PayrollDashboardModule({ token, headers }) {
   const authH = useMemo(() => headers || (token ? { Authorization: `Bearer ${token}` } : {}), [headers, token]);
@@ -58,29 +62,58 @@ export default function PayrollDashboardModule({ token, headers }) {
   const runSummary = d.run_summary || {};
   const coverage = d.employee_profile_coverage || {};
   const { page, setPage, totalPages, total, paged } = useClientPagination(history, 10);
+  const muatAwal = loading && !dashboard;
+
+  const kolom = [
+    { kunci: 'run', label: 'Nomor run', hp: 'judul', isi: (r) => <span className="font-medium">{r.run_number}</span> },
+    { kunci: 'periode', label: 'Periode', hp: 'keterangan', isi: (r) => <span className="text-sm md:whitespace-nowrap">{periode(r)}</span> },
+    { kunci: 'status', label: 'Status', isi: (r) => <StatusBadge status={r.status} label={STATUS_LABEL[r.status]} /> },
+    { kunci: 'bayar', label: 'Pembayaran', isi: (r) => <span className="text-sm">{payLabel(r)}</span> },
+    { kunci: 'karyawan', label: 'Karyawan', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.total_employees ?? '—'}</span> },
+    { kunci: 'bersih', label: 'Gaji bersih', rata: 'kanan', isi: (r) => <span className="tabular-nums">{formatRupiah(r.total_net || 0)}</span> },
+    { kunci: 'dibuat', label: 'Dibuat', rata: 'kanan', isi: (r) => <span className="text-sm">{r.created_at ? formatDateID(r.created_at) : '—'}</span> },
+  ];
 
   const tools = (
-    <Button variant="outline" size="icon" onClick={fetchAll} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
-      data-testid="btn-refresh-payroll">
-      <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-    </Button>
+    <>
+      <TombolUnduh namaBerkas="riwayat-run-gaji" namaLembar="Riwayat run" baris={history} testId="pd-unduh"
+        kolom={[
+          { label: 'Nomor run', nilai: (r) => r.run_number },
+          { label: 'Periode', nilai: periode },
+          { label: 'Status', nilai: (r) => STATUS_LABEL[r.status] || r.status },
+          { label: 'Pembayaran', nilai: payLabel },
+          { label: 'Karyawan', nilai: (r) => r.total_employees ?? '' },
+          { label: 'Gaji bruto', nilai: (r) => Number(r.total_gross || 0) },
+          { label: 'Gaji bersih', nilai: (r) => Number(r.total_net || 0) },
+          { label: 'Dibuat', nilai: (r) => (r.created_at ? formatDateID(r.created_at) : '') },
+        ]} />
+      <Button variant="outline" size="icon" onClick={fetchAll} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+        data-testid="btn-refresh-payroll">
+        <RefreshCw className={loading ? 'animate-spin' : ''} />
+      </Button>
+    </>
   );
 
   return (
     <PageLayout
       title="Dasbor penggajian"
-      subtitle="Ringkasan run gaji. Run dibuat dan dibayar di tab Proses Gaji."
+      subtitle="Ringkasan run gaji tahun ini. Run dibuat dan dibayar di tab Proses gaji."
       tools={tools}
       testId="payroll-dashboard-page"
-      summary={(
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatTile label="Dibayar tahun ini" value={formatRupiah(d.total_disbursed_ytd || 0)} accent="success" testId="pd-paid-ytd" />
-          <StatTile label="Run draf" value={String(runSummary.draft?.count ?? 0)}
-            sub={`${formatRupiah(runSummary.draft?.total_net_rp || 0)} gaji bersih`} testId="pd-draft" />
-          <StatTile label="Final belum dibayar" value={formatRupiah(d.total_unpaid_finalized || 0)} accent="warning" testId="pd-unpaid" />
-          <StatTile label="Cakupan profil gaji" value={`${String(coverage.coverage_pct ?? 0).replace('.', ',')}%`}
-            sub={`${coverage.with_payroll_profile ?? 0} dari ${coverage.total_active_employees ?? 0} karyawan aktif`} testId="pd-coverage" />
+      summary={!muatAwal && (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <StatTile label="Dibayar tahun ini" value={formatRupiah(d.total_disbursed_ytd || 0)} accent="success" testId="pd-paid-ytd"
+            sub="Gaji bersih run final yang sudah dibayar, periode mulai 1 Januari." />
+          <StatTile label="Run draf tahun ini" value={String(runSummary.draft?.count ?? 0)} testId="pd-draft"
+            sub={`${formatRupiah(runSummary.draft?.total_net_rp || 0)} gaji bersih, belum final.`} />
+          <StatTile label="Final belum dibayar" value={formatRupiah(d.total_unpaid_finalized || 0)} accent="warning" testId="pd-unpaid"
+            sub="Gaji bersih run final tahun ini yang belum dicatat dibayar." />
+          <StatTile label="Cakupan profil gaji" value={`${String(coverage.coverage_pct ?? 0).replace('.', ',')}%`} testId="pd-coverage"
+            sub={`${coverage.with_payroll_profile ?? 0} dari ${coverage.total_active_employees ?? 0} karyawan aktif punya profil gaji aktif.`} />
         </div>
+      )}
+      footer={history.length > 10 && (
+        <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />
       )}
     >
       {alerts.map((a) => (
@@ -88,42 +121,17 @@ export default function PayrollDashboardModule({ token, headers }) {
           title={a.message} testId={`pd-alert-${a.type}`}>{a.action}</Notice>
       ))}
 
-      <GlassCard className="p-0 overflow-hidden">
-        {history.length === 0 ? (
-          <EmptyState icon={BarChart3} title="Belum ada run gaji"
-            description="Buat run pertama di tab Proses Gaji; ringkasannya akan tampil di sini." />
-        ) : (
-          <>
-            <Table data-testid="pd-history">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Nomor run</TableHead>
-                  <TableHead>Periode</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Pembayaran</TableHead>
-                  <TableHead className="text-right">Karyawan</TableHead>
-                  <TableHead className="text-right">Gaji bersih</TableHead>
-                  <TableHead className="text-right">Dibuat</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {paged.map((r) => (
-                  <TableRow key={r.id} data-testid={`pd-row-${r.run_number}`}>
-                    <TableCell className="text-xs">{r.run_number}</TableCell>
-                    <TableCell className="text-xs">{formatDateID(r.period_from)} – {formatDateID(r.period_to)}</TableCell>
-                    <TableCell><StatusBadge status={r.status} label={STATUS_LABEL[r.status]} /></TableCell>
-                    <TableCell className="text-xs">{payLabel(r)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{r.total_employees ?? '—'}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatRupiah(r.total_net || 0)}</TableCell>
-                    <TableCell className="text-right text-xs">{r.created_at ? formatDateID(r.created_at) : '—'}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
-          </>
-        )}
-      </GlassCard>
+      {muatAwal ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat dasbor penggajian…</p>
+      ) : (
+        <div className="space-y-2">
+          {history.length > 0 && <p className="text-sm font-medium text-foreground">Riwayat run terakhir (maksimal 12)</p>}
+          <TabelData kolom={kolom} baris={paged} testId="pd-history"
+            kunci={(r) => r.id}
+            kosong={<EmptyState title="Belum ada run gaji"
+              description="Buat run pertama di tab Proses gaji; ringkasannya akan tampil di sini." />} />
+        </div>
+      )}
     </PageLayout>
   );
 }
