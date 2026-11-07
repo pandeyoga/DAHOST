@@ -9,7 +9,8 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
+import PanelTabs from '@/components/ui/panel-tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { 
@@ -225,16 +226,8 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
 
       {/* Tabs: Chat & Documents */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full max-w-md grid-cols-2">
-          <TabsTrigger value="chat" className="flex items-center gap-2" data-testid="tab-chat">
-            <MessageSquare className="h-4 w-4" />
-            Diskusi
-          </TabsTrigger>
-          <TabsTrigger value="docs" className="flex items-center gap-2" data-testid="tab-docs">
-            <FolderOpen className="h-4 w-4" />
-            Dokumen
-          </TabsTrigger>
-        </TabsList>
+        <PanelTabs value={activeTab} onChange={setActiveTab} testId="tab" ariaLabel="Bagian kelompok"
+          tabs={[{ key: 'chat', label: 'Diskusi' }, { key: 'docs', label: 'Dokumen' }]} />
 
         {/* Chat Tab - Embed Communication Hub Channel */}
         <TabsContent value="chat" className="mt-4">

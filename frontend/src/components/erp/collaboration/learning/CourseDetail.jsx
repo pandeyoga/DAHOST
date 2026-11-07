@@ -9,7 +9,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
+import PanelTabs from '@/components/ui/panel-tabs';
 import { 
   ArrowLeft, Clock, BarChart, Users, Award, CheckCircle2, 
   Lock, PlayCircle, FileText, MessageSquare, ClipboardList,
@@ -175,13 +176,9 @@ export default function CourseDetail({ courseId, onBack }) {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList>
-            <TabsTrigger value="overview" data-testid="tab-overview">Ringkasan</TabsTrigger>
-            <TabsTrigger value="materials" data-testid="tab-materials">Materi</TabsTrigger>
-            <TabsTrigger value="discussion" data-testid="tab-discussion">Diskusi</TabsTrigger>
-            <TabsTrigger value="assignments" data-testid="tab-assignments">Tugas</TabsTrigger>
-            <TabsTrigger value="progress" data-testid="tab-progress">Kemajuan</TabsTrigger>
-          </TabsList>
+          <PanelTabs value={activeTab} onChange={setActiveTab} testId="tab" ariaLabel="Bagian kursus"
+            tabs={[{ key: 'overview', label: 'Ringkasan' }, { key: 'materials', label: 'Materi' }, { key: 'discussion', label: 'Diskusi' },
+              { key: 'assignments', label: 'Tugas' }, { key: 'progress', label: 'Kemajuan' }]} />
 
           {/* Overview Tab */}
           <TabsContent value="overview" className="mt-6">

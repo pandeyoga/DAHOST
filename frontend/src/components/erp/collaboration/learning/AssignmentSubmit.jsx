@@ -10,7 +10,8 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
+import PanelTabs from '@/components/ui/panel-tabs';
 import { Badge } from '@/components/ui/badge';
 import { ClipboardList, CheckCircle2, Send, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
@@ -99,10 +100,8 @@ export default function AssignmentSubmit({ material, existingSubmission, onSubmi
       <Card>
         <CardContent className="pt-6 space-y-4">
           <Tabs value={submissionType} onValueChange={setSubmissionType}>
-            <TabsList>
-              <TabsTrigger value="text" data-testid="submission-tab-text">Teks</TabsTrigger>
-              <TabsTrigger value="link" data-testid="submission-tab-link">Tautan</TabsTrigger>
-            </TabsList>
+            <PanelTabs value={submissionType} onChange={setSubmissionType} testId="submission-tab" ariaLabel="Bentuk jawaban"
+              tabs={[{ key: 'text', label: 'Teks' }, { key: 'link', label: 'Tautan' }]} />
 
             <TabsContent value="text" className="space-y-2">
               <Label htmlFor="assignment-text">Jawaban</Label>
