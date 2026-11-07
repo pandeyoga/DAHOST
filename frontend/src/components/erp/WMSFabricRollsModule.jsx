@@ -502,9 +502,10 @@ export default function WMSFabricRollsModule({ token }) {
           </Button>
         </>
       )}
-      filters={(
+      filters={<>
+        {(
         <>
-          <FilterChips options={tabOpsi} value={tab} onChange={setTab} hideWhenEmpty={false} testId="rolls-tab" />
+          <FilterChips className="w-full sm:w-auto" options={tabOpsi} value={tab} onChange={setTab} hideWhenEmpty={false} testId="rolls-tab" />
           {!tabMissing && (
             <>
               <div className="relative w-full sm:w-64">
@@ -513,20 +514,21 @@ export default function WMSFabricRollsModule({ token }) {
                   onChange={(e) => setSearch(e.target.value)} className="pl-8" data-testid="search-roll-input" />
               </div>
               <SmartNativeSelect value={filters.qc_status} onChange={(e) => setFilters({ ...filters, qc_status: e.target.value })}
-                className="w-full sm:w-40" aria-label="Status QC" data-testid="qc-filter">
+                className="w-full sm:w-40" wrapperClassName="w-full sm:w-40" aria-label="Status QC" data-testid="qc-filter">
                 <option value="all">Semua QC</option>
                 {Object.entries(QC_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
               </SmartNativeSelect>
               <SmartNativeSelect value={`${sort.key}:${sort.dir}`} aria-label="Urutkan"
                 onChange={(e) => { const [key, dir] = e.target.value.split(':'); setSort({ key, dir }); }}
-                className="w-full sm:w-48" data-testid="rolls-sort">
+                className="w-full sm:w-48" wrapperClassName="w-full sm:w-48" data-testid="rolls-sort">
                 {URUTAN.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </SmartNativeSelect>
             </>
           )}
         </>
       )}
-      tools={tabMissing ? (
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {tabMissing ? (
         <>
           <TombolUnduh namaBerkas="penerimaan-kain-tanpa-roll" namaLembar="Tanpa roll" baris={missing} testId="missing-unduh"
             kolom={[
@@ -570,6 +572,8 @@ export default function WMSFabricRollsModule({ token }) {
           </Button>
         </>
       )}
+        </div>
+      </>}
       summary={!tabMissing && sortedRolls.length > 0 ? (
         <p className="text-sm text-muted-foreground" data-testid="rolls-summary">
           {sortedRolls.length} roll sesuai saringan · sisa kain: <span className="font-medium text-foreground">{remainingBySatuan}</span>
@@ -616,18 +620,18 @@ export default function WMSFabricRollsModule({ token }) {
         keterangan={`Nomor roll otomatis: ${rollPolicy?.next_number || 'RL-…'} (pola ${rollPolicy?.format || 'RL-{YYYY}{MM}-{SEQ:4}'}, diatur di Administrasi Sistem › Penomoran Dokumen).`}
         onSimpan={handleCreateRoll} menyimpan={saving} labelSimpan="Simpan">
         <span className="sr-only" data-testid="roll-no-auto">{rollPolicy?.next_number || 'RL-…'}</span>
-        <Isian label="Material kain" wajib htmlFor="roll-material">
-          <SmartNativeSelect id="roll-material" value={createPick.material_id}
-            onChange={(e) => {
-              const m = rollMasters.materials.find((x) => x.id === e.target.value);
-              setCreatePick((p) => ({ ...p, material_id: e.target.value, color: m?.color || '' }));
-            }}
-            data-testid="input-material">
-            <option value="">{rollMasters.loaded ? '— pilih kain dari master —' : 'Memuat material…'}</option>
-            {rollMasters.materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
-          </SmartNativeSelect>
-        </Isian>
         <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Material kain" wajib htmlFor="roll-material">
+            <SmartNativeSelect id="roll-material" value={createPick.material_id}
+              onChange={(e) => {
+                const m = rollMasters.materials.find((x) => x.id === e.target.value);
+                setCreatePick((p) => ({ ...p, material_id: e.target.value, color: m?.color || '' }));
+              }}
+              data-testid="input-material">
+              <option value="">{rollMasters.loaded ? 'Pilih kain dari master' : 'Memuat material…'}</option>
+              {rollMasters.materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
+            </SmartNativeSelect>
+          </Isian>
           <Isian label="Warna" htmlFor="roll-warna">
             <Input id="roll-warna" value={createPick.color} onChange={(e) => setCreatePick((p) => ({ ...p, color: e.target.value }))}
               placeholder={pickedMat?.color ? '' : 'mis. Navy'} data-testid="input-color" />
@@ -640,7 +644,7 @@ export default function WMSFabricRollsModule({ token }) {
             <SmartNativeSelect id="roll-supplier" value={createPick.supplier_name}
               onChange={(e) => setCreatePick((p) => ({ ...p, supplier_name: e.target.value }))}
               data-testid="input-supplier">
-              <option value="">— tanpa supplier —</option>
+              <option value="">Tanpa supplier</option>
               {rollMasters.suppliers.map((s) => <option key={s.id} value={s.name}>{`${s.code} — ${s.name}`}</option>)}
             </SmartNativeSelect>
           </Isian>
@@ -652,7 +656,7 @@ export default function WMSFabricRollsModule({ token }) {
                   supplier_name: po ? (po.supplier_name || po.vendor_name || p.supplier_name) : p.supplier_name }));
               }}
               data-testid="input-po-no">
-              <option value="">— tanpa PO —</option>
+              <option value="">Tanpa PO</option>
               {rollMasters.pos.map((po) => <option key={po.id} value={po.po_number}>{`${po.po_number} · ${po.supplier_name || po.vendor_name || ''}`}</option>)}
             </SmartNativeSelect>
           </Isian>

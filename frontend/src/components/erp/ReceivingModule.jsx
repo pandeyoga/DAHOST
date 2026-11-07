@@ -76,9 +76,9 @@ const EMPTY_ITEM = () => ({
 function rejectHint(cats, code, qty, unit) {
   const kind = (cats.find((c) => c.code === code) || {}).kind;
   if (kind === 'dokumen') {
-    return <>Alasan Reject — {qty} {unit} <strong>tidak masuk stok</strong> (catatan di GR saja; sisa PO tetap terbuka)</>;
+    return <>Qty ditolak {qty} {unit} <strong>tidak masuk stok</strong> (catatan di GR saja; sisa PO tetap terbuka)</>;
   }
-  return <>Alasan Reject — {qty} {unit} akan masuk <strong>Karantina QC</strong></>;
+  return <>Qty ditolak {qty} {unit} akan masuk <strong>Karantina QC</strong></>;
 }
 const rejectOptLabel = (rc) => `${rc.label}${rc.kind === 'dokumen' ? ' · catatan saja' : ' · karantina'}`;
 const priceOf = (it) => parseFloat(it?.unit_price) || parseFloat(it?.unit_cost) || 0;
@@ -655,7 +655,8 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
           <Plus />Penerimaan baru
         </Button>
       )}
-      filters={(
+      filters={<>
+        {(
         <>
           <div className="relative w-full sm:w-64">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -665,12 +666,13 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
           </div>
           <SmartNativeSelect value={`${sort.key}:${sort.dir}`} aria-label="Urutkan"
             onChange={(e) => { const [key, dir] = e.target.value.split(':'); setSort({ key, dir }); }}
-            className="w-full sm:w-52" data-testid="receiving-sort">
+            className="w-full sm:w-52" wrapperClassName="w-full sm:w-52" data-testid="receiving-sort">
             {URUTAN.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </SmartNativeSelect>
         </>
       )}
-      tools={(
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {(
         <>
           <TombolUnduh namaBerkas="penerimaan-barang" namaLembar="Penerimaan" baris={rows} testId="receiving-unduh"
             kolom={[
@@ -693,6 +695,8 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
           </Button>
         </>
       )}
+        </div>
+      </>}
       summary={missingRollsTotal > 0 ? (
         // FASE H-5: kain yang masuk stok tanpa gulungan — Cutting menolak memotongnya.
         <Notice tone="warning" icon={AlertCircle} testId="gr-missing-rolls-banner"
@@ -888,7 +892,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                 </Isian>
                 {/* FASE 6: alasan reject — qty reject otomatis masuk Karantina QC */}
                 {(parseFloat(item.rejected_qty) || 0) > 0 && (
-                  <Isian label="Alasan reject" className="col-span-2 sm:col-span-3" htmlFor={`item-reject-reason-${idx}`}
+                  <Isian label="Alasan ditolak" className="col-span-2 sm:col-span-3" htmlFor={`item-reject-reason-${idx}`}
                     petunjuk={rejectHint(rejectCats, item.reject_reason, item.rejected_qty, item.unit)}>
                     <SmartNativeSelect id={`item-reject-reason-${idx}`} value={item.reject_reason || ''}
                       onChange={e => updateItem(idx, 'reject_reason', e.target.value)}
@@ -981,7 +985,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
           {/* FASE 6: banner karantina bila ada qty reject yang ditahan */}
           {showDetail.quarantine_summary?.total_qty > 0 && (
             <Notice tone="warning" icon={AlertCircle} testId="gr-quarantine-banner"
-              title={`${showDetail.quarantine_summary.total_qty} unit reject ditahan di ${showDetail.quarantine_summary.location?.name || 'Karantina QC'}`}
+              title={`${showDetail.quarantine_summary.total_qty} unit ditolak ditahan di ${showDetail.quarantine_summary.location?.name || 'Karantina QC'}`}
               action={onNavigate && (
                 <Button size="sm" variant="outline" onClick={() => { setShowDetail(null); onNavigate('wh-quarantine'); }}
                   data-testid="gr-open-quarantine">
@@ -1095,7 +1099,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                       </p>
                     )}
                     {(parseFloat(item.rejected_qty) || 0) > 0 && (
-                      <Isian label="Alasan reject" htmlFor={`gr-detail-reject-reason-${idx}`}
+                      <Isian label="Alasan ditolak" htmlFor={`gr-detail-reject-reason-${idx}`}
                         petunjuk={rejectHint(rejectCats, item.reject_reason, item.rejected_qty, item.unit)}>
                         <SmartNativeSelect id={`gr-detail-reject-reason-${idx}`} value={item.reject_reason || ''}
                           onChange={e => updateDetailItem(idx, { reject_reason: e.target.value })}

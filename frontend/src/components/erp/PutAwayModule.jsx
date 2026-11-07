@@ -239,14 +239,16 @@ export default function PutAwayModule({ token, onNavigate }) {
       testId="wh-putaway-module"
       title="Penyimpanan"
       subtitle="Tempatkan barang yang belum dirak ke gudang, zona, rak, dan bin."
-      filters={(
+      filters={<>
+        {(
         <div className="relative w-full sm:w-64">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder="Cari kode / nama, lalu Enter" value={search} onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && fetchData()} className="pl-8" data-testid="putaway-search" />
         </div>
       )}
-      tools={(
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {(
         <>
           <TombolUnduh namaBerkas="barang-belum-dirak" namaLembar="Belum dirak" baris={pendingItems} testId="putaway-unduh"
             kolom={[
@@ -264,6 +266,8 @@ export default function PutAwayModule({ token, onNavigate }) {
           </Button>
         </>
       )}
+        </div>
+      </>}
       summary={message ? (
         <Notice tone="success" icon={CheckCircle2} testId="putaway-message" title={message.text} />
       ) : null}

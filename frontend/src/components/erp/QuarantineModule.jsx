@@ -82,7 +82,7 @@ function TandaBlokir({ it }) {
         </span>
       )}
       {it.availability_blocked === false ? (
-        <span title={`Barang reject ini MASIH terhitung tersedia sebanyak ${fmtNum(it.availability_shortfall)} ${it.unit} — bisa ikut dipakai produksi atau terkirim ke pembeli.`}
+        <span title={`Barang tolakan ini MASIH terhitung tersedia sebanyak ${fmtNum(it.availability_shortfall)} ${it.unit} — bisa ikut dipakai produksi atau terkirim ke pembeli.`}
           data-testid={`quarantine-unblocked-badge-${it.id}`}>
           <StatusBadge tone="danger" label="Tidak terblokir" />
         </span>
@@ -165,7 +165,7 @@ function ActionModal({ item, action, locations, quarantineLoc, onClose, onSubmit
       )}
       {!item.valued && action !== 'release' && (
         <Notice tone="info" icon={Info}>
-          Barang ini <strong>belum masuk nilai persediaan</strong> (reject saat penerimaan tidak ditagihkan supplier),
+          Barang ini <strong>belum masuk nilai persediaan</strong> (barang yang ditolak saat penerimaan tidak ditagihkan ke supplier),
           jadi tidak ada jurnal keuangan yang dibuat.
         </Notice>
       )}
@@ -369,7 +369,7 @@ export default function QuarantineModule({ token: tokenProp }) {
   );
   const tombolBlokir = (it) => (
     <Button size="sm" variant="destructive" onClick={() => retryBlock(it)} disabled={retrying === it.id}
-      title="Pasang ulang blokir ketersediaan agar barang reject ini tidak terhitung tersedia"
+      title="Pasang ulang blokir ketersediaan agar barang tolakan ini tidak terhitung tersedia"
       data-testid={`quarantine-retry-block-${it.id}`}>
       <ShieldOff />{retrying === it.id ? 'Memblokir…' : 'Coba blokir ulang'}
     </Button>
@@ -429,7 +429,7 @@ export default function QuarantineModule({ token: tokenProp }) {
     { kunci: 'alasan', label: 'Alasan', isi: (it) => ((it.reject_reasons || []).length === 0
       ? <span className="text-muted-foreground">-</span>
       : <div className="text-sm">{(it.reject_reasons || []).map((r, i) => <div key={i}>{alasan(r.code)}{r.qty ? ` · ${fmtNum(r.qty)}` : ''}</div>)}</div>) },
-    { kunci: 'qty', label: 'Qty reject', rata: 'kanan', isi: (it) => <span className="tabular-nums">{fmtNum(it.qty)} <span className="text-xs text-muted-foreground">{it.unit}</span></span> },
+    { kunci: 'qty', label: 'Qty ditolak', rata: 'kanan', isi: (it) => <span className="tabular-nums">{fmtNum(it.qty)} <span className="text-xs text-muted-foreground">{it.unit}</span></span> },
     { kunci: 'sisa', label: 'Sisa', rata: 'kanan', isi: (it) => <span className="font-medium tabular-nums">{fmtNum(it.remaining_qty)}</span> },
     { kunci: 'nilai', label: 'Nilai', rata: 'kanan', isi: (it) => (
       <div className="text-sm">
@@ -447,17 +447,18 @@ export default function QuarantineModule({ token: tokenProp }) {
 
   return (
     <PageLayout testId="quarantine-module" title="Karantina QC"
-      subtitle="Barang reject QC ditahan & diblokir sampai dilepas, diretur ke pemasok, atau di-scrap."
+      subtitle="Barang yang ditolak QC ditahan & diblokir sampai dilepas, diretur ke pemasok, atau di-scrap."
       actions={<Button onClick={() => setShowManual(true)} data-testid="quarantine-manual-btn"><PackagePlus />Karantina manual</Button>}
       filters={<>
-        <FilterChips value={tampilan} onChange={pilihTampilan} hideWhenEmpty={false} testId="quarantine-tab"
+        {<>
+        <FilterChips className="w-full sm:w-auto" value={tampilan} onChange={pilihTampilan} hideWhenEmpty={false} testId="quarantine-tab"
           options={[
             { key: 'all', label: 'Semua item karantina' },
             { key: 'legacy', label: 'Retur lama tanpa penyelesaian' },
             { key: 'needs', label: 'Perlu tindakan manual', count: unblockedCount },
           ]} />
         <SmartNativeSelect value={status} onChange={(e) => setStatus(e.target.value)} disabled={needsAction || legacyOnly}
-          className="w-full sm:w-44" data-testid="quarantine-status-filter" aria-label="Status karantina">
+          className="w-full sm:w-44" wrapperClassName="w-full sm:w-44" data-testid="quarantine-status-filter" aria-label="Status karantina">
           <option value="open">Masih tertahan</option>
           <option value="closed">Sudah selesai</option>
           <option value="all">Semua status</option>
@@ -468,7 +469,8 @@ export default function QuarantineModule({ token: tokenProp }) {
             className="pl-8" data-testid="quarantine-search" />
         </div>
       </>}
-      tools={<>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {<>
         <TombolUnduh namaBerkas="karantina-qc" namaLembar="Karantina QC" baris={filtered} testId="quarantine-unduh"
           kolom={[
             { label: 'Kode material', nilai: (it) => it.material_code },
@@ -478,7 +480,7 @@ export default function QuarantineModule({ token: tokenProp }) {
             { label: 'Pemasok', nilai: (it) => it.source?.supplier_name || '' },
             { label: 'Alasan', nilai: (it) => (it.reject_reasons || []).map((r) => `${alasan(r.code)}${r.qty ? ` ${r.qty}` : ''}`).join('; ') },
             { label: 'Satuan', nilai: (it) => it.unit },
-            { label: 'Qty reject', nilai: (it) => Number(it.qty || 0) },
+            { label: 'Qty ditolak', nilai: (it) => Number(it.qty || 0) },
             { label: 'Sisa', nilai: (it) => Number(it.remaining_qty || 0) },
             { label: 'Nilai (Rp)', nilai: (it) => (Number(it.unit_cost || 0) > 0 ? Number(it.value || 0) : '') },
             { label: 'Bernilai', nilai: (it) => (it.valued ? 'Sudah' : 'Belum') },
@@ -492,6 +494,8 @@ export default function QuarantineModule({ token: tokenProp }) {
           <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
       </>}
+        </div>
+      </>}
       summary={<>
         {/* PERINGATAN MERAH — barang reject yang ketersediaannya BELUM terblokir: masih terhitung TERSEDIA
             (`available = qty − reserved`), jadi bisa ikut dipilih untuk produksi atau DIKIRIM KE PEMBELI. */}
@@ -503,7 +507,7 @@ export default function QuarantineModule({ token: tokenProp }) {
                 Lihat daftar
               </Button>
             )}>
-            Barang reject ini masih terhitung stok tersedia, sehingga bisa ikut dipilih untuk produksi atau terkirim ke
+            Barang tolakan ini masih terhitung stok tersedia, sehingga bisa ikut dipilih untuk produksi atau terkirim ke
             pembeli. Tekan <em>Coba blokir ulang</em> pada barisnya. Bila tetap gagal, stok fisik di lokasi karantina
             kemungkinan lebih kecil dari qty karantina — lakukan opname/koreksi stok dulu.
             {(summary?.unblocked_groups || []).length > 0 && (
@@ -527,7 +531,7 @@ export default function QuarantineModule({ token: tokenProp }) {
         )}
         {summary && Object.keys(summary.by_reason || {}).length > 0 && (
           <p className="text-sm text-muted-foreground" data-testid="quarantine-by-reason">
-            Alasan reject (sisa tertahan): {Object.entries(summary.by_reason).map(([code, qty]) => `${alasan(code)} ${fmtNum(qty)}`).join(' · ')}
+            Alasan ditolak (sisa tertahan): {Object.entries(summary.by_reason).map(([code, qty]) => `${alasan(code)} ${fmtNum(qty)}`).join(' · ')}
           </p>
         )}
         {locInfo && (
@@ -537,8 +541,8 @@ export default function QuarantineModule({ token: tokenProp }) {
       footer={<>
         {pg.total > 0 && <PaginationLite page={pg.page} totalPages={pg.totalPages} total={pg.total} pageSize={pg.pageSize} onPageChange={pg.setPage} />}
         <p className="text-xs text-muted-foreground">
-          Cara kerja: saat Penerimaan Barang dikonfirmasi diterima, qty yang diterima masuk stok normal dan qty reject
-          otomatis masuk Karantina QC. Bila reject baru ditemukan setelah barang masuk, pakai re-inspeksi QC pada GR
+          Cara kerja: saat Penerimaan Barang dikonfirmasi diterima, qty yang diterima masuk stok normal dan qty yang ditolak
+          otomatis masuk Karantina QC. Bila barang ditolak baru ketahuan setelah masuk, pakai re-inspeksi QC pada GR
           (opsi lanjutkan meski sudah diterima) — stok otomatis dipindah ke karantina.
         </p>
       </>}>
@@ -550,10 +554,10 @@ export default function QuarantineModule({ token: tokenProp }) {
         <TabelData kolom={kolom} baris={pg.paged} onKlikBaris={setDetail} testId="quarantine-table"
           kosong={needsAction ? (
             <EmptyState icon={Lock} title="Semua barang karantina sudah terblokir"
-              description="Tidak ada barang reject yang masih terhitung tersedia: seluruh stok karantina tidak bisa dipakai produksi maupun dikirim ke pembeli." />
+              description="Tidak ada barang tolakan yang masih terhitung tersedia: seluruh stok karantina tidak bisa dipakai produksi maupun dikirim ke pembeli." />
           ) : (
             <EmptyState icon={PackageCheck} title={search ? 'Tidak ada item yang cocok' : 'Tidak ada barang di karantina'}
-              description={search ? 'Ubah kata pencarian.' : 'Qty reject dari penerimaan barang akan otomatis muncul di sini.'} />
+              description={search ? 'Ubah kata pencarian.' : 'Qty yang ditolak saat penerimaan barang akan otomatis muncul di sini.'} />
           )} />
       )}
 
@@ -571,10 +575,10 @@ export default function QuarantineModule({ token: tokenProp }) {
           <dl className="divide-y divide-[var(--glass-border)]">
             <BarisDetail label="Sumber">{sourceLabel(detail.source?.type)}{detail.source?.number ? ` · ${detail.source.number}` : ''}</BarisDetail>
             <BarisDetail label="Pemasok">{detail.source?.supplier_name || '—'}</BarisDetail>
-            <BarisDetail label="Alasan reject">
+            <BarisDetail label="Alasan ditolak">
               {(detail.reject_reasons || []).length ? (detail.reject_reasons || []).map((r) => `${alasan(r.code)}${r.qty ? ` · ${fmtNum(r.qty)}` : ''}`).join('; ') : '—'}
             </BarisDetail>
-            <BarisDetail label="Qty reject">{fmtNum(detail.qty)} {detail.unit}</BarisDetail>
+            <BarisDetail label="Qty ditolak">{fmtNum(detail.qty)} {detail.unit}</BarisDetail>
             <BarisDetail label="Sisa karantina">{fmtNum(detail.remaining_qty)} {detail.unit}</BarisDetail>
             <BarisDetail label="Nilai">
               {Number(detail.unit_cost || 0) > 0 ? fmtRp(detail.value) : 'Harga satuan belum diisi'} · {detail.valued ? 'sudah bernilai' : 'belum bernilai'}

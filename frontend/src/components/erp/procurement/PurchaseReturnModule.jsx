@@ -133,7 +133,7 @@ export function PurchaseReturnCreateModal({ token, quarantineItem, onClose, onSa
       return;
     }
     if (settlement === 'refund' && unvalued > 1e-6) {
-      setErr('Refund hanya untuk barang yang sudah bernilai/ditagih. Reject saat penerimaan belum ditagih — pilih tukar barang atau potong tagihan.');
+      setErr('Refund hanya untuk barang yang sudah bernilai/ditagih. Barang yang ditolak saat penerimaan belum ditagih — pilih tukar barang atau potong tagihan.');
       return;
     }
     setBusy(true); setErr('');
@@ -155,7 +155,7 @@ export function PurchaseReturnCreateModal({ token, quarantineItem, onClose, onSa
   const ketKarantina = fromQ ? [
     `Karantina sisa ${fmtNum(quarantineItem.remaining_qty)} ${quarantineItem.unit}`,
     quarantineItem.source?.number, quarantineItem.source?.supplier_name,
-    unvalued > 0 ? `${fmtNum(unvalued)} belum bernilai (reject GR, belum ditagih)` : null,
+    unvalued > 0 ? `${fmtNum(unvalued)} belum bernilai (ditolak saat GR, belum ditagih)` : null,
   ].filter(Boolean).join(' · ') : '';
 
   return (
@@ -174,7 +174,7 @@ export function PurchaseReturnCreateModal({ token, quarantineItem, onClose, onSa
         <Isian label="Ditanggung" wajib htmlFor="rtp-ditanggung">
           <SmartNativeSelect id="rtp-ditanggung" value={borne} onChange={(e) => setBorne(e.target.value)} data-testid="rtp-borne">
             <option value="supplier">Pemasok (tagihan dipotong lewat nota debit)</option>
-            <option value="da">DA (dibebankan; reject GR menjadi bisa ditagih pemasok)</option>
+            <option value="da">DA (dibebankan; barang ditolak saat GR menjadi bisa ditagih pemasok)</option>
           </SmartNativeSelect>
         </Isian>
       )}
@@ -258,7 +258,7 @@ function ReplacementModal({ token, rtp, onClose, onDone }) {
   return (
     <FormPopup open onClose={onClose} ukuran="pendek" testId="rtp-replacement-form"
       judul={`Terima barang pengganti · ${rtp.rtp_number}`}
-      keterangan="Barang pengganti masuk stok pada harga GR asal. Bagian yang dulu bernilai menutup klaim retur; bagian reject GR menjadi penerimaan susulan yang bisa ditagih pemasok."
+      keterangan="Barang pengganti masuk stok pada harga GR asal. Bagian yang dulu bernilai menutup klaim retur; bagian yang ditolak saat GR menjadi penerimaan susulan yang bisa ditagih pemasok."
       onSimpan={submit} menyimpan={busy} galat={err} labelSimpan="Terima pengganti">
       <Isian label="Lokasi penerima" wajib htmlFor="rtp-lokasi-pengganti">
         <SmartNativeSelect id="rtp-lokasi-pengganti" value={locId} onChange={(e) => setLocId(e.target.value)} data-testid="rtp-replacement-location">
@@ -351,9 +351,11 @@ export default function PurchaseReturnModule({ token }) {
     <PageLayout testId="purchase-return-module" title="Retur Pembelian"
       subtitle="Barang dikembalikan ke pemasok pada harga GR asal; nota debit & refund diselesaikan Keuangan."
       actions={<Button onClick={() => setShowCreate(true)} data-testid="rtp-new"><Plus />Retur dari stok</Button>}
-      filters={<FilterChips options={STATUS_PILIHAN.map(([key, label]) => ({ key, label }))} value={status} onChange={setStatus}
+      filters={<>
+        {<FilterChips className="w-full sm:w-auto" options={STATUS_PILIHAN.map(([key, label]) => ({ key, label }))} value={status} onChange={setStatus}
         hideWhenEmpty={false} testId="rtp-filter" />}
-      tools={<>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {<>
         <TombolUnduh namaBerkas="retur-pembelian" namaLembar="Retur pembelian" baris={rows} testId="rtp-unduh"
           kolom={[
             { label: 'No. retur', nilai: (r) => r.rtp_number },
@@ -371,6 +373,8 @@ export default function PurchaseReturnModule({ token }) {
         <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} disabled={loading}>
           <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
+      </>}
+        </div>
       </>}>
       {err && <p className="text-sm text-[hsl(var(--danger-text))]" role="alert">{err}</p>}
       {loading && rows.length === 0 ? (
