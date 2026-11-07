@@ -283,10 +283,10 @@ export default function HRKasbonModule() {
       subtitle="Tinjau pengajuan kasbon dan pinjaman karyawan, lalu pantau sisa pinjaman yang dipotong dari gaji."
       filters={<>
         <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} searchable={false}
-          data-testid="hrkasbon-filter-status" className="h-9 w-48" aria-label="Status">
+          data-testid="hrkasbon-filter-status" className="h-9 w-full sm:w-48" aria-label="Status">
           {opsiStatus.map((o) => <option key={o.key} value={o.key}>{`${o.label} (${o.count})`}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={`${sort.key}:${sort.dir}`} searchable={false} className="h-9 w-48" aria-label="Urutan"
+        <SmartNativeSelect value={`${sort.key}:${sort.dir}`} searchable={false} className="h-9 w-full sm:w-48" aria-label="Urutan"
           data-testid="hrkasbon-sort"
           onChange={e => { const [key, dir] = e.target.value.split(':'); setSort({ key, dir }); }}>
           {URUTAN.map((u) => <option key={u.key} value={u.key}>{u.label}</option>)}
@@ -298,9 +298,9 @@ export default function HRKasbonModule() {
         </div>
       </>}
       tools={<>
-        <TombolUnduh namaBerkas="pengajuan-kasbon-hr" namaLembar="Kasbon" baris={rows} kolom={kolomUnduh}
+        <TombolUnduh label={<span className="hidden sm:inline">Unduh</span>} namaBerkas="pengajuan-kasbon-hr" namaLembar="Kasbon" baris={rows} kolom={kolomUnduh}
           testId="hrkasbon-export" />
-        <ViewToggle value={view} onChange={setView} testId="hrkasbon-view" />
+        <div className="hidden sm:block"><ViewToggle value={view} onChange={setView} testId="hrkasbon-view" /></div>
         <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
           <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>

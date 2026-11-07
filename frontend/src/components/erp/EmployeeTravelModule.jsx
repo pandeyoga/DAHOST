@@ -573,7 +573,7 @@ export default function EmployeeTravelModule({ token, user }) {
             ariaLabel="Pengajuan siapa" options={[{ key: 'my', label: 'Pengajuan saya' }, { key: 'all', label: 'Semua pengajuan' }]} />
         )}
         <SmartNativeSelect value={filter} onChange={e => setFilter(e.target.value)} searchable={false}
-          className="h-9 w-52" aria-label="Status" data-testid="travel-filter-status">
+          className="h-9 w-full sm:w-52" aria-label="Status" data-testid="travel-filter-status">
           <option value="all">Semua status</option>
           <option value="draft">Draf</option>
           <option value="submitted">Menunggu persetujuan</option>
@@ -590,7 +590,7 @@ export default function EmployeeTravelModule({ token, user }) {
         </div>
       </>}
       tools={<>
-        <TombolUnduh namaBerkas="perjalanan-dinas" namaLembar="Perjalanan dinas" baris={filteredReqs} testId="travel-unduh"
+        <TombolUnduh label={<span className="hidden sm:inline">Unduh</span>} namaBerkas="perjalanan-dinas" namaLembar="Perjalanan dinas" baris={filteredReqs} testId="travel-unduh"
           kolom={[
             { label: 'Nomor', nilai: (r) => r.trip_number },
             { label: 'Karyawan', nilai: (r) => r.employee_name || '' },
@@ -605,8 +605,9 @@ export default function EmployeeTravelModule({ token, user }) {
             { label: 'Uang muka dibayar', nilai: (r) => Number(r.cash_advance_paid || 0) },
             { label: 'Status', nilai: (r) => labelStatus(r.status) },
           ]} />
-        <Button variant="outline" onClick={() => setShowExport(true)} data-testid="travel-export-range">
-          <Download />Unduh per tanggal
+        <Button variant="outline" onClick={() => setShowExport(true)} data-testid="travel-export-range"
+          title="Unduh CSV per tanggal" aria-label="Unduh per tanggal">
+          <Download /><span className="hidden sm:inline">Unduh per tanggal</span>
         </Button>
         <Button variant="outline" size="icon" onClick={fetchData} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
           <RefreshCw className={loading ? 'animate-spin' : ''} />

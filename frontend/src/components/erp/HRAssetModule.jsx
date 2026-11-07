@@ -317,7 +317,7 @@ export default function HRAssetModule({ token }) {
 
   const unduh = {
     assets: (
-      <TombolUnduh namaBerkas="aset-karyawan" namaLembar="Aset" baris={assets} testId="asset-unduh"
+      <TombolUnduh label={<span className="hidden sm:inline">Unduh</span>} namaBerkas="aset-karyawan" namaLembar="Aset" baris={assets} testId="asset-unduh"
         kolom={[
           { label: 'Kode aset', nilai: (a) => a.asset_code || '' },
           { label: 'Nama aset', nilai: (a) => a.asset_name },
@@ -333,7 +333,7 @@ export default function HRAssetModule({ token }) {
         ]} />
     ),
     assignments: (
-      <TombolUnduh namaBerkas="penugasan-aset-aktif" namaLembar="Penugasan aktif" baris={assignments} testId="assignment-unduh"
+      <TombolUnduh label={<span className="hidden sm:inline">Unduh</span>} namaBerkas="penugasan-aset-aktif" namaLembar="Penugasan aktif" baris={assignments} testId="assignment-unduh"
         kolom={[
           { label: 'Aset', nilai: (a) => a.asset_name },
           { label: 'Kode aset', nilai: (a) => a.asset_code || '' },
@@ -345,7 +345,7 @@ export default function HRAssetModule({ token }) {
         ]} />
     ),
     by_employee: (
-      <TombolUnduh namaBerkas={`aset-${selectedEmp?.employee_code || 'karyawan'}`} namaLembar="Aset karyawan"
+      <TombolUnduh label={<span className="hidden sm:inline">Unduh</span>} namaBerkas={`aset-${selectedEmp?.employee_code || 'karyawan'}`} namaLembar="Aset karyawan"
         baris={selectedEmp ? empAssets : []} testId="emp-asset-unduh"
         kolom={[
           { label: 'Karyawan', nilai: () => selectedEmp?.name || '' },
@@ -365,7 +365,16 @@ export default function HRAssetModule({ token }) {
     <Tabs value={tab} onValueChange={setTab}>
       <PageLayout testId="hr-asset-module" title="Aset karyawan"
         subtitle="Aset perusahaan yang dipinjamkan ke karyawan: daftar, penugasan aktif, dan riwayat per karyawan."
-        actions={<Button onClick={() => setAssetDialog({})} data-testid="asset-add"><Plus />Tambah aset</Button>}
+        // Alat (muat ulang, unduh) ikut kepala, bukan baris penyaring: baris itu memuat tab, dan di HP cetakan
+        // menyempitkan penyaring di samping alat sehingga tab terpotong (lihat laporan, permintaan komponen bersama).
+        actions={<>
+          <Button variant="outline" size="icon" onClick={() => { loadAssets(); loadAssignments(); if (selectedEmp) loadEmpAssets(selectedEmp.id); }}
+            title="Muat ulang" aria-label="Muat ulang">
+            <RefreshCw />
+          </Button>
+          {unduh[tab]}
+          <Button onClick={() => setAssetDialog({})} data-testid="asset-add"><Plus />Tambah aset</Button>
+        </>}
         filters={<>
           <TabsList className="h-auto max-w-full justify-start max-sm:flex-nowrap max-sm:overflow-x-auto">
             <TabsTrigger value="assets" data-testid="asset-tab-assets">Daftar aset</TabsTrigger>
@@ -378,29 +387,24 @@ export default function HRAssetModule({ token }) {
               <Input value={search} onChange={e => setSearch(e.target.value)}
                 placeholder="Cari nama, kode, nomor seri" className="pl-8" data-testid="asset-search" />
             </div>
+            <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
             <SmartNativeSelect value={filterCat} onChange={e => setFilterCat(e.target.value)} searchable={false}
-              className="h-9 w-44" aria-label="Kategori" data-testid="asset-filter-category">
+              className="h-9 w-full sm:w-44" aria-label="Kategori" data-testid="asset-filter-category">
               <option value="">Semua kategori</option>
               {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
             </SmartNativeSelect>
             <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} searchable={false}
-              className="h-9 w-40" aria-label="Status" data-testid="asset-filter-status">
+              className="h-9 w-full sm:w-40" aria-label="Status" data-testid="asset-filter-status">
               <option value="">Semua status</option>
               {STATUSES.map(s => <option key={s} value={s}>{STATUS_CFG[s]?.label || s}</option>)}
             </SmartNativeSelect>
+            </div>
           </>)}
           {tab === 'by_employee' && (
             <EmployeeSelect employees={employees} value={selectedEmp?.id || ''} testId="asset-by-employee"
               placeholder="— Pilih karyawan —" className="h-9 w-full sm:w-72"
               onChange={(v) => { const e = employees.find((x) => x.id === v) || null; setSelectedEmp(e); if (!e) setEmpAssets([]); }} />
           )}
-        </>}
-        tools={<>
-          {unduh[tab]}
-          <Button variant="outline" size="icon" onClick={() => { loadAssets(); loadAssignments(); if (selectedEmp) loadEmpAssets(selectedEmp.id); }}
-            title="Muat ulang" aria-label="Muat ulang">
-            <RefreshCw />
-          </Button>
         </>}
         footer={tab === 'assets' && assets.length > 0 && (
           <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />

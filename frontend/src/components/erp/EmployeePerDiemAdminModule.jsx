@@ -137,7 +137,7 @@ export default function EmployeePerDiemAdminModule({ token, user }) {
     { kunci: 'jenis', label: 'Jenis perjalanan', hp: 'judul', isi: (r) => (
       <div className="min-w-0">
         <p className="font-medium text-foreground">{namaJenis(r)}</p>
-        <p className="text-xs text-muted-foreground">{jenis(r).description || ''}</p>
+        <p className="text-xs text-muted-foreground" title={catatan(r)}>{jenis(r).description || ''}</p>
       </div>) },
     { kunci: 'harian', label: 'Uang harian', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmt(r.daily_rate)}</span> },
     { kunci: 'makan', label: 'Uang makan', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmt(r.meal_allowance)}</span> },
@@ -145,8 +145,6 @@ export default function EmployeePerDiemAdminModule({ token, user }) {
     { kunci: 'total', label: 'Total per hari', rata: 'kanan', isi: (r) => <span className="font-semibold tabular-nums">{fmt(totalHarian(r))}</span> },
     { kunci: 'berlaku', label: 'Berlaku sejak', isi: (r) => (r.effective_date ? formatTanggalID(r.effective_date) || r.effective_date : '—') },
     { kunci: 'status', label: 'Status', isi: (r) => { const k = keadaan(r); return <StatusBadge status={k.label} label={k.label} tone={k.tone} />; } },
-    { kunci: 'catatan', label: 'Catatan', hp: false, isi: (r) => (
-      <span className="block max-w-[14rem] truncate text-muted-foreground" title={catatan(r)}>{catatan(r) || '—'}</span>) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
       <Button size="sm" variant="outline" onClick={() => setEditing(r)} data-testid={`per-diem-edit-${r.destination_type}`}>
         <Pencil />{r.is_default ? 'Atur' : 'Ubah'}

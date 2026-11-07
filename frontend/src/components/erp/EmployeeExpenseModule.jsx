@@ -598,7 +598,7 @@ export default function EmployeeExpenseModule({ token, user }) {
             ariaLabel="Klaim siapa" options={[{ key: 'my', label: 'Klaim saya' }, { key: 'all', label: 'Semua klaim' }]} />
         )}
         <SmartNativeSelect value={filter} onChange={e => setFilter(e.target.value)} searchable={false}
-          className="h-9 w-52" aria-label="Status" data-testid="claim-filter-status">
+          className="h-9 w-full sm:w-52" aria-label="Status" data-testid="claim-filter-status">
           <option value="all">Semua status</option>
           <option value="draft">Draf</option>
           <option value="submitted">Menunggu persetujuan</option>
@@ -613,7 +613,7 @@ export default function EmployeeExpenseModule({ token, user }) {
         </div>
       </>}
       tools={<>
-        <TombolUnduh namaBerkas="klaim-biaya" namaLembar="Klaim biaya" baris={filteredClaims} testId="claim-unduh"
+        <TombolUnduh label={<span className="hidden sm:inline">Unduh</span>} namaBerkas="klaim-biaya" namaLembar="Klaim biaya" baris={filteredClaims} testId="claim-unduh"
           kolom={[
             { label: 'Nomor klaim', nilai: (c) => c.claim_number },
             { label: 'Judul', nilai: (c) => c.title },
@@ -625,8 +625,9 @@ export default function EmployeeExpenseModule({ token, user }) {
             { label: 'Dibuat', nilai: (c) => fmtDate(c.created_at) },
             { label: 'Nomor jurnal', nilai: (c) => c.gl_je_number || '' },
           ]} />
-        <Button variant="outline" onClick={() => setShowExport(true)} data-testid="claim-export-range">
-          <Download />Unduh per tanggal
+        <Button variant="outline" onClick={() => setShowExport(true)} data-testid="claim-export-range"
+          title="Unduh CSV per tanggal" aria-label="Unduh per tanggal">
+          <Download /><span className="hidden sm:inline">Unduh per tanggal</span>
         </Button>
         <Button variant="outline" size="icon" onClick={fetchData} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
           <RefreshCw className={loading ? 'animate-spin' : ''} />
