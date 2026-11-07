@@ -3,7 +3,7 @@
  *
  * Tahap 2 (2026-11-06):
  * · Foto selfie masuk & pulang TAMPIL saat HR memeriksa (dulu tidak ada fotonya sama sekali).
- * · Cetakan PageLayout; rincian dibuka di halaman (DetailPanel), bukan popup.
+ * · Cetakan PageLayout; rincian lewat DetailPanel (sejak Standar UI/UX v2 tampil sebagai popup).
  * · Tanggal yang sudah masuk gaji final ditolak server dengan pesan (koreksi lewat pengajuan koreksi).
  * Standar UI/UX v2 (8 Nov 2026): rincian = popup (DetailPanel), tabel standar + unduh Excel/CSV,
  * tombol Setujui hijau / Tolak merah.
@@ -224,7 +224,7 @@ export default function RahazaAttendanceApprovalModule({ token }) {
       testId="att-approval-page"
     >
       {loading ? (
-        <p className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Memuat antrean absen…</p>
+        <p className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Memuat antrean absen…</p>
       ) : records.length === 0 ? (
         <EmptyState icon={ClipboardCheck} title="Tidak ada absen untuk penyaring ini"
           description={statusFilter === 'pending' ? 'Semua absen sudah diperiksa.' : 'Ubah status atau periode.'} />

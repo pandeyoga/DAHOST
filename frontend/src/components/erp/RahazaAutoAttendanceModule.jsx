@@ -43,7 +43,7 @@ const TZ = 'Asia/Jakarta';
 const useHeaders = (token) => useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
 function Memuat({ teks = 'Memuat…' }) {
-  return <p className="py-10 text-center text-sm text-muted-foreground">{teks}</p>;
+  return <p className="py-6 text-center text-sm text-muted-foreground">{teks}</p>;
 }
 
 function MuatUlang({ onClick, memuat }) {

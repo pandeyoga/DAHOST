@@ -368,7 +368,7 @@ export default function RahazaAttendanceModule({ token }) {
         footer={rows.length > 0 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}
       >
       {loading && rows.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat absensi…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat absensi…</p>
       ) : rows.length === 0 ? (
         <EmptyState icon={ClockIcon} title="Belum ada karyawan aktif" description="Tambahkan data karyawan terlebih dahulu untuk mengisi absensi." />
       ) : (

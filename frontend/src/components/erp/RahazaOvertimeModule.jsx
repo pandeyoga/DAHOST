@@ -195,7 +195,7 @@ export default function RahazaOvertimeModule({ token, user }) {
       </>}
       footer={items.length > 0 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}>
       {loading && items.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat pengajuan lembur…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat pengajuan lembur…</p>
       ) : (
         <TabelData kolom={kolom} baris={paged} testId="overtime-table"
           kosong={<EmptyState icon={Clock} title="Tidak ada pengajuan lembur"

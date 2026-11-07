@@ -151,7 +151,7 @@ export default function HRLeaveBalancesModule({ token }) {
       )}
       footer={tampil.length > 0 && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={15} onPageChange={setPage} />}>
       {loading && baris.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat saldo cuti…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat saldo cuti…</p>
       ) : !loadError && (
         <TabelData kolom={kolom} baris={paged} testId="balance-table"
           kosong={<EmptyState icon={CalendarDays}

@@ -527,7 +527,7 @@ export default function RahazaLeaveModule({ token, onNavigate, bagian }) {
       )}
       footer={leaves.length > 0 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}>
       {loading && leaves.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat pengajuan…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat pengajuan…</p>
       ) : (
         <TabelData kolom={kolomPengajuan} baris={paged} onKlikBaris={setSelectedLeave} testId="leave-table"
           kosong={<EmptyState icon={CalendarDays} title="Belum ada pengajuan"
@@ -559,7 +559,7 @@ export default function RahazaLeaveModule({ token, onNavigate, bagian }) {
       </>}
       summary={<p className="text-sm text-muted-foreground">Perubahan langsung dipakai formulir pengajuan dan penggajian.</p>}>
       {loading && leaveTypes.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat jenis cuti…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat jenis cuti…</p>
       ) : (
         <TabelData kolom={kolomJenis} baris={leaveTypes} testId="leave-type-list"
           kosong={<EmptyState icon={CalendarDays} title="Belum ada jenis cuti"

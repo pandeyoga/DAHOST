@@ -331,7 +331,7 @@ export default function HRAttendanceSessionsModule({ token }) {
         </div>
       )}>
       {loading ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat…</p>
       ) : tab === 'pending' ? (
         <TabelData kolom={kolomPending} baris={pendingShown} testId="pending-list"
           kosong={<EmptyState icon={CheckCircle2} testId="pending-empty"
