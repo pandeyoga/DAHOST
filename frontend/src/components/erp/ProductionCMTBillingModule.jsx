@@ -22,6 +22,9 @@ import { RefreshCw, Search, Receipt, AlertTriangle, CheckCircle2, Landmark, X } 
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { Input } from '@/components/ui/input';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DatePicker from '@/components/ui/date-picker';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
@@ -141,13 +144,13 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
             options={[{ key: 'bills', label: 'Tagihan', count: rows.length },
               { key: 'schedules', label: 'Jadwal hutang per PO', count: (schedules.items || []).length }]} />
         )}
-        <div className="relative w-72 max-w-full">
+        <div className="relative w-full sm:w-64">
           <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') load(); }} placeholder="Cari kode tagihan / vendor / PO…"
-            className="pl-8 h-9" data-testid="cmt-billing-search" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') load(); }} placeholder="Cari tagihan, vendor, PO (Enter)"
+            className="pl-8" data-testid="cmt-billing-search" />
         </div>
-        <SmartNativeSelect value={status} onChange={(e) => setStatus(e.target.value)} className="h-9 w-44" data-testid="cmt-billing-status-filter" aria-label="Status">
+        <SmartNativeSelect value={status} onChange={(e) => setStatus(e.target.value)} className="w-44" data-testid="cmt-billing-status-filter" aria-label="Status">
           <option value="">Semua status</option>
           <option value="draft">Draf</option>
           <option value="posted">Terjurnal</option>
@@ -156,7 +159,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
           <option value="cancelled">Dibatalkan</option>
         </SmartNativeSelect>
         {vendorOpts.length > 0 && (
-          <SmartNativeSelect value={partnerId} onChange={(e) => setPartnerId(e.target.value)} className="h-9 w-80 max-w-full"
+          <SmartNativeSelect value={partnerId} onChange={(e) => setPartnerId(e.target.value)} className="w-56"
             data-testid="cmt-billing-vendor-filter" aria-label="Vendor CMT">
             <option value="">Semua vendor CMT ({vendorOpts.length})</option>
             {vendorOpts.map((v) => (
@@ -170,9 +173,30 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
           <Button variant="outline" onClick={resetFilters} data-testid="cmt-billing-reset"><X className="h-3.5 w-3.5" />Reset filter</Button>
         )}
       </>}
-      tools={<Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="cmt-billing-refresh">
-        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-      </Button>}
+      tools={<>
+        {/* Standar UI/UX v2: unduh Excel/CSV tampilan aktif (semua baris hasil saringan dari server). */}
+        {view === 'schedules' ? (
+          <TombolUnduh namaBerkas="jadwal-hutang-cmt" baris={schedules.items || []} testId="cmt-billing-unduh" kolom={[
+            { label: 'PO', nilai: (s) => s.po_number || '' }, { label: 'Vendor CMT', nilai: (s) => s.vendor_name || '' },
+            { label: 'Jadwal (Rp)', nilai: (s) => Number(s.scheduled_amount) || 0 }, { label: 'Jadwal (pcs)', nilai: (s) => Number(s.scheduled_qty) || 0 },
+            { label: 'Lolos QC (Rp)', nilai: (s) => Number(s.matured_amount) || 0 }, { label: 'Dibayar (Rp)', nilai: (s) => Number(s.paid_amount) || 0 },
+            { label: 'Tertahan (Rp)', nilai: (s) => Number(s.blocked_amount) || 0 }, { label: 'Bisa dibayar (Rp)', nilai: (s) => Number(s.payable_amount) || 0 },
+            { label: 'Status', nilai: (s) => s.status_label || s.status || '' },
+          ]} />
+        ) : (
+          <TombolUnduh namaBerkas="tagihan-cmt" baris={rows} testId="cmt-billing-unduh" kolom={[
+            { label: 'Kode', nilai: (r) => r.payment_code || '' }, { label: 'Vendor CMT', nilai: (r) => r.cmt_name || '' },
+            { label: 'PO', nilai: (r) => r.po_number || r.source_receipt_code || '' }, { label: 'Pcs', nilai: (r) => Number(r.total_pcs) || 0 },
+            { label: 'Nilai (Rp)', nilai: (r) => Number(r.amount) || 0 }, { label: 'Bisa dibayar (Rp)', nilai: (r) => Number(r.payable_amount) || 0 },
+            { label: 'Tertahan (Rp)', nilai: (r) => Number(r.blocked_amount) || 0 },
+            { label: 'Selisih belum selesai (pcs)', nilai: (r) => Number(r.variance_unresolved_qty) || 0 },
+            { label: 'Status', nilai: (r) => r.status || '' }, { label: 'Jurnal', nilai: (r) => (r.gl_posted ? (r.gl_je_number || 'terjurnal') : 'Belum dijurnal') },
+          ]} />
+        )}
+        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="cmt-billing-refresh">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </>}
       summary={<>
         {error && <Notice tone="danger" icon={AlertTriangle} title="Gagal memuat data" testId="cmt-billing-error">{error}</Notice>}
         {(summary?.total_bills > 0) && (
@@ -192,7 +216,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
         <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
       )}
     >
-      <GlassCard className="p-0 overflow-hidden">
+      <GlassCard className="p-0 overflow-x-auto">
         {view === 'schedules' ? (
           <>
             {/* Tahap 8 fase 2: PO maklon yang dijahit tim CV Sukma sendiri — tanpa tagihan & jadwal hutang CMT */}
@@ -485,9 +509,9 @@ function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
           )}
           <MoneyInput glass placeholder={`maks. ${fmtNum(payable)}`} value={payForm.amount} onChange={(e) => setPayForm((f) => ({ ...f, amount: e.target.value }))}
             className="h-9 w-40" data-testid="cmt-pay-amount" />
-          <GlassInput type="date" value={payForm.payment_date} onChange={(e) => setPayForm((f) => ({ ...f, payment_date: e.target.value }))} className="h-9 w-40" data-testid="cmt-pay-date" />
+          <div className="w-44"><DatePicker value={payForm.payment_date} onChange={(v) => setPayForm((f) => ({ ...f, payment_date: v }))} placeholder="Tanggal bayar" testId="cmt-pay-date" /></div>
           <GlassInput placeholder="No. referensi" value={payForm.reference_no} onChange={(e) => setPayForm((f) => ({ ...f, reference_no: e.target.value }))} className="h-9 w-40" data-testid="cmt-pay-ref" />
-          <Button onClick={pay} disabled={busy} data-testid="cmt-pay-submit"><CheckCircle2 className="w-4 h-4" />Bayar vendor</Button>
+          <Button variant="success" onClick={pay} disabled={busy} data-testid="cmt-pay-submit"><CheckCircle2 className="w-4 h-4" />Bayar vendor</Button>
         </div>
       )}
       {bill.notes && <p className="text-xs text-muted-foreground">{bill.notes}</p>}
