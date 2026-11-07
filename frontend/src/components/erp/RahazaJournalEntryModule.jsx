@@ -3,14 +3,16 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
 import { toast } from 'sonner';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { Plus, RefreshCw, Trash2, FileText, Check, Ban, Search, Download } from 'lucide-react';
+import { Plus, RefreshCw, Trash2, FileText, Check, Ban, Search } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState, StatusBadge as AtomStatusBadge } from './moduleAtoms';
-import PageLayout, { DetailPanel, RowDetail, RowToggle } from './layout/PageLayout';
+import PageLayout, { RowDetail, RowToggle } from './layout/PageLayout';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import JournalLinesInline from './finance/JournalLinesInline';
-import Modal from './Modal';
 import PaginationBar from '@/components/ui/PaginationBar';
 import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
 import { JOURNAL_SOURCE_LABELS, journalSourceLabel, finStatus, humanMemo } from '../../lib/financeLabels';
@@ -31,6 +33,8 @@ function StatusBadge({ status }) {
 
 // Memo jurnal otomatis dari server ("AR Invoice …") ditampilkan dalam bahasa Indonesia lewat `humanMemo`
 // (lib/financeLabels — satu sumber, 2026-11-05); data & unduhan CSV tetap memakai teks aslinya.
+// 2026-11-08: memo pengeluaran "Expense: …" belum dikenali humanMemo (butuh spasi, bukan titik dua) → ditangani di sini.
+const memoID = (m) => humanMemo(String(m || '').replace(/^Expense:\s*/, 'Pengeluaran: '));
 
 function JournalEditor({ accounts, onSave, onClose, token }) {
   const [form, setForm] = useState({
@@ -90,18 +94,20 @@ function JournalEditor({ accounts, onSave, onClose, token }) {
   // akun / induk sub-ledger) diberi PERINGATAN — tidak memblokir simpan.
   const controlKindOf = (code) => (code && accounts.find(a => a.code === code)?.control_kind) || '';
 
-  // 2026-11-05 (PANDUAN_UI G13): formulir panjang dibuka DI HALAMAN di atas daftar (DetailPanel; × / Esc menutup).
+  // 2026-11-08 (Standar UI/UX v2): form SELALU popup — FormPopup panjang (dulu panel di atas daftar).
+  // Kaki: [Simpan draf] · Batal · Simpan & posting (hijau).
   return (
-    <DetailPanel title="Jurnal baru" description="Minimal 2 baris; total debit harus sama dengan total kredit." onClose={onClose} testId="je-editor">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div>
-          <label className="text-xs text-muted-foreground" htmlFor="je-input-date">Tanggal *</label>
-          <GlassInput id="je-input-date" type="date" value={form.date} onChange={e => handle('date', e.target.value)} data-testid="je-input-date" />
-        </div>
-        <div className="md:col-span-2">
-          <label className="text-xs text-muted-foreground" htmlFor="je-input-memo">Memo / keterangan</label>
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="je-editor"
+      judul="Jurnal baru" keterangan="Minimal 2 baris; total debit harus sama dengan total kredit."
+      onSimpan={() => submit(false)} labelSimpan="Simpan & posting" bisaSimpan={balanced && nomorSiap && !lineProblem}
+      aksiKiri={<Button type="button" variant="outline" onClick={() => submit(true)} disabled={!balanced || !nomorSiap || !!lineProblem} data-testid="je-save-draft">Simpan draf</Button>}>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Isian label="Tanggal" wajib>
+          <DatePicker id="je-input-date" value={form.date} onChange={v => handle('date', v)} bolehKosong={false} testId="je-input-date" />
+        </Isian>
+        <Isian label="Memo / keterangan" htmlFor="je-input-memo" className="md:col-span-2">
           <GlassInput id="je-input-memo" value={form.memo} onChange={e => handle('memo', e.target.value)} placeholder="Mis. Setoran modal awal" data-testid="je-input-memo" />
-        </div>
+        </Isian>
         <div className="md:col-span-3">
           <DocNumberField
             policy={numPolicy}
@@ -113,13 +119,13 @@ function JournalEditor({ accounts, onSave, onClose, token }) {
         </div>
       </div>
 
-      <p className="text-xs text-muted-foreground">Baris jurnal</p>
-      <div className="space-y-2">
+      <p className="text-sm font-medium text-foreground">Baris jurnal</p>
+      <div className="space-y-3 sm:space-y-2">
         {form.lines.map((ln, i) => {
           const ctl = controlKindOf(ln.account_code);
           return (
-          <div key={i} className="grid grid-cols-12 gap-2 items-start">
-            <div className="col-span-5">
+          <div key={i} className="grid grid-cols-2 sm:grid-cols-12 gap-2 items-start">
+            <div className="col-span-2 sm:col-span-5">
               <SmartNativeSelect
                 value={ln.account_code}
                 onChange={e => setLine(i, 'account_code', e.target.value)}
@@ -131,24 +137,24 @@ function JournalEditor({ accounts, onSave, onClose, token }) {
                 {postableAccounts.map(a => <option key={a.code} value={a.code}>{`${a.code} · ${a.name}`}</option>)}
               </SmartNativeSelect>
             </div>
-            <div className="col-span-2">
+            <div className="sm:col-span-2">
               <MoneyInput decimals={2} glass value={ln.debit} onChange={e => { setLine(i, 'debit', e.target.value); if (Number(e.target.value) > 0) setLine(i, 'credit', 0); }} placeholder="Debit" aria-label={`Debit baris ${i + 1}`} data-testid={`je-line-${i}-debit`} />
             </div>
-            <div className="col-span-2">
+            <div className="sm:col-span-2">
               <MoneyInput decimals={2} glass value={ln.credit} onChange={e => { setLine(i, 'credit', e.target.value); if (Number(e.target.value) > 0) setLine(i, 'debit', 0); }} placeholder="Kredit" aria-label={`Kredit baris ${i + 1}`} data-testid={`je-line-${i}-credit`} />
             </div>
-            <div className="col-span-2">
+            <div className="sm:col-span-2">
               <GlassInput value={ln.description} onChange={e => setLine(i, 'description', e.target.value)} placeholder="Uraian" aria-label={`Uraian baris ${i + 1}`} data-testid={`je-line-${i}-desc`} />
             </div>
-            <div className="col-span-1 flex items-center justify-center">
+            <div className="sm:col-span-1 flex items-center justify-end sm:justify-center">
               {form.lines.length > 2 && (
                 <Button variant="ghost" size="icon-sm" onClick={() => removeLine(i)} title="Hapus baris" aria-label="Hapus baris" data-testid={`je-line-${i}-remove`}>
-                  <Trash2 className="w-3.5 h-3.5 text-[hsl(var(--destructive))]" />
+                  <Trash2 className="w-3.5 h-3.5 text-[hsl(var(--danger-text))]" />
                 </Button>
               )}
             </div>
             {ctl && (
-              <p className="col-span-12 -mt-1 text-[11px] text-[hsl(var(--warning))]" data-testid={`je-line-${i}-control-warning`}>
+              <p className="col-span-2 sm:col-span-12 -mt-1 text-xs text-[hsl(var(--warning-text))]" data-testid={`je-line-${i}-control-warning`}>
                 {ctl === 'ap'
                   ? 'Akun hutang usaha: sebaiknya dicatat lewat faktur pemasok dan pembayarannya, supaya rincian hutang per pemasok tetap benar. Jurnal tetap bisa disimpan.'
                   : 'Akun piutang usaha: sebaiknya dicatat lewat faktur penjualan dan penerimaan pembayarannya, supaya rincian piutang per pelanggan tetap benar. Jurnal tetap bisa disimpan.'}
@@ -158,24 +164,17 @@ function JournalEditor({ accounts, onSave, onClose, token }) {
           );
         })}
       </div>
-      <Button size="sm" variant="outline" onClick={addLine} data-testid="je-add-line"><Plus className="w-3.5 h-3.5" />Tambah baris</Button>
+      <Button type="button" size="sm" variant="outline" onClick={addLine} data-testid="je-add-line"><Plus className="w-3.5 h-3.5" />Tambah baris</Button>
 
-      <div className="flex items-center justify-between flex-wrap gap-3 pt-3 border-t border-[var(--glass-border)]">
-        <div className="flex gap-4 text-sm flex-wrap">
-          <div><span className="text-muted-foreground text-xs">Total debit </span><span className="font-semibold tabular-nums">{fmt(totalD)}</span></div>
-          <div><span className="text-muted-foreground text-xs">Total kredit </span><span className="font-semibold tabular-nums">{fmt(totalC)}</span></div>
-          <div className={`font-semibold ${balanced ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--destructive))]'}`} data-testid="je-balanced-indicator">
-            {balanced ? 'Seimbang ✓' : 'Tidak seimbang (selisih ' + fmt(Math.abs(totalD - totalC)) + ')'}
-          </div>
-          {lineProblem && <div className="text-xs text-[hsl(var(--warning))]" data-testid="je-line-problem">{lineProblem}</div>}
+      <div className="flex gap-4 text-sm flex-wrap pt-3 border-t border-[var(--glass-border)]">
+        <div><span className="text-muted-foreground">Total debit </span><span className="font-semibold tabular-nums">{fmt(totalD)}</span></div>
+        <div><span className="text-muted-foreground">Total kredit </span><span className="font-semibold tabular-nums">{fmt(totalC)}</span></div>
+        <div className={`font-semibold ${balanced ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--danger-text))]'}`} data-testid="je-balanced-indicator">
+          {balanced ? 'Seimbang' : 'Tidak seimbang (selisih ' + fmt(Math.abs(totalD - totalC)) + ')'}
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={onClose} data-testid="je-editor-cancel">Batal</Button>
-          <Button variant="outline" onClick={() => submit(true)} disabled={!balanced || !nomorSiap || !!lineProblem} data-testid="je-save-draft">Simpan draf</Button>
-          <Button onClick={() => submit(false)} disabled={!balanced || !nomorSiap || !!lineProblem} data-testid="je-save-post">Simpan & posting</Button>
-        </div>
+        {lineProblem && <div className="text-[hsl(var(--warning-text))]" data-testid="je-line-problem">{lineProblem}</div>}
       </div>
-    </DetailPanel>
+    </FormPopup>
   );
 }
 
@@ -185,43 +184,25 @@ function JournalRowActions({ je, onPost, onVoid, onDelete }) {
     <div className="flex items-center justify-between gap-3 flex-wrap mt-3 pt-3 border-t border-[var(--glass-border)]">
       <div className="text-xs text-muted-foreground">
         Dibuat oleh <span className="text-foreground/80">{je.created_by_name || '-'}</span> · Sumber: {journalSourceLabel(je.source_module)}
-        {je.voided_at && <span className="ml-1 text-[hsl(var(--destructive))]">· Dibatalkan</span>}
+        {je.voided_at && <span className="ml-1 text-[hsl(var(--danger-text))]">· Dibatalkan</span>}
       </div>
       <div className="flex gap-2">
         {je.status === 'draft' && (
           <>
-            <Button size="sm" variant="outline" onClick={() => onDelete(je)} data-testid="je-delete"><Trash2 className="w-3.5 h-3.5" />Hapus draf</Button>
-            <Button size="sm" variant="outline" onClick={() => onPost(je)} data-testid="je-post"><Check className="w-3.5 h-3.5" />Posting jurnal</Button>
+            <Button size="sm" variant="destructive" onClick={() => onDelete(je)} data-testid="je-delete"><Trash2 className="w-3.5 h-3.5" />Hapus draf</Button>
+            <Button size="sm" variant="success" onClick={() => onPost(je)} data-testid="je-post"><Check className="w-3.5 h-3.5" />Posting jurnal</Button>
           </>
         )}
         {je.status === 'posted' && je.hub_voidable !== false && (
-          <Button size="sm" variant="outline" onClick={() => onVoid(je)} data-testid="je-void"><Ban className="w-3.5 h-3.5" />Batalkan</Button>
+          <Button size="sm" variant="destructive" onClick={() => onVoid(je)} data-testid="je-void"><Ban className="w-3.5 h-3.5" />Batalkan</Button>
         )}
         {je.status === 'posted' && je.hub_voidable === false && (
-          <span className="text-xs text-[hsl(var(--warning))] max-w-md text-right" data-testid="je-void-locked">
+          <span className="text-xs text-[hsl(var(--warning-text))] max-w-md text-right" data-testid="je-void-locked">
             Jurnal otomatis dari {journalSourceLabel(je.source_module)} — batalkan lewat dokumen sumbernya (batal faktur / batalkan pembayaran) supaya buku pembantu ikut berubah.
           </span>
         )}
       </div>
     </div>
-  );
-}
-
-/** Alasan pembatalan jurnal — isian pendek (G9: bukan window.prompt). */
-function VoidDialog({ je, onCancel, onConfirm }) {
-  const [reason, setReason] = useState('');
-  return (
-    <Modal title={`Batalkan jurnal ${je.je_number}`} onClose={onCancel} size="sm" data-testid="je-void-dialog"
-      description="Alasan pembatalan jurnal">
-      <div className="space-y-3">
-        <p className="text-sm text-muted-foreground">Jurnal pembalik dibuat otomatis. Tulis alasannya untuk jejak audit.</p>
-        <GlassInput autoFocus value={reason} onChange={e => setReason(e.target.value)} placeholder="Alasan membatalkan jurnal" data-testid="je-void-reason" />
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={onCancel}>Batal</Button>
-          <Button variant="destructive" onClick={() => onConfirm(reason)} data-testid="je-void-confirm"><Ban className="w-4 h-4" />Batalkan jurnal</Button>
-        </div>
-      </div>
-    </Modal>
   );
 }
 
@@ -242,6 +223,8 @@ const STATUS_TABS = [
  * penyaring sumber/akun/cari, Unduh CSV, dan "+ Jurnal baru" di halaman yang sama.
  * 2026-11-05 (PANDUAN_UI G1/G4/G13, arahan owner): cetakan PageLayout; status = pil penyaring (dulu tab garis
  * bawah); klik nomor jurnal membuka baris-barisnya DI BAWAH barisnya (dulu kartu detail di atas tabel).
+ * 2026-11-08 (Standar UI/UX v2): jurnal baru = FormPopup panjang + DatePicker; alasan batal lewat dialog konfirmasi;
+ * unduh Excel/CSV semua jurnal tersaring; Posting hijau / Hapus & Batalkan merah; memo "Expense:" → "Pengeluaran:".
  */
 export default function RahazaJournalEntryModule({ token }) {
   // Tahap 8: pemilih akun hanya menampilkan akun yang berlaku untuk CV terpilih
@@ -254,7 +237,6 @@ export default function RahazaJournalEntryModule({ token }) {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
   const [detailId, setDetailId] = useState(null);
-  const [voiding, setVoiding] = useState(null);
   const [filterStatus, setFilterStatus] = useState('');
   const [period, setPeriod] = useState(() => periodFromPreset('3m'));
   const [source, setSource] = useState('');
@@ -308,9 +290,16 @@ export default function RahazaJournalEntryModule({ token }) {
     else { const e = await r.json(); toast.error(e.detail || 'Gagal memposting jurnal'); }
   };
 
-  const voidJE = async (je, reason) => {
+  // Alasan pembatalan lewat dialog konfirmasi berisian (dulu popup buatan sendiri); jurnal pembalik dibuat server.
+  const voidJE = async (je) => {
+    const reason = await confirmDialog({
+      title: `Batalkan jurnal ${je.je_number}?`, body: 'Jurnal pembalik dibuat otomatis. Tulis alasannya untuk jejak audit.',
+      confirmLabel: 'Batalkan jurnal', cancelLabel: 'Kembali', danger: true,
+      input: { label: 'Alasan', placeholder: 'Alasan membatalkan jurnal' },
+    });
+    if (!reason) return;
     const r = await fetch(`/api/rahaza/journals/${je.id}/void`, { method: 'POST', headers, body: JSON.stringify({ reason }) });
-    if (r.ok) { setVoiding(null); setDetailId(null); fetchData(); }
+    if (r.ok) { setDetailId(null); fetchData(); }
     else { const e = await r.json(); toast.error(e.detail || 'Gagal membatalkan jurnal'); }
   };
 
@@ -321,8 +310,8 @@ export default function RahazaJournalEntryModule({ token }) {
     else { const e = await r.json(); toast.error(e.detail || 'Gagal menghapus draf'); }
   };
 
-  // Unduh CSV: SEMUA jurnal sesuai penyaring (bukan hanya halaman ini), dibaca per halaman 200.
-  const exportCSV = async () => {
+  // Unduh: SEMUA jurnal sesuai penyaring (bukan hanya halaman ini), dibaca per halaman 200.
+  const ambilSemua = async () => {
     const all = [];
     for (let page = 1; page <= 50; page += 1) {
       const r = await fetch(`/api/rahaza/journals?${params(page, 200)}`, { headers });
@@ -330,13 +319,7 @@ export default function RahazaJournalEntryModule({ token }) {
       all.push(...(d.items || []));
       if (!d.items || all.length >= (d.total || 0)) break;
     }
-    const esc = (c) => { const v = String(c ?? ''); return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
-    const csv = [['No. jurnal', 'Tanggal', 'Status', 'Sumber', 'Referensi', 'Memo', 'Debit', 'Kredit'],
-      ...all.map(j => [j.je_number, j.date, finStatus(j.status).label, journalSourceLabel(j.source_module), j.source_ref || '', j.memo || '', j.total_debit, j.total_credit])]
-      .map(r => r.map(esc).join(',')).join('\n');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    const a = document.createElement('a'); a.href = url; a.download = `jurnal-${period.from}-${period.to}.csv`; a.click();
-    URL.revokeObjectURL(url);
+    return all;
   };
 
   const allCount = Object.values(counts).reduce((s, n) => s + n, 0);
@@ -354,11 +337,11 @@ export default function RahazaJournalEntryModule({ token }) {
       {/* 2026-11-07 (audit form Tahap 5): akun dipilih dari Bagan Akun (dulu kotak teks "Kode akun" yang harus
           diketik persis) — kode · nama, bisa dicari. */}
       <SmartNativeSelect value={accountCode} onChange={e => setAccountCode(e.target.value)} aria-label="Akun"
-        className="h-9 w-64" searchPlaceholder="Cari kode atau nama akun…" data-testid="je-filter-account">
+        className="h-9 w-56" searchPlaceholder="Cari kode atau nama akun…" data-testid="je-filter-account">
         <option value="">Semua akun</option>
         {accounts.filter(a => !a.is_group).map(a => <option key={a.code} value={a.code}>{`${a.code} · ${a.name}`}</option>)}
       </SmartNativeSelect>
-      <div className="relative w-72 max-w-full">
+      <div className="relative w-full sm:w-64">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <GlassInput value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari nomor jurnal / memo / referensi…" aria-label="Cari jurnal" className="pl-9 h-9" data-testid="je-search" />
       </div>
@@ -377,9 +360,19 @@ export default function RahazaJournalEntryModule({ token }) {
       filters={filters}
       tools={<>
         <Button size="icon" variant="outline" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang" data-testid="je-refresh"><RefreshCw className="w-4 h-4" /></Button>
-        <Button variant="outline" onClick={exportCSV} disabled={!total} data-testid="je-export"><Download className="w-4 h-4" />Unduh CSV</Button>
+        <TombolUnduh namaBerkas={`jurnal-${period.from}-${period.to}`} namaLembar="Jurnal" baris={rows} ambilSemua={ambilSemua} testId="je-export"
+          kolom={[
+            { label: 'No. jurnal', nilai: (j) => j.je_number },
+            { label: 'Tanggal', nilai: (j) => formatDateID(j.date) },
+            { label: 'Status', nilai: (j) => finStatus(j.status).label },
+            { label: 'Sumber', nilai: (j) => journalSourceLabel(j.source_module) },
+            { label: 'Referensi', nilai: (j) => j.source_ref || '' },
+            { label: 'Memo', nilai: (j) => memoID(j.memo) },
+            { label: 'Debit', nilai: (j) => Number(j.total_debit) || 0 },
+            { label: 'Kredit', nilai: (j) => Number(j.total_credit) || 0 },
+          ]} />
       </>}
-      detail={editing && <JournalEditor accounts={accounts} onSave={save} onClose={() => setEditing(null)} token={token} />}
+
       footer={<PaginationBar total={total} skip={skip} limit={PAGE} onPageChange={setSkip} />}
     >
       <GlassCard className="p-0 overflow-hidden">
@@ -392,14 +385,14 @@ export default function RahazaJournalEntryModule({ token }) {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-muted-foreground border-b border-[var(--glass-border)]">
-                  <th className="py-2 pl-2 w-10"><span className="sr-only">Rincian</span></th>
-                  <th className="py-2 px-2 font-medium">No. jurnal</th>
-                  <th className="py-2 px-2 font-medium">Tanggal</th>
-                  <th className="py-2 px-2 font-medium">Memo</th>
-                  <th className="py-2 px-2 font-medium">Sumber</th>
-                  <th className="py-2 px-2 font-medium">Status</th>
-                  <th className="py-2 px-2 font-medium text-right">Total (Rp)</th>
+                <tr>
+                  <th className="w-10"><span className="sr-only">Rincian</span></th>
+                  <th className="text-left">No. jurnal</th>
+                  <th className="text-left">Tanggal</th>
+                  <th className="text-left">Memo</th>
+                  <th className="text-left hidden md:table-cell">Sumber</th>
+                  <th className="text-left">Status</th>
+                  <th className="text-right">Total (Rp)</th>
                 </tr>
               </thead>
               <tbody>
@@ -413,22 +406,22 @@ export default function RahazaJournalEntryModule({ token }) {
                         className={`border-b border-[var(--glass-border)] hover:bg-foreground/5 cursor-pointer ${open ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}
                         data-testid={`je-row-${j.je_number}`}
                       >
-                        <td className="py-2 pl-2" onClick={e => e.stopPropagation()}>
+                        <td onClick={e => e.stopPropagation()}>
                           <RowToggle open={open} onClick={toggle} label="Lihat isi jurnal" testId={`je-toggle-${j.je_number}`} />
                         </td>
-                        <td className="py-2 px-2 text-xs whitespace-nowrap">
-                          <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={e => { e.stopPropagation(); toggle(); }}>{j.je_number}</Button>
+                        <td className="whitespace-nowrap">
+                          <Button variant="link" size="sm" className="h-auto p-0" onClick={e => { e.stopPropagation(); toggle(); }}>{j.je_number}</Button>
                         </td>
-                        <td className="py-2 px-2 text-xs whitespace-nowrap">{formatDateID(j.date)}</td>
-                        <td className="py-2 px-2 text-xs">{j.memo ? humanMemo(j.memo) : '-'}</td>
-                        <td className="py-2 px-2 text-xs text-muted-foreground">{journalSourceLabel(j.source_module)}</td>
-                        <td className="py-2 px-2"><StatusBadge status={j.status} /></td>
-                        <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap text-xs">{formatNumber(j.total_debit)}</td>
+                        <td className="whitespace-nowrap">{formatDateID(j.date)}</td>
+                        <td className="min-w-[12rem]">{j.memo ? memoID(j.memo) : '—'}</td>
+                        <td className="text-muted-foreground hidden md:table-cell">{journalSourceLabel(j.source_module)}</td>
+                        <td><StatusBadge status={j.status} /></td>
+                        <td className="text-right tabular-nums whitespace-nowrap">{formatNumber(j.total_debit)}</td>
                       </tr>
                       {open && (
                         <RowDetail colSpan={7} testId="je-detail">
                           <JournalLinesInline jeId={j.id} token={token} testId={`je-lines-${j.je_number}`} />
-                          <JournalRowActions je={j} onPost={postJE} onVoid={setVoiding} onDelete={delDraft} />
+                          <JournalRowActions je={j} onPost={postJE} onVoid={voidJE} onDelete={delDraft} />
                         </RowDetail>
                       )}
                     </Fragment>
@@ -440,7 +433,7 @@ export default function RahazaJournalEntryModule({ token }) {
         )}
       </GlassCard>
 
-      {voiding && <VoidDialog je={voiding} onCancel={() => setVoiding(null)} onConfirm={(reason) => voidJE(voiding, reason)} />}
+      {editing && <JournalEditor accounts={accounts} onSave={save} onClose={() => setEditing(null)} token={token} />}
     </PageLayout>
   );
 }
