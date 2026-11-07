@@ -1,25 +1,26 @@
 /**
- * WebhookSecurityPanel — status keamanan HMAC webhook marketplace (FASE 19 / AUDIT-2).
+ * WebhookSecurityPanel — status keamanan tanda tangan (HMAC) webhook marketplace (FASE 19 / AUDIT-2).
  *
- * Menampilkan, per platform, apakah verifikasi tanda tangan sudah aktif beserta
- * skema base string dan header yang diterima — supaya tim integrasi bisa
- * memperbaiki sendiri tanpa membuka `.env`. TIDAK PERNAH menampilkan nilai secret
- * (backend `GET /api/marketing/webhooks/security-status` tidak mengirimkannya).
+ * Menampilkan, per platform, apakah verifikasi tanda tangan sudah aktif beserta skema teks yang ditandatangani
+ * dan header yang diterima — supaya tim integrasi bisa memperbaiki sendiri tanpa membuka berkas pengaturan server.
+ * TIDAK PERNAH menampilkan nilai rahasia (backend `GET /api/marketing/webhooks/security-status` tidak mengirimkannya).
  *
- * Kenapa panel ini ada: sebelum FASE 19 ketiga receiver webhook menerima tulisan
- * TANPA auth apa pun. Setelah HMAC diwajibkan, kegagalan konfigurasi berubah jadi
- * "semua webhook 401" — dan tanpa panel ini penyebabnya tidak terlihat di UI.
+ * Standar UI/UX v2 (8 Nov 2026): satu baris pemberitahuan ringkas; rincian dibuka sebagai popup (dulu panel
+ * yang membuka ke bawah di dalam halaman). Rincian = tabel + unduh.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
-import { ShieldCheck, ShieldAlert, RefreshCw, ChevronDown, ChevronUp, KeyRound } from 'lucide-react';
-import { Card, CardContent } from '../../ui/card';
+import { ShieldCheck, ShieldAlert, RefreshCw, ListTree } from 'lucide-react';
 import { Button } from '../../ui/button';
-import { Badge } from '../../ui/badge';
+import DetailPopup from '../../ui/detail-popup';
+import TabelData from '../../ui/tabel-data';
+import TombolUnduh from '../../ui/tombol-unduh';
+import { Notice, StatusBadge } from '../moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
 const LABEL = { tokopedia: 'Tokopedia', shopee: 'Shopee', tiktok: 'TikTok Shop' };
+const ENV_LABEL = { shopee: 'Shopee', tokopedia: 'Tokopedia', tiktok: 'TikTok Shop', shared_fallback: 'Cadangan bersama' };
 
 export default function WebhookSecurityPanel({ headers }) {
   const [data, setData] = useState(null);
@@ -44,104 +45,96 @@ export default function WebhookSecurityPanel({ headers }) {
 
   const allOk = data?.all_configured;
   const platforms = data?.platforms || {};
+  const baris = Object.entries(platforms).map(([p, v]) => ({ id: p, p, ...v }));
+  const statusLabel = (v) => (v.configured ? 'Terverifikasi' : 'Kunci rahasia belum diatur');
+
+  const kolom = [
+    { kunci: 'platform', label: 'Platform', hp: 'judul', isi: (r) => <span className="font-medium">{LABEL[r.p] || r.p}</span> },
+    { kunci: 'status', label: 'Status', isi: (r) => (
+      <StatusBadge status={r.configured ? 'ok' : 'belum'} label={statusLabel(r)} tone={r.configured ? 'success' : 'warning'} />) },
+    { kunci: 'teks', label: 'Teks yang ditandatangani', isi: (r) => <code className="text-xs text-foreground">{r.base_string_scheme}</code> },
+    { kunci: 'header', label: 'Header diterima', isi: (r) => (
+      <span className="text-xs"><code className="text-foreground">{r.canonical_header}</code>
+        {(r.accepted_headers || []).filter((h) => h !== r.canonical_header).length > 0 && (
+          <span className="text-muted-foreground"> · {(r.accepted_headers || []).filter((h) => h !== r.canonical_header).join(', ')}</span>)}
+      </span>) },
+    { kunci: 'toleransi', label: 'Toleransi pengulangan', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.replay_tolerance_sec} detik</span> },
+  ];
 
   return (
-    <Card
-      className={`bg-card border ${allOk ? 'border-emerald-300 dark:border-emerald-500/40' : 'border-amber-300 dark:border-amber-500/40'}`}
-      data-testid="webhook-security-panel"
-    >
-      <CardContent className="pt-4 pb-3 space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
-              allOk ? 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] '
-                    : 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] '}`}>
-              {allOk ? <ShieldCheck className="w-5 h-5" /> : <ShieldAlert className="w-5 h-5" />}
-            </div>
-            <div>
-              <p className="text-sm font-semibold">Keamanan Webhook (HMAC-SHA256)</p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {error
-                  ? error
-                  : allOk
-                    ? 'Semua platform memverifikasi tanda tangan — payload palsu ditolak 401.'
-                    : 'Sebagian platform belum punya secret. Webhook-nya akan DITOLAK (fail-closed).'}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <Button size="sm" variant="ghost" onClick={load} disabled={loading}
-                    data-testid="btn-refresh-webhook-security">
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+    <div data-testid="webhook-security-panel">
+      <Notice tone={error ? 'danger' : allOk ? 'success' : 'warning'} icon={allOk ? ShieldCheck : ShieldAlert}
+        title="Keamanan webhook (tanda tangan HMAC-SHA256)"
+        action={
+          <div className="flex items-center gap-2">
+            <Button size="icon" variant="outline" onClick={load} disabled={loading} title="Muat ulang status keamanan"
+              aria-label="Muat ulang status keamanan" data-testid="btn-refresh-webhook-security">
+              <RefreshCw className={loading ? 'animate-spin' : ''} />
             </Button>
-            <Button size="sm" variant="outline" onClick={() => setOpen((v) => !v)}
-                    data-testid="btn-toggle-webhook-security">
-              {open ? <ChevronUp className="w-4 h-4 mr-1" /> : <ChevronDown className="w-4 h-4 mr-1" />}
-              Detail
+            <Button size="sm" variant="outline" onClick={() => setOpen(true)} disabled={!data}
+              data-testid="btn-toggle-webhook-security">
+              <ListTree />Rincian
             </Button>
           </div>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          {Object.keys(platforms).length === 0 && !loading && !error && (
-            <span className="text-xs text-muted-foreground">Tidak ada platform terdaftar.</span>
-          )}
-          {Object.entries(platforms).map(([p, v]) => (
-            <Badge
-              key={p}
-              variant="outline"
-              data-testid={`webhook-sec-${p}`}
-              className={v.configured
-                ? 'bg-[hsl(var(--success)/0.08)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)] '
-                : 'bg-[hsl(var(--warning)/0.08)] text-[hsl(var(--warning-text))] border-[hsl(var(--warning)/0.35)] '}
-            >
-              {v.configured ? <ShieldCheck className="w-3 h-3 mr-1" /> : <ShieldAlert className="w-3 h-3 mr-1" />}
-              {LABEL[p] || p}: {v.configured ? 'terverifikasi' : 'secret belum diset'}
-            </Badge>
+        }>
+        <span className="block">
+          {error
+            ? error
+            : allOk
+              ? 'Semua platform memverifikasi tanda tangan — kiriman palsu ditolak.'
+              : 'Sebagian platform belum punya kunci rahasia. Webhook dari platform itu akan ditolak.'}
+        </span>
+        <span className="mt-1.5 flex flex-wrap gap-1.5">
+          {baris.length === 0 && !loading && !error && <span className="text-xs text-muted-foreground">Tidak ada platform terdaftar.</span>}
+          {baris.map((r) => (
+            <span key={r.p} data-testid={`webhook-sec-${r.p}`}>
+              <StatusBadge status={r.configured ? 'ok' : 'belum'} tone={r.configured ? 'success' : 'warning'}
+                label={`${LABEL[r.p] || r.p}: ${r.configured ? 'terverifikasi' : 'belum diatur'}`} />
+            </span>
           ))}
-        </div>
+        </span>
+      </Notice>
 
-        {open && (
-          <div className="rounded-lg border border-border bg-muted/40 p-3 space-y-3 text-xs">
-            {Object.entries(platforms).map(([p, v]) => (
-              <div key={p} className="space-y-1">
-                <div className="font-semibold text-foreground flex items-center gap-1.5">
-                  <KeyRound className="w-3.5 h-3.5" /> {LABEL[p] || p}
-                </div>
-                <div className="grid sm:grid-cols-2 gap-x-4 gap-y-0.5 text-muted-foreground">
-                  <div>Base string: <code className="text-foreground">{v.base_string_scheme}</code></div>
-                  <div>Header utama: <code className="text-foreground">{v.canonical_header}</code></div>
-                  <div>Header diterima: <code className="text-foreground">{(v.accepted_headers || []).join(', ')}</code></div>
-                  <div>Toleransi replay: <code className="text-foreground">{v.replay_tolerance_sec}s</code></div>
-                  {v.uses_shared_secret && (
-                    <div className="sm:col-span-2 text-[hsl(var(--warning-text))] ">
-                      Memakai secret bersama (dev). Di produksi set secret per-platform.
-                    </div>
-                  )}
-                  {p === 'shopee' && (
-                    <div className="sm:col-span-2">
-                      URL yang ditandatangani: <code className="text-foreground break-all">{v.webhook_url || '(belum diset)'}</code>
-                    </div>
-                  )}
-                  {p === 'tiktok' && (
-                    <div className="sm:col-span-2">
-                      app_key: <code className="text-foreground">{v.app_key_set ? 'sudah diset' : '(belum diset)'}</code>
-                    </div>
-                  )}
-                </div>
-              </div>
+      {open && data && (
+        <DetailPopup open onClose={() => setOpen(false)} judul="Rincian keamanan webhook" testId="webhook-security-detail"
+          keterangan="Nilai kunci rahasia tidak pernah ditampilkan. Kunci diatur di pengaturan server."
+          status={<StatusBadge status={allOk ? 'ok' : 'belum'} label={allOk ? 'Semua terverifikasi' : 'Belum lengkap'} tone={allOk ? 'success' : 'warning'} />}
+          aksi={<TombolUnduh namaBerkas="keamanan-webhook" namaLembar="Keamanan" baris={baris} testId="webhook-security-unduh"
+            kolom={[
+              { label: 'Platform', nilai: (r) => LABEL[r.p] || r.p },
+              { label: 'Status', nilai: statusLabel },
+              { label: 'Teks yang ditandatangani', nilai: (r) => r.base_string_scheme },
+              { label: 'Header utama', nilai: (r) => r.canonical_header },
+              { label: 'Header diterima', nilai: (r) => (r.accepted_headers || []).join(', ') },
+              { label: 'Toleransi pengulangan (detik)', nilai: (r) => r.replay_tolerance_sec },
+            ]} />}>
+          <TabelData kolom={kolom} baris={baris} testId="webhook-security-table" />
+          <div className="space-y-1 text-sm">
+            {baris.filter((r) => r.uses_shared_secret).map((r) => (
+              <p key={`s-${r.p}`} className="text-[hsl(var(--warning-text))]">
+                {LABEL[r.p] || r.p}: memakai kunci rahasia bersama (pengembangan). Di produksi atur kunci per platform.
+              </p>
             ))}
-            {data?.env_keys && (
-              <div className="pt-2 border-t border-border text-muted-foreground">
-                <div className="font-semibold text-foreground mb-1">Env yang dibaca backend</div>
-                {Object.entries(data.env_keys).map(([k, arr]) => (
-                  <div key={k}>· <span className="text-foreground">{k}</span>: {arr.join(' · ')}</div>
-                ))}
-              </div>
+            {platforms.shopee && (
+              <p className="text-muted-foreground">Alamat yang ditandatangani Shopee:{' '}
+                <code className="break-all text-foreground">{platforms.shopee.webhook_url || '(belum diatur)'}</code></p>
+            )}
+            {platforms.tiktok && (
+              <p className="text-muted-foreground">Kunci aplikasi TikTok: {platforms.tiktok.app_key_set ? 'sudah diatur' : 'belum diatur'}</p>
             )}
           </div>
-        )}
-      </CardContent>
-    </Card>
+          {data.env_keys && (
+            <div className="space-y-1 border-t border-[var(--glass-border)] pt-3 text-sm">
+              <p className="font-medium text-foreground">Nama pengaturan di server (untuk tim teknis)</p>
+              {Object.entries(data.env_keys).map(([k, arr]) => (
+                <p key={k} className="text-muted-foreground">
+                  {ENV_LABEL[k] || k}: <code className="text-xs text-foreground">{arr.join(' · ')}</code>
+                </p>
+              ))}
+            </div>
+          )}
+        </DetailPopup>
+      )}
+    </div>
   );
 }
