@@ -7,7 +7,7 @@
 > | No | Aturan v2 | Komponen |
 > |---|---|---|
 > | 1 | **Detail dibuka sebagai POPUP**, bukan panel di atas tabel. Rincian kecil (mis. baris jurnal) boleh tetap di bawah barisnya (`RowDetail`). | `DetailPanel` (kini otomatis popup bila ada `onClose`), `ui/detail-popup` |
-> | 2 | **Form SELALU popup** — tidak pernah halaman sendiri. Dua ukuran yang konsisten: pendek & panjang. Kaki: galat · Batal · Simpan (hijau). | `ui/form-popup` (`FormPopup`, `Isian`) |
+> | 2 | **Form SELALU popup** — tidak pernah halaman sendiri. Dua ukuran yang konsisten: pendek & panjang. Kaki: galat · Batal · Simpan (hijau). | `ui/form-popup` (`FormPopup`, `Isian`; form penolakan: `warnaSimpan="destructive"`) |
 > | 3 | **Warna tombol**: utama ungu; Simpan/Setujui hijau (`variant="success"`); Hapus/Tolak merah (`variant="destructive"`); lainnya garis. Warna pada tombol aksi dan status itu boleh — hiasan (gradien, emoji) tidak. | `ui/button` |
 > | 4 | **Kepala halaman tipis**: judul + 1 kalimat; tanpa ikon besar; di HP judul lebih kecil & keterangan disembunyikan. | `PageLayout` / `PageHeader` |
 > | 5 | **Daftar > 6 data = tabel**, bukan kartu berulang. | `ui/tabel-data` (`TabelData`) atau `ui/table` |
