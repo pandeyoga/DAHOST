@@ -1,4 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import PageLayout from './layout/PageLayout';
+import FormPopup from '@/components/ui/form-popup';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Plus, Edit2, X, Copy, Package, Scale, Save, FileText, Search, Layers, Link2, Unlink, Wrench } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -378,23 +381,17 @@ export default function RahazaBOMModuleV2({ token }) {
   const viewerMaterials = selectedVersion?.materials || [];
 
   return (
-    <div className="space-y-5" data-testid="rahaza-bom-page">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Bill of Materials (BOM)</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Resep per model + ukuran + warna: <strong>1 pcs potongan</strong> (biaya = kain roll yang dipotong ÷ pcs jadi, dari Portal Cutting)
-            + aksesoris. Bukan lagi kg kain per pcs.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+    // Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (dulu judul h1 sendiri); pilih model di baris penyaring.
+    <PageLayout testId="rahaza-bom-page" title="Bill of Materials (BOM)"
+      subtitle="Resep per model + ukuran + warna: 1 pcs potongan (biaya kain roll ÷ pcs jadi, dari Portal Cutting) + aksesoris."
+      filters={(
           <Select
             value={selectedModelId}
             onValueChange={val => { setSelectedModelId(val); setSelectedSizeId(''); setEditor(null); setActiveTab('matrix'); }}
             data-testid="bom-model-selector"
           >
-            <SelectTrigger className="w-[240px]">
-              <SelectValue placeholder="— Pilih Model —" />
+            <SelectTrigger className="w-56" aria-label="Model">
+              <SelectValue placeholder="Pilih model" />
             </SelectTrigger>
             <SelectContent>
               {models.map(m => (
@@ -402,15 +399,13 @@ export default function RahazaBOMModuleV2({ token }) {
               ))}
             </SelectContent>
           </Select>
-        </div>
-      </div>
-
-      <GlassCard className="p-3 flex items-center gap-3 flex-wrap" data-testid="bom-shortcuts-card">
-        <span className="text-xs text-muted-foreground font-semibold">Jalan pintas</span>
+      )}>
+      <div className="flex items-center gap-3 flex-wrap" data-testid="bom-shortcuts-card">
+        <span className="text-sm font-medium text-foreground">Jalan pintas</span>
         <BomShortcuts headers={headers} token={token} selectedModelId={selectedModelId}
           modelLabel={(models.find(m => m.id === selectedModelId) || {}).code || ''} categories={categories}
           onDone={() => { loadMatrix(); }} />
-      </GlassCard>
+      </div>
 
       {/* ACC-2 — kesehatan kopling BOM ↔ master material.
           Banner SELALU tampil bila data kesehatan sudah dimuat: kondisi BURUK
@@ -481,7 +476,7 @@ export default function RahazaBOMModuleV2({ token }) {
                 <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
               </div>
             ) : !matrix ? (
-              <GlassCard className="p-6 text-center text-muted-foreground">
+              <GlassCard className="p-4 text-center text-muted-foreground">
                 Tidak dapat memuat data BOM.
               </GlassCard>
             ) : (
@@ -594,9 +589,9 @@ export default function RahazaBOMModuleV2({ token }) {
                     <GlassCard className="p-5 space-y-5" data-testid="bom-editor-form">
                       <div className="flex items-center justify-between">
                         <div>
-                          <h3 className="text-lg font-semibold text-foreground">
+                          <p className="text-base font-semibold text-foreground">
                             {editor.mode === 'edit' ? 'Edit Versi' : 'Buat Versi Baru'}
-                          </h3>
+                          </p>
                           <p className="text-sm text-muted-foreground">
                             {selectedModel?.code} · {selectedSize?.code}
                             {editor.mode === 'edit' && selectedVersion ? ` · v${selectedVersion.version}` : ''}
@@ -806,11 +801,11 @@ export default function RahazaBOMModuleV2({ token }) {
                         <div className="space-y-4">
                           <div className="flex items-center justify-between">
                             <div>
-                              <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                              <p className="text-base font-semibold text-foreground flex items-center gap-2">
                                 <FileText className="w-5 h-5 text-primary" />
                                 BOM v{selectedVersion.version}
                                 {selectedVersion.is_active && (<Badge variant="default" className="ml-2">Aktif</Badge>)}
-                              </h3>
+                              </p>
                               <p className="text-sm text-muted-foreground mt-1">
                                 {selectedModel?.code} · {selectedSize?.code}
                                 {' · '}{selectedVersion.material_count || viewerMaterials.length} material
@@ -945,16 +940,13 @@ export default function RahazaBOMModuleV2({ token }) {
 
       {/* Copy Modal */}
       {copyModal && (
-        <Dialog open={!!copyModal} onOpenChange={() => setCopyModal(null)}>
-          <DialogContent className="sm:max-w-[600px]" data-testid="bom-copy-modal">
-            <DialogHeader>
-              <DialogTitle>Copy BOM dari Size {copyModal.source_size_code}</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
+        <FormPopup open onClose={() => setCopyModal(null)} ukuran="pendek" testId="bom-copy-modal"
+          judul={`Salin BOM dari ukuran ${copyModal.source_size_code}`} onSimpan={runCopy} labelSimpan="Salin">
+            <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
                 Pilih size tujuan. Material akan disalin sesuai versi aktif.
               </p>
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                 {(matrix?.matrix || [])
                   .filter(r => r.size_code !== copyModal.source_size_code)
                   .map(r => {
@@ -964,16 +956,15 @@ export default function RahazaBOMModuleV2({ token }) {
                         key={r.size_id}
                         className={`border border-[var(--glass-border)] rounded-lg px-3 py-2 cursor-pointer text-sm flex items-center gap-2 transition-colors ${
                           checked ? 'bg-primary/10 border-primary/40 text-foreground'
-                                  : 'bg-[var(--glass-bg)] text-foreground/70 hover:bg-[var(--glass-bg-hover)]'
+                                  : 'text-foreground hover:bg-[var(--glass-bg-hover)]'
                         }`}
                       >
-                        <input
-                          type="checkbox"
+                        <Checkbox
                           checked={checked}
-                          onChange={e =>
+                          onCheckedChange={v =>
                             setCopyModal(c => ({
                               ...c,
-                              target_ids: e.target.checked
+                              target_ids: v
                                 ? [...c.target_ids, r.size_id]
                                 : c.target_ids.filter(x => x !== r.size_id),
                             }))
@@ -987,22 +978,16 @@ export default function RahazaBOMModuleV2({ token }) {
                   })}
               </div>
               <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={copyModal.overwrite}
-                  onChange={e => setCopyModal(c => ({ ...c, overwrite: e.target.checked }))}
+                  onCheckedChange={v => setCopyModal(c => ({ ...c, overwrite: !!v }))}
                   data-testid="bom-copy-overwrite"
                 />
-                Overwrite BOM yang sudah ada
+                Timpa BOM yang sudah ada
               </label>
             </div>
-            <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => setCopyModal(null)}>Batal</Button>
-              <Button type="button" onClick={runCopy} data-testid="bom-copy-run-btn">Copy</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        </FormPopup>
       )}
-    </div>
+    </PageLayout>
   );
 }
