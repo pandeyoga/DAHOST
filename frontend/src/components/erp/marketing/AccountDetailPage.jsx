@@ -14,6 +14,9 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { GlassCard, GlassPanel } from '@/components/ui/glass';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import PageLayout from '../layout/PageLayout';
+import { StatTile } from '../moduleAtoms';
 import { RevenueChart } from '../RevenueChart';
 import { AccountBadge, getPlatformConfig } from './AccountBadge';
 import { useActiveMarketingAccount } from '@/hooks/useActiveMarketingAccount';
@@ -38,8 +41,8 @@ function TargetBar({ label, actual, target, fmtFn = fmtCompact }) {
   if (target == null || target === 0) return null;
   const p = Math.min(Math.round((actual / target) * 100), 100);
   const over = actual > target;
-  const color = p >= 90 ? 'bg-emerald-500' : p >= 70 ? 'bg-amber-500' : 'bg-red-500';
-  const textColor = p >= 90 ? 'text-emerald-600' : p >= 70 ? 'text-amber-600' : 'text-red-600';
+  const color = p >= 90 ? 'bg-[hsl(var(--success))]' : p >= 70 ? 'bg-[hsl(var(--warning))]' : 'bg-[hsl(var(--destructive))]';
+  const textColor = p >= 90 ? 'text-[hsl(var(--success-text))]' : p >= 70 ? 'text-[hsl(var(--warning-text))]' : 'text-[hsl(var(--danger-text))]';
   return (
     <div className="space-y-1" data-testid={`target-bar-${label.toLowerCase()}`}>
       <div className="flex items-center justify-between text-xs">
@@ -47,7 +50,7 @@ function TargetBar({ label, actual, target, fmtFn = fmtCompact }) {
         <span className={`font-semibold tabular-nums ${textColor}`}>
           {fmtFn(actual)} / {fmtFn(target)}
           <span className="ml-1.5 font-bold">{p}%</span>
-          {over && <span className="ml-1 text-emerald-500">✓</span>}
+          {over && <span className="ml-1 text-[hsl(var(--success-text))]">(tercapai)</span>}
         </span>
       </div>
       <div className="h-2 bg-muted rounded-full overflow-hidden">
@@ -62,7 +65,7 @@ function KpiCard({ label, value, sub, icon: Icon, color = 'text-primary' }) {
   return (
     <GlassPanel className="p-4" data-testid={`kpi-${label.toLowerCase().replace(/\s+/g, '-')}`}>
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-xs text-muted-foreground uppercase tracking-wider">{label}</span>
+        <span className="text-xs text-muted-foreground">{label}</span>
         {Icon && <Icon size={14} className={color} />}
       </div>
       <div className="text-xl font-bold tabular-nums">{value}</div>
@@ -86,25 +89,25 @@ function SalesTable({ data }) {
         <thead>
           <tr className="text-left text-muted-foreground border-b">
             <th className="py-2 px-3">Tanggal</th>
-            <th className="py-2 px-3">Type</th>
-            <th className="py-2 px-3 text-right">Revenue</th>
-            <th className="py-2 px-3 text-right">Orders</th>
+            <th className="py-2 px-3">Jenis</th>
+            <th className="py-2 px-3 text-right">Omzet</th>
+            <th className="py-2 px-3 text-right">Pesanan</th>
             <th className="py-2 px-3 text-right">AOV</th>
-            <th className="py-2 px-3 text-right">CR</th>
+            <th className="py-2 px-3 text-right">Konversi</th>
             <th className="py-2 px-3 text-right">Rating</th>
           </tr>
         </thead>
         <tbody>
           {data.map((row, i) => (
             <tr key={row.id || i} className="border-b last:border-0 hover:bg-muted/20" data-testid={`sales-row-${i}`}>
-              <td className="py-2 px-3 font-mono">{row.date}</td>
+              <td className="py-2 px-3">{row.date}</td>
               <td className="py-2 px-3">
                 <Badge variant="outline" className={
                   row.revenue_type === 'live'
-                    ? 'bg-pink-100 dark:bg-pink-500/10 text-pink-500 border-pink-400 dark:border-pink-500/30 text-[10px]'
-                    : 'bg-blue-100 dark:bg-blue-500/10 text-blue-500 border-blue-400 dark:border-blue-500/30 text-[10px]'
+                    ? 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.25)] text-xs'
+                    : 'bg-[hsl(var(--info)/0.12)] text-[hsl(var(--info-text))] border-[hsl(var(--info)/0.3)] text-xs'
                 }>
-                  {row.revenue_type === 'live' ? '🎥 Live' : '📊 Total'}
+                  {row.revenue_type === 'live' ? 'Live' : 'Total'}
                 </Badge>
               </td>
               <td className="py-2 px-3 text-right tabular-nums font-medium">{fmt(row.metrics?.revenue)}</td>
@@ -114,7 +117,7 @@ function SalesTable({ data }) {
               <td className="py-2 px-3 text-right tabular-nums">
                 {row.metrics?.rating ? (
                   <span className="flex items-center justify-end gap-0.5">
-                    <Star size={10} className="text-amber-700 dark:text-amber-400 fill-amber-400" />
+                    <Star size={10} className="text-[hsl(var(--warning))] fill-[hsl(var(--warning))]" />
                     {Number(row.metrics.rating).toFixed(1)}
                   </span>
                 ) : '-'}
@@ -147,32 +150,32 @@ function CreatorsTab({ creators, loading, creatorTargets = {} }) {
 
         const revPct  = revTgt  > 0 ? Math.min(100, Math.round(((c.this_month?.revenue  || 0) / revTgt)  * 100)) : null;
         const sessPct = sessTgt > 0 ? Math.min(100, Math.round(((c.this_month?.sessions || 0) / sessTgt) * 100)) : null;
-        const pctColor = (p) => p >= 90 ? 'bg-emerald-500' : p >= 60 ? 'bg-amber-500' : 'bg-red-500';
+        const pctColor = (p) => p >= 90 ? 'bg-[hsl(var(--success))]' : p >= 60 ? 'bg-[hsl(var(--warning))]' : 'bg-[hsl(var(--destructive))]';
 
         return (
           <div key={c.id} className="rounded-lg border bg-card p-3" data-testid={`creator-card-${c.id}`}>
             <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-pink-500 flex items-center justify-center text-foreground text-xs font-bold shrink-0">
+              <div className="w-8 h-8 rounded-full bg-[hsl(var(--primary)/0.15)] flex items-center justify-center text-foreground text-xs font-bold shrink-0">
                 {c.name?.charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0">
                 <div className="text-sm font-semibold truncate">{c.name}</div>
                 <div className="text-xs text-muted-foreground">{c.creator_code}</div>
               </div>
-              <div className={`text-[10px] ml-auto shrink-0 px-1.5 py-0.5 rounded-full border font-medium ${
-                c.status === 'active' ? 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-600 border-emerald-400 dark:border-emerald-500/30' : 'bg-muted dark:bg-gray-500/10 text-muted-foreground border-border dark:border-gray-500/30'
+              <div className={`text-xs ml-auto shrink-0 px-1.5 py-0.5 rounded-full border font-medium ${
+                c.status === 'active' ? 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.3)]' : 'bg-[var(--glass-bg)] text-muted-foreground border-[var(--glass-border)]'
               }`}>{c.status}</div>
             </div>
 
             {/* Actual stats */}
-            <div className="grid grid-cols-3 gap-1 text-center text-[10px] mb-2">
+            <div className="grid grid-cols-3 gap-1 text-center text-xs mb-2">
               <div className="rounded bg-muted/30 p-1.5">
                 <div className="text-muted-foreground">Sesi</div>
                 <div className="font-bold">{c.this_month?.sessions || 0}</div>
               </div>
               <div className="rounded bg-muted/30 p-1.5">
-                <div className="text-muted-foreground">Revenue</div>
-                <div className="font-bold text-emerald-600">{fmtCompact(c.this_month?.revenue || 0)}</div>
+                <div className="text-muted-foreground">Omzet</div>
+                <div className="font-bold text-[hsl(var(--success-text))]">{fmtCompact(c.this_month?.revenue || 0)}</div>
               </div>
               <div className="rounded bg-muted/30 p-1.5">
                 <div className="text-muted-foreground">Viewers</div>
@@ -185,9 +188,9 @@ function CreatorsTab({ creators, loading, creatorTargets = {} }) {
               <div className="space-y-1.5 pt-2 border-t border-border">
                 {revTgt > 0 && (
                   <div>
-                    <div className="flex justify-between text-[10px] mb-0.5">
-                      <span className="text-muted-foreground">Revenue</span>
-                      <span className={revPct >= 90 ? 'text-emerald-600' : revPct >= 60 ? 'text-amber-600' : 'text-red-500'}>
+                    <div className="flex justify-between text-xs mb-0.5">
+                      <span className="text-muted-foreground">Omzet</span>
+                      <span className={revPct >= 90 ? 'text-[hsl(var(--success-text))]' : revPct >= 60 ? 'text-[hsl(var(--warning-text))]' : 'text-[hsl(var(--danger-text))]'}>
                         {fmtCompact(c.this_month?.revenue || 0)} / {fmtCompact(revTgt)} ({revPct}%)
                       </span>
                     </div>
@@ -198,9 +201,9 @@ function CreatorsTab({ creators, loading, creatorTargets = {} }) {
                 )}
                 {sessTgt > 0 && (
                   <div>
-                    <div className="flex justify-between text-[10px] mb-0.5">
+                    <div className="flex justify-between text-xs mb-0.5">
                       <span className="text-muted-foreground">Sesi</span>
-                      <span className={sessPct >= 90 ? 'text-emerald-600' : sessPct >= 60 ? 'text-amber-600' : 'text-red-500'}>
+                      <span className={sessPct >= 90 ? 'text-[hsl(var(--success-text))]' : sessPct >= 60 ? 'text-[hsl(var(--warning-text))]' : 'text-[hsl(var(--danger-text))]'}>
                         {c.this_month?.sessions || 0} / {sessTgt} ({sessPct}%)
                       </span>
                     </div>
@@ -209,7 +212,7 @@ function CreatorsTab({ creators, loading, creatorTargets = {} }) {
                     </div>
                   </div>
                 )}
-                <p className="text-[9px] text-violet-500 text-right">target {new Date().toLocaleString('id-ID',{month:'short',year:'numeric'})}</p>
+                <p className="text-xs text-muted-foreground text-right">target {new Date().toLocaleString('id-ID',{month:'short',year:'numeric'})}</p>
               </div>
             )}
             {!hasTarget && (
@@ -241,11 +244,11 @@ function LiveHostsTab({ hosts, loading }) {
               <div className="text-sm font-semibold">{h.name}</div>
               <div className="text-xs text-muted-foreground">{h.email}</div>
             </div>
-            <Badge variant="outline" className={`text-[10px] ${
-              h.status === 'active' ? 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-600 border-emerald-400 dark:border-emerald-500/30' : 'bg-muted dark:bg-gray-500/10 text-muted-foreground border-border dark:border-gray-500/30'
+            <Badge variant="outline" className={`text-xs ${
+              h.status === 'active' ? 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.3)]' : 'bg-[var(--glass-bg)] text-muted-foreground border-[var(--glass-border)]'
             }`}>{h.status}</Badge>
           </div>
-          <div className="text-[10px] text-muted-foreground">
+          <div className="text-xs text-muted-foreground">
             {h.employment_type} · Rp {fmtNum(h.hourly_rate)}/jam
           </div>
         </div>
@@ -276,13 +279,13 @@ function OrdersTab({ orders, loading }) {
         <tbody>
           {orders.slice(0, 50).map((o, i) => (
             <tr key={o.id || i} className="border-b last:border-0 hover:bg-muted/20">
-              <td className="py-2 px-3 font-mono">{o.order_id || o.id}</td>
+              <td className="py-2 px-3">{o.order_id || o.id}</td>
               <td className="py-2 px-3 max-w-[160px] truncate">{o.product_name || o.items?.[0]?.name || '—'}</td>
               <td className="py-2 px-3 text-right tabular-nums">{fmtCompact(o.total_payment || o.revenue || 0)}</td>
               <td className="py-2 px-3 text-center">
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                  o.status === 'delivered' ? 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-600' :
-                  o.status === 'cancelled' ? 'bg-red-100 dark:bg-red-500/10 text-red-600' : 'bg-blue-100 dark:bg-blue-500/10 text-blue-600'
+                <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                  o.status === 'delivered' ? 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))]' :
+                  o.status === 'cancelled' ? 'bg-[hsl(var(--destructive)/0.10)] text-[hsl(var(--danger-text))]' : 'bg-[hsl(var(--info)/0.12)] text-[hsl(var(--info-text))]'
                 }`}>{o.status}</span>
               </td>
               <td className="py-2 px-3 text-muted-foreground">{o.order_date?.slice(0, 10) || o.date || '—'}</td>
@@ -308,10 +311,10 @@ function ComplaintsTab({ complaints, loading }) {
       {complaints.map((c, i) => (
         <div key={c.id || i} className="rounded-lg border bg-card p-3">
           <div className="flex items-start justify-between gap-2 mb-1">
-            <div className="font-mono text-xs text-muted-foreground">{c.complaint_number || c.id?.slice(0,8)}</div>
-            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-              c.status === 'resolved' ? 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-600' :
-              c.status === 'open' ? 'bg-red-100 dark:bg-red-500/10 text-red-600' : 'bg-amber-100 dark:bg-amber-500/10 text-amber-600'
+            <div className="text-xs text-muted-foreground">{c.complaint_number || c.id?.slice(0,8)}</div>
+            <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+              c.status === 'resolved' ? 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))]' :
+              c.status === 'open' ? 'bg-[hsl(var(--destructive)/0.10)] text-[hsl(var(--danger-text))]' : 'bg-[hsl(var(--warning)/0.14)] text-[hsl(var(--warning-text))]'
             }`}>{c.status}</span>
           </div>
           <p className="text-sm font-medium truncate">{c.complaint_text || c.title || '—'}</p>
@@ -338,11 +341,11 @@ function ReviewsTab({ reviews, loading }) {
           <div className="flex items-center gap-2 mb-1">
             <div className="flex">
               {[1,2,3,4,5].map(s => (
-                <Star key={s} size={11} className={s <= (r.rating || 0) ? 'text-amber-700 dark:text-amber-400 fill-amber-400' : 'text-muted-foreground'} />
+                <Star key={s} size={11} className={s <= (r.rating || 0) ? 'text-[hsl(var(--warning))] fill-[hsl(var(--warning))]' : 'text-muted-foreground'} />
               ))}
             </div>
-            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ml-auto ${
-              r.status === 'responded' ? 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-600' : 'bg-amber-100 dark:bg-amber-500/10 text-amber-600'
+            <span className={`text-xs px-1.5 py-0.5 rounded font-medium ml-auto ${
+              r.status === 'responded' ? 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))]' : 'bg-[hsl(var(--warning)/0.14)] text-[hsl(var(--warning-text))]'
             }`}>{r.status || 'pending'}</span>
           </div>
           <p className="text-sm truncate">{r.review_text || '—'}</p>
@@ -354,6 +357,11 @@ function ReviewsTab({ reviews, loading }) {
 }
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
+const PLATFORM_LABEL_DETAIL = { shopee: 'Shopee', tiktok: 'TikTok Shop', tiktokshop: 'TikTok Shop', tokopedia: 'Tokopedia', lazada: 'Lazada' };
+const labelPlatformDetail = (p) => PLATFORM_LABEL_DETAIL[String(p || '').toLowerCase()] || p || '';
+
+/** Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (judul = nama toko, tombol Kembali di kepala), 6 kartu → 4 StatTile,
+ *  tab standar tanpa ikon, unduh Excel/CSV untuk riwayat sales & pesanan, warna token. */
 export function AccountDetailPage({ account, token, onBack, onNavigate }) {
   const { setActiveAccount } = useActiveMarketingAccount();
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
@@ -484,198 +492,118 @@ export function AccountDetailPage({ account, token, onBack, onNavigate }) {
     return { rev, revLive, orders, aov, avgRating, days: totalRows.length };
   }, [salesData]);
 
-  const healthColor = account.health_score >= 80 ? 'text-emerald-500'
-    : account.health_score >= 60 ? 'text-amber-500'
-    : account.health_score != null ? 'text-red-500' : 'text-muted-foreground';
+  const healthColor = account.health_score >= 80 ? 'success'
+    : account.health_score >= 60 ? 'warning'
+    : account.health_score != null ? 'danger' : 'default';
+  const bulanIni = now.toLocaleString('id-ID', { month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' });
+  const tombolUnduh = (tab === 'sales' && salesData.length > 0) ? (
+    <TombolUnduh namaBerkas={`riwayat-sales-${account.account_code}`} namaLembar="Riwayat sales" baris={salesData} testId="detail-sales-unduh"
+      kolom={[
+        { label: 'Tanggal', nilai: (r) => r.date }, { label: 'Jenis', nilai: (r) => (r.revenue_type === 'live' ? 'Live' : 'Total') },
+        { label: 'Omzet', nilai: (r) => Number(r.metrics?.revenue || 0) }, { label: 'Pesanan', nilai: (r) => Number(r.metrics?.orders || 0) },
+        { label: 'Rating', nilai: (r) => r.metrics?.rating ?? '' },
+      ]} />
+  ) : (tab === 'orders' && orders.length > 0) ? (
+    <TombolUnduh namaBerkas={`pesanan-${account.account_code}`} namaLembar="Pesanan" baris={orders} testId="detail-orders-unduh"
+      kolom={[
+        { label: 'Nomor pesanan', nilai: (o) => o.order_id || o.id }, { label: 'Produk', nilai: (o) => o.product_name || '' },
+        { label: 'Total', nilai: (o) => Number(o.total_payment || o.total || 0) }, { label: 'Status', nilai: (o) => o.status || '' },
+        { label: 'Tanggal', nilai: (o) => String(o.order_date || '').slice(0, 10) },
+      ]} />
+  ) : null;
 
   return (
-    <div className="space-y-5" data-testid="account-detail-page">
-      {/* Header */}
-      <div className="flex items-start gap-3">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onBack}
-          className="mt-0.5 h-8 px-2"
-          data-testid="back-to-dashboard"
-        >
-          <ArrowLeft size={16} className="mr-1" /> Kembali
+    <PageLayout testId="account-detail-page" title={account.account_name}
+      subtitle={[account.account_code, labelPlatformDetail(account.platform), account.username ? `@${account.username}` : null,
+        account.status === 'active' ? 'Aktif' : (account.status || null)].filter(Boolean).join(' · ')}
+      actions={<>
+        <Button variant="outline" onClick={onBack} data-testid="back-to-dashboard"><ArrowLeft />Kembali</Button>
+        <Button variant="outline" onClick={() => { setActiveAccount(account); toast.success(`Akun aktif: ${account.account_name}`); }}
+          data-testid="set-active-account">Jadikan akun aktif</Button>
+        <Button onClick={() => { setActiveAccount(account); onNavigate?.('marketing-sales'); }} data-testid="goto-input-sales">
+          <TrendingUp />Input sales
         </Button>
-
-        <div className="flex-1 min-w-0">
-          <div className="flex flex-wrap items-center gap-2 mb-1">
-            <h1 className="text-xl font-bold truncate">{account.account_name}</h1>
-            <AccountBadge account={account} size="sm" />
-            <Badge variant="outline" className={`text-xs ${
-              account.status === 'active' ? 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-600 border-emerald-400 dark:border-emerald-500/30' : ''
-            }`}>{account.status}</Badge>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {account.account_code} · {account.username && `@${account.username} · `}
-            {account.group?.replace('_', ' ')}
-          </p>
+      </>}
+      summary={(
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile label="Omzet" value={fmtCompact(kpi.rev)} sub={`Termasuk live ${fmtCompact(kpi.revLive)} · ${kpi.days} hari berdata`} testId="kpi-total-revenue" />
+          <StatTile label="Pesanan" value={fmtNum(kpi.orders)} sub={kpi.orders ? `Rata-rata ${fmtCompact(kpi.aov)} per pesanan` : 'Belum ada pesanan'} testId="kpi-total-orders" />
+          <StatTile label="Skor kesehatan" value={account.health_score != null ? account.health_score : '—'} accent={healthColor}
+            sub={account.health_score >= 80 ? 'Sangat baik' : account.health_score >= 60 ? 'Baik' : account.health_score != null ? 'Perlu perhatian' : 'Belum ada data 30 hari terakhir'}
+            testId="kpi-health-score" />
+          <StatTile label="Kreator & host live" value={`${creators.length} · ${hosts.length}`} sub="Kreator KOL · host live yang ditugaskan" testId="kpi-kol" />
         </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setActiveAccount(account);
-              onNavigate?.('marketing-sales');
-            }}
-            data-testid="goto-input-sales"
-          >
-            <TrendingUp size={13} className="mr-1.5" /> Input Sales
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => {
-              setActiveAccount(account);
-              toast.success(`Akun aktif: ${account.account_name}`);
-            }}
-            data-testid="set-active-account"
-          >
-            Set Akun Aktif
-          </Button>
-        </div>
-      </div>
-
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-        <KpiCard label="Total Revenue" value={fmtCompact(kpi.rev)} sub={`+Live: ${fmtCompact(kpi.revLive)}`} icon={TrendingUp} color="text-primary" />
-        <KpiCard label="Total Orders" value={fmtNum(kpi.orders)} sub={`${kpi.days} hari data`} icon={ShoppingBag} color="text-blue-500" />
-        <KpiCard label="Avg Order Value" value={fmtCompact(kpi.aov)} icon={BarChart3} color="text-amber-500" />
-        <KpiCard
-          label="Health Score"
-          value={account.health_score != null ? account.health_score : 'N/A'}
-          sub={account.health_score >= 80 ? 'Excellent' : account.health_score >= 60 ? 'Good' : account.health_score != null ? 'Perlu perhatian' : 'Belum ada data'}
-          icon={Activity}
-          color={healthColor}
-        />
-        <KpiCard label="KOL / Creator" value={creators.length} sub="yang di-assign" icon={Users} color="text-violet-500" />
-        <KpiCard label="Live Host" value={hosts.length} sub="yang di-assign" icon={Radio} color="text-pink-500" />
-      </div>
-
-      {/* Target Bulan Ini */}
-      <GlassCard className="p-4" data-testid="account-target-section">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold flex items-center gap-1.5">
-            <Target size={14} className="text-primary" />
-            Target Bulan Ini — {now.toLocaleString('id-ID', { month: 'long', year: 'numeric' })}
-          </h3>
-          <Button
-            size="sm" variant="outline" className="h-7 text-xs"
-            onClick={() => onNavigate?.('marketing-targets')}
-            data-testid="goto-set-target"
-          >
-            <Target size={11} className="mr-1" />
-            {target ? 'Edit Target' : 'Set Target'}
+      )}>
+      {/* Target bulan ini */}
+      <section className="space-y-2" data-testid="account-target-section">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-base font-semibold">Target {bulanIni}</p>
+          <Button size="sm" variant="outline" onClick={() => onNavigate?.('marketing-targets')} data-testid="goto-set-target">
+            <Target />{target ? 'Ubah target' : 'Isi target'}
           </Button>
         </div>
         {target ? (
           <div className="space-y-3">
-            <TargetBar label="Revenue" actual={kpi.rev} target={target.revenue_target} fmtFn={fmtCompact} />
-            <TargetBar label="Orders" actual={kpi.orders} target={target.orders_target} fmtFn={(n) => fmtNum(n)} />
-            {target.notes && (
-              <p className="text-xs text-muted-foreground italic border-t pt-2 mt-2">📝 {target.notes}</p>
-            )}
+            <TargetBar label="Omzet" actual={kpi.rev} target={target.revenue_target} fmtFn={fmtCompact} />
+            <TargetBar label="Pesanan" actual={kpi.orders} target={target.orders_target} fmtFn={(n) => fmtNum(n)} />
+            {target.notes && <p className="text-sm text-muted-foreground">Catatan: {target.notes}</p>}
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground italic">
-            Belum ada target untuk bulan ini.
-            <button onClick={() => onNavigate?.('marketing-targets')} className="ml-1 text-primary hover:underline">
-              Set target sekarang →
-            </button>
-          </p>
+          <p className="text-sm text-muted-foreground">Belum ada target untuk bulan ini.</p>
         )}
-      </GlassCard>
+      </section>
 
-      {/* Revenue Trend Chart */}
-      <GlassCard className="p-5" data-testid="account-revenue-chart">
-        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+      {/* Tren omzet */}
+      <GlassCard className="space-y-3 p-4" data-testid="account-revenue-chart">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h3 className="text-sm font-semibold flex items-center gap-2">
-              <Activity size={14} className="text-primary" /> Revenue Trend — {account.account_name}
-            </h3>
-            <p className="text-xs text-muted-foreground mt-0.5">Total vs Live revenue harian</p>
+            <p className="text-base font-semibold">Tren omzet</p>
+            <p className="text-sm text-muted-foreground">Omzet total dan live per hari.</p>
           </div>
-          <div className="flex items-center gap-3 text-xs">
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-400" /> Total</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-pink-400" /> Live</span>
-            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={fetchSales}>
-              <RefreshCw size={11} className={`mr-1 ${loading ? 'animate-spin' : ''}`} /> Refresh
-            </Button>
-          </div>
+          <Button variant="outline" size="icon" onClick={fetchSales} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
+          </Button>
         </div>
         {loading ? (
-          <div className="h-52 flex items-center justify-center text-muted-foreground text-sm">
-            <Loader2 className="animate-spin mr-2" size={18} /> Memuat data...
-          </div>
-        ) : trendData.length === 0 ? (
-          <div className="h-52 flex items-center justify-center text-muted-foreground text-sm">
-            Belum ada data sales untuk akun ini
-          </div>
+          <p className="py-10 text-center text-sm text-muted-foreground">Memuat data…</p>
         ) : (
           <RevenueChart data={trendData} height={220} />
         )}
       </GlassCard>
 
-      {/* Tabs: Sales | Creator | LiveHost | Orders | Komplain | Reviews */}
+      {/* Sales · Kreator · Host live · Pesanan · Komplain · Ulasan */}
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList data-testid="account-detail-tabs" className="flex-wrap h-auto">
-          <TabsTrigger value="sales" data-testid="tab-sales">
-            <TrendingUp size={13} className="mr-1.5" />Sales History
-          </TabsTrigger>
-          <TabsTrigger value="creators" data-testid="tab-creators">
-            <Users size={13} className="mr-1.5" />KOL Creator ({creators.length})
-          </TabsTrigger>
-          <TabsTrigger value="hosts" data-testid="tab-hosts">
-            <Radio size={13} className="mr-1.5" />LiveHost ({hosts.length})
-          </TabsTrigger>
-          <TabsTrigger value="orders" data-testid="tab-orders">
-            <ShoppingBag size={13} className="mr-1.5" />Orders ({orders.length})
-          </TabsTrigger>
-          <TabsTrigger value="complaints" data-testid="tab-complaints">
-            <MessageCircle size={13} className="mr-1.5" />Komplain ({complaints.length})
-          </TabsTrigger>
-          <TabsTrigger value="reviews" data-testid="tab-reviews">
-            <Star size={13} className="mr-1.5" />Reviews ({reviews.length})
-          </TabsTrigger>
-        </TabsList>
+        <div className="flex flex-wrap items-center gap-3">
+          <TabsList data-testid="account-detail-tabs" className="h-auto max-w-full justify-start gap-1 max-sm:flex-nowrap max-sm:overflow-x-auto sm:flex-wrap">
+            <TabsTrigger value="sales" className="shrink-0" data-testid="tab-sales">Riwayat sales</TabsTrigger>
+            <TabsTrigger value="creators" className="shrink-0" data-testid="tab-creators">Kreator ({creators.length})</TabsTrigger>
+            <TabsTrigger value="hosts" className="shrink-0" data-testid="tab-hosts">Host live ({hosts.length})</TabsTrigger>
+            <TabsTrigger value="orders" className="shrink-0" data-testid="tab-orders">Pesanan ({orders.length})</TabsTrigger>
+            <TabsTrigger value="complaints" className="shrink-0" data-testid="tab-complaints">Komplain ({complaints.length})</TabsTrigger>
+            <TabsTrigger value="reviews" className="shrink-0" data-testid="tab-reviews">Ulasan ({reviews.length})</TabsTrigger>
+          </TabsList>
+          {tombolUnduh && <div className="ml-auto">{tombolUnduh}</div>}
+        </div>
 
         <TabsContent value="sales" className="mt-4">
-          <GlassCard className="p-0 overflow-hidden">
-            {loading ? (
-              <div className="py-10 flex justify-center"><Loader2 className="animate-spin" /></div>
-            ) : (
-              <SalesTable data={salesData} />
-            )}
-          </GlassCard>
+          {loading ? <p className="py-10 text-center text-sm text-muted-foreground">Memuat…</p> : <SalesTable data={salesData} />}
         </TabsContent>
-
         <TabsContent value="creators" className="mt-4">
           <CreatorsTab creators={creators} loading={creatorsLoading} creatorTargets={creatorTargets} />
         </TabsContent>
-
         <TabsContent value="hosts" className="mt-4">
           <LiveHostsTab hosts={hosts} loading={hostsLoading} />
         </TabsContent>
-
         <TabsContent value="orders" className="mt-4">
-          <GlassCard className="p-0 overflow-hidden">
-            <OrdersTab orders={orders} loading={ordersLoading} />
-          </GlassCard>
+          <OrdersTab orders={orders} loading={ordersLoading} />
         </TabsContent>
-
         <TabsContent value="complaints" className="mt-4">
           <ComplaintsTab complaints={complaints} loading={complaintsLoading} />
         </TabsContent>
-
         <TabsContent value="reviews" className="mt-4">
           <ReviewsTab reviews={reviews} loading={reviewsLoading} />
         </TabsContent>
       </Tabs>
-    </div>
+    </PageLayout>
   );
 }

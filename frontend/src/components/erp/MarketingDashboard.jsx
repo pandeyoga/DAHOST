@@ -1,15 +1,21 @@
+/**
+ * Dashboard Marketing (Portal Marketing, menu pertama).
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, kartu siklus & periode = StatTile berketerangan (target/anggaran/biaya 0
+ * → "—" + alasan, dulu "0,0%" merah), skor kesehatan tanpa data = "—" (dulu "0 / 100" merah), 7 kartu toko berulang
+ * (omzet/pesanan selalu "-") → tabel toko dengan omzet periode dari data tren yang sama + unduh, warna token.
+ */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import {
-  Store, TrendingUp, Package, RefreshCw, Plus, BarChart3, Activity, Tv2,
-} from 'lucide-react';
-import { GlassCard, GlassPanel } from '@/components/ui/glass';
+import { Store, RefreshCw, Plus, Eye } from 'lucide-react';
+import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { PageHeader } from './moduleAtoms';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { formatTanggalID } from '@/components/ui/date-picker';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatTile } from './moduleAtoms';
 import { PeriodSelector } from './PeriodSelector';
-import { AccountCard } from './AccountCard';
 import { RevenueChart } from './RevenueChart';
 import { HealthScoreGauge } from './HealthScoreGauge';
 import { AccountDetailPage } from './marketing/AccountDetailPage';
@@ -19,15 +25,10 @@ import { formatRupiah } from '@/lib/format';
 import { todayWIB, monthStartWIB, thisMonthWIB } from '@/lib/waktu';
 
 const API_BASE = process.env.REACT_APP_BACKEND_URL;
+const PLATFORM_LABEL = { shopee: 'Shopee', tiktok: 'TikTok Shop', tiktokshop: 'TikTok Shop', tokopedia: 'Tokopedia', lazada: 'Lazada' };
+const labelPlatform = (p) => PLATFORM_LABEL[String(p || '').toLowerCase()] || p || '—';
 
 const fmt = formatRupiah;
-const fmtCompact = (n) => {
-  if (!n) return 'Rp 0';
-  if (n >= 1_000_000_000) return `Rp ${(n / 1_000_000_000).toFixed(1)}M`;
-  if (n >= 1_000_000) return `Rp ${(n / 1_000_000).toFixed(1)}jt`;
-  if (n >= 1_000) return `Rp ${(n / 1_000).toFixed(0)}rb`;
-  return `Rp ${n.toLocaleString('id-ID')}`;
-};
 
 export default function MarketingDashboard({ token, onNavigate }) {
   const [loading, setLoading] = useState(true);
@@ -76,9 +77,9 @@ export default function MarketingDashboard({ token, onNavigate }) {
       const accs = accountsRes.ok ? await accountsRes.json() : [];
       setAccounts(accs);
 
-      // Fetch sales trend per account (top 10)
+      // Tren omzet per toko (semua toko aktif — dulu dipotong 10 toko pertama tanpa keterangan)
       const accTrendMap = {};
-      for (const acc of accs.slice(0, 10)) {
+      for (const acc of accs) {
         const r = await fetch(
           `${API_BASE}/api/marketing/accounts/${acc.id}/sales?${params.toString()}`,
           { headers }
@@ -132,221 +133,133 @@ export default function MarketingDashboard({ token, onNavigate }) {
     const total = scored.reduce((sum, a) => sum + a.health_score, 0);
     return Math.round(total / scored.length);
   }, [accounts]);
+  const adaSkor = (a) => a.health_score !== null && a.health_score !== undefined;
+  const sebaran = {
+    baik: accounts.filter(a => adaSkor(a) && a.health_score >= 80).length,
+    cukup: accounts.filter(a => adaSkor(a) && a.health_score >= 60 && a.health_score < 80).length,
+    buruk: accounts.filter(a => adaSkor(a) && a.health_score < 60).length,
+    kosong: accounts.filter(a => !adaSkor(a)).length,
+  };
+  // Omzet per toko pada rentang terpilih = jumlah input harian (data yang sama dengan grafik tren)
+  const omzetToko = (id) => (perAccountTrend[id] || []).reduce((s, r) => s + (r.total || 0), 0);
+  const omzetLive = (id) => (perAccountTrend[id] || []).reduce((s, r) => s + (r.live || 0), 0);
+  const sm = overview?.summary || {};
+  const rentang = `${formatTanggalID(period.date_from)} – ${formatTanggalID(period.date_to)}`;
+
+  const kolomToko = [
+    { kunci: 'toko', label: 'Toko', hp: 'judul', isi: (a) => (
+      <div data-testid={`account-card-${a.account_code}`}><p className="font-medium">{a.account_name}</p><p className="text-xs text-muted-foreground">{a.account_code}</p></div>) },
+    { kunci: 'platform', label: 'Platform', hp: 'keterangan', isi: (a) => labelPlatform(a.platform) },
+    { kunci: 'omzet', label: 'Omzet periode', rata: 'kanan', isi: (a) => <span className="tabular-nums md:whitespace-nowrap">{fmt(omzetToko(a.id))}</span> },
+    { kunci: 'live', label: 'Omzet live', rata: 'kanan', isi: (a) => <span className="tabular-nums md:whitespace-nowrap">{fmt(omzetLive(a.id))}</span> },
+    { kunci: 'skor', label: 'Skor kesehatan', rata: 'kanan', isi: (a) => (adaSkor(a)
+      ? <span className={`font-semibold tabular-nums ${a.health_score >= 80 ? 'text-[hsl(var(--success-text))]' : a.health_score >= 60 ? 'text-[hsl(var(--warning-text))]' : 'text-[hsl(var(--danger-text))]'}`}>{a.health_score}</span>
+      : <span className="text-muted-foreground">Belum ada</span>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (a) => (
+      <Button size="sm" variant="outline" onClick={() => setDetailAccount(a)} data-testid={`view-dashboard-${a.account_code}`}>
+        <Eye />Lihat detail
+      </Button>) },
+  ];
+
+  // ── Rincian satu toko (halaman detail yang sudah ada) ──
+  if (detailAccount) {
+    return (
+      <div data-testid="marketing-dashboard">
+        <AccountDetailPage account={detailAccount} token={token} onBack={() => setDetailAccount(null)} onNavigate={onNavigate} />
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-5" data-testid="marketing-dashboard">
-
-      {/* ── Account Detail View ── */}
-      {detailAccount && (
-        <AccountDetailPage
-          account={detailAccount}
-          token={token}
-          onBack={() => setDetailAccount(null)}
-          onNavigate={onNavigate}
-        />
-      )}
-
-      {/* ── Dashboard View ── */}
-      {!detailAccount && (<>
-      <PageHeader
-        icon={Store}
-        eyebrow="Portal Marketing · Ringkasan"
-        title="Dashboard Marketing"
-        subtitle="Satu layar untuk target, omzet, anggaran, dan kesehatan tiap toko (Shopee, TikTokShop, Tokopedia) — angka resmi bulanan diambil dari SSOT siklus marketing."
-        actions={
-          <Button onClick={fetchData} variant="outline" size="sm" data-testid="refresh-dashboard-btn">
-            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat ulang
-          </Button>
-        }
-      />
-
+    <PageLayout testId="marketing-dashboard" title="Dashboard marketing"
+      subtitle="Target, omzet, anggaran, dan kesehatan tiap toko — angka resmi bulanan dari siklus marketing."
+      actions={<>
+        <Button onClick={() => onNavigate?.('marketing-task-hub')} variant="outline" data-testid="quick-tasks">Buka tugas</Button>
+        <Button onClick={() => onNavigate?.('marketing-sales')} data-testid="quick-input-sales"><Plus />Input sales</Button>
+      </>}
+      filters={<PeriodSelector value={period} onChange={setPeriod} />}
+      tools={(
+        <Button onClick={fetchData} variant="outline" size="icon" disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="refresh-dashboard-btn">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      )}>
       {/* Angka RESMI satu bulan — dijumlah backend (SSOT siklus marketing) */}
       <MarketingCycleStrip token={token} period={cyclePeriod} />
 
-      {/* Period Selector */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <PeriodSelector value={period} onChange={setPeriod} />
-        <div className="flex items-center gap-2">
-          <Button onClick={() => onNavigate?.('marketing-sales')} size="sm" data-testid="quick-input-sales">
-            <Plus className="w-3.5 h-3.5 mr-1.5" /> Input Sales
-          </Button>
-          <Button onClick={() => onNavigate?.('marketing-task-hub')} size="sm" variant="outline" data-testid="quick-tasks">
-            Buka Tugas
-          </Button>
-        </div>
+      <section className="space-y-2">
+        <p className="text-base font-semibold">Periode terpilih · {rentang}</p>
+        {loading && !overview ? (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-20" />)}</div>
+        ) : overview && (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <StatTile testId="kpi-total-revenue" label="Omzet" value={fmt(sm.total_revenue)}
+              sub={`Termasuk live ${fmt(sm.total_revenue_live)} · dari input harian`} />
+            <StatTile testId="kpi-total-orders" label="Pesanan" value={Number(sm.total_orders || 0).toLocaleString('id-ID')}
+              sub={sm.total_orders ? `Rata-rata ${fmt(sm.avg_order_value)} per pesanan` : 'Belum ada pesanan di periode ini'} />
+            <StatTile testId="kpi-active-accounts" label="Toko aktif" value={sm.active_accounts || 0}
+              sub={`Dari ${sm.total_accounts || 0} toko`} />
+            <StatTile testId="kpi-top-account" label="Toko terbaik"
+              value={overview.top_account ? overview.top_account.account_name : '—'}
+              sub={overview.top_account ? `Omzet ${fmt(overview.top_account.revenue)}` : 'Belum ada omzet di periode ini'} />
+          </div>
+        )}
+      </section>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <GlassCard className="space-y-3 p-4 lg:col-span-2" data-testid="revenue-trend-card">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-base font-semibold">Tren omzet</p>
+              <p className="text-sm text-muted-foreground">Omzet total dan live per hari, dari input harian tiap toko.</p>
+            </div>
+            <SmartNativeSelect className="w-48" value={chartAccountFilter} onChange={(e) => setChartAccountFilter(e.target.value)}
+              data-testid="chart-account-filter">
+              <option value="all">Semua toko</option>
+              {accounts.map(a => <option key={a.id} value={a.id}>{a.account_name}</option>)}
+            </SmartNativeSelect>
+          </div>
+          <RevenueChart data={trendData} height={260} />
+        </GlassCard>
+
+        <GlassCard className="space-y-3 p-4" data-testid="health-score-card">
+          <div>
+            <p className="text-base font-semibold">Rata-rata skor kesehatan</p>
+            <p className="text-sm text-muted-foreground">
+              {avgHealthScore == null ? 'Belum ada toko yang punya skor — skor dihitung dari data 30 hari terakhir.' : `Rata-rata ${accounts.length - sebaran.kosong} toko yang sudah punya skor.`}
+            </p>
+          </div>
+          <HealthScoreGauge score={avgHealthScore} size={120} label="" />
+          <dl className="space-y-1 text-sm">
+            <div className="flex justify-between"><dt className="text-muted-foreground">Sangat baik (≥ 80)</dt><dd className="tabular-nums">{sebaran.baik}</dd></div>
+            <div className="flex justify-between"><dt className="text-muted-foreground">Cukup (60–79)</dt><dd className="tabular-nums">{sebaran.cukup}</dd></div>
+            <div className="flex justify-between"><dt className="text-muted-foreground">Perlu perbaikan (&lt; 60)</dt><dd className="tabular-nums">{sebaran.buruk}</dd></div>
+            <div className="flex justify-between"><dt className="text-muted-foreground">Belum ada skor</dt><dd className="tabular-nums">{sebaran.kosong}</dd></div>
+          </dl>
+        </GlassCard>
       </div>
 
-      {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-32" />)}
-        </div>
-      ) : (
-        <>
-          {/* Summary KPIs */}
-          {overview && (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <GlassPanel className="p-5" data-testid="kpi-total-revenue">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-xs uppercase text-muted-foreground tracking-wider">Omzet Rentang Terpilih</div>
-                  <TrendingUp className="w-4 h-4 text-primary" />
-                </div>
-                <div className="text-2xl font-bold tabular-nums text-foreground">
-                  {fmtCompact(overview.summary?.total_revenue)}
-                </div>
-                <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-                  <Tv2 className="w-3 h-3 text-pink-400" />
-                  Live: {fmtCompact(overview.summary?.total_revenue_live)}
-                </div>
-              </GlassPanel>
-
-              <GlassPanel className="p-5" data-testid="kpi-total-orders">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-xs uppercase text-muted-foreground tracking-wider">Jumlah Order</div>
-                  <Package className="w-4 h-4 text-primary" />
-                </div>
-                <div className="text-2xl font-bold tabular-nums text-foreground">
-                  {Number(overview.summary?.total_orders || 0).toLocaleString('id-ID')}
-                </div>
-                <div className="text-xs text-muted-foreground mt-1">
-                  AOV: {fmt(overview.summary?.avg_order_value)}
-                </div>
-              </GlassPanel>
-
-              <GlassPanel className="p-5" data-testid="kpi-active-accounts">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-xs uppercase text-muted-foreground tracking-wider">Toko Aktif</div>
-                  <Store className="w-4 h-4 text-primary" />
-                </div>
-                <div className="text-2xl font-bold tabular-nums text-foreground">
-                  {overview.summary?.active_accounts || 0}
-                </div>
-                <div className="text-xs text-muted-foreground mt-1">
-                  dari {overview.summary?.total_accounts || 0} total akun
-                </div>
-              </GlassPanel>
-
-              <GlassPanel className="p-5 bg-primary/5 border-primary/30" data-testid="kpi-top-account">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-xs uppercase text-primary tracking-wider">Toko Terbaik</div>
-                  <BarChart3 className="w-4 h-4 text-primary" />
-                </div>
-                {overview.top_account ? (
-                  <>
-                    <div className="text-sm font-semibold text-foreground truncate">
-                      {overview.top_account.account_name}
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-1">
-                      {fmtCompact(overview.top_account.revenue)}
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-sm text-muted-foreground">Belum ada data</div>
-                )}
-              </GlassPanel>
-            </div>
-          )}
-
-          {/* Revenue Chart + Health Gauge */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <GlassCard className="p-5 lg:col-span-2" data-testid="revenue-trend-card">
-              <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-                <div>
-                  <h3 className="text-base font-semibold flex items-center gap-2">
-                    <Activity className="w-4 h-4 text-primary" /> Tren Omzet
-                  </h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">Omzet total vs live per hari (rentang terpilih)</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {/* Filter chart per akun */}
-                  <Select value={chartAccountFilter} onValueChange={setChartAccountFilter}>
-                    <SelectTrigger className="h-7 text-xs w-44" data-testid="chart-account-filter">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Semua Akun</SelectItem>
-                      {accounts.map(a => (
-                        <SelectItem key={a.id} value={a.id}>{a.account_name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-400" /> Total</span>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-pink-400" /> Live</span>
-                  </div>
-                </div>
-              </div>
-              <RevenueChart data={trendData} height={280} />
-            </GlassCard>
-
-            <GlassCard className="p-5 flex flex-col items-center justify-center" data-testid="health-score-card">
-              <h3 className="text-base font-semibold mb-1">Rata-rata Skor Kesehatan</h3>
-              <p className="text-xs text-muted-foreground mb-4">Rata-rata semua toko aktif</p>
-              <HealthScoreGauge score={avgHealthScore ?? 0} size={140} label="" />
-              <div className="mt-4 w-full text-xs space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Sangat baik (≥80)</span>
-                  <span className="text-emerald-400">{accounts.filter(a => a.health_score !== null && a.health_score !== undefined && a.health_score >= 80).length}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Cukup (60-79)</span>
-                  <span className="text-yellow-400">{accounts.filter(a => a.health_score !== null && a.health_score !== undefined && a.health_score >= 60 && a.health_score < 80).length}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Perlu perbaikan</span>
-                  <span className="text-red-400">{accounts.filter(a => a.health_score !== null && a.health_score !== undefined && a.health_score < 60).length}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Belum ada data</span>
-                  <span className="text-muted-foreground">{accounts.filter(a => a.health_score === null || a.health_score === undefined).length}</span>
-                </div>
-              </div>
-            </GlassCard>
-          </div>
-
-          {/* Accounts Grid */}
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-lg font-semibold text-foreground">Akun Platform</h3>
-                <p className="text-xs text-muted-foreground">Klik akun untuk dashboard detail</p>
-              </div>
-              <Button
-                size="sm"
-                onClick={() => onNavigate?.('marketing-accounts')}
-                data-testid="manage-accounts-btn"
-              >
-                <Plus className="w-4 h-4 mr-2" /> Kelola Akun
-              </Button>
-            </div>
-
-            {accounts.length === 0 ? (
-              <GlassCard className="p-12 text-center">
-                <Store className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
-                <p className="text-muted-foreground mb-4">Belum ada akun platform</p>
-                <Button
-                  size="sm"
-                  onClick={() => onNavigate?.('marketing-accounts')}
-                  data-testid="add-first-account"
-                >
-                  <Plus className="w-4 h-4 mr-2" /> Tambah Akun Pertama
-                </Button>
-              </GlassCard>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {accounts.map(account => (
-                  <AccountCard
-                    key={account.id}
-                    account={account}
-                    token={token}
-                    onViewDetail={setDetailAccount}
-                  />
-                ))}
-              </div>
-            )}
+            <p className="text-base font-semibold">Toko</p>
+            <p className="text-sm text-muted-foreground">Klik baris untuk dashboard satu toko.</p>
           </div>
-        </>
-      )}
-      </>)}
-    </div>
+          <div className="flex items-center gap-2">
+            <TombolUnduh namaBerkas={`dashboard-toko-${period.date_from}-${period.date_to}`} namaLembar="Toko" baris={accounts} testId="dashboard-toko-unduh"
+              kolom={[
+                { label: 'Toko', nilai: (a) => a.account_name }, { label: 'Kode', nilai: (a) => a.account_code },
+                { label: 'Platform', nilai: (a) => labelPlatform(a.platform) },
+                { label: 'Omzet periode', nilai: (a) => omzetToko(a.id) }, { label: 'Omzet live', nilai: (a) => omzetLive(a.id) },
+                { label: 'Skor kesehatan', nilai: (a) => (adaSkor(a) ? a.health_score : '') },
+              ]} />
+            <Button variant="outline" onClick={() => onNavigate?.('marketing-accounts')} data-testid="manage-accounts-btn">Kelola akun</Button>
+          </div>
+        </div>
+        <TabelData kolom={kolomToko} baris={accounts} onKlikBaris={setDetailAccount} testId="dashboard-accounts-table"
+          kosong={<EmptyState icon={Store} title="Belum ada toko aktif"
+            action={<Button onClick={() => onNavigate?.('marketing-accounts')} data-testid="add-first-account"><Plus />Tambah akun pertama</Button>} />} />
+      </section>
+    </PageLayout>
   );
 }
