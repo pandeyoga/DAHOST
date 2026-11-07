@@ -1,13 +1,35 @@
+/**
+ * Proses gaji (tab di hub Penggajian) — run gaji per periode: buat, hitung ulang, finalisasi, bayar, batalkan.
+ *
+ * Standar UI/UX v2 (8 Nov 2026), tampilan saja — semua endpoint, isian, dan aturan (pemisahan tugas, jurnal,
+ * BPJS per lembaga, PPh21, pembatalan dua langkah) TIDAK berubah:
+ *  • cetakan PageLayout (dulu kepala bergaya kartu + kotak "Langkah Berikutnya" yang memakan tempat → tautan
+ *    "Jurnal gaji" di baris alat);
+ *  • daftar = TabelData + unduh Excel/CSV; aksi baris dulu 10+ ikon/huruf kecil tanpa label (💸, BK, BT, P, ×) →
+ *    paling banyak 1 tombol berlabel + menu "Lainnya" berlabel lengkap;
+ *  • rincian run = DetailPopup; semua form (buat run, bayar gaji, bayar BPJS/PPh21, finalisasi, pembatalan,
+ *    penyesuaian slip) = FormPopup standar; tanggal = DatePicker.
+ */
 import { useState, useEffect, useCallback, useReducer, useMemo } from 'react';
-import { Plus, RefreshCw, Download, Eye, Lock, Calendar, DollarSign, AlertTriangle, CheckCircle, ShieldAlert, Copy, FileText, FilesIcon, BookOpen, ExternalLink, AlertCircle, X, CreditCard, RotateCcw } from 'lucide-react';
-import OnwardCTA from './OnwardCTA';
-import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
+import {
+  AlertTriangle, BookOpen, CheckCircle, Copy, Download, Eye, FileText, FilesIcon, Lock, MoreHorizontal, Plus,
+  RefreshCw, RotateCcw, ShieldAlert, Trash2, Wallet, X,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { PageHeader, StatusBadge } from './moduleAtoms';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker, { formatTanggalID } from '@/components/ui/date-picker';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
@@ -25,6 +47,10 @@ const bpjsDue = (run, agency) => {
 const bpjsPaid = (run, agency) => (run.bpjs_payments || {})[agency]?.status === 'paid';
 
 const fmtIDR = formatRupiah;
+const RUN_STATUS = { draft: 'Draf', finalized: 'Final', cancelled: 'Dibatalkan' };
+const runStatusLabel = (s) => RUN_STATUS[s] || s || '—';
+const periodeLabel = (r) => `${formatTanggalID(r.period_from) || r.period_from || '—'} – ${formatTanggalID(r.period_to) || r.period_to || '—'}`;
+const bayarLabel = (r) => (r.status !== 'finalized' ? '—' : r.payment_status === 'paid' ? 'Dibayar' : 'Belum dibayar');
 
 const _PR_INIT = { runs: [], loading: true };
 function _prReducer(s, a) {
@@ -33,40 +59,29 @@ function _prReducer(s, a) {
   return s;
 }
 
-/** GL Posting Status Badge */
+/** Status jurnal buku besar satu run (nomor jurnal finalisasi & pembayaran → buka daftar jurnal). */
 function GLStatusBadge({ run, onNavigate }) {
   if (!run.gl_je_number && !run.post_error) {
-    if (run.status !== 'finalized') return null;
-    return <span className="text-[10px] text-muted-foreground italic">Belum diposting</span>;
+    if (run.status !== 'finalized') return <span className="text-sm text-muted-foreground">—</span>;
+    return <span className="text-sm text-muted-foreground">Belum diposting</span>;
   }
+  const buka = onNavigate ? () => onNavigate('fin-journal-list') : undefined;
   return (
-    <div className="flex flex-col gap-1">
-      {/* Finalize JE */}
+    <div className="flex flex-col items-start gap-0.5">
       {run.gl_je_number && (
-        <span
-          className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium bg-emerald-100 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-400 dark:border-emerald-500/30 cursor-pointer hover:bg-emerald-100 dark:bg-emerald-500/20"
-          title={`Journal Entry Finalisasi: ${run.gl_je_number}`}
-          onClick={() => onNavigate && onNavigate('fin-journal-list')}
-          data-testid={`gl-badge-${run.run_number}`}
-        >
-          <BookOpen size={9} /> {run.gl_je_number}
-        </span>
+        <Button variant="link" size="sm" className="h-auto p-0 text-sm" onClick={buka} disabled={!buka}
+          title={`Jurnal finalisasi: ${run.gl_je_number}`} data-testid={`gl-badge-${run.run_number}`}>
+          {run.gl_je_number}
+        </Button>
       )}
-      {/* Payment JE */}
       {run.payment_gl_je_number && (
-        <span
-          className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium bg-blue-100 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-400 dark:border-blue-500/30 cursor-pointer hover:bg-blue-100 dark:bg-blue-500/20"
-          title={`Journal Entry Pembayaran: ${run.payment_gl_je_number}`}
-          onClick={() => onNavigate && onNavigate('fin-journal-list')}
-          data-testid={`pay-je-badge-${run.run_number}`}
-        >
-          💸 {run.payment_gl_je_number}
-        </span>
+        <Button variant="link" size="sm" className="h-auto p-0 text-sm" onClick={buka} disabled={!buka}
+          title={`Jurnal pembayaran: ${run.payment_gl_je_number}`} data-testid={`pay-je-badge-${run.run_number}`}>
+          Bayar: {run.payment_gl_je_number}
+        </Button>
       )}
       {run.post_error && !run.gl_je_number && (
-        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium bg-red-100 dark:bg-red-500/10 text-red-700 dark:text-red-400 border border-red-400 dark:border-red-500/30" title={run.post_error}>
-          <AlertCircle size={9} /> Error GL
-        </span>
+        <span title={run.post_error}><StatusBadge status="error" label="Jurnal gagal" tone="danger" /></span>
       )}
     </div>
   );
@@ -346,191 +361,188 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
     setCreating(true);
   };
 
-  const { page, setPage, totalPages, total, paged } = useClientPagination(runs, 10);
-  return (
-    <div className="space-y-5" data-testid="rahaza-payroll-run-page">
-      <PageHeader
-        icon={DollarSign}
-        eyebrow="Portal SDM · Penggajian"
-        title="Proses Penggajian"
-        subtitle="Jalankan penggajian per periode. Gunakan &quot;Salin Bulan Lalu&quot; untuk isi otomatis periode sebelumnya."
-        actions={
+  const [saringStatus, setSaringStatus] = useState('');
+  const opsiStatus = [
+    { key: '', label: 'Semua', count: runs.length },
+    ...Object.entries(RUN_STATUS).map(([k, l]) => ({ key: k, label: l, count: runs.filter(r => r.status === k).length }))
+      .filter(o => o.count > 0 || o.key === saringStatus),
+  ];
+  const baris = useMemo(() => runs.filter(r => !saringStatus || r.status === saringStatus), [runs, saringStatus]);
+  const { page, setPage, totalPages, total, paged } = useClientPagination(baris, 10);
+
+  /** Aksi baris (aturan tampil sama dengan versi lama; kini berlabel dan dikelompokkan). */
+  const aksiUtama = (r) => {
+    if (r.status === 'draft') {
+      return (
+        <Button size="sm" variant="success" onClick={() => finalizeRun(r.id)} data-testid={`pr-finalize-${r.run_number}`}>
+          <Lock />Finalisasi
+        </Button>
+      );
+    }
+    if (r.status === 'finalized' && r.gl_je_number && r.payment_status !== 'paid') {
+      return (
+        <Button size="sm" variant="outline" onClick={() => { setPayDialog(r); setPayForm(f => ({ ...f, payment_date: todayWIB() })); }}
+          data-testid={`pay-btn-${r.run_number}`}>
+          <Wallet />Bayar gaji
+        </Button>
+      );
+    }
+    return null;
+  };
+  const menuLain = (r) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="icon-sm" variant="ghost" title="Lainnya" aria-label="Lainnya" data-testid={`pr-more-${r.run_number}`}>
+          <MoreHorizontal />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onSelect={() => openRun(r.id)} data-testid={`pr-view-${r.run_number}`}>
+          <Eye className="mr-2 h-4 w-4" />Lihat rincian slip
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => exportCsv(r.id, r.run_number)} data-testid={`pr-csv-${r.run_number}`}>
+          <Download className="mr-2 h-4 w-4" />Unduh CSV
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => downloadRunExcel(r.id, r.run_number)} data-testid={`pr-excel-${r.run_number}`}>
+          <FileText className="mr-2 h-4 w-4" />Unduh Excel (rekap, slip, data bank)
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => downloadRunPdf(r.id, r.run_number)} data-testid={`pr-pdf-run-${r.run_number}`}>
+          <FilesIcon className="mr-2 h-4 w-4" />Unduh semua slip PDF
+        </DropdownMenuItem>
+        {r.status === 'draft' && (
           <>
-            {/* Salin Bulan Lalu — 1-click period pre-fill */}
-            <Button
-              variant="ghost"
-              onClick={salinBulanLalu}
-              className="h-9 border border-[var(--glass-border)] gap-1.5"
-              data-testid="pr-copy-last-month"
-              title={`Buat run untuk periode bulan lalu (${lastMonthPeriodWIB().from} → ${lastMonthPeriodWIB().to})`}
-            >
-              <Copy className="w-3.5 h-3.5" />
-              Salin Bulan Lalu
-            </Button>
-            <Button variant="ghost" onClick={refresh} className="h-9 border border-[var(--glass-border)]" data-testid="pr-refresh">
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Refresh
-            </Button>
-            <Button onClick={() => { setCreateInitial(null); setCreating(true); }} className="h-9" data-testid="pr-create">
-              <Plus className="w-3.5 h-3.5 mr-1.5" /> Buat Penggajian Baru
-            </Button>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => recalcRun(r.id)} data-testid={`pr-recalc-${r.run_number}`}>
+              <RotateCcw className="mr-2 h-4 w-4" />Hitung ulang (penyesuaian manual tetap)
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => delRun(r.id)} className="text-[hsl(var(--danger-text))]" data-testid={`pr-delete-${r.run_number}`}>
+              <Trash2 className="mr-2 h-4 w-4" />Hapus run draf
+            </DropdownMenuItem>
           </>
-        }
-      />
+        )}
+        {r.status === 'finalized' && r.post_error && (
+          <DropdownMenuItem onSelect={() => retryPost(r.id)} data-testid={`pr-retry-${r.run_number}`}>
+            <AlertTriangle className="mr-2 h-4 w-4" />Coba posting jurnal lagi
+          </DropdownMenuItem>
+        )}
+        {r.status === 'finalized' && r.gl_je_number && (
+          <>
+            <DropdownMenuSeparator />
+            {r.bpjs_payment_status !== 'paid' && BPJS_AGENCIES.map(([ag, lbl]) => (
+              !bpjsPaid(r, ag) && bpjsDue(r, ag) !== 0 && (
+                <DropdownMenuItem key={ag} onSelect={() => openObligation(r, 'bpjs', ag)} data-testid={`bpjs-${ag}-btn-${r.run_number}`}>
+                  <Wallet className="mr-2 h-4 w-4" />Bayar {lbl}
+                </DropdownMenuItem>
+              )
+            ))}
+            {r.pph21_payment_status !== 'paid' && (
+              <DropdownMenuItem onSelect={() => openObligation(r, 'pph21')} data-testid={`pph21-btn-${r.run_number}`}>
+                <Wallet className="mr-2 h-4 w-4" />Bayar PPh21 ke DJP
+              </DropdownMenuItem>
+            )}
+          </>
+        )}
+        {r.payment_status === 'paid' && (
+          <DropdownMenuItem onSelect={() => voidPayment(r)} className="text-[hsl(var(--danger-text))]" data-testid={`void-pay-btn-${r.run_number}`}>
+            <X className="mr-2 h-4 w-4" />Batalkan pembayaran gaji
+          </DropdownMenuItem>
+        )}
+        {/* 2026-11-02 (K34): batalkan run final (jurnal pembalik) */}
+        {r.status === 'finalized' && (
+          <DropdownMenuItem onSelect={() => { setCancelReason(r.cancel_request?.reason || ''); setCancelDialog(r); }}
+            className="text-[hsl(var(--danger-text))]" data-testid={`cancel-run-btn-${r.run_number}`}>
+            <X className="mr-2 h-4 w-4" />{r.cancel_request?.status === 'pending' ? 'Tinjau pengajuan pembatalan' : 'Batalkan run (jurnal pembalik)'}
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
-      {/* RC-FLOW-UX Alur 6 — Payroll → Jurnal Gaji (GL) */}
-      <OnwardCTA
-        onNavigate={onNavigate}
-        title="Langkah Berikutnya"
-        actions={[
-          { module: 'fin-journal-hub', label: 'Jurnal Gaji (GL)', icon: BookOpen, primary: true, hint: 'Lihat jurnal akuntansi hasil finalisasi penggajian' },
-        ]}
-      />
+  const kolom = [
+    { kunci: 'run', label: 'Nomor run', hp: 'judul', isi: (r) => <span className="font-medium">{r.run_number}</span> },
+    { kunci: 'periode', label: 'Periode', hp: 'keterangan', isi: (r) => <span className="text-sm md:whitespace-nowrap">{periodeLabel(r)}</span> },
+    { kunci: 'status', label: 'Status', isi: (r) => (
+      <div className="flex flex-wrap items-center gap-1">
+        <StatusBadge status={r.status} label={runStatusLabel(r.status)} />
+        {r.status === 'finalized' && r.payment_status === 'paid' && <StatusBadge status="paid" label="Dibayar" />}
+        {r.cancel_request?.status === 'pending' && <StatusBadge status="pending" label="Pembatalan diajukan" tone="warning" />}
+        {(r.warnings || []).length > 0 && (
+          <span className="inline-flex items-center gap-1 text-xs text-[hsl(var(--warning-text))]"
+            title={(r.warnings || []).map(w => `${w.employee_name}: ${w.message}`).join('\n')} data-testid={`run-warn-${r.run_number}`}>
+            <AlertTriangle className="h-3.5 w-3.5" />{r.warnings.length} peringatan
+          </span>
+        )}
+      </div>) },
+    { kunci: 'karyawan', label: 'Karyawan', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.total_employees ?? '—'}</span> },
+    { kunci: 'bruto', label: 'Bruto', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtIDR(r.total_gross)}</span> },
+    { kunci: 'potongan', label: 'Potongan', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtIDR(r.total_deductions)}</span> },
+    { kunci: 'bersih', label: 'Bersih', rata: 'kanan', isi: (r) => <span className="font-medium tabular-nums">{fmtIDR(r.total_net)}</span> },
+    { kunci: 'jurnal', label: 'Jurnal', isi: (r) => <GLStatusBadge run={r} onNavigate={onNavigate} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+      <div className="flex items-center justify-end gap-1 md:whitespace-nowrap">{aksiUtama(r)}{menuLain(r)}</div>) },
+  ];
 
-      {error && <div className="bg-[hsl(var(--destructive)/0.12)] border border-[hsl(var(--destructive)/0.22)] rounded-lg p-3 text-sm text-[hsl(var(--destructive))]">{error}</div>}
+  const tutupBuat = () => { setCreating(false); setCreateInitial(null); setError(''); };
+  const lalu = lastMonthPeriodWIB();
 
-      {loading ? (
-        <div className="flex items-center justify-center h-48"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" /></div>
+  return (
+    <PageLayout testId="rahaza-payroll-run-page" title="Proses gaji"
+      subtitle="Buat run gaji per periode, hitung ulang, finalisasi, lalu catat pembayarannya."
+      actions={<>
+        {/* Salin Bulan Lalu — 1-click period pre-fill */}
+        <Button variant="outline" onClick={salinBulanLalu} data-testid="pr-copy-last-month"
+          title={`Buat run untuk periode bulan lalu (${formatTanggalID(lalu.from)} – ${formatTanggalID(lalu.to)})`}>
+          <Copy />Salin bulan lalu
+        </Button>
+        <Button onClick={() => { setError(''); setCreateInitial(null); setCreating(true); }} data-testid="pr-create">
+          <Plus />Buat proses gaji
+        </Button>
+      </>}
+      filters={<FilterChips options={opsiStatus} value={saringStatus} onChange={setSaringStatus} testId="pr-status" ariaLabel="Status run" />}
+      tools={<>
+        {/* RC-FLOW-UX Alur 6 — Payroll → Jurnal Gaji (GL); dulu kotak "Langkah Berikutnya" */}
+        {typeof onNavigate === 'function' && (
+          <Button variant="link" onClick={() => onNavigate('fin-journal-hub')} title="Lihat jurnal akuntansi hasil finalisasi penggajian"
+            data-testid="onward-fin-journal-hub"><BookOpen />Jurnal gaji</Button>
+        )}
+        <TombolUnduh namaBerkas="proses-gaji" namaLembar="Run gaji" baris={baris} testId="pr-unduh"
+          kolom={[
+            { label: 'Nomor run', nilai: (r) => r.run_number },
+            { label: 'Periode dari', nilai: (r) => formatTanggalID(r.period_from) || r.period_from || '' },
+            { label: 'Periode sampai', nilai: (r) => formatTanggalID(r.period_to) || r.period_to || '' },
+            { label: 'Status', nilai: (r) => runStatusLabel(r.status) },
+            { label: 'Pembayaran', nilai: bayarLabel },
+            { label: 'Karyawan', nilai: (r) => r.total_employees ?? '' },
+            { label: 'Bruto (Rp)', nilai: (r) => Number(r.total_gross || 0) },
+            { label: 'Potongan (Rp)', nilai: (r) => Number(r.total_deductions || 0) },
+            { label: 'Bersih (Rp)', nilai: (r) => Number(r.total_net || 0) },
+            { label: 'Jurnal finalisasi', nilai: (r) => r.gl_je_number || '' },
+            { label: 'Jurnal pembayaran', nilai: (r) => r.payment_gl_je_number || '' },
+            { label: 'Peringatan', nilai: (r) => (r.warnings || []).length },
+          ]} />
+        <Button variant="outline" size="icon" onClick={refresh} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="pr-refresh"><RefreshCw className={loading ? 'animate-spin' : ''} /></Button>
+      </>}
+      footer={baris.length > 10 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}
+    >
+      {error && !creating && <Notice tone="danger" icon={AlertTriangle} title={error} testId="pr-error" />}
+
+      {loading && runs.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat proses gaji…</p>
       ) : (
-        <GlassCard className="p-0 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-[var(--glass-bg)]">
-                <tr className="text-left text-xs text-muted-foreground">
-                  <th className="px-4 py-3">Run #</th>
-                  <th className="px-3 py-3">Periode</th>
-                  <th className="px-3 py-3">Status</th>
-                  <th className="px-3 py-3 text-right">Karyawan</th>
-                  <th className="px-3 py-3 text-right">Gross</th>
-                  <th className="px-3 py-3 text-right">Potongan</th>
-                  <th className="px-3 py-3 text-right">Net</th>
-                  <th className="px-3 py-3">GL Jurnal</th>
-                  <th className="px-3 py-3 text-right">Aksi</th>
-                </tr>
-              </thead>
-              <tbody>
-                {runs.length === 0 ? (
-                  <tr><td colSpan={9} className="text-center py-12 text-muted-foreground">
-                    Belum ada proses penggajian. Klik &quot;Buat Penggajian Baru&quot; atau &quot;Salin Bulan Lalu&quot; untuk memulai.
-                  </td></tr>
-                ) : paged.map(r => (
-                  <tr key={r.id} className="border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] transition-colors" data-testid={`pr-row-${r.run_number}`}>
-                    <td className="px-4 py-2 font-mono text-xs text-foreground">{r.run_number}</td>
-                    <td className="px-3 py-2 text-xs text-foreground">{r.period_from} → {r.period_to}</td>
-                    <td className="px-3 py-2"><StatusBadge status={r.status} /></td>
-                    <td className="px-3 py-2 text-right text-foreground">{r.total_employees}</td>
-                    <td className="px-3 py-2 text-right font-mono text-foreground">{fmtIDR(r.total_gross)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-red-600 dark:text-red-300">{fmtIDR(r.total_deductions)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-emerald-600 dark:text-emerald-300 font-semibold">{fmtIDR(r.total_net)}</td>
-                    {/* GL Posting Status */}
-                    <td className="px-3 py-2">
-                      <GLStatusBadge run={r} onNavigate={onNavigate} />
-                    </td>
-                    <td className="px-3 py-2 text-right whitespace-nowrap">
-                      <button onClick={() => openRun(r.id)} className="text-xs text-primary hover:underline mr-2" data-testid={`pr-view-${r.run_number}`} title="Lihat detail"><Eye className="w-3 h-3 inline" /></button>
-                      <button onClick={() => exportCsv(r.id, r.run_number)} className="text-xs text-foreground/50 hover:text-foreground hover:underline mr-2" title="Download CSV"><Download className="w-3 h-3 inline" /></button>
-                      <button
-                        onClick={() => downloadRunExcel(r.id, r.run_number)}
-                        className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline mr-2"
-                        data-testid={`pr-excel-${r.run_number}`}
-                        title="Download Excel (Rekapitulasi + Slip + Data Bank)"
-                      >
-                        <FileText className="w-3 h-3 inline" />
-                      </button>
-                      <button
-                        onClick={() => downloadRunPdf(r.id, r.run_number)}
-                        className="text-xs text-primary hover:underline mr-2"
-                        data-testid={`pr-pdf-run-${r.run_number}`}
-                        title="Download semua slip PDF"
-                      >
-                        <FilesIcon className="w-3 h-3 inline" />
-                      </button>
-                      {r.status === 'draft' && (
-                        <>
-                          <Button variant="ghost" size="icon-sm" onClick={() => recalcRun(r.id)} className="mr-1"
-                            title="Hitung ulang (penyesuaian manual tetap)" aria-label="Hitung ulang" data-testid={`pr-recalc-${r.run_number}`}>
-                            <RotateCcw className="w-3 h-3" />
-                          </Button>
-                          <button onClick={() => finalizeRun(r.id)} className="text-xs text-emerald-600 dark:text-emerald-300 hover:underline mr-2" data-testid={`pr-finalize-${r.run_number}`} title="Finalisasi"><Lock className="w-3 h-3 inline" /></button>
-                          <button onClick={() => delRun(r.id)} className="text-xs text-red-600 dark:text-red-300 hover:underline" title="Hapus"><RefreshCw className="w-3 h-3 inline" /></button>
-                        </>
-                      )}
-                      {r.status === 'finalized' && r.post_error && (
-                        <button onClick={() => retryPost(r.id)} className="text-xs text-amber-600 dark:text-amber-300 hover:underline" title="Retry GL Posting"><AlertTriangle className="w-3 h-3 inline" /></button>
-                      )}
-                      {/* Bayar Gaji — tampil jika sudah finalized + GL posted + belum dibayar */}
-                      {r.status === 'finalized' && r.gl_je_number && r.payment_status !== 'paid' && (
-                        <button
-                          onClick={() => { setPayDialog(r); setPayForm(f => ({ ...f, payment_date: todayWIB() })); }}
-                          className="text-xs text-blue-600 dark:text-blue-300 hover:underline ml-1"
-                          title="Bayar Gaji (buat payment JE)"
-                          data-testid={`pay-btn-${r.run_number}`}
-                        >
-                          💸
-                        </button>
-                      )}
-                      {r.payment_status === 'paid' && (
-                        <button
-                          onClick={() => voidPayment(r)}
-                          className="text-xs text-muted-foreground hover:underline ml-1"
-                          title="Void pembayaran"
-                          data-testid={`void-pay-btn-${r.run_number}`}
-                        >
-                          <X className="w-3 h-3 inline" />
-                        </button>
-                      )}
-                      {/* BPJS (per lembaga) + PPh21 payment buttons — 2026-11-02 (K22) */}
-                      {r.status === 'finalized' && r.gl_je_number && (
-                        <>
-                          {r.bpjs_payment_status !== 'paid' && BPJS_AGENCIES.map(([ag, lbl]) => (
-                            !bpjsPaid(r, ag) && bpjsDue(r, ag) !== 0 && (
-                              <button
-                                key={ag}
-                                onClick={() => openObligation(r, 'bpjs', ag)}
-                                className="text-xs text-teal-600 dark:text-teal-300 hover:underline ml-1"
-                                title={`Bayar ${lbl}`}
-                                data-testid={`bpjs-${ag}-btn-${r.run_number}`}
-                              >{ag === 'kes' ? 'BK' : 'BT'}</button>
-                            )
-                          ))}
-                          {r.pph21_payment_status !== 'paid' && (
-                            <button
-                              onClick={() => openObligation(r, 'pph21')}
-                              className="text-xs text-purple-600 dark:text-purple-300 hover:underline ml-1"
-                              title="Bayar PPh21 ke DJP"
-                              data-testid={`pph21-btn-${r.run_number}`}
-                            >P</button>
-                          )}
-                        </>
-                      )}
-                      {/* 2026-11-02 (K34): batalkan run final (jurnal pembalik) */}
-                      {r.status === 'finalized' && (
-                        <button
-                          onClick={() => { setCancelReason(r.cancel_request?.reason || ''); setCancelDialog(r); }}
-                          className={`text-xs ml-1 hover:underline ${r.cancel_request?.status === 'pending' ? 'text-amber-600 dark:text-amber-300 font-semibold' : 'text-red-600 dark:text-red-300'}`}
-                          title={r.cancel_request?.status === 'pending' ? 'Pengajuan pembatalan menunggu Keuangan' : 'Batalkan run (jurnal pembalik)'}
-                          data-testid={`cancel-run-btn-${r.run_number}`}
-                        ><X className="w-3 h-3 inline" />{r.cancel_request?.status === 'pending' ? '?' : ''}</button>
-                      )}
-                      {(r.warnings || []).length > 0 && (
-                        <span className="ml-1 text-amber-600 dark:text-amber-300" title={(r.warnings || []).map(w => `${w.employee_name}: ${w.message}`).join('\n')}
-                          data-testid={`run-warn-${r.run_number}`}><AlertTriangle className="w-3 h-3 inline" /></span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
-          </div>
-        </GlassCard>
+        <TabelData kolom={kolom} baris={paged} onKlikBaris={(r) => openRun(r.id)} testId="pr-table"
+          kosong={<EmptyState title={runs.length ? 'Tidak ada run dengan status ini' : 'Belum ada proses gaji'}
+            description={runs.length ? 'Pilih status lain.' : 'Tekan “Buat proses gaji” atau “Salin bulan lalu” untuk memulai.'}
+            action={!runs.length && <Button onClick={() => { setCreateInitial(null); setCreating(true); }}><Plus />Buat proses gaji</Button>} />} />
       )}
 
       {creating && (
         <CreateRunModal
-          onClose={() => { setCreating(false); setCreateInitial(null); }}
+          onClose={tutupBuat}
           onCreate={createRun}
           token={token}
           initial={createInitial}
+          galat={error}
         />
       )}
       {viewing && (
@@ -545,191 +557,119 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
         />
       )}
 
-      {/* ── Payment Dialog ── */}
-      <Dialog open={!!payDialog} onOpenChange={o => !o && setPayDialog(null)}>
-        <DialogContent className="max-w-sm" data-testid="pay-dialog">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <CreditCard size={16} className="text-blue-600 dark:text-blue-400" />
-              Bayar Gaji — {payDialog?.run_number}
-            </DialogTitle>
-            <p className="text-xs text-muted-foreground mt-1">
-              Jurnal: Dr Hutang Gaji / Cr Bank
-            </p>
-          </DialogHeader>
-          <div className="space-y-3 mt-2">
-            {payDialog && (
-              <div className="rounded-lg bg-blue-100 dark:bg-blue-500/10 border border-blue-400 dark:border-blue-500/30 px-3 py-2 text-sm">
-                <span className="text-muted-foreground">Total dibayar:</span>
-                <span className="ml-2 font-bold text-blue-600 dark:text-blue-300">
-                  Rp {Number(payDialog.total_net || 0).toLocaleString('id-ID')}
-                </span>
-              </div>
-            )}
-            <div>
-              <Label className="text-xs">Tanggal Pembayaran</Label>
-              <GlassInput type="date" className="mt-1 h-9 text-sm"
-                value={payForm.payment_date}
-                onChange={e => setPayForm(f => ({ ...f, payment_date: e.target.value }))}
-                data-testid="pay-date" />
-            </div>
-            <div>
-              <Label className="text-xs">Rekening / Kas</Label>
-              {/* Tahap 5: pemilih rekening yang sama dengan form bayar SDM lain (bisa dicari), nilai = kode akun GL */}
-              <div className="mt-1">
-                <CashAccountSelect accounts={cashAccounts} loaded={cashLoaded} valueKey="gl_account_code"
-                  value={payForm.bank_account_code} testId="pay-bank-select"
-                  onChange={v => setPayForm(f => ({ ...f, bank_account_code: v }))} />
-              </div>
-            </div>
-            <div>
-              <Label className="text-xs">Metode</Label>
-              <Select value={payForm.payment_method}
-                onValueChange={v => setPayForm(f => ({ ...f, payment_method: v }))}>
-                <SelectTrigger className="mt-1 h-9 text-sm"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="bank_transfer">Transfer Bank</SelectItem>
-                  <SelectItem value="cash">Tunai</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="text-xs">Catatan (opsional)</Label>
-              <GlassInput className="mt-1 h-9 text-sm" placeholder="Keterangan pembayaran..."
-                value={payForm.notes}
-                onChange={e => setPayForm(f => ({ ...f, notes: e.target.value }))} />
-            </div>
-            <div>
-              <Label className="text-xs">Alasan pengecualian (hanya bila Anda sendiri yang membuat run ini)</Label>
-              <GlassInput className="mt-1 h-9 text-sm" placeholder="Khusus admin/owner"
-                value={payForm.override_reason || ''} data-testid="pay-override-reason"
-                onChange={e => setPayForm(f => ({ ...f, override_reason: e.target.value }))} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPayDialog(null)}>Batal</Button>
-            <Button
-              onClick={payGaji}
-              disabled={paying || !payForm.bank_account_code}
-              className="bg-blue-600 hover:bg-blue-700"
-              data-testid="pay-confirm-btn"
-            >
-              {paying ? '💸 Memproses...' : '💸 Bayar Gaji'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* ── Bayar gaji ── */}
+      <FormPopup open={!!payDialog} onClose={() => setPayDialog(null)} ukuran="pendek" onSimpan={payGaji} menyimpan={paying}
+        bisaSimpan={!!payForm.bank_account_code} labelSimpan="Bayar gaji" testId="pay-dialog"
+        judul={`Bayar gaji — ${payDialog?.run_number || ''}`}
+        keterangan="Jurnal: debit hutang gaji, kredit rekening yang dipilih.">
+        {payDialog && (
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Total dibayar"><span className="font-semibold tabular-nums">{fmtIDR(payDialog.total_net || 0)}</span></BarisDetail>
+            <BarisDetail label="Periode">{periodeLabel(payDialog)}</BarisDetail>
+          </dl>
+        )}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Tanggal pembayaran" wajib>
+            <DatePicker value={payForm.payment_date} onChange={v => setPayForm(f => ({ ...f, payment_date: v }))}
+              bolehKosong={false} testId="pay-date" />
+          </Isian>
+          <Isian label="Metode">
+            <SmartNativeSelect value={payForm.payment_method} searchable={false} data-testid="pay-method"
+              onChange={e => setPayForm(f => ({ ...f, payment_method: e.target.value }))}>
+              <option value="bank_transfer">Transfer bank</option>
+              <option value="cash">Tunai</option>
+            </SmartNativeSelect>
+          </Isian>
+        </div>
+        <Isian label="Rekening / kas" wajib>
+          {/* Tahap 5: pemilih rekening yang sama dengan form bayar SDM lain (bisa dicari), nilai = kode akun GL */}
+          <CashAccountSelect accounts={cashAccounts} loaded={cashLoaded} valueKey="gl_account_code"
+            value={payForm.bank_account_code} testId="pay-bank-select"
+            onChange={v => setPayForm(f => ({ ...f, bank_account_code: v }))} />
+        </Isian>
+        <Isian label="Catatan (opsional)">
+          <Input placeholder="Keterangan pembayaran" value={payForm.notes}
+            onChange={e => setPayForm(f => ({ ...f, notes: e.target.value }))} />
+        </Isian>
+        <Isian label="Alasan pengecualian" petunjuk="Hanya bila Anda sendiri yang membuat run ini (khusus admin/owner).">
+          <Input placeholder="Kosongkan bila Anda bukan pembuat run" value={payForm.override_reason || ''} data-testid="pay-override-reason"
+            onChange={e => setPayForm(f => ({ ...f, override_reason: e.target.value }))} />
+        </Isian>
+      </FormPopup>
 
-      {/* ── Bayar BPJS per lembaga / PPh21 — 2026-11-02 (K22): rekening + tanggal, bukan window.prompt ── */}
-      <Dialog open={!!oblDialog} onOpenChange={o => !o && setOblDialog(null)}>
-        <DialogContent className="max-w-sm" data-testid="obligation-dialog">
-          <DialogHeader>
-            <DialogTitle>
-              {oblDialog?.type === 'bpjs'
-                ? `Bayar ${BPJS_AGENCIES.find(([k]) => k === oblDialog?.agency)?.[1] || 'BPJS'}`
-                : 'Bayar PPh21 ke DJP'} — {oblDialog?.run?.run_number}
-            </DialogTitle>
-          </DialogHeader>
-          {oblDialog?.type === 'bpjs' && (() => {
-            const b = (oblDialog.run.bpjs_breakdown || {})[oblDialog.agency];
-            return b ? (
-              <div className="rounded-lg bg-teal-50 dark:bg-teal-500/10 border border-teal-300 dark:border-teal-500/30 px-3 py-2 text-xs space-y-0.5">
-                <div>Potongan karyawan: <strong>{fmtIDR(b.employee)}</strong></div>
-                <div>Iuran perusahaan (sudah dijurnal): <strong>{fmtIDR(b.employer)}</strong></div>
-                <div className="text-sm">Total dibayar: <strong>{fmtIDR(Number(b.employee || 0) + Number(b.employer || 0))}</strong> · Dr {b.payable_code}</div>
-              </div>
-            ) : <p className="text-xs text-muted-foreground">Run lama: nilai = potongan karyawan lembaga ini (akun hutang BPJS lama).</p>;
-          })()}
-          <div className="space-y-3">
-            <div>
-              <Label className="text-xs">Tanggal Pembayaran</Label>
-              <GlassInput type="date" className="mt-1 h-9 text-sm"
-                value={oblForm.payment_date} onChange={e => setOblForm(f => ({ ...f, payment_date: e.target.value }))}
-                data-testid="obligation-date" />
-            </div>
-            <div>
-              <Label className="text-xs">Rekening / Kas</Label>
-              <CashAccountSelect accounts={cashAccounts} loaded={cashLoaded} value={oblForm.cash_account_id}
-                onChange={v => setOblForm(f => ({ ...f, cash_account_id: v }))} testId="obligation-account" />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOblDialog(null)}>Batal</Button>
-            <Button onClick={payObligation} disabled={paying || !oblForm.cash_account_id || !oblForm.payment_date}
-              data-testid="obligation-confirm">{paying ? 'Memproses…' : 'Bayar'}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* ── Bayar BPJS per lembaga / PPh21 — 2026-11-02 (K22): rekening + tanggal, bukan dialog bawaan peramban ── */}
+      <FormPopup open={!!oblDialog} onClose={() => setOblDialog(null)} ukuran="pendek" onSimpan={payObligation} menyimpan={paying}
+        bisaSimpan={!!oblForm.cash_account_id && !!oblForm.payment_date} labelSimpan="Bayar" testId="obligation-dialog"
+        judul={`${oblDialog?.type === 'bpjs'
+          ? `Bayar ${BPJS_AGENCIES.find(([k]) => k === oblDialog?.agency)?.[1] || 'BPJS'}`
+          : 'Bayar PPh21 ke DJP'} — ${oblDialog?.run?.run_number || ''}`}>
+        {oblDialog?.type === 'bpjs' && (() => {
+          const b = (oblDialog.run.bpjs_breakdown || {})[oblDialog.agency];
+          return b ? (
+            <dl className="divide-y divide-[var(--glass-border)]">
+              <BarisDetail label="Potongan karyawan"><span className="tabular-nums">{fmtIDR(b.employee)}</span></BarisDetail>
+              <BarisDetail label="Iuran perusahaan"><span className="tabular-nums">{fmtIDR(b.employer)}</span> <span className="text-muted-foreground">(sudah dijurnal)</span></BarisDetail>
+              <BarisDetail label="Total dibayar"><span className="font-semibold tabular-nums">{fmtIDR(Number(b.employee || 0) + Number(b.employer || 0))}</span> <span className="text-muted-foreground">· akun hutang {b.payable_code}</span></BarisDetail>
+            </dl>
+          ) : <p className="text-sm text-muted-foreground">Run lama: nilai = potongan karyawan lembaga ini (akun hutang BPJS lama).</p>;
+        })()}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Tanggal pembayaran" wajib>
+            <DatePicker value={oblForm.payment_date} onChange={v => setOblForm(f => ({ ...f, payment_date: v }))}
+              bolehKosong={false} testId="obligation-date" />
+          </Isian>
+          <Isian label="Rekening / kas" wajib>
+            <CashAccountSelect accounts={cashAccounts} loaded={cashLoaded} value={oblForm.cash_account_id}
+              onChange={v => setOblForm(f => ({ ...f, cash_account_id: v }))} testId="obligation-account" />
+          </Isian>
+        </div>
+      </FormPopup>
 
       {/* ── Batalkan run final — 2026-11-02 (K34) ── */}
-      <Dialog open={!!cancelDialog} onOpenChange={o => !o && setCancelDialog(null)}>
-        <DialogContent className="max-w-md" data-testid="cancel-run-dialog">
-          <DialogHeader>
-            <DialogTitle>Batalkan Run {cancelDialog?.run_number}</DialogTitle>
-            <p className="text-xs text-muted-foreground mt-1">
-              Semua jurnal run ini (gaji + potongan kasbon) dibalik dengan jurnal pembalik, potongan kasbon dikembalikan,
-              dan status menjadi DIBATALKAN sehingga periode bisa dibuat ulang. Gaji/BPJS/PPh21 yang sudah dibayar harus
-              di-void dulu. Alur: HR mengajukan → Keuangan (orang lain) menyetujui; owner bisa satu langkah.
-            </p>
-          </DialogHeader>
-          {cancelDialog?.cancel_request?.status === 'pending' && (
-            <div className="rounded-lg border border-amber-400 bg-amber-50 dark:bg-amber-500/10 px-3 py-2 text-xs">
-              Diajukan oleh <strong>{cancelDialog.cancel_request.requested_by_name}</strong>: {cancelDialog.cancel_request.reason}
-            </div>
-          )}
-          <div>
-            <Label className="text-xs">Alasan</Label>
-            <textarea value={cancelReason} onChange={e => setCancelReason(e.target.value)} rows={3}
-              className="mt-1 w-full rounded border border-border bg-background px-3 py-2 text-sm" data-testid="cancel-run-reason" />
-          </div>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setCancelDialog(null)}>Tutup</Button>
-            {cancelDialog?.cancel_request?.status === 'pending' ? (
-              <>
-                <Button variant="outline" onClick={() => submitCancel('reject')} disabled={paying} data-testid="cancel-run-reject">Tolak Pengajuan</Button>
-                <Button className="bg-red-600 hover:bg-red-700" onClick={() => submitCancel('approve')} disabled={paying} data-testid="cancel-run-approve">
-                  Setujui & Batalkan Run
-                </Button>
-              </>
+      {(() => {
+        const pending = cancelDialog?.cancel_request?.status === 'pending';
+        return (
+          <FormPopup open={!!cancelDialog} onClose={() => setCancelDialog(null)} ukuran="pendek" menyimpan={paying}
+            testId="cancel-run-dialog" judul={`Batalkan run ${cancelDialog?.run_number || ''}`}
+            keterangan="Semua jurnal run ini (gaji + potongan kasbon) dibalik, potongan kasbon dikembalikan, dan status menjadi Dibatalkan sehingga periode bisa dibuat ulang. Gaji, BPJS, dan PPh21 yang sudah dibayar harus dibatalkan dulu pembayarannya. Alur: HR mengajukan, Keuangan (orang lain) menyetujui; owner bisa satu langkah."
+            onSimpan={() => submitCancel(pending ? 'approve' : 'request')}
+            labelSimpan={pending ? 'Setujui & batalkan run' : 'Ajukan pembatalan (HR)'}
+            bisaSimpan={pending || !!cancelReason.trim()}
+            aksiKiri={pending ? (
+              <Button type="button" variant="outline" onClick={() => submitCancel('reject')} disabled={paying} data-testid="cancel-run-reject">
+                Tolak pengajuan
+              </Button>
             ) : (
-              <>
-                <Button variant="outline" onClick={() => submitCancel('request')} disabled={paying || !cancelReason.trim()} data-testid="cancel-run-request">
-                  Ajukan (HR)
-                </Button>
-                <Button className="bg-red-600 hover:bg-red-700" onClick={() => submitCancel('approve')} disabled={paying || !cancelReason.trim()}
-                  title="Hanya owner/superadmin (satu langkah)" data-testid="cancel-run-owner">Batalkan Sekarang (owner)</Button>
-              </>
+              <Button type="button" variant="destructive" onClick={() => submitCancel('approve')} disabled={paying || !cancelReason.trim()}
+                title="Hanya owner/superadmin (satu langkah)" data-testid="cancel-run-owner">Batalkan sekarang (owner)</Button>
+            )}>
+            {pending && (
+              <Notice tone="warning" title={`Diajukan oleh ${cancelDialog.cancel_request.requested_by_name || '—'}`}>
+                {cancelDialog.cancel_request.reason}
+              </Notice>
             )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            <Isian label="Alasan" wajib={!pending}>
+              <Textarea value={cancelReason} onChange={e => setCancelReason(e.target.value)} rows={3} data-testid="cancel-run-reason" />
+            </Isian>
+          </FormPopup>
+        );
+      })()}
 
       {/* ── Finalisasi — 2026-11-06 (Tahap 2): dialog aplikasi + alasan pengecualian pemisahan tugas ── */}
-      <Dialog open={!!finalizeDialog} onOpenChange={o => !o && !paying && setFinalizeDialog(null)}>
-        <DialogContent className="max-w-md" data-testid="finalize-dialog">
-          <DialogHeader>
-            <DialogTitle>Finalisasi {finalizeDialog?.run_number || 'run gaji'}</DialogTitle>
-            <p className="text-xs text-muted-foreground mt-1">
-              Jurnal gaji dibuat dan absensi periode ini dikunci. Sesudahnya slip tidak bisa diubah; koreksi absen masuk
-              run berikutnya. Finalisasi harus oleh pengguna lain dari pembuat run.
-            </p>
-          </DialogHeader>
-          <div>
-            <Label className="text-xs">Alasan pengecualian (hanya admin/owner yang membuat run ini sendiri)</Label>
-            <GlassInput className="mt-1 h-9 text-sm" value={overrideReason} onChange={e => setOverrideReason(e.target.value)}
-              placeholder="Kosongkan bila Anda bukan pembuat run" data-testid="finalize-override-reason" />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setFinalizeDialog(null)} disabled={paying}>Batal</Button>
-            <Button onClick={submitFinalize} disabled={paying} data-testid="finalize-confirm">{paying ? 'Memproses…' : 'Finalisasi'}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+      <FormPopup open={!!finalizeDialog} onClose={() => setFinalizeDialog(null)} ukuran="pendek" onSimpan={submitFinalize}
+        menyimpan={paying} labelSimpan="Finalisasi" testId="finalize-dialog"
+        judul={`Finalisasi ${finalizeDialog?.run_number || 'run gaji'}`}
+        keterangan="Jurnal gaji dibuat dan absensi periode ini dikunci. Sesudahnya slip tidak bisa diubah; koreksi absen masuk run berikutnya. Finalisasi harus oleh pengguna lain dari pembuat run.">
+        <Isian label="Alasan pengecualian" petunjuk="Hanya admin/owner yang membuat run ini sendiri.">
+          <Input value={overrideReason} onChange={e => setOverrideReason(e.target.value)}
+            placeholder="Kosongkan bila Anda bukan pembuat run" data-testid="finalize-override-reason" />
+        </Isian>
+      </FormPopup>
+    </PageLayout>
   );
 }
 
-function CreateRunModal({ onClose, onCreate, token, initial }) {
+function CreateRunModal({ onClose, onCreate, token, initial, galat }) {
   const today = todayWIB(); // 2026-11-02: tanggal WIB (No.54(a)), bukan UTC
   const defaultFrom = initial?.from || (today.slice(0, 7) + '-01');
   const defaultTo = initial?.to || today;
@@ -739,6 +679,7 @@ function CreateRunModal({ onClose, onCreate, token, initial }) {
   const [validating, setValidating] = useState(false);
   const [validation, setValidation] = useState(null);
   const [showValidation, setShowValidation] = useState(false);
+  const [menyimpan, setMenyimpan] = useState(false);
 
   const headers = { Authorization: `Bearer ${token}` };
 
@@ -752,90 +693,73 @@ function CreateRunModal({ onClose, onCreate, token, initial }) {
       if (r.ok) { setValidation(await r.json()); setShowValidation(true); }
     } finally { setValidating(false); }
   };
-
-  const sevColor = (sev) => sev === 'high'
-    ? 'text-red-600 dark:text-red-300 border-red-300 dark:border-red-300/20 bg-red-400/8'
-    : 'text-amber-600 dark:text-amber-300 border-amber-300 dark:border-amber-300/20 bg-amber-400/8';
+  const gantiPeriode = (setter) => (v) => { setter(v); setValidation(null); setShowValidation(false); };
+  const simpan = async () => {
+    setMenyimpan(true);
+    try { await onCreate({ period_from: from, period_to: to, notes }); } finally { setMenyimpan(false); }
+  };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-foreground/50 backdrop-blur-sm" onClick={onClose}>
-      <GlassCard className="p-6 max-w-xl w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-bold text-foreground">Buat Proses Penggajian Baru</h2>
-          {initial && (
-            <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">Periode bulan lalu</span>
+    <FormPopup open onClose={onClose} ukuran="pendek" onSimpan={simpan} menyimpan={menyimpan} labelSimpan="Buat run"
+      bisaSimpan={!!from && !!to} galat={galat} testId="pr-create-form"
+      judul="Buat proses gaji baru"
+      keterangan={initial ? 'Periode bulan lalu sudah terisi. Run menghitung slip untuk semua karyawan dengan profil gaji aktif.'
+        : 'Run menghitung slip untuk semua karyawan dengan profil gaji aktif.'}>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Periode dari" wajib>
+          <DatePicker value={from} onChange={gantiPeriode(setFrom)} max={to || undefined} bolehKosong={false} testId="pr-create-from" />
+        </Isian>
+        <Isian label="Periode sampai" wajib>
+          <DatePicker value={to} onChange={gantiPeriode(setTo)} min={from || undefined} bolehKosong={false} testId="pr-create-to" />
+        </Isian>
+      </div>
+      <Isian label="Catatan">
+        <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Opsional" />
+      </Isian>
+
+      {/* Attendance Validation */}
+      <Isian label="Periksa absensi (opsional)" petunjuk={!showValidation ? 'Lihat karyawan yang absensinya belum lengkap sebelum run dibuat.' : undefined}>
+        <div className="space-y-2">
+          <Button type="button" variant="outline" size="sm" onClick={validateAttendance} disabled={validating} data-testid="pr-validate-att">
+            <ShieldAlert />{validating ? 'Memeriksa…' : 'Periksa sekarang'}
+          </Button>
+          {showValidation && validation && (
+            <div className="space-y-2" data-testid="pr-validation-result">
+              {validation.summary.total_warnings === 0 ? (
+                <Notice tone="success" icon={CheckCircle}
+                  title={`Absensi lengkap untuk semua ${validation.summary.total_employees} karyawan. Siap diproses.`} />
+              ) : (
+                <>
+                  <Notice tone="warning" icon={AlertTriangle}
+                    title={`${validation.summary.total_warnings} karyawan punya absensi tidak lengkap.`}>
+                    Proses gaji tetap bisa dijalankan.
+                  </Notice>
+                  <ul className="max-h-40 divide-y divide-[var(--glass-border)] overflow-y-auto rounded-[var(--radius-md)] border border-[var(--glass-border)]">
+                    {validation.warnings.slice(0, 10).map(w => (
+                      <li key={w.employee_id} className="px-3 py-2 text-sm">
+                        <span className={w.severity === 'high' ? 'font-medium text-[hsl(var(--danger-text))]' : 'font-medium text-[hsl(var(--warning-text))]'}>{w.employee_name}</span>
+                        <span className="ml-2 text-foreground/80">{w.warning_message}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  {validation.warnings.length > 10 && (
+                    <p className="text-xs text-muted-foreground">Menampilkan 10 dari {validation.warnings.length} karyawan.</p>
+                  )}
+                </>
+              )}
+            </div>
           )}
         </div>
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-muted-foreground uppercase block mb-1">Periode Dari</label>
-              <GlassInput type="date" value={from} onChange={e => { setFrom(e.target.value); setValidation(null); setShowValidation(false); }} data-testid="pr-create-from" />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground uppercase block mb-1">Periode Sampai</label>
-              <GlassInput type="date" value={to} onChange={e => { setTo(e.target.value); setValidation(null); setShowValidation(false); }} data-testid="pr-create-to" />
-            </div>
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground uppercase block mb-1">Catatan</label>
-            <GlassInput value={notes} onChange={e => setNotes(e.target.value)} placeholder="Opsional" />
-          </div>
-
-          {/* Attendance Validation */}
-          <div className="border border-[var(--glass-border)] rounded-lg p-3">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-foreground/70 uppercase flex items-center gap-1.5">
-                <ShieldAlert className="w-3.5 h-3.5" /> Validasi Attendance (Opsional)
-              </span>
-              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs border border-[var(--glass-border)]"
-                onClick={validateAttendance} disabled={validating} data-testid="pr-validate-att">
-                {validating ? 'Memeriksa...' : 'Periksa Sekarang'}
-              </Button>
-            </div>
-            {!showValidation && (
-              <p className="text-xs text-muted-foreground">Klik &quot;Periksa Sekarang&quot; untuk melihat potensi masalah attendance sebelum run payroll.</p>
-            )}
-            {showValidation && validation && (
-              <div className="space-y-2" data-testid="pr-validation-result">
-                {validation.summary.total_warnings === 0 ? (
-                  <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-300 bg-emerald-400/8 border border-emerald-300 dark:border-emerald-300/20 rounded-lg p-2.5">
-                    <CheckCircle className="w-4 h-4 shrink-0" />
-                    <span>Attendance lengkap untuk semua {validation.summary.total_employees} karyawan. Siap run payroll.</span>
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-300 bg-amber-400/8 border border-amber-300 dark:border-amber-300/20 rounded-lg p-2.5">
-                      <AlertTriangle className="w-4 h-4 shrink-0" />
-                      <span><strong>{validation.summary.total_warnings}</strong> karyawan punya attendance tidak lengkap. Payroll tetap bisa dijalankan.</span>
-                    </div>
-                    <div className="max-h-40 overflow-y-auto space-y-1">
-                      {validation.warnings.slice(0, 10).map(w => (
-                        <div key={w.employee_id} className={`text-[11px] rounded p-2 border ${sevColor(w.severity)}`}>
-                          <span className="font-semibold">{w.employee_name}</span>
-                          <span className="ml-2 font-normal">{w.warning_message}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="bg-primary/10 border border-primary/20 rounded-lg p-3 text-xs text-foreground/80">
-            <Calendar className="w-3.5 h-3.5 inline-block mr-1" />
-            Run akan otomatis hitung slip untuk semua karyawan dengan profile payroll aktif.
-          </div>
-        </div>
-        <div className="flex gap-2 mt-6 justify-end">
-          <Button variant="ghost" onClick={onClose} className="border border-[var(--glass-border)]">Batal</Button>
-          <Button onClick={() => onCreate({ period_from: from, period_to: to, notes })} data-testid="pr-create-submit">Buat Run</Button>
-        </div>
-      </GlassCard>
-    </div>
+      </Isian>
+    </FormPopup>
   );
 }
+
+const slipUpah = (s) => s.earnings_total ?? s.base_salary;
+const slipTunjangan = (s) => s.allowance_total ?? s.meal_allowance;
+const slipLembur = (s) => s.overtime_amount ?? s.overtime_pay;
+const slipPotongan = (s) => s.deductions_total ?? s.total_deductions;
+const slipBersih = (s) => s.net_pay ?? s.net_salary;
 
 function RunDetailModal({ data, token, onClose, onRefresh, onDownloadExcel, onVoidObligation, onRecalc }) {
   const run = data.run;
@@ -899,163 +823,121 @@ function RunDetailModal({ data, token, onClose, onRefresh, onDownloadExcel, onVo
     } finally { setDlAllLoading(false); }
   };
 
+  /* Payslips table
+     FASE 20 — kolom di sini DULU membaca skema payslip LAMA (`base_salary`, `transport_allowance`, …,
+     `net_salary`). TIDAK SATU PUN field itu dihasilkan `_compute_payslip_for_employee()`, yang menulis
+     `earnings_total`, `allowance_total`, `overtime_amount`, `gross_pay`, `deductions_total`, `net_pay`.
+     Fallback ke nama lama dipertahankan (backend sendiri melakukannya) supaya payslip lama tetap tampil. */
+  const kolomSlip = [
+    { kunci: 'karyawan', label: 'Karyawan', hp: 'judul', isi: (s) => (
+      <div className="min-w-0"><p className="font-medium">{s.employee_name}</p><p className="text-xs text-muted-foreground">{s.employee_code}</p></div>) },
+    { kunci: 'upah', label: 'Upah', rata: 'kanan', isi: (s) => <span className="tabular-nums">{fmtIDR(slipUpah(s))}</span> },
+    { kunci: 'tunjangan', label: 'Tunjangan', rata: 'kanan', isi: (s) => <span className="tabular-nums">{fmtIDR(slipTunjangan(s))}</span> },
+    { kunci: 'lembur', label: 'Lembur', rata: 'kanan', isi: (s) => <span className="tabular-nums">{fmtIDR(slipLembur(s))}</span> },
+    { kunci: 'bruto', label: 'Bruto', rata: 'kanan', isi: (s) => <span className="tabular-nums">{fmtIDR(s.gross_pay)}</span> },
+    { kunci: 'potongan', label: 'Potongan', rata: 'kanan', isi: (s) => <span className="tabular-nums">{fmtIDR(slipPotongan(s))}</span> },
+    { kunci: 'bersih', label: 'Bersih', rata: 'kanan', isi: (s) => <span className="font-semibold tabular-nums">{fmtIDR(slipBersih(s))}</span> },
+    { kunci: 'slip', label: 'Slip', rata: 'tengah', hp: 'aksi', isi: (s) => (
+      <Button variant="outline" size="icon-sm" onClick={() => downloadSlipPdf(s)} disabled={dlSlipId === s.id}
+        data-testid={`pr-pdf-slip-${s.employee_code}`} title={`Unduh slip PDF ${s.employee_name}`} aria-label={`Unduh slip PDF ${s.employee_name}`}>
+        {dlSlipId === s.id ? <RefreshCw className="animate-spin" /> : <FileText />}
+      </Button>) },
+    ...(!locked ? [{ kunci: 'adj', label: 'Penyesuaian', hp: 'aksi', isi: (s) => <AdjustCell slip={s} onSave={saveAdjustment} /> }] : []),
+  ];
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-foreground/50 backdrop-blur-sm" onClick={onClose}>
-      <GlassCard className="p-6 max-w-5xl w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className="flex items-start justify-between gap-4 mb-4">
-          <div>
-            <h2 className="text-xl font-bold text-foreground">{run.run_number}</h2>
-            <p className="text-xs text-muted-foreground">{run.period_from} → {run.period_to} · Status: <span className={run.status === 'finalized' ? 'text-emerald-600 dark:text-emerald-300' : 'text-amber-600 dark:text-amber-300'}>{run.status}</span></p>
-          </div>
-          {/* PDF & Excel download actions */}
-          <div className="flex items-center gap-2 shrink-0">
-            {run.status === 'draft' && onRecalc && (
-              <Button variant="outline" size="sm" onClick={() => onRecalc(run.id)} data-testid="pr-detail-recalc"
-                title="Hitung ulang dari absensi, profil gaji, dan pengaturan terkini; penyesuaian manual tetap">
-                <RotateCcw className="w-3.5 h-3.5 mr-1" /> Hitung ulang
-              </Button>
-            )}
-            <button
-              onClick={() => onDownloadExcel(run.id, run.run_number)}
-              className="h-8 px-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-colors flex items-center gap-1.5 text-xs font-semibold"
-              data-testid="pr-download-excel"
-              title="Download Excel: Rekapitulasi + Slip Individual + Data Transfer Bank"
-            >
-              <FileText className="w-3.5 h-3.5" />
-              Export Excel
-            </button>
-            <button
-              onClick={downloadAllPdf}
-              disabled={dlAllLoading}
-              className="h-8 px-3 rounded-lg border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 transition-colors flex items-center gap-1.5 text-xs font-semibold disabled:opacity-50"
-              data-testid="pr-download-all-pdf"
-              title="Download PDF semua slip gaji dalam satu file"
-            >
-              {dlAllLoading
-                ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                : <FilesIcon className="w-3.5 h-3.5" />}
-              {dlAllLoading ? 'Menyiapkan...' : 'Download Semua Slip PDF'}
-            </button>
-            <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-2xl leading-none">×</button>
-          </div>
-        </div>
-
-        {/* Summary tiles */}
-        <div className="grid grid-cols-3 gap-2 mb-4">
-          <GlassPanel className="px-3 py-2"><div className="text-[10px] uppercase text-muted-foreground">Total Kotor</div><div className="text-lg font-bold text-foreground">{fmtIDR(run.total_gross)}</div></GlassPanel>
-          <GlassPanel className="px-3 py-2"><div className="text-[10px] uppercase text-muted-foreground">Potongan</div><div className="text-lg font-bold text-red-600 dark:text-red-300">{fmtIDR(run.total_deductions)}</div></GlassPanel>
-          <GlassPanel className="px-3 py-2"><div className="text-[10px] uppercase text-muted-foreground">Net</div><div className="text-lg font-bold text-emerald-600 dark:text-emerald-300">{fmtIDR(run.total_net)}</div></GlassPanel>
-        </div>
-
-        {/* 2026-11-02 (K24): peringatan lembur bertarif 0 */}
-        {(run.warnings || []).length > 0 && (
-          <div className="mb-4 rounded-lg border border-amber-400 bg-amber-50 dark:bg-amber-500/10 p-3 text-xs space-y-1" data-testid="run-warnings">
-            <div className="font-semibold flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> {run.warnings.length} peringatan — periksa sebelum finalisasi</div>
-            {run.warnings.map((w, i) => <div key={`${w.employee_id}-${w.type}-${i}`}><strong>{w.employee_name}</strong> — {w.message}</div>)}
-          </div>
+    <DetailPopup open onClose={onClose} judul={run.run_number} testId="pr-detail"
+      status={<StatusBadge status={run.status} label={runStatusLabel(run.status)} />}
+      keterangan={`${periodeLabel(run)} · ${payslips.length} slip gaji`}
+      aksi={<>
+        {run.status === 'draft' && onRecalc && (
+          <Button variant="outline" size="sm" onClick={() => onRecalc(run.id)} data-testid="pr-detail-recalc"
+            title="Hitung ulang dari absensi, profil gaji, dan pengaturan terkini; penyesuaian manual tetap">
+            <RotateCcw />Hitung ulang
+          </Button>
         )}
+        <Button variant="outline" size="sm" onClick={() => onDownloadExcel(run.id, run.run_number)} data-testid="pr-download-excel"
+          title="Unduh Excel: rekap, slip per karyawan, dan data transfer bank">
+          <FileText />Excel rekap &amp; bank
+        </Button>
+        <Button variant="outline" size="sm" onClick={downloadAllPdf} disabled={dlAllLoading} data-testid="pr-download-all-pdf"
+          title="Unduh PDF semua slip gaji dalam satu berkas">
+          {dlAllLoading ? <RefreshCw className="animate-spin" /> : <FilesIcon />}
+          {dlAllLoading ? 'Menyiapkan…' : 'PDF semua slip'}
+        </Button>
+      </>}>
+      {/* Ringkasan = total yang tersimpan di run (sama dengan baris di daftar Proses gaji) */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <StatTile label="Total bruto" value={fmtIDR(run.total_gross)} sub={`Jumlah bruto ${payslips.length} slip`} />
+        <StatTile label="Potongan" value={fmtIDR(run.total_deductions)} sub="BPJS, PPh21, kasbon, keterlambatan, dan potongan manual" />
+        <StatTile label="Gaji bersih" value={fmtIDR(run.total_net)} accent="success" sub="Yang dibayarkan ke karyawan" />
+      </div>
 
-        {/* 2026-11-02 (K22/K34): status pembayaran BPJS per lembaga & PPh21 (void diperlukan sebelum batal run) */}
-        {run.status !== 'draft' && (
-          <div className="mb-4 flex flex-wrap gap-2 text-xs" data-testid="run-obligations">
-            {run.bpjs_employer_totals && (
-              <span className="px-2 py-1 rounded border border-[var(--glass-border)]">
-                Iuran BPJS perusahaan: {fmtIDR(run.bpjs_employer_totals.total)} {run.bpjs_employer_journal ? '(dijurnal)' : '(tidak dijurnal — saklar mati)'}
-              </span>
-            )}
-            {BPJS_AGENCIES.map(([ag, lbl]) => bpjsPaid(run, ag) && (
-              <span key={ag} className="px-2 py-1 rounded border border-teal-400 text-teal-700 dark:text-teal-300">
-                {lbl} dibayar {run.bpjs_payments[ag].je_number}
-                {run.status === 'finalized' && <button className="ml-1 underline" onClick={() => onVoidObligation(run, 'bpjs', ag)}>void</button>}
-              </span>
-            ))}
-            {run.pph21_payment_status === 'paid' && (
-              <span className="px-2 py-1 rounded border border-purple-400 text-purple-700 dark:text-purple-300">
-                PPh21 dibayar {run.pph21_payment_je}
-                {run.status === 'finalized' && <button className="ml-1 underline" onClick={() => onVoidObligation(run, 'pph21')}>void</button>}
-              </span>
-            )}
-            {run.status === 'cancelled' && (
-              <span className="px-2 py-1 rounded border border-red-400 text-red-700 dark:text-red-300">
-                Dibatalkan {run.cancelled_by_name}: {run.cancel_reason} · pembalik {(run.cancel_reversal_jes || []).map(j => j.reversal).join(', ')}
-              </span>
-            )}
-          </div>
-        )}
+      {/* 2026-11-02 (K24): peringatan lembur bertarif 0 */}
+      {(run.warnings || []).length > 0 && (
+        <Notice tone="warning" icon={AlertTriangle} title={`${run.warnings.length} peringatan — periksa sebelum finalisasi`} testId="run-warnings">
+          <ul className="space-y-0.5">
+            {run.warnings.map((w, i) => <li key={`${w.employee_id}-${w.type}-${i}`}><strong>{w.employee_name}</strong> — {w.message}</li>)}
+          </ul>
+        </Notice>
+      )}
 
-        {/* Payslips table
-            FASE 20 — kolom di sini DULU membaca skema payslip LAMA
-            (`base_salary`, `transport_allowance`, `meal_allowance`,
-            `production_bonus`, `overtime_pay`, `total_deductions`, `net_salary`).
-            TIDAK SATU PUN field itu dihasilkan `_compute_payslip_for_employee()`,
-            yang menulis `earnings_total`, `allowance_total`, `overtime_amount`,
-            `gross_pay`, `deductions_total`, `net_pay`. Akibatnya SELURUH kolom
-            uang menampilkan "Rp 0" padahal total run benar (kelas bug yang sama
-            dengan 404 senyap: HTTP 200, tapi layar bohong).
-            `Transport`/`Bonus Prod.` dihapus karena backend tidak memisahkannya —
-            semuanya masuk `allowances[]`; menampilkan kolom yang mustahil terisi
-            hanya membuat pengguna menduga datanya hilang.
-            Fallback ke nama lama dipertahankan (backend sendiri melakukannya,
-            mis. `slip.get("net_pay", slip.get("net_salary", 0))`) supaya payslip
-            lama di DB produksi tetap tampil. */}
-        <table className="w-full text-sm">
-          <thead className="bg-[var(--glass-bg)]">
-            <tr className="text-left text-xs text-muted-foreground">
-              <th className="px-3 py-2">Karyawan</th>
-              <th className="px-3 py-2 text-right">Upah</th>
-              <th className="px-3 py-2 text-right">Tunjangan</th>
-              <th className="px-3 py-2 text-right">Lembur</th>
-              <th className="px-3 py-2 text-right">Bruto</th>
-              <th className="px-3 py-2 text-right">Potongan</th>
-              <th className="px-3 py-2 text-right font-semibold text-foreground">Net</th>
-              <th className="px-3 py-2 text-center">Slip</th>
-              {!locked && <th className="px-3 py-2">Adj.</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {payslips.map(s => (
-              <tr key={s.id} className="border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] transition-colors" data-testid={`slip-${s.employee_code}`}>
-                <td className="px-3 py-2">
-                  <div className="font-semibold text-xs">{s.employee_name}</div>
-                  <div className="text-[10px] text-muted-foreground font-mono">{s.employee_code}</div>
-                </td>
-                <td className="px-3 py-2 text-right font-mono text-xs">{fmtIDR(s.earnings_total ?? s.base_salary)}</td>
-                <td className="px-3 py-2 text-right font-mono text-xs">{fmtIDR(s.allowance_total ?? s.meal_allowance)}</td>
-                <td className="px-3 py-2 text-right font-mono text-xs">{fmtIDR(s.overtime_amount ?? s.overtime_pay)}</td>
-                <td className="px-3 py-2 text-right font-mono text-xs">{fmtIDR(s.gross_pay)}</td>
-                <td className="px-3 py-2 text-right font-mono text-xs text-red-600 dark:text-red-300">{fmtIDR(s.deductions_total ?? s.total_deductions)}</td>
-                <td className="px-3 py-2 text-right font-mono text-xs font-bold text-emerald-600 dark:text-emerald-300">{fmtIDR(s.net_pay ?? s.net_salary)}</td>
-                {/* Per-slip PDF download */}
-                <td className="px-3 py-2 text-center">
-                  <button
-                    onClick={() => downloadSlipPdf(s)}
-                    disabled={dlSlipId === s.id}
-                    className="h-7 w-7 rounded border border-primary/20 bg-primary/8 text-primary hover:bg-primary/20 transition-colors grid place-items-center disabled:opacity-50"
-                    data-testid={`pr-pdf-slip-${s.employee_code}`}
-                    title={`Download slip PDF ${s.employee_name}`}
-                  >
-                    {dlSlipId === s.id
-                      ? <RefreshCw className="w-3 h-3 animate-spin" />
-                      : <FileText className="w-3 h-3" />}
-                  </button>
-                </td>
-                {!locked && (
-                  <td className="px-3 py-2">
-                    <AdjustCell slip={s} onSave={saveAdjustment} />
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {/* 2026-11-02 (K22/K34): status pembayaran BPJS per lembaga & PPh21 (void diperlukan sebelum batal run) */}
+      {run.status !== 'draft' && (
+        <dl className="divide-y divide-[var(--glass-border)]" data-testid="run-obligations">
+          {run.bpjs_employer_totals && (
+            <BarisDetail label="Iuran BPJS perusahaan">
+              <span className="tabular-nums">{fmtIDR(run.bpjs_employer_totals.total)}</span>{' '}
+              <span className="text-muted-foreground">{run.bpjs_employer_journal ? '(dijurnal)' : '(tidak dijurnal — saklar mati)'}</span>
+            </BarisDetail>
+          )}
+          {BPJS_AGENCIES.map(([ag, lbl]) => bpjsPaid(run, ag) && (
+            <BarisDetail key={ag} label={lbl}>
+              <span className="text-[hsl(var(--success-text))]">Dibayar · {run.bpjs_payments[ag].je_number}</span>
+              {run.status === 'finalized' && (
+                <Button variant="link" size="sm" className="ml-2 h-auto p-0" onClick={() => onVoidObligation(run, 'bpjs', ag)}>Batalkan pembayaran</Button>
+              )}
+            </BarisDetail>
+          ))}
+          {run.pph21_payment_status === 'paid' && (
+            <BarisDetail label="PPh21">
+              <span className="text-[hsl(var(--success-text))]">Dibayar · {run.pph21_payment_je}</span>
+              {run.status === 'finalized' && (
+                <Button variant="link" size="sm" className="ml-2 h-auto p-0" onClick={() => onVoidObligation(run, 'pph21')}>Batalkan pembayaran</Button>
+              )}
+            </BarisDetail>
+          )}
+          {run.status === 'cancelled' && (
+            <BarisDetail label="Dibatalkan">
+              <span className="text-[hsl(var(--danger-text))]">{run.cancelled_by_name}: {run.cancel_reason}</span>
+              {(run.cancel_reversal_jes || []).length > 0 && (
+                <span className="block text-muted-foreground">Jurnal pembalik: {(run.cancel_reversal_jes || []).map(j => j.reversal).join(', ')}</span>
+              )}
+            </BarisDetail>
+          )}
+        </dl>
+      )}
 
-        <div className="flex justify-between items-center gap-2 mt-4">
-          <p className="text-xs text-muted-foreground">{payslips.length} slip gaji · Klik <FileText className="w-3 h-3 inline" /> untuk unduh per karyawan, atau <FilesIcon className="w-3 h-3 inline" /> untuk semua.</p>
-          <Button variant="ghost" onClick={onClose} className="border border-[var(--glass-border)]">Tutup</Button>
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-medium text-foreground">Slip gaji ({payslips.length})</p>
+          <TombolUnduh namaBerkas={`slip-gaji-${run.run_number}`} namaLembar="Slip gaji" baris={payslips} testId="pr-slip-unduh"
+            kolom={[
+              { label: 'Kode karyawan', nilai: (s) => s.employee_code || '' },
+              { label: 'Nama', nilai: (s) => s.employee_name || '' },
+              { label: 'Upah (Rp)', nilai: (s) => Number(slipUpah(s) || 0) },
+              { label: 'Tunjangan (Rp)', nilai: (s) => Number(slipTunjangan(s) || 0) },
+              { label: 'Lembur (Rp)', nilai: (s) => Number(slipLembur(s) || 0) },
+              { label: 'Bruto (Rp)', nilai: (s) => Number(s.gross_pay || 0) },
+              { label: 'Potongan (Rp)', nilai: (s) => Number(slipPotongan(s) || 0) },
+              { label: 'Bersih (Rp)', nilai: (s) => Number(slipBersih(s) || 0) },
+              { label: 'Alasan penyesuaian', nilai: (s) => s.adjustment_notes || '' },
+            ]} />
         </div>
-      </GlassCard>
-    </div>
+        <TabelData kolom={kolomSlip} baris={payslips} testId="pr-slips"
+          kosong={<EmptyState title="Belum ada slip gaji" description="Run ini tidak berisi slip. Periksa profil gaji karyawan lalu hitung ulang." />} />
+      </div>
+    </DetailPopup>
   );
 }
 
@@ -1095,62 +977,48 @@ function AdjustCell({ slip, onSave }) {
     .filter(Boolean).join(' / ');
   return (
     <>
-      <button onClick={start} className="text-xs text-primary hover:underline"
+      <Button variant="link" size="sm" className="h-auto p-0" onClick={start}
         title={slip.adjustment_notes ? `Alasan: ${slip.adjustment_notes}` : 'Penyesuaian pendapatan/potongan'}
         data-testid={`payslip-adjust-open-${slipId}`}>
-        {summary ? `Adj: ${summary}` : 'Adj'}
-      </button>
-      <Dialog open={open} onOpenChange={o => !o && !busy && setOpen(false)}>
-        <DialogContent className="max-w-md" data-testid={`payslip-adjust-dialog-${slipId}`}>
-          <DialogHeader>
-            <DialogTitle>Penyesuaian slip — {slip.employee_name}</DialogTitle>
-            <p className="text-xs text-muted-foreground mt-1">
-              Bruto sistem {fmtIDR(slip.gross_before_adjustment ?? (Number(slip.gross_pay || 0) - curAdd))}.
-              BPJS &amp; PPh21 tidak dihitung ulang.
-            </p>
-          </DialogHeader>
-          <div className="space-y-3 text-sm">
-            <div>
-              <Label className="text-xs">Penyesuaian pendapatan (Rp, minus = mengurangi)</Label>
-              <MoneyInput unstyled allowNegative value={earning} onChange={e => setEarning(Number(e.target.value))}
-                className="mt-1 w-full h-9 px-2 rounded border border-[var(--glass-border)] bg-[var(--input-surface)] font-mono"
-                data-testid={`payslip-adjust-earning-${slipId}`} />
+        {summary || 'Sesuaikan'}
+      </Button>
+      <FormPopup open={open} onClose={() => setOpen(false)} ukuran="pendek" onSimpan={submit} menyimpan={busy}
+        testId={`payslip-adjust-dialog-${slipId}`} judul={`Penyesuaian slip — ${slip.employee_name}`}
+        keterangan={`Bruto sistem ${fmtIDR(slip.gross_before_adjustment ?? (Number(slip.gross_pay || 0) - curAdd))}. BPJS dan PPh21 tidak dihitung ulang.`}>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Penyesuaian pendapatan (Rp)" petunjuk="Minus = mengurangi pendapatan.">
+            <MoneyInput unstyled allowNegative value={earning} onChange={e => setEarning(Number(e.target.value))}
+              className="h-9 w-full rounded-md border border-[var(--glass-border)] bg-[var(--input-surface)] px-3 text-sm tabular-nums"
+              data-testid={`payslip-adjust-earning-${slipId}`} />
+          </Isian>
+          <Isian label="Potongan tambahan (Rp)" petunjuk="Nol atau lebih.">
+            <MoneyInput unstyled value={ded} onChange={e => setDed(Number(e.target.value))}
+              className="h-9 w-full rounded-md border border-[var(--glass-border)] bg-[var(--input-surface)] px-3 text-sm tabular-nums"
+              data-testid={`payslip-adjust-amount-${slipId}`} />
+          </Isian>
+        </div>
+        {lines.length > 0 && (
+          <Isian label="Kurangi potongan sistem" petunjuk="Paling besar sama dengan nilai aslinya. BPJS dan PPh21 wajib, tidak bisa diubah.">
+            <div className="divide-y divide-[var(--glass-border)] rounded-[var(--radius-md)] border border-[var(--glass-border)]">
+              {lines.map(l => (
+                <div key={l.index} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                  <span className="min-w-0 flex-1 truncate" title={l.label}>{l.label}</span>
+                  {NON_EDITABLE(l.type)
+                    ? <span className="tabular-nums text-muted-foreground">{fmtIDR(l.amount)} (wajib)</span>
+                    : <MoneyInput unstyled value={l.amount}
+                        onChange={e => setLines(ls => ls.map(x => x.index === l.index ? { ...x, amount: Math.min(Number(e.target.value), x.original) } : x))}
+                        className="h-8 w-32 rounded-md border border-[var(--glass-border)] bg-[var(--input-surface)] px-2 text-sm tabular-nums"
+                        data-testid={`payslip-adjust-line-${slipId}-${l.index}`} />}
+                </div>
+              ))}
             </div>
-            <div>
-              <Label className="text-xs">Potongan tambahan (Rp, ≥ 0)</Label>
-              <MoneyInput unstyled value={ded} onChange={e => setDed(Number(e.target.value))}
-                className="mt-1 w-full h-9 px-2 rounded border border-[var(--glass-border)] bg-[var(--input-surface)] font-mono"
-                data-testid={`payslip-adjust-amount-${slipId}`} />
-            </div>
-            {lines.length > 0 && (
-              <div className="space-y-1">
-                <Label className="text-xs">Kurangi potongan sistem (maks nilai asli)</Label>
-                {lines.map(l => (
-                  <div key={l.index} className="flex items-center gap-2 text-xs">
-                    <span className="flex-1 truncate" title={l.label}>{l.label}</span>
-                    {NON_EDITABLE(l.type)
-                      ? <span className="font-mono text-muted-foreground">{fmtIDR(l.amount)} (wajib)</span>
-                      : <MoneyInput unstyled value={l.amount}
-                          onChange={e => setLines(ls => ls.map(x => x.index === l.index ? { ...x, amount: Math.min(Number(e.target.value), x.original) } : x))}
-                          className="w-28 h-7 px-2 rounded border border-[var(--glass-border)] bg-[var(--input-surface)] font-mono"
-                          data-testid={`payslip-adjust-line-${slipId}-${l.index}`} />}
-                  </div>
-                ))}
-              </div>
-            )}
-            <div>
-              <Label className="text-xs">Alasan *</Label>
-              <input type="text" value={n} onChange={e => setN(e.target.value)} placeholder="Wajib bila ada penyesuaian"
-                className="mt-1 w-full h-9 px-2 rounded border border-[var(--glass-border)] bg-[var(--input-surface)]"
-                data-testid={`payslip-adjust-notes-${slipId}`} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)} disabled={busy} data-testid={`payslip-adjust-cancel-${slipId}`}>Batal</Button>
-            <Button onClick={submit} disabled={busy} data-testid={`payslip-adjust-save-${slipId}`}>{busy ? 'Menyimpan…' : 'Simpan'}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </Isian>
+        )}
+        <Isian label="Alasan" wajib petunjuk="Wajib bila ada penyesuaian.">
+          <Input value={n} onChange={e => setN(e.target.value)} placeholder="Tulis alasan penyesuaian"
+            data-testid={`payslip-adjust-notes-${slipId}`} />
+        </Isian>
+      </FormPopup>
     </>
   );
 }
