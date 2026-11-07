@@ -1,7 +1,7 @@
 /**
  * AccessoriesReports — Portal Aksesoris › Laporan.
  *
- * Tab: Stok · Pemakaian · Biaya (gaya tab standar HubTabs; tiap tab di cetakan PageLayout).
+ * Bagian: Stok · Pemakaian · Biaya (PanelTabs standar di baris penyaring; satu cetakan PageLayout).
  * Stok memakai /api/acc/items. Pemakaian & Biaya belum tersedia di server — ditampilkan apa adanya
  * (dulu berjudul "Coming Soon").
  *
@@ -16,7 +16,7 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
-import HubTabs from './hubs/HubTabs';
+import PanelTabs from '@/components/ui/panel-tabs';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 
@@ -35,7 +35,7 @@ const statusItem = (i) => {
 };
 
 // ── Tab Stok (memakai /api/acc/items) ────────────────────────────────────────
-function StockLevelTab({ token }) {
+function StockLevelTab({ token, tabs }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -79,9 +79,10 @@ function StockLevelTab({ token }) {
   ];
 
   return (
-    <PageLayout testId="acc-reports-stock" title="Stok"
-      subtitle="Stok tiap item aksesoris dibanding batas minimumnya."
+    <PageLayout testId="acc-reports-stock" title="Laporan"
+      subtitle="Laporan stok, pemakaian, dan biaya aksesoris."
       filters={<>
+        {tabs}
         <div className="relative w-full sm:w-64">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder="Cari nama atau kode" value={search} onChange={(e) => setSearch(e.target.value)}
@@ -129,18 +130,18 @@ function StockLevelTab({ token }) {
 }
 
 // ── Tab yang belum tersedia ──────────────────────────────────────────────────
-function UsageTab() {
+function UsageTab({ tabs }) {
   return (
-    <PageLayout testId="acc-reports-usage" title="Pemakaian">
+    <PageLayout testId="acc-reports-usage" title="Laporan" subtitle="Laporan stok, pemakaian, dan biaya aksesoris." filters={tabs}>
       <EmptyState icon={BarChart3} title="Laporan pemakaian belum tersedia"
         description="Nantinya berisi rekap pemakaian aksesoris per periode, divisi, dan item." />
     </PageLayout>
   );
 }
 
-function CostTab() {
+function CostTab({ tabs }) {
   return (
-    <PageLayout testId="acc-reports-cost" title="Biaya">
+    <PageLayout testId="acc-reports-cost" title="Laporan" subtitle="Laporan stok, pemakaian, dan biaya aksesoris." filters={tabs}>
       <EmptyState icon={Wallet} title="Analisis biaya belum tersedia"
         description="Nantinya berisi biaya aksesoris, termasuk HPP per unit produksi." />
     </PageLayout>
@@ -153,11 +154,14 @@ const TABS = [
   { key: 'cost', label: 'Biaya', Component: CostTab },
 ];
 
-export default function AccessoriesReports(props) {
+export default function AccessoriesReports({ token }) {
+  const [tab, setTab] = useState('stock');
+  const aktif = TABS.find((t) => t.key === tab) || TABS[0];
+  const Isi = aktif.Component;
+  const tabs = <PanelTabs tabs={TABS} value={tab} onChange={setTab} testId="acc-reports-tab" ariaLabel="Jenis laporan" />;
   return (
     <div data-testid="accessories-reports">
-      <HubTabs hubId="accessories-reports-tabs" title="Laporan" subtitle="Laporan stok, pemakaian, dan biaya aksesoris."
-        tabs={TABS} {...props} />
+      <Isi token={token} tabs={tabs} />
     </div>
   );
 }

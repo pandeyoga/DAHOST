@@ -43,7 +43,7 @@ export default function PDFViewer({ url, title }) {
           >
             <a href={url} download>
               <Download size={14} className="mr-1" />
-              Download
+              Unduh
             </a>
           </Button>
         </div>

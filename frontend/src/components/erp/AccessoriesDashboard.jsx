@@ -181,7 +181,7 @@ export default function AccessoriesDashboard({ token }) {
   ];
 
   return (
-    <PageLayout testId="accessories-dashboard" title="Dashboard"
+    <PageLayout testId="accessories-dashboard" title="Dashboard aksesoris"
       subtitle="Ringkasan stok aksesoris, permintaan yang menunggu, dan barang yang perlu diserahkan."
       filters={<>
         <FilterChips options={opsiSaring} value={saring} onChange={setSaring} hideWhenEmpty={false} testId="acc-stock-filter" />

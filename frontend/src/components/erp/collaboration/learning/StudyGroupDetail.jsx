@@ -4,6 +4,7 @@
  * Shows group info + embedded chat (Communication Hub channel) + shared documents (Workspace folder)
  */
 
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -42,20 +43,20 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
       setGroup(data.study_group);
     } catch (error) {
       console.error('Error fetching group detail:', error);
-      toast.error('Gagal memuat detail study group');
+      toast.error('Gagal memuat rincian kelompok belajar');
     } finally {
       setLoading(false);
     }
   };
 
   const handleLeaveGroup = async () => {
-    if (!confirm('Yakin ingin keluar dari study group ini?')) return;
+    if (!(await confirmDialog({ title: 'Keluar dari kelompok belajar ini?', confirmLabel: 'Keluar', danger: true }))) return;
 
     try {
       await apiFetch(`/collab/study-groups/${groupId}/members/${user.id}`, {
         method: 'DELETE',
       });
-      toast.success('Berhasil keluar dari study group');
+      toast.success('Anda keluar dari kelompok belajar');
       onNavigate('study-groups'); // Back to list
     } catch (error) {
       console.error('Error leaving group:', error);
@@ -64,13 +65,13 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
   };
 
   const handleDeleteGroup = async () => {
-    if (!confirm('Yakin ingin menghapus study group ini? Tindakan tidak dapat dibatalkan.')) return;
+    if (!(await confirmDialog({ title: 'Hapus kelompok belajar ini?', body: 'Tindakan ini tidak bisa dibatalkan.', confirmLabel: 'Hapus', danger: true }))) return;
 
     try {
       await apiFetch(`/collab/study-groups/${groupId}`, {
         method: 'DELETE',
       });
-      toast.success('Study group berhasil dihapus');
+      toast.success('Kelompok belajar dihapus');
       onNavigate('study-groups'); // Back to list
     } catch (error) {
       console.error('Error deleting group:', error);
@@ -249,7 +250,7 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
                   />
                 </div>
               ) : (
-                <div className="p-12 text-center text-muted-foreground">
+                <div className="py-8 text-center text-muted-foreground">
                   <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
                   <p>Kanal diskusi belum dibuat</p>
                 </div>
@@ -271,7 +272,7 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
                   />
                 </div>
               ) : (
-                <div className="p-12 text-center text-muted-foreground">
+                <div className="py-8 text-center text-muted-foreground">
                   <FolderOpen className="h-12 w-12 mx-auto mb-4 opacity-50" />
                   <p>Folder dokumen belum dibuat</p>
                 </div>
