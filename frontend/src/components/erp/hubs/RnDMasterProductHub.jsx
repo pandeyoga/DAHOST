@@ -1,4 +1,4 @@
-import React, { Suspense } from 'react';
+import { Suspense } from 'react';
 
 import { lazyRetry } from '../../../lib/lazyRetry';
 import { Skeleton } from '@/components/ui/skeleton';
