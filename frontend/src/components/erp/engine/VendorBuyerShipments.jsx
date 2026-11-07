@@ -303,7 +303,7 @@ export default function VendorBuyerShipments({ user }) {
             <section className="space-y-2">
               <p className="text-sm font-semibold text-foreground">Riwayat dispatch</p>
               {!list ? <p className="text-sm text-muted-foreground">Memuat riwayat…</p> : list.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Belum ada dispatch.</p>
+                <EmptyState title="Belum ada dispatch" description="Dispatch yang dibuat untuk deklarasi ini tampil di sini." />
               ) : (
                 <div className="overflow-x-auto">
                   <Table>

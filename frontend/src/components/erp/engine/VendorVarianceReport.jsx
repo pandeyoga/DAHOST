@@ -121,7 +121,7 @@ export default function VendorVarianceReport({ token, user }) {
           <StatTile label="Produksi kurang" value={nUnder} sub="Laporan jenis kurang" />
         </div>
       )}>
-      {loading ? <p className="py-10 text-center text-sm text-muted-foreground">Memuat laporan…</p> : (
+      {loading ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat laporan…</p> : (
         <TabelData kolom={kolom} baris={variances} testId="vendor-variance-table"
           kosong={<EmptyState icon={AlertTriangle} title="Belum ada laporan selisih" description="Buat laporan bila produksi lebih atau kurang dari pesanan." />} />
       )}

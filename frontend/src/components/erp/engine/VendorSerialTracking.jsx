@@ -82,7 +82,7 @@ export default function VendorSerialTracking() {
         { label: 'Sisa', nilai: (s) => Number(s.remaining_qty) || 0 }, { label: 'Status', nilai: (s) => statusSeri(s.status)[0] },
       ]} />}
       summary={!loading && <p className="text-sm text-muted-foreground">{n(serialList.length)} nomor seri tampil.</p>}>
-      {loading ? <p className="py-10 text-center text-sm text-muted-foreground">Memuat nomor seri…</p> : (
+      {loading ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat nomor seri…</p> : (
         <TabelData kolom={kolom} baris={serialList} kunci={(s) => `${s.serial_number}-${s.po_id}`} onKlikBaris={bukaJejak}
           testId="vendor-serial-table" kosong={<EmptyState icon={Hash} title="Tidak ada nomor seri" description="Ubah saringan atau kata pencarian." />} />
       )}
@@ -99,7 +99,7 @@ export default function VendorSerialTracking() {
           <section className="space-y-1">
             <p className="text-sm font-semibold text-foreground">Jejak (10 kejadian terakhir)</p>
             {!traceData ? <p className="text-sm text-muted-foreground">Memuat jejak…</p> : (traceData.timeline || []).length === 0 ? (
-              <p className="text-sm text-muted-foreground">Belum ada kejadian.</p>
+              <EmptyState title="Belum ada kejadian" description="Jejak nomor seri ini belum tercatat." />
             ) : (
               <ul className="divide-y divide-[var(--glass-border)] text-sm">
                 {traceData.timeline.slice(0, 10).map((ev, i) => (

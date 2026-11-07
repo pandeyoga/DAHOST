@@ -345,7 +345,7 @@ export default function VendorMaterialRequests({ user }) {
         </p>
       </>}>
       {loading ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat data…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat data…</p>
       ) : (
         <TabelData kolom={kolom} baris={filtered} onKlikBaris={openDetail} testId="vendor-mr-table"
           kosong={<EmptyState icon={ClipboardList}

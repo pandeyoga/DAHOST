@@ -83,7 +83,7 @@ export default function VendorReminderInbox() {
         { label: 'Prioritas', nilai: (r) => prioritas(r.priority)[0] }, { label: 'Dari', nilai: (r) => r.created_by || '' },
         { label: 'Balasan', nilai: (r) => r.response || '' }, { label: 'Dibalas', nilai: (r) => (r.response_date ? waktu(r.response_date) : '') },
       ]} />}>
-      {loading ? <p className="py-10 text-center text-sm text-muted-foreground">Memuat…</p> : (
+      {loading ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat…</p> : (
         <TabelData kolom={kolom} baris={baris} onKlikBaris={setDetail} testId="vendor-reminder-table"
           kosong={<EmptyState icon={Bell} title={reminders.length ? 'Tidak ada pengingat yang cocok' : 'Belum ada pengingat'}
             description={reminders.length ? 'Ubah saringan.' : 'Pengingat dari admin akan muncul di sini.'} />} />

@@ -101,7 +101,7 @@ export function RahazaColorsModule({ token }) {
         { label: 'Kode', nilai: (r) => r.code || '' }, { label: 'Nama', nilai: (r) => r.name || '' }, { label: 'Hex', nilai: (r) => r.hex || '' },
         { label: 'Urutan', nilai: (r) => Number(r.order_seq) || 0 }, { label: 'Status', nilai: (r) => (r.active === false ? 'Nonaktif' : 'Aktif') },
       ]} />}>
-      {loading ? <p className="py-10 text-center text-sm text-muted-foreground">Memuat…</p> : (
+      {loading ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat…</p> : (
         <TabelData kolom={kolom} baris={rows} testId="color-table"
           kosong={<EmptyState icon={Palette} title="Belum ada warna" description="Klik Tambah warna untuk menambah palet." />} />
       )}

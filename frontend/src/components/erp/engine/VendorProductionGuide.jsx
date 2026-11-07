@@ -74,7 +74,7 @@ export default function VendorProductionGuide() {
     const empty = photos.length === 0 && steps.length === 0 && videos.length === 0 && refImages.length === 0 && !g.hero_image_url;
     const badge = g.source_type === 'buyer_catalog' ? 'Katalog Buyer' : 'Model Internal';
     return (
-      <div key={gi} className="rounded-2xl border border-border bg-card p-4 space-y-5" data-testid={`vendor-guide-article-${gi}`}>
+      <section key={gi} className="space-y-5 border-t border-[var(--glass-border)] pt-4 first:border-t-0 first:pt-0" data-testid={`vendor-guide-article-${gi}`}>
         <div className="flex items-center gap-2 flex-wrap border-b border-border pb-3">
           <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary">
             <Package className="w-3.5 h-3.5" /> {badge}
@@ -157,13 +157,13 @@ export default function VendorProductionGuide() {
         )}
 
         {empty && (
-          <div className="text-sm text-[hsl(var(--warning-text))] bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-lg p-3 flex items-start gap-2">
+          <div className="text-sm text-[hsl(var(--warning-text))] flex items-start gap-2">
             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
             Panduan Produksi untuk artikel ini belum diisi. Admin/PPIC dapat mengisi SOP di
             {g.source_type === 'buyer_catalog' ? ' Katalog Buyer → Panduan Produksi.' : ' Master Produk → Panduan.'}
           </div>
         )}
-      </div>
+      </section>
     );
   };
 
@@ -194,7 +194,7 @@ export default function VendorProductionGuide() {
         { label: 'Target (pcs)', nilai: (j) => Number(j.total_available || j.total_ordered) || 0 },
       ]} />}>
       {loading ? (
-        <p className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /> Memuat…</p>
+        <p className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /> Memuat…</p>
       ) : (
         <TabelData kolom={kolom} baris={jobs} onKlikBaris={openGuide} testId="guide-jobs-list"
           kosong={<div data-testid="guide-empty"><EmptyState icon={Briefcase} title="Belum ada pekerjaan yang ditugaskan"
@@ -205,7 +205,7 @@ export default function VendorProductionGuide() {
         <DetailPopup open onClose={() => { setSelected(null); setGuide(null); }} testId="vendor-guide-detail"
           judul={`Panduan produksi ${selected.job_number}`} keterangan={selected.po_number ? `PO ${selected.po_number}` : undefined}>
           {guideLoading ? (
-            <p className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /> Memuat panduan…</p>
+            <p className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /> Memuat panduan…</p>
           ) : !guide?.has_guide ? (
             <Notice tone="warning" icon={AlertCircle} testId="guide-no-model">{guide?.message || 'Belum ada panduan produksi untuk pekerjaan ini.'}</Notice>
           ) : (

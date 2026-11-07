@@ -195,7 +195,7 @@ export default function VendorReceiving() {
           {needsInspection > 0 && `${n(needsInspection)} kiriman menunggu inspeksi material (wajib dalam 3 hari; produksi belum bisa dimulai).`}
         </p>
       )}>
-      {loading && !shipments.length ? <p className="py-10 text-center text-sm text-muted-foreground">Memuat kiriman…</p> : (
+      {loading && !shipments.length ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat kiriman…</p> : (
         <TabelData kolom={kolom} baris={baris} onKlikBaris={setDetail} testId="vendor-receiving-table"
           kosong={<EmptyState icon={Package} title="Tidak ada kiriman masuk"
             description="Kiriman bahan dari DA muncul di sini untuk dikonfirmasi." />} />

@@ -190,7 +190,7 @@ function VendorPicker({ vendors, loading, err, onPick, onReload }) {
       </>}
       footer={rows.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
       {loading && !vendors.length ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat vendor…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat vendor…</p>
       ) : (
         <TabelData kolom={kolom} baris={paged} testId="cmt-override-vendor-table"
           kosong={<div data-testid="cmt-override-empty">
