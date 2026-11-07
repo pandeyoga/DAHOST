@@ -1,21 +1,23 @@
 /**
- * AddColumnDialog + ManageColumnsDialog — combined column-management dialogs.
+ * AddColumnDialog + ManageColumnsDialog — kelola kolom spreadsheet.
  *
- * ManageColumnsDialog shows current columns + delete buttons; nests AddColumnDialog
- * when user clicks "Tambah Kolom".
+ * Standar UI/UX v2 (8 Nov 2026): tambah kolom = FormPopup pendek; kelola kolom = DetailPopup berisi tabel standar;
+ * hapus kolom lewat konfirmasi aplikasi (dulu window.confirm). Tambah kolom membuka form di atas daftar kolom
+ * diganti: daftar disembunyikan sementara selama form terbuka (tidak ada popup bertumpuk).
  */
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
-import { Columns, Plus, Trash2 } from 'lucide-react';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup from '@/components/ui/detail-popup';
+import TabelData from '@/components/ui/tabel-data';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { EmptyState } from '../moduleAtoms';
+
+const TIPE = { text: 'Teks', number: 'Angka' };
 
 export function AddColumnDialog({ open, onClose, onAdd }) {
   const [name, setName] = useState('');
@@ -29,79 +31,46 @@ export function AddColumnDialog({ open, onClose, onAdd }) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-sm" data-testid="add-column-dialog">
-        <DialogHeader><DialogTitle>Tambah Kolom</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          <div>
-            <label className="text-sm font-medium mb-1 block">Nama Kolom *</label>
-            <Input
-              placeholder="Contoh: Jumlah, Keterangan..."
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-              autoFocus
-              data-testid="add-column-name"
-            />
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Tipe Data</label>
-            <Select value={type} onValueChange={setType}>
-              <SelectTrigger data-testid="add-column-type"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="text">Teks</SelectItem>
-                <SelectItem value="number">Angka</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-        <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={handleAdd} data-testid="add-column-submit">Tambah</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open={open} onClose={onClose} ukuran="pendek" judul="Tambah kolom" onSimpan={handleAdd}
+      labelSimpan="Tambah" testId="add-column-dialog">
+      <Isian label="Nama kolom" wajib htmlFor="add-column-name">
+        <Input id="add-column-name" placeholder="Contoh: Jumlah, Keterangan" value={name} onChange={(e) => setName(e.target.value)}
+          autoFocus data-testid="add-column-name" />
+      </Isian>
+      <Isian label="Tipe data">
+        <SmartNativeSelect value={type} onChange={(e) => setType(e.target.value)} searchable={false} className="h-9 w-full"
+          aria-label="Tipe data" data-testid="add-column-type">
+          <option value="text">Teks</option>
+          <option value="number">Angka</option>
+        </SmartNativeSelect>
+      </Isian>
+    </FormPopup>
   );
 }
 
 export function ManageColumnsDialog({ open, onClose, columns, onDelete, onAdd }) {
   const [showAdd, setShowAdd] = useState(false);
+  const hapus = async (col) => {
+    if (await confirmDialog({ title: `Hapus kolom "${col.name}"?`, body: 'Isi kolom ini di semua baris ikut hilang.', confirmLabel: 'Hapus', danger: true })) {
+      onDelete(col.key);
+    }
+  };
+  const kolom = [
+    { kunci: 'nama', label: 'Kolom', hp: 'judul', isi: (c) => <span className="font-medium">{c.name}</span> },
+    { kunci: 'tipe', label: 'Tipe', isi: (c) => TIPE[c.type || 'text'] || c.type },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (c) => (
+      <Button variant="ghost" size="icon-sm" onClick={() => hapus(c)} title="Hapus kolom" aria-label="Hapus kolom"
+        data-testid={`delete-col-${columns.indexOf(c)}`}><Trash2 /></Button>) },
+  ];
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-sm" data-testid="manage-columns-dialog">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><Columns size={16} />Kelola Kolom</DialogTitle>
-        </DialogHeader>
-        <ScrollArea className="max-h-56">
-          <div className="space-y-1 pr-1">
-            {columns.length === 0 && (
-              <p className="text-sm text-muted-foreground text-center py-4">Belum ada kolom</p>
-            )}
-            {columns.map((col, i) => (
-              <div key={col.key} className="flex items-center justify-between p-2 rounded-md hover:bg-muted/30 border">
-                <div>
-                  <p className="text-sm font-medium">{col.name}</p>
-                  <p className="text-xs text-muted-foreground capitalize">{col.type || 'text'}</p>
-                </div>
-                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive"
-                  onClick={() => window.confirm(`Hapus kolom "${col.name}"?`) && onDelete(col.key)}
-                  data-testid={`delete-col-${i}`}>
-                  <Trash2 size={12} />
-                </Button>
-              </div>
-            ))}
-          </div>
-        </ScrollArea>
-        {showAdd
-          ? <AddColumnDialog open={showAdd} onClose={() => setShowAdd(false)}
-              onAdd={(col) => { onAdd(col); setShowAdd(false); }} />
-          : <Button variant="outline" className="w-full" onClick={() => setShowAdd(true)} data-testid="open-add-column">
-              <Plus size={14} className="mr-1" />Tambah Kolom
-            </Button>}
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} className="w-full">Selesai</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <>
+      <DetailPopup open={open && !showAdd} onClose={onClose} judul="Kelola kolom" testId="manage-columns-dialog"
+        keterangan={`${columns.length} kolom di spreadsheet ini.`}
+        aksi={<Button size="sm" onClick={() => setShowAdd(true)} data-testid="open-add-column"><Plus />Tambah kolom</Button>}>
+        <TabelData kolom={kolom} baris={columns} kunci={(c) => c.key} testId="manage-columns-table"
+          kosong={<EmptyState title="Belum ada kolom" description="Tambah kolom pertama untuk mulai mengisi data." className="py-8" />} />
+      </DetailPopup>
+      <AddColumnDialog open={open && showAdd} onClose={() => setShowAdd(false)} onAdd={(col) => { onAdd(col); setShowAdd(false); }} />
+    </>
   );
 }

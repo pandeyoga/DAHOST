@@ -1,18 +1,15 @@
 /**
- * AccessBadge — small visual indicator of permission level on a document
- * (owner | admin | edit | view).
+ * AccessBadge — penanda tingkat akses dokumen (pemilik | admin | ubah | lihat).
+ * Standar UI/UX v2: memakai StatusBadge (token warna) — dulu kelas warna & ukuran huruf 10px buatan sendiri.
  */
+import { StatusBadge } from '../moduleAtoms';
 import { ACCESS_CONFIG } from './utils';
 
 export default function AccessBadge({ level }) {
   const cfg = ACCESS_CONFIG[level] || ACCESS_CONFIG.view;
   const Icon = cfg.icon;
   return (
-    <span
-      className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border ${cfg.cls}`}
-    >
-      <Icon size={10} />
-      {cfg.label}
-    </span>
+    <StatusBadge status={level || 'view'} tone={cfg.tone}
+      label={<><Icon className="h-3 w-3" aria-hidden="true" />{cfg.label}</>} />
   );
 }

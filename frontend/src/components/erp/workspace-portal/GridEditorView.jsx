@@ -6,6 +6,8 @@
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { toast } from 'sonner';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { StatusBadge } from '../moduleAtoms';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DataGrid, SelectColumn } from 'react-data-grid';
@@ -106,9 +108,9 @@ export default function GridEditorView({ document: initDoc, token, onBack, onUpd
     queueSave(newRows, columns, formatting);
   };
 
-  const handleDeleteSelected = () => {
+  const handleDeleteSelected = async () => {
     if (isReadOnly || selectedRows.size === 0) return;
-    if (!window.confirm(`Hapus ${selectedRows.size} baris?`)) return;
+    if (!(await confirmDialog({ title: `Hapus ${selectedRows.size} baris?`, confirmLabel: 'Hapus', danger: true }))) return;
     const newRows = rows.filter((r) => !selectedRows.has(r.id));
     setRows(newRows);
     setSelectedRows(new Set());
@@ -244,8 +246,8 @@ export default function GridEditorView({ document: initDoc, token, onBack, onUpd
   const saveIndicator = isReadOnly ? null : (
     <span className="text-xs flex items-center gap-1" data-testid="save-status">
       {saveStatus === 'saving' && <><Loader2 size={11} className="animate-spin" /><span className="text-muted-foreground">Menyimpan...</span></>}
-      {saveStatus === 'pending' && <><AlertCircle size={11} className="text-amber-500" /><span className="text-amber-600">Belum disimpan</span></>}
-      {saveStatus === 'saved' && <><Check size={11} className="text-emerald-500" /><span className="text-muted-foreground">Tersimpan</span></>}
+      {saveStatus === 'pending' && <><AlertCircle size={12} className="text-[hsl(var(--warning-text))]" /><span className="text-[hsl(var(--warning-text))]">Belum disimpan</span></>}
+      {saveStatus === 'saved' && <><Check size={12} className="text-[hsl(var(--success-text))]" /><span className="text-muted-foreground">Tersimpan</span></>}
     </span>
   );
 
@@ -255,7 +257,7 @@ export default function GridEditorView({ document: initDoc, token, onBack, onUpd
       <div className="border-b bg-card px-4 py-3 shrink-0">
         <div className="flex items-center justify-between mb-2.5">
           <div className="flex items-center gap-2 min-w-0">
-            <Button variant="ghost" size="sm" onClick={onBack} className="shrink-0" data-testid="back-btn">
+            <Button variant="ghost" size="sm" onClick={onBack} className="shrink-0" title="Kembali ke daftar dokumen" aria-label="Kembali ke daftar dokumen" data-testid="back-btn">
               <ChevronRight size={16} className="rotate-180" />
             </Button>
             {renaming ? (
@@ -265,7 +267,7 @@ export default function GridEditorView({ document: initDoc, token, onBack, onUpd
                 className="h-7 text-sm font-semibold w-64" data-testid="rename-input" />
             ) : (
               <div className="flex items-center gap-1.5 min-w-0">
-                <h2 className="text-base font-semibold truncate" data-testid="doc-title">{doc?.name}</h2>
+                <p className="text-base font-semibold truncate" data-testid="doc-title">{doc?.name}</p>
                 {canEdit(doc?.access_level) && (
                   <Button variant="ghost" size="sm" className="h-6 w-6 p-0 shrink-0"
                     onClick={startRename} data-testid="rename-btn"><Edit3 size={12} /></Button>
@@ -276,14 +278,12 @@ export default function GridEditorView({ document: initDoc, token, onBack, onUpd
           </div>
           <div className="flex gap-2 shrink-0">
             {isReadOnly && (
-              <span className="flex items-center gap-1 text-xs text-amber-600 border border-amber-200 bg-amber-50 px-2 py-1 rounded-md">
-                <Lock size={12} />Hanya Lihat
-              </span>
+              <StatusBadge status="lihat" tone="warning" label={<><Lock className="h-3 w-3" />Hanya lihat</>} />
             )}
             {saveIndicator}
             {canShare(doc?.access_level) && (
               <Button variant="outline" size="sm" onClick={() => setShowShare(true)} data-testid="share-btn">
-                <Share2 size={14} className="mr-1" />Share
+                <Share2 size={14} className="mr-1" />Bagikan
               </Button>
             )}
             <Button variant="outline" size="sm" onClick={handleExportExcel} disabled={exporting} data-testid="export-excel-btn">
@@ -364,7 +364,7 @@ export default function GridEditorView({ document: initDoc, token, onBack, onUpd
           {selectedRows.size > 0 && ` · ${selectedRows.size} dipilih`}
         </p>
         {isReadOnly && (
-          <p className="text-xs text-amber-500 flex items-center gap-1">
+          <p className="text-xs text-[hsl(var(--warning-text))] flex items-center gap-1">
             <Lock size={11} />Mode baca saja
           </p>
         )}
