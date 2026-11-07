@@ -267,7 +267,9 @@ export default function RahazaAttendanceModule({ token }) {
         title="Absensi harian"
         subtitle="Isian cepat kehadiran semua karyawan aktif. Perubahan HR tercatat di riwayat tiap baris."
         actions={<>
-          <Button variant="success" onClick={saveAll} disabled={saving || rows.length === 0} data-testid="attendance-save">
+          {/* Di HP tombol ini pindah ke baris penyaring (lihat bawah) supaya tabel tidak terdorong ke bawah layar */}
+          <Button variant="success" onClick={saveAll} disabled={saving || rows.length === 0} data-testid="attendance-save"
+            className="max-sm:hidden">
             {saving ? <><RefreshCw className="animate-spin" />Menyimpan…</> : <><Save />Simpan semua</>}
           </Button>
         </>}
@@ -277,7 +279,7 @@ export default function RahazaAttendanceModule({ token }) {
               title="Hari sebelumnya" aria-label="Hari sebelumnya" data-testid="att-prev-day">
               <ChevronLeft />
             </Button>
-            <div className="w-44">
+            <div className="w-36 sm:w-44">
               <DatePicker value={date} onChange={changeDate} max={today} bolehKosong={false} testId="att-date" />
             </div>
             <Button variant="outline" size="icon" onClick={() => changeDate(addDaysISO(date, 1))} disabled={date >= today}
@@ -302,15 +304,23 @@ export default function RahazaAttendanceModule({ token }) {
               <DropdownMenuItem onSelect={salinKemarin} disabled={copying || loading} data-testid="att-copy-yesterday">
                 <Copy className="mr-2 h-4 w-4" />{copying ? 'Menyalin…' : 'Salin dari kemarin'}
               </DropdownMenuItem>
+              {/* HP: "Tandai hadir & simpan" ada di menu ini (di layar lebar tampil sebagai tombol) */}
+              <DropdownMenuItem onSelect={markAllHadirAndSave} disabled={saving} className="sm:hidden" data-testid="att-setall-hadir-save-hp">
+                <CheckCircle2 className="mr-2 h-4 w-4" />Tandai hadir & simpan
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           <Button variant="outline" onClick={markAllHadirAndSave} disabled={saving || rows.length === 0}
-            data-testid="att-setall-hadir-save"
+            className="max-sm:hidden" data-testid="att-setall-hadir-save"
             title="Isi Hadir (shift otomatis + 8 jam) untuk karyawan yang belum tercatat, lalu simpan. Cuti, izin, sakit, alpa, dan absen selfie tidak ditimpa.">
             <CheckCircle2 />Tandai hadir & simpan
           </Button>
           {/* Unduh & muat ulang di ujung kanan baris yang sama; di HP turun ke baris sendiri (tidak menimpa tanggal) */}
           <div className="ml-auto flex shrink-0 items-center gap-2">
+            <Button variant="success" onClick={saveAll} disabled={saving || rows.length === 0} className="sm:hidden"
+              data-testid="attendance-save-hp">
+              {saving ? <><RefreshCw className="animate-spin" />Menyimpan…</> : <><Save />Simpan semua</>}
+            </Button>
             <TombolUnduh namaBerkas={`absensi-harian-${date}`} namaLembar="Absensi harian" baris={rows} testId="att-unduh"
               kolom={[
                 { label: 'Tanggal', nilai: () => formatTanggalID(date) },
@@ -346,9 +356,9 @@ export default function RahazaAttendanceModule({ token }) {
           )}
           {/* Ringkasan = absen yang SUDAH TERSIMPAN untuk tanggal ini (bukan isian layar yang belum disimpan). */}
           {rows.length > 0 && (
-            <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground" data-testid="att-summary">
+            <p className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground sm:gap-x-4" data-testid="att-summary">
               <span data-testid="att-count-total"><b className="font-semibold text-foreground tabular-nums">{rows.length}</b> karyawan aktif</span>
-              <span data-testid="att-count-recorded"><b className="font-semibold text-foreground tabular-nums">{tersimpan.length}</b> sudah dicatat · {rows.length - tersimpan.length} belum</span>
+              <span data-testid="att-count-recorded"><b className="font-semibold text-foreground tabular-nums">{tersimpan.length}</b> sudah dicatat<span className="max-sm:hidden"> · {rows.length - tersimpan.length} belum</span></span>
               <span data-testid="att-count-hadir">Hadir <b className="font-semibold text-[hsl(var(--success-text))] tabular-nums">{hitungSimpan.hadir || 0}</b></span>
               <span data-testid="att-count-absent">Tidak hadir <b className={`font-semibold tabular-nums ${hitungSimpan.alpa ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`}>{tidakHadir}</b>{rincianTidakHadir ? ` (${rincianTidakHadir})` : ''}</span>
               {tersimpan.length > 0 && <span>{jam(jamSimpan)} jam kerja · {jam(lemburSimpan)} jam lembur tersimpan</span>}

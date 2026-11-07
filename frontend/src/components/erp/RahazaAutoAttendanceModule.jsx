@@ -471,6 +471,9 @@ export function MesinSidikJari({ token }) {
   return (
     <PageLayout testId="attendance-device-tab" title="Mesin sidik jari"
       subtitle="Mesin ZKTeco/Fingerspot di kantor. Bila server tidak menjangkau mesin, unggah file ekspornya."
+      filters={<p className="text-sm text-muted-foreground">
+        Sinkron langsung hanya bisa bila server menjangkau mesin di jaringan kantor. Bila tidak, pakai Impor file mesin.
+      </p>}
       actions={<>
         <Button variant="outline" onClick={() => { setForm({ ...FORM_MESIN }); setGalat(''); }} data-testid="device-add"><Plus />Tambah mesin</Button>
         <Button onClick={() => setImpor(true)} data-testid="fingerprint-open"><Upload />Impor file mesin</Button>
@@ -489,9 +492,7 @@ export function MesinSidikJari({ token }) {
           ]} />
         <MuatUlang onClick={load} memuat={loading} />
       </>}
-      summary={<p className="text-sm text-muted-foreground">
-        Sinkron langsung hanya bisa bila server menjangkau mesin di jaringan kantor. Bila tidak, pakai Impor file mesin.
-      </p>}>
+>
       {loading && devices.length === 0 ? <Memuat /> : (
         <TabelData kolom={kolom} baris={devices} testId="device-table"
           kosong={<EmptyState icon={Fingerprint} title="Belum ada mesin"

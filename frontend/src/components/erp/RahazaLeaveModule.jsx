@@ -563,8 +563,7 @@ export default function RahazaLeaveModule({ token, onNavigate, bagian }) {
       ) : (
         <TabelData kolom={kolomJenis} baris={leaveTypes} testId="leave-type-list"
           kosong={<EmptyState icon={CalendarDays} title="Belum ada jenis cuti"
-            description="Tambah jenis cuti, izin, atau sakit beserta kuota tahunannya."
-            action={<Button onClick={tambahJenis}><Plus />Tambah jenis</Button>} />} />
+            description="Tekan Tambah jenis untuk membuat jenis cuti, izin, atau sakit beserta kuota tahunannya." />} />
       )}
     </PageLayout>
   );
