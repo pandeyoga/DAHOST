@@ -118,12 +118,12 @@ function YesNo({ ok, yes = 'Sudah', no = 'Belum' }) {
    CSV, jadi angka di berkas unduhan tidak mungkin berbeda dari yang di layar. */
 const COLUMNS = [
   { key: 'account', label: 'Toko', get: (a) => (a.account_name || '').toLowerCase() },
-  { key: 'total', label: 'Input harian', get: (a) => (a.sales_status?.entered_total ? 1 : 0) },
-  { key: 'revenue', label: 'Omzet diinput', get: (a) => Number(a.sales_status?.revenue || 0), num: true },
+  { key: 'total', label: 'Harian', get: (a) => (a.sales_status?.entered_total ? 1 : 0) },
+  { key: 'revenue', label: 'Omzet', get: (a) => Number(a.sales_status?.revenue || 0), num: true },
   { key: 'orders', label: 'Pesanan', get: (a) => Number(a.sales_status?.orders || 0), num: true },
-  { key: 'live', label: 'Input live', get: (a) => (a.sales_status?.entered_live ? 1 : 0) },
-  { key: 'health', label: 'Skor kesehatan', get: (a) => (a.health_score == null ? -1 : Number(a.health_score)), num: true },
-  { key: 'tasks', label: 'Tugas menunggu', get: (a) => (a.pending_action_tasks || []).length, num: true },
+  { key: 'live', label: 'Live', get: (a) => (a.sales_status?.entered_live ? 1 : 0) },
+  { key: 'health', label: 'Skor', get: (a) => (a.health_score == null ? -1 : Number(a.health_score)), num: true },
+  { key: 'tasks', label: 'Tugas', get: (a) => (a.pending_action_tasks || []).length, num: true },
   { key: 'overdue', label: 'Terlambat', get: (a) => Number(a.overdue_count || 0), num: true },
 ];
 

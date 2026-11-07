@@ -1104,7 +1104,7 @@ export default function DataImportWizard({ token }) {
                 <TabelData baris={groups} kunci={(g) => g.key} onKlikBaris={(g) => setGroupKey(g.key)} testId="import-groups"
                   kolom={[
                     { kunci: 'nama', label: 'Kelompok', hp: 'judul', isi: (g) => <span className="font-medium" data-testid={`import-group-${g.key}`}>{g.label}</span> },
-                    { kunci: 'ket', label: 'Isi', hp: 'keterangan', isi: (g) => <span className="text-sm text-muted-foreground">{g.describe}</span> },
+                    { kunci: 'ket', label: 'Isi', hp: 'keterangan', isi: (g) => <span className="block text-sm text-muted-foreground md:max-w-[34rem]">{g.describe}</span> },
                     { kunci: 'n', label: 'Jenis data', rata: 'kanan', isi: (g) => <span className="tabular-nums">{(g.types || []).filter((t) => !t.deprecated).length}</span> },
                     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (g) => (
                       <Button size="sm" variant="outline" onClick={() => setGroupKey(g.key)}>Pilih<ArrowRight /></Button>) },
