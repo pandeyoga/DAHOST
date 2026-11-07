@@ -50,7 +50,7 @@ import WMSOpnameScanModule from './WMSOpnameScanModule';
 import { useActiveEmployees, EmployeeSelect } from './hr/hrPickers';
 import PageLayout from './layout/PageLayout';
 import HubTabs from './hubs/HubTabs';
-import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -478,11 +478,11 @@ function MasterTab({ token, onRefreshDash, onOpenValuation, title, subtitle }) {
               placeholder="Kancing" data-testid="acc-field-name" />
           </Isian>
         </div>
-        <Isian label="Supplier">
-          <SupplierPick suppliers={suppliers} form={form} setForm={setForm}
-            className="w-full" data-testid="acc-supplier-select" />
-        </Isian>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Isian label="Supplier">
+            <SupplierPick suppliers={suppliers} form={form} setForm={setForm}
+              className="w-full" data-testid="acc-supplier-select" />
+          </Isian>
           <Isian label="Satuan">
             <SmartNativeSelect value={form.unit} onChange={e=>setForm({...form,unit:e.target.value})} className="w-full" data-testid="acc-unit-select">
               {unitOptions(editItem?.unit).map(u=><option key={u} value={u}>{u}</option>)}
@@ -1213,7 +1213,9 @@ export default function AccessoryModule({
   useEffect(() => { loadDash(); loadItems(); }, [loadDash, loadItems]);
 
   const refreshAll = () => { loadDash(); loadItems(); };
-  const judul = headerTitle || 'Manajemen Aksesoris';
+  // Judul = label menu yang membuka modul ini (Standar UI/UX v2: judul halaman = label menu).
+  const JUDUL_MENU = { master: 'Master Aksesoris', opname: 'Stok Opname', internal: 'Request Internal' };
+  const judul = headerTitle || JUDUL_MENU[defaultTab] || 'Manajemen Aksesoris';
   const sub = headerSubtitle || 'Master, stok, permintaan internal, permintaan beli, dan valuasi aksesoris produksi.';
 
   // FASE 10 — tab "Peminjaman" DILEPAS. Peminjaman alat/aset sudah pindah ke
@@ -1263,21 +1265,32 @@ export default function AccessoryModule({
     return <t.Component {...t.props} ringkasan={peringatanStok} />;
   }
 
+  // Ringkasan modul = satu kalimat (dulu 4 kartu di atas tab; di tab Valuasi HPP jadi dua baris kartu
+  // sehingga tabel baru mulai di tengah layar). Angka & sumbernya tetap sama (`/api/acc/dashboard`).
   const ringkasan = dash && !scoped && (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="acc-summary">
-      <StatTile label="Stok habis" value={fmtNum(habis)} accent={habis ? 'danger' : 'default'}
-        sub={`dari ${fmtNum(dash.total_items)} item aktif`}
-        hint="Aksesoris aktif yang stoknya 0 atau kurang." />
-      <StatTile label="Stok menipis" value={fmtNum(menipis)} accent={menipis ? 'warning' : 'default'}
-        sub="Masih ada, tetapi di bawah stok minimum" />
+    <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted-foreground" data-testid="acc-summary">
+      <span title="Aksesoris aktif yang stoknya 0 atau kurang.">
+        Stok habis <b className={habis ? 'tabular-nums text-[hsl(var(--danger-text))]' : 'tabular-nums text-foreground'}>{fmtNum(habis)}</b>
+        {' '}dari {fmtNum(dash.total_items)} item aktif
+      </span>
+      <span aria-hidden="true">·</span>
+      <span title="Masih ada, tetapi di bawah stok minimum.">
+        Stok menipis <b className={menipis ? 'tabular-nums text-[hsl(var(--warning-text))]' : 'tabular-nums text-foreground'}>{fmtNum(menipis)}</b>
+      </span>
+      <span aria-hidden="true">·</span>
       {/* FASE 8 — KPI valuasi menggantikan kartu "Dipinjam" (peminjaman pindah ke Portal Aset sejak ACC-3) */}
-      <StatTile label="Nilai persediaan" value={fmtRp(dash.total_stock_value)}
-        sub={dash.unvalued_items ? `${fmtNum(dash.unvalued_items)} item belum punya HPP` : 'Semua item sudah punya HPP'}
-        subTone={dash.unvalued_items ? 'warning' : undefined} />
-      <StatTile label="Permintaan menunggu" value={fmtNum(dash.pending_requests)}
-        sub={`${fmtNum(dash.pending_pr)} permintaan beli berjalan`}
-        hint="Permintaan aksesoris yang diajukan dan belum diputuskan (semua jenis, sama dengan Inbox Persetujuan)." />
-    </div>
+      <span>
+        Nilai persediaan <b className="tabular-nums text-foreground">{fmtRp(dash.total_stock_value)}</b>
+        {dash.unvalued_items
+          ? <span className="text-[hsl(var(--warning-text))]"> ({fmtNum(dash.unvalued_items)} item belum punya HPP)</span>
+          : ' (semua item sudah punya HPP)'}
+      </span>
+      <span aria-hidden="true">·</span>
+      <span title="Permintaan aksesoris yang diajukan dan belum diputuskan (semua jenis, sama dengan Inbox Persetujuan).">
+        Permintaan menunggu <b className="tabular-nums text-foreground">{fmtNum(dash.pending_requests)}</b>
+        {' '}({fmtNum(dash.pending_pr)} permintaan beli berjalan)
+      </span>
+    </p>
   );
 
   return (

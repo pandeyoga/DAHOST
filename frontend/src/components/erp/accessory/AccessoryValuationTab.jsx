@@ -199,12 +199,16 @@ export default function AccessoryValuationTab({ token, onRefreshDash }) {
     { kunci: 'kategori', label: 'Kategori', isi: (it) => <span className="text-muted-foreground">{it.category || '—'}</span> },
     { kunci: 'stok', label: 'Stok', rata: 'kanan', isi: (it) => (
       <span className="tabular-nums">{fmtNum(it.stock_qty)} <span className="text-xs text-muted-foreground">{it.unit}</span></span>) },
-    { kunci: 'hpp', label: 'HPP', rata: 'kanan', isi: (it) => (it.valued
-      ? <span className="tabular-nums">{fmtRp(it.unit_cost)}</span>
-      : <span className="text-[hsl(var(--warning-text))]" title="Belum dinilai — jurnal persediaan tidak akan terbentuk">belum diisi</span>) },
+    // Metode penilaian ditulis kecil di bawah HPP (dulu kolom sendiri → tombol Scrap terpotong di kanan).
+    { kunci: 'hpp', label: 'HPP', rata: 'kanan', isi: (it) => (
+      <div>
+        {it.valued
+          ? <span className="tabular-nums">{fmtRp(it.unit_cost)}</span>
+          : <span className="text-[hsl(var(--warning-text))]" title="Belum dinilai — jurnal persediaan tidak akan terbentuk">belum diisi</span>}
+        {METHOD_LABEL[it.cost_method] && <p className="text-xs text-muted-foreground">{METHOD_LABEL[it.cost_method]}</p>}
+      </div>) },
     { kunci: 'nilai', label: 'Nilai stok', rata: 'kanan', isi: (it) => (
       <span className="font-medium tabular-nums">{it.stock_value > 0 ? fmtRp(it.stock_value) : '—'}</span>) },
-    { kunci: 'metode', label: 'Metode', isi: (it) => <span className="text-muted-foreground">{METHOD_LABEL[it.cost_method] || '—'}</span> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (
       <div className="flex items-center justify-end gap-1">
         <Button size="sm" variant="outline" onClick={() => bukaSetHpp(it)} title="Set / koreksi harga satuan"
