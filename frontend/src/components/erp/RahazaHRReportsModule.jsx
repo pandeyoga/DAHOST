@@ -212,7 +212,7 @@ export default function RahazaHRReportsModule({ token }) {
             onChange={(v) => setPeriode((p) => ({ ...p, preset: 'custom', to: v }))} /></div>
         </>
       ) : null}
-      <SmartNativeSelect value={departmentId} onChange={e => setDepartmentId(e.target.value)} className="w-44" data-testid="filter-department">
+      <SmartNativeSelect value={departmentId} onChange={e => setDepartmentId(e.target.value)} className="w-48" data-testid="filter-department">
         <option value="">Semua departemen</option>
         {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
       </SmartNativeSelect>
