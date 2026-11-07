@@ -29,30 +29,30 @@ function fmtRp(n) { return `Rp ${fmt(n)}`; }
 function fmtPct(n) { return `${(n || 0).toFixed(1)}%`; }
 
 const RISK_CONFIG = {
-  critical: { label: 'Kritis',  color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',       dot: 'bg-red-500',    icon: AlertTriangle },
-  high:     { label: 'Tinggi',  color: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300', dot: 'bg-orange-500', icon: AlertTriangle },
-  medium:   { label: 'Sedang',  color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',   dot: 'bg-amber-400',  icon: Clock },
-  low:      { label: 'Rendah',  color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', dot: 'bg-emerald-500', icon: CheckCircle2 }
+  critical: { label: 'Kritis',  color: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] ',       dot: 'bg-[hsl(var(--destructive-strong))]',    icon: AlertTriangle },
+  high:     { label: 'Tinggi',  color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ', dot: 'bg-[hsl(var(--warning))]', icon: AlertTriangle },
+  medium:   { label: 'Sedang',  color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ',   dot: 'bg-[hsl(var(--warning))]',  icon: Clock },
+  low:      { label: 'Rendah',  color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ', dot: 'bg-[hsl(var(--success-strong))]', icon: CheckCircle2 }
 };
 
 const DIR_CONFIG = {
-  increase: { icon: ArrowUp,   color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20' },
-  decrease: { icon: ArrowDown, color: 'text-red-600',     bg: 'bg-red-50 dark:bg-red-900/20' },
-  hold:     { icon: Target,    color: 'text-muted-foreground',   bg: 'bg-muted dark:bg-slate-800/50' }
+  increase: { icon: ArrowUp,   color: 'text-[hsl(var(--success-text))]', bg: 'bg-[hsl(var(--success)/0.08)] ' },
+  decrease: { icon: ArrowDown, color: 'text-[hsl(var(--danger-text))]',     bg: 'bg-[hsl(var(--destructive)/0.08)] ' },
+  hold:     { icon: Target,    color: 'text-muted-foreground',   bg: 'bg-muted ' }
 };
 
 const STATUS_CONFIG = {
-  pending:  { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
-  approved: { label: 'Disetujui', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
-  applied:  { label: 'Diterapkan', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
-  rejected: { label: 'Ditolak', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' }
+  pending:  { label: 'Menunggu', color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ' },
+  approved: { label: 'Disetujui', color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] ' },
+  applied:  { label: 'Diterapkan', color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ' },
+  rejected: { label: 'Ditolak', color: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] ' }
 };
 
 const AB_STATUS = {
-  draft:     { label: 'Draft',    color: 'bg-muted text-muted-foreground dark:bg-slate-800 dark:text-foreground/70' },
-  running:   { label: 'Running',  color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
-  paused:    { label: 'Paused',   color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
-  concluded: { label: 'Selesai',  color: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300' }
+  draft:     { label: 'Draft',    color: 'bg-muted text-muted-foreground dark:text-foreground/70' },
+  running:   { label: 'Running',  color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ' },
+  paused:    { label: 'Paused',   color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ' },
+  concluded: { label: 'Selesai',  color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] ' }
 };
 
 
@@ -160,19 +160,19 @@ function DynamicPricingTab({ authH }) {
   useEffect(() => { fetchSettings(); }, [fetchSettings]);
   useEffect(() => { fetchSuggestions(); }, [fetchSuggestions]);
 
-  if (settingsLoading) return <div className="flex justify-center py-16"><Loader2 className="animate-spin text-muted-foreground" size={28} /></div>;
+  if (settingsLoading) return <div className="flex justify-center py-6"><Loader2 className="animate-spin text-muted-foreground" size={28} /></div>;
 
   const isEnabled = settings?.enabled;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* Control Card */}
       <Card className={`border-2 transition-colors ${isEnabled ? 'border-emerald-400 dark:border-emerald-600' : 'border-border dark:border-slate-700'}`}>
         <CardContent className="pt-5">
           <div className="flex flex-col sm:flex-row sm:items-center gap-4">
             <div className="flex items-center gap-4 flex-1">
               <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${ isEnabled ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-muted dark:bg-slate-800' }`}>
-                {isEnabled ? <Power size={22} className="text-emerald-600" /> : <PowerOff size={22} className="text-muted-foreground" />}
+                {isEnabled ? <Power size={22} className="text-[hsl(var(--success-text))]" /> : <PowerOff size={22} className="text-muted-foreground" />}
               </div>
               <div>
                 <div className="flex items-center gap-3">
@@ -183,7 +183,7 @@ function DynamicPricingTab({ authH }) {
                     className="data-[state=checked]:bg-emerald-500"
                     data-testid="pricing-toggle"
                   />
-                  <Badge className={isEnabled ? 'bg-emerald-100 text-emerald-700' : 'bg-muted text-muted-foreground'}>
+                  <Badge className={isEnabled ? 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))]' : 'bg-muted text-muted-foreground'}>
                     {isEnabled ? 'AKTIF' : 'NONAKTIF'}
                   </Badge>
                 </div>
@@ -211,10 +211,10 @@ function DynamicPricingTab({ authH }) {
       {isEnabled && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { label: 'Min Margin', value: `${settings?.min_margin_pct_global}%`, icon: Shield, color: 'text-blue-600' },
-            { label: 'Max Naik/Run', value: `+${settings?.max_price_increase_pct_per_run}%`, icon: ArrowUp, color: 'text-emerald-600' },
-            { label: 'Max Turun/Run', value: `-${settings?.max_price_decrease_pct_per_run}%`, icon: ArrowDown, color: 'text-red-600' },
-            { label: 'Pembulatan', value: `Rp ${fmt(settings?.rounding_rule)}`, icon: Target, color: 'text-violet-600' },
+            { label: 'Min Margin', value: `${settings?.min_margin_pct_global}%`, icon: Shield, color: 'text-[hsl(var(--primary))]' },
+            { label: 'Max Naik/Run', value: `+${settings?.max_price_increase_pct_per_run}%`, icon: ArrowUp, color: 'text-[hsl(var(--success-text))]' },
+            { label: 'Max Turun/Run', value: `-${settings?.max_price_decrease_pct_per_run}%`, icon: ArrowDown, color: 'text-[hsl(var(--danger-text))]' },
+            { label: 'Pembulatan', value: `Rp ${fmt(settings?.rounding_rule)}`, icon: Target, color: 'text-[hsl(var(--primary))]' },
           ].map(item => (
             <div key={item.label} className="rounded-lg border p-3 bg-muted/30">
               <div className="flex items-center gap-2 mb-1">
@@ -253,9 +253,9 @@ function DynamicPricingTab({ authH }) {
         </CardHeader>
         <CardContent className="p-0">
           {sugLoading ? (
-            <div className="flex justify-center py-12"><Loader2 className="animate-spin text-muted-foreground" size={22} /></div>
+            <div className="flex justify-center py-6"><Loader2 className="animate-spin text-muted-foreground" size={22} /></div>
           ) : suggestions.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-2">
+            <div className="flex flex-col items-center justify-center py-6 text-muted-foreground gap-2">
               <DollarSign size={32} className="opacity-30" />
               <p className="text-sm">
                 {isEnabled ? 'Belum ada suggestions. Klik "Generate Suggestions" untuk memulai.' : 'Aktifkan Dynamic Pricing untuk generate suggestions.'}
@@ -290,8 +290,8 @@ function DynamicPricingTab({ authH }) {
                         </td>
                         <td className="px-3 py-2.5">
                           <Badge variant="outline" className={`text-xs ${
-                            s.confidence === 'high' ? 'border-emerald-400 text-emerald-600' :
-                            s.confidence === 'low' ? 'border-border text-muted-foreground/60' : 'border-amber-400 text-amber-600'
+                            s.confidence === 'high' ? 'border-[hsl(var(--success)/0.35)] text-[hsl(var(--success-text))]' :
+                            s.confidence === 'low' ? 'border-border text-muted-foreground/60' : 'border-[hsl(var(--warning)/0.35)] text-[hsl(var(--warning-text))]'
                           }`}>{s.confidence}</Badge>
                         </td>
                         <td className="px-3 py-2.5 text-xs text-muted-foreground max-w-[200px]">
@@ -303,13 +303,13 @@ function DynamicPricingTab({ authH }) {
                         <td className="px-3 py-2.5">
                           {s.status === 'pending' && (
                             <div className="flex items-center gap-1">
-                              <Button size="sm" variant="ghost" className="h-7 px-2 text-emerald-600 hover:bg-emerald-50"
+                              <Button size="sm" variant="ghost" className="h-7 px-2 text-[hsl(var(--success-text))] hover:bg-[hsl(var(--success)/0.08)]"
                                 onClick={() => doAction(s.id, 'approve')} disabled={actionLoading[s.id + 'approve']}>
                                 {actionLoading[s.id + 'approve'] ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={13} />}
                               </Button>
                               {/* 2026-11-02: tombol Apply (⚡) DIHAPUS dari baris pending — Apply
                                   hanya untuk usulan yang sudah disetujui (izin sama dengan Approve). */}
-                              <Button size="sm" variant="ghost" className="h-7 px-2 text-red-500 hover:bg-red-50"
+                              <Button size="sm" variant="ghost" className="h-7 px-2 text-[hsl(var(--danger-text))] hover:bg-[hsl(var(--destructive)/0.08)]"
                                 onClick={() => doAction(s.id, 'reject')} disabled={actionLoading[s.id + 'reject']}>
                                 {actionLoading[s.id + 'reject'] ? <Loader2 size={11} className="animate-spin" /> : <XCircle size={13} />}
                               </Button>
@@ -363,9 +363,9 @@ function DynamicPricingTab({ authH }) {
                         <td className="px-3 py-1.5 text-muted-foreground">{new Date(ev.created_at).toLocaleString('id-ID', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' })}</td>
                         <td className="px-3 py-1.5">
                           <Badge className={`text-xs ${
-                            ev.event_type === 'apply' ? 'bg-emerald-100 text-emerald-700' :
-                            ev.event_type === 'approve' ? 'bg-blue-100 text-blue-700' :
-                            ev.event_type === 'reject' ? 'bg-red-100 text-red-700' : 'bg-muted text-muted-foreground'
+                            ev.event_type === 'apply' ? 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))]' :
+                            ev.event_type === 'approve' ? 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))]' :
+                            ev.event_type === 'reject' ? 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))]' : 'bg-muted text-muted-foreground'
                           }`}>{ev.event_type}</Badge>
                         </td>
                         <td className="px-3 py-1.5 font-medium">{ev.product || '—'}</td>
@@ -406,8 +406,8 @@ function DynamicPricingTab({ authH }) {
               </div>
 
               {/* Guardrails */}
-              <div className="p-3 bg-blue-50 dark:bg-blue-950/20 rounded-lg space-y-3">
-                <p className="text-xs font-semibold text-blue-700 dark:text-blue-300 flex items-center gap-1"><Shield size={12} /> Guardrails Keamanan</p>
+              <div className="p-3 bg-[hsl(var(--primary)/0.08)] rounded-lg space-y-3">
+                <p className="text-xs font-semibold text-[hsl(var(--primary))] flex items-center gap-1"><Shield size={12} /> Guardrails Keamanan</p>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label className="text-xs">Min Margin (%)</Label>
@@ -452,9 +452,9 @@ function DynamicPricingTab({ authH }) {
                   onChange={v => setDraft(d => ({ ...d, exclude_skus: v }))} />
               </div>
 
-              <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg">
-                <Info size={14} className="text-amber-600 shrink-0" />
-                <p className="text-xs text-amber-700 dark:text-amber-300">
+              <div className="flex items-center gap-2 p-3 bg-[hsl(var(--warning)/0.08)] rounded-lg">
+                <Info size={14} className="text-[hsl(var(--warning-text))] shrink-0" />
+                <p className="text-xs text-[hsl(var(--warning-text))] ">
                   Perubahan harga tidak otomatis ke platform marketplace sampai Phase 4 (Direct API) aktif. Saat ini bersifat <strong>internal suggestion only</strong>.
                 </p>
               </div>
@@ -520,7 +520,7 @@ function ChurnPredictionTab({ authH }) {
   const filtered = riskFilter === 'all' ? customers : customers.filter(c => c.churn_risk === riskFilter);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -554,16 +554,16 @@ function ChurnPredictionTab({ authH }) {
           </div>
 
           {summary.general_strategy && (
-            <Card className="bg-gradient-to-r from-violet-50 to-purple-50 dark:from-violet-950/30 dark:to-purple-950/30 border-violet-200 dark:border-violet-800">
+            <Card className=" border-[hsl(var(--primary)/0.35)] ">
               <CardContent className="pt-4">
                 <div className="flex items-start gap-3">
-                  <Brain size={18} className="text-violet-600 mt-0.5 shrink-0" />
+                  <Brain size={18} className="text-[hsl(var(--primary))] mt-0.5 shrink-0" />
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-violet-900 dark:text-violet-100">{summary.general_strategy}</p>
+                    <p className="text-sm font-medium text-[hsl(var(--primary))] ">{summary.general_strategy}</p>
                     {summary.quick_wins?.length > 0 && (
                       <ul className="mt-2 space-y-1">
                         {summary.quick_wins.map((w, i) => (
-                          <li key={i} className="flex items-center gap-1.5 text-xs text-violet-700 dark:text-violet-300">
+                          <li key={i} className="flex items-center gap-1.5 text-xs text-[hsl(var(--primary))] ">
                             <ChevronRight size={11} /> {w}
                           </li>
                         ))}
@@ -602,9 +602,9 @@ function ChurnPredictionTab({ authH }) {
         </CardHeader>
         <CardContent className="p-0">
           {scoresLoading || analyzing ? (
-            <div className="flex justify-center py-12"><Loader2 className="animate-spin text-muted-foreground" size={22} /></div>
+            <div className="flex justify-center py-6"><Loader2 className="animate-spin text-muted-foreground" size={22} /></div>
           ) : filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 gap-3 text-muted-foreground">
+            <div className="flex flex-col items-center justify-center py-6 gap-3 text-muted-foreground">
               <Users size={32} className="opacity-30" />
               <p className="text-sm">{customers.length === 0 ? 'Klik "Jalankan Analisis" untuk memulai' : 'Tidak ada customer di filter ini'}</p>
             </div>
@@ -640,8 +640,8 @@ function ChurnPredictionTab({ authH }) {
                             <div className="flex items-center gap-0.5">
                               {['R', 'F', 'M'].map((l, i) => (
                                 <span key={l} className={`w-5 h-5 rounded text-xs flex items-center justify-center font-bold ${
-                                  [c.r_score, c.f_score, c.m_score][i] >= 4 ? 'bg-emerald-100 text-emerald-700' :
-                                  [c.r_score, c.f_score, c.m_score][i] >= 3 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
+                                  [c.r_score, c.f_score, c.m_score][i] >= 4 ? 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))]' :
+                                  [c.r_score, c.f_score, c.m_score][i] >= 3 ? 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))]' : 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))]'
                                 }`}>{[c.r_score, c.f_score, c.m_score][i]}</span>
                               ))}
                             </div>
@@ -658,11 +658,11 @@ function ChurnPredictionTab({ authH }) {
                           <tr>
                             <td colSpan={8} className="px-3 py-3 bg-muted/20">
                               <div className="flex items-start gap-2">
-                                <div className="p-2 rounded bg-violet-100 dark:bg-violet-900/30">
-                                  <Brain size={14} className="text-violet-600" />
+                                <div className="p-2 rounded bg-[hsl(var(--primary)/0.12)] ">
+                                  <Brain size={14} className="text-[hsl(var(--primary))]" />
                                 </div>
                                 <div className="flex-1">
-                                  <p className="text-xs font-semibold text-violet-700 dark:text-violet-300 mb-1">
+                                  <p className="text-xs font-semibold text-[hsl(var(--primary))] mb-1">
                                     Template Pesan — via {c.ai_channel || 'WA'}
                                   </p>
                                   <p className="text-xs text-muted-foreground italic whitespace-pre-wrap">{c.ai_template}</p>
@@ -792,7 +792,7 @@ function ABTestingTab({ authH }) {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">Eksperimen konten & creative untuk menemukan kombinasi terbaik</p>
         <Button size="sm" onClick={() => setShowCreate(true)} data-testid="create-ab-btn">
@@ -816,10 +816,10 @@ function ABTestingTab({ authH }) {
 
       {/* Experiments List */}
       {loading ? (
-        <div className="flex justify-center py-12"><Loader2 className="animate-spin text-muted-foreground" size={24} /></div>
+        <div className="flex justify-center py-6"><Loader2 className="animate-spin text-muted-foreground" size={24} /></div>
       ) : experiments.length === 0 ? (
         <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+          <CardContent className="flex flex-col items-center justify-center py-6 gap-3">
             <FlaskConical size={40} className="text-muted-foreground opacity-40" />
             <p className="font-medium">Belum ada eksperimen</p>
             <p className="text-sm text-muted-foreground">Buat eksperimen pertama untuk mulai mengoptimasi konten</p>
@@ -833,7 +833,7 @@ function ABTestingTab({ authH }) {
             const hasConcluded = exp.status === 'concluded';
             const hasData = exp.variants?.some(v => v.views > 0);
             return (
-              <Card key={exp.id} className={hasConcluded ? 'border-violet-300 dark:border-violet-700' : ''}>
+              <Card key={exp.id} className={hasConcluded ? 'border-[hsl(var(--primary)/0.35)] ' : ''}>
                 <CardHeader className="pb-2">
                   <div className="flex flex-col sm:flex-row sm:items-start gap-2">
                     <div className="flex-1">
@@ -884,14 +884,14 @@ function ABTestingTab({ authH }) {
                 <CardContent className="pt-0">
                   {/* Concluded Winner */}
                   {hasConcluded && exp.winner_label && (
-                    <div className="mb-3 p-3 bg-violet-50 dark:bg-violet-950/20 rounded-lg flex items-start gap-2">
-                      <Trophy size={16} className="text-violet-600 mt-0.5 shrink-0" />
+                    <div className="mb-3 p-3 bg-[hsl(var(--primary)/0.08)] rounded-lg flex items-start gap-2">
+                      <Trophy size={16} className="text-[hsl(var(--primary))] mt-0.5 shrink-0" />
                       <div>
-                        <p className="text-sm font-bold text-violet-700 dark:text-violet-300">
+                        <p className="text-sm font-bold text-[hsl(var(--primary))] ">
                           Pemenang: {exp.winner_label}
                           {exp.improvement_pct && <span className="text-xs font-normal ml-2">({exp.improvement_pct}% lebih baik)</span>}
                         </p>
-                        <p className="text-xs text-violet-600 dark:text-violet-400 mt-0.5">{exp.winner_reason}</p>
+                        <p className="text-xs text-[hsl(var(--primary))] mt-0.5">{exp.winner_reason}</p>
                         {exp.recommendation && (
                           <p className="text-xs text-muted-foreground mt-1 italic">Rekomendasi: {exp.recommendation}</p>
                         )}
@@ -905,14 +905,14 @@ function ABTestingTab({ authH }) {
                       <div key={v.id}
                         className={`rounded-lg border p-3 ${
                           hasConcluded && exp.winner_variant_id === v.id
-                            ? 'border-violet-400 bg-violet-50 dark:bg-violet-950/20'
+                            ? 'border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary)/0.08)] '
                             : 'bg-muted/20'
                         }`}
                       >
                         <div className="flex items-center gap-1.5 mb-2">
                           <span className="font-semibold text-sm">{v.label}</span>
                           {hasConcluded && exp.winner_variant_id === v.id && (
-                            <Trophy size={12} className="text-violet-600" />
+                            <Trophy size={12} className="text-[hsl(var(--primary))]" />
                           )}
                         </div>
                         {v.content && (
@@ -1071,9 +1071,9 @@ export default function AdvancedAIModule({ token }) {
   ];
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-6" data-testid="advanced-ai-module">
+    <div className="min-h-screen bg-background p-4 md:p-4" data-testid="advanced-ai-module">
       {/* Header */}
-      <div className="mb-6">
+      <div className="mb-4">
         <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
           <Sparkles size={24} className="text-primary" />
           Advanced AI Features
@@ -1082,7 +1082,7 @@ export default function AdvancedAIModule({ token }) {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 p-1 bg-muted rounded-xl mb-6 overflow-x-auto">
+      <div className="flex gap-1 p-1 bg-muted rounded-xl mb-4 overflow-x-auto">
         {tabs.map(t => (
           <button
             key={t.id}

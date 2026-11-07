@@ -44,9 +44,9 @@ export default function LiveHostModule({ token }) {
   );
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-6" data-testid="livehost-module">
+    <div className="min-h-screen bg-background p-4 md:p-4" data-testid="livehost-module">
       {/* Header */}
-      <div className="mb-6">
+      <div className="mb-4">
         <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
           <Users size={24} className="text-primary" />
           LiveHost Management
@@ -57,7 +57,7 @@ export default function LiveHostModule({ token }) {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 p-1 bg-muted rounded-xl mb-6 overflow-x-auto">
+      <div className="flex gap-1 p-1 bg-muted rounded-xl mb-4 overflow-x-auto">
         {[
           { id: 'hosts', label: 'Live Hosts', icon: Users },
           { id: 'shifts', label: 'Shift Management', icon: Clock },

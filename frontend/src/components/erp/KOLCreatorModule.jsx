@@ -26,17 +26,17 @@ const fmt = (n) => new Intl.NumberFormat('id-ID').format(n || 0);
 const fmtRp = (n) => `Rp ${fmt(n)}`;
 
 const PLATFORM_COLORS = {
-  shopee: 'bg-orange-100 dark:bg-orange-500/20 text-orange-600 dark:text-orange-400 border-orange-400 dark:border-orange-500/30',
-  tiktokshop: 'bg-black/30 text-pink-600 dark:text-pink-400 border-pink-400 dark:border-pink-500/30',
-  tokopedia: 'bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400 border-green-400 dark:border-green-500/30',
+  shopee: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] border-[hsl(var(--warning)/0.35)] ',
+  tiktokshop: 'bg-black/30 text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)] ',
+  tokopedia: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)] ',
 };
 
 const STATUS_BADGE = {
-  active: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-400 dark:border-emerald-500/30',
-  inactive: 'bg-muted dark:bg-zinc-500/20 text-muted-foreground dark:text-zinc-400 border-border dark:border-zinc-500/30',
-  pending: 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-400 dark:border-amber-500/30',
-  approved: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-400 dark:border-emerald-500/30',
-  rejected: 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-400 border-red-400 dark:border-red-500/30',
+  active: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)] ',
+  inactive: 'bg-muted text-muted-foreground border-border ',
+  pending: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] border-[hsl(var(--warning)/0.35)] ',
+  approved: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)] ',
+  rejected: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] border-[hsl(var(--destructive)/0.35)] ',
 };
 
 function Badge({ cls, children }) {
@@ -49,7 +49,7 @@ function Badge({ cls, children }) {
 
 function KPIBar({ label, value, target, unit = '' }) {
   const pct = target ? Math.min(100, Math.round((value / target) * 100)) : 0;
-  const color = pct >= 80 ? 'bg-emerald-500' : pct >= 50 ? 'bg-amber-500' : 'bg-red-500';
+  const color = pct >= 80 ? 'bg-[hsl(var(--success-strong))]' : pct >= 50 ? 'bg-[hsl(var(--warning))]' : 'bg-[hsl(var(--destructive-strong))]';
   return (
     <div>
       <div className="flex justify-between text-xs mb-1">
@@ -131,11 +131,11 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
   return (
     <div className="fixed inset-0 bg-foreground/60 z-50 flex items-center justify-center p-4 overflow-auto">
       <div className="bg-[hsl(var(--card))] border border-foreground/10 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-auto">
-        <div className="p-6 border-b border-foreground/10 flex items-center justify-between">
+        <div className="p-4 border-b border-foreground/10 flex items-center justify-between">
           <h2 className="text-lg font-semibold">{isEdit ? 'Edit Creator' : 'Tambah Creator Baru'}</h2>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X size={20} /></button>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-5">
+        <form onSubmit={handleSubmit} className="p-4 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-1.5">Nama Creator *</label>
@@ -227,7 +227,7 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
                   onClick={() => toggleAccount(acc.id)}
                   className={`px-3 py-1.5 rounded-lg text-xs border transition-all ${
                     form.assigned_account_ids.includes(acc.id)
-                      ? 'bg-violet-500/30 border-violet-400 text-violet-600 dark:text-violet-300'
+                      ? 'bg-[hsl(var(--primary)/0.3)] border-[hsl(var(--primary)/0.35)] text-[hsl(var(--primary))] '
                       : 'bg-foreground/5 border-foreground/10 text-muted-foreground hover:border-foreground/20'
                   }`}
                 >
@@ -242,7 +242,7 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
           </div>
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 py-2 rounded-lg border border-foreground/10 text-sm hover:bg-foreground/5 transition-colors">Batal</button>
-            <button data-testid="save-creator-btn" type="submit" disabled={saving} className="flex-1 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-sm font-medium transition-colors disabled:opacity-50">
+            <button data-testid="save-creator-btn" type="submit" disabled={saving} className="flex-1 py-2 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-sm font-medium transition-colors disabled:opacity-50">
               {saving ? 'Menyimpan...' : isEdit ? 'Simpan Perubahan' : 'Buat Creator'}
             </button>
           </div>
@@ -321,13 +321,13 @@ function SessionFormModal({ token, creators, accounts, onClose, onSaved }) {
                 })}
               </SmartNativeSelect>
               {form.creator_id && assignedIds.length === 0 && (
-                <p className="text-[10px] text-amber-700 dark:text-amber-400 mt-1">Creator belum di-assign ke akun manapun</p>
+                <p className="text-xs text-[hsl(var(--warning-text))] mt-1">Creator belum di-assign ke akun manapun</p>
               )}
               {form.account_id && availableAccounts.find(a => a.id === form.account_id) && (() => {
                 const acc = availableAccounts.find(a => a.id === form.account_id);
                 const cfg = getPlatformConfig(acc.platform);
                 return (
-                  <div className={`mt-1.5 flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-medium ${cfg.bg} ${cfg.border} ${cfg.text}`}>
+                  <div className={`mt-1.5 flex items-center gap-1.5 px-2 py-1 rounded border text-xs font-medium ${cfg.bg} ${cfg.border} ${cfg.text}`}>
                     {cfg.icon} Input ke: {acc.account_name}
                   </div>
                 );
@@ -376,7 +376,7 @@ function SessionFormModal({ token, creators, accounts, onClose, onSaved }) {
           </div>
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose} className="flex-1 py-2 rounded-lg border border-foreground/10 text-sm hover:bg-foreground/5">Batal</button>
-            <button data-testid="save-session-btn" type="submit" disabled={saving} className="flex-1 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-sm font-medium disabled:opacity-50">
+            <button data-testid="save-session-btn" type="submit" disabled={saving} className="flex-1 py-2 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-sm font-medium disabled:opacity-50">
               {saving ? 'Menyimpan...' : 'Catat Sesi'}
             </button>
           </div>
@@ -520,7 +520,7 @@ export default function KOLCreatorModule({ token }) {
 
   const { page, setPage, totalPages, total, paged } = useClientPagination(sessions, 10);
   return (
-    <div data-testid="kol-creator-module" className="space-y-6 p-6">
+    <div data-testid="kol-creator-module" className="space-y-4 p-4">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
@@ -534,7 +534,7 @@ export default function KOLCreatorModule({ token }) {
             <button
               data-testid="add-creator-btn"
               onClick={() => { setEditCreator(null); setShowCreatorForm(true); }}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-sm font-medium transition-colors"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-sm font-medium transition-colors"
             >
               <UserPlus size={16} />
               Tambah Creator
@@ -544,7 +544,7 @@ export default function KOLCreatorModule({ token }) {
             <button
               data-testid="add-session-btn"
               onClick={() => setShowSessionForm(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-sm font-medium transition-colors"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-sm font-medium transition-colors"
             >
               <Plus size={16} />
               Catat Sesi
@@ -561,13 +561,13 @@ export default function KOLCreatorModule({ token }) {
             data-testid={`tab-${t.id}`}
             onClick={() => setTab(t.id)}
             className={`relative flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              tab === t.id ? 'bg-violet-600 text-foreground shadow-lg' : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'
+              tab === t.id ? 'bg-[hsl(var(--primary))] text-foreground shadow-lg' : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'
             }`}
           >
             <t.icon size={15} />
             {t.label}
             {t.badge ? (
-              <span className="absolute -top-1 -right-1 bg-amber-500 text-foreground text-xs rounded-full w-4 h-4 flex items-center justify-center">
+              <span className="absolute -top-1 -right-1 bg-[hsl(var(--warning))] text-foreground text-xs rounded-full w-4 h-4 flex items-center justify-center">
                 {t.badge}
               </span>
             ) : null}
@@ -575,7 +575,7 @@ export default function KOLCreatorModule({ token }) {
         ))}
       </div>
 
-      {loading && <div className="text-center py-12 text-muted-foreground">Memuat data...</div>}
+      {loading && <div className="text-center py-6 text-muted-foreground">Memuat data...</div>}
 
       {/* ═══ TAB: CREATORS ═══ */}
       {!loading && tab === 'creators' && (
@@ -612,7 +612,7 @@ export default function KOLCreatorModule({ token }) {
           </div>
 
           {filteredCreators.length === 0 ? (
-            <div className="text-center py-16 text-muted-foreground">
+            <div className="text-center py-6 text-muted-foreground">
               <Users className="mx-auto mb-3 opacity-30" size={40} />
               <p className="text-sm">Belum ada kreator. Klik "Tambah Creator" untuk memulai.</p>
             </div>
@@ -623,11 +623,11 @@ export default function KOLCreatorModule({ token }) {
                 <div
                   key={creator.id}
                   data-testid="creator-card"
-                  className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-5 hover:border-violet-400 dark:border-violet-500/30 transition-all group"
+                  className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-5 hover:border-[hsl(var(--primary)/0.35)] transition-all group"
                 >
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-violet-500 to-pink-500 flex items-center justify-center text-foreground font-bold text-sm">
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center text-foreground font-bold text-sm">
                         {creator.name.charAt(0).toUpperCase()}
                       </div>
                       <div>
@@ -655,7 +655,7 @@ export default function KOLCreatorModule({ token }) {
                         return acc ? <AccountBadge key={id} account={acc} size="xs" /> : null;
                       })
                     ) : (
-                      <span className="text-[10px] text-muted-foreground italic px-1">Belum di-assign ke akun</span>
+                      <span className="text-xs text-muted-foreground italic px-1">Belum di-assign ke akun</span>
                     )}
                   </div>
 
@@ -667,7 +667,7 @@ export default function KOLCreatorModule({ token }) {
                     </div>
                     <div className="bg-foreground/5 rounded-lg p-2 text-center">
                       <div className="text-xs text-muted-foreground">Revenue</div>
-                      <div className="font-bold text-xs text-emerald-600 dark:text-emerald-400">{fmtRp(creator.this_month?.revenue || 0)}</div>
+                      <div className="font-bold text-xs text-[hsl(var(--success-text))] ">{fmtRp(creator.this_month?.revenue || 0)}</div>
                     </div>
                     <div className="bg-foreground/5 rounded-lg p-2 text-center">
                       <div className="text-xs text-muted-foreground">Penonton</div>
@@ -693,14 +693,14 @@ export default function KOLCreatorModule({ token }) {
                           <KPIBar label="Viewers" value={creator.this_month?.viewers || 0} target={mt.viewers_target} />
                         )}
                         {mt && (
-                          <p className="text-[9px] text-violet-600 dark:text-violet-400 text-right mt-0.5">target bulanan</p>
+                          <p className="text-xs text-[hsl(var(--primary))] text-right mt-0.5">target bulanan</p>
                         )}
                       </div>
                     );
                   })()}
 
-                  <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[10px]">
-                    <span className="px-1.5 py-0.5 rounded-full bg-foreground/5 uppercase"
+                  <div className="flex flex-wrap items-center gap-1.5 mt-2 text-xs">
+                    <span className="px-1.5 py-0.5 rounded-full bg-foreground/5 "
                       data-testid={`creator-type-badge-${creator.creator_code}`}>
                       {creator.creator_type || 'new'}
                     </span>
@@ -710,11 +710,11 @@ export default function KOLCreatorModule({ token }) {
                     {/* Kreator tanpa akun portal DIKATAKAN, bukan dibiarkan
                         gagal login diam-diam. */}
                     {creator.login_email ? (
-                      <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600">
+                      <span className="px-1.5 py-0.5 rounded-full bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))]">
                         akun portal siap
                       </span>
                     ) : (
-                      <span className="px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600"
+                      <span className="px-1.5 py-0.5 rounded-full bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning-text))]"
                         data-testid={`creator-no-portal-${creator.creator_code}`}>
                         belum ada akun portal
                       </span>
@@ -737,7 +737,7 @@ export default function KOLCreatorModule({ token }) {
                     </button>
                     <button
                       onClick={() => handleDeactivateCreator(creator.id)}
-                      className="flex-1 text-xs py-1.5 rounded-lg border border-red-300 dark:border-red-500/20 text-red-700 dark:text-red-400 hover:bg-red-100 dark:bg-red-500/10 transition-colors flex items-center justify-center gap-1.5"
+                      className="flex-1 text-xs py-1.5 rounded-lg border border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--danger-text))] hover:bg-[hsl(var(--destructive)/0.12)] transition-colors flex items-center justify-center gap-1.5"
                     >
                       <Trash2 size={12} /> Nonaktifkan
                     </button>
@@ -760,7 +760,7 @@ export default function KOLCreatorModule({ token }) {
       {!loading && tab === 'performance' && (
         <div className="space-y-4">
           {sessions.length === 0 ? (
-            <div className="text-center py-16 text-muted-foreground">
+            <div className="text-center py-6 text-muted-foreground">
               <Video className="mx-auto mb-3 opacity-30" size={40} />
               <p className="text-sm">Belum ada sesi live. Klik "Catat Sesi" untuk mulai.</p>
             </div>
@@ -787,10 +787,10 @@ export default function KOLCreatorModule({ token }) {
                           {fmt(s.viewers)}
                         </div>
                       </td>
-                      <td className="px-4 py-3 font-medium text-emerald-600 dark:text-emerald-400">{fmtRp(s.revenue)}</td>
+                      <td className="px-4 py-3 font-medium text-[hsl(var(--success-text))] ">{fmtRp(s.revenue)}</td>
                       <td className="px-4 py-3">{fmt(s.orders)}</td>
                       <td className="px-4 py-3">
-                        <button onClick={() => handleDeleteSession(s.id)} className="text-red-700 dark:text-red-400 hover:text-red-600 dark:text-red-300 transition-colors">
+                        <button onClick={() => handleDeleteSession(s.id)} className="text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))] transition-colors">
                           <Trash2 size={14} />
                         </button>
                       </td>
@@ -806,17 +806,17 @@ export default function KOLCreatorModule({ token }) {
 
       {/* ═══ TAB: CATALOG & REQUESTS ═══ */}
       {!loading && tab === 'catalog' && (
-        <div className="space-y-6">
+        <div className="space-y-4">
           {/* Pending Requests */}
           {pendingRequests.length > 0 && (
             <div>
               <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                <span className="w-5 h-5 rounded-full bg-amber-500 flex items-center justify-center text-foreground text-xs">{pendingRequests.length}</span>
+                <span className="w-5 h-5 rounded-full bg-[hsl(var(--warning))] flex items-center justify-center text-foreground text-xs">{pendingRequests.length}</span>
                 Request Pending Persetujuan
               </h3>
               <div className="space-y-2">
                 {pendingRequests.map(req => (
-                  <div key={req.id} data-testid="request-row" className="flex items-center justify-between bg-amber-100 dark:bg-amber-500/5 border border-amber-300 dark:border-amber-500/20 rounded-xl p-4">
+                  <div key={req.id} data-testid="request-row" className="flex items-center justify-between bg-[hsl(var(--warning)/0.12)] border border-[hsl(var(--warning)/0.35)] rounded-xl p-4">
                     <div>
                       <div className="font-medium text-sm">{req.product_name} <span className="text-xs text-muted-foreground">({req.sku})</span></div>
                       <div className="text-xs text-muted-foreground mt-0.5">
@@ -828,14 +828,14 @@ export default function KOLCreatorModule({ token }) {
                       <button
                         data-testid="approve-request-btn"
                         onClick={() => handleApproveRequest(req.id)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-400 dark:border-emerald-500/30 text-xs hover:bg-emerald-500/30 transition-colors"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border border-[hsl(var(--success)/0.35)] text-xs hover:bg-[hsl(var(--success)/0.3)] transition-colors"
                       >
                         <Check size={12} /> Setujui
                       </button>
                       <button
                         data-testid="reject-request-btn"
                         onClick={() => handleRejectRequest(req.id)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-400 border border-red-400 dark:border-red-500/30 text-xs hover:bg-red-500/30 transition-colors"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] border border-[hsl(var(--destructive)/0.35)] text-xs hover:bg-[hsl(var(--destructive)/0.3)] transition-colors"
                       >
                         <X size={12} /> Tolak
                       </button>
@@ -853,7 +853,7 @@ export default function KOLCreatorModule({ token }) {
               Semua Request {requestPagination ? `(${requestPagination.total})` : `(${requests.length})`}
             </h3>
             {requests.length === 0 ? (
-              <div className="text-center py-10 text-muted-foreground text-sm">Belum ada request dari creator.</div>
+              <div className="text-center py-6 text-muted-foreground text-sm">Belum ada request dari creator.</div>
             ) : (
               <>
               <div className="overflow-auto rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
@@ -876,7 +876,7 @@ export default function KOLCreatorModule({ token }) {
                         <td className="px-4 py-3">{req.quantity_requested} pcs</td>
                         <td className="px-4 py-3 text-xs">{fmt(req.stock_at_request)} pcs</td>
                         <td className="px-4 py-3 text-xs">
-                          <span className={req.current_stock >= req.quantity_requested ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}>
+                          <span className={req.current_stock >= req.quantity_requested ? 'text-[hsl(var(--success-text))] ' : 'text-[hsl(var(--danger-text))] '}>
                             {fmt(req.current_stock)} pcs
                           </span>
                         </td>
@@ -931,7 +931,7 @@ export default function KOLCreatorModule({ token }) {
           </div>
 
           {leaderboard.length === 0 ? (
-            <div className="text-center py-16 text-muted-foreground">
+            <div className="text-center py-6 text-muted-foreground">
               <Trophy className="mx-auto mb-3 opacity-30" size={40} />
               <p className="text-sm">Belum ada data performa untuk periode ini.</p>
             </div>
@@ -942,17 +942,17 @@ export default function KOLCreatorModule({ token }) {
                   key={entry.creator_id}
                   data-testid="leaderboard-row"
                   className={`flex items-center gap-4 p-4 rounded-2xl border transition-all ${
-                    entry.rank === 1 ? 'bg-amber-100 dark:bg-amber-500/10 border-amber-400 dark:border-amber-500/30' :
-                    entry.rank === 2 ? 'bg-muted dark:bg-zinc-400/10 border-border dark:border-zinc-400/30' :
-                    entry.rank === 3 ? 'bg-orange-600/10 border-orange-600/30' :
+                    entry.rank === 1 ? 'bg-[hsl(var(--warning)/0.12)] border-[hsl(var(--warning)/0.35)] ' :
+                    entry.rank === 2 ? 'bg-muted border-border ' :
+                    entry.rank === 3 ? 'bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.3)]' :
                     'bg-foreground/[0.03] border-foreground/[0.08]'
                   }`}
                 >
                   {/* Rank */}
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg flex-shrink-0 ${
-                    entry.rank === 1 ? 'bg-amber-500 text-foreground' :
+                    entry.rank === 1 ? 'bg-[hsl(var(--warning))] text-foreground' :
                     entry.rank === 2 ? 'bg-muted text-foreground' :
-                    entry.rank === 3 ? 'bg-orange-600 text-foreground' :
+                    entry.rank === 3 ? 'bg-[hsl(var(--warning))] text-foreground' :
                     'bg-foreground/10 text-muted-foreground'
                   }`}>
                     {entry.rank <= 3 ? ['🥇', '🥈', '🥉'][entry.rank - 1] : entry.rank}
@@ -973,7 +973,7 @@ export default function KOLCreatorModule({ token }) {
 
                   {/* Revenue + KPI */}
                   <div className="text-right flex-shrink-0">
-                    <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400">{fmtRp(entry.total_revenue)}</div>
+                    <div className="text-lg font-bold text-[hsl(var(--success-text))] ">{fmtRp(entry.total_revenue)}</div>
                     {entry.kpi_revenue_pct !== null && (
                       <div className={`text-xs font-medium ${entry.kpi_revenue_pct >= 100 ? 'text-emerald-600 dark:text-emerald-400' : entry.kpi_revenue_pct >= 50 ? 'text-amber-700 dark:text-amber-400' : 'text-red-700 dark:text-red-400'}`}>
                         {entry.kpi_revenue_pct}% dari target

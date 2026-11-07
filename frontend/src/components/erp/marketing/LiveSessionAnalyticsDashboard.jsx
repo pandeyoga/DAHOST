@@ -28,10 +28,10 @@ const FMT_NUM = v => (+v || 0).toLocaleString('id-ID');
 const FMT_PCT = v => `${(+v || 0).toFixed(1)}%`;
 
 const PLATFORM_COLORS = {
-  shopee:    { bg: 'bg-orange-100 dark:bg-orange-500/15', text: 'text-orange-600 dark:text-orange-400', border: 'border-orange-400 dark:border-orange-500/30', bar: 'bg-orange-500' },
+  shopee:    { bg: 'bg-[hsl(var(--warning)/0.12)] ', text: 'text-[hsl(var(--warning-text))] ', border: 'border-[hsl(var(--warning)/0.35)] ', bar: 'bg-[hsl(var(--warning))]' },
   tiktok:    { bg: 'bg-muted dark:bg-muted-foreground/15',   text: 'text-foreground/80',   border: 'border-border dark:border-border/60',   bar: 'bg-muted-foreground/40' },
-  instagram: { bg: 'bg-pink-100 dark:bg-pink-500/15',   text: 'text-pink-600 dark:text-pink-400',   border: 'border-pink-400 dark:border-pink-500/30',   bar: 'bg-pink-500' },
-  tokopedia: { bg: 'bg-green-100 dark:bg-green-500/15',  text: 'text-green-700 dark:text-green-400',  border: 'border-green-400 dark:border-green-500/30',  bar: 'bg-green-500' },
+  instagram: { bg: 'bg-[hsl(var(--primary)/0.12)] ',   text: 'text-[hsl(var(--primary))] ',   border: 'border-[hsl(var(--primary)/0.35)] ',   bar: 'bg-[hsl(var(--primary))]' },
+  tokopedia: { bg: 'bg-[hsl(var(--success)/0.12)] ',  text: 'text-[hsl(var(--success-text))] ',  border: 'border-[hsl(var(--success)/0.35)] ',  bar: 'bg-[hsl(var(--success-strong))]' },
 };
 
 const PLATFORMS_LIST = ['shopee', 'tiktok', 'instagram', 'tokopedia'];
@@ -41,7 +41,7 @@ function DeltaBadge({ pct }) {
   const pos = pct >= 0;
   return (
     <span className={`inline-flex items-center gap-0.5 text-xs font-medium ${
-      pos ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'
+      pos ? 'text-[hsl(var(--success-text))] ' : 'text-[hsl(var(--danger-text))] '
     }`}>
       {pos ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
       {Math.abs(pct)}%
@@ -59,7 +59,7 @@ function MiniBarChart({ data, valueKey = 'revenue', labelKey = 'date' }) {
       {data.slice(-14).map((d, i) => (
         <div key={i} className="flex-1 flex flex-col items-center group relative">
           <div
-            className="w-full bg-blue-500 rounded-sm opacity-70 hover:opacity-100 transition-all"
+            className="w-full bg-[hsl(var(--primary))] rounded-sm opacity-70 hover:opacity-100 transition-all"
             style={{ height: `${((d[valueKey] || 0) / max) * 100}%` }}
           />
           <div className="absolute bottom-full mb-1 bg-muted border border-border rounded px-2 py-1 text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 z-10">
@@ -139,12 +139,12 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
   ];
 
   return (
-    <div className="p-4 md:p-6 space-y-5 text-foreground">
+    <div className="p-4 md:p-4 space-y-4 text-foreground">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-bold flex items-center gap-2">
-            <Zap className="text-amber-700 dark:text-amber-400" /> Live Session Analytics
+            <Zap className="text-[hsl(var(--warning-text))] " /> Live Session Analytics
           </h2>
           <p className="text-sm text-muted-foreground mt-1">Analisis performa live session multi-platform</p>
         </div>
@@ -213,7 +213,7 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
             onClick={() => setActiveTab(t.id)}
             className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors ${
               activeTab === t.id
-                ? 'text-foreground border-b-2 border-blue-500'
+                ? 'text-foreground border-b-2 border-[hsl(var(--primary)/0.35)]'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
             data-testid={`tab-${t.id}`}
@@ -272,7 +272,7 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
           </CardHeader>
           <CardContent className="p-0">
             {sessions.length === 0 ? (
-              <div className="text-center py-10 text-muted-foreground/80">Belum ada data sesi</div>
+              <div className="text-center py-6 text-muted-foreground/80">Belum ada data sesi</div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -302,7 +302,7 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
                           }`}>{s.platform}</span>
                         </td>
                         <td className="px-4 py-2 text-foreground/80">{s.host_name || '—'}</td>
-                        <td className="px-4 py-2 text-right text-emerald-600 dark:text-emerald-400 font-medium">{FMT_IDR(s.total_revenue)}</td>
+                        <td className="px-4 py-2 text-right text-[hsl(var(--success-text))] font-medium">{FMT_IDR(s.total_revenue)}</td>
                         <td className="px-4 py-2 text-right text-foreground/80">{s.orders_count}</td>
                         <td className="px-4 py-2 text-right text-muted-foreground">{FMT_NUM(s.peak_viewers)}</td>
                         <td className="px-4 py-2 text-right text-muted-foreground">{s.conversion_rate}%</td>
@@ -341,7 +341,7 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
           </CardHeader>
           <CardContent className="p-0">
             {products.data.length === 0 ? (
-              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+              <div className="px-4 py-6 text-center text-sm text-muted-foreground">
                 {products.note || 'Belum ada rincian produk pada sesi live.'}
               </div>
             ) : (
@@ -366,7 +366,7 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
                     {products.data.map((p) => (
                       <tr key={`${p.catalog_item_id || p.sku}`} className="border-b border-border/60 hover:bg-muted/30">
                         <td className="px-4 py-2 text-muted-foreground">{p.rank}</td>
-                        <td className="px-4 py-2 font-mono text-xs">{p.sku || '—'}</td>
+                        <td className="px-4 py-2 tabular-nums text-xs">{p.sku || '—'}</td>
                         <td className="px-4 py-2">
                           {p.name || '—'}
                           {p.category ? <span className="text-xs text-muted-foreground ml-1">({p.category})</span> : null}
@@ -376,11 +376,11 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
                             title={p.account_name}>{p.account_name || '—'}</td>
                         )}
                         <td className="px-4 py-2 text-right tabular-nums font-semibold">{FMT_NUM(p.total_units_sold)}</td>
-                        <td className="px-4 py-2 text-right tabular-nums text-emerald-600 font-semibold">{FMT_IDR(p.total_revenue)}</td>
+                        <td className="px-4 py-2 text-right tabular-nums text-[hsl(var(--success-text))] font-semibold">{FMT_IDR(p.total_revenue)}</td>
                         <td className="px-4 py-2 text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             <div className="h-1.5 w-14 bg-muted rounded-full overflow-hidden">
-                              <div className="h-full bg-blue-500" style={{ width: `${Math.min(p.revenue_share_pct, 100)}%` }} />
+                              <div className="h-full bg-[hsl(var(--primary))]" style={{ width: `${Math.min(p.revenue_share_pct, 100)}%` }} />
                             </div>
                             <span className="text-xs tabular-nums w-10 text-right">{p.revenue_share_pct}%</span>
                           </div>
@@ -405,12 +405,12 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
         <Card className="bg-card border-border">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-foreground/80 flex items-center gap-2">
-              <Award className="w-4 h-4 text-amber-700 dark:text-amber-400" /> Host Leaderboard ({days} hari)
+              <Award className="w-4 h-4 text-[hsl(var(--warning-text))] " /> Host Leaderboard ({days} hari)
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             {leaderboard.length === 0 ? (
-              <div className="text-center py-10 text-muted-foreground/80">Belum ada data host</div>
+              <div className="text-center py-6 text-muted-foreground/80">Belum ada data host</div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -430,12 +430,12 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
                       <tr key={h.host_name} className="border-b border-border/50 hover:bg-muted/50">
                         <td className="px-4 py-2">
                           <span className={`font-bold ${
-                            i === 0 ? 'text-amber-700 dark:text-amber-400' : i === 1 ? 'text-foreground/80' : i === 2 ? 'text-orange-600 dark:text-orange-400' : 'text-muted-foreground/80'
+                            i === 0 ? 'text-[hsl(var(--warning-text))] ' : i === 1 ? 'text-foreground/80' : i === 2 ? 'text-[hsl(var(--warning-text))] ' : 'text-muted-foreground/80'
                           }`}>#{h.rank}</span>
                         </td>
                         <td className="px-4 py-2 font-medium text-foreground">{h.host_name}</td>
                         <td className="px-4 py-2 text-right text-muted-foreground">{h.total_sessions}</td>
-                        <td className="px-4 py-2 text-right text-emerald-600 dark:text-emerald-400 font-medium">{FMT_IDR(h.total_revenue)}</td>
+                        <td className="px-4 py-2 text-right text-[hsl(var(--success-text))] font-medium">{FMT_IDR(h.total_revenue)}</td>
                         <td className="px-4 py-2 text-right text-foreground/80">{FMT_IDR(h.avg_revenue_per_session)}</td>
                         <td className="px-4 py-2 text-right text-muted-foreground">{FMT_NUM(h.avg_viewers)}</td>
                         <td className="px-4 py-2 text-right text-muted-foreground">{h.avg_conversion_rate}%</td>
@@ -453,12 +453,12 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
         <Card className="bg-card border-border">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-foreground/80 flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-blue-600 dark:text-blue-400" /> Revenue Trend (Weekly)
+              <TrendingUp className="w-4 h-4 text-[hsl(var(--primary))] " /> Revenue Trend (Weekly)
             </CardTitle>
           </CardHeader>
           <CardContent>
             {trend.length === 0 ? (
-              <div className="text-center py-10 text-muted-foreground/80">Belum ada data trend</div>
+              <div className="text-center py-6 text-muted-foreground/80">Belum ada data trend</div>
             ) : (
               <>
                 <MiniBarChart data={trend} valueKey="revenue" labelKey="period" />
@@ -477,7 +477,7 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
                       {trend.map(t => (
                         <tr key={t.period} className="border-b border-border/30">
                           <td className="py-1 px-2 text-foreground/80">{t.period}</td>
-                          <td className="py-1 px-2 text-right text-emerald-600 dark:text-emerald-400">{FMT_IDR(t.revenue)}</td>
+                          <td className="py-1 px-2 text-right text-[hsl(var(--success-text))] ">{FMT_IDR(t.revenue)}</td>
                           <td className="py-1 px-2 text-right text-muted-foreground">{t.sessions}</td>
                           <td className="py-1 px-2 text-right text-muted-foreground">{t.orders}</td>
                           <td className="py-1 px-2 text-right text-muted-foreground">{FMT_IDR(t.avg_revenue_per_session)}</td>
@@ -499,7 +499,7 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
           </CardHeader>
           <CardContent className="p-0">
             {accountHealth.length === 0 ? (
-              <div className="text-center py-10 text-muted-foreground/80">Belum ada data akun</div>
+              <div className="text-center py-6 text-muted-foreground/80">Belum ada data akun</div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -523,13 +523,13 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
                           } ${PLATFORM_COLORS[a.platform]?.text || 'text-foreground/80'}`}>{a.platform}</span>
                         </td>
                         <td className="px-4 py-2 text-right text-muted-foreground">{a.sessions}</td>
-                        <td className="px-4 py-2 text-right text-emerald-600 dark:text-emerald-400">{FMT_IDR(a.total_revenue)}</td>
+                        <td className="px-4 py-2 text-right text-[hsl(var(--success-text))] ">{FMT_IDR(a.total_revenue)}</td>
                         <td className="px-4 py-2 text-right text-muted-foreground">{a.avg_conversion_rate}%</td>
                         <td className="px-4 py-2 text-right">
                           <span className={`font-bold ${
-                            a.health_score >= 80 ? 'text-emerald-600 dark:text-emerald-400' :
-                            a.health_score >= 60 ? 'text-blue-600 dark:text-blue-400' :
-                            a.health_score >= 40 ? 'text-amber-700 dark:text-amber-400' : 'text-red-700 dark:text-red-400'
+                            a.health_score >= 80 ? 'text-[hsl(var(--success-text))] ' :
+                            a.health_score >= 60 ? 'text-[hsl(var(--primary))] ' :
+                            a.health_score >= 40 ? 'text-[hsl(var(--warning-text))] ' : 'text-[hsl(var(--danger-text))] '
                           }`}>{a.health_score}</span>
                           <span className="text-muted-foreground/60 text-xs ml-1">({a.health_status})</span>
                         </td>

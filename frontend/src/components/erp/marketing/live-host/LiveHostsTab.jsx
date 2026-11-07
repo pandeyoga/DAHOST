@@ -146,12 +146,12 @@ export default function LiveHostsTab({ authH }) {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-12">
+        <div className="flex justify-center py-6">
           <Loader2 size={28} className="animate-spin text-muted-foreground" />
         </div>
       ) : hosts.length === 0 ? (
         <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+          <CardContent className="flex flex-col items-center justify-center py-6 gap-3">
             <Users size={40} className="text-muted-foreground opacity-40" />
             <p className="font-medium">Belum ada LiveHost</p>
             <p className="text-sm text-muted-foreground">Tambahkan LiveHost pertama untuk mulai scheduling</p>
@@ -224,7 +224,7 @@ export default function LiveHostsTab({ authH }) {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            className="h-8 w-8 p-0 text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))] hover:bg-[hsl(var(--destructive)/0.08)]"
                             onClick={() => handleDelete(host)}
                             data-testid={`delete-host-${host.id}`}
                           >

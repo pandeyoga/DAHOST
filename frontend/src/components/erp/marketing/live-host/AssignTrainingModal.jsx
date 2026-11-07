@@ -73,7 +73,7 @@ export default function AssignTrainingModal({ training, authH, onClose, onSucces
           </p>
 
           {loading ? (
-            <div className="flex justify-center py-8">
+            <div className="flex justify-center py-6">
               <Loader2 size={24} className="animate-spin" />
             </div>
           ) : (

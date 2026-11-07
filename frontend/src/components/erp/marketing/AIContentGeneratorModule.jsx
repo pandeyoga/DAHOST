@@ -32,7 +32,7 @@ function CopyButton({ text, className = '' }) {
   };
   return (
     <Button size="sm" variant="ghost" onClick={handleCopy} className={className}>
-      {copied ? <CheckCircle2 className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+      {copied ? <CheckCircle2 className="h-4 w-4 text-[hsl(var(--success-text))]" /> : <Copy className="h-4 w-4" />}
       <span className="ml-1 text-xs">{copied ? 'Tersalin' : 'Copy'}</span>
     </Button>
   );
@@ -98,12 +98,12 @@ function GeneratorTab() {
   const cfg = PLATFORM_CONFIG[platform] || PLATFORM_CONFIG.instagram;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       {/* Form */}
       <Card className="border border-border">
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-purple-500" />
+            <Sparkles className="h-4 w-4 text-[hsl(var(--primary))]" />
             Input Produk
           </CardTitle>
           <CardDescription className="text-xs">Isi informasi produk untuk caption yang relevan</CardDescription>
@@ -119,7 +119,7 @@ function GeneratorTab() {
                 {Object.entries(PLATFORM_CONFIG).map(([k, v]) => (
                   <SelectItem key={k} value={k}>
                     <span className="flex items-center gap-2">
-                      <Badge variant="outline" className="text-[10px] px-1 py-0">{v.badge}</Badge>
+                      <Badge variant="outline" className="text-xs px-1 py-0">{v.badge}</Badge>
                       {v.label}
                     </span>
                   </SelectItem>
@@ -197,7 +197,7 @@ function GeneratorTab() {
               {form.master && Number(form.master.retail_price_master || 0) > 0
                 && Number(form.price || 0) > 0
                 && Number(form.price) !== Number(form.master.retail_price_master) && (
-                <p className="mt-1 text-[10px] text-amber-700 dark:text-amber-400">
+                <p className="mt-1 text-xs text-[hsl(var(--warning-text))] ">
                   Beda dari harga resmi master (Rp {Number(form.master.retail_price_master).toLocaleString('id-ID')}).
                 </p>
               )}
@@ -216,7 +216,7 @@ function GeneratorTab() {
           </div>
 
           <Button title="Muat ulang" aria-label="Muat ulang" size="icon"
-            className={`w-full bg-gradient-to-r ${cfg.color} text-foreground hover:opacity-90`}
+            className={`w-full ${cfg.color} text-foreground hover:opacity-90`}
             onClick={handleGenerate}
             disabled={loading}
             data-testid="btn-generate-caption"
@@ -234,21 +234,21 @@ function GeneratorTab() {
       <Card className="border border-border">
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
-            <Badge variant="outline" className={`text-[10px]`}>{cfg.badge}</Badge>
+            <Badge variant="outline" className={`text-xs`}>{cfg.badge}</Badge>
             Hasil Caption
           </CardTitle>
           <CardDescription className="text-xs">Caption dan hashtag siap copy-paste</CardDescription>
         </CardHeader>
         <CardContent>
           {!result && !loading && (
-            <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+            <div className="flex flex-col items-center justify-center py-6 text-center text-muted-foreground">
               <Sparkles className="h-10 w-10 mb-3 opacity-30" />
               <p className="text-sm">Isi form di sebelah kiri lalu<br />klik &quot;Generate Caption AI&quot;</p>
             </div>
           )}
           {loading && (
-            <div className="flex flex-col items-center justify-center py-12">
-              <RefreshCw className="h-8 w-8 animate-spin text-purple-500 mb-3" />
+            <div className="flex flex-col items-center justify-center py-6">
+              <RefreshCw className="h-8 w-8 animate-spin text-[hsl(var(--primary))] mb-3" />
               <p className="text-sm text-muted-foreground">AI sedang menulis caption terbaik...</p>
             </div>
           )}
@@ -256,15 +256,15 @@ function GeneratorTab() {
             <div className="space-y-4">
               <div className="bg-muted/50 rounded-lg p-3">
                 <div className="flex items-center justify-between mb-2">
-                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Caption</Label>
+                  <Label className="text-xs font-semibold text-muted-foreground">Caption</Label>
                   <CopyButton text={result.caption} />
                 </div>
                 <p className="text-sm leading-relaxed whitespace-pre-wrap">{result.caption}</p>
-                <p className="text-[11px] text-muted-foreground mt-2">{result.caption?.length || 0} karakter (maks {cfg.limit})</p>
+                <p className="text-xs text-muted-foreground mt-2">{result.caption?.length || 0} karakter (maks {cfg.limit})</p>
               </div>
               <div className="bg-muted/50 rounded-lg p-3">
                 <div className="flex items-center justify-between mb-2">
-                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Hashtag</Label>
+                  <Label className="text-xs font-semibold text-muted-foreground">Hashtag</Label>
                   <CopyButton text={result.hashtags} />
                 </div>
                 <div className="flex flex-wrap gap-1.5">
@@ -323,8 +323,8 @@ function HistoryTab() {
         </Button>
       </div>
 
-      {loading && <div className="text-center py-8 text-muted-foreground text-sm">Memuat riwayat...</div>}
-      {!loading && !history?.length && <div className="text-center py-8 text-muted-foreground text-sm">Belum ada riwayat generate</div>}
+      {loading && <div className="text-center py-6 text-muted-foreground text-sm">Memuat riwayat...</div>}
+      {!loading && !history?.length && <div className="text-center py-6 text-muted-foreground text-sm">Belum ada riwayat generate</div>}
       {!loading && history?.length > 0 && (
         <div className="space-y-3">
           {history.map((item, i) => (
@@ -333,13 +333,13 @@ function HistoryTab() {
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
-                      <Badge variant="outline" className="text-[10px]">{item.type === 'caption' ? 'Caption' : 'Image'}</Badge>
-                      {item.platform && <Badge variant="secondary" className="text-[10px]">{PLATFORM_CONFIG[item.platform]?.badge || item.platform}</Badge>}
+                      <Badge variant="outline" className="text-xs">{item.type === 'caption' ? 'Caption' : 'Image'}</Badge>
+                      {item.platform && <Badge variant="secondary" className="text-xs">{PLATFORM_CONFIG[item.platform]?.badge || item.platform}</Badge>}
                     </div>
                     <p className="text-sm font-medium">{item.product_name || item.prompt || 'N/A'}</p>
                     {item.caption && <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{item.caption}</p>}
                   </div>
-                  <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
                     <Clock className="h-3 w-3" />
                     {item.generated_at ? new Date(item.generated_at).toLocaleDateString('id-ID') : '-'}
                   </div>
@@ -355,19 +355,19 @@ function HistoryTab() {
 
 export default function AIContentGeneratorModule() {
   return (
-    <div className="p-6 space-y-4">
+    <div className="p-4 space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
+            <div className="h-8 w-8 rounded-lg flex items-center justify-center">
               <Sparkles className="h-4 w-4 text-foreground" />
             </div>
             AI Content Generator
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">Generate caption & hashtag untuk IG, TikTok, Shopee, Tokopedia</p>
         </div>
-        <Badge className="bg-purple-100 text-purple-700 border-purple-200">Powered by AI</Badge>
+        <Badge className="bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]">Powered by AI</Badge>
       </div>
 
       <Tabs defaultValue="generator">

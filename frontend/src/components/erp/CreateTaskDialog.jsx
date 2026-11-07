@@ -207,7 +207,7 @@ export function CreateTaskDialog({ open, onOpenChange, onCreated, token, account
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <Label htmlFor="task-title">Judul Task <span className="text-red-400">*</span></Label>
+            <Label htmlFor="task-title">Judul Task <span className="text-[hsl(var(--danger-text))]">*</span></Label>
             <GlassInput
               id="task-title"
               value={form.title}
@@ -307,7 +307,7 @@ export function CreateTaskDialog({ open, onOpenChange, onCreated, token, account
           <div>
             <Label>
               Akun / Toko Marketplace
-              {form.task_type === 'data_entry' && <span className="text-red-400 ml-1">*</span>}
+              {form.task_type === 'data_entry' && <span className="text-[hsl(var(--danger-text))] ml-1">*</span>}
             </Label>
             <Select
               value={form.account_id || 'none'}
@@ -326,20 +326,20 @@ export function CreateTaskDialog({ open, onOpenChange, onCreated, token, account
               </SelectContent>
             </Select>
             {form.task_type === 'data_entry' && !form.account_id && (
-              <p className="text-xs text-amber-500 mt-1">
+              <p className="text-xs text-[hsl(var(--warning-text))] mt-1">
                 Task tipe Input Data wajib pilih akun marketplace
               </p>
             )}
           </div>
 
           {/* ── ACTIONABLE TASK LINKAGE ── */}
-          <div className="rounded-md border border-blue-500/30 bg-blue-500/5 p-3 space-y-3">
+          <div className="rounded-md border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.05)] p-3 space-y-3">
             <div>
               <Label className="text-xs flex items-center gap-1">
                 <Zap className="w-3 h-3" />
                 In-System Action (Opsional)
               </Label>
-              <p className="text-[11px] text-muted-foreground mt-0.5 mb-2">
+              <p className="text-xs text-muted-foreground mt-0.5 mb-2">
                 Pilih jika task perlu eksekusi aksi langsung dari Kanban (bukan sekadar reminder).
               </p>
               <Select
@@ -371,14 +371,14 @@ export function CreateTaskDialog({ open, onOpenChange, onCreated, token, account
                   placeholder={`UUID ${form.related_entity} yang akan di-action`}
                   data-testid="task-entity-id-input"
                 />
-                <p className="text-[11px] text-muted-foreground mt-0.5">
+                <p className="text-xs text-muted-foreground mt-0.5">
                   Copy ID dari modul {form.related_entity === 'return' ? 'Returns & Refunds' : 'Rating & Review'}.
                 </p>
               </div>
             )}
 
             {form.related_entity === 'sales_data' && form.account_id && (
-              <p className="text-[11px] text-emerald-400">
+              <p className="text-xs text-[hsl(var(--success-text))]">
                 ✓ Akun terpilih akan jadi pre-fill untuk form sales data. Staff cukup isi revenue/orders di Kanban.
               </p>
             )}

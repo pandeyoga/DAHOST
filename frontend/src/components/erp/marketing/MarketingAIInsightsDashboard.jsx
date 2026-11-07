@@ -21,16 +21,16 @@ const MODULE_ICONS = {
 };
 
 const URGENCY_CONFIG = {
-  urgent: { label: 'Segera', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300', dot: 'bg-red-500' },
-  high:   { label: 'Tinggi', color: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300', dot: 'bg-orange-500' },
-  medium: { label: 'Sedang', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', dot: 'bg-amber-400' },
-  low:    { label: 'Rendah', color: 'bg-muted text-muted-foreground dark:bg-slate-800 dark:text-foreground/70', dot: 'bg-muted' }
+  urgent: { label: 'Segera', color: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] ', dot: 'bg-[hsl(var(--destructive-strong))]' },
+  high:   { label: 'Tinggi', color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ', dot: 'bg-[hsl(var(--warning))]' },
+  medium: { label: 'Sedang', color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ', dot: 'bg-[hsl(var(--warning))]' },
+  low:    { label: 'Rendah', color: 'bg-muted text-muted-foreground dark:text-foreground/70', dot: 'bg-muted' }
 };
 
 const SENTIMENT_CONFIG = {
-  positive: { label: 'Positif', color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20', icon: CheckCircle2 },
-  neutral:  { label: 'Netral',  color: 'text-amber-600',   bg: 'bg-amber-50 dark:bg-amber-900/20',   icon: Minus },
-  negative: { label: 'Negatif', color: 'text-red-600',     bg: 'bg-red-50 dark:bg-red-900/20',       icon: AlertTriangle }
+  positive: { label: 'Positif', color: 'text-[hsl(var(--success-text))]', bg: 'bg-[hsl(var(--success)/0.08)] ', icon: CheckCircle2 },
+  neutral:  { label: 'Netral',  color: 'text-[hsl(var(--warning-text))]',   bg: 'bg-[hsl(var(--warning)/0.08)] ',   icon: Minus },
+  negative: { label: 'Negatif', color: 'text-[hsl(var(--danger-text))]',     bg: 'bg-[hsl(var(--destructive)/0.08)] ',       icon: AlertTriangle }
 };
 
 function UrgencyBadge({ urgency }) {
@@ -121,9 +121,9 @@ export default function MarketingAIInsightsDashboard({ token }) {
   ];
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-6" data-testid="ai-insights-dashboard">
+    <div className="min-h-screen bg-background p-4 md:p-4" data-testid="ai-insights-dashboard">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <Brain size={24} className="text-primary" />
@@ -138,7 +138,7 @@ export default function MarketingAIInsightsDashboard({ token }) {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 p-1 bg-muted rounded-lg mb-6 overflow-x-auto">
+      <div className="flex gap-1 p-1 bg-muted rounded-lg mb-4 overflow-x-auto">
         {tabs.map(t => (
           <button
             key={t.id}
@@ -190,7 +190,7 @@ export default function MarketingAIInsightsDashboard({ token }) {
                 <CardContent className="space-y-2">
                   <p className="text-3xl font-bold tabular-nums">{fmt(overview.complaints?.recent_30d)}</p>
                   {overview.complaints?.overdue > 0 && (
-                    <div className="flex items-center gap-1.5 px-2 py-1 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 rounded-md">
+                    <div className="flex items-center gap-1.5 px-2 py-1 bg-[hsl(var(--destructive)/0.08)] text-[hsl(var(--danger-text))] rounded-md">
                       <AlertTriangle size={12} />
                       <span className="text-xs font-medium">{overview.complaints?.overdue} overdue SLA</span>
                     </div>
@@ -219,7 +219,7 @@ export default function MarketingAIInsightsDashboard({ token }) {
                       <div key={r} className="flex items-center gap-2 text-xs">
                         <span className="text-muted-foreground w-10">{'⭐'.repeat(Number(r))}</span>
                         <div className="flex-1 bg-muted rounded-full h-1.5">
-                          <div className="bg-amber-400 h-1.5 rounded-full" style={{ width: `${overview.reviews?.total > 0 ? (n / overview.reviews.total * 100) : 0}%` }} />
+                          <div className="bg-[hsl(var(--warning))] h-1.5 rounded-full" style={{ width: `${overview.reviews?.total > 0 ? (n / overview.reviews.total * 100) : 0}%` }} />
                         </div>
                         <span className="font-medium w-8 text-right tabular-nums">{n}</span>
                       </div>
@@ -237,7 +237,7 @@ export default function MarketingAIInsightsDashboard({ token }) {
                   <p className="text-3xl font-bold tabular-nums">{fmt(overview.discounts?.active)}</p>
                   <p className="text-xs text-muted-foreground">Campaign aktif</p>
                   {overview.discounts?.expiring_soon > 0 && (
-                    <div className="flex items-center gap-1.5 px-2 py-1 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 rounded-md">
+                    <div className="flex items-center gap-1.5 px-2 py-1 bg-[hsl(var(--warning)/0.08)] text-[hsl(var(--warning-text))] rounded-md">
                       <Clock size={12} />
                       <span className="text-xs font-medium">{overview.discounts?.expiring_soon} berakhir dalam 3 hari</span>
                     </div>
@@ -254,13 +254,13 @@ export default function MarketingAIInsightsDashboard({ token }) {
                   <p className="text-3xl font-bold tabular-nums">{(overview.health?.accounts || []).length}</p>
                   <p className="text-xs text-muted-foreground">Total akun terpantau</p>
                   {overview.health?.critical_count > 0 && (
-                    <div className="flex items-center gap-1.5 px-2 py-1 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 rounded-md">
+                    <div className="flex items-center gap-1.5 px-2 py-1 bg-[hsl(var(--destructive)/0.08)] text-[hsl(var(--danger-text))] rounded-md">
                       <AlertTriangle size={12} />
                       <span className="text-xs font-medium">{overview.health?.critical_count} akun kritis</span>
                     </div>
                   )}
                   {overview.health?.warning_count > 0 && (
-                    <div className="flex items-center gap-1.5 px-2 py-1 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 rounded-md">
+                    <div className="flex items-center gap-1.5 px-2 py-1 bg-[hsl(var(--warning)/0.08)] text-[hsl(var(--warning-text))] rounded-md">
                       <AlertTriangle size={12} />
                       <span className="text-xs font-medium">{overview.health?.warning_count} akun perlu perhatian</span>
                     </div>
@@ -269,7 +269,7 @@ export default function MarketingAIInsightsDashboard({ token }) {
               </Card>
 
               {/* Quick AI Actions */}
-              <Card className="bg-gradient-to-br from-primary/5 to-primary/10 border-primary/20">
+              <Card className=" from-primary/5 to-primary/10 border-primary/20">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm flex items-center gap-2"><Sparkles size={14} className="text-primary" /> AI Actions</CardTitle>
                   <CardDescription className="text-xs">Jalankan analisis AI</CardDescription>
@@ -302,7 +302,7 @@ export default function MarketingAIInsightsDashboard({ token }) {
         <div className="space-y-4">
           {!forecast && !loading.forecast && (
             <Card className="border-dashed">
-              <CardContent className="flex flex-col items-center justify-center py-12 gap-4">
+              <CardContent className="flex flex-col items-center justify-center py-6 gap-4">
                 <TrendingUp size={40} className="text-muted-foreground opacity-40" />
                 <div className="text-center">
                   <p className="font-medium">Sales Forecast 7 Hari</p>
@@ -323,16 +323,16 @@ export default function MarketingAIInsightsDashboard({ token }) {
           {forecast && !loading.forecast && (
             <div className="space-y-4">
               {/* Summary */}
-              <Card className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30 border-blue-200 dark:border-blue-800">
+              <Card className=" border-[hsl(var(--primary)/0.35)] ">
                 <CardContent className="pt-4">
                   <div className="flex items-start gap-3">
-                    <Brain size={20} className="text-blue-600 mt-0.5 shrink-0" />
+                    <Brain size={20} className="text-[hsl(var(--primary))] mt-0.5 shrink-0" />
                     <div className="flex-1">
-                      <p className="text-sm font-medium text-blue-900 dark:text-blue-100">{forecast.summary}</p>
+                      <p className="text-sm font-medium text-[hsl(var(--primary))] ">{forecast.summary}</p>
                       <div className="flex items-center gap-3 mt-2">
                         <span className={`inline-flex items-center gap-1 text-xs font-medium ${
-                          forecast.trend === 'upward' ? 'text-emerald-600' :
-                          forecast.trend === 'downward' ? 'text-red-600' : 'text-amber-600'
+                          forecast.trend === 'upward' ? 'text-[hsl(var(--success-text))]' :
+                          forecast.trend === 'downward' ? 'text-[hsl(var(--danger-text))]' : 'text-[hsl(var(--warning-text))]'
                         }`}>
                           {forecast.trend === 'upward' ? <ArrowUp size={12} /> : forecast.trend === 'downward' ? <ArrowDown size={12} /> : <Minus size={12} />}
                           Tren: {forecast.trend === 'upward' ? 'Naik' : forecast.trend === 'downward' ? 'Turun' : 'Stabil'}
@@ -344,7 +344,7 @@ export default function MarketingAIInsightsDashboard({ token }) {
                       {forecast.key_factors?.length > 0 && (
                         <div className="flex flex-wrap gap-1.5 mt-2">
                           {forecast.key_factors.map((f, i) => (
-                            <span key={i} className="text-xs bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full">{f}</span>
+                            <span key={i} className="text-xs bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] px-2 py-0.5 rounded-full">{f}</span>
                           ))}
                         </div>
                       )}
@@ -389,7 +389,7 @@ export default function MarketingAIInsightsDashboard({ token }) {
         <div className="space-y-4">
           {!sentiment && !loading.sentiment && (
             <Card className="border-dashed">
-              <CardContent className="flex flex-col items-center justify-center py-12 gap-4">
+              <CardContent className="flex flex-col items-center justify-center py-6 gap-4">
                 <MessageSquare size={40} className="text-muted-foreground opacity-40" />
                 <div className="text-center">
                   <p className="font-medium">Analisis Sentimen Customer</p>
@@ -440,16 +440,16 @@ export default function MarketingAIInsightsDashboard({ token }) {
                           <div key={i} className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
                               <span className={`w-2 h-2 rounded-full ${
-                                t.sentiment === 'positive' ? 'bg-emerald-500' :
-                                t.sentiment === 'negative' ? 'bg-red-500' : 'bg-amber-400'
+                                t.sentiment === 'positive' ? 'bg-[hsl(var(--success-strong))]' :
+                                t.sentiment === 'negative' ? 'bg-[hsl(var(--destructive-strong))]' : 'bg-[hsl(var(--warning))]'
                               }`} />
                               <span className="text-sm">{t.theme}</span>
                             </div>
                             <div className="flex items-center gap-2">
                               <Badge variant="outline" className="text-xs">{t.frequency}x</Badge>
                               <Badge className={`text-xs ${
-                                t.impact === 'high' ? 'bg-red-100 text-red-700' :
-                                t.impact === 'medium' ? 'bg-amber-100 text-amber-700' : 'bg-muted text-muted-foreground'
+                                t.impact === 'high' ? 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))]' :
+                                t.impact === 'medium' ? 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))]' : 'bg-muted text-muted-foreground'
                               }`}>{t.impact}</Badge>
                             </div>
                           </div>
@@ -512,7 +512,7 @@ export default function MarketingAIInsightsDashboard({ token }) {
         <div className="space-y-4">
           {!recommendations && !loading.recommendations && (
             <Card className="border-dashed">
-              <CardContent className="flex flex-col items-center justify-center py-12 gap-4">
+              <CardContent className="flex flex-col items-center justify-center py-6 gap-4">
                 <Zap size={40} className="text-muted-foreground opacity-40" />
                 <div className="text-center">
                   <p className="font-medium">AI Action Items</p>
@@ -533,15 +533,15 @@ export default function MarketingAIInsightsDashboard({ token }) {
           {recommendations && !loading.recommendations && (
             <div className="space-y-4">
               {/* Summary */}
-              <Card className="bg-gradient-to-r from-violet-50 to-purple-50 dark:from-violet-950/30 dark:to-purple-950/30 border-violet-200 dark:border-violet-800">
+              <Card className=" border-[hsl(var(--primary)/0.35)] ">
                 <CardContent className="pt-4">
                   <div className="flex items-start gap-3">
-                    <Brain size={20} className="text-violet-600 mt-0.5 shrink-0" />
+                    <Brain size={20} className="text-[hsl(var(--primary))] mt-0.5 shrink-0" />
                     <div>
-                      <p className="text-sm font-medium text-violet-900 dark:text-violet-100">{recommendations.summary}</p>
+                      <p className="text-sm font-medium text-[hsl(var(--primary))] ">{recommendations.summary}</p>
                       <Badge className={`mt-2 text-xs ${
-                        recommendations.overall_health === 'healthy' ? 'bg-emerald-100 text-emerald-700' :
-                        recommendations.overall_health === 'critical' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                        recommendations.overall_health === 'healthy' ? 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))]' :
+                        recommendations.overall_health === 'critical' ? 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))]' : 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))]'
                       }`}>
                         Health: {recommendations.overall_health}
                       </Badge>

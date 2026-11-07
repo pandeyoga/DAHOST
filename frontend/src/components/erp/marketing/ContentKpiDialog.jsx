@@ -112,7 +112,7 @@ export default function ContentKpiDialog({ open, onClose, onSaved, token, conten
         </div>
 
         <div className="space-y-1">
-          <label className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1">
+          <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1">
             <Link2 size={11} /> Link terbit (wajib)
           </label>
           <Input value={url} onChange={(e) => setUrl(e.target.value)} className="h-8 text-xs"
@@ -122,7 +122,7 @@ export default function ContentKpiDialog({ open, onClose, onSaved, token, conten
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           {FIELDS.map(([f, label]) => (
             <div key={f} className="space-y-1">
-              <label className="text-[11px] text-muted-foreground">{label}</label>
+              <label className="text-xs text-muted-foreground">{label}</label>
               <Input type="number" min="0" step="any" className="h-8 text-xs"
                 value={form[f] ?? ''} onChange={(e) => set(f, e.target.value)}
                 data-testid={`kpi-input-${f}`} />
@@ -131,10 +131,10 @@ export default function ContentKpiDialog({ open, onClose, onSaved, token, conten
         </div>
 
         <div className="rounded-lg border border-border bg-muted/40 p-3" data-testid="kpi-derived">
-          <p className="text-[11px] font-semibold mb-1.5 flex items-center gap-1 text-foreground">
+          <p className="text-xs font-semibold mb-1.5 flex items-center gap-1 text-foreground">
             <Calculator size={11} /> Dihitung sistem (tidak bisa diketik)
           </p>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-[11px]">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
             <div><span className="text-muted-foreground block">Engagement</span>
               {fmtNum(derived.engagement)}</div>
             <div><span className="text-muted-foreground block">Eng. rate</span>

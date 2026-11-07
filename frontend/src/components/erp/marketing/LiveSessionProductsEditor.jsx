@@ -74,14 +74,14 @@ function Row({ items, line, onChange, onRemove, index, disabled }) {
           <SelectContent className="max-h-72">
             {items.map((i) => (
               <SelectItem key={i.id} value={i.id}>
-                <span className="font-mono text-[11px] text-muted-foreground mr-1.5">{i.sku}</span>
+                <span className="tabular-nums text-xs text-muted-foreground mr-1.5">{i.sku}</span>
                 {i.name}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
         {item && (
-          <p className="text-[10px] text-muted-foreground mt-1">
+          <p className="text-xs text-muted-foreground mt-1">
             HPP master {rp(item.hpp)} · harga jual {rp(item.harga_jual || item.price)}
           </p>
         )}
@@ -107,13 +107,13 @@ function Row({ items, line, onChange, onRemove, index, disabled }) {
       <td className="px-2 py-2 text-xs tabular-nums text-muted-foreground whitespace-nowrap">
         {rp(Math.round(priceAvg))}
         {margin !== null && (
-          <div className={margin >= 0 ? 'text-emerald-600' : 'text-red-600'}>
+          <div className={margin >= 0 ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--danger-text))]'}>
             margin {rp(Math.round(margin))}
           </div>
         )}
       </td>
       <td className="px-2 py-2">
-        <Button variant="ghost" size="sm" className="h-7 px-2 text-red-600"
+        <Button variant="ghost" size="sm" className="h-7 px-2 text-[hsl(var(--danger-text))]"
           disabled={disabled} data-testid={`lp-remove-${index}`}
           onClick={onRemove}>
           <Trash2 size={13} />
@@ -203,7 +203,7 @@ export default function LiveSessionProductsEditor({
           <Loader2 className="w-3.5 h-3.5 animate-spin" /> Memuat katalog toko…
         </p>
       ) : items.length === 0 ? (
-        <p className="px-3 py-4 text-xs text-amber-700 dark:text-amber-400 flex items-start gap-1.5">
+        <p className="px-3 py-4 text-xs text-[hsl(var(--warning-text))] flex items-start gap-1.5">
           <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />
           Katalog toko ini masih kosong. Isi dulu di <b className="mx-1">Manajemen Katalog</b>
           — rincian live harus menunjuk produk master supaya bisa dijumlahkan per produk.
@@ -224,7 +224,7 @@ export default function LiveSessionProductsEditor({
             <thead>
               <tr className="border-b bg-muted/20">
                 {['Produk (katalog toko)', 'Unit terjual', 'Omzet (Rp)', 'Order', 'Harga rata-rata', ''].map((h) => (
-                  <th key={h} className="px-2 py-1.5 text-left text-[11px] font-semibold text-muted-foreground whitespace-nowrap">{h}</th>
+                  <th key={h} className="px-2 py-1.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
@@ -258,26 +258,26 @@ export default function LiveSessionProductsEditor({
             </div>
           )}
           {dupe && (
-            <p className="text-[11px] text-red-600 flex items-start gap-1">
+            <p className="text-xs text-[hsl(var(--danger-text))] flex items-start gap-1">
               <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />
               Ada produk yang sama dua kali. Gabungkan jadi satu baris — kalau dobel,
               “produk terlaris” menghitungnya dua kali.
             </p>
           )}
           {rec.over && (
-            <p className="text-[11px] text-red-600 flex items-start gap-1">
+            <p className="text-xs text-[hsl(var(--danger-text))] flex items-start gap-1">
               <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />
               Rincian ({rp(rec.totalRevenue)}) MELEBIHI omzet sesi ({rp(rec.sRev)}).
               Salah satunya keliru — server akan menolak sampai diperbaiki.
             </p>
           )}
           {!rec.over && rec.sRev > 0 && rec.unallocated <= Math.max(rec.sRev * 0.02, 1) && (
-            <p className="text-[11px] text-emerald-600 flex items-center gap-1">
+            <p className="text-xs text-[hsl(var(--success-text))] flex items-center gap-1">
               <CheckCircle2 className="w-3.5 h-3.5" /> Rincian sudah menjelaskan seluruh omzet sesi.
             </p>
           )}
           {rec.sRev <= 0 && rec.totalRevenue > 0 && (
-            <p className="text-[11px] text-amber-700 dark:text-amber-400">
+            <p className="text-xs text-[hsl(var(--warning-text))] ">
               Omzet sesi masih Rp 0 sementara rincian sudah {rp(rec.totalRevenue)}.
               Isi omzet sesi, atau pakai tombol <b>Samakan total sesi</b> sesudah disimpan.
             </p>

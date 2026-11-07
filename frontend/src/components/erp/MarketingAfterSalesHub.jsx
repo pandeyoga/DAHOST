@@ -17,10 +17,10 @@ const API = process.env.REACT_APP_BACKEND_URL;
 
 // ── Resolution Log Tab ──────────────────────────────────────────────────────
 const STATUS_LABEL = {
-  resolved: { label: 'Diselesaikan', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
-  closed:   { label: 'Ditutup',      color: 'bg-muted text-muted-foreground dark:bg-gray-800/50 dark:text-gray-400' },
-  completed:{ label: 'Selesai',      color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
-  rejected: { label: 'Ditolak',      color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
+  resolved: { label: 'Diselesaikan', color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ' },
+  closed:   { label: 'Ditutup',      color: 'bg-muted text-muted-foreground ' },
+  completed:{ label: 'Selesai',      color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] ' },
+  rejected: { label: 'Ditolak',      color: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] ' },
 };
 
 function ResolutionLogTab({ token }) {
@@ -125,15 +125,15 @@ function ResolutionLogTab({ token }) {
           data-testid={`log-item-${item.type}-${item.id}`}
         >
           <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-            item.type === 'complaint' ? 'bg-amber-100 dark:bg-amber-900/30' :
-            item.type === 'wh_return' ? 'bg-emerald-100 dark:bg-emerald-900/30' :
-            'bg-blue-100 dark:bg-blue-900/30'
+            item.type === 'complaint' ? 'bg-[hsl(var(--warning)/0.12)] ' :
+            item.type === 'wh_return' ? 'bg-[hsl(var(--success)/0.12)] ' :
+            'bg-[hsl(var(--primary)/0.12)] '
           }`}>
             {item.type === 'complaint'
-              ? <AlertTriangle size={14} className="text-amber-600" />
+              ? <AlertTriangle size={14} className="text-[hsl(var(--warning-text))]" />
               : item.type === 'wh_return'
-                ? <CheckCircle2 size={14} className="text-emerald-600" />
-                : <RotateCcw size={14} className="text-blue-600" />
+                ? <CheckCircle2 size={14} className="text-[hsl(var(--success-text))]" />
+                : <RotateCcw size={14} className="text-[hsl(var(--primary))]" />
             }
           </div>
           <div className="flex-1 min-w-0">
@@ -151,10 +151,10 @@ function ResolutionLogTab({ token }) {
           <div className="text-xs text-muted-foreground flex-shrink-0 text-right">
             <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium mr-2 ${
               item.type === 'complaint'
-                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                ? 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] '
                 : item.type === 'wh_return'
-                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                  : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                  ? 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] '
+                  : 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] '
             }`}>
               {item.type === 'complaint' ? 'Komplain' : item.type === 'wh_return' ? 'Retur Fisik' : 'Refund'}
             </span>
@@ -204,7 +204,7 @@ export default function MarketingAfterSalesHub({ token, onNavigate }) {
   return (
     <div className="h-full" data-testid="after-sales-hub">
       {/* Hub Header */}
-      <div className="px-4 md:px-6 py-4 border-b bg-background">
+      <div className="px-4 md:px-4 py-4 border-b bg-background">
         <h1 className="text-xl font-bold tracking-tight">Komplain & Retur/Refund</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
           Pengelolaan pasca-penjualan: komplain pelanggan, refund & nota kredit, riwayat penyelesaian
@@ -213,13 +213,13 @@ export default function MarketingAfterSalesHub({ token, onNavigate }) {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
-        <div className="px-4 md:px-6 pt-4 border-b bg-background">
+        <div className="px-4 md:px-4 pt-4 border-b bg-background">
           <TabsList className="h-9">
             <TabsTrigger value="complaints" className="gap-1.5" data-testid="tab-complaints">
               <AlertTriangle size={13} />
               Komplain
               {openComplaints > 0 && (
-                <Badge variant="destructive" className="ml-1 h-4 min-w-4 px-1 text-[10px]">
+                <Badge variant="destructive" className="ml-1 h-4 min-w-4 px-1 text-xs">
                   {openComplaints}
                 </Badge>
               )}
@@ -228,7 +228,7 @@ export default function MarketingAfterSalesHub({ token, onNavigate }) {
               <RotateCcw size={13} />
               Refund & Nota Kredit
               {pendingReturns > 0 && (
-                <Badge variant="secondary" className="ml-1 h-4 min-w-4 px-1 text-[10px]">
+                <Badge variant="secondary" className="ml-1 h-4 min-w-4 px-1 text-xs">
                   {pendingReturns}
                 </Badge>
               )}
@@ -244,7 +244,7 @@ export default function MarketingAfterSalesHub({ token, onNavigate }) {
           <ComplaintsManagementModule token={token} onNavigate={onNavigate} />
         </TabsContent>
         <TabsContent value="returns" className="flex-1 overflow-auto m-0 p-0 pt-4">
-          <div className="px-4 md:px-6">
+          <div className="px-4 md:px-4">
             <ReturnsRefundsModule token={token} onNavigate={onNavigate} />
           </div>
         </TabsContent>

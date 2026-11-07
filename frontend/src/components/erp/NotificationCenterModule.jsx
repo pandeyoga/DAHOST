@@ -17,9 +17,9 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 
 const CHANNEL_ICON = { whatsapp: MessageCircle, email: Mail };
 const STATUS_TONE = {
-  queued:  'bg-amber-100 dark:bg-amber-500/15 text-amber-600 dark:text-amber-300 border-amber-400/25',
-  sent:    'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border-emerald-400/25',
-  failed:  'bg-red-100 dark:bg-red-500/15 text-red-600 dark:text-red-300 border-red-400/25',
+  queued:  'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] border-[hsl(var(--warning)/0.25)]',
+  sent:    'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.25)]',
+  failed:  'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] border-[hsl(var(--destructive)/0.25)]',
 };
 const EVENT_LABEL = {
   sample_submitted:  'Sample Siap Approval',
@@ -107,40 +107,40 @@ function ProviderConfigTab({ headers }) {
     </div>
   );
 
-  if (loading) return <div className="text-center py-8 text-foreground/40 text-sm">Memuat...</div>;
+  if (loading) return <div className="text-center py-6 text-foreground/40 text-sm">Memuat...</div>;
 
   return (
-    <div className="space-y-5 max-w-xl">
+    <div className="space-y-4 max-w-xl">
       {/* Status banner */}
       <div className="grid grid-cols-2 gap-3">
         <div className={`rounded-xl border p-3 flex items-center gap-2.5 ${
           cfg.whatsapp_configured
-            ? 'bg-emerald-100 dark:bg-emerald-500/10 border-emerald-500/25'
+            ? 'bg-[hsl(var(--success)/0.12)] border-[hsl(var(--success)/0.25)]'
             : 'bg-foreground/[0.03] border-foreground/10'
         }`}>
           {cfg.whatsapp_configured
-            ? <Wifi className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            ? <Wifi className="w-4 h-4 text-[hsl(var(--success-text))] " />
             : <WifiOff className="w-4 h-4 text-foreground/30" />}
           <div>
             <div className="text-xs font-semibold">
-              {cfg.whatsapp_configured ? <span className="text-emerald-600 dark:text-emerald-300">WhatsApp Terkonfigurasi</span> : 'WhatsApp Belum Diatur'}
+              {cfg.whatsapp_configured ? <span className="text-[hsl(var(--success-text))] ">WhatsApp Terkonfigurasi</span> : 'WhatsApp Belum Diatur'}
             </div>
-            <div className="text-[10px] text-foreground/40">Fonnte API</div>
+            <div className="text-xs text-foreground/40">Fonnte API</div>
           </div>
         </div>
         <div className={`rounded-xl border p-3 flex items-center gap-2.5 ${
           cfg.email_configured
-            ? 'bg-emerald-100 dark:bg-emerald-500/10 border-emerald-500/25'
+            ? 'bg-[hsl(var(--success)/0.12)] border-[hsl(var(--success)/0.25)]'
             : 'bg-foreground/[0.03] border-foreground/10'
         }`}>
           {cfg.email_configured
-            ? <Wifi className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            ? <Wifi className="w-4 h-4 text-[hsl(var(--success-text))] " />
             : <WifiOff className="w-4 h-4 text-foreground/30" />}
           <div>
             <div className="text-xs font-semibold">
-              {cfg.email_configured ? <span className="text-emerald-600 dark:text-emerald-300">Email Terkonfigurasi</span> : 'Email Belum Diatur'}
+              {cfg.email_configured ? <span className="text-[hsl(var(--success-text))] ">Email Terkonfigurasi</span> : 'Email Belum Diatur'}
             </div>
-            <div className="text-[10px] text-foreground/40">SMTP</div>
+            <div className="text-xs text-foreground/40">SMTP</div>
           </div>
         </div>
       </div>
@@ -152,7 +152,7 @@ function ProviderConfigTab({ headers }) {
           onClick={() => setWaOpen(p => !p)}
         >
           <div className="flex items-center gap-2">
-            <MessageCircle className="w-4 h-4 text-green-700 dark:text-green-400" />
+            <MessageCircle className="w-4 h-4 text-[hsl(var(--success-text))] " />
             <span className="text-sm font-semibold">WhatsApp — Fonnte</span>
           </div>
           <ChevronDown className={`w-4 h-4 text-foreground/40 transition-transform ${
@@ -162,7 +162,7 @@ function ProviderConfigTab({ headers }) {
         {waOpen && (
           <div className="space-y-3 pt-1">
             <div className="text-xs text-foreground/50 bg-foreground/5 p-2 rounded">
-              Daftar di <a href="https://fonnte.com" target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 underline">fonnte.com</a> untuk mendapatkan API key WhatsApp Business.
+              Daftar di <a href="https://fonnte.com" target="_blank" rel="noreferrer" className="text-[hsl(var(--primary))] underline">fonnte.com</a> untuk mendapatkan API key WhatsApp Business.
             </div>
             <Toggle label="Aktifkan WhatsApp" field="whatsapp_enabled" />
             <F label="API Key Fonnte" field="whatsapp_api_key" type="password" placeholder="Masukkan API key..." />
@@ -182,7 +182,7 @@ function ProviderConfigTab({ headers }) {
           onClick={() => setEmailOpen(p => !p)}
         >
           <div className="flex items-center gap-2">
-            <Mail className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+            <Mail className="w-4 h-4 text-[hsl(var(--primary))] " />
             <span className="text-sm font-semibold">Email — SMTP</span>
           </div>
           <ChevronDown className={`w-4 h-4 text-foreground/40 transition-transform ${
@@ -214,7 +214,7 @@ function ProviderConfigTab({ headers }) {
                 <option value="ssl">SSL/TLS — port 465</option>
                 <option value="none">Tanpa enkripsi — relay/SMTP internal</option>
               </SmartNativeSelect>
-              <div className="text-[11px] text-foreground/50">
+              <div className="text-xs text-foreground/50">
                 Username &amp; password boleh dikosongkan bila server mengizinkan relay tanpa autentikasi.
               </div>
             </div>
@@ -230,7 +230,7 @@ function ProviderConfigTab({ headers }) {
       {/* FASE 10 — Rapor valuasi aksesoris otomatis (tanggal 1, 06:00 WIB) */}
       <GlassCard className="p-4 space-y-3">
         <div className="text-sm font-semibold flex items-center gap-2">
-          <Mail className="w-4 h-4 text-sky-600 dark:text-sky-400" /> Rapor Valuasi Aksesoris Bulanan
+          <Mail className="w-4 h-4 text-[hsl(var(--primary))] " /> Rapor Valuasi Aksesoris Bulanan
         </div>
         <div className="text-xs text-foreground/50 bg-foreground/5 p-2 rounded">
           Setiap tanggal 1 pukul 06:00 WIB sistem mengirim rapor valuasi persediaan aksesoris
@@ -256,7 +256,7 @@ function ProviderConfigTab({ headers }) {
       {/* Event Subscriptions */}
       <GlassCard className="p-4 space-y-3">
         <div className="text-sm font-semibold flex items-center gap-2">
-          <Zap className="w-4 h-4 text-amber-700 dark:text-amber-400" /> Auto-Notify Events
+          <Zap className="w-4 h-4 text-[hsl(var(--warning-text))] " /> Auto-Notify Events
         </div>
         <div className="space-y-2">
           <Toggle label="Notifikasi saat stage maklon berubah" field="notify_on_stage_change" />
@@ -272,8 +272,8 @@ function ProviderConfigTab({ headers }) {
           {['whatsapp','email'].map(ch => (
             <div key={ch} className={`flex items-start gap-2 text-xs p-2.5 rounded-lg border ${
               testResult[ch]?.success
-                ? 'bg-emerald-100 dark:bg-emerald-500/10 border-emerald-500/25 text-emerald-600 dark:text-emerald-300'
-                : 'bg-red-100 dark:bg-red-500/10 border-red-500/25 text-red-600 dark:text-red-300'
+                ? 'bg-[hsl(var(--success)/0.12)] border-[hsl(var(--success)/0.25)] text-[hsl(var(--success-text))] '
+                : 'bg-[hsl(var(--destructive)/0.12)] border-[hsl(var(--destructive)/0.25)] text-[hsl(var(--danger-text))] '
             }`}>
               {testResult[ch]?.success
                 ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5" />
@@ -421,7 +421,7 @@ export default function NotificationCenterModule({ token }) {
 
   const { page, setPage, totalPages, total, paged } = useClientPagination(runs, 10);
   return (
-    <div className="p-6 space-y-6" data-testid="notification-center">
+    <div className="p-4 space-y-4" data-testid="notification-center">
       <PageHeader
         title="Notification Center"
         subtitle="Notifikasi otomatis ke klien (WhatsApp & Email) saat stage berubah, invoice terbit, dsb."
@@ -447,22 +447,22 @@ export default function NotificationCenterModule({ token }) {
       {summary && (
         <div className={`rounded-xl border p-3 text-xs flex items-start gap-2 ${
           summary.whatsapp_configured || summary.email_configured
-            ? 'border-emerald-400 dark:border-emerald-400/30 bg-emerald-50 dark:bg-emerald-400/5'
-            : 'border-amber-400 dark:border-amber-400/30 bg-amber-50 dark:bg-amber-400/5'
+            ? 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.08)] '
+            : 'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.08)] '
         }`}>
           {summary.whatsapp_configured || summary.email_configured
-            ? <Wifi className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mt-0.5" />
-            : <WifiOff className="w-4 h-4 text-amber-700 dark:text-amber-400 mt-0.5" />}
+            ? <Wifi className="w-4 h-4 text-[hsl(var(--success-text))] mt-0.5" />
+            : <WifiOff className="w-4 h-4 text-[hsl(var(--warning-text))] mt-0.5" />}
           <div className="flex-1">
             {summary.whatsapp_configured || summary.email_configured ? (
-              <span className="text-emerald-200 font-medium">
+              <span className="text-[hsl(var(--success-text))] font-medium">
                 Provider aktif: {summary.whatsapp_configured ? 'WhatsApp (Fonnte) ' : ''}{summary.email_configured ? 'Email (SMTP)' : ''}
               </span>
             ) : (
               <div>
-                <span className="font-medium text-amber-200">MODE MOCK aktif. </span>
+                <span className="font-medium text-[hsl(var(--warning-text))]">MODE MOCK aktif. </span>
                 <span className="text-foreground/65">Notifikasi dicatat ke DB tapi belum dikirim nyata. </span>
-                <button onClick={() => setTab('config')} className="text-amber-600 dark:text-amber-300 hover:text-amber-200 underline underline-offset-2 transition">
+                <button onClick={() => setTab('config')} className="text-[hsl(var(--warning-text))] hover:text-[hsl(var(--warning-text))] underline underline-offset-2 transition">
                   Klik di sini untuk konfigurasi provider &rarr;
                 </button>
               </div>
@@ -489,9 +489,9 @@ export default function NotificationCenterModule({ token }) {
       {tab === 'config' ? (
         <ProviderConfigTab headers={headers} />
       ) : tab === 'scheduler' ? (
-        <div className="space-y-5">
+        <div className="space-y-4">
           <div className={`rounded-xl border p-3 text-xs flex items-center gap-2 ${
-            scheduler?.scheduler_running ? 'border-emerald-400 dark:border-emerald-400/30 bg-emerald-50 dark:bg-emerald-400/5 text-emerald-200' : 'border-red-400 dark:border-red-400/30 bg-red-50 dark:bg-red-400/5 text-red-200'
+            scheduler?.scheduler_running ? 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.08)] text-[hsl(var(--success-text))]' : 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.08)] text-[hsl(var(--danger-text))]'
           }`}>
             <div className={`w-2 h-2 rounded-full ${scheduler?.scheduler_running ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
             <span className="font-medium">{scheduler?.scheduler_running ? 'Scheduler aktif' : 'Scheduler nonaktif'}</span>
@@ -502,9 +502,9 @@ export default function NotificationCenterModule({ token }) {
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
-                    <code className="text-xs font-mono text-violet-600 dark:text-violet-300">{j.id}</code>
+                    <code className="text-xs tabular-nums text-[hsl(var(--primary))] ">{j.id}</code>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                      j.enabled ? 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-300' : 'bg-foreground/10 text-foreground/55'
+                      j.enabled ? 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ' : 'bg-foreground/10 text-foreground/55'
                     }`}>{j.enabled ? 'enabled' : 'disabled'}</span>
                   </div>
                   <p className="text-sm text-foreground/85">{j.description}</p>
@@ -534,13 +534,13 @@ export default function NotificationCenterModule({ token }) {
                 <tbody>
                   {paged.map((r, i) => (
                     <tr key={i} className="border-t border-foreground/5">
-                      <td className="px-3 py-2 font-mono text-violet-600 dark:text-violet-300">{r.job_id}</td>
+                      <td className="px-3 py-2 tabular-nums text-[hsl(var(--primary))] ">{r.job_id}</td>
                       <td className="px-3 py-2 whitespace-nowrap">{new Date(r.started_at).toLocaleString('id-ID')}</td>
                       <td className="px-3 py-2">
                         <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                          r.status==='success' ? 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-300'
-                          : r.status==='failed' ? 'bg-red-100 dark:bg-red-500/15 text-red-600 dark:text-red-300'
-                          : 'bg-amber-100 dark:bg-amber-500/15 text-amber-600 dark:text-amber-300'
+                          r.status==='success' ? 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] '
+                          : r.status==='failed' ? 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] '
+                          : 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] '
                         }`}>{r.status}</span>
                       </td>
                       <td className="px-3 py-2 text-right">{r.duration_ms ?? '-'}</td>
@@ -559,11 +559,11 @@ export default function NotificationCenterModule({ token }) {
           {/* Stats */}
           {summary && (
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-              <GlassCard className="p-3"><div className="text-[10px] uppercase text-foreground/45">Total</div><div className="text-2xl font-bold tabular-nums">{summary.total}</div></GlassCard>
-              <GlassCard className="p-3 border-amber-300 dark:border-amber-400/20"><div className="text-[10px] uppercase text-amber-700 dark:text-amber-400 flex items-center gap-1"><Clock className="w-3 h-3" /> Queued</div><div className="text-2xl font-bold tabular-nums text-amber-600 dark:text-amber-300">{summary.by_status.queued}</div></GlassCard>
-              <GlassCard className="p-3 border-emerald-300 dark:border-emerald-400/20"><div className="text-[10px] uppercase text-emerald-600 dark:text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Sent</div><div className="text-2xl font-bold tabular-nums text-emerald-600 dark:text-emerald-300">{summary.by_status.sent}</div></GlassCard>
-              <GlassCard className="p-3"><div className="text-[10px] uppercase text-foreground/45 flex items-center gap-1"><MessageCircle className="w-3 h-3" /> WhatsApp</div><div className="text-2xl font-bold tabular-nums">{summary.by_channel.whatsapp}</div></GlassCard>
-              <GlassCard className="p-3"><div className="text-[10px] uppercase text-foreground/45 flex items-center gap-1"><Mail className="w-3 h-3" /> Email</div><div className="text-2xl font-bold tabular-nums">{summary.by_channel.email}</div></GlassCard>
+              <GlassCard className="p-3"><div className="text-xs text-foreground/45">Total</div><div className="text-2xl font-bold tabular-nums">{summary.total}</div></GlassCard>
+              <GlassCard className="p-3 border-[hsl(var(--warning)/0.35)] "><div className="text-xs text-[hsl(var(--warning-text))] flex items-center gap-1"><Clock className="w-3 h-3" /> Queued</div><div className="text-2xl font-bold tabular-nums text-[hsl(var(--warning-text))] ">{summary.by_status.queued}</div></GlassCard>
+              <GlassCard className="p-3 border-[hsl(var(--success)/0.35)] "><div className="text-xs text-[hsl(var(--success-text))] flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Sent</div><div className="text-2xl font-bold tabular-nums text-[hsl(var(--success-text))] ">{summary.by_status.sent}</div></GlassCard>
+              <GlassCard className="p-3"><div className="text-xs text-foreground/45 flex items-center gap-1"><MessageCircle className="w-3 h-3" /> WhatsApp</div><div className="text-2xl font-bold tabular-nums">{summary.by_channel.whatsapp}</div></GlassCard>
+              <GlassCard className="p-3"><div className="text-xs text-foreground/45 flex items-center gap-1"><Mail className="w-3 h-3" /> Email</div><div className="text-2xl font-bold tabular-nums">{summary.by_channel.email}</div></GlassCard>
             </div>
           )}
           {/* Filters */}
@@ -587,7 +587,7 @@ export default function NotificationCenterModule({ token }) {
             <div className="flex gap-1.5">
               {['all','stage_change','invoice_issued','invoice_overdue','manual'].map(e => (
                 <Button key={e} size="sm" variant={filterEvent===e?'default':'outline'}
-                  onClick={() => setFilterEvent(e)} className="text-[10px]">
+                  onClick={() => setFilterEvent(e)} className="text-xs">
                   {e==='all'?'All Events':EVENT_LABEL[e]||e}
                 </Button>
               ))}
@@ -602,9 +602,9 @@ export default function NotificationCenterModule({ token }) {
 
           {/* List */}
           {loading ? (
-            <div className="text-center py-10 text-foreground/40 text-sm">Memuat...</div>
+            <div className="text-center py-6 text-foreground/40 text-sm">Memuat...</div>
           ) : filtered.length === 0 ? (
-            <div className="text-center py-12 rounded-xl border border-dashed border-foreground/10">
+            <div className="text-center py-6 rounded-xl border border-dashed border-foreground/10">
               <Bell className="w-8 h-8 mx-auto text-foreground/30 mb-2" />
               <p className="text-sm text-foreground/50">Belum ada notifikasi.</p>
             </div>
@@ -619,14 +619,14 @@ export default function NotificationCenterModule({ token }) {
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <Icon className="w-4 h-4 text-foreground/55" />
                           <span className="text-sm font-medium text-foreground truncate">{n.recipient}</span>
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${STATUS_TONE[n.status]||'bg-foreground/10'}`}>{n.status}</span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-500/15 text-violet-600 dark:text-violet-300 border border-violet-400/25">{EVENT_LABEL[n.event_type]||n.event_type}</span>
-                          {n.sent_real && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-300">REAL</span>}
-                          {n.sent_mock && <span className="text-[10px] px-1.5 py-0.5 rounded bg-foreground/10 text-foreground/55">MOCK</span>}
+                          <span className={`text-xs px-1.5 py-0.5 rounded border ${STATUS_TONE[n.status]||'bg-foreground/10'}`}>{n.status}</span>
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] border border-[hsl(var(--primary)/0.25)]">{EVENT_LABEL[n.event_type]||n.event_type}</span>
+                          {n.sent_real && <span className="text-xs px-1.5 py-0.5 rounded bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ">REAL</span>}
+                          {n.sent_mock && <span className="text-xs px-1.5 py-0.5 rounded bg-foreground/10 text-foreground/55">MOCK</span>}
                         </div>
                         {n.subject && <div className="text-xs text-foreground/65 font-medium mb-0.5">{n.subject}</div>}
                         <p className="text-xs text-foreground/65 line-clamp-2">{n.body}</p>
-                        <div className="text-[10px] text-foreground/40 mt-1">
+                        <div className="text-xs text-foreground/40 mt-1">
                           {new Date(n.created_at).toLocaleString('id-ID')}
                           {n.sent_at && ` · sent ${new Date(n.sent_at).toLocaleString('id-ID')}`}
                         </div>
@@ -642,7 +642,7 @@ export default function NotificationCenterModule({ token }) {
                             <RotateCw className="w-3 h-3" /> Retry
                           </Button>
                         )}
-                        <Button size="icon" variant="ghost" className="w-7 h-7 text-red-700 dark:text-red-400 hover:bg-red-100 dark:bg-red-500/15" onClick={() => remove(n.id)}>
+                        <Button size="icon" variant="ghost" className="w-7 h-7 text-[hsl(var(--danger-text))] hover:bg-[hsl(var(--destructive)/0.12)] " onClick={() => remove(n.id)}>
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       </div>

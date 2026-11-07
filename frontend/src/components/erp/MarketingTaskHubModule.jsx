@@ -35,7 +35,7 @@ export default function MarketingTaskHubModule({ token }) {
   return (
     <div className="h-full" data-testid="marketing-task-hub">
       {/* Hub Header */}
-      <div className="px-4 md:px-6 py-4 border-b bg-background">
+      <div className="px-4 md:px-4 py-4 border-b bg-background">
         <h1 className="text-xl font-bold tracking-tight">Task Management</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
           Kelola task harian, approval workflow, dan template task berulang dalam satu dashboard
@@ -44,7 +44,7 @@ export default function MarketingTaskHubModule({ token }) {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
-        <div className="px-4 md:px-6 pt-4 border-b bg-background">
+        <div className="px-4 md:px-4 pt-4 border-b bg-background">
           <TabsList className="h-9">
             <TabsTrigger value="kanban" className="gap-1.5" data-testid="tab-kanban">
               <LayoutGrid size={13} />
@@ -54,7 +54,7 @@ export default function MarketingTaskHubModule({ token }) {
               <ClipboardCheck size={13} />
               Pending Approval
               {pendingCount > 0 && (
-                <Badge variant="destructive" className="ml-1 h-4 min-w-4 px-1 text-[10px]">
+                <Badge variant="destructive" className="ml-1 h-4 min-w-4 px-1 text-xs">
                   {pendingCount}
                 </Badge>
               )}
@@ -66,13 +66,13 @@ export default function MarketingTaskHubModule({ token }) {
           </TabsList>
         </div>
 
-        <TabsContent value="kanban" className="flex-1 overflow-auto m-0 p-4 md:p-6">
+        <TabsContent value="kanban" className="flex-1 overflow-auto m-0 p-4 md:p-4">
           <TaskManagementModule token={token} />
         </TabsContent>
-        <TabsContent value="approvals" className="flex-1 overflow-auto m-0 p-4 md:p-6">
+        <TabsContent value="approvals" className="flex-1 overflow-auto m-0 p-4 md:p-4">
           <ApprovalInboxModule token={token} />
         </TabsContent>
-        <TabsContent value="templates" className="flex-1 overflow-auto m-0 p-4 md:p-6">
+        <TabsContent value="templates" className="flex-1 overflow-auto m-0 p-4 md:p-4">
           <TaskTemplatesModule token={token} />
         </TabsContent>
       </Tabs>

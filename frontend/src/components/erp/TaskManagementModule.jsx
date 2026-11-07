@@ -21,9 +21,9 @@ import { toast } from 'sonner';
 
 const COLUMNS = [
   { id: 'to_do', title: 'To Do', color: 'bg-muted/10 border-border/30' },
-  { id: 'in_progress', title: 'In Progress', color: 'bg-blue-500/10 border-blue-500/30' },
-  { id: 'pending_approval', title: 'Pending Approval', color: 'bg-yellow-500/10 border-yellow-500/30' },
-  { id: 'done', title: 'Done', color: 'bg-emerald-500/10 border-emerald-500/30' },
+  { id: 'in_progress', title: 'In Progress', color: 'bg-[hsl(var(--primary)/0.1)] border-[hsl(var(--primary)/0.3)]' },
+  { id: 'pending_approval', title: 'Pending Approval', color: 'bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.3)]' },
+  { id: 'done', title: 'Done', color: 'bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.3)]' },
 ];
 
 export default function TaskManagementModule({ token }) {
@@ -166,7 +166,7 @@ export default function TaskManagementModule({ token }) {
   const hasActiveFilter = filter.priority !== 'all' || filter.account_id !== 'all';
 
   return (
-    <div className="space-y-5" data-testid="task-management-page">
+    <div className="space-y-4" data-testid="task-management-page">
       <PageHeader
         icon={CheckSquare}
         eyebrow="Portal Marketing · Task Management"
@@ -186,7 +186,7 @@ export default function TaskManagementModule({ token }) {
               <Filter className="w-3.5 h-3.5 mr-1.5" />
               Filter
               {hasActiveFilter && (
-                <Badge variant="outline" className="ml-2 h-4 px-1 text-[10px]">
+                <Badge variant="outline" className="ml-2 h-4 px-1 text-xs">
                   {(filter.priority !== 'all' ? 1 : 0) + (filter.account_id !== 'all' ? 1 : 0)}
                 </Badge>
               )}
@@ -201,15 +201,15 @@ export default function TaskManagementModule({ token }) {
       {/* Stats strip */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <GlassPanel className="p-3">
-          <div className="text-xs text-muted-foreground uppercase tracking-wider">Total</div>
+          <div className="text-xs text-muted-foreground ">Total</div>
           <div className="text-xl font-bold tabular-nums">{totalCount}</div>
         </GlassPanel>
         {COLUMNS.map(col => (
           <GlassPanel key={col.id} className="p-3">
-            <div className="text-xs text-muted-foreground uppercase tracking-wider truncate">{col.title}</div>
+            <div className="text-xs text-muted-foreground truncate">{col.title}</div>
             <div className="text-xl font-bold tabular-nums">{columns[col.id]?.length || 0}</div>
             {col.id === 'to_do' && overdueCount > 0 && (
-              <div className="text-xs text-red-400 mt-0.5">{overdueCount} overdue</div>
+              <div className="text-xs text-[hsl(var(--danger-text))] mt-0.5">{overdueCount} overdue</div>
             )}
           </GlassPanel>
         ))}
@@ -253,7 +253,7 @@ export default function TaskManagementModule({ token }) {
       )}
 
       {loading ? (
-        <div className="text-center py-12 text-muted-foreground">Loading tasks...</div>
+        <div className="text-center py-6 text-muted-foreground">Loading tasks...</div>
       ) : (
         <>
           <DragDropContext onDragEnd={handleDragEnd}>
@@ -263,7 +263,7 @@ export default function TaskManagementModule({ token }) {
                   <div className={`mb-3 p-3 rounded-lg border ${column.color}`}>
                     <div className="flex items-center justify-between">
                       <span className="font-semibold text-sm">{column.title}</span>
-                      <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-foreground/10">
+                      <span className="text-xs tabular-nums px-2 py-0.5 rounded-full bg-foreground/10">
                         {columns[column.id]?.length || 0}
                       </span>
                     </div>
@@ -348,12 +348,12 @@ export default function TaskManagementModule({ token }) {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
-              <AlertTriangle size={18} className="text-amber-500" />
+              <AlertTriangle size={18} className="text-[hsl(var(--warning-text))]" />
               Task Belum Dieksekusi
             </AlertDialogTitle>
             <AlertDialogDescription>
               <strong>"{bypassConfirm?.task?.title}"</strong> memiliki aksi sistem
-              (<span className="font-mono text-xs">{bypassConfirm?.task?.action_type}</span>) yang
+              (<span className="tabular-nums text-xs">{bypassConfirm?.task?.action_type}</span>) yang
               belum dijalankan. Jika ditandai Done tanpa eksekusi, data tidak akan tersimpan ke sistem.
               <br /><br />
               Pilih tindakan:
@@ -364,7 +364,7 @@ export default function TaskManagementModule({ token }) {
               Batal (Buka Drawer)
             </AlertDialogCancel>
             <AlertDialogAction
-              className="bg-amber-500 hover:bg-amber-600"
+              className="bg-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.9)]"
               onClick={() => {
                 // Open drawer instead so user can execute action
                 setDetailTaskId(bypassConfirm.task.id);

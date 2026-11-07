@@ -27,23 +27,23 @@ const API = process.env.REACT_APP_BACKEND_URL;
 
 // ── Constants ──
 const SLA_CONFIG = {
-  on_time:  { label: 'On Time',   color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', dot: 'bg-emerald-500' },
-  at_risk:  { label: 'At Risk',   color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',        dot: 'bg-amber-500' },
-  overdue:  { label: 'Overdue',   color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',                dot: 'bg-red-500' },
-  resolved: { label: 'Selesai',   color: 'bg-muted text-muted-foreground dark:bg-gray-800/50 dark:text-gray-400',            dot: 'bg-muted' },
+  on_time:  { label: 'On Time',   color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ', dot: 'bg-[hsl(var(--success-strong))]' },
+  at_risk:  { label: 'At Risk',   color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ',        dot: 'bg-[hsl(var(--warning))]' },
+  overdue:  { label: 'Overdue',   color: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] ',                dot: 'bg-[hsl(var(--destructive-strong))]' },
+  resolved: { label: 'Selesai',   color: 'bg-muted text-muted-foreground ',            dot: 'bg-muted' },
 };
 
 const STATUS_CONFIG = {
-  open:        { label: 'Terbuka',     color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',           icon: AlertTriangle },
-  in_progress: { label: 'Diproses',   color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',       icon: Clock },
-  resolved:    { label: 'Selesai',    color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', icon: CheckCircle2 },
-  closed:      { label: 'Ditutup',    color: 'bg-muted text-muted-foreground dark:bg-gray-800/50 dark:text-gray-400',        icon: XCircle },
+  open:        { label: 'Terbuka',     color: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] ',           icon: AlertTriangle },
+  in_progress: { label: 'Diproses',   color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] ',       icon: Clock },
+  resolved:    { label: 'Selesai',    color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ', icon: CheckCircle2 },
+  closed:      { label: 'Ditutup',    color: 'bg-muted text-muted-foreground ',        icon: XCircle },
 };
 
 const SEVERITY_CONFIG = {
-  critical: { label: 'Kritis',   color: 'text-red-600',    bg: 'bg-red-600' },
-  high:     { label: 'Tinggi',   color: 'text-orange-600', bg: 'bg-orange-500' },
-  medium:   { label: 'Sedang',   color: 'text-amber-600',  bg: 'bg-amber-500' },
+  critical: { label: 'Kritis',   color: 'text-[hsl(var(--danger-text))]',    bg: 'bg-[hsl(var(--destructive-strong))]' },
+  high:     { label: 'Tinggi',   color: 'text-[hsl(var(--warning-text))]', bg: 'bg-[hsl(var(--warning))]' },
+  medium:   { label: 'Sedang',   color: 'text-[hsl(var(--warning-text))]',  bg: 'bg-[hsl(var(--warning))]' },
   low:      { label: 'Rendah',   color: 'text-muted-foreground',   bg: 'bg-muted' },
 };
 
@@ -84,7 +84,7 @@ function SLABadge({ sla_status, sla_due_at }) {
         {cfg.label}
       </span>
       {hoursLeft !== null && sla_status !== 'resolved' && (
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-xs text-muted-foreground">
           {hoursLeft < 0
             ? `${Math.abs(Math.round(hoursLeft))}j overdue`
             : `${Math.round(hoursLeft)}j tersisa`
@@ -183,7 +183,7 @@ function ComplaintDetailModal({ complaint, open, onClose, onUpdate, token }) {
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <AlertTriangle size={16} className="text-amber-500" />
+            <AlertTriangle size={16} className="text-[hsl(var(--warning-text))]" />
             {detail.complaint_number}
           </DialogTitle>
         </DialogHeader>
@@ -228,8 +228,8 @@ function ComplaintDetailModal({ complaint, open, onClose, onUpdate, token }) {
           )}
 
           {/* Complaint Text */}
-          <div className="rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-900/10 p-3">
-            <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 mb-1">💬 Keluhan Pelanggan:</p>
+          <div className="rounded-lg border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.5)] p-3">
+            <p className="text-xs font-semibold text-[hsl(var(--warning-text))] mb-1">💬 Keluhan Pelanggan:</p>
             <p className="text-sm">{detail.complaint_text}</p>
             <p className="text-xs text-muted-foreground mt-1">— {detail.customer_name} • {detail.product_name}</p>
           </div>
@@ -248,7 +248,7 @@ function ComplaintDetailModal({ complaint, open, onClose, onUpdate, token }) {
               <p className="text-xs font-semibold text-muted-foreground mb-2">Pesanan Terkait:</p>
               {detail.orders.map((o, i) => (
                 <div key={i} className="flex justify-between text-xs py-0.5">
-                  <span className="font-mono">{o.order_id}</span>
+                  <span className="tabular-nums">{o.order_id}</span>
                   <span>{o.qty} pcs • {o.courier}</span>
                 </div>
               ))}
@@ -372,16 +372,16 @@ export default function ComplaintsManagementModule({ token, onNavigate }) {
 
   // KPI Cards
   const kpis = [
-    { label: 'Total Komplain',  value: summary?.total,        sub: `${summary?.by_status?.open || 0} terbuka`,                    color: 'text-indigo-600', bg: 'bg-indigo-50 dark:bg-indigo-900/20', icon: Inbox },
-    { label: 'Overdue (SLA)',   value: summary?.overdue,       sub: `${summary?.at_risk || 0} at risk`,                           color: 'text-red-600',    bg: 'bg-red-50 dark:bg-red-900/20',     icon: AlertCircle },
-    { label: 'Resolve Rate',    value: `${summary?.resolve_rate || 0}%`, sub: `${summary?.resolved || 0} terselesaikan`,           color: 'text-emerald-600',bg: 'bg-emerald-50 dark:bg-emerald-900/20', icon: CheckCircle2 },
-    { label: 'Sedang Diproses', value: summary?.by_status?.in_progress || 0, sub: `${summary?.by_sla?.at_risk || 0} perlu segera`, color: 'text-amber-600',  bg: 'bg-amber-50 dark:bg-amber-900/20', icon: Clock },
+    { label: 'Total Komplain',  value: summary?.total,        sub: `${summary?.by_status?.open || 0} terbuka`,                    color: 'text-[hsl(var(--primary))]', bg: 'bg-[hsl(var(--primary)/0.08)] ', icon: Inbox },
+    { label: 'Overdue (SLA)',   value: summary?.overdue,       sub: `${summary?.at_risk || 0} at risk`,                           color: 'text-[hsl(var(--danger-text))]',    bg: 'bg-[hsl(var(--destructive)/0.08)] ',     icon: AlertCircle },
+    { label: 'Resolve Rate',    value: `${summary?.resolve_rate || 0}%`, sub: `${summary?.resolved || 0} terselesaikan`,           color: 'text-[hsl(var(--success-text))]',bg: 'bg-[hsl(var(--success)/0.08)] ', icon: CheckCircle2 },
+    { label: 'Sedang Diproses', value: summary?.by_status?.in_progress || 0, sub: `${summary?.by_sla?.at_risk || 0} perlu segera`, color: 'text-[hsl(var(--warning-text))]',  bg: 'bg-[hsl(var(--warning)/0.08)] ', icon: Clock },
   ];
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-6" data-testid="complaints-dashboard">
+    <div className="min-h-screen bg-background p-4 md:p-4" data-testid="complaints-dashboard">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Manajemen Komplain</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Keluhan pelanggan dengan SLA tracking dan klasifikasi AI</p>
@@ -407,7 +407,7 @@ export default function ComplaintsManagementModule({ token, onNavigate }) {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         {kpis.map(k => (
           <div key={k.label} className={`rounded-xl border p-4 ${k.bg}`}>
             <div className="flex items-center justify-between mb-1">
@@ -518,7 +518,7 @@ export default function ComplaintsManagementModule({ token, onNavigate }) {
                       className="hover:bg-muted/30 transition-colors group"
                       data-testid={`complaint-row-${c.id}`}
                     >
-                      <td className="px-3 py-2 font-mono text-xs font-semibold">{c.complaint_number}</td>
+                      <td className="px-3 py-2 tabular-nums text-xs font-semibold">{c.complaint_number}</td>
                       <td className="px-3 py-2 text-xs">
                         {PLATFORM_ICONS[c.platform]} <span className="capitalize">{c.platform}</span>
                       </td>

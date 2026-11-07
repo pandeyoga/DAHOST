@@ -19,9 +19,9 @@ import { TaskDetailDrawer } from './TaskDetailDrawer';
 import { toast } from 'sonner';
 
 const priorityColors = {
-  high: 'bg-red-500/10 text-red-400 border-red-500/30',
-  medium: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30',
-  low: 'bg-green-500/10 text-green-400 border-green-500/30',
+  high: 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--danger-text))] border-[hsl(var(--destructive)/0.3)]',
+  medium: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning-text))] border-[hsl(var(--warning)/0.3)]',
+  low: 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.3)]',
 };
 
 function RejectDialog({ open, onOpenChange, onConfirm }) {
@@ -67,7 +67,7 @@ function RejectDialog({ open, onOpenChange, onConfirm }) {
           <Button
             onClick={handleConfirm}
             disabled={submitting}
-            className="bg-red-500 hover:bg-red-600"
+            className="bg-[hsl(var(--destructive-strong))] hover:bg-[hsl(var(--destructive-strong)/0.9)]"
             data-testid="confirm-reject-btn"
           >
             {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
@@ -151,7 +151,7 @@ export default function ApprovalInboxModule({ token }) {
   const fmtDate = (d) => d ? new Date(d).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '-';
 
   return (
-    <div className="space-y-5" data-testid="approval-inbox-module">
+    <div className="space-y-4" data-testid="approval-inbox-module">
       <PageHeader
         icon={ClipboardCheck}
         eyebrow="Portal Marketing · Approvals"
@@ -166,12 +166,12 @@ export default function ApprovalInboxModule({ token }) {
 
       <GlassPanel className="p-4">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-yellow-500/10 border border-yellow-500/30 flex items-center justify-center">
-            <Clock className="w-5 h-5 text-yellow-400" />
+          <div className="w-10 h-10 rounded-lg bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.3)] flex items-center justify-center">
+            <Clock className="w-5 h-5 text-[hsl(var(--warning-text))]" />
           </div>
           <div>
             <div className="text-2xl font-bold tabular-nums" data-testid="pending-count">{tasks.length}</div>
-            <div className="text-xs text-muted-foreground uppercase tracking-wider">Pending Approval</div>
+            <div className="text-xs text-muted-foreground ">Pending Approval</div>
           </div>
         </div>
       </GlassPanel>
@@ -181,8 +181,8 @@ export default function ApprovalInboxModule({ token }) {
           {[1, 2, 3].map(i => <Skeleton key={i} className="h-32" />)}
         </div>
       ) : tasks.length === 0 ? (
-        <GlassCard className="p-12 text-center">
-          <CheckCircle className="w-16 h-16 mx-auto mb-4 text-emerald-400 opacity-50" />
+        <GlassCard className="p-4 text-center">
+          <CheckCircle className="w-16 h-16 mx-auto mb-4 text-[hsl(var(--success-text))] opacity-50" />
           <p className="text-muted-foreground">Tidak ada task yang menunggu approval. 🎉</p>
         </GlassCard>
       ) : (
@@ -198,10 +198,10 @@ export default function ApprovalInboxModule({ token }) {
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-mono text-muted-foreground">{task.task_code}</span>
+                      <span className="text-xs tabular-nums text-muted-foreground">{task.task_code}</span>
                       <Badge variant="outline" className={priorityColors[task.priority]}>{task.priority}</Badge>
                       {isOverdue && (
-                        <Badge variant="outline" className="bg-red-500/10 text-red-400 border-red-500/30">
+                        <Badge variant="outline" className="bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--danger-text))] border-[hsl(var(--destructive)/0.3)]">
                           <AlertCircle className="w-3 h-3 mr-1" /> Overdue
                         </Badge>
                       )}
@@ -239,7 +239,7 @@ export default function ApprovalInboxModule({ token }) {
                       size="sm"
                       onClick={() => handleApprove(task)}
                       disabled={actioning === task.id}
-                      className="bg-emerald-500 hover:bg-emerald-600"
+                      className="bg-[hsl(var(--success-strong))] hover:bg-[hsl(var(--success-strong)/0.9)]"
                       data-testid={`approve-btn-${task.task_code}`}
                     >
                       {actioning === task.id ? (
@@ -253,7 +253,7 @@ export default function ApprovalInboxModule({ token }) {
                       variant="outline"
                       onClick={() => setRejectTarget(task)}
                       disabled={actioning === task.id}
-                      className="text-red-400 hover:bg-red-500/10"
+                      className="text-[hsl(var(--danger-text))] hover:bg-[hsl(var(--destructive)/0.1)]"
                       data-testid={`reject-btn-${task.task_code}`}
                     >
                       <XCircle className="w-3.5 h-3.5 mr-1" /> Reject

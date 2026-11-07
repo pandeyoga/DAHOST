@@ -55,7 +55,7 @@ export default function AnalyticsTab({ authH }) {
 
   const { page, setPage, totalPages, total, paged } = useClientPagination(hostPerformance, 10);
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Month Selector */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -80,7 +80,7 @@ export default function AnalyticsTab({ authH }) {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-12">
+        <div className="flex justify-center py-6">
           <Loader2 size={28} className="animate-spin text-muted-foreground" />
         </div>
       ) : (
@@ -92,7 +92,7 @@ export default function AnalyticsTab({ authH }) {
             </CardHeader>
             <CardContent>
               {hostPerformance.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
+                <div className="text-center py-6 text-muted-foreground">
                   <BarChart3 size={40} className="mx-auto mb-2 opacity-40" />
                   <p className="text-sm">Belum ada data performance untuk bulan ini</p>
                 </div>
@@ -126,7 +126,7 @@ export default function AnalyticsTab({ authH }) {
                           <td className="px-4 py-3 text-right tabular-nums font-medium">{fmtRp(host.total_revenue)}</td>
                           <td className="px-4 py-3 text-right tabular-nums">{fmt(host.total_orders)}</td>
                           <td className="px-4 py-3 text-right tabular-nums">{fmt(host.total_viewers)}</td>
-                          <td className="px-4 py-3 text-right tabular-nums text-emerald-600 dark:text-emerald-400">
+                          <td className="px-4 py-3 text-right tabular-nums text-[hsl(var(--success-text))] ">
                             {fmtRp(host.avg_revenue_per_shift)}
                           </td>
                         </tr>

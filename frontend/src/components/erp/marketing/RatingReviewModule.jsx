@@ -38,15 +38,15 @@ const REVIEW_HEADS = ['Tanggal', 'Rating', 'Platform', 'Order ID', 'Toko', 'Prod
 // Tanggal kalender WIB: 'YYYY-MM-DD' dibiarkan, instan (created_at) dibaca dalam WIB.
 const fmtDate = (v) => (v ? (toWIBDate(v) || String(v).slice(0, 10)) : '—');
 const STATUS_CONFIG = {
-  pending:  { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: AlertCircle },
-  reviewed: { label: 'Direspon',  color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', icon: CheckCircle2 },
+  pending:  { label: 'Menunggu', color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ', icon: AlertCircle },
+  reviewed: { label: 'Direspon',  color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ', icon: CheckCircle2 },
 };
 
 function StarRating({ rating, size = 14 }) {
   return (
     <div className="flex items-center gap-0.5">
       {[1, 2, 3, 4, 5].map(i => (
-        <Star key={i} size={size} className={i <= rating ? 'fill-amber-400 text-amber-700 dark:text-amber-400' : 'text-foreground/80 dark:text-gray-600'} />
+        <Star key={i} size={size} className={i <= rating ? 'fill-[hsl(var(--warning-text))] text-[hsl(var(--warning-text))] ' : 'text-foreground/80 '} />
       ))}
     </div>
   );
@@ -297,7 +297,7 @@ export default function RatingReviewModule({ token }) {
   const activeFilters = [filterStatus, filterPlatform, filterRating > 0, filterCategory, searchQuery].filter(Boolean).length;
 
   return (
-    <div className="space-y-6" data-testid="rating-review-module">
+    <div className="space-y-4" data-testid="rating-review-module">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -317,11 +317,11 @@ export default function RatingReviewModule({ token }) {
       {/* KPI Cards */}
       <ActiveAccountBar accounts={masterAccounts} activeAccount={activeAccount} onAccountChange={acc => { setActiveAccount(acc); setCurrentPage(1); }} hint="Filter review by akun:" />
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <KPICard label="Total Review" value={s.total || 0} color="text-blue-600" bg="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950/30 dark:to-blue-900/30" icon={Star} />
-        <KPICard label="Rating Rendah" value={s.low_rating || 0} sub="(1-2 bintang)" color="text-red-600" bg="bg-gradient-to-br from-red-50 to-red-100 dark:from-red-950/30 dark:to-red-900/30" icon={ThumbsDown} />
-        <KPICard label="Rata-rata Rating" value={s.avg_rating || 0} color="text-amber-600" bg="bg-gradient-to-br from-amber-50 to-amber-100 dark:from-amber-950/30 dark:to-amber-900/30" icon={Star} />
-        <KPICard label="Menunggu" value={s.pending || 0} color="text-orange-600" bg="bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-950/30 dark:to-orange-900/30" icon={AlertCircle} />
-        <KPICard label="Direspon" value={s.reviewed || 0} color="text-emerald-600" bg="bg-gradient-to-br from-emerald-50 to-emerald-100 dark:from-emerald-950/30 dark:to-emerald-900/30" icon={CheckCircle2} />
+        <KPICard label="Total Review" value={s.total || 0} color="text-[hsl(var(--primary))]" bg=" " icon={Star} />
+        <KPICard label="Rating Rendah" value={s.low_rating || 0} sub="(1-2 bintang)" color="text-[hsl(var(--danger-text))]" bg=" " icon={ThumbsDown} />
+        <KPICard label="Rata-rata Rating" value={s.avg_rating || 0} color="text-[hsl(var(--warning-text))]" bg=" " icon={Star} />
+        <KPICard label="Menunggu" value={s.pending || 0} color="text-[hsl(var(--warning-text))]" bg=" " icon={AlertCircle} />
+        <KPICard label="Direspon" value={s.reviewed || 0} color="text-[hsl(var(--success-text))]" bg=" " icon={CheckCircle2} />
       </div>
 
       {/* Filters */}
@@ -423,9 +423,9 @@ export default function RatingReviewModule({ token }) {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="flex justify-center py-8"><Loader2 className="animate-spin" size={24} /></div>
+            <div className="flex justify-center py-6"><Loader2 className="animate-spin" size={24} /></div>
           ) : reviews.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">Tidak ada review</div>
+            <div className="text-center py-6 text-muted-foreground">Tidak ada review</div>
           ) : view === 'table' ? (
             <div className="rounded-lg border border-border overflow-x-auto">
               <table className="w-full text-xs" data-testid="reviews-table">
@@ -440,7 +440,7 @@ export default function RatingReviewModule({ token }) {
                       <td className="px-2.5 py-2 whitespace-nowrap">{fmtDate(r.date || r.created_at)}</td>
                       <td className="px-2.5 py-2"><StarRating rating={r.rating} size={12} /></td>
                       <td className="px-2.5 py-2 whitespace-nowrap">{PLATFORM_ICONS[r.platform]} {r.platform || '—'}</td>
-                      <td className="px-2.5 py-2 font-mono text-[11px]">{r.order_id || '—'}</td>
+                      <td className="px-2.5 py-2 tabular-nums text-xs">{r.order_id || '—'}</td>
                       <td className="px-2.5 py-2">{r.account_name || '—'}</td>
                       <td className="px-2.5 py-2 max-w-[200px] truncate" title={r.product}>{r.product || '—'}</td>
                       <td className="px-2.5 py-2 max-w-[280px] truncate" title={r.review_text}>
@@ -455,7 +455,7 @@ export default function RatingReviewModule({ token }) {
                         ) : '—'}
                       </td>
                       <td className="px-2.5 py-2 max-w-[220px] truncate" title={r.response_text}>
-                        {r.response_text || <span className="text-amber-600">belum dibalas</span>}
+                        {r.response_text || <span className="text-[hsl(var(--warning-text))]">belum dibalas</span>}
                       </td>
                       <td className="px-2.5 py-2 whitespace-nowrap text-right">
                         <Button onClick={() => setShowDetail(r)} variant="ghost" size="sm"

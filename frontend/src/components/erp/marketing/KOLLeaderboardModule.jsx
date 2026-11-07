@@ -27,8 +27,8 @@ const fmt = (n, decimals = 0) => {
 
 const fmtRp = (n) => n == null ? '-' : formatRupiah(n);
 
-const RANK_COLORS = ['text-yellow-500', 'text-muted-foreground', 'text-orange-500'];
-const RANK_BG    = ['bg-yellow-50 border-yellow-200', 'bg-muted border-border', 'bg-orange-50 border-orange-200'];
+const RANK_COLORS = ['text-[hsl(var(--warning-text))]', 'text-muted-foreground', 'text-[hsl(var(--warning-text))]'];
+const RANK_BG    = ['bg-[hsl(var(--warning)/0.08)] border-[hsl(var(--warning)/0.35)]', 'bg-muted border-border', 'bg-[hsl(var(--warning)/0.08)] border-[hsl(var(--warning)/0.35)]'];
 
 const SORT_OPTIONS = [
   { value: 'conversion_rate', label: 'Conversion Rate' },
@@ -71,29 +71,29 @@ function KOLDetailModal({ kolId, kolName, days, onClose }) {
         <div className="p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-bold flex items-center gap-2">
-              <Star className="h-5 w-5 text-yellow-500" />
+              <Star className="h-5 w-5 text-[hsl(var(--warning-text))]" />
               {kolName}
             </h3>
             <Button size="sm" variant="ghost" onClick={onClose}>✕</Button>
           </div>
-          {loading && <div className="text-center py-8 text-sm text-muted-foreground">Memuat detail...</div>}
-          {!loading && !detail && <div className="text-center py-8 text-sm text-muted-foreground">Data tidak tersedia</div>}
+          {loading && <div className="text-center py-6 text-sm text-muted-foreground">Memuat detail...</div>}
+          {!loading && !detail && <div className="text-center py-6 text-sm text-muted-foreground">Data tidak tersedia</div>}
           {!loading && detail && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 {[
-                  { icon: TrendingUp, label: 'Total Revenue', value: fmtRp(detail.metrics?.total_revenue), color: 'text-green-500' },
-                  { icon: Eye,        label: 'Total Viewers', value: fmt(detail.metrics?.total_viewers), color: 'text-blue-500' },
-                  { icon: ShoppingBag,label: 'Total Orders',  value: fmt(detail.metrics?.total_orders), color: 'text-purple-500' },
-                  { icon: Percent,    label: 'Conv. Rate',    value: `${(detail.metrics?.conversion_rate || 0).toFixed(2)}%`, color: 'text-orange-500' },
-                  { icon: BarChart3,  label: 'Sessions',      value: fmt(detail.metrics?.session_count), color: 'text-teal-500' },
-                  { icon: ShoppingBag,label: 'Orders/Session',value: (detail.metrics?.orders_per_session || 0).toFixed(1), color: 'text-pink-500' },
+                  { icon: TrendingUp, label: 'Total Revenue', value: fmtRp(detail.metrics?.total_revenue), color: 'text-[hsl(var(--success-text))]' },
+                  { icon: Eye,        label: 'Total Viewers', value: fmt(detail.metrics?.total_viewers), color: 'text-[hsl(var(--primary))]' },
+                  { icon: ShoppingBag,label: 'Total Orders',  value: fmt(detail.metrics?.total_orders), color: 'text-[hsl(var(--primary))]' },
+                  { icon: Percent,    label: 'Conv. Rate',    value: `${(detail.metrics?.conversion_rate || 0).toFixed(2)}%`, color: 'text-[hsl(var(--warning-text))]' },
+                  { icon: BarChart3,  label: 'Sessions',      value: fmt(detail.metrics?.session_count), color: 'text-[hsl(var(--success-text))]' },
+                  { icon: ShoppingBag,label: 'Orders/Session',value: (detail.metrics?.orders_per_session || 0).toFixed(1), color: 'text-[hsl(var(--primary))]' },
                 ].map((m, i) => (
                   <Card key={i} className="border border-border">
                     <CardContent className="p-3 flex items-center gap-2">
                       <m.icon className={`h-5 w-5 ${m.color}`} />
                       <div>
-                        <p className="text-[11px] text-muted-foreground">{m.label}</p>
+                        <p className="text-xs text-muted-foreground">{m.label}</p>
                         <p className="text-sm font-bold">{m.value}</p>
                       </div>
                     </CardContent>
@@ -101,7 +101,7 @@ function KOLDetailModal({ kolId, kolName, days, onClose }) {
                 ))}
               </div>
               <div>
-                <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Sesi Terakhir ({detail.sessions?.length || 0})</p>
+                <p className="text-xs font-semibold text-muted-foreground mb-2 ">Sesi Terakhir ({detail.sessions?.length || 0})</p>
                 <div className="space-y-2 max-h-48 overflow-y-auto">
                   {(detail.sessions || []).slice(0, 10).map((s, i) => (
                     <div key={i} className="flex items-center justify-between text-xs py-1.5 border-b border-border last:border-0">
@@ -109,7 +109,7 @@ function KOLDetailModal({ kolId, kolName, days, onClose }) {
                       <div className="flex items-center gap-3">
                         <span className="flex items-center gap-1"><Eye className="h-3 w-3" />{fmt(s.viewers)}</span>
                         <span className="flex items-center gap-1"><ShoppingBag className="h-3 w-3" />{fmt(s.orders)}</span>
-                        <span className="font-medium text-green-600">{fmtRp(s.revenue)}</span>
+                        <span className="font-medium text-[hsl(var(--success-text))]">{fmtRp(s.revenue)}</span>
                       </div>
                     </div>
                   ))}
@@ -158,12 +158,12 @@ export default function KOLLeaderboardModule() {
   const overall = meta?.overall_stats || {};
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 space-y-4">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
           <h2 className="text-xl font-bold flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center">
+            <div className="h-8 w-8 rounded-lg flex items-center justify-center">
               <Trophy className="h-4 w-4 text-foreground" />
             </div>
             KOL Leaderboard
@@ -221,10 +221,10 @@ export default function KOLLeaderboardModule() {
       {overall && Object.keys(overall).length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { icon: TrendingUp, label: 'Total Revenue',   value: fmtRp(overall.total_revenue),       color: 'text-green-500',  bg: 'bg-green-50' },
-            { icon: Eye,        label: 'Total Viewers',   value: fmt(overall.total_viewers),           color: 'text-blue-500',   bg: 'bg-blue-50' },
-            { icon: ShoppingBag,label: 'Total Orders',    value: fmt(overall.total_orders),            color: 'text-purple-500', bg: 'bg-purple-50' },
-            { icon: Percent,    label: 'Avg Conv. Rate',  value: `${(overall.avg_conversion_rate || 0).toFixed(2)}%`, color: 'text-orange-500', bg: 'bg-orange-50' },
+            { icon: TrendingUp, label: 'Total Revenue',   value: fmtRp(overall.total_revenue),       color: 'text-[hsl(var(--success-text))]',  bg: 'bg-[hsl(var(--success)/0.08)]' },
+            { icon: Eye,        label: 'Total Viewers',   value: fmt(overall.total_viewers),           color: 'text-[hsl(var(--primary))]',   bg: 'bg-[hsl(var(--primary)/0.08)]' },
+            { icon: ShoppingBag,label: 'Total Orders',    value: fmt(overall.total_orders),            color: 'text-[hsl(var(--primary))]', bg: 'bg-[hsl(var(--primary)/0.08)]' },
+            { icon: Percent,    label: 'Avg Conv. Rate',  value: `${(overall.avg_conversion_rate || 0).toFixed(2)}%`, color: 'text-[hsl(var(--warning-text))]', bg: 'bg-[hsl(var(--warning)/0.08)]' },
           ].map((m, i) => (
             <Card key={i} className="border border-border">
               <CardContent className="p-3 flex items-center gap-3">
@@ -232,7 +232,7 @@ export default function KOLLeaderboardModule() {
                   <m.icon className={`h-4 w-4 ${m.color}`} />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-[11px] text-muted-foreground truncate">{m.label}</p>
+                  <p className="text-xs text-muted-foreground truncate">{m.label}</p>
                   <p className="text-sm font-bold truncate">{m.value}</p>
                 </div>
               </CardContent>
@@ -251,9 +251,9 @@ export default function KOLLeaderboardModule() {
         </CardHeader>
         <CardContent className="p-0">
           {loading ? (
-            <div className="text-center py-12 text-sm text-muted-foreground"><RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2" />Memuat data...</div>
+            <div className="text-center py-6 text-sm text-muted-foreground"><RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2" />Memuat data...</div>
           ) : items.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
+            <div className="text-center py-6 text-muted-foreground">
               <Trophy className="h-10 w-10 mx-auto mb-2 opacity-20" />
               <p className="text-sm">Belum ada data live session</p>
               <p className="text-xs mt-1">Input data sesi live di modul Live Session</p>
@@ -281,7 +281,7 @@ export default function KOLLeaderboardModule() {
                       <td className="px-3 py-2">{fmt(kol.total_orders)}</td>
                       <td className="px-3 py-2">{(kol.orders_per_session || 0).toFixed(1)}</td>
                       <td className="px-3 py-2">
-                        <span className={(kol.conversion_rate || 0) >= 1 ? 'text-emerald-600' : 'text-amber-600'}>
+                        <span className={(kol.conversion_rate || 0) >= 1 ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--warning-text))]'}>
                           {(kol.conversion_rate || 0).toFixed(2)}%
                         </span>
                       </td>
@@ -317,10 +317,10 @@ export default function KOLLeaderboardModule() {
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-sm truncate">{kol.kol_name || kol.kol_id}</p>
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
-                      <MetricBadge icon={TrendingUp} label="Rev" value={fmtRp(kol.total_revenue)} colorClass="text-green-500" />
-                      <MetricBadge icon={Eye}         label="Views" value={fmt(kol.total_viewers)} colorClass="text-blue-500" />
-                      <MetricBadge icon={ShoppingBag} label="O/S"  value={(kol.orders_per_session || 0).toFixed(1)} colorClass="text-purple-500" />
-                      <MetricBadge icon={Percent}     label="CR"   value={`${(kol.conversion_rate || 0).toFixed(2)}%`} colorClass="text-orange-500" />
+                      <MetricBadge icon={TrendingUp} label="Rev" value={fmtRp(kol.total_revenue)} colorClass="text-[hsl(var(--success-text))]" />
+                      <MetricBadge icon={Eye}         label="Views" value={fmt(kol.total_viewers)} colorClass="text-[hsl(var(--primary))]" />
+                      <MetricBadge icon={ShoppingBag} label="O/S"  value={(kol.orders_per_session || 0).toFixed(1)} colorClass="text-[hsl(var(--primary))]" />
+                      <MetricBadge icon={Percent}     label="CR"   value={`${(kol.conversion_rate || 0).toFixed(2)}%`} colorClass="text-[hsl(var(--warning-text))]" />
                     </div>
                   </div>
 

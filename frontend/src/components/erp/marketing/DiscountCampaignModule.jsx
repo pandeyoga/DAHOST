@@ -29,10 +29,10 @@ const API = process.env.REACT_APP_BACKEND_URL;
 
 const PLATFORM_ICONS = { shopee: '🛒', tiktok: '🎵', tokopedia: '🟢', instagram: '📷', semua_platform: '🌐' };
 const STATUS_CONFIG = {
-  active:   { label: 'Aktif',    color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', icon: CheckCircle2 },
-  upcoming: { label: 'Upcoming', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300', icon: Clock },
-  expired:  { label: 'Expired',  color: 'bg-muted text-muted-foreground dark:bg-gray-800 dark:text-gray-400', icon: XCircle },
-  draft:    { label: 'Draft',    color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: AlertTriangle },
+  active:   { label: 'Aktif',    color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ', icon: CheckCircle2 },
+  upcoming: { label: 'Upcoming', color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] ', icon: Clock },
+  expired:  { label: 'Expired',  color: 'bg-muted text-muted-foreground ', icon: XCircle },
+  draft:    { label: 'Draft',    color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ', icon: AlertTriangle },
 };
 
 function StatusBadge({ status }) {
@@ -191,16 +191,16 @@ export default function DiscountCampaignModule({ token }) {
   };
 
   const kpis = [
-    { label: 'Total Kampanye', value: fmt(summary?.total),         sub: 'Semua kampanye',            color: 'text-indigo-600',  bg: 'bg-indigo-50 dark:bg-indigo-900/20',   icon: Tag },
-    { label: 'Aktif Sekarang', value: fmt(summary?.active),        sub: 'Sedang berjalan',           color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20', icon: CheckCircle2 },
-    { label: 'Akan Datang',    value: fmt(summary?.upcoming),       sub: 'Belum mulai',               color: 'text-blue-600',    bg: 'bg-blue-50 dark:bg-blue-900/20',       icon: Clock },
-    { label: 'Habis 3 Hari',   value: fmt(summary?.expiring_soon), sub: 'Segera berakhir',           color: 'text-amber-600',   bg: 'bg-amber-50 dark:bg-amber-900/20',    icon: AlertTriangle },
+    { label: 'Total Kampanye', value: fmt(summary?.total),         sub: 'Semua kampanye',            color: 'text-[hsl(var(--primary))]',  bg: 'bg-[hsl(var(--primary)/0.08)] ',   icon: Tag },
+    { label: 'Aktif Sekarang', value: fmt(summary?.active),        sub: 'Sedang berjalan',           color: 'text-[hsl(var(--success-text))]', bg: 'bg-[hsl(var(--success)/0.08)] ', icon: CheckCircle2 },
+    { label: 'Akan Datang',    value: fmt(summary?.upcoming),       sub: 'Belum mulai',               color: 'text-[hsl(var(--primary))]',    bg: 'bg-[hsl(var(--primary)/0.08)] ',       icon: Clock },
+    { label: 'Habis 3 Hari',   value: fmt(summary?.expiring_soon), sub: 'Segera berakhir',           color: 'text-[hsl(var(--warning-text))]',   bg: 'bg-[hsl(var(--warning)/0.08)] ',    icon: AlertTriangle },
   ];
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-6" data-testid="discount-campaign-dashboard">
+    <div className="min-h-screen bg-background p-4 md:p-4" data-testid="discount-campaign-dashboard">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Discount Campaign Manager</h1>
           <p className="text-sm text-muted-foreground">Kelola semua kampanye promo multi-platform</p>
@@ -216,13 +216,13 @@ export default function DiscountCampaignModule({ token }) {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         {kpis.map(k => <KPICard key={k.label} {...k} />)}
       </div>
 
       {/* Expiring Soon Alert */}
       {summary?.expiring_soon > 0 && (
-        <div className="mb-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 flex items-center gap-2 text-amber-700 dark:text-amber-300 text-sm">
+        <div className="mb-4 p-3 rounded-lg bg-[hsl(var(--warning)/0.08)] border border-[hsl(var(--warning)/0.35)] flex items-center gap-2 text-[hsl(var(--warning-text))] text-sm">
           <AlertTriangle size={16} />
           <strong>{summary.expiring_soon} kampanye</strong> akan berakhir dalam 3 hari! Perlu tindakan.
         </div>
@@ -285,9 +285,9 @@ export default function DiscountCampaignModule({ token }) {
       <Card>
         <CardContent className="p-0">
           {loading ? (
-            <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-muted-foreground" /></div>
+            <div className="flex justify-center py-6"><Loader2 size={28} className="animate-spin text-muted-foreground" /></div>
           ) : items.length === 0 ? (
-            <div className="text-center py-16 text-muted-foreground">
+            <div className="text-center py-6 text-muted-foreground">
               <Tag size={40} className="mx-auto mb-3 opacity-30" />
               <p className="font-medium">Belum ada kampanye</p>
               <Button size="sm" className="mt-3" onClick={openCreate}><Plus size={12} className="mr-1" />Buat Kampanye</Button>
@@ -298,13 +298,13 @@ export default function DiscountCampaignModule({ token }) {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b bg-muted/40">
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase">Nama Kampanye</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase">Platform / Akun</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase">Jenis</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase">Nilai</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase">Periode</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase">Status</th>
-                      <th className="px-4 py-3 text-right text-xs font-semibold text-muted-foreground uppercase">Aksi</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground ">Nama Kampanye</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground ">Platform / Akun</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground ">Jenis</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground ">Nilai</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground ">Periode</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground ">Status</th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold text-muted-foreground ">Aksi</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -321,7 +321,7 @@ export default function DiscountCampaignModule({ token }) {
                         <td className="px-4 py-3 text-xs">{item.discount_type_label || DISCOUNT_TYPE_LABELS[item.discount_type] || item.discount_type}</td>
                         <td className="px-4 py-3">
                           {item.discount_value > 0 ? (
-                            <span className="font-semibold text-emerald-600">
+                            <span className="font-semibold text-[hsl(var(--success-text))]">
                               {item.discount_unit === 'persen' ? `${item.discount_value}%` :
                                item.discount_unit === 'nominal' ? fmtRp(item.discount_value) :
                                `${item.discount_value} unit`}
@@ -330,12 +330,12 @@ export default function DiscountCampaignModule({ token }) {
                           {item.min_purchase > 0 && <div className="text-xs text-muted-foreground">Min. {fmtRp(item.min_purchase)}</div>}
                         </td>
                         <td className="px-4 py-3 text-xs">
-                          <div className="font-mono">{item.start_date}</div>
+                          <div className="tabular-nums">{item.start_date}</div>
                           <div className="text-muted-foreground">s/d {item.end_date}</div>
                           {item.days_remaining !== null && item.days_remaining !== undefined && (
                             <div className={`text-xs font-medium mt-0.5 ${
-                              item.days_remaining <= 3 ? 'text-red-500' :
-                              item.days_remaining <= 7 ? 'text-amber-500' : 'text-emerald-500'
+                              item.days_remaining <= 3 ? 'text-[hsl(var(--danger-text))]' :
+                              item.days_remaining <= 7 ? 'text-[hsl(var(--warning-text))]' : 'text-[hsl(var(--success-text))]'
                             }`}>
                               {item.days_remaining >= 0 ? `${item.days_remaining} hari lagi` : `Berakhir ${Math.abs(item.days_remaining)} hari lalu`}
                             </div>
@@ -347,7 +347,7 @@ export default function DiscountCampaignModule({ token }) {
                             <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(item)}>
                               <Pencil size={12} />
                             </Button>
-                            <Button size="icon" variant="ghost" className="h-7 w-7 text-red-500 hover:text-red-600" onClick={() => handleDelete(item.id)}>
+                            <Button size="icon" variant="ghost" className="h-7 w-7 text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))]" onClick={() => handleDelete(item.id)}>
                               <Trash2 size={12} />
                             </Button>
                           </div>

@@ -47,9 +47,9 @@ const BASIS_LABEL = {
   gmv_kpi: 'GMV KPI konten (platform)', none: 'Belum ada angka',
 };
 const STATUS_STYLE = {
-  on_track: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30',
-  warning: 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30',
-  behind: 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/30',
+  on_track: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.3)]',
+  warning: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))] border-[hsl(var(--warning)/0.3)]',
+  behind: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--danger-text))] border-[hsl(var(--destructive)/0.3)]',
   no_target: 'bg-muted text-muted-foreground border-border',
 };
 const STATUS_LABEL = {
@@ -162,7 +162,7 @@ export default function CreatorScorecardView({ token, onNavigate }) {
     <div className="space-y-4" data-testid="creator-scorecard-view">
       <div className="flex flex-wrap items-end gap-2">
         <div>
-          <label className="text-[11px] text-muted-foreground block">Bulan</label>
+          <label className="text-xs text-muted-foreground block">Bulan</label>
           <SmartNativeSelect value={month} onChange={(e) => setMonth(Number(e.target.value))}
             data-testid="scorecard-month"
             className="w-40 h-9 rounded-md border border-border bg-background text-foreground px-2 text-xs">
@@ -170,7 +170,7 @@ export default function CreatorScorecardView({ token, onNavigate }) {
           </SmartNativeSelect>
         </div>
         <div>
-          <label className="text-[11px] text-muted-foreground block">Tahun</label>
+          <label className="text-xs text-muted-foreground block">Tahun</label>
           <input type="number" value={year} min={2020} max={2100}
             onChange={(e) => setYear(Number(e.target.value))} data-testid="scorecard-year"
             className="h-9 w-24 rounded-md border border-border bg-background text-foreground px-2 text-xs" />
@@ -179,7 +179,7 @@ export default function CreatorScorecardView({ token, onNavigate }) {
           includeAll allLabel="Semua Toko" required={false} label="Toko"
           testId="scorecard-account-select" className="min-w-[220px]" />
         <div className="relative min-w-[180px]">
-          <label className="text-[11px] text-muted-foreground block">Cari kreator</label>
+          <label className="text-xs text-muted-foreground block">Cari kreator</label>
           <Search size={13} className="absolute left-2.5 top-[30px] text-muted-foreground" />
           <input type="text" value={query} onChange={(e) => setQuery(e.target.value)}
             placeholder="nama atau kode…" data-testid="scorecard-search"
@@ -210,40 +210,40 @@ export default function CreatorScorecardView({ token, onNavigate }) {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3" data-testid="scorecard-kpi">
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Target omzet</p>
+        <GlassCard className="p-3"><p className="text-xs text-muted-foreground">Target omzet</p>
           <p className="text-base font-bold">{fmtRp(t.revenue_target)}</p>
-          <p className="text-[10px] text-muted-foreground">{rowsAll.length} kreator</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Omzet pesanan</p>
+          <p className="text-xs text-muted-foreground">{rowsAll.length} kreator</p></GlassCard>
+        <GlassCard className="p-3"><p className="text-xs text-muted-foreground">Omzet pesanan</p>
           <p className="text-base font-bold">{fmtRp(t.order_revenue)}</p>
-          <p className="text-[10px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             {t.revenue_pct_orders == null ? 'tanpa target' : `${t.revenue_pct_orders}% target`}</p>
           {/* SESI #9 — angka kedua yang diminta pemilik, TIDAK menggantikan bruto */}
-          <p className="text-[10px] text-muted-foreground" data-testid="scorecard-kpi-returns">
+          <p className="text-xs text-muted-foreground" data-testid="scorecard-kpi-returns">
             {(t.orders_returned || 0) > 0
               ? <>setelah retur <b>{fmtRp(t.order_revenue_net_returns)}</b> · retur {fmtNum(t.orders_returned)} pesanan ({fmtRp(t.order_revenue_returned)})</>
               : 'tidak ada pesanan retur'}
           </p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Omzet sesi live</p>
+        <GlassCard className="p-3"><p className="text-xs text-muted-foreground">Omzet sesi live</p>
           <p className="text-base font-bold">{fmtRp(t.session_revenue)}</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">GMV KPI konten</p>
+        <GlassCard className="p-3"><p className="text-xs text-muted-foreground">GMV KPI konten</p>
           <p className="text-base font-bold">{fmtRp(t.gmv_kpi)}</p>
-          <p className="text-[10px] text-muted-foreground">cakupan KPI {t.kpi_coverage_pct || 0}%</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Konten</p>
+          <p className="text-xs text-muted-foreground">cakupan KPI {t.kpi_coverage_pct || 0}%</p></GlassCard>
+        <GlassCard className="p-3"><p className="text-xs text-muted-foreground">Konten</p>
           <p className="text-base font-bold">{fmtNum(t.contents)}</p>
-          <p className="text-[10px] text-muted-foreground">{fmtNum(t.posted)} terbit</p></GlassCard>
+          <p className="text-xs text-muted-foreground">{fmtNum(t.posted)} terbit</p></GlassCard>
       </div>
 
       {noTarget.length > 0 && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3"
+        <div className="rounded-lg border border-[hsl(var(--warning)/0.3)] bg-[hsl(var(--warning)/0.1)] p-3"
           data-testid="scorecard-no-target">
-          <p className="text-xs font-semibold flex items-center gap-1.5 text-amber-700 dark:text-amber-400">
+          <p className="text-xs font-semibold flex items-center gap-1.5 text-[hsl(var(--warning-text))] ">
             <AlertTriangle size={12} /> {noTarget.length} kreator belum punya target {MONTHS[month - 1]} {year}
           </p>
-          <p className="text-[11px] text-muted-foreground mt-1">
+          <p className="text-xs text-muted-foreground mt-1">
             {noTarget.slice(0, 8).join(' · ')}{noTarget.length > 8 ? ' …' : ''} — pencapaiannya
             ditandai “belum ada target”, bukan 0%.
           </p>
-          <Button size="sm" variant="outline" className="h-7 mt-2 text-[11px]"
+          <Button size="sm" variant="outline" className="h-7 mt-2 text-xs"
             onClick={gotoTarget} data-testid="scorecard-goto-target">
             <Target size={11} className="mr-1" /> Tetapkan target kreator
           </Button>
@@ -251,11 +251,11 @@ export default function CreatorScorecardView({ token, onNavigate }) {
       )}
 
       {loading ? (
-        <div className="py-10 text-center text-muted-foreground text-sm">
+        <div className="py-6 text-center text-muted-foreground text-sm">
           <Loader2 className="mx-auto animate-spin mb-2" size={18} /> Menghitung pencapaian kreator…
         </div>
       ) : !rows.length ? (
-        <div className="py-10 text-center text-muted-foreground text-sm" data-testid="scorecard-empty">
+        <div className="py-6 text-center text-muted-foreground text-sm" data-testid="scorecard-empty">
           {rowsAll.length === 0
             ? 'Belum ada kreator yang bisa dinilai pada bulan ini.'
             : `Tidak ada kreator yang cocok dengan “${query}”.`}
@@ -275,7 +275,7 @@ export default function CreatorScorecardView({ token, onNavigate }) {
                     <td className="px-2.5 py-2">
                       <div className="font-semibold text-foreground">{r.creator_name}</div>
                       {r.creator_code ? (
-                        <div className="text-[10px] text-muted-foreground">{r.creator_code}</div>
+                        <div className="text-xs text-muted-foreground">{r.creator_code}</div>
                       ) : null}
                     </td>
                     <td className="px-2.5 py-2 whitespace-nowrap">
@@ -298,9 +298,9 @@ export default function CreatorScorecardView({ token, onNavigate }) {
                     <td className="px-2.5 py-2 whitespace-nowrap"
                       data-testid={`scorecard-returned-${r.creator_id}`}>
                       {(a.orders_returned || 0) > 0
-                        ? <span className="text-amber-700 dark:text-amber-300">
+                        ? <span className="text-[hsl(var(--warning-text))] ">
                           {fmtRp(a.order_revenue_returned)}
-                          <span className="text-[10px] text-muted-foreground"> · {fmtNum(a.orders_returned)} pesanan</span>
+                          <span className="text-xs text-muted-foreground"> · {fmtNum(a.orders_returned)} pesanan</span>
                         </span>
                         : <span className="text-muted-foreground">—</span>}
                     </td>
@@ -313,7 +313,7 @@ export default function CreatorScorecardView({ token, onNavigate }) {
                     <td className="px-2.5 py-2">{fmtNum(a.contents)}</td>
                     <td className="px-2.5 py-2">{fmtNum(a.posted)}</td>
                     <td className="px-2.5 py-2">
-                      <span className={a.kpi_coverage_pct >= 80 ? 'text-emerald-600' : 'text-amber-600'}>
+                      <span className={a.kpi_coverage_pct >= 80 ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--warning-text))]'}>
                         {Number(a.kpi_coverage_pct || 0).toFixed(0)}%
                       </span>
                     </td>
@@ -322,12 +322,12 @@ export default function CreatorScorecardView({ token, onNavigate }) {
                     <td className="px-2.5 py-2">{fmtNum(a.sessions)}</td>
                     <td className="px-2.5 py-2">{fmtNum(a.viewers)}</td>
                     <td className="px-2.5 py-2">
-                      <Badge variant="outline" className={`text-[9px] ${STATUS_STYLE[ach.status]}`}>
+                      <Badge variant="outline" className={`text-xs ${STATUS_STYLE[ach.status]}`}>
                         {STATUS_LABEL[ach.status]}
                       </Badge>
                     </td>
                     <td className="px-2.5 py-2">
-                      <Button size="sm" variant="outline" className="h-7 text-[11px]"
+                      <Button size="sm" variant="outline" className="h-7 text-xs"
                         onClick={() => openDetail(r)}
                         data-testid={`scorecard-detail-btn-${r.creator_id}`}>
                         Lihat asalnya
@@ -352,12 +352,12 @@ export default function CreatorScorecardView({ token, onNavigate }) {
                     <CardTitle className="text-sm flex items-center gap-1.5">
                       <Target size={13} className="text-primary" /> {r.creator_name}
                     </CardTitle>
-                    <Badge variant="outline" className={`text-[9px] ${STATUS_STYLE[ach.status]}`}>
+                    <Badge variant="outline" className={`text-xs ${STATUS_STYLE[ach.status]}`}>
                       {STATUS_LABEL[ach.status]}
                     </Badge>
                   </div>
                 </CardHeader>
-                <CardContent className="space-y-1.5 text-[11px]">
+                <CardContent className="space-y-1.5 text-xs">
                   <div className="flex justify-between"><span className="text-muted-foreground">Target</span>
                     <span>{r.target.revenue == null ? '—' : fmtRp(r.target.revenue)}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Basis</span>
@@ -371,7 +371,7 @@ export default function CreatorScorecardView({ token, onNavigate }) {
                     <span className="font-semibold">
                       {fmtRp(a.order_revenue_net_returns)}
                       {(a.orders_returned || 0) > 0 && (
-                        <span className="text-[10px] text-amber-700 dark:text-amber-300">
+                        <span className="text-xs text-[hsl(var(--warning-text))] ">
                           {' '}(retur {fmtNum(a.orders_returned)})
                         </span>
                       )}
@@ -382,7 +382,7 @@ export default function CreatorScorecardView({ token, onNavigate }) {
                     <span>{fmtRp(a.gmv_kpi)}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Konten / terbit</span>
                     <span>{fmtNum(a.contents)} / {fmtNum(a.posted)}</span></div>
-                  <Button size="sm" variant="outline" className="h-7 w-full mt-1 text-[11px]"
+                  <Button size="sm" variant="outline" className="h-7 w-full mt-1 text-xs"
                     onClick={() => openDetail(r)}
                     data-testid={`scorecard-detail-card-btn-${r.creator_id}`}>
                     Lihat asal angkanya
@@ -403,7 +403,7 @@ export default function CreatorScorecardView({ token, onNavigate }) {
           <p className="text-xs font-semibold mb-1 flex items-center gap-1 text-foreground">
             <Info size={12} /> Catatan kejujuran data
           </p>
-          <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-muted-foreground">
+          <ul className="list-disc pl-4 space-y-0.5 text-xs text-muted-foreground">
             {(data.data_notes || []).map((n, i) => <li key={i}>{n}</li>)}
           </ul>
         </div>
@@ -418,18 +418,18 @@ export default function CreatorScorecardView({ token, onNavigate }) {
               <Target size={15} className="text-primary" />
               Rincian {detailOf?.creator_name} · {MONTHS[month - 1]} {year}
             </DialogTitle>
-            <DialogDescription className="text-[11px]">
+            <DialogDescription className="text-xs">
               Tiga daftar di bawah adalah TIGA SUMBER ANGKA yang berbeda dan <b>tidak
               dijumlah</b>. Totalnya sama dengan baris di tabel Scorecard.
             </DialogDescription>
           </DialogHeader>
 
           {detailLoading ? (
-            <div className="py-10 text-center text-muted-foreground text-sm">
+            <div className="py-6 text-center text-muted-foreground text-sm">
               <Loader2 className="mx-auto animate-spin mb-2" size={18} /> Menelusuri asal angka…
             </div>
           ) : detail?.error ? (
-            <p className="text-xs text-rose-600 dark:text-rose-400 py-6 text-center">
+            <p className="text-xs text-[hsl(var(--danger-text))] py-6 text-center">
               {detail.error}
             </p>
           ) : detail ? (
@@ -448,9 +448,9 @@ export default function CreatorScorecardView({ token, onNavigate }) {
                 detail.target?.has_target ? 'ditetapkan SPV' : 'belum ada target']]
                   .map(([l, v, s]) => (
                     <div key={l} className="rounded-md border border-border p-2">
-                      <p className="text-[10px] text-muted-foreground">{l}</p>
+                      <p className="text-xs text-muted-foreground">{l}</p>
                       <p className="text-sm font-bold text-foreground">{v}</p>
-                      <p className="text-[10px] text-muted-foreground">{s}</p>
+                      <p className="text-xs text-muted-foreground">{s}</p>
                     </div>
                   ))}
               </div>
@@ -481,7 +481,7 @@ export default function CreatorScorecardView({ token, onNavigate }) {
 
               <div className="rounded-md border border-border overflow-x-auto max-h-[46vh]">
                 {detailTab === 'konten' && (
-                  <table className="w-full text-[11px]" data-testid="scorecard-detail-contents">
+                  <table className="w-full text-xs" data-testid="scorecard-detail-contents">
                     <thead className="bg-muted/60 sticky top-0"><tr>
                       {['Tanggal', 'Judul', 'Jenis', 'Status', 'KPI', 'Views',
                         'Engagement', 'GMV KPI', 'Order (KPI)'].map((h) => (
@@ -506,8 +506,8 @@ export default function CreatorScorecardView({ token, onNavigate }) {
                           <td className="px-2 py-1.5">{c.status || '—'}</td>
                           <td className="px-2 py-1.5">
                             {c.has_kpi
-                              ? <Badge variant="outline" className="text-[9px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30">ada</Badge>
-                              : <Badge variant="outline" className="text-[9px]">belum</Badge>}
+                              ? <Badge variant="outline" className="text-xs bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.3)]">ada</Badge>
+                              : <Badge variant="outline" className="text-xs">belum</Badge>}
                           </td>
                           <td className="px-2 py-1.5">{fmtNum(c.views)}</td>
                           <td className="px-2 py-1.5">{fmtNum(c.engagement)}</td>
@@ -519,7 +519,7 @@ export default function CreatorScorecardView({ token, onNavigate }) {
                   </table>
                 )}
                 {detailTab === 'pesanan' && (
-                  <table className="w-full text-[11px]" data-testid="scorecard-detail-orders">
+                  <table className="w-full text-xs" data-testid="scorecard-detail-orders">
                     <thead className="bg-muted/60 sticky top-0"><tr>
                       {['No. Pesanan', 'Tanggal', 'Toko', 'Status', 'Omzet produk',
                         'Dihitung?'].map((h) => (
@@ -533,16 +533,16 @@ export default function CreatorScorecardView({ token, onNavigate }) {
                         </td></tr>
                       ) : detail.orders.map((o) => (
                         <tr key={o.id} className="hover:bg-muted/30">
-                          <td className="px-2 py-1.5 font-mono">{o.order_id}</td>
+                          <td className="px-2 py-1.5 tabular-nums">{o.order_id}</td>
                           <td className="px-2 py-1.5 whitespace-nowrap">{String(o.order_date || '').slice(0, 10)}</td>
                           <td className="px-2 py-1.5">{o.account_name || '—'}</td>
                           <td className="px-2 py-1.5">{o.status}</td>
                           <td className="px-2 py-1.5 whitespace-nowrap">{fmtRp(o.revenue_product)}</td>
                           <td className="px-2 py-1.5">
                             {o.counted ? (
-                              <span className="text-emerald-700 dark:text-emerald-400">
+                              <span className="text-[hsl(var(--success-text))] ">
                                 ya{o.note ? ' · ' : ''}
-                                {o.note ? <span className="text-amber-700 dark:text-amber-400">{o.note}</span> : null}
+                                {o.note ? <span className="text-[hsl(var(--warning-text))] ">{o.note}</span> : null}
                               </span>
                             ) : (
                               <span className="text-muted-foreground">tidak — {o.why_not_counted}</span>
@@ -554,7 +554,7 @@ export default function CreatorScorecardView({ token, onNavigate }) {
                   </table>
                 )}
                 {detailTab === 'sesi' && (
-                  <table className="w-full text-[11px]" data-testid="scorecard-detail-sessions">
+                  <table className="w-full text-xs" data-testid="scorecard-detail-sessions">
                     <thead className="bg-muted/60 sticky top-0"><tr>
                       {['Tanggal', 'Sesi', 'Toko', 'Omzet sesi', 'Penonton', 'Puncak',
                         'Order', 'Durasi'].map((h) => (
@@ -584,17 +584,17 @@ export default function CreatorScorecardView({ token, onNavigate }) {
               </div>
 
               {detail.truncated && (
-                <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                <p className="text-xs text-[hsl(var(--warning-text))] ">
                   Daftar dipotong pada batas aman. Persempit dengan filter toko/bulan untuk
                   melihat sisanya.
                 </p>
               )}
-              <ul className="list-disc pl-4 space-y-0.5 text-[10px] text-muted-foreground">
+              <ul className="list-disc pl-4 space-y-0.5 text-xs text-muted-foreground">
                 {(detail.data_notes || []).filter((n) => !n.startsWith('PERLU KEPUTUSAN'))
                   .map((n, i) => <li key={i}>{n}</li>)}
               </ul>
               <div className="flex justify-end">
-                <Button size="sm" variant="outline" className="h-8 text-[11px]"
+                <Button size="sm" variant="outline" className="h-8 text-xs"
                   onClick={() => { setDetailOf(null); setDetail(null); }}
                   data-testid="scorecard-detail-close">
                   <X size={12} className="mr-1" /> Tutup

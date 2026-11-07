@@ -14,9 +14,9 @@ import { AccountBadge } from './marketing/AccountBadge';
 import { toast } from 'sonner';
 
 const priorityColors = {
-  high: 'bg-red-500/10 text-red-400 border-red-500/30',
-  medium: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30',
-  low: 'bg-green-500/10 text-green-400 border-green-500/30',
+  high: 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--danger-text))] border-[hsl(var(--destructive)/0.3)]',
+  medium: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning-text))] border-[hsl(var(--warning)/0.3)]',
+  low: 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.3)]',
 };
 
 const taskTypeLabels = {
@@ -83,8 +83,8 @@ export function TaskCard({ task, isDragging, onRefresh, token, accounts = [], on
     <GlassCard
       className={`p-3 cursor-grab active:cursor-grabbing transition-all ${
         isDragging ? 'shadow-lg rotate-2 scale-105' : ''
-      } ${isOverdue ? 'border-red-500/50' : ''} ${
-        isActionable && !actionExecuted ? 'border-blue-500/40' : ''
+      } ${isOverdue ? 'border-[hsl(var(--destructive)/0.5)]' : ''} ${
+        isActionable && !actionExecuted ? 'border-[hsl(var(--primary)/0.4)]' : ''
       }`}
       data-testid={`task-card-${task.task_code}`}
     >
@@ -92,14 +92,14 @@ export function TaskCard({ task, isDragging, onRefresh, token, accounts = [], on
       <div className="flex items-start justify-between mb-2">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 mb-1 flex-wrap">
-            <span className="text-xs font-mono text-muted-foreground">{task.task_code}</span>
-            {isOverdue && <AlertCircle className="w-3 h-3 text-red-400 shrink-0" />}
+            <span className="text-xs tabular-nums text-muted-foreground">{task.task_code}</span>
+            {isOverdue && <AlertCircle className="w-3 h-3 text-[hsl(var(--danger-text))] shrink-0" />}
             {/* ⚡ Actionable indicator */}
             {isActionable && (
               <span className={`inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
                 actionExecuted
-                  ? 'bg-emerald-500/10 text-emerald-500'
-                  : 'bg-blue-500/15 text-blue-500 border border-blue-500/30'
+                  ? 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))]'
+                  : 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border border-[hsl(var(--primary)/0.3)]'
               }`}>
                 <Zap size={9} />
                 {actionExecuted ? 'Done' : 'Action'}
@@ -122,11 +122,11 @@ export function TaskCard({ task, isDragging, onRefresh, token, accounts = [], on
             {task.status === 'pending_approval' && (
               <>
                 <DropdownMenuItem onClick={handleApprove} disabled={loading}>
-                  <CheckCircle className="w-3 h-3 mr-2 text-emerald-400" />
+                  <CheckCircle className="w-3 h-3 mr-2 text-[hsl(var(--success-text))]" />
                   Approve
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={handleReject} disabled={loading}>
-                  <AlertCircle className="w-3 h-3 mr-2 text-red-400" />
+                  <AlertCircle className="w-3 h-3 mr-2 text-[hsl(var(--danger-text))]" />
                   Reject
                 </DropdownMenuItem>
               </>

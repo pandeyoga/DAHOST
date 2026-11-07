@@ -74,13 +74,13 @@ export default function PlatformKpiView({ token, onNavigate }) {
           includeAll allLabel="Semua Toko" required={false} label="Toko"
           testId="kpi-account-select" className="min-w-[220px]" />
         <div>
-          <label className="text-[11px] text-muted-foreground block">Dari</label>
+          <label className="text-xs text-muted-foreground block">Dari</label>
           <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
             data-testid="kpi-date-from"
             className="h-9 rounded-md border border-border bg-background text-foreground px-2 text-xs" />
         </div>
         <div>
-          <label className="text-[11px] text-muted-foreground block">Sampai</label>
+          <label className="text-xs text-muted-foreground block">Sampai</label>
           <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
             data-testid="kpi-date-to"
             className="h-9 rounded-md border border-border bg-background text-foreground px-2 text-xs" />
@@ -97,11 +97,11 @@ export default function PlatformKpiView({ token, onNavigate }) {
       </div>
 
       {loading ? (
-        <div className="py-10 text-center text-muted-foreground text-sm">
+        <div className="py-6 text-center text-muted-foreground text-sm">
           <Loader2 className="mx-auto animate-spin mb-2" size={18} /> Memuat KPI platform…
         </div>
       ) : !channels.length ? (
-        <div className="py-10 text-center" data-testid="kpi-empty">
+        <div className="py-6 text-center" data-testid="kpi-empty">
           <p className="text-sm font-semibold text-foreground">Belum ada KPI platform pada rentang ini.</p>
           <p className="text-xs text-muted-foreground mt-1 max-w-xl mx-auto">
             Unduh dari Seller Center lalu unggah di menu <b>Impor Data</b>:
@@ -124,9 +124,9 @@ export default function PlatformKpiView({ token, onNavigate }) {
                     <p className="text-xs font-semibold flex items-center gap-1.5 text-foreground">
                       <Icon size={13} className="text-primary" /> {c.label}
                     </p>
-                    <Badge variant="outline" className="text-[9px]">{fmtNum(c.days)} hari</Badge>
+                    <Badge variant="outline" className="text-xs">{fmtNum(c.days)} hari</Badge>
                   </div>
-                  <div className="space-y-1 text-[11px]">
+                  <div className="space-y-1 text-xs">
                     <div className="flex justify-between"><span className="text-muted-foreground">GMV (pesanan dibuat)</span>
                       <span className="font-semibold">{fmtRp(c.gmv_created)}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">Pesanan</span>
@@ -175,7 +175,7 @@ export default function PlatformKpiView({ token, onNavigate }) {
                     data-testid={`kpi-row-${r.date}-${r.channel}`}>
                     <td className="px-2.5 py-2 whitespace-nowrap font-medium">{r.date}</td>
                     <td className="px-2.5 py-2">
-                      <Badge variant="outline" className="text-[9px] capitalize">{r.channel}</Badge>
+                      <Badge variant="outline" className="text-xs capitalize">{r.channel}</Badge>
                     </td>
                     <td className="px-2.5 py-2 text-muted-foreground whitespace-nowrap">
                       {SOURCE_LABEL[r.source] || r.source}
@@ -206,7 +206,7 @@ export default function PlatformKpiView({ token, onNavigate }) {
           <p className="text-xs font-semibold mb-1 flex items-center gap-1 text-foreground">
             <Info size={12} /> Catatan kejujuran data
           </p>
-          <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-muted-foreground">
+          <ul className="list-disc pl-4 space-y-0.5 text-xs text-muted-foreground">
             {(summary.data_notes || []).map((n, i) => <li key={i}>{n}</li>)}
           </ul>
         </div>

@@ -45,17 +45,17 @@ const ageDays = (v) => {
   return Math.max(0, daysBetweenISO(d, todayWIB()));
 };
 const SHIPMENT_STATUS_CONFIG = {
-  pending:   { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: Clock },
-  shipped:   { label: 'Dikirim', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300', icon: Truck },
-  delivered: { label: 'Terkirim', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', icon: CheckCircle2 },
+  pending:   { label: 'Menunggu', color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ', icon: Clock },
+  shipped:   { label: 'Dikirim', color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] ', icon: Truck },
+  delivered: { label: 'Terkirim', color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ', icon: CheckCircle2 },
 };
 
 const PROGRESS_STATUS_CONFIG = {
-  open:        { label: 'Open', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
-  follow_up:   { label: 'Follow Up', color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' },
-  sold:        { label: 'Terjual', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
-  no_response: { label: 'No Response', color: 'bg-muted text-foreground dark:bg-gray-900/30 dark:text-gray-300' },
-  closed:      { label: 'Closed', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
+  open:        { label: 'Open', color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] ' },
+  follow_up:   { label: 'Follow Up', color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] ' },
+  sold:        { label: 'Terjual', color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ' },
+  no_response: { label: 'No Response', color: 'bg-muted text-foreground ' },
+  closed:      { label: 'Closed', color: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] ' },
 };
 
 function KPICard({ label, value, sub, color, bg, icon: Icon }) {
@@ -311,7 +311,7 @@ export default function SampleDeliveryModule({ token }) {
   const activeFilters = [filterShipmentStatus, filterProgress, filterPlatform, filterAccountId, searchQuery].filter(Boolean).length;
 
   return (
-    <div className="space-y-6" data-testid="sample-delivery-module">
+    <div className="space-y-4" data-testid="sample-delivery-module">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -330,12 +330,12 @@ export default function SampleDeliveryModule({ token }) {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
-        <KPICard label="Total Sample" value={s.total || 0} color="text-blue-600" bg="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950/30 dark:to-blue-900/30" icon={Package} />
-        <KPICard label="Pending" value={s.pending || 0} color="text-orange-600" bg="bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-950/30 dark:to-orange-900/30" icon={Clock} />
-        <KPICard label="Dikirim" value={s.shipped || 0} color="text-blue-600" bg="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950/30 dark:to-blue-900/30" icon={Truck} />
-        <KPICard label="Terkirim" value={s.delivered || 0} color="text-emerald-600" bg="bg-gradient-to-br from-emerald-50 to-emerald-100 dark:from-emerald-950/30 dark:to-emerald-900/30" icon={CheckCircle2} />
-        <KPICard label="Terjual" value={s.sold || 0} color="text-green-600" bg="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-950/30 dark:to-green-900/30" icon={TrendingUp} />
-        <KPICard label="Total Investasi" value={`Rp ${(s.total_investment || 0).toLocaleString('id-ID')}`} color="text-purple-600" bg="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-950/30 dark:to-purple-900/30" icon={Package} />
+        <KPICard label="Total Sample" value={s.total || 0} color="text-[hsl(var(--primary))]" bg=" " icon={Package} />
+        <KPICard label="Pending" value={s.pending || 0} color="text-[hsl(var(--warning-text))]" bg=" " icon={Clock} />
+        <KPICard label="Dikirim" value={s.shipped || 0} color="text-[hsl(var(--primary))]" bg=" " icon={Truck} />
+        <KPICard label="Terkirim" value={s.delivered || 0} color="text-[hsl(var(--success-text))]" bg=" " icon={CheckCircle2} />
+        <KPICard label="Terjual" value={s.sold || 0} color="text-[hsl(var(--success-text))]" bg=" " icon={TrendingUp} />
+        <KPICard label="Total Investasi" value={`Rp ${(s.total_investment || 0).toLocaleString('id-ID')}`} color="text-[hsl(var(--primary))]" bg=" " icon={Package} />
       </div>
 
       {/* Filters */}
@@ -439,9 +439,9 @@ export default function SampleDeliveryModule({ token }) {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="flex justify-center py-8"><Loader2 className="animate-spin" size={24} /></div>
+            <div className="flex justify-center py-6"><Loader2 className="animate-spin" size={24} /></div>
           ) : samples.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">Tidak ada sample</div>
+            <div className="text-center py-6 text-muted-foreground">Tidak ada sample</div>
           ) : view === 'table' ? (
             <div className="rounded-lg border border-border overflow-x-auto">
               <table className="w-full text-xs" data-testid="sample-table">
@@ -457,17 +457,17 @@ export default function SampleDeliveryModule({ token }) {
                       <td className="px-2.5 py-2">{s.account_name || '—'}</td>
                       <td className="px-2.5 py-2">
                         <div className="font-medium text-foreground">{s.username || '—'}</div>
-                        <div className="text-[10px] text-muted-foreground">
+                        <div className="text-xs text-muted-foreground">
                           {PLATFORM_ICONS[s.platform]} {s.sample_type_label || s.sample_type || ''}
                         </div>
                       </td>
                       <td className="px-2.5 py-2 max-w-[200px] truncate" title={s.product}>
                         {s.product || '—'}
                         {s.size || s.color ? (
-                          <span className="text-[10px] text-muted-foreground"> · {s.size} {s.color}</span>
+                          <span className="text-xs text-muted-foreground"> · {s.size} {s.color}</span>
                         ) : null}
                       </td>
-                      <td className="px-2.5 py-2 font-mono text-[11px]">{s.sku || '—'}</td>
+                      <td className="px-2.5 py-2 tabular-nums text-xs">{s.sku || '—'}</td>
                       <td className="px-2.5 py-2">{s.quantity || 0}</td>
                       <td className="px-2.5 py-2 whitespace-nowrap">Rp {(s.hpp || 0).toLocaleString('id-ID')}</td>
                       <td className="px-2.5 py-2 whitespace-nowrap font-semibold">
@@ -475,7 +475,7 @@ export default function SampleDeliveryModule({ token }) {
                       </td>
                       <td className="px-2.5 py-2 whitespace-nowrap">Rp {(s.ongkir || 0).toLocaleString('id-ID')}</td>
                       <td className="px-2.5 py-2">{s.courier || '—'}</td>
-                      <td className="px-2.5 py-2 font-mono text-[11px]">{s.tracking_number || '—'}</td>
+                      <td className="px-2.5 py-2 tabular-nums text-xs">{s.tracking_number || '—'}</td>
                       <td className="px-2.5 py-2">
                         {s.shipment_status ? (
                           <Badge className={SHIPMENT_STATUS_CONFIG[s.shipment_status]?.color}>
@@ -493,10 +493,10 @@ export default function SampleDeliveryModule({ token }) {
                       <td className="px-2.5 py-2">
                         {s.video_link ? (
                           <a href={s.video_link} target="_blank" rel="noopener noreferrer"
-                            className="text-blue-600 hover:underline inline-flex items-center gap-1">
+                            className="text-[hsl(var(--primary))] hover:underline inline-flex items-center gap-1">
                             <Video size={11} />Video
                           </a>
-                        ) : <span className="text-amber-600">belum ada</span>}
+                        ) : <span className="text-[hsl(var(--warning-text))]">belum ada</span>}
                       </td>
                       <td className="px-2.5 py-2 whitespace-nowrap">{ageDays(s.date || s.created_at)}</td>
                       <td className="px-2.5 py-2 whitespace-nowrap text-right">
@@ -545,7 +545,7 @@ export default function SampleDeliveryModule({ token }) {
                       </div>
                       {s.sales_update && <p className="text-sm"><strong>Update:</strong> {s.sales_update}</p>}
                       {s.video_link && (
-                        <a href={s.video_link} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1">
+                        <a href={s.video_link} target="_blank" rel="noopener noreferrer" className="text-xs text-[hsl(var(--primary))] hover:underline flex items-center gap-1">
                           <Video size={12} />Lihat Video
                         </a>
                       )}
@@ -738,7 +738,7 @@ export default function SampleDeliveryModule({ token }) {
                   onChange={e => setForm({ ...form, hpp: parseFloat(e.target.value) })}
                   data-testid="sample-hpp" />
                 {form.catalog_item_id && (
-                  <p className="text-[11px] text-muted-foreground mt-1">
+                  <p className="text-xs text-muted-foreground mt-1">
                     HPP diambil dari katalog — ubah di Manajemen Katalog bila salah.
                   </p>
                 )}

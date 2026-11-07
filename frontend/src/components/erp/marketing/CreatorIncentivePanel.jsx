@@ -103,7 +103,7 @@ export default function CreatorIncentivePanel({ token, creator, onClose }) {
               <Target className="w-5 h-5" /> Insentif · {data.creator_name}
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Tipe <b className="uppercase">{data.creator_type}</b> · periode {data.period.period_months} bulan
+              Tipe <b className="">{data.creator_type}</b> · periode {data.period.period_months} bulan
               ({data.period.start} → {data.period.end})
             </p>
           </div>
@@ -223,7 +223,7 @@ export default function CreatorIncentivePanel({ token, creator, onClose }) {
                       <td className="py-1 text-muted-foreground">{e.entered_by}</td>
                       <td className="py-1 text-right">
                         <button onClick={() => delEntry(e.id)} data-testid={`tracker-del-${e.id}`}
-                          className="text-red-500 hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
+                          className="text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))]"><Trash2 className="w-3.5 h-3.5" /></button>
                       </td>
                     </tr>
                   ))}
@@ -240,9 +240,9 @@ export default function CreatorIncentivePanel({ token, creator, onClose }) {
 function Stat({ label, value, hint, testId }) {
   return (
     <div className="rounded-xl border border-foreground/10 p-3" data-testid={testId}>
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
       <div className="text-lg font-semibold mt-0.5">{value}</div>
-      {hint ? <div className="text-[10px] text-muted-foreground">{hint}</div> : null}
+      {hint ? <div className="text-xs text-muted-foreground">{hint}</div> : null}
     </div>
   );
 }
@@ -250,7 +250,7 @@ function Stat({ label, value, hint, testId }) {
 function Field({ label, children }) {
   return (
     <label className="block">
-      <span className="block text-[10px] uppercase tracking-wide text-muted-foreground mb-1">{label}</span>
+      <span className="block text-xs text-muted-foreground mb-1">{label}</span>
       {children}
     </label>
   );

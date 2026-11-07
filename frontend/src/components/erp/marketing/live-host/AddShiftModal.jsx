@@ -113,7 +113,7 @@ export default function AddShiftModal({ hosts, accounts, authH, onClose, onSucce
               </SelectContent>
             </Select>
             {form.host_id && hostAssignedIds.length === 0 && (
-              <p className="text-[10px] text-amber-500 mt-1">
+              <p className="text-xs text-[hsl(var(--warning-text))] mt-1">
                 Host belum di-assign ke akun manapun. Edit host untuk menambah assignment.
               </p>
             )}
@@ -124,7 +124,7 @@ export default function AddShiftModal({ hosts, accounts, authH, onClose, onSucce
                 const cfg = getPlatformConfig(acc.platform);
                 return (
                   <div
-                    className={`mt-1.5 flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-medium ${cfg.bg} ${cfg.border} ${cfg.text}`}
+                    className={`mt-1.5 flex items-center gap-1.5 px-2 py-1 rounded border text-xs font-medium ${cfg.bg} ${cfg.border} ${cfg.text}`}
                   >
                     {cfg.icon} Shift untuk: {acc.account_name}
                   </div>

@@ -224,7 +224,7 @@ function TemplateFormDialog({ open, onOpenChange, template, onSaved, token, acco
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <Label htmlFor="tpl-name">Nama Template <span className="text-red-400">*</span></Label>
+            <Label htmlFor="tpl-name">Nama Template <span className="text-[hsl(var(--danger-text))]">*</span></Label>
             <GlassInput
               id="tpl-name"
               value={form.template_name}
@@ -236,7 +236,7 @@ function TemplateFormDialog({ open, onOpenChange, template, onSaved, token, acco
           </div>
 
           <div>
-            <Label htmlFor="tpl-title">Judul Task <span className="text-red-400">*</span></Label>
+            <Label htmlFor="tpl-title">Judul Task <span className="text-[hsl(var(--danger-text))]">*</span></Label>
             <GlassInput
               id="tpl-title"
               value={form.title}
@@ -489,7 +489,7 @@ export default function TaskTemplatesModule({ token }) {
   };
 
   return (
-    <div className="space-y-5" data-testid="task-templates-module">
+    <div className="space-y-4" data-testid="task-templates-module">
       <PageHeader
         icon={FileCog}
         eyebrow="Portal Marketing · Templates"
@@ -512,7 +512,7 @@ export default function TaskTemplatesModule({ token }) {
           {[1, 2, 3].map(i => <Skeleton key={i} className="h-28" />)}
         </div>
       ) : templates.length === 0 ? (
-        <GlassCard className="p-12 text-center">
+        <GlassCard className="p-4 text-center">
           <FileCog className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
           <p className="text-muted-foreground mb-4">Belum ada template task</p>
           <Button size="sm" onClick={() => { setEditTpl(null); setDialogOpen(true); }} data-testid="create-first-template-btn">
@@ -527,7 +527,7 @@ export default function TaskTemplatesModule({ token }) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <h3 className="text-base font-semibold text-foreground">{tpl.template_name}</h3>
-                    <Badge variant="outline" className={tpl.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-muted/10 text-muted-foreground'}>
+                    <Badge variant="outline" className={tpl.is_active ? 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))]' : 'bg-muted/10 text-muted-foreground'}>
                       {tpl.is_active ? 'Active' : 'Inactive'}
                     </Badge>
                   </div>
@@ -557,7 +557,7 @@ export default function TaskTemplatesModule({ token }) {
                     size="sm"
                     variant="outline"
                     onClick={() => toggleActive(tpl)}
-                    className={tpl.is_active ? 'text-orange-400' : 'text-emerald-400'}
+                    className={tpl.is_active ? 'text-[hsl(var(--warning-text))]' : 'text-[hsl(var(--success-text))]'}
                     data-testid={`toggle-tpl-${tpl.id}`}
                   >
                     {tpl.is_active ? (

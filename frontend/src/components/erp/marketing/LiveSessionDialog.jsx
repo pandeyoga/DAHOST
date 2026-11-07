@@ -153,7 +153,7 @@ export default function LiveSessionDialog({ open, onClose, onSaved, token, sessi
               value={form.host_id} onChange={(v) => setForm((f) => ({ ...f, host_id: v }))}
               testId="live-host-select" />
             <div>
-              <label className="text-xs font-medium mb-1 block">Tanggal Sesi <span className="text-red-500">*</span></label>
+              <label className="text-xs font-medium mb-1 block">Tanggal Sesi <span className="text-[hsl(var(--danger-text))]">*</span></label>
               <Input type="date" value={form.session_date} onChange={set('session_date')}
                 className="h-9" data-testid="live-date" />
             </div>
@@ -163,7 +163,7 @@ export default function LiveSessionDialog({ open, onClose, onSaved, token, sessi
                 className="h-9" data-testid="live-start" />
             </div>
             <div className="sm:col-span-2">
-              <label className="text-xs font-medium mb-1 block">Judul / Tema Sesi <span className="text-red-500">*</span></label>
+              <label className="text-xs font-medium mb-1 block">Judul / Tema Sesi <span className="text-[hsl(var(--danger-text))]">*</span></label>
               <Input value={form.title} onChange={set('title')}
                 placeholder="Live Gamis Malam — Flash Sale" className="h-9" data-testid="live-title" />
             </div>

@@ -95,7 +95,7 @@ export default function PaymentTab({ authH }) {
   const changeMonth = (offset) => setMonth(addMonthsYM(month, offset));
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Month Selector & Actions */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -141,7 +141,7 @@ export default function PaymentTab({ authH }) {
             size="sm"
             onClick={handleSync}
             disabled={syncing}
-            className="h-9 bg-emerald-600 hover:bg-emerald-700"
+            className="h-9 bg-[hsl(var(--success-strong))] hover:bg-[hsl(var(--success-strong)/0.9)]"
             data-testid="sync-to-finance-btn"
           >
             {syncing ? (
@@ -160,12 +160,12 @@ export default function PaymentTab({ authH }) {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-12">
+        <div className="flex justify-center py-6">
           <Loader2 size={28} className="animate-spin text-muted-foreground" />
         </div>
       ) : !paymentStatus ? (
         <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+          <CardContent className="flex flex-col items-center justify-center py-6 gap-3">
             <DollarSign size={40} className="text-muted-foreground opacity-40" />
             <p className="font-medium">No payment data</p>
           </CardContent>
@@ -187,7 +187,7 @@ export default function PaymentTab({ authH }) {
               <CardContent className="pt-6">
                 <div className="text-center">
                   <p className="text-sm text-muted-foreground mb-1">Total Amount</p>
-                  <p className="text-2xl font-bold text-emerald-600">{fmtRp(paymentStatus.total_amount)}</p>
+                  <p className="text-2xl font-bold text-[hsl(var(--success-text))]">{fmtRp(paymentStatus.total_amount)}</p>
                 </div>
               </CardContent>
             </Card>
@@ -196,7 +196,7 @@ export default function PaymentTab({ authH }) {
               <CardContent className="pt-6">
                 <div className="text-center">
                   <p className="text-sm text-muted-foreground mb-1">Pending</p>
-                  <p className="text-2xl font-bold text-amber-600">{paymentStatus.status_summary.pending.count}</p>
+                  <p className="text-2xl font-bold text-[hsl(var(--warning-text))]">{paymentStatus.status_summary.pending.count}</p>
                   <p className="text-xs text-muted-foreground mt-1">{fmtRp(paymentStatus.status_summary.pending.total_pay)}</p>
                 </div>
               </CardContent>
@@ -206,7 +206,7 @@ export default function PaymentTab({ authH }) {
               <CardContent className="pt-6">
                 <div className="text-center">
                   <p className="text-sm text-muted-foreground mb-1">Synced</p>
-                  <p className="text-2xl font-bold text-emerald-600">{paymentStatus.status_summary.synced_to_finance.count}</p>
+                  <p className="text-2xl font-bold text-[hsl(var(--success-text))]">{paymentStatus.status_summary.synced_to_finance.count}</p>
                   <p className="text-xs text-muted-foreground mt-1">{fmtRp(paymentStatus.status_summary.synced_to_finance.total_pay)}</p>
                 </div>
               </CardContent>
@@ -221,10 +221,10 @@ export default function PaymentTab({ authH }) {
             <CardContent>
               <div className="space-y-4">
                 {/* Pending */}
-                <div className="flex items-center justify-between p-4 bg-amber-50 dark:bg-amber-900/10 rounded-lg border border-amber-200 dark:border-amber-900/30">
+                <div className="flex items-center justify-between p-4 bg-[hsl(var(--warning)/0.08)] rounded-lg border border-[hsl(var(--warning)/0.35)] ">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
-                      <Clock size={20} className="text-amber-600" />
+                    <div className="w-10 h-10 rounded-full bg-[hsl(var(--warning)/0.12)] flex items-center justify-center">
+                      <Clock size={20} className="text-[hsl(var(--warning-text))]" />
                     </div>
                     <div>
                       <p className="font-medium">Pending Calculation</p>
@@ -238,10 +238,10 @@ export default function PaymentTab({ authH }) {
                 </div>
 
                 {/* Calculated */}
-                <div className="flex items-center justify-between p-4 bg-blue-50 dark:bg-blue-900/10 rounded-lg border border-blue-200 dark:border-blue-900/30">
+                <div className="flex items-center justify-between p-4 bg-[hsl(var(--primary)/0.08)] rounded-lg border border-[hsl(var(--primary)/0.35)] ">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-                      <DollarSign size={20} className="text-blue-600" />
+                    <div className="w-10 h-10 rounded-full bg-[hsl(var(--primary)/0.12)] flex items-center justify-center">
+                      <DollarSign size={20} className="text-[hsl(var(--primary))]" />
                     </div>
                     <div>
                       <p className="font-medium">Calculated</p>
@@ -255,10 +255,10 @@ export default function PaymentTab({ authH }) {
                 </div>
 
                 {/* Synced */}
-                <div className="flex items-center justify-between p-4 bg-emerald-50 dark:bg-emerald-900/10 rounded-lg border border-emerald-200 dark:border-emerald-900/30">
+                <div className="flex items-center justify-between p-4 bg-[hsl(var(--success)/0.08)] rounded-lg border border-[hsl(var(--success)/0.35)] ">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
-                      <CheckCircle size={20} className="text-emerald-600" />
+                    <div className="w-10 h-10 rounded-full bg-[hsl(var(--success)/0.12)] flex items-center justify-center">
+                      <CheckCircle size={20} className="text-[hsl(var(--success-text))]" />
                     </div>
                     <div>
                       <p className="font-medium">Synced to Finance</p>
@@ -286,11 +286,11 @@ export default function PaymentTab({ authH }) {
                   <p className="flex-1">= (Actual Hours Worked) × (Hourly Rate)</p>
                 </div>
                 <div className="flex items-start gap-2">
-                  <Badge variant="outline" className="mt-0.5 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30">Bonus</Badge>
+                  <Badge variant="outline" className="mt-0.5 bg-[hsl(var(--success)/0.08)] text-[hsl(var(--success-text))] ">Bonus</Badge>
                   <p className="flex-1">= 10% of Revenue (if revenue &gt; Rp 5,000,000)</p>
                 </div>
                 <div className="flex items-start gap-2">
-                  <Badge variant="outline" className="mt-0.5 bg-red-50 text-red-700 dark:bg-red-900/30">Penalty</Badge>
+                  <Badge variant="outline" className="mt-0.5 bg-[hsl(var(--destructive)/0.08)] text-[hsl(var(--danger-text))] ">Penalty</Badge>
                   <p className="flex-1">= Rp 50,000 (if attendance = late)</p>
                 </div>
                 <div className="flex items-start gap-2 pt-2 border-t">

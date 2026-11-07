@@ -36,10 +36,10 @@ const RETURN_HEADS = ['Tanggal', 'Platform', 'Order ID', 'Toko', 'Produk', 'Harg
 // Tanggal kalender WIB: 'YYYY-MM-DD' dibiarkan, instan (created_at) dibaca dalam WIB.
 const fmtDate = (v) => (v ? (toWIBDate(v) || String(v).slice(0, 10)) : '—');
 const STATUS_CONFIG = {
-  pending:   { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: Clock },
-  approved:  { label: 'Disetujui', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300', icon: ThumbsUp },
-  completed: { label: 'Selesai', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', icon: CheckCircle2 },
-  rejected:  { label: 'Ditolak', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300', icon: ThumbsDown },
+  pending:   { label: 'Menunggu', color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ', icon: Clock },
+  approved:  { label: 'Disetujui', color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] ', icon: ThumbsUp },
+  completed: { label: 'Selesai', color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ', icon: CheckCircle2 },
+  rejected:  { label: 'Ditolak', color: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] ', icon: ThumbsDown },
 };
 
 function KPICard({ label, value, sub, color, bg, icon: Icon }) {
@@ -392,7 +392,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
   const activeFilters = [filterStatus, filterPlatform, filterReason, searchQuery].filter(Boolean).length;
 
   return (
-    <div className="space-y-6" data-testid="returns-refunds-module">
+    <div className="space-y-4" data-testid="returns-refunds-module">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -421,11 +421,11 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
       {/* KPI Cards */}
       <ActiveAccountBar accounts={masterAccounts} activeAccount={activeAccount} onAccountChange={acc => { setActiveAccount(acc); setCurrentPage(1); }} hint="Filter returns by akun:" />
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <KPICard label="Total Return" value={s.total || 0} color="text-blue-600" bg="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950/30 dark:to-blue-900/30" icon={RotateCcw} />
-        <KPICard label="Menunggu" value={s.pending || 0} color="text-orange-600" bg="bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-950/30 dark:to-orange-900/30" icon={Clock} />
-        <KPICard label="Disetujui" value={s.approved || 0} color="text-blue-600" bg="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950/30 dark:to-blue-900/30" icon={ThumbsUp} />
-        <KPICard label="Selesai" value={s.completed || 0} color="text-emerald-600" bg="bg-gradient-to-br from-emerald-50 to-emerald-100 dark:from-emerald-950/30 dark:to-emerald-900/30" icon={CheckCircle2} />
-        <KPICard label="Total Refund" value={`Rp ${(s.total_refund || 0).toLocaleString('id-ID')}`} color="text-purple-600" bg="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-950/30 dark:to-purple-900/30" icon={RotateCcw} />
+        <KPICard label="Total Return" value={s.total || 0} color="text-[hsl(var(--primary))]" bg=" " icon={RotateCcw} />
+        <KPICard label="Menunggu" value={s.pending || 0} color="text-[hsl(var(--warning-text))]" bg=" " icon={Clock} />
+        <KPICard label="Disetujui" value={s.approved || 0} color="text-[hsl(var(--primary))]" bg=" " icon={ThumbsUp} />
+        <KPICard label="Selesai" value={s.completed || 0} color="text-[hsl(var(--success-text))]" bg=" " icon={CheckCircle2} />
+        <KPICard label="Total Refund" value={`Rp ${(s.total_refund || 0).toLocaleString('id-ID')}`} color="text-[hsl(var(--primary))]" bg=" " icon={RotateCcw} />
       </div>
 
       {/* Filters */}
@@ -509,9 +509,9 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="flex justify-center py-8"><Loader2 className="animate-spin" size={24} /></div>
+            <div className="flex justify-center py-6"><Loader2 className="animate-spin" size={24} /></div>
           ) : returns.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">Tidak ada return</div>
+            <div className="text-center py-6 text-muted-foreground">Tidak ada return</div>
           ) : view === 'table' ? (
             <div className="rounded-lg border border-border overflow-x-auto">
               <table className="w-full text-xs" data-testid="returns-table">
@@ -527,7 +527,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
                       <td className="px-2.5 py-2 whitespace-nowrap">
                         {PLATFORM_ICONS[r.platform]} {r.platform || '—'}
                       </td>
-                      <td className="px-2.5 py-2 font-mono text-[11px]">{r.order_id || '—'}</td>
+                      <td className="px-2.5 py-2 tabular-nums text-xs">{r.order_id || '—'}</td>
                       <td className="px-2.5 py-2">{r.account_name || '—'}</td>
                       <td className="px-2.5 py-2 max-w-[220px] truncate" title={r.product}>{r.product || '—'}</td>
                       <td className="px-2.5 py-2 whitespace-nowrap">Rp {(r.price || 0).toLocaleString('id-ID')}</td>
@@ -747,7 +747,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
                   data-testid="return-qty-input" />
               </div>
             </div>
-            <div className="rounded-md border border-sky-300 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-800 px-3 py-2 text-xs text-sky-900 dark:text-sky-200 flex items-start gap-2">
+            <div className="rounded-md border border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary)/0.08)] px-3 py-2 text-xs text-[hsl(var(--primary))] flex items-start gap-2">
               <Warehouse size={14} className="mt-0.5 shrink-0" />
               <span>
                 Setelah disimpan, <strong>Retur Fisik di Gudang dibuat otomatis (menunggu paket)</strong>.
@@ -809,8 +809,8 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
                     <strong>Efek stok:</strong>{' '}
                     {showDetail.wh_restocked ? (
                       <Badge className={showDetail.wh_stock_effect === 'sellable'
-                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                        : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'}>
+                        ? 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] '
+                        : 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] '}>
                         {showDetail.wh_stock_effect === 'sellable'
                           ? `+${showDetail.wh_restock_qty || 0} stok jual (${showDetail.wh_restock_location_code || 'ZNA-FG'})`
                           : `+${showDetail.wh_restock_qty || 0} karantina (${showDetail.wh_restock_location_code || 'ZNA-KARANTINA'})`}
@@ -823,7 +823,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
                       </Badge>
                     )}
                     {showDetail.wh_link_status && showDetail.wh_link_status !== 'linked' && (
-                      <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">{showDetail.wh_link_reason}</p>
+                      <p className="text-xs text-[hsl(var(--warning-text))] mt-1">{showDetail.wh_link_reason}</p>
                     )}
                   </div>
                 )}
@@ -838,9 +838,9 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
                 const hours = (Date.now() - upd) / 36e5;
                 if (hours < 24) return null;
                 return (
-                  <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-3 py-2 text-sm">
-                    <AlertCircle size={16} className="text-amber-600 mt-0.5 shrink-0" />
-                    <div className="text-amber-900 dark:text-amber-200">
+                  <div className="flex items-start gap-2 rounded-md border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.08)] px-3 py-2 text-sm">
+                    <AlertCircle size={16} className="text-[hsl(var(--warning-text))] mt-0.5 shrink-0" />
+                    <div className="text-[hsl(var(--warning-text))] ">
                       <strong className="block mb-0.5">Barang belum diterima Gudang</strong>
                       <span className="text-xs">
                         Retur disetujui {Math.floor(hours)} jam lalu, tapi belum ada entry Retur Fisik di Gudang. Stok FG hanya bertambah setelah Gudang menerima &amp; memutuskan. Klik <em>Kirim ke Gudang</em> untuk melanjutkan.
@@ -884,8 +884,8 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
               {showDetail.status === 'approved' && (
                 <div className="flex flex-col gap-2">
                   {showDetail.wh_return_id && (
-                    <div className="rounded-md border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-800 px-3 py-2 text-sm text-emerald-900 dark:text-emerald-200 flex items-center gap-2">
-                      <CheckCircle2 size={14} className="text-emerald-600" />
+                    <div className="rounded-md border border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.08)] px-3 py-2 text-sm text-[hsl(var(--success-text))] flex items-center gap-2">
+                      <CheckCircle2 size={14} className="text-[hsl(var(--success-text))]" />
                       Terhubung ke Gudang: <strong>{showDetail.wh_return_code}</strong>
                       {onNavigate && (
                         <Button

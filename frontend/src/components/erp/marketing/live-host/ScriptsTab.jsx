@@ -103,12 +103,12 @@ export default function ScriptsTab({ authH }) {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-12">
+        <div className="flex justify-center py-6">
           <Loader2 size={28} className="animate-spin text-muted-foreground" />
         </div>
       ) : scripts.length === 0 ? (
         <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+          <CardContent className="flex flex-col items-center justify-center py-6 gap-3">
             <Video size={40} className="text-muted-foreground opacity-40" />
             <p className="font-medium">Belum ada script</p>
             <Button size="sm" onClick={() => setShowModal(true)}>
@@ -149,7 +149,7 @@ export default function ScriptsTab({ authH }) {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 w-7 p-0 text-red-600"
+                      className="h-7 w-7 p-0 text-[hsl(var(--danger-text))]"
                       onClick={() => handleDelete(script)}
                     >
                       <Trash2 size={12} />

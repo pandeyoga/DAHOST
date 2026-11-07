@@ -84,13 +84,13 @@ export default function CreatorWeeklyReportPanel({ token }) {
     <div className="space-y-4" data-testid="creator-weekly-report-panel">
       <div className="flex flex-wrap items-end gap-2">
         <div>
-          <label className="text-[11px] text-muted-foreground block">Pekan berakhir</label>
+          <label className="text-xs text-muted-foreground block">Pekan berakhir</label>
           <input type="date" value={weekEnd} max={todayStr}
             onChange={(e) => setWeek(e.target.value)}
             data-testid="weekly-week-end"
             className="h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs" />
         </div>
-        <p className="text-[11px] text-muted-foreground pb-1.5">
+        <p className="text-xs text-muted-foreground pb-1.5">
           7 hari bergulir: <span className="font-semibold text-foreground">
             {period.start || '—'} s/d {period.end || '—'}</span>
         </p>
@@ -108,29 +108,29 @@ export default function CreatorWeeklyReportPanel({ token }) {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3" data-testid="weekly-kpi">
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Kreator</p>
+        <GlassCard className="p-3"><p className="text-xs text-muted-foreground">Kreator</p>
           <p className="text-base font-bold">{fmtNum(t.creators)}</p>
-          <p className="text-[10px] text-muted-foreground">{fmtNum(t.creators_active)} aktif berkonten</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Konten pekan ini</p>
+          <p className="text-xs text-muted-foreground">{fmtNum(t.creators_active)} aktif berkonten</p></GlassCard>
+        <GlassCard className="p-3"><p className="text-xs text-muted-foreground">Konten pekan ini</p>
           <p className="text-base font-bold">{fmtNum(t.contents)}</p>
-          <p className="text-[10px] text-muted-foreground">{fmtNum(t.posted)} tayang</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Views</p>
+          <p className="text-xs text-muted-foreground">{fmtNum(t.posted)} tayang</p></GlassCard>
+        <GlassCard className="p-3"><p className="text-xs text-muted-foreground">Views</p>
           <p className="text-base font-bold">{fmtNum(t.views)}</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">GMV (KPI platform)</p>
+        <GlassCard className="p-3"><p className="text-xs text-muted-foreground">GMV (KPI platform)</p>
           <p className="text-base font-bold">{rp(t.gmv_kpi)}</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Omzet pesanan</p>
+        <GlassCard className="p-3"><p className="text-xs text-muted-foreground">Omzet pesanan</p>
           <p className="text-base font-bold">{rp(t.order_revenue)}</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Insentif periode</p>
+        <GlassCard className="p-3"><p className="text-xs text-muted-foreground">Insentif periode</p>
           <p className="text-base font-bold">{rp(t.incentive_total)}</p>
-          <p className="text-[10px] text-muted-foreground">{fmtNum(t.pcs_week)} pcs pekan ini</p></GlassCard>
+          <p className="text-xs text-muted-foreground">{fmtNum(t.pcs_week)} pcs pekan ini</p></GlassCard>
       </div>
 
       {loading ? (
-        <div className="py-10 text-center text-muted-foreground text-sm">
+        <div className="py-6 text-center text-muted-foreground text-sm">
           <Loader2 className="mx-auto animate-spin mb-2" size={18} /> Menyusun rapor mingguan…
         </div>
       ) : !rows.length ? (
-        <div className="py-10 text-center text-muted-foreground text-sm" data-testid="weekly-empty">
+        <div className="py-6 text-center text-muted-foreground text-sm" data-testid="weekly-empty">
           Belum ada kreator yang bisa dilaporkan.
         </div>
       ) : (
@@ -150,17 +150,17 @@ export default function CreatorWeeklyReportPanel({ token }) {
                     data-testid={`weekly-row-${r.creator_id}`}>
                     <td className="px-2.5 py-2">
                       <div className="font-semibold text-foreground">{r.creator_name}</div>
-                      <div className="text-[10px] text-muted-foreground">
+                      <div className="text-xs text-muted-foreground">
                         {r.creator_code}{r.domicile ? ` · ${r.domicile}` : ''}
                       </div>
                       {!r.login_email && (
-                        <div className="text-[10px] text-amber-600 inline-flex items-center gap-0.5">
+                        <div className="text-xs text-[hsl(var(--warning-text))] inline-flex items-center gap-0.5">
                           <AlertTriangle size={9} /> belum ada email portal
                         </div>
                       )}
                     </td>
                     <td className="px-2.5 py-2">
-                      <Badge variant="outline" className="text-[9px]">{r.creator_type}</Badge>
+                      <Badge variant="outline" className="text-xs">{r.creator_type}</Badge>
                     </td>
                     <td className="px-2.5 py-2">{fmtNum(r.contents)} / {fmtNum(r.posted)}</td>
                     <td className="px-2.5 py-2">{fmtNum(r.views)}</td>
@@ -179,14 +179,14 @@ export default function CreatorWeeklyReportPanel({ token }) {
                     </td>
                     <td className="px-2.5 py-2 whitespace-nowrap">
                       {last ? (
-                        <span className={last.status === 'sent' ? 'text-emerald-600' : 'text-amber-600'}
+                        <span className={last.status === 'sent' ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--warning-text))]'}
                           title={last.error || ''}>
                           {STATUS_LABEL[last.status] || last.status}
                         </span>
                       ) : <span className="text-muted-foreground">belum dikirim</span>}
                     </td>
                     <td className="px-2.5 py-2">
-                      <Button size="sm" variant="outline" className="h-6 px-2 text-[10px]"
+                      <Button size="sm" variant="outline" className="h-6 px-2 text-xs"
                         onClick={() => send(r.creator_id, !!last)}
                         disabled={sending === r.creator_id}
                         data-testid={`weekly-send-${r.creator_id}`}>
@@ -209,7 +209,7 @@ export default function CreatorWeeklyReportPanel({ token }) {
           <p className="text-xs font-semibold mb-1 flex items-center gap-1 text-foreground">
             <Info size={12} /> Catatan kejujuran data
           </p>
-          <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-muted-foreground">
+          <ul className="list-disc pl-4 space-y-0.5 text-xs text-muted-foreground">
             {data.data_notes.map((n, i) => <li key={i}>{n}</li>)}
           </ul>
         </div>

@@ -101,19 +101,19 @@ export default function ContentPerformanceView({ token }) {
     <div className="space-y-4" data-testid="content-performance-view">
       <div className="flex flex-wrap items-end gap-2">
         <div>
-          <label className="text-[11px] text-muted-foreground block">Dari</label>
+          <label className="text-xs text-muted-foreground block">Dari</label>
           <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
             data-testid="perf-date-from"
             className="h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs" />
         </div>
         <div>
-          <label className="text-[11px] text-muted-foreground block">Sampai</label>
+          <label className="text-xs text-muted-foreground block">Sampai</label>
           <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
             data-testid="perf-date-to"
             className="h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs" />
         </div>
         <div>
-          <label className="text-[11px] text-muted-foreground block">Tampilkan</label>
+          <label className="text-xs text-muted-foreground block">Tampilkan</label>
           <SmartNativeSelect value={groupBy} onChange={(e) => setGroupBy(e.target.value)}
             data-testid="perf-group-by"
             className="w-40 h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs">
@@ -123,7 +123,7 @@ export default function ContentPerformanceView({ token }) {
         {perContent && (
           <>
             <div>
-              <label className="text-[11px] text-muted-foreground block">Saring KPI</label>
+              <label className="text-xs text-muted-foreground block">Saring KPI</label>
               <SmartNativeSelect value={kpiState} onChange={(e) => setKpiState(e.target.value)}
                 data-testid="perf-kpi-state"
                 className="w-40 h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs">
@@ -131,7 +131,7 @@ export default function ContentPerformanceView({ token }) {
               </SmartNativeSelect>
             </div>
             <div>
-              <label className="text-[11px] text-muted-foreground block">Urutkan</label>
+              <label className="text-xs text-muted-foreground block">Urutkan</label>
               <SmartNativeSelect value={sort} onChange={(e) => setSort(e.target.value)}
                 data-testid="perf-sort"
                 className="w-40 h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs">
@@ -161,34 +161,34 @@ export default function ContentPerformanceView({ token }) {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3" data-testid="perf-kpi">
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Konten</p>
+        <GlassCard className="p-3"><p className="text-xs text-muted-foreground">Konten</p>
           <p className="text-base font-bold">{fmtNum(t.contents)}</p>
-          <p className="text-[10px] text-muted-foreground">{fmtNum(t.posted)} terbit</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Cakupan KPI</p>
+          <p className="text-xs text-muted-foreground">{fmtNum(t.posted)} terbit</p></GlassCard>
+        <GlassCard className="p-3"><p className="text-xs text-muted-foreground">Cakupan KPI</p>
           <p className="text-base font-bold">{Number(t.kpi_coverage_pct || 0).toFixed(1)}%</p>
-          <p className="text-[10px] text-muted-foreground">{fmtNum(t.with_kpi)} konten ber-KPI</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Views</p>
+          <p className="text-xs text-muted-foreground">{fmtNum(t.with_kpi)} konten ber-KPI</p></GlassCard>
+        <GlassCard className="p-3"><p className="text-xs text-muted-foreground">Views</p>
           <p className="text-base font-bold">{fmtNum(t.views)}</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Engagement</p>
+        <GlassCard className="p-3"><p className="text-xs text-muted-foreground">Engagement</p>
           <p className="text-base font-bold">{fmtNum(t.engagement)}</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">GMV (KPI platform)</p>
+        <GlassCard className="p-3"><p className="text-xs text-muted-foreground">GMV (KPI platform)</p>
           <p className="text-base font-bold">{fmtRp(t.gmv_kpi)}</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">
+        <GlassCard className="p-3"><p className="text-xs text-muted-foreground">
           {perContent ? 'Pesanan (KPI)' : 'Omzet pesanan'}</p>
           <p className="text-base font-bold">
             {perContent ? fmtNum(t.orders) : fmtRp(t.order_revenue)}</p>
-          <p className="text-[10px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             {perContent ? 'dari KPI konten' : 'dari pesanan ber-kreator'}</p></GlassCard>
       </div>
 
       {loading ? (
-        <div className="py-10 text-center text-muted-foreground text-sm">
+        <div className="py-6 text-center text-muted-foreground text-sm">
           <Loader2 className="mx-auto animate-spin mb-2" size={18} /> Menghitung performa konten…
         </div>
       ) : !rows.length ? (
-        <div className="py-10 text-center text-sm" data-testid="perf-empty">
+        <div className="py-6 text-center text-sm" data-testid="perf-empty">
           {data?.scope_empty ? (
-            <span className="text-amber-600">
+            <span className="text-[hsl(var(--warning-text))]">
               Belum ada toko yang di-assign kepada akun Anda — layar ini kosong karena
               kewenangan, bukan karena tidak ada konten. Minta admin meng-assign toko Anda.
             </span>
@@ -213,17 +213,17 @@ export default function ContentPerformanceView({ token }) {
                     <div className="font-semibold text-foreground truncate" title={r.title}>{r.title}</div>
                     {r.published_url ? (
                       <a href={r.published_url} target="_blank" rel="noreferrer"
-                        className="text-[10px] text-primary inline-flex items-center gap-0.5"
+                        className="text-xs text-primary inline-flex items-center gap-0.5"
                         data-testid={`perf-content-link-${r.id}`}>
                         <ExternalLink size={9} /> buka
                       </a>
-                    ) : <span className="text-[10px] text-muted-foreground">tanpa link terbit</span>}
+                    ) : <span className="text-xs text-muted-foreground">tanpa link terbit</span>}
                   </td>
                   <td className="px-2.5 py-2 whitespace-nowrap">{r.content_type_label || '—'}</td>
                   <td className="px-2.5 py-2 whitespace-nowrap">{r.account_name || '—'}</td>
                   <td className="px-2.5 py-2 whitespace-nowrap">{r.creator_name || '—'}</td>
                   <td className="px-2.5 py-2">
-                    <Badge variant="outline" className="text-[9px]">{r.status}</Badge>
+                    <Badge variant="outline" className="text-xs">{r.status}</Badge>
                   </td>
                   <td className="px-2.5 py-2">{fmtNum(r.kpi?.views)}</td>
                   <td className="px-2.5 py-2">{fmtNum(r.kpi_derived?.engagement)}</td>
@@ -233,11 +233,11 @@ export default function ContentPerformanceView({ token }) {
                   <td className="px-2.5 py-2 font-semibold whitespace-nowrap">{fmtRp(r.kpi?.gmv)}</td>
                   <td className="px-2.5 py-2">
                     {r.kpi_filled
-                      ? <Badge className="text-[9px] bg-emerald-100 text-emerald-700 hover:bg-emerald-100">terisi</Badge>
-                      : <Badge className="text-[9px] bg-amber-100 text-amber-800 hover:bg-amber-100">belum</Badge>}
+                      ? <Badge className="text-xs bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] hover:bg-[hsl(var(--success)/0.12)]">terisi</Badge>
+                      : <Badge className="text-xs bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] hover:bg-[hsl(var(--warning)/0.12)]">belum</Badge>}
                   </td>
                   <td className="px-2.5 py-2">
-                    <Button size="sm" variant="outline" className="h-6 px-2 text-[10px]"
+                    <Button size="sm" variant="outline" className="h-6 px-2 text-xs"
                       onClick={() => setEditing(r)} data-testid={`perf-fill-kpi-${r.id}`}>
                       <PencilLine size={10} className="mr-1" /> Isi KPI
                     </Button>
@@ -258,13 +258,13 @@ export default function ContentPerformanceView({ token }) {
                 <tr key={r.key} className="hover:bg-muted/30" data-testid={`perf-row-${r.key}`}>
                   <td className="px-2.5 py-2">
                     <div className="font-semibold text-foreground">{r.label}</div>
-                    {r.creator_code ? <div className="text-[10px] text-muted-foreground">{r.creator_code}</div> : null}
+                    {r.creator_code ? <div className="text-xs text-muted-foreground">{r.creator_code}</div> : null}
                   </td>
                   <td className="px-2.5 py-2">{fmtNum(r.contents)}</td>
                   <td className="px-2.5 py-2">{fmtNum(r.posted)}</td>
                   <td className="px-2.5 py-2">{fmtNum(r.with_kpi)}</td>
                   <td className="px-2.5 py-2">
-                    <span className={r.kpi_coverage_pct >= 80 ? 'text-emerald-600' : 'text-amber-600'}>
+                    <span className={r.kpi_coverage_pct >= 80 ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--warning-text))]'}>
                       {Number(r.kpi_coverage_pct || 0).toFixed(1)}%
                     </span>
                   </td>
@@ -291,14 +291,14 @@ export default function ContentPerformanceView({ token }) {
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between gap-2">
                   <CardTitle className="text-sm flex items-center gap-1.5">
-                    <Users size={13} className="text-violet-500" /> {r.label}
+                    <Users size={13} className="text-[hsl(var(--primary))]" /> {r.label}
                   </CardTitle>
-                  <Badge variant="outline" className="text-[9px]">
+                  <Badge variant="outline" className="text-xs">
                     KPI {Number(r.kpi_coverage_pct || 0).toFixed(0)}%
                   </Badge>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-1 text-[11px]">
+              <CardContent className="space-y-1 text-xs">
                 <div className="flex justify-between"><span className="text-muted-foreground">Konten / terbit</span>
                   <span>{fmtNum(r.contents)} / {fmtNum(r.posted)}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Views</span>
@@ -320,7 +320,7 @@ export default function ContentPerformanceView({ token }) {
           <p className="text-xs font-semibold mb-1 flex items-center gap-1 text-foreground">
             <Info size={12} /> Catatan kejujuran data
           </p>
-          <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-muted-foreground">
+          <ul className="list-disc pl-4 space-y-0.5 text-xs text-muted-foreground">
             {(data.data_notes || []).map((n, i) => <li key={i}>{n}</li>)}
           </ul>
         </div>

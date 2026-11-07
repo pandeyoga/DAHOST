@@ -16,18 +16,18 @@ import axios from 'axios';
 const API = process.env.REACT_APP_BACKEND_URL;
 
 const PLATFORM_COLORS = {
-  shopee:    { ring: 'ring-orange-400/40', bg: 'from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20', badge: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
-  tiktok:    { ring: 'ring-border/40',   bg: 'from-gray-50 to-slate-50 dark:from-gray-900/20 dark:to-slate-900/20',   badge: 'bg-muted text-foreground dark:bg-gray-900/30 dark:text-gray-300' },
-  tokopedia: { ring: 'ring-green-400/40',  bg: 'from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20', badge: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
+  shopee:    { ring: 'ring-orange-400/40', bg: 'from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20', badge: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ' },
+  tiktok:    { ring: 'ring-border/40',   bg: 'from-gray-50 to-slate-50 dark:from-gray-900/20 dark:to-slate-900/20',   badge: 'bg-muted text-foreground ' },
+  tokopedia: { ring: 'ring-green-400/40',  bg: 'from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20', badge: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ' },
 };
 
 function StatusBadge({ connected }) {
   return connected ? (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ">
       <CheckCircle2 size={10} />Terkonfigurasi
     </span>
   ) : (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground dark:bg-gray-800 dark:text-gray-400">
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground ">
       <XCircle size={10} />Belum Dikonfigurasi
     </span>
   );
@@ -62,7 +62,7 @@ function PlatformCard({ platform, meta, config, onSave, onDisconnect, onTest }) 
   return (
     <Card className={`ring-2 ${colors.ring || 'ring-border/40'} overflow-hidden`}>
       {/* Card header row */}
-      <div className={`bg-gradient-to-r ${colors.bg || 'from-muted/30 to-muted/10'} p-4 flex items-center justify-between`}>
+      <div className={` ${colors.bg || 'from-muted/30 to-muted/10'} p-4 flex items-center justify-between`}>
         <div className="flex items-center gap-3">
           <span className="text-2xl">{meta?.icon}</span>
           <div>
@@ -80,14 +80,14 @@ function PlatformCard({ platform, meta, config, onSave, onDisconnect, onTest }) 
       {expanded && (
         <CardContent className="p-4 space-y-4 border-t">
           {/* Info banner */}
-          <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 flex gap-2 text-sm">
-            <Info size={14} className="text-blue-500 flex-shrink-0 mt-0.5" />
+          <div className="p-3 rounded-lg bg-[hsl(var(--primary)/0.08)] border border-[hsl(var(--primary)/0.35)] flex gap-2 text-sm">
+            <Info size={14} className="text-[hsl(var(--primary))] flex-shrink-0 mt-0.5" />
             <div>
-              <p className="font-medium text-blue-700 dark:text-blue-300">Placeholder — Phase 4 Ready</p>
-              <p className="text-xs text-blue-600 dark:text-blue-400 mt-0.5">{meta?.note}</p>
+              <p className="font-medium text-[hsl(var(--primary))] ">Placeholder — Phase 4 Ready</p>
+              <p className="text-xs text-[hsl(var(--primary))] mt-0.5">{meta?.note}</p>
               {meta?.docs_url && (
                 <a href={meta.docs_url} target="_blank" rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline mt-1">
+                  className="inline-flex items-center gap-1 text-xs text-[hsl(var(--primary))] hover:underline mt-1">
                   <ExternalLink size={10} />Dokumentasi API
                 </a>
               )}
@@ -118,7 +118,7 @@ function PlatformCard({ platform, meta, config, onSave, onDisconnect, onTest }) 
                 </div>
                 {connected && config?.credentials?.[`_${field.key}_masked`] && (
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Tersimpan: <code className="font-mono bg-muted px-1 rounded">{config.credentials[`_${field.key}_masked`]}</code>
+                    Tersimpan: <code className="tabular-nums bg-muted px-1 rounded">{config.credentials[`_${field.key}_masked`]}</code>
                   </p>
                 )}
               </div>
@@ -136,7 +136,7 @@ function PlatformCard({ platform, meta, config, onSave, onDisconnect, onTest }) 
               Test Koneksi
             </Button>
             {connected && (
-              <Button size="sm" variant="outline" className="text-red-500 hover:text-red-600 hover:border-red-300"
+              <Button size="sm" variant="outline" className="text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))] hover:border-[hsl(var(--destructive)/0.35)]"
                 onClick={() => { onDisconnect(platform); setExpanded(false); }}>
                 <Trash2 size={14} className="mr-1" />Hapus Credentials
               </Button>
@@ -147,8 +147,8 @@ function PlatformCard({ platform, meta, config, onSave, onDisconnect, onTest }) 
           {testResult && (
             <div className={`p-3 rounded-lg text-sm flex gap-2 ${
               testResult.success
-                ? 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
-                : 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300'
+                ? 'bg-[hsl(var(--success)/0.08)] border border-[hsl(var(--success)/0.35)] text-[hsl(var(--success-text))] '
+                : 'bg-[hsl(var(--warning)/0.08)] border border-[hsl(var(--warning)/0.35)] text-[hsl(var(--warning-text))] '
             }`}>
               {testResult.success ? <CheckCircle2 size={14} className="flex-shrink-0 mt-0.5" /> : <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />}
               <div>
@@ -265,9 +265,9 @@ export default function MarketingIntegrationSettings({ token }) {
   );
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-6" data-testid="integration-settings-page">
+    <div className="min-h-screen bg-background p-4 md:p-4" data-testid="integration-settings-page">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <Settings size={22} className="text-primary" />Integration Settings
@@ -280,14 +280,14 @@ export default function MarketingIntegrationSettings({ token }) {
       </div>
 
       {/* Phase 4 Info Banner */}
-      <div className="mb-6 p-4 rounded-xl border bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border-blue-200 dark:border-blue-800">
+      <div className="mb-4 p-4 rounded-xl border border-[hsl(var(--primary)/0.35)] ">
         <div className="flex gap-3">
-          <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/40 flex-shrink-0">
-            <Info size={16} className="text-blue-600" />
+          <div className="p-2 rounded-lg bg-[hsl(var(--primary)/0.12)] flex-shrink-0">
+            <Info size={16} className="text-[hsl(var(--primary))]" />
           </div>
           <div>
-            <h3 className="font-semibold text-sm text-blue-800 dark:text-blue-200">Placeholder UI — Phase 4 Direct API Integration</h3>
-            <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+            <h3 className="font-semibold text-sm text-[hsl(var(--primary))] ">Placeholder UI — Phase 4 Direct API Integration</h3>
+            <p className="text-xs text-[hsl(var(--primary))] mt-1">
               Halaman ini menyimpan credentials API untuk digunakan saat Phase 4 (Direct Sync: orders, inventory, ads).
               Saat ini belum ada koneksi real ke platform — simpan credentials Anda agar siap saat Phase 4 aktif.
             </p>
@@ -297,7 +297,7 @@ export default function MarketingIntegrationSettings({ token }) {
 
       {/* Platform Integration Cards */}
       <h2 className="text-base font-semibold mb-3">🔗 Platform Connections</h2>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
         {Object.entries(meta).map(([platform, m]) => (
           <PlatformCard
             key={platform}

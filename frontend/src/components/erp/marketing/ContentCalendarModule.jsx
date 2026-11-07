@@ -30,10 +30,10 @@ const API = process.env.REACT_APP_BACKEND_URL;
 
 const PLATFORM_ICONS = { shopee: '🛒', tiktok: '🎵', tokopedia: '🟢', instagram: '📷', facebook: '🔵' };
 const STATUS_CONFIG = {
-  draft:     { label: 'Draft',     color: 'bg-muted text-muted-foreground dark:bg-gray-800 dark:text-gray-300', icon: AlertCircle },
-  scheduled: { label: 'Terjadwal', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300', icon: Clock },
-  posted:    { label: 'Tayang',    color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', icon: CheckCircle2 },
-  cancelled: { label: 'Batal',     color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300', icon: XCircle },
+  draft:     { label: 'Draft',     color: 'bg-muted text-muted-foreground ', icon: AlertCircle },
+  scheduled: { label: 'Terjadwal', color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] ', icon: Clock },
+  posted:    { label: 'Tayang',    color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ', icon: CheckCircle2 },
+  cancelled: { label: 'Batal',     color: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] ', icon: XCircle },
 };
 
 const MONTHS_ID = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
@@ -280,19 +280,19 @@ function ContentCalendarBase({ token }) {
   };
 
   const kpis = [
-    { label: 'Total Konten',  value: summary?.total     ?? '—', sub: `${summary?.this_month ?? 0} bulan ini`,  color: 'text-indigo-600',  bg: 'bg-indigo-50 dark:bg-indigo-900/20', icon: Calendar },
-    { label: 'Terjadwal',     value: summary?.scheduled ?? '—', sub: 'Menunggu posting',                       color: 'text-blue-600',    bg: 'bg-blue-50 dark:bg-blue-900/20',   icon: Clock },
-    { label: 'Sudah Tayang',  value: summary?.posted    ?? '—', sub: 'Total posted',                           color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20', icon: CheckCircle2 },
-    { label: 'Draft',         value: summary?.draft     ?? '—', sub: 'Perlu finalisasi',                       color: 'text-amber-600',   bg: 'bg-amber-50 dark:bg-amber-900/20', icon: AlertCircle },
+    { label: 'Total Konten',  value: summary?.total     ?? '—', sub: `${summary?.this_month ?? 0} bulan ini`,  color: 'text-[hsl(var(--primary))]',  bg: 'bg-[hsl(var(--primary)/0.08)] ', icon: Calendar },
+    { label: 'Terjadwal',     value: summary?.scheduled ?? '—', sub: 'Menunggu posting',                       color: 'text-[hsl(var(--primary))]',    bg: 'bg-[hsl(var(--primary)/0.08)] ',   icon: Clock },
+    { label: 'Sudah Tayang',  value: summary?.posted    ?? '—', sub: 'Total posted',                           color: 'text-[hsl(var(--success-text))]', bg: 'bg-[hsl(var(--success)/0.08)] ', icon: CheckCircle2 },
+    { label: 'Draft',         value: summary?.draft     ?? '—', sub: 'Perlu finalisasi',                       color: 'text-[hsl(var(--warning-text))]',   bg: 'bg-[hsl(var(--warning)/0.08)] ', icon: AlertCircle },
   ];
 
   const grid = buildGrid();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-6" data-testid="content-calendar-dashboard">
+    <div className="min-h-screen bg-background p-4 md:p-4" data-testid="content-calendar-dashboard">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Content Calendar</h1>
           <p className="text-sm text-muted-foreground">Jadwal konten multi-platform dengan AI hook generation</p>
@@ -308,7 +308,7 @@ function ContentCalendarBase({ token }) {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         {kpis.map(k => <KPICard key={k.label} {...k} />)}
       </div>
 
@@ -402,7 +402,7 @@ function ContentCalendarBase({ token }) {
           </CardHeader>
           <CardContent className="p-3">
             {loading ? (
-              <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-muted-foreground" /></div>
+              <div className="flex justify-center py-6"><Loader2 size={28} className="animate-spin text-muted-foreground" /></div>
             ) : (
               <>
                 <div className="grid grid-cols-7 mb-1">
@@ -433,10 +433,10 @@ function ContentCalendarBase({ token }) {
                               {entries.slice(0, 3).map(e => (
                                 <div key={e.id}
                                   className={`text-xs px-1 py-0.5 rounded truncate cursor-pointer hover:opacity-80 ${
-                                    e.status === 'posted'    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30' :
-                                    e.status === 'scheduled' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30' :
-                                    e.status === 'cancelled' ? 'bg-red-100 text-red-700 dark:bg-red-900/30' :
-                                    'bg-muted text-muted-foreground dark:bg-gray-800'
+                                    e.status === 'posted'    ? 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ' :
+                                    e.status === 'scheduled' ? 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] ' :
+                                    e.status === 'cancelled' ? 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] ' :
+                                    'bg-muted text-muted-foreground '
                                   }`}
                                   onClick={(ev) => { ev.stopPropagation(); setShowDetail(e); }}
                                   title={e.title}
@@ -465,9 +465,9 @@ function ContentCalendarBase({ token }) {
         <Card>
           <CardContent className="p-0">
             {loading ? (
-              <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-muted-foreground" /></div>
+              <div className="flex justify-center py-6"><Loader2 size={28} className="animate-spin text-muted-foreground" /></div>
             ) : visibleList.length === 0 ? (
-              <div className="text-center py-16 text-muted-foreground">
+              <div className="text-center py-6 text-muted-foreground">
                 <Calendar size={40} className="mx-auto mb-3 opacity-30" />
                 <p className="font-medium">Belum ada konten</p>
                 <Button size="sm" className="mt-3" onClick={() => openCreate('')}><Plus size={12} className="mr-1" />Tambah</Button>
@@ -478,19 +478,19 @@ function ContentCalendarBase({ token }) {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b bg-muted/40">
-                        <th className="px-4 py-3 text-left font-semibold text-xs text-muted-foreground uppercase">Tanggal</th>
-                        <th className="px-4 py-3 text-left font-semibold text-xs text-muted-foreground uppercase">Platform / Akun</th>
-                        <th className="px-4 py-3 text-left font-semibold text-xs text-muted-foreground uppercase">Jenis</th>
-                        <th className="px-4 py-3 text-left font-semibold text-xs text-muted-foreground uppercase">Judul / Hook</th>
-                        <th className="px-4 py-3 text-left font-semibold text-xs text-muted-foreground uppercase">Jam</th>
-                        <th className="px-4 py-3 text-left font-semibold text-xs text-muted-foreground uppercase">Status</th>
-                        <th className="px-4 py-3 text-right font-semibold text-xs text-muted-foreground uppercase">Aksi</th>
+                        <th className="px-4 py-3 text-left font-semibold text-xs text-muted-foreground ">Tanggal</th>
+                        <th className="px-4 py-3 text-left font-semibold text-xs text-muted-foreground ">Platform / Akun</th>
+                        <th className="px-4 py-3 text-left font-semibold text-xs text-muted-foreground ">Jenis</th>
+                        <th className="px-4 py-3 text-left font-semibold text-xs text-muted-foreground ">Judul / Hook</th>
+                        <th className="px-4 py-3 text-left font-semibold text-xs text-muted-foreground ">Jam</th>
+                        <th className="px-4 py-3 text-left font-semibold text-xs text-muted-foreground ">Status</th>
+                        <th className="px-4 py-3 text-right font-semibold text-xs text-muted-foreground ">Aksi</th>
                       </tr>
                     </thead>
                     <tbody>
                       {visibleList.map((e, i) => (
                         <tr key={e.id} className={`border-b last:border-0 hover:bg-muted/30 transition-colors ${i % 2 === 0 ? '' : 'bg-muted/10'}`}>
-                          <td className="px-4 py-3 font-mono text-xs">{e.date}</td>
+                          <td className="px-4 py-3 tabular-nums text-xs">{e.date}</td>
                           <td className="px-4 py-3">
                             <div className="font-medium">{PLATFORM_ICONS[e.platform] || '📌'} {e.platform}</div>
                             <div className="text-xs text-muted-foreground">{e.account_name}</div>
@@ -511,7 +511,7 @@ function ContentCalendarBase({ token }) {
                               <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(e)}>
                                 <Pencil size={12} />
                               </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-red-500 hover:text-red-600" onClick={() => handleDelete(e.id)}>
+                              <Button size="icon" variant="ghost" className="h-7 w-7 text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))]" onClick={() => handleDelete(e.id)}>
                                 <Trash2 size={12} />
                               </Button>
                             </div>
@@ -671,7 +671,7 @@ function ContentCalendarBase({ token }) {
                 data-testid="content-reference-link-input"
                 onChange={e => setForm(f => ({...f, reference_link: e.target.value}))}
                 placeholder="https://drive.google.com/... (materi foto/video/brief)" className="mt-1" />
-              <p className="text-[10px] text-muted-foreground mt-1">Tautan aset konten (Drive/Canva/Figma) — bisa dibuka langsung dari detail konten.</p>
+              <p className="text-xs text-muted-foreground mt-1">Tautan aset konten (Drive/Canva/Figma) — bisa dibuka langsung dari detail konten.</p>
             </div>
             {/* 2026-11-07 (Tahap 5) — dulu di sini ada isian "Status" KEDUA (duplikat yang di atas). */}
             {form.status === 'posted' && (
@@ -681,7 +681,7 @@ function ContentCalendarBase({ token }) {
                   data-testid="content-published-url-input"
                   onChange={e => setForm(f => ({...f, published_url: e.target.value}))}
                   placeholder="https://… (tautan unggahan yang sudah tayang)" className="mt-1" />
-                <p className="text-[10px] text-muted-foreground mt-1">Wajib untuk status Tayang — bukti konten benar-benar terbit.</p>
+                <p className="text-xs text-muted-foreground mt-1">Wajib untuk status Tayang — bukti konten benar-benar terbit.</p>
               </div>
             )}
           </div>
@@ -709,7 +709,7 @@ function ContentCalendarBase({ token }) {
 export default function ContentCalendarModule(props) {
   const [tab, setTab] = useState('kalender');
   return (
-    <div className="space-y-3 p-4 lg:p-6">
+    <div className="space-y-3 p-4 lg:p-4">
       <div className="flex flex-wrap gap-1.5" data-testid="content-tabs">
         {[['kalender', 'Kalender & Rencana'], ['performa', 'Performa Konten'],
           ['scorecard', 'Scorecard Kreator'], ['kpi', 'KPI Platform']].map(([v, l]) => (

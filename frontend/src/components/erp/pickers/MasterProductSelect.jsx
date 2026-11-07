@@ -125,7 +125,7 @@ export default function MasterProductSelect({
               </span>
             ) : selected ? (
               <span className="flex items-center gap-1.5 truncate">
-                <span className="tabular-nums text-[11px] text-muted-foreground">{selected.code}</span>
+                <span className="tabular-nums text-xs text-muted-foreground">{selected.code}</span>
                 <span className="truncate">{selected.name}</span>
               </span>
             ) : (
@@ -165,12 +165,12 @@ export default function MasterProductSelect({
                       value === p.model_id ? 'opacity-100' : 'opacity-0')} />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
-                        <span className="tabular-nums text-[11px] text-muted-foreground">{p.code}</span>
+                        <span className="tabular-nums text-xs text-muted-foreground">{p.code}</span>
                         <span className="truncate text-sm">{p.name}</span>
                       </div>
-                      <div className="flex flex-wrap items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
+                      <div className="flex flex-wrap items-center gap-1.5 mt-0.5 text-xs text-muted-foreground">
                         {p.category_name && (
-                          <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">
+                          <Badge variant="secondary" className="px-1.5 py-0 text-xs font-normal">
                             {p.category_name}
                           </Badge>
                         )}
@@ -189,7 +189,7 @@ export default function MasterProductSelect({
 
       {/* Master kosong / tidak terbaca — katakan apa adanya + jalan keluarnya. */}
       {!loading && items.length === 0 && (
-        <p className="mt-1 flex items-start gap-1.5 text-[11px] text-[hsl(var(--warning))] "
+        <p className="mt-1 flex items-start gap-1.5 text-xs text-[hsl(var(--warning))] "
            data-testid={`${testId}-empty`}>
           <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
           <span>
@@ -204,7 +204,7 @@ export default function MasterProductSelect({
       {selected && (
         <div className="mt-1.5 rounded-md border border-border bg-muted/50 px-2.5 py-1.5"
              data-testid={`${testId}-meta`}>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
             <span>Kategori: <b className="text-foreground">{selected.category_name || '—'}</b></span>
             <span>HPP master: <b className="text-foreground">{rp(selected.hpp)}</b></span>
             <span>Harga resmi: <b className="text-foreground">{rp(selected.retail_price_master)}</b></span>
@@ -213,7 +213,7 @@ export default function MasterProductSelect({
         </div>
       )}
 
-      {helpText && <p className="mt-1 text-[11px] text-muted-foreground">{helpText}</p>}
+      {helpText && <p className="mt-1 text-xs text-muted-foreground">{helpText}</p>}
     </div>
   );
 }

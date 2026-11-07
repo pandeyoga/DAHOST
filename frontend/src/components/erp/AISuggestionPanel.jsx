@@ -65,18 +65,18 @@ export default function AISuggestionPanel({ suggestion, fields, decideUrl, heade
   };
 
   return (
-    <div className="rounded-lg border border-violet-300/60 dark:border-violet-800/60 bg-violet-50/50 dark:bg-violet-950/20 p-3 space-y-2" data-testid={testId}>
+    <div className="rounded-lg border border-[hsl(var(--primary)/0.6)] bg-[hsl(var(--primary)/0.5)] p-3 space-y-2" data-testid={testId}>
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold text-violet-700 dark:text-violet-300 flex items-center gap-1">
+        <p className="text-xs font-semibold text-[hsl(var(--primary))] flex items-center gap-1">
           <Bot size={13} /> Usulan AI — belum mengubah data resmi sebelum diterima
         </p>
-        <Badge variant="outline" className="text-[10px]">{STATUS_LABEL[suggestion.status] || suggestion.status}</Badge>
+        <Badge variant="outline" className="text-xs">{STATUS_LABEL[suggestion.status] || suggestion.status}</Badge>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {fields.map(f => (
           <div key={f.key}>
-            <p className="text-[11px] text-muted-foreground">{f.label}</p>
+            <p className="text-xs text-muted-foreground">{f.label}</p>
             {editing && f.options ? (
               <Select value={draft[f.key] ?? values[f.key] ?? ''} onValueChange={v => setDraft(d => ({ ...d, [f.key]: v }))}>
                 <SelectTrigger className="h-8 text-xs" data-testid={`${testId}-edit-${f.key}`}><SelectValue /></SelectTrigger>
@@ -95,12 +95,12 @@ export default function AISuggestionPanel({ suggestion, fields, decideUrl, heade
       </div>
 
       {suggestion.reason && <p className="text-xs text-muted-foreground italic">Alasan AI: {suggestion.reason}</p>}
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         Diusulkan {fmtTime(suggestion.suggested_at)}
         {suggestion.confidence != null && ` · keyakinan ${Math.round(suggestion.confidence * 100)}%`}
         {suggestion.decided_by && ` · diputuskan ${suggestion.decided_by} ${fmtTime(suggestion.decided_at)}`}
       </p>
-      {error && <p className="text-xs text-red-600">{error}</p>}
+      {error && <p className="text-xs text-[hsl(var(--danger-text))]">{error}</p>}
 
       {pending && (
         <div className="flex flex-wrap gap-2 pt-1">
@@ -112,7 +112,7 @@ export default function AISuggestionPanel({ suggestion, fields, decideUrl, heade
               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setDraft({}); setEditing(true); }} disabled={!!busy} data-testid={`${testId}-modify`}>
                 <Pencil size={12} className="mr-1" /> Ubah
               </Button>
-              <Button size="sm" variant="ghost" className="h-7 text-xs text-red-600" onClick={() => decide('reject')} disabled={!!busy} data-testid={`${testId}-reject`}>
+              <Button size="sm" variant="ghost" className="h-7 text-xs text-[hsl(var(--danger-text))]" onClick={() => decide('reject')} disabled={!!busy} data-testid={`${testId}-reject`}>
                 {busy === 'reject' ? <Loader2 size={12} className="mr-1 animate-spin" /> : <X size={12} className="mr-1" />} Tolak
               </Button>
             </>

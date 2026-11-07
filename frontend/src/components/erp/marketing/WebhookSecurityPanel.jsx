@@ -54,8 +54,8 @@ export default function WebhookSecurityPanel({ headers }) {
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
-              allOk ? 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                    : 'bg-amber-100 dark:bg-amber-500/15 text-amber-600 dark:text-amber-400'}`}>
+              allOk ? 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] '
+                    : 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] '}`}>
               {allOk ? <ShieldCheck className="w-5 h-5" /> : <ShieldAlert className="w-5 h-5" />}
             </div>
             <div>
@@ -92,8 +92,8 @@ export default function WebhookSecurityPanel({ headers }) {
               variant="outline"
               data-testid={`webhook-sec-${p}`}
               className={v.configured
-                ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-500/30'
-                : 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-500/30'}
+                ? 'bg-[hsl(var(--success)/0.08)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)] '
+                : 'bg-[hsl(var(--warning)/0.08)] text-[hsl(var(--warning-text))] border-[hsl(var(--warning)/0.35)] '}
             >
               {v.configured ? <ShieldCheck className="w-3 h-3 mr-1" /> : <ShieldAlert className="w-3 h-3 mr-1" />}
               {LABEL[p] || p}: {v.configured ? 'terverifikasi' : 'secret belum diset'}
@@ -114,7 +114,7 @@ export default function WebhookSecurityPanel({ headers }) {
                   <div>Header diterima: <code className="text-foreground">{(v.accepted_headers || []).join(', ')}</code></div>
                   <div>Toleransi replay: <code className="text-foreground">{v.replay_tolerance_sec}s</code></div>
                   {v.uses_shared_secret && (
-                    <div className="sm:col-span-2 text-amber-600 dark:text-amber-400">
+                    <div className="sm:col-span-2 text-[hsl(var(--warning-text))] ">
                       Memakai secret bersama (dev). Di produksi set secret per-platform.
                     </div>
                   )}

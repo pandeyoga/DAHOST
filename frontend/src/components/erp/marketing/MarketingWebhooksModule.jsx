@@ -29,10 +29,10 @@ import WebhookSecurityPanel from './WebhookSecurityPanel';
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
 const PLATFORM_COLORS = {
-  tokopedia: 'bg-green-100 dark:bg-green-500/15 text-green-700 dark:text-green-400 border-green-400 dark:border-green-500/30',
-  shopee:    'bg-orange-100 dark:bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-400 dark:border-orange-500/30',
-  tiktok:    'bg-muted dark:bg-zinc-500/15 text-foreground/80 border-border dark:border-zinc-500/30',
-  manual:    'bg-blue-100 dark:bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-400 dark:border-blue-500/30',
+  tokopedia: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)] ',
+  shopee:    'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] border-[hsl(var(--warning)/0.35)] ',
+  tiktok:    'bg-muted text-foreground/80 border-border ',
+  manual:    'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)] ',
 };
 
 const PLATFORM_LABELS = {
@@ -44,22 +44,22 @@ const PLATFORM_LABELS = {
 
 function StatusBadge({ processed, error }) {
   if (error === 'duplicate') return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-muted dark:bg-zinc-500/20 text-muted-foreground">
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-muted text-muted-foreground">
       <Copy className="w-3 h-3" /> Duplikat
     </span>
   );
   if (error) return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-400">
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] ">
       <XCircle className="w-3 h-3" /> Error
     </span>
   );
   if (processed) return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-emerald-100 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ">
       <CheckCircle2 className="w-3 h-3" /> Processed
     </span>
   );
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400">
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ">
       <Clock className="w-3 h-3" /> Pending
     </span>
   );
@@ -181,12 +181,12 @@ export default function MarketingWebhooksModule({ user, headers }) {
     : events;
 
   return (
-    <div className="p-4 md:p-6 space-y-6 text-foreground">
+    <div className="p-4 md:p-4 space-y-4 text-foreground">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold flex items-center gap-2">
-            <Zap className="text-amber-700 dark:text-amber-400" /> Webhook Events Monitor
+            <Zap className="text-[hsl(var(--warning-text))] " /> Webhook Events Monitor
           </h2>
           <p className="text-sm text-muted-foreground mt-1">Monitor inbound events dari Tokopedia, Shopee, TikTok Shop</p>
         </div>
@@ -225,8 +225,8 @@ export default function MarketingWebhooksModule({ user, headers }) {
               <div className="text-xs text-muted-foreground mb-1">{PLATFORM_LABELS[s.platform] || s.platform}</div>
               <div className="text-2xl font-bold">{s.total}</div>
               <div className="flex justify-between text-xs text-muted-foreground/80 mt-1">
-                <span className="text-emerald-600 dark:text-emerald-400">{s.processed} OK</span>
-                <span className={s.errors > 0 ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground/80'}>{s.errors} err</span>
+                <span className="text-[hsl(var(--success-text))] ">{s.processed} OK</span>
+                <span className={s.errors > 0 ? 'text-[hsl(var(--danger-text))] ' : 'text-muted-foreground/80'}>{s.errors} err</span>
                 <span>{s.success_rate}%</span>
               </div>
             </CardContent>
@@ -287,9 +287,9 @@ export default function MarketingWebhooksModule({ user, headers }) {
       <Card className="bg-card border-border">
         <CardContent className="p-0">
           {loading ? (
-            <div className="text-center py-10 text-muted-foreground/80">Loading...</div>
+            <div className="text-center py-6 text-muted-foreground/80">Loading...</div>
           ) : filtered.length === 0 ? (
-            <div className="text-center py-10 text-muted-foreground/80">
+            <div className="text-center py-6 text-muted-foreground/80">
               <Zap className="w-10 h-10 mx-auto mb-2 opacity-30" />
               <p>Belum ada webhook events</p>
               <p className="text-xs mt-1">Klik "Test Ingest" untuk kirim payload sample</p>
@@ -304,11 +304,11 @@ export default function MarketingWebhooksModule({ user, headers }) {
                     </span>
                     <StatusBadge processed={evt.processed} error={evt.error} />
                   </div>
-                  <p className="text-[11px] font-mono text-foreground/80">{evt.event_type || '—'}</p>
-                  <p className="text-[11px] text-muted-foreground">
+                  <p className="text-xs tabular-nums text-foreground/80">{evt.event_type || '—'}</p>
+                  <p className="text-xs text-muted-foreground">
                     Order: {evt.normalized_order?.platform_order_id || '—'}
                   </p>
-                  <p className="text-[10px] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     {evt.received_at ? new Date(evt.received_at).toLocaleString('id-ID') : '—'}
                   </p>
                   <div className="flex gap-1 pt-1">
@@ -318,7 +318,7 @@ export default function MarketingWebhooksModule({ user, headers }) {
                     </Button>
                     {(evt.error && evt.error !== 'duplicate') && (
                       <Button variant="ghost" size="sm"
-                        className="h-7 px-2 text-xs text-amber-700 dark:text-amber-400"
+                        className="h-7 px-2 text-xs text-[hsl(var(--warning-text))] "
                         onClick={() => handleReprocess(evt.id)}>
                         <RotateCcw className="w-3.5 h-3.5 mr-1" />Ulangi
                       </Button>
@@ -348,11 +348,11 @@ export default function MarketingWebhooksModule({ user, headers }) {
                           {PLATFORM_LABELS[evt.platform] || evt.platform}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-foreground/80 font-mono text-xs">{evt.event_type || '—'}</td>
+                      <td className="px-4 py-3 text-foreground/80 tabular-nums text-xs">{evt.event_type || '—'}</td>
                       <td className="px-4 py-3">
                         <StatusBadge processed={evt.processed} error={evt.error} />
                       </td>
-                      <td className="px-4 py-3 text-muted-foreground text-xs font-mono">
+                      <td className="px-4 py-3 text-muted-foreground text-xs tabular-nums">
                         {evt.normalized_order?.platform_order_id || '—'}
                       </td>
                       <td className="px-4 py-3 text-muted-foreground/80 text-xs">
@@ -371,7 +371,7 @@ export default function MarketingWebhooksModule({ user, headers }) {
                           {(evt.error && evt.error !== 'duplicate') && (
                             <Button
                               variant="ghost" size="sm"
-                              className="h-7 w-7 p-0 hover:bg-muted-foreground/30 text-amber-700 dark:text-amber-400"
+                              className="h-7 w-7 p-0 hover:bg-muted-foreground/30 text-[hsl(var(--warning-text))] "
                               onClick={() => handleReprocess(evt.id)}
                               data-testid={`btn-reprocess-${evt.id}`}
                             >
@@ -417,14 +417,14 @@ export default function MarketingWebhooksModule({ user, headers }) {
           {selectedEvent && (
             <div className="space-y-4 text-sm">
               <div className="grid grid-cols-2 gap-3 text-xs">
-                <div><span className="text-muted-foreground/80">ID:</span> <span className="font-mono text-foreground/80">{selectedEvent.id}</span></div>
+                <div><span className="text-muted-foreground/80">ID:</span> <span className="tabular-nums text-foreground/80">{selectedEvent.id}</span></div>
                 <div><span className="text-muted-foreground/80">Event:</span> <span className="text-foreground/80">{selectedEvent.event_type}</span></div>
                 <div><span className="text-muted-foreground/80">Status:</span> <StatusBadge processed={selectedEvent.processed} error={selectedEvent.error} /></div>
                 <div><span className="text-muted-foreground/80">Received:</span> <span className="text-foreground/80">{selectedEvent.received_at ? new Date(selectedEvent.received_at).toLocaleString('id-ID') : '—'}</span></div>
               </div>
               {selectedEvent.error && (
-                <div className="bg-red-100 dark:bg-red-500/10 border border-red-400 dark:border-red-500/30 rounded p-3">
-                  <p className="text-xs text-red-700 dark:text-red-400 font-medium">Error:</p>
+                <div className="bg-[hsl(var(--destructive)/0.12)] border border-[hsl(var(--destructive)/0.35)] rounded p-3">
+                  <p className="text-xs text-[hsl(var(--danger-text))] font-medium">Error:</p>
                   <p className="text-xs text-foreground/80 mt-1">{selectedEvent.error}</p>
                 </div>
               )}
@@ -468,7 +468,7 @@ export default function MarketingWebhooksModule({ user, headers }) {
               <div className="flex justify-between items-center mb-1">
                 <label className="text-xs text-muted-foreground">JSON Payload</label>
                 <button
-                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                  className="text-xs text-[hsl(var(--primary))] hover:underline"
                   onClick={() => {
                     const sample = manualForm.platform === 'shopee' ? SHOPEE_SAMPLE : TOKOPEDIA_SAMPLE;
                     setManualForm(f => ({ ...f, payload: sample }));
@@ -480,7 +480,7 @@ export default function MarketingWebhooksModule({ user, headers }) {
                 onChange={e => setManualForm(f => ({ ...f, payload: e.target.value }))}
                 placeholder='{"order": {...}}'
                 rows={8}
-                className="bg-muted border-border font-mono text-xs"
+                className="bg-muted border-border tabular-nums text-xs"
                 data-testid="textarea-webhook-payload"
               />
             </div>
@@ -489,7 +489,7 @@ export default function MarketingWebhooksModule({ user, headers }) {
               <Button title="Muat ulang" aria-label="Muat ulang" size="icon"
                 onClick={handleManualIngest}
                 disabled={manualSending || !manualForm.payload}
-                className="bg-amber-600 hover:bg-amber-700 text-foreground"
+                className="bg-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.9)] text-foreground"
                 data-testid="btn-submit-manual-ingest"
               >
                 {manualSending ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4 mr-1" />}

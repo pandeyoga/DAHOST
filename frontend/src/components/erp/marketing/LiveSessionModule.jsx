@@ -87,15 +87,15 @@ export default function LiveSessionModule({ token }) {
   useEffect(() => { fetchSessions(); }, [fetchSessions]);
   
   const kpis = [
-    { label: 'Total Sessions', value: fmt(summary?.total_sessions), sub: `${fmt(summary?.total_viewers || 0)} viewers`, color: 'text-indigo-600', bg: 'bg-indigo-50 dark:bg-indigo-900/20', icon: Video },
-    { label: 'Total Revenue', value: fmtRp(summary?.total_revenue), sub: `${fmt(summary?.total_orders || 0)} orders`, color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20', icon: ShoppingBag },
-    { label: 'Engagement Rate', value: `${summary?.avg_engagement_rate || 0}%`, sub: 'Rata-rata', color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20', icon: Heart },
-    { label: 'Conversion Rate', value: `${summary?.avg_conversion_rate || 0}%`, sub: 'Rata-rata', color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-900/20', icon: TrendingUp },
+    { label: 'Total Sessions', value: fmt(summary?.total_sessions), sub: `${fmt(summary?.total_viewers || 0)} viewers`, color: 'text-[hsl(var(--primary))]', bg: 'bg-[hsl(var(--primary)/0.08)] ', icon: Video },
+    { label: 'Total Revenue', value: fmtRp(summary?.total_revenue), sub: `${fmt(summary?.total_orders || 0)} orders`, color: 'text-[hsl(var(--success-text))]', bg: 'bg-[hsl(var(--success)/0.08)] ', icon: ShoppingBag },
+    { label: 'Engagement Rate', value: `${summary?.avg_engagement_rate || 0}%`, sub: 'Rata-rata', color: 'text-[hsl(var(--warning-text))]', bg: 'bg-[hsl(var(--warning)/0.08)] ', icon: Heart },
+    { label: 'Conversion Rate', value: `${summary?.avg_conversion_rate || 0}%`, sub: 'Rata-rata', color: 'text-[hsl(var(--primary))]', bg: 'bg-[hsl(var(--primary)/0.08)] ', icon: TrendingUp },
   ];
   
   return (
-    <div className="min-h-screen bg-background p-4 md:p-6" data-testid="live-dashboard">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+    <div className="min-h-screen bg-background p-4 md:p-4" data-testid="live-dashboard">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Live Session Performance</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Monitor performa live shopping di semua platform</p>
@@ -114,7 +114,7 @@ export default function LiveSessionModule({ token }) {
       <div className="mb-4">
         <ActiveAccountBar accounts={masterAccounts} activeAccount={activeAccount} onAccountChange={setActiveAccount} hint="Context akun live session:" />
       </div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         {kpis.map(k => (
           <div key={k.label} className={`rounded-xl border p-4 ${k.bg}`}>
             <div className="flex items-center justify-between mb-1">
@@ -128,7 +128,7 @@ export default function LiveSessionModule({ token }) {
       </div>
       
       {summary?.top_hosts && summary.top_hosts.length > 0 && (
-        <Card className="mb-6">
+        <Card className="mb-4">
           <CardHeader>
             <CardTitle>Top Hosts (by Revenue)</CardTitle>
           </CardHeader>
@@ -139,7 +139,7 @@ export default function LiveSessionModule({ token }) {
                   <div className="text-2xl font-bold text-primary mb-1">#{i + 1}</div>
                   <p className="font-semibold text-sm mb-1">{host.host}</p>
                   <p className="text-xs text-muted-foreground">{fmt(host.sessions)} sessions</p>
-                  <p className="text-sm font-bold text-emerald-600 mt-1">{fmtRp(host.revenue)}</p>
+                  <p className="text-sm font-bold text-[hsl(var(--success-text))] mt-1">{fmtRp(host.revenue)}</p>
                 </div>
               ))}
             </div>
@@ -211,7 +211,7 @@ export default function LiveSessionModule({ token }) {
                         </div>
                       </td>
                       <td className="px-3 py-2 tabular-nums font-semibold">{fmt(s.orders)}</td>
-                      <td className="px-3 py-2 tabular-nums text-xs text-emerald-600 font-bold">{fmtRp(s.revenue)}</td>
+                      <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--success-text))] font-bold">{fmtRp(s.revenue)}</td>
                       <td className="px-3 py-2 tabular-nums font-bold text-primary">{s.conversion_rate}%</td>
                       {/* F18#3 — kolom rincian produk: dulu tidak ada jalan mengisinya
                           sehingga laporan "produk terlaris saat live" selalu kosong. */}
@@ -224,7 +224,7 @@ export default function LiveSessionModule({ token }) {
                               {s.products_detail.lines_count} item · {fmt(s.products_detail.total_units)} unit
                             </div>
                             <div className={s.products_detail.over_allocated
-                              ? 'text-red-600 flex items-center gap-1' : 'text-muted-foreground'}>
+                              ? 'text-[hsl(var(--danger-text))] flex items-center gap-1' : 'text-muted-foreground'}>
                               {s.products_detail.over_allocated && <AlertTriangle size={10} />}
                               {fmtRp(s.products_detail.total_revenue)}
                               {s.products_detail.coverage_pct
@@ -245,7 +245,7 @@ export default function LiveSessionModule({ token }) {
                           onClick={() => { setEditing(s); setDialogOpen(true); }}>
                           <Pencil size={13} />
                         </Button>
-                        <Button size="sm" variant="ghost" className="h-7 px-2 text-red-600"
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-[hsl(var(--danger-text))]"
                           data-testid={`live-delete-${s.id}`}
                           onClick={async () => {
                             if (!(await confirmDialog(`Hapus sesi "${s.title}"?`))) return;

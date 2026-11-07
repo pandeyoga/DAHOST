@@ -15,8 +15,8 @@ const RUN_HEADS = ['Waktu mulai', 'Job', 'Status', 'Galat'];
 const fmtDT = (v) => (v ? new Date(v).toLocaleString('id-ID') : '—');
 
 function StatusBadge({ enabled, running }) {
-  if (running) return <Badge className="bg-green-100 text-green-700 border-green-200"><Activity className="h-3 w-3 mr-1" />Berjalan</Badge>;
-  if (enabled) return <Badge className="bg-blue-100 text-blue-700 border-blue-200">Aktif</Badge>;
+  if (running) return <Badge className="bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)]"><Activity className="h-3 w-3 mr-1" />Berjalan</Badge>;
+  if (enabled) return <Badge className="bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]">Aktif</Badge>;
   return <Badge variant="secondary">Tidak Aktif</Badge>;
 }
 
@@ -68,12 +68,12 @@ export default function MarketingSchedulerModule() {
   };
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-teal-500 to-cyan-600 flex items-center justify-center">
+            <div className="h-8 w-8 rounded-lg flex items-center justify-center">
               <Cpu className="h-4 w-4 text-foreground" />
             </div>
             Scheduler & Otomasi
@@ -102,11 +102,11 @@ export default function MarketingSchedulerModule() {
 
       {/* Jobs List */}
       <div className="space-y-3">
-        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Registered Jobs ({jobs.length})</p>
+        <p className="text-xs font-semibold text-muted-foreground ">Registered Jobs ({jobs.length})</p>
         {loading ? (
-          <div className="text-center py-8 text-sm text-muted-foreground"><RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2" /></div>
+          <div className="text-center py-6 text-sm text-muted-foreground"><RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2" /></div>
         ) : jobs.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground text-sm">Tidak ada job terdaftar</div>
+          <div className="text-center py-6 text-muted-foreground text-sm">Tidak ada job terdaftar</div>
         ) : view === 'table' ? (
           <div className="rounded-lg border border-border overflow-x-auto bg-background">
             <table className="w-full text-xs" data-testid="scheduler-jobs-table">
@@ -118,13 +118,13 @@ export default function MarketingSchedulerModule() {
                   <tr key={job.id} className="hover:bg-muted/30" data-testid={`scheduler-row-${job.id}`}>
                     <td className="px-3 py-2">
                       <div className="font-medium text-foreground">{job.description}</div>
-                      <div className="text-[10px] text-muted-foreground font-mono">{job.id}</div>
+                      <div className="text-xs text-muted-foreground tabular-nums">{job.id}</div>
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">{job.cron_label || '—'}</td>
                     <td className="px-3 py-2">
                       {job.enabled
-                        ? <Badge className="text-[10px] bg-green-100 text-green-700 border-green-200">Aktif</Badge>
-                        : <Badge variant="secondary" className="text-[10px]">Non-aktif</Badge>}
+                        ? <Badge className="text-xs bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)]">Aktif</Badge>
+                        : <Badge variant="secondary" className="text-xs">Non-aktif</Badge>}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">{fmtDT(job.next_run_at)}</td>
                     <td className="px-3 py-2 text-right">
@@ -147,12 +147,12 @@ export default function MarketingSchedulerModule() {
                 <div className="flex items-center justify-between">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
-                      <CalendarClock className="h-4 w-4 text-teal-500" />
+                      <CalendarClock className="h-4 w-4 text-[hsl(var(--success-text))]" />
                       <p className="font-medium text-sm">{job.description}</p>
-                      <Badge variant="outline" className="text-[10px]">{job.cron_label}</Badge>
+                      <Badge variant="outline" className="text-xs">{job.cron_label}</Badge>
                       {job.enabled
-                        ? <Badge className="text-[10px] bg-green-100 text-green-700 border-green-200">Aktif</Badge>
-                        : <Badge variant="secondary" className="text-[10px]">Non-aktif</Badge>
+                        ? <Badge className="text-xs bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)]">Aktif</Badge>
+                        : <Badge variant="secondary" className="text-xs">Non-aktif</Badge>
                       }
                     </div>
                     <div className="flex items-center gap-4 text-xs text-muted-foreground">
@@ -183,7 +183,7 @@ export default function MarketingSchedulerModule() {
 
       {/* Recent Runs */}
       <div>
-        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Run History Terakhir ({runs.length})</p>
+        <p className="text-xs font-semibold text-muted-foreground mb-3">Run History Terakhir ({runs.length})</p>
         {runs.length === 0 && !loading && (
           <div className="text-center py-6 text-sm text-muted-foreground border-2 border-dashed border-border rounded-lg">
             Belum ada riwayat run
@@ -200,12 +200,12 @@ export default function MarketingSchedulerModule() {
                   {runs.map((run, i) => (
                     <tr key={i} className="hover:bg-muted/30">
                       <td className="px-3 py-2 whitespace-nowrap">{fmtDT(run.started_at)}</td>
-                      <td className="px-3 py-2 font-mono text-[11px]">{run.job_id}</td>
+                      <td className="px-3 py-2 tabular-nums text-xs">{run.job_id}</td>
                       <td className="px-3 py-2">
                         <Badge variant={run.status === 'success' ? 'outline' : 'destructive'}
-                          className="text-[10px]">{run.status}</Badge>
+                          className="text-xs">{run.status}</Badge>
                       </td>
-                      <td className="px-3 py-2 text-red-600 max-w-[320px] truncate" title={run.error || ''}>
+                      <td className="px-3 py-2 text-[hsl(var(--danger-text))] max-w-[320px] truncate" title={run.error || ''}>
                         {run.error || '—'}
                       </td>
                     </tr>
@@ -217,20 +217,20 @@ export default function MarketingSchedulerModule() {
             <div key={i} className="flex items-center gap-3 py-2 border-b border-border last:border-0 text-sm">
               <div className="flex-shrink-0">
                 {run.status === 'success'
-                  ? <CheckCircle2 className="h-4 w-4 text-green-500" />
-                  : <XCircle className="h-4 w-4 text-red-500" />
+                  ? <CheckCircle2 className="h-4 w-4 text-[hsl(var(--success-text))]" />
+                  : <XCircle className="h-4 w-4 text-[hsl(var(--danger-text))]" />
                 }
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-medium text-xs truncate">{run.job_id}</p>
-                {run.error && <p className="text-[11px] text-red-500 truncate">{run.error}</p>}
+                {run.error && <p className="text-xs text-[hsl(var(--danger-text))] truncate">{run.error}</p>}
               </div>
               <span className="text-xs text-muted-foreground flex-shrink-0">
                 {run.started_at ? new Date(run.started_at).toLocaleString('id-ID') : '-'}
               </span>
               <Badge
                 variant={run.status === 'success' ? 'outline' : 'destructive'}
-                className="text-[10px] flex-shrink-0"
+                className="text-xs flex-shrink-0"
               >
                 {run.status}
               </Badge>

@@ -36,11 +36,11 @@ const API = process.env.REACT_APP_BACKEND_URL;
 
 const PLATFORM_ICONS = { shopee: '🛒', tiktok: '🎵', tokopedia: '🟢', instagram: '📷', website: '🌐' };
 const STATUS_CONFIG = {
-  planning:  { label: 'Perencanaan', color: 'bg-muted text-muted-foreground dark:bg-gray-800 dark:text-gray-300',         icon: AlertTriangle },
-  ready:     { label: 'Siap Launch', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',      icon: Clock },
-  launched:  { label: 'Launched',    color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', icon: CheckCircle2 },
-  postponed: { label: 'Ditunda',     color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: AlertTriangle },
-  cancelled: { label: 'Dibatalkan',  color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',         icon: XCircle },
+  planning:  { label: 'Perencanaan', color: 'bg-muted text-muted-foreground ',         icon: AlertTriangle },
+  ready:     { label: 'Siap Launch', color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] ',      icon: Clock },
+  launched:  { label: 'Launched',    color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ', icon: CheckCircle2 },
+  postponed: { label: 'Ditunda',     color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ', icon: AlertTriangle },
+  cancelled: { label: 'Dibatalkan',  color: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] ',         icon: XCircle },
 };
 
 function StatusBadge({ status }) {
@@ -254,19 +254,19 @@ export default function ProductLaunchModule({ token }) {
   };
 
   const kpis = [
-    { label: 'Total Produk',  value: fmt(summary?.total),      sub: 'Semua kategori',        color: 'text-indigo-600',  bg: 'bg-indigo-50 dark:bg-indigo-900/20', icon: Package },
-    { label: 'Siap Launch',   value: fmt(summary?.ready),       sub: 'Sudah siap',            color: 'text-blue-600',    bg: 'bg-blue-50 dark:bg-blue-900/20',   icon: Clock },
-    { label: 'Sudah Launch',  value: fmt(summary?.launched),    sub: 'Di pasar',              color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20', icon: CheckCircle2 },
-    { label: 'Dalam 30 Hari', value: fmt(summary?.upcoming_30), sub: 'Jadwal upcoming',       color: 'text-amber-600',   bg: 'bg-amber-50 dark:bg-amber-900/20', icon: Rocket },
+    { label: 'Total Produk',  value: fmt(summary?.total),      sub: 'Semua kategori',        color: 'text-[hsl(var(--primary))]',  bg: 'bg-[hsl(var(--primary)/0.08)] ', icon: Package },
+    { label: 'Siap Launch',   value: fmt(summary?.ready),       sub: 'Sudah siap',            color: 'text-[hsl(var(--primary))]',    bg: 'bg-[hsl(var(--primary)/0.08)] ',   icon: Clock },
+    { label: 'Sudah Launch',  value: fmt(summary?.launched),    sub: 'Di pasar',              color: 'text-[hsl(var(--success-text))]', bg: 'bg-[hsl(var(--success)/0.08)] ', icon: CheckCircle2 },
+    { label: 'Dalam 30 Hari', value: fmt(summary?.upcoming_30), sub: 'Jadwal upcoming',       color: 'text-[hsl(var(--warning-text))]',   bg: 'bg-[hsl(var(--warning)/0.08)] ', icon: Rocket },
   ];
 
   // Sort items by launch_date for timeline view
   const sortedItems = [...items].sort((a, b) => a.launch_date?.localeCompare(b.launch_date) || 0);
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-6" data-testid="product-launch-dashboard">
+    <div className="min-h-screen bg-background p-4 md:p-4" data-testid="product-launch-dashboard">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Product Launch Manager</h1>
           <p className="text-sm text-muted-foreground">Manajemen peluncuran produk multi-platform</p>
@@ -282,7 +282,7 @@ export default function ProductLaunchModule({ token }) {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         {kpis.map(k => <KPICard key={k.label} {...k} />)}
       </div>
 
@@ -291,14 +291,14 @@ export default function ProductLaunchModule({ token }) {
           isinya teks bebas. Selama belum ditautkan, stok/HPP/harga resminya
           tidak bisa dicocokkan — dan dulu itu tidak terlihat sama sekali. */}
       {unlinked > 0 && (
-        <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-700 dark:bg-amber-900/25"
+        <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.08)] px-4 py-3 "
              data-testid="launch-unlinked-banner">
-          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
-          <div className="text-xs text-amber-900 dark:text-amber-200">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-[hsl(var(--warning-text))] " />
+          <div className="text-xs text-[hsl(var(--warning-text))] ">
             <b>{unlinked} rencana peluncuran belum tertaut Master Produk.</b>{' '}
             Dibuat sebelum aturan &quot;produk wajib dari master&quot;, jadi nama/bahan/modelnya
             masih teks bebas. Buka <b>Edit</b> pada baris bertanda
-            <span className="mx-1 inline-flex items-center rounded border border-amber-400 bg-amber-100 px-1.5 py-0.5 font-medium dark:bg-amber-800/40">belum tertaut</span>
+            <span className="mx-1 inline-flex items-center rounded border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.12)] px-1.5 py-0.5 font-medium ">belum tertaut</span>
             lalu pilih produknya — supaya stok, HPP, dan harga resminya punya satu sumber.
           </div>
         </div>
@@ -365,9 +365,9 @@ export default function ProductLaunchModule({ token }) {
         <Card>
           <CardContent className="p-0">
             {loading ? (
-              <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-muted-foreground" /></div>
+              <div className="flex justify-center py-6"><Loader2 size={28} className="animate-spin text-muted-foreground" /></div>
             ) : items.length === 0 ? (
-              <div className="text-center py-16 text-muted-foreground">
+              <div className="text-center py-6 text-muted-foreground">
                 <Rocket size={40} className="mx-auto mb-3 opacity-30" />
                 <p className="font-medium">Belum ada produk launch</p>
                 <Button size="sm" className="mt-3" onClick={openCreate}><Plus size={12} className="mr-1" />Tambah</Button>
@@ -378,13 +378,13 @@ export default function ProductLaunchModule({ token }) {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b bg-muted/40">
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase">Produk</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase">Bahan / Kategori</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase">Tanggal Launch</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase">Harga</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase">Platform</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase">Status</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold text-muted-foreground uppercase">Aksi</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground ">Produk</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground ">Bahan / Kategori</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground ">Tanggal Launch</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground ">Harga</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground ">Platform</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground ">Status</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-muted-foreground ">Aksi</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -394,10 +394,10 @@ export default function ProductLaunchModule({ token }) {
                             <div className="font-medium max-w-[220px] truncate" title={item.product_name}>{item.product_name}</div>
                             <div className="mt-0.5 flex items-center gap-1.5">
                               {item.master_linked ? (
-                                <span className="font-mono text-[10px] text-muted-foreground"
+                                <span className="tabular-nums text-xs text-muted-foreground"
                                       data-testid={`launch-code-${item.id}`}>{item.model_code || item.model}</span>
                               ) : (
-                                <span className="inline-flex items-center gap-1 rounded border border-amber-400 bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 dark:border-amber-600 dark:bg-amber-900/40 dark:text-amber-200"
+                                <span className="inline-flex items-center gap-1 rounded border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.12)] px-1.5 py-0.5 text-xs font-medium text-[hsl(var(--warning-text))] "
                                       title="Rencana ini belum tertaut Master Produk — buka Edit lalu pilih produknya."
                                       data-testid={`launch-unlinked-${item.id}`}>
                                   <AlertTriangle size={9} /> belum tertaut
@@ -410,13 +410,13 @@ export default function ProductLaunchModule({ token }) {
                             <div className="text-muted-foreground">{item.category_name || ''}</div>
                           </td>
                           <td className="px-4 py-3">
-                            <div className="font-mono text-xs">{item.launch_date}</div>
+                            <div className="tabular-nums text-xs">{item.launch_date}</div>
                           </td>
                           <td className="px-4 py-3">
                             <div className="text-xs space-y-0.5">
-                              {item.listing_price > 0 && <div className="font-semibold text-emerald-600">{fmtRp(item.listing_price)}</div>}
+                              {item.listing_price > 0 && <div className="font-semibold text-[hsl(var(--success-text))]">{fmtRp(item.listing_price)}</div>}
                               {item.flash_sale_price > 0 && item.flash_sale_price !== item.listing_price && (
-                                <div className="text-blue-600">Flash: {fmtRp(item.flash_sale_price)}</div>
+                                <div className="text-[hsl(var(--primary))]">Flash: {fmtRp(item.flash_sale_price)}</div>
                               )}
                               {item.cross_price > 0 && <div className="line-through text-muted-foreground">{fmtRp(item.cross_price)}</div>}
                             </div>
@@ -447,7 +447,7 @@ export default function ProductLaunchModule({ token }) {
                               <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(item)}>
                                 <Pencil size={12} />
                               </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-red-500 hover:text-red-600" onClick={() => handleDelete(item.id)}>
+                              <Button size="icon" variant="ghost" className="h-7 w-7 text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))]" onClick={() => handleDelete(item.id)}>
                                 <Trash2 size={12} />
                               </Button>
                             </div>
@@ -478,9 +478,9 @@ export default function ProductLaunchModule({ token }) {
         <Card>
           <CardContent className="p-4">
             {loading ? (
-              <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-muted-foreground" /></div>
+              <div className="flex justify-center py-6"><Loader2 size={28} className="animate-spin text-muted-foreground" /></div>
             ) : sortedItems.length === 0 ? (
-              <div className="text-center py-16 text-muted-foreground">
+              <div className="text-center py-6 text-muted-foreground">
                 <Rocket size={40} className="mx-auto mb-3 opacity-30" />
                 <p>Belum ada produk launch</p>
               </div>
@@ -499,9 +499,9 @@ export default function ProductLaunchModule({ token }) {
                       <div key={item.id} className="flex gap-4">
                         {/* Dot */}
                         <div className={`relative z-10 flex-shrink-0 w-10 h-10 rounded-full border-2 flex items-center justify-center ${
-                          item.status === 'launched' ? 'bg-emerald-500 border-emerald-500 text-foreground' :
-                          item.status === 'ready'    ? 'bg-blue-500 border-blue-500 text-foreground' :
-                          item.status === 'cancelled'? 'bg-red-400 border-red-400 text-foreground' :
+                          item.status === 'launched' ? 'bg-[hsl(var(--success-strong))] border-[hsl(var(--success)/0.35)] text-foreground' :
+                          item.status === 'ready'    ? 'bg-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)] text-foreground' :
+                          item.status === 'cancelled'? 'bg-[hsl(var(--destructive-strong))] border-[hsl(var(--destructive)/0.35)] text-foreground' :
                           isToday                    ? 'bg-primary border-primary text-primary-foreground' :
                           'bg-background border-border text-muted-foreground'
                         }`}>
@@ -522,7 +522,7 @@ export default function ProductLaunchModule({ token }) {
                               </div>
                               <div className="flex items-center gap-2 mt-1.5">
                                 {item.listing_price > 0 && (
-                                  <span className="text-xs font-medium text-emerald-600">{fmtRp(item.listing_price)}</span>
+                                  <span className="text-xs font-medium text-[hsl(var(--success-text))]">{fmtRp(item.listing_price)}</span>
                                 )}
                                 {(item.platforms || []).map(p => (
                                   <span key={p} className="text-sm" title={p}>{PLATFORM_ICONS[p] || '📌'}</span>
@@ -533,7 +533,7 @@ export default function ProductLaunchModule({ token }) {
                               <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(item)}>
                                 <Pencil size={12} />
                               </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-red-500 hover:text-red-600" onClick={() => handleDelete(item.id)}>
+                              <Button size="icon" variant="ghost" className="h-7 w-7 text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))]" onClick={() => handleDelete(item.id)}>
                                 <Trash2 size={12} />
                               </Button>
                             </div>
@@ -585,7 +585,7 @@ export default function ProductLaunchModule({ token }) {
 
               {/* Dokumen WARISAN: katakan apa adanya, jangan ditebak. */}
               {editTarget && !form.model_id && (
-                <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-900 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-200"
+                <div className="mt-2 rounded-md border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.08)] px-3 py-2 text-xs text-[hsl(var(--warning-text))] "
                      data-testid="launch-legacy-warning">
                   <b>Belum tertaut Master Produk.</b> Rencana ini dibuat sebelum
                   aturan &quot;produk wajib dari master&quot;, isinya teks bebas
@@ -622,7 +622,7 @@ export default function ProductLaunchModule({ token }) {
             </div>
             <div>
               <Label className="text-xs text-muted-foreground">Kode Model (dari master)</Label>
-              <div className="mt-1 h-9 flex items-center rounded-md border border-border bg-muted/50 px-3 font-mono text-sm"
+              <div className="mt-1 h-9 flex items-center rounded-md border border-border bg-muted/50 px-3 tabular-nums text-sm"
                    data-testid="launch-model-readonly">
                 {form.master?.code || <span className="font-sans text-muted-foreground text-xs">Pilih produk dulu</span>}
               </div>
@@ -636,7 +636,7 @@ export default function ProductLaunchModule({ token }) {
               {form.master && Number(form.master.retail_price_master || 0) > 0
                 && Number(form.original_price || 0) > 0
                 && Number(form.original_price) !== Number(form.master.retail_price_master) && (
-                <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400"
+                <p className="mt-1 text-xs text-[hsl(var(--warning-text))] "
                    data-testid="launch-price-diff">
                   Beda {fmtRp(Math.abs(Number(form.original_price) - Number(form.master.retail_price_master)))} dari
                   harga resmi master ({fmtRp(form.master.retail_price_master)}).

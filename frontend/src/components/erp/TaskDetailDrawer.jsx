@@ -207,16 +207,16 @@ export function TaskDetailDrawer({ taskId, open, onOpenChange, onUpdated, token 
         <SheetHeader>
           <SheetTitle>Detail Task</SheetTitle>
           <SheetDescription>
-            {task?.task_code && <span className="font-mono text-xs">{task.task_code}</span>}
+            {task?.task_code && <span className="tabular-nums text-xs">{task.task_code}</span>}
           </SheetDescription>
         </SheetHeader>
 
         {loading ? (
-          <div className="flex items-center justify-center py-12">
+          <div className="flex items-center justify-center py-6">
             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
           </div>
         ) : !form ? (
-          <div className="text-center py-12 text-muted-foreground">Task tidak tersedia</div>
+          <div className="text-center py-6 text-muted-foreground">Task tidak tersedia</div>
         ) : (
           <div className="space-y-4 mt-4">
             {/* Status badges */}
@@ -224,15 +224,15 @@ export function TaskDetailDrawer({ taskId, open, onOpenChange, onUpdated, token 
               <Badge variant="outline">{form.status}</Badge>
               {task?.approval_status && (
                 <Badge variant="outline" className={
-                  task.approval_status === 'approved' ? 'bg-emerald-500/10 text-emerald-400' :
-                  task.approval_status === 'rejected' ? 'bg-red-500/10 text-red-400' :
-                  'bg-yellow-500/10 text-yellow-400'
+                  task.approval_status === 'approved' ? 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))]' :
+                  task.approval_status === 'rejected' ? 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--danger-text))]' :
+                  'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning-text))]'
                 }>
                   Approval: {task.approval_status}
                 </Badge>
               )}
               {task?.action_type && task?.related_entity && (
-                <Badge variant="outline" className="bg-blue-500/10 text-blue-400">
+                <Badge variant="outline" className="bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]">
                   <Link2 className="w-3 h-3 mr-1" />
                   {task.related_entity} • {task.action_type}
                 </Badge>
@@ -241,9 +241,9 @@ export function TaskDetailDrawer({ taskId, open, onOpenChange, onUpdated, token 
 
             {/* ── ACTIONABLE TASK SECTION ── */}
             {task?.action_type && task.status !== 'done' && task.status !== 'cancelled' && (
-              <div className="rounded-lg border-2 border-blue-500/30 bg-blue-500/5 p-4 space-y-3" data-testid="task-action-panel">
+              <div className="rounded-lg border-2 border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.05)] p-4 space-y-3" data-testid="task-action-panel">
                 <div className="flex items-center gap-2">
-                  <Zap className="w-4 h-4 text-blue-500" />
+                  <Zap className="w-4 h-4 text-[hsl(var(--primary))]" />
                   <h3 className="font-semibold text-sm">In-System Action</h3>
                 </div>
 
@@ -308,7 +308,7 @@ export function TaskDetailDrawer({ taskId, open, onOpenChange, onUpdated, token 
                         variant={actionData.decision === 'approve' ? 'default' : 'outline'}
                         size="sm"
                         onClick={() => setActionData(d => ({ ...d, decision: 'approve' }))}
-                        className={actionData.decision === 'approve' ? 'bg-emerald-600 hover:bg-emerald-700' : ''}
+                        className={actionData.decision === 'approve' ? 'bg-[hsl(var(--success-strong))] hover:bg-[hsl(var(--success-strong)/0.9)]' : ''}
                         data-testid="action-approve-btn"
                       >
                         <CheckCircle className="w-4 h-4 mr-1" /> Approve
@@ -318,7 +318,7 @@ export function TaskDetailDrawer({ taskId, open, onOpenChange, onUpdated, token 
                         variant={actionData.decision === 'reject' ? 'default' : 'outline'}
                         size="sm"
                         onClick={() => setActionData(d => ({ ...d, decision: 'reject' }))}
-                        className={actionData.decision === 'reject' ? 'bg-red-600 hover:bg-red-700' : ''}
+                        className={actionData.decision === 'reject' ? 'bg-[hsl(var(--destructive-strong))] hover:bg-[hsl(var(--destructive-strong)/0.9)]' : ''}
                         data-testid="action-reject-btn"
                       >
                         <AlertCircle className="w-4 h-4 mr-1" /> Reject
@@ -360,7 +360,7 @@ export function TaskDetailDrawer({ taskId, open, onOpenChange, onUpdated, token 
                 <Button
                   onClick={handleExecuteAction}
                   disabled={actionExecuting}
-                  className="w-full bg-blue-600 hover:bg-blue-700"
+                  className="w-full bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)]"
                   data-testid="action-execute-btn"
                 >
                   {actionExecuting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
@@ -370,8 +370,8 @@ export function TaskDetailDrawer({ taskId, open, onOpenChange, onUpdated, token 
             )}
 
             {task?.action_executed_at && task.action_result && (
-              <div className="rounded-md bg-emerald-500/10 border border-emerald-500/30 p-3 text-xs">
-                <p className="font-semibold text-emerald-400 mb-1">
+              <div className="rounded-md bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.3)] p-3 text-xs">
+                <p className="font-semibold text-[hsl(var(--success-text))] mb-1">
                   <CheckCircle className="w-3 h-3 inline mr-1" />
                   Action telah dieksekusi
                 </p>
@@ -482,7 +482,7 @@ export function TaskDetailDrawer({ taskId, open, onOpenChange, onUpdated, token 
                 onClick={handleDelete}
                 disabled={saving}
                 variant="outline"
-                className="w-full text-red-400 hover:bg-red-500/10"
+                className="w-full text-[hsl(var(--danger-text))] hover:bg-[hsl(var(--destructive)/0.1)]"
                 data-testid="detail-cancel-btn"
               >
                 <Trash2 className="w-4 h-4 mr-2" />

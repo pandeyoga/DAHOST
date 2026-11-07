@@ -80,7 +80,7 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
             <div className="mt-1 h-9 flex items-center px-3 rounded-md border border-input bg-muted/30 text-sm" data-testid="select-platform">
               {shift.account_name ? `${shift.account_name} · ` : ''}{shift.platform || 'platform mengikuti toko'}
             </div>
-            <p className="text-[10px] text-muted-foreground mt-1">Otomatis dari toko pada shift (bukan pilihan bebas).</p>
+            <p className="text-xs text-muted-foreground mt-1">Otomatis dari toko pada shift (bukan pilihan bebas).</p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -143,7 +143,7 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
                     <button
                       type="button"
                       onClick={() => removeItem(i)}
-                      className="ml-1 hover:text-red-600"
+                      className="ml-1 hover:text-[hsl(var(--danger-text))]"
                     >
                       <X size={10} />
                     </button>
