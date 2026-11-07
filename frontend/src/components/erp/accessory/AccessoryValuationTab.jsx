@@ -223,7 +223,7 @@ export default function AccessoryValuationTab({ token, onRefreshDash }) {
   // panel otomasi anak — sehingga pesan hasil aksi (mis. "SMTP belum diisi")
   // ikut hilang sebelum sempat terbaca user. Ini bug nyata yang ketemu saat uji UI.
   if (loading && !data) {
-    return <p className="py-10 text-center text-sm text-muted-foreground" data-testid="acc-valuation-loading">Memuat valuasi…</p>;
+    return <p className="py-6 text-center text-sm text-muted-foreground" data-testid="acc-valuation-loading">Memuat valuasi…</p>;
   }
 
   const adaStok = Number(totals.total_qty || 0) > 0;

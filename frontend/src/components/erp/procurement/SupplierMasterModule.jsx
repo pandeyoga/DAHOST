@@ -238,7 +238,7 @@ function SupplierForm({ token, meta, initial, onClose, onSaved }) {
             <Plus /> Tambah kontak
           </Button>
         </div>
-        {!f.contacts?.length && <p className="text-sm text-muted-foreground">Belum ada kontak.</p>}
+        {!f.contacts?.length && <p className="text-sm text-muted-foreground">Kontak belum diisi — klik Tambah kontak.</p>}
         {(f.contacts || []).map((c, i) => (
           <div key={i} className="grid grid-cols-2 items-center gap-2 sm:grid-cols-12">
             <Input className="sm:col-span-3" placeholder="Nama" aria-label="Nama kontak" value={c.name}
@@ -266,7 +266,7 @@ function SupplierForm({ token, meta, initial, onClose, onSaved }) {
             <Plus /> Tambah rekening
           </Button>
         </div>
-        {!f.bank_accounts?.length && <p className="text-sm text-muted-foreground">Belum ada rekening.</p>}
+        {!f.bank_accounts?.length && <p className="text-sm text-muted-foreground">Rekening belum diisi — klik Tambah rekening.</p>}
         {(f.bank_accounts || []).map((b, i) => (
           <div key={i} className="grid grid-cols-2 items-center gap-2 sm:grid-cols-12">
             <Input className="sm:col-span-3" placeholder="Bank" aria-label="Nama bank" value={b.bank_name}
@@ -436,7 +436,7 @@ function SupplierDetail({ token, supplierId, materials, onClose, onChanged, onEd
   if (loading && !sup) {
     return (
       <DetailPopup open onClose={onClose} judul="Memuat supplier…" testId="supplier-detail-memuat">
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat data supplier…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat data supplier…</p>
       </DetailPopup>
     );
   }
@@ -685,7 +685,7 @@ function MigrateModal({ token, onClose, onDone }) {
       judul="Tarik supplier dari dokumen lama" labelSimpan="Jalankan sekarang" testId="supplier-migrate-modal"
       keterangan="Nama supplier teks bebas di PO, QC penerimaan, penerimaan gudang, PR aksesoris, dan faktur hutang dijadikan master; ejaan berbeda digabung, nama asli tidak dihapus.">
       {loading ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memindai dokumen lama…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memindai dokumen lama…</p>
       ) : (
         <>
           <div className="grid grid-cols-3 gap-3">
@@ -923,7 +923,7 @@ export default function SupplierMasterModule({ token }) {
       {err && <Notice tone="danger">{err}</Notice>}
 
       {loading && rows.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat supplier…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat supplier…</p>
       ) : (
         <TabelData kolom={kolom} baris={rows} onKlikBaris={(s) => setDetailId(s.id)} testId="supplier-table"
           kosong={<EmptyState icon={Building2}

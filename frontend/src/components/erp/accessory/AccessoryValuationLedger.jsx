@@ -172,7 +172,7 @@ export default function AccessoryValuationLedger({ token, refreshKey = 0 }) {
       {err && <Notice tone="danger">{err}</Notice>}
 
       {loading ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat kartu stok…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat kartu stok…</p>
       ) : mutasi ? (
         <TabelData kolom={kolomMutasi} baris={mvPg.paged} testId="acc-val-mv"
           kosong={<EmptyState icon={Receipt} title="Belum ada mutasi bernilai"

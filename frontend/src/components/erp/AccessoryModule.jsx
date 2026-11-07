@@ -192,7 +192,7 @@ function TombolMuatUlang({ onClick, memuat, testId }) {
   );
 }
 
-const Memuat = ({ teks }) => <p className="py-10 text-center text-sm text-muted-foreground">{teks}</p>;
+const Memuat = ({ teks }) => <p className="py-6 text-center text-sm text-muted-foreground">{teks}</p>;
 
 // ─── TAB 1: MASTER & STOK ────────────────────────────────────────────────────
 function MasterTab({ token, onRefreshDash, onOpenValuation, title, subtitle }) {
@@ -874,7 +874,7 @@ function RequestInternalTab({ token, items, title, subtitle }) {
           </div>
           {lines.map((ln,i) => (
             <div key={i} className="flex items-center gap-2">
-              <SmartNativeSelect value={ln.acc_id} onChange={e=>lineChange(i,e.target.value)} className="w-full min-w-0 flex-1" wrapperClassName="min-w-0 flex-1" data-testid={`req-item-${i}`}>
+              <SmartNativeSelect value={ln.acc_id} onChange={e=>lineChange(i,e.target.value)} className="w-full" wrapperClassName="min-w-0 flex-1 sm:max-w-[26rem]" data-testid={`req-item-${i}`}>
                 <option value="">Pilih item...</option>
                 {items.map(a=><option key={a.id} value={a.id}>{`${a.code ? `${a.code} · ` : ''}${a.name} (stok: ${a.stock_qty} ${a.unit})`}</option>)}
               </SmartNativeSelect>
@@ -1145,7 +1145,7 @@ function PurchaseRequestTab({ token, items, title, subtitle, ringkasan }) {
           </div>
           {lines.map((ln,i)=>(
             <div key={i} className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
-              <SmartNativeSelect value={ln.acc_id} onChange={e=>lineChange(i,e.target.value)} className="w-full" wrapperClassName="w-full min-w-0 sm:flex-1" data-testid={`pr-item-${i}`}>
+              <SmartNativeSelect value={ln.acc_id} onChange={e=>lineChange(i,e.target.value)} className="w-full" wrapperClassName="w-full min-w-0 sm:w-auto sm:flex-1 sm:max-w-[22rem]" data-testid={`pr-item-${i}`}>
                 <option value="">Pilih item...</option>
                 {items.map(a=><option key={a.id} value={a.id}>{`${a.code ? `${a.code} · ` : ''}${a.name} (stok: ${a.stock_qty} ${a.unit})`}</option>)}
               </SmartNativeSelect>

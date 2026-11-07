@@ -161,7 +161,7 @@ export default function AccessoryValuationAutomation({ token, onChanged }) {
   // Muat awal saja yang menampilkan tulisan memuat. Saat memuat ulang setelah aksi, panel tetap
   // tampil (kalau tidak, banner hasil aksi ikut hilang dari layar).
   if (loading && !digest && !sched) {
-    return <p className="py-10 text-center text-sm text-muted-foreground" data-testid="acc-val-automation-loading">Memuat pengaturan otomasi…</p>;
+    return <p className="py-6 text-center text-sm text-muted-foreground" data-testid="acc-val-automation-loading">Memuat pengaturan otomasi…</p>;
   }
 
   const dt = digest?.totals || {};
@@ -360,7 +360,7 @@ export default function AccessoryValuationAutomation({ token, onChanged }) {
             {openHistory && (
               <div data-testid="acc-report-history">
                 {runs.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Belum ada pengiriman.</p>
+                  <p className="text-sm text-muted-foreground">Rapor belum pernah dikirim.</p>
                 ) : (
                   <Table>
                     <TableHeader>
