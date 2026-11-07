@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import FilterChips from '@/components/ui/filter-chips';
 import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
@@ -153,13 +153,8 @@ export default function VendorProgress({ token, user }) {
           {childJobs.length > 0 && (
             <section className="space-y-2">
               <p className="text-sm font-semibold text-foreground">Job turunan (kiriman tambahan/pengganti)</p>
-              <Tabs value={selectedChildJobId || ''} onValueChange={(v) => loadChildJobItems(v)}>
-                <TabsList aria-label="Job turunan">
-                  {childJobs.map((child) => (
-                    <TabsTrigger key={child.id} value={child.id}>{child.job_number} · {child.shipment_type === 'ADDITIONAL' ? 'tambahan' : child.shipment_type === 'REPLACEMENT' ? 'pengganti' : child.shipment_type}</TabsTrigger>
-                  ))}
-                </TabsList>
-              </Tabs>
+              <FilterChips value={selectedChildJobId || ''} onChange={(v) => loadChildJobItems(v)} hideWhenEmpty={false} ariaLabel="Job turunan"
+                options={childJobs.map((child) => ({ key: child.id, label: `${child.job_number} · ${child.shipment_type === 'ADDITIONAL' ? 'tambahan' : child.shipment_type === 'REPLACEMENT' ? 'pengganti' : child.shipment_type}` }))} />
               {anakAktif && (
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">

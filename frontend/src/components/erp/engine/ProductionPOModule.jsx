@@ -7,6 +7,7 @@ import POWorkflowIndicator from './POWorkflowIndicator';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import DatePicker from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Textarea } from '@/components/ui/textarea';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -786,6 +787,30 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
           onQuickComplete={(po) => setQuickCompletePO(po)}
         />
       )}
+      tools={(
+        <TombolUnduh testId="po-unduh" baris={pos}
+          namaBerkas={isInternal ? 'po-produksi-internal' : 'po-maklon'} namaLembar="PO"
+          // semua PO hasil saringan (status + kata cari), bukan hanya halaman yang tampil
+          ambilSemua={() => ambilSemuaHalaman(({ page, per_page }) => {
+            const q = new URLSearchParams({ page: String(page), per_page: String(per_page), sort_by: 'created_at', sort_dir: 'desc' });
+            if (cari.trim()) q.set('search', cari.trim());
+            if (filterStatus) q.set('status', filterStatus);
+            if (businessType) q.set('business_type', businessType);
+            return apiGet(`/production-pos?${q.toString()}`);
+          })}
+          kolom={[
+            { label: 'No. PO', nilai: (r) => r.po_number },
+            { label: isInternal ? 'Tujuan' : 'Klien', nilai: (r) => r.customer_name || '' },
+            { label: 'Penjahit (CMT)', nilai: (r) => r.vendor_name || '' },
+            { label: 'Tanggal PO', nilai: (r) => formatDateID(r.po_date || r.created_at, { fallback: '' }) },
+            { label: 'Baris', nilai: (r) => Number(r.item_count) || 0 },
+            { label: 'Total qty', nilai: (r) => Number(r.total_qty) || 0 },
+            { label: 'Tenggat produksi', nilai: (r) => formatDateID(r.deadline, { fallback: '' }) },
+            { label: 'Tenggat kirim', nilai: (r) => formatDateID(r.delivery_deadline, { fallback: '' }) },
+            { label: 'Status', nilai: (r) => PO_STATUS_LABEL[r.status] || r.status || '' },
+            { label: 'No. seri', nilai: (r) => (r.serial_numbers || []).join(', ') },
+          ]} />
+      )}
       filters={(
         <>
           <div className="relative w-full sm:w-64">
@@ -818,29 +843,6 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
           estimatedRowHeight: 80,
         }}
         searchValue={cari}
-        unduh={{
-          namaBerkas: isInternal ? 'po-produksi-internal' : 'po-maklon', namaLembar: 'PO',
-          // semua PO hasil saringan (status + kata cari), bukan hanya halaman yang tampil
-          ambilSemua: () => ambilSemuaHalaman(({ page, per_page }) => {
-            const q = new URLSearchParams({ page: String(page), per_page: String(per_page), sort_by: 'created_at', sort_dir: 'desc' });
-            if (cari.trim()) q.set('search', cari.trim());
-            if (filterStatus) q.set('status', filterStatus);
-            if (businessType) q.set('business_type', businessType);
-            return apiGet(`/production-pos?${q.toString()}`);
-          }),
-          kolom: [
-            { label: 'No. PO', nilai: (r) => r.po_number },
-            { label: isInternal ? 'Tujuan' : 'Klien', nilai: (r) => r.customer_name || '' },
-            { label: 'Penjahit (CMT)', nilai: (r) => r.vendor_name || '' },
-            { label: 'Tanggal PO', nilai: (r) => formatDateID(r.po_date || r.created_at, { fallback: '' }) },
-            { label: 'Baris', nilai: (r) => Number(r.item_count) || 0 },
-            { label: 'Total qty', nilai: (r) => Number(r.total_qty) || 0 },
-            { label: 'Tenggat produksi', nilai: (r) => formatDateID(r.deadline, { fallback: '' }) },
-            { label: 'Tenggat kirim', nilai: (r) => formatDateID(r.delivery_deadline, { fallback: '' }) },
-            { label: 'Status', nilai: (r) => PO_STATUS_LABEL[r.status] || r.status || '' },
-            { label: 'No. seri', nilai: (r) => (r.serial_numbers || []).join(', ') },
-          ],
-        }}
       />
 
       {/* Form PO — K12 (7 Nov 2026): SATU bentuk untuk PO internal & maklon.

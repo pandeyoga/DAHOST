@@ -11,13 +11,14 @@ import { AlertTriangle, Loader2, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { GlassInput } from '@/components/ui/glass';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
 import { Textarea } from '@/components/ui/textarea';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { apiGet, apiPost } from '../../../../lib/api';
 import { todayWIB } from '../../../../lib/waktu';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from '../../docnum/DocNumberField';
-import { DetailPanel } from '../../layout/PageLayout';
 import { EmptyState, Notice } from '../../moduleAtoms';
 import { AksesorisTable, PotonganTable, SectionLabel, fmtNum, fmtRp } from './kirimShared';
 
@@ -107,43 +108,39 @@ export default function KirimanForm({ businessType, onClose, onSaved, onNavigate
   };
 
   return (
-    <DetailPanel testId="kirim-form" closeTestId="kirim-form-close" onClose={onClose}
-      title="Kiriman baru ke CMT"
-      description="Potongan otomatis dari BOM; aksesoris diisi jumlah final dalam satuan serah."
-      actions={<Button onClick={submit} disabled={!canSave} data-testid="kirim-form-submit">
-        {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Truck className="w-4 h-4" />}Simpan kiriman</Button>}>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+    // Standar UI/UX v2 (8 Nov 2026): form = FormPopup panjang (dulu panel di atas tabel). Kaki: Batal · Simpan kiriman (hijau).
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="kirim-form"
+      judul="Kiriman baru ke CMT"
+      keterangan="Potongan otomatis dari BOM; aksesoris diisi jumlah final dalam satuan serah."
+      onSimpan={submit} bisaSimpan={!!canSave} menyimpan={saving} labelSimpan="Simpan kiriman">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <DocNumberField policy={numPolicy} value={form.shipment_number} label="No. kiriman" testId="kirim-number"
           onChange={(v) => setForm((f) => ({ ...f, shipment_number: v }))} />
-        <label className="text-xs font-medium text-foreground/80 space-y-1">
-          <span>No. surat jalan (opsional)</span>
+        <Isian label="No. surat jalan (opsional)">
           <GlassInput value={form.delivery_note_number} onChange={(e) => setForm((f) => ({ ...f, delivery_note_number: e.target.value }))}
-            className="h-9" data-testid="kirim-sj" />
-        </label>
-        <label className="text-xs font-medium text-foreground/80 space-y-1">
-          <span>Vendor CMT</span>
-          <SmartNativeSelect value={form.vendor_id} aria-label="Vendor CMT" className="h-9 w-full" data-testid="kirim-vendor"
+            data-testid="kirim-sj" />
+        </Isian>
+        <Isian label="Vendor CMT" wajib>
+          <SmartNativeSelect value={form.vendor_id} aria-label="Vendor CMT" className="w-full" data-testid="kirim-vendor"
             onChange={(e) => { setForm((f) => ({ ...f, vendor_id: e.target.value, po_id: '' })); setPoItems([]); setCalc(null); }}>
             <option value="">Pilih vendor CMT</option>
             {vendors.map((v) => <option key={v.id} value={v.id}>{v.garment_name}{v.garment_code ? ` (${v.garment_code})` : ''}</option>)}
           </SmartNativeSelect>
-        </label>
-        <label className="text-xs font-medium text-foreground/80 space-y-1">
-          <span>Tanggal kirim</span>
-          <GlassInput type="date" value={form.shipment_date} className="h-9" data-testid="kirim-date"
-            onChange={(e) => setForm((f) => ({ ...f, shipment_date: e.target.value }))} />
-        </label>
+        </Isian>
+        <Isian label="Tanggal kirim">
+          <DatePicker value={form.shipment_date} bolehKosong={false} testId="kirim-date"
+            onChange={(v) => setForm((f) => ({ ...f, shipment_date: v }))} />
+        </Isian>
       </div>
-      <label className="block text-xs font-medium text-foreground/80 space-y-1">
-        <span>PO</span>
-        <SmartNativeSelect value={form.po_id} disabled={!form.vendor_id} aria-label="PO" className="h-9 w-full" data-testid="kirim-po"
+      <Isian label="PO" wajib>
+        <SmartNativeSelect value={form.po_id} disabled={!form.vendor_id} aria-label="PO" className="w-full" data-testid="kirim-po"
           onChange={(e) => choosePo(e.target.value)}>
           <option value="">{form.vendor_id ? 'Pilih PO' : 'Pilih vendor CMT dulu'}</option>
           {poOptions.map((p) => (
             <option key={p.id} value={p.id}>{p.po_number} · {p.customer_name || '—'}{p.vendor_id ? '' : ' · belum ada vendor'}</option>
           ))}
         </SmartNativeSelect>
-      </label>
+      </Isian>
       {po && !po.vendor_id && (
         <p className="text-xs text-muted-foreground" data-testid="kirim-po-no-vendor">
           PO {po.po_number} belum punya vendor — vendor kiriman ini akan dicatat sebagai vendor PO.
@@ -168,7 +165,7 @@ export default function KirimanForm({ businessType, onClose, onSaved, onNavigate
           {poItems.length === 0 ? (
             <EmptyState icon={Truck} title="Semua baris PO sudah dikirim" description="Gunakan Permintaan tambahan untuk kiriman susulan." />
           ) : (
-            <Table data-testid="kirim-items">
+            <div className="overflow-x-auto"><Table data-testid="kirim-items">
               <TableHeader><TableRow>
                 <TableHead>SKU</TableHead><TableHead>Produk</TableHead><TableHead>Ukuran / warna</TableHead>
                 <TableHead className="text-right">Sisa ke CMT</TableHead><TableHead className="text-right">Dikirim</TableHead>
@@ -191,7 +188,7 @@ export default function KirimanForm({ businessType, onClose, onSaved, onNavigate
                   );
                 })}
               </TableBody>
-            </Table>
+            </Table></div>
           )}
           {overRemaining.length > 0 && (
             <p className="text-xs text-[hsl(var(--danger-text))]">Qty melebihi sisa ke CMT — kurangi, atau pakai Permintaan tambahan.</p>
@@ -245,10 +242,9 @@ export default function KirimanForm({ businessType, onClose, onSaved, onNavigate
           )}
         </>
       )}
-      <label className="block text-xs font-medium text-foreground/80 space-y-1">
-        <span>Catatan (opsional)</span>
+      <Isian label="Catatan (opsional)">
         <Textarea rows={2} value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} data-testid="kirim-notes" />
-      </label>
-    </DetailPanel>
+      </Isian>
+    </FormPopup>
   );
 }

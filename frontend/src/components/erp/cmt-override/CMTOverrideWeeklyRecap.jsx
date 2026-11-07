@@ -263,7 +263,7 @@ const DELTA_METRICS = [
 ];
 
 export default function CMTOverrideWeeklyRecap({
-  endDay, onEndDayChange, onOpenDay, onOpenVendor, canFill = true,
+  endDay, onEndDayChange, onOpenDay, onOpenVendor, canFill = true, viewSwitch = null,
 }) {
   const [dayLocal, setDayLocal] = useState(isoToday);
   const controlled = typeof endDay === 'string' && !!endDay;
@@ -430,7 +430,7 @@ export default function CMTOverrideWeeklyRecap({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-3">
             <div>
-              <p className="text-base font-semibold text-foreground">Rekap mingguan</p>
+              {viewSwitch || <p className="text-base font-semibold text-foreground">Rekap mingguan</p>}
               <p className="mt-0.5 max-w-2xl text-sm text-muted-foreground">
                 Vendor mana yang <b>sering bolong</b> dalam 7 hari terakhir — satu kotak
                 per hari. Klik kotak hari untuk membuka <b>Rekap Harian</b> tanggal itu.

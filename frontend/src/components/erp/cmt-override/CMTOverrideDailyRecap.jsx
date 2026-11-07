@@ -131,7 +131,7 @@ function TaskCell({ row, taskKey, task, onOpen, canFill }) {
  *   tanggalnya sendiri (dipakai bila dirender langsung tanpa panel).
  */
 export default function CMTOverrideDailyRecap({
-  onOpenVendor, canFill = true, day: dayProp, onDayChange,
+  onOpenVendor, canFill = true, day: dayProp, onDayChange, viewSwitch = null,
 }) {
   const [dayLocal, setDayLocal] = useState(isoToday);
   const controlled = typeof dayProp === 'string' && !!dayProp;
@@ -250,11 +250,9 @@ export default function CMTOverrideDailyRecap({
 
   return (
     <div className="space-y-4" data-testid="cmt-recap-panel">
-      <p className="text-sm text-muted-foreground">
-        Vendor yang <b>belum diisi</b> untuk tanggal ini, per jenis pekerjaan. Klik <b>Belum diisi</b> untuk langsung membuka modulnya atas nama vendor itu.
-      </p>
       <Toolbar testId="cmt-recap-day-toolbar"
         filters={<>
+          {viewSwitch}
           <div className="flex items-center gap-1">
             <Button variant="outline" size="icon" onClick={() => setDay(d => shiftDay(d, -1))}
               title="Hari sebelumnya" aria-label="Hari sebelumnya" data-testid="cmt-recap-prev-day">
@@ -289,18 +287,16 @@ export default function CMTOverrideDailyRecap({
           </Button>
         </>} />
 
-      {/* Kartu ringkasan — dari server (`summary`), dihitung atas SEMUA vendor aktif untuk tanggal ini. */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard testid="cmt-recap-summary-pending" tone="red" label="Vendor belum diisi"
-          value={summary.vendors_pending ?? '—'} hint={`${summary.tasks_pending_total ?? 0} tugas belum diisi`} />
-        <StatCard testid="cmt-recap-summary-partial" tone="amber" label="Vendor sebagian"
-          value={summary.vendors_partial ?? '—'} hint="Terisi, masih ada sisa" />
-        <StatCard testid="cmt-recap-summary-done" tone="green" label="Vendor lengkap"
-          value={summary.vendors_done ?? '—'} hint={`${summary.qty_progress_today ?? 0} pcs progress masuk`} />
-        <StatCard testid="cmt-recap-summary-idle" tone="grey" label="Vendor tanpa pekerjaan"
-          value={summary.vendors_idle ?? '—'} hint="Tidak perlu diisi" />
-      </div>
-      <span className="sr-only" data-testid="cmt-recap-summary-tasks">{summary.tasks_pending_total ?? 0}</span>
+      {/* Ringkasan — satu kalimat (dulu 5 kartu tinggi yang mendorong tabel ke bawah). Angka dari server (`summary`),
+          dihitung atas SEMUA vendor aktif untuk tanggal ini. */}
+      <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm" data-testid="cmt-recap-summary">
+        <span><b className={`tabular-nums ${summary.vendors_pending ? 'text-[hsl(var(--danger-text))]' : ''}`} data-testid="cmt-recap-summary-pending">{summary.vendors_pending ?? '—'}</b> vendor belum diisi
+          (<span className="tabular-nums" data-testid="cmt-recap-summary-tasks">{summary.tasks_pending_total ?? 0}</span> tugas)</span>
+        <span><b className={`tabular-nums ${summary.vendors_partial ? 'text-[hsl(var(--warning-text))]' : ''}`} data-testid="cmt-recap-summary-partial">{summary.vendors_partial ?? '—'}</b> sebagian</span>
+        <span><b className="tabular-nums" data-testid="cmt-recap-summary-done">{summary.vendors_done ?? '—'}</b> lengkap</span>
+        <span><b className="tabular-nums" data-testid="cmt-recap-summary-idle">{summary.vendors_idle ?? '—'}</b> tanpa pekerjaan</span>
+        <span className="text-muted-foreground"><span className="tabular-nums">{summary.qty_progress_today ?? 0}</span> pcs progress masuk</span>
+      </p>
 
       <Toolbar testId="cmt-recap-filter-toolbar"
         filters={<>
@@ -393,7 +389,7 @@ export default function CMTOverrideDailyRecap({
       )}
 
       <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span className="font-medium text-foreground">Keterangan:</span>
+        <span className="font-medium text-foreground">Keterangan (klik "Belum diisi" untuk membuka modulnya atas nama vendor):</span>
         <span className="inline-flex items-center gap-1"><XCircle className="h-3.5 w-3.5 text-[hsl(var(--danger-text))]" /> belum diisi (ada pekerjaan menunggu)</span>
         <span className="inline-flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5 text-[hsl(var(--warning-text))]" /> sudah diisi, masih ada sisa</span>
         <span className="inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5 text-[hsl(var(--success-text))]" /> sudah diisi</span>

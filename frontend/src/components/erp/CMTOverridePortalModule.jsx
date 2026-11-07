@@ -26,7 +26,7 @@ import { Button } from '@/components/ui/button';
 import { GlassCard } from '@/components/ui/glass';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import FilterChips from '@/components/ui/filter-chips';
 import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
@@ -85,25 +85,19 @@ const GROUPS = [
 const groupOf = (moduleId) => GROUPS.find((g) => g.modules.includes(moduleId)) || GROUPS[0];
 
 /** Isi satu tab kelompok: pil modul (bila > 1) lalu modul aktif. Modul bisa pindah ke modul lain (onNavigate). */
-function ModuleGroup({ group, activeModule, onPick, token, user, vendorName }) {
+function ModuleGroup({ group, activeModule, setActiveModule, token, user, vendorName }) {
   const current = group.modules.includes(activeModule) ? activeModule : group.modules[0];
   const render = (id) => {
     if (id === '__audit') return <AuditPanel vendorName={vendorName} />;
     const m = MODULES.find((x) => x.id === id);
-    return m ? <m.Comp token={token} user={user} onNavigate={onPick} /> : null;
+    return m ? <m.Comp token={token} user={user} onNavigate={setActiveModule} /> : null;
   };
   if (group.modules.length === 1) return render(current);
   return (
     <div className="space-y-4" data-testid={`cmt-override-group-${group.key}`}>
-      <Tabs value={current} onValueChange={onPick}>
-        <TabsList aria-label={`Modul ${group.label}`}>
-          {group.modules.map((id) => (
-            <TabsTrigger key={id} value={id} data-testid={`cmt-override-module-${id}`}>
-              {MODULES.find((x) => x.id === id)?.label || id}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
+      {/* Pil modul (penyaring), bukan tab di dalam tab. */}
+      <FilterChips value={current} onChange={setActiveModule} hideWhenEmpty={false} ariaLabel={`Modul ${group.label}`}
+        testId="cmt-override-module" options={group.modules.map((id) => ({ key: id, label: MODULES.find((x) => x.id === id)?.label || id }))} />
       {render(current)}
     </div>
   );
@@ -294,7 +288,12 @@ export default function CMTOverridePortalModule({ user, token }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [selected, setSelected] = useState(null);
-  const [activeModule, setActiveModule] = useState('dashboard');
+  const [activeModule, setActiveModuleRaw] = useState('dashboard');
+  // Tab hub = KELOMPOK modul; memilih kelompok membuka modul pertamanya. Id modul (dari Rekap / Ringkasan) langsung dipakai.
+  const setActiveModule = useCallback((key) => {
+    const grp = GROUPS.find((x) => x.key === key);
+    setActiveModuleRaw(grp ? grp.modules[0] : key);
+  }, []);
   const [warnOpen, setWarnOpen] = useState(true);
   const mounted = useRef(true);
 
@@ -353,8 +352,8 @@ export default function CMTOverridePortalModule({ user, token }) {
 
   const groupTabs = useMemo(() => (selected ? GROUPS.map((g) => ({
     key: g.key, label: g.label, Component: ModuleGroup,
-    props: { group: g, activeModule, onPick: setActiveModule, token, user: vendorUser, vendorName: selected.name },
-  })) : []), [selected, activeModule, token, vendorUser]);
+    props: { group: g, activeModule, setActiveModule, token, user: vendorUser, vendorName: selected.name },
+  })) : []), [selected, activeModule, setActiveModule, token, vendorUser]);
 
   const pickerTabs = useMemo(() => [
     { key: 'vendor', label: 'Pilih vendor', Component: VendorPicker,
@@ -396,8 +395,7 @@ export default function CMTOverridePortalModule({ user, token }) {
           </Notice>
         )}
       </>}>
-      <HubTabs hubId="cmt-override-modules" tabs={groupTabs} value={groupOf(activeModule).key}
-        onValueChange={(k) => { const grp = GROUPS.find((x) => x.key === k); if (grp) setActiveModule(grp.modules[0]); }} />
+      <HubTabs hubId="cmt-override-modules" tabs={groupTabs} value={groupOf(activeModule).key} onValueChange={setActiveModule} />
     </PageLayout>
   );
 }
