@@ -352,7 +352,7 @@ export default function PdfTemplateStudio({ token }) {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-end">
           <Field label="Yang sedang diatur" className="lg:col-span-5">
             <Select value={docKey} onValueChange={setDocKey}>
-              <SelectTrigger className="h-9" data-testid="pdf-studio-doc-select">
+              <SelectTrigger className="h-9 w-full sm:max-w-sm" data-testid="pdf-studio-doc-select">
                 <SelectValue placeholder="Pilih jenis dokumen" />
               </SelectTrigger>
               <SelectContent className="max-h-[420px]">
@@ -377,7 +377,7 @@ export default function PdfTemplateStudio({ token }) {
           {isGlobal ? (
             <Field label="Dokumen contoh untuk pratinjau" className="lg:col-span-4">
               <Select value={previewDoc} onValueChange={setPreviewDoc}>
-                <SelectTrigger className="h-9" data-testid="pdf-studio-preview-doc">
+                <SelectTrigger className="h-9 w-full sm:max-w-sm" data-testid="pdf-studio-preview-doc">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="max-h-[420px]">

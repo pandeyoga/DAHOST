@@ -8,7 +8,7 @@
  *
  * Standar UI/UX v2 (8 Nov 2026): satu baris penyaring (cari + kelompok), daftar 268 koleksi = tabel bercentang
  * (dulu kisi kotak per kelompok), unduh Excel/CSV, konfirmasi = popup standar dengan tombol merah. Nama koleksi
- * tetap tampil apa adanya karena itulah yang dikosongkan (API tidak punya nama tampilan).
+ * tampil sebagai terjemahan (labelKoleksi); nama teknis ada di keterangan arah kursor & berkas unduhan.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, Lock, RefreshCw, Search, Trash2 } from 'lucide-react';
@@ -21,6 +21,7 @@ import TombolUnduh from '@/components/ui/tombol-unduh';
 import DetailPopup from '@/components/ui/detail-popup';
 import { GlassCard } from '@/components/ui/glass';
 import { Notice, StatusBadge } from './moduleAtoms';
+import { labelKoleksi } from './backupRestoreHelpers';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -59,7 +60,8 @@ export default function DatabaseCollectionsPanel({ token }) {
 
   const visible = (data?.collections || []).filter(c => {
     const q = filter.trim().toLowerCase();
-    return (!kelompok || c.group === kelompok) && (!q || c.name.toLowerCase().includes(q) || c.group.toLowerCase().includes(q));
+    return (!kelompok || c.group === kelompok)
+      && (!q || c.name.toLowerCase().includes(q) || labelKoleksi(c.name).toLowerCase().includes(q) || c.group.toLowerCase().includes(q));
   });
 
   // "Pilih semua yang boleh" untuk baris yang sedang tampil (bukan koleksi terlindungi).
@@ -119,7 +121,8 @@ export default function DatabaseCollectionsPanel({ token }) {
         </label>
         <div className="ml-auto flex items-center gap-2">
           <TombolUnduh namaBerkas="koleksi-database" namaLembar="Koleksi" baris={visible} testId="collections-unduh" kolom={[
-            { label: 'Koleksi', nilai: (c) => c.name }, { label: 'Kelompok', nilai: (c) => c.group },
+            { label: 'Koleksi', nilai: (c) => labelKoleksi(c.name) }, { label: 'Nama teknis', nilai: (c) => c.name },
+            { label: 'Kelompok', nilai: (c) => c.group },
             { label: 'Dokumen', nilai: (c) => c.count }, { label: 'Terlindungi', nilai: (c) => (c.protected ? 'Ya' : 'Tidak') },
           ]} />
           <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
@@ -130,8 +133,7 @@ export default function DatabaseCollectionsPanel({ token }) {
       </div>
 
       <p className="text-sm text-muted-foreground" data-testid="collections-summary">
-        {data?.total_collections} koleksi · {data?.total_documents?.toLocaleString('id-ID')} dokumen · database aktif{' '}
-        <span className="font-mono">{data?.database}</span>
+        {data?.total_collections} koleksi · {data?.total_documents?.toLocaleString('id-ID')} dokumen di database aktif
         {visible.length !== (data?.collections || []).length && ` · ${visible.length} tampil`}
       </p>
 
@@ -175,11 +177,11 @@ export default function DatabaseCollectionsPanel({ token }) {
                   onClick={() => { if (!lockedFor(c)) toggle(c.name); }}>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={selected.includes(c.name)} onChange={() => toggle(c.name)}
-                      disabled={lockedFor(c)} aria-label={`Pilih ${c.name}`}
+                      disabled={lockedFor(c)} aria-label={`Pilih ${labelKoleksi(c.name)}`}
                       className="h-4 w-4 accent-[hsl(var(--destructive))]" data-testid={`collection-check-${c.name}`} />
                   </TableCell>
                   <TableCell>
-                    <span className="break-all font-mono text-sm">{c.name}</span>
+                    <span className="text-sm" title={c.name}>{labelKoleksi(c.name)}</span>
                     {c.protected && <StatusBadge status="lock" label="Terlindungi" tone="warning" className="ml-2" />}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">{c.group}</TableCell>
@@ -202,9 +204,9 @@ export default function DatabaseCollectionsPanel({ token }) {
               {busy ? <><Loader2 className="animate-spin" />Memproses…</> : 'Kosongkan sekarang'}
             </Button>
           </>}>
-          <div className="max-h-32 space-y-0.5 overflow-y-auto rounded-md border border-[var(--glass-border)] p-2 font-mono text-xs">
-            {selected.map(n => <div key={n}>{n}</div>)}
-          </div>
+          <ul className="max-h-32 list-inside list-disc space-y-0.5 overflow-y-auto rounded-md border border-[var(--glass-border)] p-2 text-sm">
+            {selected.map(n => <li key={n} title={n}>{labelKoleksi(n)}</li>)}
+          </ul>
 
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={createBackup} onChange={e => setCreateBackup(e.target.checked)}
@@ -216,7 +218,7 @@ export default function DatabaseCollectionsPanel({ token }) {
             <label className="flex items-start gap-2 text-sm text-[hsl(var(--danger-text))]">
               <input type="checkbox" checked={allowProtected} onChange={e => setAllowProtected(e.target.checked)}
                 className="mt-0.5 h-4 w-4 accent-[hsl(var(--destructive))]" data-testid="clear-protected-toggle" />
-              <span>Izinkan koleksi terlindungi ({selectedProtected.join(', ')}). Ini bisa membuat sistem tidak bisa dipakai.</span>
+              <span>Izinkan koleksi terlindungi ({selectedProtected.map(labelKoleksi).join(', ')}). Ini bisa membuat sistem tidak bisa dipakai.</span>
             </label>
           )}
 

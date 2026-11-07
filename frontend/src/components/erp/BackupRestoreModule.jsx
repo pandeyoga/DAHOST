@@ -23,7 +23,7 @@ import {
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import { useToast } from '@/hooks/use-toast';
-import { downloadBackup, uploadBackup, listCollections, restoreSelective } from './backupRestoreHelpers';
+import { downloadBackup, uploadBackup, listCollections, restoreSelective, labelKoleksi } from './backupRestoreHelpers';
 import DatabaseCollectionsPanel from './DatabaseCollectionsPanel';
 
 const formatDate = (isoStr) => {
@@ -388,7 +388,7 @@ export default function BackupRestoreModule({ token }) {
 
   return (
     <PageLayout testId="backup-restore-page" title="Backup data"
-      subtitle="Cadangan database untuk pemulihan bila terjadi masalah. Backup otomatis berjalan tiap hari pukul 02.00 WIB."
+      subtitle="Cadangan database untuk pemulihan. Backup otomatis tiap hari pukul 02.00 WIB."
       actions={(
         <Button onClick={createBackup} data-testid="backup-create" disabled={processing === 'create'}>
           <Database />{processing === 'create' ? 'Membuat…' : 'Buat backup'}
@@ -586,9 +586,9 @@ export default function BackupRestoreModule({ token }) {
                     data-testid={`collection-${collection.name}`}>
                     <TableCell>
                       <input type="checkbox" checked={on} readOnly className="h-4 w-4 accent-[hsl(var(--primary))]"
-                        aria-label={`Pilih ${collection.name}`} />
+                        aria-label={`Pilih ${labelKoleksi(collection.name)}`} />
                     </TableCell>
-                    <TableCell className="break-all font-mono text-sm">{collection.name}</TableCell>
+                    <TableCell className="text-sm" title={collection.name}>{labelKoleksi(collection.name)}</TableCell>
                     <TableCell className="text-right tabular-nums">{Number(collection.document_count || 0).toLocaleString('id-ID')}</TableCell>
                     <TableCell className="whitespace-nowrap text-right tabular-nums">{collection.size_mb} MB</TableCell>
                   </TableRow>

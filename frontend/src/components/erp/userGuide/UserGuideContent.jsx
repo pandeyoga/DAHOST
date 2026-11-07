@@ -95,25 +95,25 @@ function OverviewView() {
 
       {/* 5 Portal cards */}
       <div>
-        <h3 className="text-sm font-semibold text-foreground mb-3">5 Portal Utama</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <h3 className="text-sm font-semibold text-foreground mb-3">Portal utama</h3>
+        <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {Object.entries(PORTAL_META).filter(([k]) => !['qc', 'shift'].includes(k)).map(([key, m]) => {
             const Icon = m.icon;
             return (
-              <div key={key} className={`rounded-xl border p-4 ${m.classes.bg} ${m.classes.border}`}>
+              <li key={key} className={`rounded-xl border p-4 ${m.classes.bg} ${m.classes.border}`}>
                 <div className="flex items-start gap-3">
-                  <div className={`w-10 h-10 rounded-xl bg-background/70 dark:bg-foreground/10 grid place-items-center shrink-0 ${m.classes.text}`}>
+                  <div className="w-10 h-10 rounded-xl bg-[hsl(var(--primary)/0.1)] grid place-items-center shrink-0 text-[hsl(var(--primary))]">
                     <Icon className="w-5 h-5" strokeWidth={2} />
                   </div>
                   <div>
                     <p className={`text-sm font-semibold ${m.classes.text}`}>{m.name}</p>
-                    <p className="text-xs text-foreground/60 mt-0.5">{m.role}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{m.role}</p>
                   </div>
                 </div>
-              </div>
+              </li>
             );
           })}
-        </div>
+        </ul>
       </div>
 
       {/* Login & Navigation */}

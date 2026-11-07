@@ -44,7 +44,26 @@ const LABEL_ID = {
   notification_telegram_bot_token: 'Token bot Telegram',
   notification_telegram_chat_id: 'ID obrolan Telegram bawaan',
 };
+// Keterangan dari server sebagian berbahasa Inggris / memuat nama kolom program — diganti untuk tampilan saja.
+const DESC_ID = {
+  hpp_profit_margin_pct: 'Target margin laba bawaan untuk menghitung harga jual.',
+  inventory_allow_negative: 'Aktif: Kirim Material CMT, Pengeluaran Material, dan Cutting tetap jalan walau stok kurang atau belum ada barisnya — stok dipotong sampai minus dan baris dibuat di gudang bawaan (A-* → Ruang Aksesoris, lainnya → gudang bahan). Matikan setelah stok opname selesai agar aturan ketat berlaku lagi.',
+  maklon_cmt_buffer_days: 'Selisih hari antara tenggat mitra/pembeli dan target CMT. Target CMT = tenggat pengiriman − cadangan. Dipakai pemantauan Kejar CMT.',
+  maklon_cmt_late_grace_days: 'Ambang "telat": pekerjaan dianggap telat bila melewati target CMT lebih dari N hari (mis. H+5). Di bawahnya berstatus "mendekati tenggat".',
+  maklon_invoice_prefix: 'Awalan nomor tagihan pesanan maklon. Contoh INV-MKL → INV-MKL-2026-0001.',
+  maklon_permak_return_grace_days: 'Penanda H+N untuk permak/retur ke CMT: bila melewati tenggat kembali lebih dari N hari, permak ditandai perlu tindakan (mis. H+3).',
+  maklon_qc_reject_threshold_pct: 'Ambang persentase tolak QC maklon. Di atas nilai ini sistem mengirim peringatan.',
+  marketplace_shopee_enabled: 'Aktifkan integrasi Shopee Open API.',
+  marketplace_tokopedia_enabled: 'Aktifkan integrasi API Tokopedia.',
+  notification_telegram_chat_id: 'ID obrolan tujuan notifikasi (grup atau pengguna).',
+  notification_telegram_enabled: 'Aktifkan/matikan bot Telegram untuk notifikasi.',
+  notification_whatsapp_api_key: 'Token atau kunci autentikasi penyedia WhatsApp.',
+  notification_whatsapp_enabled: 'Aktifkan/matikan integrasi WhatsApp (Twilio/WABA) untuk notifikasi.',
+  notification_whatsapp_sender: 'Nomor pengirim terdaftar, contoh whatsapp:+6281xxxxxxx.',
+  production_require_material_issued: 'Aktif: input progres pekerjaan produksi INTERNAL ditolak bila gudang belum menyerahkan material (Pengeluaran Material belum berstatus dikeluarkan). Mati (bawaan sementara): progres boleh diinput tanpa pengeluaran material.',
+};
 const labelSetelan = (c) => LABEL_ID[c.key] || c.label || c.key;
+const keteranganSetelan = (c) => DESC_ID[c.key] || c.description;
 const labelKategori = (k) => (CATEGORY_META[k] || { label: k }).label;
 const oleh = (u) => (!u || u === 'system_init' ? 'bawaan sistem' : u);
 const instan = (ts) => (typeof ts === 'string' && /T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(ts) ? `${ts}Z` : ts);
@@ -154,7 +173,7 @@ export default function MaklonSystemConfigModule({ token }) {
     { kunci: 'label', label: 'Setelan', hp: 'judul', isi: (c) => (
       <div className="min-w-0 md:max-w-[26rem]">
         <p className="font-medium text-foreground">{labelSetelan(c)}{c.is_secret && <Lock className="ml-1 inline h-3.5 w-3.5 text-muted-foreground" aria-label="rahasia" />}</p>
-        {c.description && <p className="text-xs text-muted-foreground">{c.description}</p>}
+        {keteranganSetelan(c) && <p className="text-xs text-muted-foreground">{keteranganSetelan(c)}</p>}
       </div>) },
     { kunci: 'kategori', label: 'Kategori', isi: (c) => <span className="text-sm">{labelKategori(c.category)}</span> },
     { kunci: 'nilai', label: 'Nilai', isi: (c) => (c.data_type === 'boolean'
@@ -173,7 +192,7 @@ export default function MaklonSystemConfigModule({ token }) {
     <PageLayout testId="maklon-system-config" title="Konfigurasi maklon"
       subtitle="Setelan sistem yang bisa diatur tanpa mengubah program: pajak, ambang, jangka bayar, dan kunci integrasi."
       filters={configs.length > 0 && (
-        <FilterChips value={activeTab} onChange={setActiveTab} hideWhenEmpty={false} testId="cfg-category-filter" options={[
+        <FilterChips className="w-full min-w-0 sm:w-auto" value={activeTab} onChange={setActiveTab} hideWhenEmpty={false} testId="cfg-category-filter" options={[
           { key: '', label: 'Semua', count: configs.length },
           ...categories.map((cat) => ({ key: cat, label: labelKategori(cat), count: configs.filter((c) => c.category === cat).length })),
         ]} />
@@ -183,7 +202,7 @@ export default function MaklonSystemConfigModule({ token }) {
           { label: 'Setelan', nilai: (c) => labelSetelan(c) }, { label: 'Kategori', nilai: (c) => labelKategori(c.category) },
           // Nilai rahasia TIDAK ikut diunduh.
           { label: 'Nilai', nilai: (c) => (c.is_secret ? (c.value || c.value_masked ? 'Tersimpan (rahasia)' : 'Belum diisi') : tampilNilai(c)) },
-          { label: 'Keterangan', nilai: (c) => c.description || '' },
+          { label: 'Keterangan', nilai: (c) => keteranganSetelan(c) || '' },
           { label: 'Diperbarui', nilai: (c) => (c.updated_at ? formatDateTimeID(instan(c.updated_at)) : '') },
           { label: 'Oleh', nilai: (c) => oleh(c.updated_by) },
         ]} />
@@ -206,7 +225,7 @@ export default function MaklonSystemConfigModule({ token }) {
       )}
 
       <FormPopup open={!!ubah} onClose={() => { setEdited({}); setUbah(null); }} ukuran="pendek" testId="cfg-form"
-        judul={ubah ? labelSetelan(ubah) : ''} keterangan={ubah?.description}
+        judul={ubah ? labelSetelan(ubah) : ''} keterangan={ubah ? keteranganSetelan(ubah) : undefined}
         onSimpan={saveAll} menyimpan={saving} bisaSimpan={canEdit && Object.keys(edited).length > 0}>
         {ubah && (
           <Isian label="Nilai" petunjuk={ubah.is_secret ? 'Nilai rahasia tidak ditampilkan. Isi untuk menggantinya.' : `Kategori: ${labelKategori(ubah.category)}`}>

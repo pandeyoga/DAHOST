@@ -92,6 +92,13 @@ function SubledgerBackfill() {
   if (!types.length) return <p className="text-sm text-muted-foreground">Tidak ada jenis akun pembantu yang diatur.</p>;
   const baris = types.map(([key, cfg]) => ({ key, ...cfg }));
   return (
+    <>
+    <div className="flex justify-end">
+      <TombolUnduh namaBerkas="akun-pembantu-data-lama" namaLembar="Akun pembantu" baris={baris} testId="maint-subledger-unduh" kolom={[
+        { label: 'Jenis akun pembantu', nilai: (t) => t.label || t.key }, { label: 'Status', nilai: (t) => (t.enabled ? 'Aktif' : 'Nonaktif') },
+        { label: 'Hasil terakhir', nilai: (t) => (res[t.key] ? hasil(t.key) : '') },
+      ]} />
+    </div>
     <TabelData baris={baris} kunci={(t) => t.key} testId="maint-subledger-table" kolom={[
       { kunci: 'label', label: 'Jenis akun pembantu', hp: 'judul', isi: (t) => (
         <span className="font-medium" data-testid={`maint-subledger-${t.key}`}>{t.label || t.key}</span>) },
@@ -110,6 +117,7 @@ function SubledgerBackfill() {
           </Button>
         </div>) },
     ]} />
+    </>
   );
 }
 
@@ -214,7 +222,7 @@ export default function FinanceMaintenanceModule({ onNavigate }) {
   return (
     <PageLayout testId="finance-maintenance" title="Perawatan data keuangan"
       subtitle="Tombol perbaikan & pengisian massal data keuangan. Jalankan hanya bila diminta Keuangan; semua aman diulang.">
-      <GlassCard className="px-4 py-1" data-testid="maint-tasks">
+      <GlassCard className="px-4 py-1" data-testid="maint-tasks" data-konten-utama="">
         <div className="divide-y divide-[var(--glass-border)]">
           <Task title="Sinkron rekening kas/bank dengan Bagan Akun"
             desc="Membuat rekening untuk akun kas/bank yang belum punya, menautkan rekening lama ke akun buku besarnya, dan menjurnal saldo awal yang belum terjurnal."

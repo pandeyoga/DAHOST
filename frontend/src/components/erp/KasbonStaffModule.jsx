@@ -324,7 +324,7 @@ export default function KasbonStaffModule() {
       subtitle="Ajukan kasbon atau pinjaman dan pantau status serta cicilannya."
       actions={<Button onClick={() => setShowForm(true)} data-testid="kasbon-new-btn"><Plus />Ajukan kasbon/pinjaman</Button>}
       filters={(
-        <FilterChips value={tab} onChange={(k) => { setTab(k || 'all'); setPage(1); }} hideWhenEmpty={false} testId="kasbon-filter"
+        <FilterChips className="w-full min-w-0 sm:w-auto" value={tab} onChange={(k) => { setTab(k || 'all'); setPage(1); }} hideWhenEmpty={false} testId="kasbon-filter"
           options={[
             { key: 'all', label: 'Semua', count: requests.length },
             { key: 'pending', label: 'Menunggu', count: hitung('pending') },
