@@ -24,7 +24,7 @@ export function InternalCheckPanel({ check }) {
       <Notice tone={synced ? 'success' : 'warning'} testId="recon-ic-balance" className="text-xs">
         <span className="tabular-nums">
           Saldo kartu kas <strong>{fmt(check.card_balance)}</strong> vs saldo buku besar akun bank saat ini <strong>{fmt(check.gl_balance_now)}</strong>
-          {synced ? <span className="text-[hsl(var(--success))]"> · sinkron</span> : <span className="text-[hsl(var(--warning))]"> · selisih {fmt(diff)}</span>}
+          {synced ? <span className="text-[hsl(var(--success-text))]"> · sinkron</span> : <span className="text-[hsl(var(--warning-text))]"> · selisih {fmt(diff)}</span>}
           {' '}· {check.issues.length} mutasi bermasalah · {check.gl_without_movement.length} jurnal bank tanpa mutasi kas
         </span>
       </Notice>

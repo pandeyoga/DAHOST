@@ -2,12 +2,13 @@ import { useState } from 'react';
 import axios from 'axios';
 import { Button } from '@/components/ui/button';
 import FilterChips from '@/components/ui/filter-chips';
-import { GLASS_INPUT_CLASS, GlassInput } from '@/components/ui/glass';
+import { GlassInput } from '@/components/ui/glass';
+import { Textarea } from '@/components/ui/textarea';
+import DatePicker from '@/components/ui/date-picker';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Loader2, Upload } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { MoneyInput } from '@/components/ui/money-input';
-import { cn } from '@/lib/utils';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -75,7 +76,7 @@ export function ImportPanel({ sessionId, headers, onDone }) {
       {tab === 'paste' && (
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">Per baris: tanggal, keterangan, nominal, masuk/keluar, referensi</p>
-          <textarea data-testid="recon-bulk-text" rows={4} aria-label="Mutasi per baris" className={cn(GLASS_INPUT_CLASS, 'h-auto tabular-nums')}
+          <Textarea data-testid="recon-bulk-text" rows={4} aria-label="Mutasi per baris" className="tabular-nums"
             value={bulkText} onChange={e => setBulkText(e.target.value)}
             placeholder={'2026-09-01, Pencairan Shopee, 5000000, masuk, TRF001\n2026-09-03, Biaya admin, 6500, keluar'} />
           <Button size="sm" data-testid="recon-bulk-submit" onClick={importBulk} disabled={busy}>Impor</Button>
@@ -83,7 +84,7 @@ export function ImportPanel({ sessionId, headers, onDone }) {
       )}
       {tab === 'manual' && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-2 items-end">
-          <GlassInput type="date" data-testid="recon-txn-date" className="h-9" aria-label="Tanggal" value={form.txn_date} onChange={e => setForm(f => ({ ...f, txn_date: e.target.value }))} />
+          <DatePicker testId="recon-txn-date" placeholder="Tanggal" value={form.txn_date} onChange={(v) => setForm(f => ({ ...f, txn_date: v }))} />
           <GlassInput data-testid="recon-txn-desc" className="h-9" placeholder="Keterangan" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
           <MoneyInput glass decimals={2} data-testid="recon-txn-amount" className="h-9" placeholder="Nominal" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
           <SmartNativeSelect data-testid="recon-txn-direction" searchable={false} className="h-9" aria-label="Arah mutasi" value={form.direction} onChange={e => setForm(f => ({ ...f, direction: e.target.value }))}>

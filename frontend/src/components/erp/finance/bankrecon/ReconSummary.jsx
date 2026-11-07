@@ -2,8 +2,8 @@ import { formatDateID, formatRupiah as fmt } from '@/lib/format';
 import { Notice } from '../../moduleAtoms';
 
 const tone = {
-  success: 'text-[hsl(var(--success))]',
-  warning: 'text-[hsl(var(--warning))]',
+  success: 'text-[hsl(var(--success-text))]',
+  warning: 'text-[hsl(var(--warning-text))]',
 };
 
 // Ringkasan: saldo buku besar akun bank vs saldo rekening koran, dijelaskan oleh item yang belum cocok.
@@ -31,7 +31,7 @@ export function ReconSummary({ summary, approved }) {
           ['Jurnal belum cocok', `${summary.unmatched_gl_count} · masuk ${fmt(summary.unmatched_gl_in)} / keluar ${fmt(summary.unmatched_gl_out)}`, 'recon-sum-ungl'],
         ].map(([label, val, tid]) => (
           <div key={tid} className="min-w-0">
-            <dt className="text-[11px] text-muted-foreground">{label}</dt>
+            <dt className="text-xs text-muted-foreground">{label}</dt>
             <dd className="text-sm font-semibold tabular-nums mt-0.5" data-testid={tid}>{typeof val === 'number' ? fmt(val) : val}</dd>
           </div>
         ))}

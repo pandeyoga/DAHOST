@@ -29,7 +29,7 @@ function CandidatePicker({ sessionId, txn, headers, onPick }) {
             <span className="font-medium whitespace-nowrap tabular-nums">{fmt(g.amount)}</span>
           </span>
           <span className="text-muted-foreground tabular-nums">
-            Selisih {fmt(Math.abs(g.amount_diff))} · {g.days_apart ?? '—'} hari {g.within_rule && <span className="text-[hsl(var(--success))]">· sesuai aturan</span>}
+            Selisih {fmt(Math.abs(g.amount_diff))} · {g.days_apart ?? '—'} hari {g.within_rule && <span className="text-[hsl(var(--success-text))]">· sesuai aturan</span>}
           </span>
         </Button>
       ))}
@@ -53,13 +53,13 @@ export function BankTxnRow({ sessionId, txn, headers, readOnly, onMatch, onUnmat
             {txn.reference && <span className="text-xs text-muted-foreground">#{txn.reference}</span>}
           </div>
           {txn.is_matched && (
-            <p className="text-xs text-[hsl(var(--success))] mt-1" data-testid={`recon-txn-matchref-${txn.id}`}>
-              ✓ {txn.match_ref} {txn.auto_matched ? '· otomatis' : ''} {Math.abs(txn.amount_diff || 0) > 0.01 ? `· selisih ${fmt(Math.abs(txn.amount_diff))}` : ''}
+            <p className="text-xs text-[hsl(var(--success-text))] mt-1" data-testid={`recon-txn-matchref-${txn.id}`}>
+              Cocok: {txn.match_ref} {txn.auto_matched ? '· otomatis' : ''} {Math.abs(txn.amount_diff || 0) > 0.01 ? `· selisih ${fmt(Math.abs(txn.amount_diff))}` : ''}
             </p>
           )}
         </div>
         <div className="text-right space-y-1">
-          <p className={cn('font-semibold text-sm tabular-nums whitespace-nowrap', isIn ? 'text-[hsl(var(--success))]' : 'text-foreground')}>{isIn ? '+' : '−'}{fmt(txn.amount)}</p>
+          <p className={cn('font-semibold text-sm tabular-nums whitespace-nowrap', isIn ? 'text-[hsl(var(--success-text))]' : 'text-foreground')}>{isIn ? '+' : '−'}{fmt(txn.amount)}</p>
           <StatusBadge status={isIn ? 'in' : 'out'} label={isIn ? 'Masuk' : 'Keluar'} tone={isIn ? 'success' : 'muted'} />
         </div>
       </div>
@@ -83,7 +83,7 @@ export function BankTxnRow({ sessionId, txn, headers, readOnly, onMatch, onUnmat
                 <Wand2 /> Penyesuaian
               </Button>
               <Button size="icon-sm" variant="ghost" data-testid={`recon-txn-delete-${txn.id}`} onClick={() => onDelete(txn)} title="Hapus mutasi" aria-label="Hapus mutasi">
-                <Trash2 className="text-[hsl(var(--destructive))]" />
+                <Trash2 className="text-[hsl(var(--danger-text))]" />
               </Button>
             </>
           )}
