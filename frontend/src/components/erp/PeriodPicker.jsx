@@ -12,6 +12,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { Calendar, ChevronDown, Check, GitCompare } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import DatePicker from '@/components/ui/date-picker';
 import {
   todayWIB, addDaysISO, monthStartWIB, lastMonthPeriodWIB, yearStartWIB,
 } from '@/lib/waktu';
@@ -50,7 +51,11 @@ export function PeriodPicker({ value, onChange, compareEnabled = true, testId = 
   const to = value?.to || resolvePreset(preset).to;
 
   useEffect(() => {
-    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    // kalender DatePicker tampil di portal (di luar ref) — klik di sana bukan "klik di luar"
+    const h = (e) => {
+      if (e.target?.closest?.('[data-radix-popper-content-wrapper]')) return;
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, []);
@@ -105,29 +110,19 @@ export function PeriodPicker({ value, onChange, compareEnabled = true, testId = 
           </div>
           {preset === 'custom' && (
             <div className="space-y-1.5 pt-2 border-t border-[var(--glass-border)]">
-              <label className="block text-[10px] uppercase tracking-wider text-foreground/50 font-semibold">Rentang</label>
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="date" value={from || ''}
-                  onChange={(e) => onChange({ ...value, preset: 'custom', from: e.target.value, to })}
-                  className="flex-1 h-8 px-2 rounded border border-[var(--glass-border)] bg-[var(--input-surface)] text-[11px]"
-                  aria-label="Tanggal mulai"
-                  data-testid={`${testId}-from`}
-                />
-                <span className="text-foreground/40">–</span>
-                <input
-                  type="date" value={to || ''}
-                  onChange={(e) => onChange({ ...value, preset: 'custom', from, to: e.target.value })}
-                  className="flex-1 h-8 px-2 rounded border border-[var(--glass-border)] bg-[var(--input-surface)] text-[11px]"
-                  aria-label="Tanggal akhir"
-                  data-testid={`${testId}-to`}
-                />
+              <p className="text-xs font-medium text-muted-foreground">Rentang</p>
+              {/* v2: satu pemilih tanggal aplikasi (dulu input tanggal bawaan peramban) */}
+              <div className="grid grid-cols-1 gap-1.5">
+                <DatePicker value={from || ''} max={to || undefined} bolehKosong={false} placeholder="Tanggal mulai"
+                  onChange={(v) => onChange({ ...value, preset: 'custom', from: v, to })} testId={`${testId}-from`} />
+                <DatePicker value={to || ''} min={from || undefined} bolehKosong={false} placeholder="Tanggal akhir"
+                  onChange={(v) => onChange({ ...value, preset: 'custom', from, to: v })} testId={`${testId}-to`} />
               </div>
             </div>
           )}
           {compareEnabled && (
             <div className="pt-2 mt-2 border-t border-[var(--glass-border)]">
-              <label className="flex items-center gap-2 cursor-pointer text-[11px] text-foreground/80 hover:text-foreground">
+              <label className="flex items-center gap-2 cursor-pointer text-xs text-foreground/80 hover:text-foreground">
                 <input
                   type="checkbox"
                   checked={!!value?.compare}
