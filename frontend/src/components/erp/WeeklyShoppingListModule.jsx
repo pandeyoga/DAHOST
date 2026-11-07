@@ -1,14 +1,20 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  ShoppingCart, RefreshCw, AlertTriangle, Wallet, BellRing, CheckCircle2,
-  FileText, Info, Search, History, PackageSearch, Truck,
+  RefreshCw, AlertTriangle, CheckCircle2, FileText, Info, Search,
 } from 'lucide-react';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 
 /**
  * Daftar Belanja Mingguan (sesi #33) — "minggu ini saya harus belanja apa?"
@@ -20,15 +26,48 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
  * titik pesan ulang (keputusan pemilik), stok dibaca kanonik, qty dibulatkan ke
  * atas ke satuan BELI, dan MOQ supplier nyata menaikkan qty dengan alasan yang
  * disebut. Barang tanpa harga TIDAK diam-diam dihitung Rp0.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, tab Radix (dulu garis bawah buatan), StatTile berketerangan,
+ * penyaring satu baris, unduh Excel/CSV, form "Buat PR" = FormPopup panjang dengan DatePicker.
+ * Kode mentah (min_stock, accessory, draft) diganti label. Semua angka kartu = `summary` API yang sama dengan
+ * daftar (ikut saringan jenis/cari) — diverifikasi 8 Nov 2026: 43 baris, Rp 9.803.558 = Σ est_total baris berharga.
  */
 
 const rp = (v) => `Rp${Math.round(Number(v) || 0).toLocaleString('id-ID')}`;
 const num = (v) => Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
 
 const STATUS_META = {
-  critical: { label: 'Kritis', cls: 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.25)]' },
-  low: { label: 'Perlu pesan', cls: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.25)]' },
+  critical: { label: 'Kritis', tone: 'danger' },
+  low: { label: 'Perlu pesan', tone: 'warning' },
 };
+const JENIS_LABEL = {
+  yarn: 'Bahan', fabric: 'Bahan', kain: 'Bahan', benang: 'Bahan', interlining: 'Bahan',
+  accessory: 'Aksesoris', packaging: 'Aksesoris', fg: 'Produk jadi',
+};
+const jenisLabel = (t) => JENIS_LABEL[t] || 'Lainnya';
+const DASAR_LABEL = {
+  purchase_lot: 'dari lot pembelian', usage_30d: 'dari pemakaian 30 hari',
+  percent_onhand: 'persen stok sekarang', fixed: 'angka ditentukan',
+};
+const SUMBER_AMBANG = {
+  min_stock_qty: 'min stok', min_stock: 'min stok (lama)', min_stock_percentage: 'persen stok tertinggi',
+  reorder_point: 'titik pesan ulang',
+};
+const keteranganAmbang = (r) => (r.threshold_basis
+  ? `dasar: ${DASAR_LABEL[r.threshold_basis] || 'lainnya'}`
+  : (SUMBER_AMBANG[r.threshold_source] || ''));
+const STATUS_PR = {
+  draft: { label: 'Draf', tone: 'muted' },
+  submitted: { label: 'Menunggu persetujuan dept', tone: 'warning' },
+  dept_approved: { label: 'Menunggu persetujuan keuangan', tone: 'warning' },
+  finance_approved: { label: 'Menunggu persetujuan final', tone: 'warning' },
+  approved: { label: 'Disetujui', tone: 'success' },
+  in_procurement: { label: 'Sedang pengadaan', tone: 'info' },
+  rejected: { label: 'Ditolak', tone: 'danger' },
+  completed: { label: 'Selesai', tone: 'success' },
+  cancelled: { label: 'Dibatalkan', tone: 'muted' },
+};
+const statusPr = (s) => STATUS_PR[s] || { label: s ? 'Lainnya' : '—', tone: 'muted' };
 
 export default function WeeklyShoppingListModule({ token, onNavigate }) {
   const [rows, setRows] = useState([]);
@@ -38,6 +77,7 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
   const [tab, setTab] = useState('list');
   const [history, setHistory] = useState(null);
   const [search, setSearch] = useState('');
+  const [cari, setCari] = useState('');
   const [filterType, setFilterType] = useState('');
   const [hideRequested, setHideRequested] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
@@ -59,6 +99,11 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
     if (window.location.hash === target) window.location.hash = '';
     window.location.hash = target;
   }, [onNavigate]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(cari), 300);
+    return () => clearTimeout(t);
+  }, [cari]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -129,420 +174,319 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
     } finally { setCreating(false); }
   };
 
-  const cards = summary ? [
-    { k: 'need_buy', label: 'Perlu dibeli minggu ini', v: num(summary.need_buy),
-      sub: `${summary.critical || 0} kritis · ${summary.with_supplier || 0} punya supplier`,
-      tone: 'text-primary', icon: ShoppingCart },
-    { k: 'value', label: 'Perkiraan nilai belanja', v: rp(summary.est_total_value),
-      sub: 'dari harga supplier / HPP pembelian', tone: 'text-[hsl(var(--success))] ',
-      icon: Wallet },
-    { k: 'unvalued', label: 'Belum berharga', v: num(summary.unvalued_count),
-      sub: 'tidak dihitung ke perkiraan total', tone: 'text-[hsl(var(--warning))] ',
-      icon: Info },
-    { k: 'no_threshold', label: 'Belum berambang', v: num(summary.without_threshold),
-      sub: `dari ${num(summary.total_materials)} barang aktif`, tone: 'text-[hsl(var(--destructive))]', icon: BellRing },
-  ] : [];
+  const muatUlang = () => { if (tab === 'history') { setHistory(null); loadHistory(); } else load(); };
+  const semuaTercentang = selectable.length > 0 && selected.size === selectable.length;
+
+  const kolomRiwayat = [
+    { kunci: 'number', label: 'Nomor PR', hp: 'judul', isi: (h) => <span className="tabular-nums" data-testid={`shopping-history-row-${h.number}`}>{h.number}</span> },
+    { kunci: 'week', label: 'Minggu', isi: (h) => h.week },
+    { kunci: 'status', label: 'Status', isi: (h) => { const s = statusPr(h.status); return <StatusBadge status={h.status} label={s.label} tone={s.tone} />; } },
+    { kunci: 'lines', label: 'Baris', rata: 'kanan', isi: (h) => <span className="tabular-nums">{h.lines}</span> },
+    { kunci: 'total', label: 'Perkiraan nilai', rata: 'kanan', isi: (h) => <span className="tabular-nums">{rp(h.total_estimated)}</span> },
+    { kunci: 'by', label: 'Diminta oleh', isi: (h) => h.requested_by_name || '—' },
+    { kunci: 'barang', label: 'Barang', hp: 'keterangan', isi: (h) => (
+      <span className="line-clamp-2 text-xs text-muted-foreground">
+        {(h.materials || []).map(m => `${m.code || ''} ${num(m.qty)} ${m.uom}`).join(' · ')}
+      </span>) },
+  ];
 
   return (
-    <div className="space-y-4" data-testid="shopping-list-page">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
-            <ShoppingCart className="w-5 h-5 text-primary" /> Daftar Belanja Mingguan
-          </h2>
-          <p className="text-sm text-muted-foreground mt-0.5" data-testid="shopping-week-label">
-            {week ? `Minggu ${week.iso} · ${week.label}` : 'Menghitung…'} — kebutuhan dihitung dari
-            ambang minimum / titik pesan ulang, stok dibaca lintas semua lokasi.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="ghost" onClick={load} disabled={loading} data-testid="shopping-refresh">
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>
-          <Button onClick={() => setDialogOpen(true)} disabled={!chosen.length}
-            data-testid="shopping-create-pr">
-            <FileText className="w-4 h-4 mr-1.5" />
-            Buat PR Pengadaan{chosen.length ? ` (${chosen.length})` : ''}
+    <Tabs value={tab} onValueChange={setTab}>
+      <PageLayout testId="shopping-list-page" title="Belanja mingguan"
+        subtitle="Barang yang perlu dibeli minggu ini, dihitung dari ambang minimum / titik pesan ulang dan stok semua lokasi."
+        actions={
+          <Button onClick={() => setDialogOpen(true)} disabled={!chosen.length} data-testid="shopping-create-pr">
+            <FileText />Buat PR pengadaan{chosen.length ? ` (${chosen.length})` : ''}
           </Button>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-1 border-b border-[var(--glass-border)]">
-        {[['list', 'Perlu Dibeli', ShoppingCart], ['history', 'PR dari layar ini', History]].map(
-          ([key, label, Icon]) => (
-            <button key={key} onClick={() => setTab(key)}
-              className={`px-3 py-2 text-sm font-medium inline-flex items-center gap-1.5 border-b-2 -mb-px transition-colors ${
-                tab === key ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-              data-testid={`shopping-tab-${key}`}>
-              <Icon className="w-3.5 h-3.5" /> {label}
-            </button>
-          ))}
-      </div>
-
-      {tab === 'list' && (
-        <>
-          {summary && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="shopping-summary">
-              {cards.map(c => (
-                <GlassCard key={c.k} className="p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className={`text-2xl font-bold ${c.tone}`} data-testid={`shopping-stat-${c.k}`}>{c.v}</div>
-                      <div className="text-xs text-muted-foreground mt-0.5">{c.label}</div>
-                      <div className="text-[10px] text-muted-foreground mt-0.5">{c.sub}</div>
-                    </div>
-                    <c.icon className="w-4 h-4 text-muted-foreground shrink-0" />
-                  </div>
-                </GlassCard>
-              ))}
+        }
+        filters={<>
+          <TabsList>
+            <TabsTrigger value="list" data-testid="shopping-tab-list">Perlu dibeli</TabsTrigger>
+            <TabsTrigger value="history" data-testid="shopping-tab-history">PR dari layar ini</TabsTrigger>
+          </TabsList>
+          {tab === 'list' && <>
+            <div className="relative w-full sm:w-64">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={cari} onChange={e => setCari(e.target.value)} placeholder="Cari kode atau nama"
+                className="pl-8" data-testid="shopping-search" />
             </div>
-          )}
-
-          {summary && summary.without_threshold > 0 && (
-            <div className="flex items-start gap-2 rounded-lg border border-[hsl(var(--warning)/0.4)] bg-[hsl(var(--warning)/0.1)] px-4 py-3"
-              data-testid="shopping-threshold-notice">
-              <AlertTriangle className="w-4 h-4 text-[hsl(var(--warning))] shrink-0 mt-0.5" />
-              <div className="text-sm text-[hsl(var(--warning))] ">
-                {summary.without_threshold_note}
-                <button onClick={() => goto('wh-master', 'thresholds')}
-                  className="ml-1 underline font-medium" data-testid="shopping-goto-thresholds">
-                  Isi Ambang Massal sekarang
-                </button>
-              </div>
-            </div>
-          )}
-
-          {lastPR && (
-            <div className="flex items-start gap-2 rounded-lg border border-[hsl(var(--success)/0.4)] bg-[hsl(var(--success)/0.1)] px-4 py-3"
-              data-testid="shopping-pr-result">
-              <CheckCircle2 className="w-4 h-4 text-[hsl(var(--success))] shrink-0 mt-0.5" />
-              <div className="text-sm text-[hsl(var(--success))] ">
-                <strong>{lastPR.request_number}</strong> dibuat sebagai draft ·{' '}
-                {(lastPR.items || []).length} barang · {rp(lastPR.total_estimated)}.{' '}
-                <button onClick={() => goto('proc-requests')} className="underline font-medium"
-                  data-testid="shopping-open-pr">Buka Permintaan Pengadaan</button>
-                {!!(lastPR.skipped || []).length && (
-                  <div className="text-xs mt-1">
-                    {lastPR.skipped.length} barang dilewati: {lastPR.skipped.map(s => `${s.code || s.material_id} (${s.reason})`).join('; ')}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative flex-1 min-w-[180px]">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-              <GlassInput value={search} onChange={e => setSearch(e.target.value)}
-                placeholder="Cari kode / nama barang…" className="pl-8 h-9 text-sm"
-                data-testid="shopping-search" />
-            </div>
-            <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)}
-              className="w-48 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-              data-testid="shopping-filter-type">
+            <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)} className="w-48"
+              searchable={false} aria-label="Jenis" data-testid="shopping-filter-type">
               <option value="">Semua jenis</option>
               <option value="bahan">Bahan (kain/benang)</option>
               <option value="aksesoris">Aksesoris</option>
-              <option value="fg">Produk Jadi</option>
+              <option value="fg">Produk jadi</option>
             </SmartNativeSelect>
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
-              <input type="checkbox" checked={hideRequested}
-                onChange={e => setHideRequested(e.target.checked)}
-                data-testid="shopping-hide-requested" />
+            <label className="flex cursor-pointer select-none items-center gap-2 text-sm text-foreground">
+              <Checkbox checked={hideRequested} onCheckedChange={(v) => setHideRequested(!!v)} data-testid="shopping-hide-requested" />
               Sembunyikan yang sudah ber-PR
             </label>
-            {!!selectable.length && (
-              <Button variant="outline" size="sm" onClick={toggleAll} data-testid="shopping-select-all">
-                {selected.size === selectable.length ? 'Batalkan semua' : `Pilih semua (${selectable.length})`}
-              </Button>
+          </>}
+        </>}
+        tools={<>
+          {tab === 'list' ? (
+            <TombolUnduh namaBerkas={`belanja-mingguan${week?.iso ? `-${week.iso}` : ''}`} namaLembar="Belanja mingguan" baris={rows}
+              testId="shopping-unduh"
+              kolom={[
+                { label: 'Kode', nilai: (r) => r.code },
+                { label: 'Nama', nilai: (r) => r.name },
+                { label: 'Jenis', nilai: (r) => jenisLabel(r.type) },
+                { label: 'Satuan dasar', nilai: (r) => r.base_uom },
+                { label: 'Stok', nilai: (r) => Number(r.onhand || 0) },
+                { label: 'Ambang', nilai: (r) => Number(r.alert_at || 0) },
+                { label: 'Kurang', nilai: (r) => Number(r.shortage || 0) },
+                { label: 'Sisa PO terbuka', nilai: (r) => Number(r.incoming_po_qty || 0) },
+                { label: 'Qty beli', nilai: (r) => Number(r.qty_buy || 0) },
+                { label: 'Satuan beli', nilai: (r) => r.purchase_uom },
+                { label: 'Harga per satuan beli (Rp)', nilai: (r) => (r.valued ? Number(r.price_per_purchase_uom || 0) : '') },
+                { label: 'Perkiraan total (Rp)', nilai: (r) => (r.valued ? Number(r.est_total || 0) : '') },
+                { label: 'Supplier', nilai: (r) => r.supplier?.name || '' },
+                { label: 'Status', nilai: (r) => (r.already_requested ? `Sudah ber-PR ${(r.pr || {}).number || ''}`.trim() : (STATUS_META[r.stock_status] || STATUS_META.low).label) },
+              ]} />
+          ) : (
+            <TombolUnduh namaBerkas="pr-dari-belanja-mingguan" namaLembar="PR" baris={history?.items || []} testId="shopping-history-unduh"
+              kolom={[
+                { label: 'Nomor PR', nilai: (h) => h.number },
+                { label: 'Minggu', nilai: (h) => h.week },
+                { label: 'Status', nilai: (h) => statusPr(h.status).label },
+                { label: 'Baris', nilai: (h) => Number(h.lines || 0) },
+                { label: 'Perkiraan nilai (Rp)', nilai: (h) => Number(h.total_estimated || 0) },
+                { label: 'Diminta oleh', nilai: (h) => h.requested_by_name || '' },
+                { label: 'Barang', nilai: (h) => (h.materials || []).map(m => `${m.code || ''} ${num(m.qty)} ${m.uom}`).join(' · ') },
+              ]} />
+          )}
+          <Button variant="outline" size="icon" onClick={muatUlang} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+            data-testid="shopping-refresh">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
+          </Button>
+        </>}
+        summary={tab === 'list' && summary ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="shopping-summary">
+              <StatTile label="Perlu dibeli minggu ini" value={num(summary.need_buy)} testId="shopping-stat-need_buy"
+                sub={`${num(summary.critical || 0)} kritis · ${num(summary.with_supplier || 0)} punya supplier`} />
+              <StatTile label="Perkiraan nilai belanja" value={rp(summary.est_total_value)} testId="shopping-stat-value"
+                sub="dari harga supplier / HPP pembelian; barang tanpa harga tidak dihitung" />
+              <StatTile label="Belum berharga" value={num(summary.unvalued_count)} testId="shopping-stat-unvalued"
+                accent={summary.unvalued_count ? 'warning' : 'default'} sub="tidak masuk perkiraan nilai" />
+              <StatTile label="Belum berambang" value={num(summary.without_threshold)} testId="shopping-stat-no_threshold"
+                accent={summary.without_threshold ? 'warning' : 'default'} sub={`dari ${num(summary.total_materials)} barang aktif`} />
+            </div>
+            <p className="text-xs text-muted-foreground" data-testid="shopping-week-label">
+              {week ? `Minggu ${week.week} · ${week.label}` : 'Menghitung minggu…'}
+            </p>
+            {summary.without_threshold > 0 && (
+              <Notice tone="warning" icon={AlertTriangle} testId="shopping-threshold-notice"
+                action={<Button variant="outline" size="sm" onClick={() => goto('wh-master', 'thresholds')}
+                  data-testid="shopping-goto-thresholds">Isi ambang massal</Button>}>
+                {summary.without_threshold_note}
+              </Notice>
+            )}
+            {lastPR && (
+              <Notice tone="success" icon={CheckCircle2} testId="shopping-pr-result"
+                title={`${lastPR.request_number} dibuat sebagai draf · ${(lastPR.items || []).length} barang · ${rp(lastPR.total_estimated)}`}
+                action={<Button variant="outline" size="sm" onClick={() => goto('proc-requests')} data-testid="shopping-open-pr">
+                  Buka Permintaan Pengadaan</Button>}>
+                {!!(lastPR.skipped || []).length && (
+                  <span className="text-xs">
+                    {lastPR.skipped.length} barang dilewati: {lastPR.skipped.map(s => `${s.code || s.material_id} (${s.reason})`).join('; ')}
+                  </span>
+                )}
+              </Notice>
             )}
           </div>
+        ) : null}>
 
-          <GlassCard className="p-0 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm" data-testid="shopping-table">
-                <thead className="bg-[var(--glass-bg)]">
-                  <tr className="text-left text-xs text-muted-foreground">
-                    <th className="px-3 py-3 w-8"></th>
-                    <th className="px-3 py-3">Barang</th>
-                    <th className="px-3 py-3 text-right">Stok</th>
-                    <th className="px-3 py-3 text-right">Ambang</th>
-                    <th className="px-3 py-3 text-right">Kurang</th>
-                    <th className="px-3 py-3 text-right">Qty beli</th>
-                    <th className="px-3 py-3 text-right">Harga</th>
-                    <th className="px-3 py-3 text-right">Perkiraan total</th>
-                    <th className="px-3 py-3">Supplier</th>
-                    <th className="px-3 py-3">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? (
-                    <tr><td colSpan={10} className="text-center py-12 text-muted-foreground">Memuat…</td></tr>
-                  ) : rows.length === 0 ? (
-                    <tr><td colSpan={10} className="py-12">
-                      <div className="text-center max-w-lg mx-auto space-y-2" data-testid="shopping-empty">
-                        <PackageSearch className="w-8 h-8 mx-auto text-muted-foreground" />
-                        {summary && summary.with_threshold === 0 ? (
+        <TabsContent value="list" className="mt-0 space-y-3">
+          {loading && rows.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">Memuat daftar belanja…</p>
+          ) : rows.length === 0 ? (
+            <div data-testid="shopping-empty">
+              {summary && summary.with_threshold === 0 ? (
+                <EmptyState title="Belum ada satu pun ambang stok yang diisi"
+                  description="Selama ambang minimum kosong, sistem tidak bisa tahu barang apa yang perlu dibeli. Isi ambangnya massal dulu — dari lot pembelian nyata, persen stok, atau angka yang Anda tentukan."
+                  action={<Button onClick={() => goto('wh-master', 'thresholds')} data-testid="shopping-empty-cta">Isi ambang massal</Button>} />
+              ) : (
+                <EmptyState title="Tidak ada yang perlu dibeli minggu ini"
+                  description={`Semua barang yang sudah punya ambang stoknya masih di atas ambang.${summary && summary.without_threshold > 0
+                    ? ` Catatan: ${summary.without_threshold} barang belum berambang, jadi daftar ini belum lengkap.` : ''}`} />
+              )}
+            </div>
+          ) : (
+            <Table data-testid="shopping-table">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox checked={semuaTercentang} onCheckedChange={toggleAll} disabled={!selectable.length}
+                      aria-label="Pilih semua barang yang belum ber-PR" data-testid="shopping-select-all" />
+                  </TableHead>
+                  <TableHead>Barang</TableHead>
+                  <TableHead className="text-right">Stok</TableHead>
+                  <TableHead className="text-right">Ambang</TableHead>
+                  <TableHead className="text-right">Kurang</TableHead>
+                  <TableHead className="text-right">Qty beli</TableHead>
+                  <TableHead className="text-right">Harga</TableHead>
+                  <TableHead className="text-right">Perkiraan total</TableHead>
+                  <TableHead>Supplier</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map(r => {
+                  const meta = STATUS_META[r.stock_status] || STATUS_META.low;
+                  const isSel = selected.has(r.material_id);
+                  return (
+                    <TableRow key={r.material_id} className={isSel ? 'bg-primary/5' : undefined} data-testid={`shopping-row-${r.code}`}>
+                      <TableCell>
+                        <Checkbox checked={isSel} disabled={r.already_requested} onCheckedChange={() => toggle(r.material_id)}
+                          aria-label={`Pilih ${r.code}`} data-testid={`shopping-check-${r.code}`} />
+                      </TableCell>
+                      <TableCell className="min-w-[14rem]">
+                        <div className="tabular-nums text-xs text-muted-foreground">{r.code}</div>
+                        <div className="text-foreground">{r.name}</div>
+                        <div className="text-xs text-muted-foreground">{jenisLabel(r.type)} · {r.base_uom}</div>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums whitespace-nowrap">{num(r.onhand)} {r.base_uom}</TableCell>
+                      <TableCell className="text-right tabular-nums whitespace-nowrap">
+                        {num(r.alert_at)}
+                        <span className="block text-xs text-muted-foreground" title={r.threshold_basis_note || ''}>{keteranganAmbang(r)}</span>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums whitespace-nowrap text-[hsl(var(--danger-text))]">
+                        {num(r.shortage)}
+                        {Number(r.incoming_po_qty || 0) > 0 && (
+                          <span className="block text-xs text-muted-foreground" data-testid={`shopping-incoming-${r.code}`}>
+                            sisa PO {num(r.incoming_po_qty)} {r.base_uom}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right whitespace-nowrap" data-testid={`shopping-qty-${r.code}`}>
+                        <span className="tabular-nums font-medium">{num(r.qty_buy)} {r.purchase_uom}</span>
+                        {r.purchase_factor !== 1 && (
+                          <span className="block text-xs text-muted-foreground">= {num(r.qty_buy_base)} {r.base_uom}</span>
+                        )}
+                        {r.qty_note && <span className="block text-xs text-[hsl(var(--warning-text))]">{r.qty_note}</span>}
+                      </TableCell>
+                      <TableCell className="text-right whitespace-nowrap">
+                        {r.valued ? (
                           <>
-                            <div className="font-medium text-foreground">Belum ada satu pun ambang stok yang diisi</div>
-                            <div className="text-xs text-muted-foreground">
-                              Selama ambang minimum kosong, sistem tidak bisa tahu barang apa yang
-                              perlu dibeli. Isi ambangnya massal dulu — bisa dari lot pembelian nyata,
-                              persen stok, atau angka yang Anda tentukan.
-                            </div>
-                            <Button size="sm" className="mt-1" onClick={() => goto('wh-master', 'thresholds')}
-                              data-testid="shopping-empty-cta">Isi Ambang Massal</Button>
+                            <span className="tabular-nums">{rp(r.price_per_purchase_uom)}</span>
+                            <span className="block text-xs text-muted-foreground">
+                              /{r.purchase_uom} · {r.price_source === 'supplier_price_list' ? 'harga supplier' : 'HPP pembelian'}
+                            </span>
                           </>
                         ) : (
-                          <>
-                            <div className="font-medium text-foreground">Tidak ada yang perlu dibeli minggu ini</div>
-                            <div className="text-xs text-muted-foreground">
-                              Semua barang yang sudah punya ambang stoknya masih di atas ambang.
-                              {summary && summary.without_threshold > 0
-                                && ` Catatan: ${summary.without_threshold} barang belum berambang, jadi daftar ini belum lengkap.`}
-                            </div>
-                          </>
+                          <span className="text-xs text-[hsl(var(--warning-text))]">belum ada harga</span>
                         )}
-                      </div>
-                    </td></tr>
-                  ) : rows.map(r => {
-                    const meta = STATUS_META[r.stock_status] || STATUS_META.low;
-                    const isSel = selected.has(r.material_id);
-                    return (
-                      <tr key={r.material_id}
-                        className={`border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] ${isSel ? 'bg-primary/5' : ''} ${r.already_requested ? 'opacity-70' : ''}`}
-                        data-testid={`shopping-row-${r.code}`}>
-                        <td className="px-3 py-2">
-                          <input type="checkbox" checked={isSel} disabled={r.already_requested}
-                            onChange={() => toggle(r.material_id)}
-                            data-testid={`shopping-check-${r.code}`} />
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="tabular-nums text-xs text-foreground">{r.code}</div>
-                          <div className="text-foreground">{r.name}</div>
-                          <div className="text-[10px] text-muted-foreground">{r.type} · {r.base_uom}</div>
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums text-xs whitespace-nowrap text-foreground">
-                          {num(r.onhand)} {r.base_uom}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums text-xs whitespace-nowrap text-foreground">
-                          {num(r.alert_at)}
-                          <span className="block text-[10px] text-muted-foreground font-sans"
-                            title={r.threshold_basis_note || ''}>
-                            {r.threshold_basis ? `dasar: ${r.threshold_basis}` : r.threshold_source}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums font-medium whitespace-nowrap" data-testid={`shopping-total-${r.code}`}>
+                        {r.valued ? rp(r.est_total) : '—'}
+                      </TableCell>
+                      <TableCell className="min-w-[10rem] text-sm">
+                        {r.supplier ? (
+                          <>
+                            <span className="text-foreground">{r.supplier.name}</span>
+                            <span className="block text-xs text-muted-foreground">
+                              {rp(r.supplier.price)}/{r.supplier.uom}
+                              {r.supplier.moq > 0 ? ` · MOQ ${num(r.supplier.moq)}` : ''}
+                              {r.supplier.lead_time_days ? ` · ${r.supplier.lead_time_days} hari` : ''}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">belum ada daftar harga</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {r.already_requested ? (
+                          <span data-testid={`shopping-pr-flag-${r.code}`} title={`Dibuat ${String((r.pr || {}).created_at || '').slice(0, 10)}`}>
+                            <StatusBadge status="ber-pr" label={(r.pr || {}).number || 'Sudah diminta'} tone="info" />
                           </span>
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums text-xs text-[hsl(var(--destructive))] whitespace-nowrap">
-                          {num(r.shortage)}
-                          {Number(r.incoming_po_qty || 0) > 0 && (
-                            <span className="block text-[10px] text-muted-foreground" data-testid={`shopping-incoming-${r.code}`}>
-                              sisa PO {num(r.incoming_po_qty)} {r.base_uom}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-right whitespace-nowrap" data-testid={`shopping-qty-${r.code}`}>
-                          <span className="tabular-nums text-xs font-semibold text-foreground">
-                            {num(r.qty_buy)} {r.purchase_uom}
-                          </span>
-                          {r.purchase_factor !== 1 && (
-                            <span className="block text-[10px] text-muted-foreground">= {num(r.qty_buy_base)} {r.base_uom}</span>
-                          )}
-                          {r.qty_note && (
-                            <span className="block text-[10px] text-[hsl(var(--warning))] ">{r.qty_note}</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-right whitespace-nowrap">
-                          {r.valued ? (
-                            <>
-                              <span className="tabular-nums text-xs text-foreground">{rp(r.price_per_purchase_uom)}</span>
-                              <span className="block text-[10px] text-muted-foreground">/{r.purchase_uom} · {r.price_source === 'supplier_price_list' ? 'harga supplier' : 'HPP pembelian'}</span>
-                            </>
-                          ) : (
-                            <span className="text-[11px] text-[hsl(var(--warning))] ">belum ada harga</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums text-xs font-semibold text-foreground whitespace-nowrap"
-                          data-testid={`shopping-total-${r.code}`}>
-                          {r.valued ? rp(r.est_total) : '—'}
-                        </td>
-                        <td className="px-3 py-2 text-xs">
-                          {r.supplier ? (
-                            <>
-                              <span className="text-foreground inline-flex items-center gap-1">
-                                <Truck className="w-3 h-3" /> {r.supplier.name}
-                              </span>
-                              <span className="block text-[10px] text-muted-foreground">
-                                {rp(r.supplier.price)}/{r.supplier.uom}
-                                {r.supplier.moq > 0 ? ` · MOQ ${num(r.supplier.moq)}` : ''}
-                                {r.supplier.lead_time_days ? ` · ${r.supplier.lead_time_days} hari` : ''}
-                              </span>
-                            </>
-                          ) : (
-                            <span className="text-[11px] text-muted-foreground">belum ada daftar harga</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2">
-                          {r.already_requested ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.25)]"
-                              data-testid={`shopping-pr-flag-${r.code}`}
-                              title={`Dibuat ${String((r.pr || {}).created_at || '').slice(0, 10)}`}>
-                              <CheckCircle2 className="w-3 h-3" /> {(r.pr || {}).number || 'sudah diminta'}
-                            </span>
-                          ) : (
-                            <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${meta.cls}`}>
-                              <AlertTriangle className="w-3 h-3" /> {meta.label}
-                            </span>
-                          )}
-                          {!r.valued && (
-                            <span className="block text-[10px] text-[hsl(var(--warning))] mt-0.5">belum berharga</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </GlassCard>
+                        ) : (
+                          <StatusBadge status={r.stock_status} label={meta.label} tone={meta.tone} />
+                        )}
+                        {!r.valued && <span className="mt-0.5 block text-xs text-[hsl(var(--warning-text))]">belum berharga</span>}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
 
           {summary && rows.length > 0 && (
-            <div className="text-xs text-muted-foreground flex items-start gap-1.5">
-              <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span>
-                {summary.unvalued_note} Qty beli dibulatkan KE ATAS ke satuan beli, dan dinaikkan
+                {summary.unvalued_note} Qty beli dibulatkan ke atas ke satuan beli, dan dinaikkan
                 ke MOQ supplier bila ada — alasannya tertulis di baris masing-masing.
                 {/* 2026-11-06 (Tahap 2): PR/PO terbuka dibaca tanpa batas minggu; sisa PO mengurangi kekurangan */}
                 {' '}Sisa PO yang masih terbuka (dari minggu mana pun) mengurangi kekurangan.
                 {summary.already_requested_count > 0
                   && ` ${summary.already_requested_count} barang sudah tertutup PO terbuka atau punya PR terbuka dan tidak dihitung lagi (anti dobel belanja).`}
               </span>
-            </div>
+            </p>
           )}
-        </>
-      )}
+        </TabsContent>
 
-      {tab === 'history' && (
-        <GlassCard className="p-0 overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--glass-border)]">
-            <div>
-              <div className="text-sm font-semibold text-foreground">Permintaan Pengadaan dari layar ini</div>
-              <div className="text-xs text-muted-foreground">
-                {history?.summary
-                  ? `${history.summary.requests} PR · total ${rp(history.summary.total_value)}`
-                  : 'Memuat…'}
-              </div>
-            </div>
-            <Button variant="ghost" size="sm" onClick={() => { setHistory(null); loadHistory(); }}
-              data-testid="shopping-history-refresh">
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat ulang
-            </Button>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm" data-testid="shopping-history-table">
-              <thead className="bg-[var(--glass-bg)]">
-                <tr className="text-left text-xs text-muted-foreground">
-                  <th className="px-3 py-3">Nomor PR</th>
-                  <th className="px-3 py-3">Minggu</th>
-                  <th className="px-3 py-3">Status</th>
-                  <th className="px-3 py-3 text-right">Baris</th>
-                  <th className="px-3 py-3 text-right">Perkiraan nilai</th>
-                  <th className="px-3 py-3">Diminta oleh</th>
-                  <th className="px-3 py-3">Barang</th>
-                </tr>
-              </thead>
-              <tbody>
-                {!history ? (
-                  <tr><td colSpan={7} className="text-center py-10 text-muted-foreground">Memuat…</td></tr>
-                ) : (history.items || []).length === 0 ? (
-                  <tr><td colSpan={7} className="text-center py-10 text-muted-foreground">
-                    Belum ada PR yang dibuat dari Daftar Belanja Mingguan.
-                  </td></tr>
-                ) : history.items.map(h => (
-                  <tr key={h.id} className="border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)]"
-                    data-testid={`shopping-history-row-${h.number}`}>
-                    <td className="px-3 py-2 tabular-nums text-xs text-foreground">{h.number}</td>
-                    <td className="px-3 py-2 text-xs text-foreground">{h.week}</td>
-                    <td className="px-3 py-2"><Badge variant="secondary" className="text-[10px]">{h.status}</Badge></td>
-                    <td className="px-3 py-2 text-right tabular-nums text-xs text-foreground">{h.lines}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-xs text-foreground">{rp(h.total_estimated)}</td>
-                    <td className="px-3 py-2 text-xs text-foreground">{h.requested_by_name || '—'}</td>
-                    <td className="px-3 py-2 text-[11px] text-muted-foreground">
-                      {(h.materials || []).map(m => `${m.code || ''} ${num(m.qty)} ${m.uom}`).join(' · ')}
-                    </td>
-                  </tr>
+        <TabsContent value="history" className="mt-0 space-y-2">
+          <p className="text-sm text-muted-foreground">
+            {history?.summary
+              ? `${history.summary.requests} PR · total ${rp(history.summary.total_value)}`
+              : 'Memuat…'}
+          </p>
+          {history && (
+            <TabelData kolom={kolomRiwayat} baris={history.items || []} kunci={(h) => h.id} testId="shopping-history-table"
+              kosong={<EmptyState title="Belum ada PR yang dibuat dari Belanja mingguan" />} />
+          )}
+        </TabsContent>
+
+        <FormPopup open={dialogOpen} onClose={() => setDialogOpen(false)} ukuran="panjang" testId="shopping-pr-dialog"
+          judul={`Buat permintaan pengadaan · ${chosen.length} barang`}
+          keterangan="PR dibuat berstatus draf — belum dikirim ke persetujuan. Kirimnya dari Portal Pengadaan → Permintaan Pengadaan."
+          onSimpan={createPR} menyimpan={creating} bisaSimpan={chosen.length > 0}
+          labelSimpan={`Buat PR (${chosen.length} barang)`}>
+          <div className="max-h-64 overflow-auto rounded-md border border-[var(--glass-border)]">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Barang</TableHead>
+                  <TableHead className="text-right">Qty</TableHead>
+                  <TableHead className="text-right">Harga</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {chosen.map(c => (
+                  <TableRow key={c.material_id}>
+                    <TableCell><span className="tabular-nums text-xs text-muted-foreground">{c.code}</span> {c.name}</TableCell>
+                    <TableCell className="text-right tabular-nums">{num(c.qty_buy)} {c.purchase_uom}</TableCell>
+                    <TableCell className="text-right tabular-nums">{c.valued ? rp(c.price_per_purchase_uom) : '—'}</TableCell>
+                    <TableCell className="text-right tabular-nums">{c.valued ? rp(c.est_total) : '—'}</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
-        </GlassCard>
-      )}
-
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl" data-testid="shopping-pr-dialog">
-          <DialogHeader>
-            <DialogTitle>Buat Permintaan Pengadaan · {chosen.length} barang</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="max-h-64 overflow-auto rounded-lg border border-[var(--glass-border)]">
-              <table className="w-full text-sm">
-                <thead className="bg-[var(--glass-bg)] sticky top-0">
-                  <tr className="text-left text-xs text-muted-foreground">
-                    <th className="px-3 py-2">Barang</th>
-                    <th className="px-3 py-2 text-right">Qty</th>
-                    <th className="px-3 py-2 text-right">Harga</th>
-                    <th className="px-3 py-2 text-right">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {chosen.map(c => (
-                    <tr key={c.material_id} className="border-t border-[var(--glass-border)]">
-                      <td className="px-3 py-2 text-foreground">
-                        <span className="tabular-nums text-xs">{c.code}</span> {c.name}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums text-xs text-foreground">{num(c.qty_buy)} {c.purchase_uom}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-xs text-foreground">{c.valued ? rp(c.price_per_purchase_uom) : '—'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-xs text-foreground">{c.valued ? rp(c.est_total) : '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Perkiraan nilai PR</span>
-              <span className="font-bold text-foreground" data-testid="shopping-dialog-total">{rp(chosenTotal)}</span>
-            </div>
-            {chosen.some(c => !c.valued) && (
-              <div className="text-xs text-[hsl(var(--warning))] ">
-                Ada barang tanpa harga — barisnya tetap masuk PR dengan harga 0 supaya bagian
-                pengadaan mengisi harga penawaran, tetapi tidak dihitung ke perkiraan nilai.
-              </div>
-            )}
-            <div className="grid md:grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-muted-foreground">Dibutuhkan sebelum (opsional)</label>
-                <GlassInput type="date" value={neededBy} onChange={e => setNeededBy(e.target.value)}
-                  className="h-9 text-sm mt-1" data-testid="shopping-needed-by" />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground">Catatan (opsional)</label>
-                <GlassInput value={notes} onChange={e => setNotes(e.target.value)}
-                  placeholder="mis. dipakai untuk order cutting minggu depan"
-                  className="h-9 text-sm mt-1" data-testid="shopping-notes" />
-              </div>
-            </div>
-            <div className="text-xs text-muted-foreground">
-              PR dibuat berstatus <strong>draft</strong> — belum dikirim ke persetujuan. Kirimnya
-              dari Portal Pengadaan → Permintaan Pengadaan.
-            </div>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">Perkiraan nilai PR</span>
+            <span className="font-semibold tabular-nums text-foreground" data-testid="shopping-dialog-total">{rp(chosenTotal)}</span>
           </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setDialogOpen(false)} disabled={creating}>Batal</Button>
-            <Button onClick={createPR} disabled={creating || !chosen.length}
-              data-testid="shopping-pr-confirm">
-              {creating ? 'Membuat…' : `Buat PR (${chosen.length} barang)`}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+          {chosen.some(c => !c.valued) && (
+            <p className="text-xs text-[hsl(var(--warning-text))]">
+              Ada barang tanpa harga — barisnya tetap masuk PR dengan harga 0 supaya bagian
+              pengadaan mengisi harga penawaran, tetapi tidak dihitung ke perkiraan nilai.
+            </p>
+          )}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Isian label="Dibutuhkan sebelum" petunjuk="Opsional">
+              <DatePicker value={neededBy} onChange={setNeededBy} placeholder="Tidak ditentukan" testId="shopping-needed-by" />
+            </Isian>
+            <Isian label="Catatan" petunjuk="Opsional" htmlFor="shopping-notes-in">
+              <Input id="shopping-notes-in" value={notes} onChange={e => setNotes(e.target.value)}
+                placeholder="mis. dipakai untuk order cutting minggu depan" data-testid="shopping-notes" />
+            </Isian>
+          </div>
+        </FormPopup>
+      </PageLayout>
+    </Tabs>
   );
 }
