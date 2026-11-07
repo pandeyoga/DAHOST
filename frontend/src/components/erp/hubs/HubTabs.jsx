@@ -17,8 +17,10 @@ const Spinner = () => (
  * `compactHeaders` (2026-11-04, hub Keuangan): modul di dalam tab tidak mengulang judul & penjelasannya
  * (lihat CompactHubContext di moduleAtoms) — dulu judul hub + penjelasan + tab + judul modul + penjelasan
  * menumpuk sehingga angka pertama baru muncul di tengah layar.
+ * Standar UI/UX v2 (8 Nov 2026): BAWAAN untuk semua hub (keluhan owner: kepala ganda); kepala hub tipis,
+ * daftar tab bergulir samping di HP (tidak bertumpuk berbaris-baris).
  */
-export default function HubTabs({ hubId, title, subtitle, tabs, compactHeaders = false, value, onValueChange, ...rest }) {
+export default function HubTabs({ hubId, title, subtitle, tabs, compactHeaders = true, value, onValueChange, ...rest }) {
   // PANDUAN_UI G4 (2026-11-04): tab rata kiri selebar isi; aksi tab aktif di kanan baris yang sama
   const [actionsSlot, setActionsSlot] = useState(null);
   // Tahap 9 (7 Nov 2026): mode terkendali opsional (`value` + `onValueChange`) — dipakai Input atas nama CMT,
@@ -50,15 +52,15 @@ export default function HubTabs({ hubId, title, subtitle, tabs, compactHeaders =
     <div className="space-y-4" data-testid={`${hubId}`}>
       {title && (
         <div>
-          <h2 className="text-2xl font-bold text-foreground tracking-tight leading-tight">{title}</h2>
-          {subtitle && <p className="text-sm text-muted-foreground mt-0.5">{subtitle}</p>}
+          <h2 className="text-xl font-bold leading-tight tracking-tight text-foreground sm:text-2xl">{title}</h2>
+          {subtitle && <p className="mt-0.5 hidden text-sm text-muted-foreground sm:block">{subtitle}</p>}
         </div>
       )}
       <Tabs value={tab} onValueChange={setTab} className="w-full">
-        <div className="flex items-center gap-3 flex-wrap">
-          <TabsList className="h-auto flex-wrap justify-start gap-1">
+        <div className="flex flex-wrap items-center gap-3">
+          <TabsList className="h-auto max-w-full justify-start gap-1 max-sm:flex-nowrap max-sm:overflow-x-auto sm:flex-wrap">
             {tabs.map((t) => (
-              <TabsTrigger key={t.key} value={t.key} data-testid={`hub-tab-${t.key}`}>
+              <TabsTrigger key={t.key} value={t.key} data-testid={`hub-tab-${t.key}`} className="shrink-0">
                 {t.label}
               </TabsTrigger>
             ))}

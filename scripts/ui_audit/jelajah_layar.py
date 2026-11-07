@@ -111,8 +111,11 @@ def jelajah_menu(pg, a, out, portal, mid, lab, lebar, hasil):
         tutup_dialog(pg)
     try:
         cand = [x for x in pg.locator("main button:visible").all() if TOMBOL_DETAIL.match(teks(x))]
-        target = cand[0] if cand else (pg.locator("main tbody tr:visible").first
-                                       if pg.locator("main tbody tr:visible").count() else None)
+        target = cand[0] if cand else None
+        # baris tabel (layar lebar) atau kartu ringkas TabelData (HP)
+        for sel in ("main tbody tr:visible", "main [data-testid$='-kartu']:visible"):
+            if target is None and pg.locator(sel).count():
+                target = pg.locator(sel).first
         if target is not None:
             target.click(timeout=3000)
             pg.wait_for_timeout(1200)

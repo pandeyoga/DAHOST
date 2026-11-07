@@ -82,14 +82,14 @@ export function StatTile({ label, value, accent = 'default', className, testId, 
         className
       )}
     >
-      <p className="text-[10px] uppercase tracking-wider text-foreground/50 font-semibold">{label}</p>
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
       <p className={cn('text-xl font-bold tracking-tight mt-1 tabular-nums', colors[accent] || colors.default)}>
         {value}{suffix && <span className="text-sm text-foreground/50 ml-1">{suffix}</span>}
       </p>
       {/* 2026-11-04: baris keterangan kecil di bawah angka (mis. "Rp 2 jt lewat jatuh tempo") — tanpa kartu buatan */}
       {sub && <p className={cn('text-xs mt-1 line-clamp-2', subTone ? colors[subTone] : 'text-muted-foreground')}>{sub}</p>}
       {isClickable && hint && (
-        <p className="text-[10px] text-foreground/40 mt-1 truncate">{hint} →</p>
+        <p className="mt-1 truncate text-xs text-muted-foreground">{hint} →</p>
       )}
     </Tag>
   );

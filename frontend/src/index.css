@@ -179,12 +179,12 @@ a[href*="emergent.sh"][href*="utm_source=emergent-badge"] {
     --muted-foreground: 226 16% 44%;
     --accent: 82 82% 70%;
     --accent-foreground: 232 52% 10%;
-    --destructive: 0 66% 57%;
+    --destructive: 0 70% 44%;        /* v2: teks merah di latar terang ≥ 4.5:1 (dulu 0 66% 57% = 4.2) */
     --destructive-foreground: 0 0% 100%;
     --border: 232 24% 90%;
     --input: 232 24% 90%;
     --ring: 258 60% 58%;
-    --success: 154 52% 46%;
+    --success: 154 62% 30%;          /* v2: dulu 154 52% 46% = 2.7:1, teks "Aktif" tak terbaca */
     --success-strong: 154 62% 28%;   /* latar tombol Simpan/Setujui: kontras teks putih ≥ 4.5 */
     /* warna TEKS status (lencana, pesan galat) — tema terang: gelap supaya kontras ≥ 4.5 */
     --success-text: 154 62% 25%;
@@ -192,8 +192,8 @@ a[href*="emergent.sh"][href*="utm_source=emergent-badge"] {
     --info-text: 200 85% 29%;
     --danger-text: 0 70% 40%;
     --destructive-strong: 0 70% 44%;   /* latar tombol Hapus/Tolak: kontras teks putih ≥ 4.5 */
-    --warning: 35 72% 55%;
-    --info: 195 82% 55%;
+    --warning: 30 88% 34%;           /* v2: dulu 35 72% 55% ≈ 2.2:1 */
+    --info: 200 85% 34%;             /* v2: dulu 195 82% 55% ≈ 2.6:1 */
 
     /* Chart palette — lavender + mint + lime accents */
     --chart-1: 258 60% 58%;
@@ -278,12 +278,12 @@ a[href*="emergent.sh"][href*="utm_source=emergent-badge"] {
     --muted-foreground: 220 8% 42%;   /* #666972 muted text */
     --accent: 207 90% 42%;
     --accent-foreground: 0 0% 100%;
-    --destructive: 358 70% 50%;       /* #CC3A3A */
+    --destructive: 358 70% 44%;       /* v2: kontras ≥ 4.5 (dulu #CC3A3A) */
     --destructive-foreground: 0 0% 100%;
     --border: 220 14% 83%;            /* #CCCEDB hairline */
     --input: 220 14% 83%;
     --ring: 207 90% 42%;
-    --success: 140 62% 36%;           /* #23944A */
+    --success: 140 62% 30%;           /* v2: kontras ≥ 4.5 (dulu #23944A = 3.9) */
     --success-strong: 140 62% 28%;   /* latar tombol Simpan/Setujui: kontras teks putih ≥ 4.5 */
     /* warna TEKS status (lencana, pesan galat) — tema klasik */
     --success-text: 140 62% 25%;
@@ -291,8 +291,8 @@ a[href*="emergent.sh"][href*="utm_source=emergent-badge"] {
     --info-text: 207 90% 33%;
     --danger-text: 358 70% 40%;
     --destructive-strong: 358 70% 44%;   /* latar tombol Hapus/Tolak: kontras teks putih ≥ 4.5 */
-    --warning: 38 92% 46%;            /* #E39A0C */
-    --info: 207 90% 42%;
+    --warning: 32 90% 34%;            /* v2: kontras ≥ 4.5 (dulu #E39A0C = 2.4) */
+    --info: 207 90% 36%;              /* v2: kontras ≥ 4.5 */
 
     /* Chart palette — classic VS accents */
     --chart-1: 207 90% 42%;           /* blue */
@@ -1842,24 +1842,22 @@ html.light :is([class~="bg-slate-800"], [class~="bg-slate-900"], [class~="bg-sla
 
 
 /* ╔══════════════════════════════════════════════════════════════════════════╗
-   ║  PANDUAN_UI G7 — SATU FORMAT TABEL (2026-11-04)                          ║
-   ║  Audit layar Keuangan: 12 format tabel di 12 layar (judul 10–12 px,      ║
-   ║  kadang kapital kadang tidak; sel 12–14 px; baris 29–84 px) dan angka    ║
-   ║  berhuruf mesin ketik. Berlaku per portal lewat main[data-portal]; portal ║
-   ║  lain ditambahkan ke daftar setelah diaudit (docs/design/CARA_AUDIT_UI). ║
+   ║  PANDUAN_UI G7 — SATU FORMAT TABEL (2026-11-04; v2 8 Nov 2026)           ║
+   ║  Dulu hanya Keuangan; Standar UI/UX v2 memberlakukannya di SEMUA portal. ║
+   ║  Judul kolom huruf biasa (bukan KAPITAL), 12 px; sel 14 px; angka rata.  ║
    ╚══════════════════════════════════════════════════════════════════════════╝ */
-html main:is([data-portal="finance"]) table > thead > tr > th {
-  font-size: 11px;
+html main[data-portal] table > thead > tr > th {
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: normal;
+  text-transform: none;
   color: hsl(var(--muted-foreground));
   padding: 8px 12px;
   white-space: nowrap;
 }
-html main:is([data-portal="finance"]) table > tbody > tr > td,
-html main:is([data-portal="finance"]) table > tfoot > tr > td {
-  font-size: 13px;
+html main[data-portal] table > tbody > tr > td,
+html main[data-portal] table > tfoot > tr > td {
+  font-size: 14px;
   padding: 10px 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -1869,12 +1867,12 @@ html main:is([data-portal="finance"]) table > tfoot > tr > td {
 
 /* 2026-11-04 (galeri: SEL-TERLIPAT) — uang/angka (kolom rata kanan) dan tanggal/nomor dokumen tidak dipatah
    ke 2 baris; kolom teks panjang (pemasok, keterangan) tetap boleh membungkus. */
-html main:is([data-portal="finance"]) table > tbody > tr > td:is(.text-right, .tabular-nums, .whitespace-nowrap),
-html main:is([data-portal="finance"]) table > tfoot > tr > td.text-right {
+html main[data-portal] table > tbody > tr > td:is(.text-right, .tabular-nums, .whitespace-nowrap),
+html main[data-portal] table > tfoot > tr > td.text-right {
   white-space: nowrap;
 }
-html main:is([data-portal="finance"]) table :is(td, th).font-mono,
-html main:is([data-portal="finance"]) table :is(td, th) .font-mono {
+html main[data-portal] table :is(td, th).font-mono,
+html main[data-portal] table :is(td, th) .font-mono {
   font-family: inherit;
   font-variant-numeric: tabular-nums;
 }

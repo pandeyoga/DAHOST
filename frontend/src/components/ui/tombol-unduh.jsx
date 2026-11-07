@@ -7,6 +7,9 @@
  *
  * Nilai angka tetap angka di Excel (bisa dijumlah); tanggal sebaiknya dikirim sudah berupa teks Indonesia.
  * Tanpa baris → tombol nonaktif dengan keterangan.
+ *
+ * Tabel berhalaman (server): berikan `ambilSemua={async () => semuaBaris}` agar yang diunduh SEMUA baris
+ * hasil saringan, bukan hanya halaman yang tampil. `baris` tetap dipakai untuk menentukan aktif/nonaktif.
  */
 import { Download, FileSpreadsheet, FileText } from 'lucide-react';
 import { toast } from 'sonner';
@@ -52,12 +55,16 @@ export function unduhCsv({ namaBerkas, kolom, baris }) {
   URL.revokeObjectURL(url);
 }
 
-export default function TombolUnduh({ namaBerkas, kolom, baris, namaLembar, label = 'Unduh', testId = 'tombol-unduh' }) {
+export default function TombolUnduh({
+  namaBerkas, kolom, baris, namaLembar, label = 'Unduh', testId = 'tombol-unduh', ambilSemua,
+}) {
   const kosong = !baris || baris.length === 0;
   const jalan = async (jenis) => {
     try {
-      if (jenis === 'excel') await unduhExcel({ namaBerkas, kolom, baris, namaLembar });
-      else unduhCsv({ namaBerkas, kolom, baris });
+      const data = ambilSemua ? await ambilSemua() : baris;
+      if (!data || data.length === 0) { toast.info('Tidak ada data untuk diunduh.'); return; }
+      if (jenis === 'excel') await unduhExcel({ namaBerkas, kolom, baris: data, namaLembar });
+      else unduhCsv({ namaBerkas, kolom, baris: data });
     } catch (e) {
       toast.error('Gagal membuat berkas unduhan.');
     }

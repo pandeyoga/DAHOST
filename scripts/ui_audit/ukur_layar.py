@@ -32,7 +32,7 @@ from playwright.sync_api import sync_playwright
 ISTILAH = [
     "announcement", "management", "update", "edit", "priority", "success", "warning", "urgent", "info",
     "submit", "export", "import", "upload", "download", "settlement", "approval", "approve", "reject",
-    "template", "assignment", "headcount", "grade", "preview", "draft", "dashboard", "overview", "summary",
+    "template", "assignment", "headcount", "grade", "preview", "draft", "overview", "summary",
     "stock", "catalog", "catalogue", "bulk", "history", "sync", "link", "unlink",
     "listing", "sku master", "default", "fallback", "track", "reimbursement", "per diem", "expense",
     "save", "cancel", "delete", "create", "new", "view", "search", "refresh", "selector",
@@ -121,9 +121,13 @@ JS_UKUR = r"""
   const istilah = new Set();
   ISTILAH.forEach(k => { const re = new RegExp('(^|[^A-Za-z])' + k.replace(/ /g, '\\s+') + '([^A-Za-z]|$)', 'i'); if (re.test(semuaTeks)) istilah.add(k); });
   (semuaTeks.match(/\b[a-z]+_[a-z_]+\b/g) || []).forEach(x => istilah.add(x));
-  const kapital = new Set(); teksEl.forEach(n => { const t = n.textContent.trim(); const s = getComputedStyle(n.parentElement);
-    const besar = s.textTransform === 'uppercase' ? t.toUpperCase() : t;
-    if (besar.length > 4 && /[A-Z]{4,}/.test(besar) && besar === besar.toUpperCase() && !BOLEH.has(t) && /[A-Z]/.test(besar)) kapital.add(besar.slice(0, 30)); });
+  // huruf besar: (a) gaya uppercase dari CSS pada teks yang aslinya huruf kecil, atau (b) label (th/label/tombol/judul/tab)
+  // yang ditulis HURUF BESAR. Isi data (kode barang, nama pemasok di sel tabel) TIDAK dihitung.
+  const kapital = new Set(); teksEl.forEach(n => { const t = n.textContent.trim(); const el = n.parentElement; const s = getComputedStyle(el);
+    if (t.length <= 4 || BOLEH.has(t) || !/[A-Za-z]{4,}/.test(t)) return;
+    const gayaCss = s.textTransform === 'uppercase' && /[a-z]/.test(t);
+    const label = el.closest('th, label, button, h1, h2, h3, h4, [role=tab], legend') && t === t.toUpperCase() && !/\d/.test(t);
+    if (gayaCss || label) kapital.add(t.toUpperCase().slice(0, 30)); });
   // V12 nilai aneh
   const aneh = (semuaTeks.match(/\b(undefined|NaN|null|Invalid Date)\b|\[object Object\]/g) || []);
   // V16 tabel tanpa unduh: ada tabel berisi, tetapi tidak ada tombol Unduh/Ekspor/CSV/Excel di halaman

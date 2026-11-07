@@ -37,12 +37,12 @@
  *   toolbar          — extra toolbar actions (kanan, sebelum Export)
  */
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import {
   Search, X, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight,
   SlidersHorizontal, Download, Rows3, Rows2, Rows4, Check, Inbox,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { todayWIB } from '@/lib/waktu';
 import { ResponsiveTableWrapper } from '@/components/ui/responsive-table-wrapper';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 
@@ -55,23 +55,8 @@ function useDebouncedValue(value, delay = 250) {
   return debounced;
 }
 
-// Download helper — CSV fallback bila exportFn tidak disuplai
-function downloadCSV(filename, columns, rows) {
-  const header = columns.filter(c => !c.hidden).map(c => `"${c.label.replace(/"/g, '""')}"`).join(',');
-  const body = rows.map(r => columns.filter(c => !c.hidden).map(c => {
-    const v = c.accessor ? c.accessor(r) : r[c.key];
-    const s = (v === null || v === undefined) ? '' : String(v);
-    return `"${s.replace(/"/g, '""').replace(/\n/g, ' ')}"`;
-  }).join(',')).join('\n');
-  const blob = new Blob([`\uFEFF${header}\n${body}`], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename; a.click();
-  URL.revokeObjectURL(url);
-}
-
 const DENSITY = {
-  compact:   { cell: 'px-2.5 py-1.5 text-[11px]', height: 'h-8' },
+  compact:   { cell: 'px-2.5 py-1.5 text-xs',    height: 'h-8' },
   default:   { cell: 'px-3 py-2 text-xs',         height: 'h-10' },
   spacious:  { cell: 'px-4 py-3 text-sm',         height: 'h-12' },
 };
@@ -242,12 +227,7 @@ export function DataTable({
 
   // ── Export ──────────────────────────────────────────────────────────────
   const handleExport = async () => {
-    if (exportFn) {
-      await exportFn(filtered);
-    } else {
-      const name = exportFilename || `${tableId}-${todayWIB()}.csv`;
-      downloadCSV(name, visibleColumns, filtered);
-    }
+    if (exportFn) await exportFn(filtered);
   };
 
   // ── Reset filters ───────────────────────────────────────────────────────
@@ -301,7 +281,7 @@ export function DataTable({
         {hasActiveFilter && (
           <button
             onClick={resetAll}
-            className="h-9 px-2.5 rounded-lg border border-[var(--glass-border)] text-[11px] text-foreground/70 hover:text-foreground hover:bg-[var(--glass-bg-hover)] transition-colors"
+            className="h-9 px-2.5 rounded-lg border border-[var(--glass-border)] text-xs text-muted-foreground hover:text-foreground hover:bg-[var(--glass-bg-hover)] transition-colors"
             data-testid={`dtv2-${tableId}-reset`}
           >
             Reset
@@ -325,7 +305,7 @@ export function DataTable({
           </button>
           {colMenuOpen && (
             <div className="absolute top-full right-0 mt-1.5 w-[180px] rounded-lg border border-[var(--glass-border)] bg-[var(--popover-surface)] backdrop-blur-[var(--glass-blur-strong)] shadow-[var(--shadow-soft)] z-30 p-1.5">
-              <p className="px-2 py-1 text-[10px] uppercase tracking-wider text-foreground/50 font-semibold">Kolom</p>
+              <p className="px-2 py-1 text-xs font-semibold text-muted-foreground">Kolom</p>
               {columns.map(c => {
                 const visible = !hiddenCols.has(c.key);
                 return (
@@ -371,8 +351,8 @@ export function DataTable({
           ))}
         </div>
 
-        {/* Export */}
-        {showExport && (
+        {/* Export — Standar UI/UX v2: Excel atau CSV dari kolom yang tampil & baris yang tersaring */}
+        {showExport && (exportFn ? (
           <button
             onClick={handleExport}
             disabled={filtered.length === 0}
@@ -382,7 +362,20 @@ export function DataTable({
             <Download className="w-3.5 h-3.5" />
             Unduh
           </button>
-        )}
+        ) : (
+          <TombolUnduh
+            namaBerkas={(exportFilename || tableId).replace(/\.csv$/i, '')}
+            baris={filtered}
+            kolom={visibleColumns.filter((c) => c.label).map((c) => ({
+              label: c.label,
+              nilai: (r) => {
+                const v = c.accessor ? c.accessor(r) : r[c.key];
+                return v !== null && typeof v === 'object' ? '' : v;
+              },
+            }))}
+            testId={`dtv2-${tableId}-export`}
+          />
+        ))}
       </div>
 
       {/* ── Bulk action bar ───────────────────────────────────────── */}
@@ -391,7 +384,7 @@ export function DataTable({
           <span className="text-xs font-medium text-[hsl(var(--primary))]">{selected.size} baris dipilih</span>
           <div className="flex items-center gap-2">
             {bulkActions && bulkActions(selectedRows, clearSelection)}
-            <button onClick={clearSelection} className="text-[11px] text-foreground/60 hover:text-foreground">Batal</button>
+            <button onClick={clearSelection} className="text-xs text-muted-foreground hover:text-foreground">Batal</button>
           </div>
         </div>
       )}
@@ -416,7 +409,7 @@ export function DataTable({
                 <th
                   key={c.key}
                   className={cn(
-                    cellClass, 'text-left font-semibold uppercase tracking-wider text-[10px] text-foreground/50',
+                    cellClass, 'text-left text-xs font-semibold text-muted-foreground',
                     c.sortable && 'cursor-pointer select-none hover:text-foreground/80',
                     c.align === 'right' && 'text-right',
                     c.align === 'center' && 'text-center',
@@ -438,7 +431,7 @@ export function DataTable({
                   </span>
                 </th>
               ))}
-              {rowActions && <th className={cn(cellClass, 'text-right w-24 font-semibold uppercase tracking-wider text-[10px] text-foreground/50')}>Aksi</th>}
+              {rowActions && <th className={cn(cellClass, 'text-right w-24 text-xs font-semibold text-muted-foreground')}>Aksi</th>}
             </tr>
           </thead>
           <tbody>
@@ -459,12 +452,12 @@ export function DataTable({
                 <td colSpan={visibleColumns.length + (selectable ? 1 : 0) + (rowActions ? 1 : 0)} className="py-16 text-center">
                   <EmptyIcon className="w-10 h-10 mx-auto text-foreground/20 mb-2" strokeWidth={1.5} />
                   <p className="text-xs font-medium text-foreground/70">{emptyTitle}</p>
-                  <p className="text-[11px] text-foreground/40 mt-0.5">{emptyDescription}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{emptyDescription}</p>
                   {emptyAction && (
                     <div className="mt-4 flex items-center justify-center gap-2">{emptyAction}</div>
                   )}
                   {emptyHelp && (
-                    <p className="text-[10px] text-foreground/35 mt-2 max-w-md mx-auto leading-relaxed">{emptyHelp}</p>
+                    <p className="text-xs text-muted-foreground mt-2 max-w-md mx-auto leading-relaxed">{emptyHelp}</p>
                   )}
                 </td>
               </tr>
@@ -517,7 +510,7 @@ export function DataTable({
 
       {/* ── Pagination footer ───────────────────────────────────── */}
       {!loading && total > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-t border-[var(--glass-border)] bg-[var(--glass-bg)] text-[11px] text-foreground/60">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-t border-[var(--glass-border)] bg-[var(--glass-bg)] text-xs text-muted-foreground">
           <div className="flex items-center gap-2">
             <span>
               Menampilkan <b className="text-foreground/80">{((safePage - 1) * pageSize) + 1}–{Math.min(safePage * pageSize, total)}</b> dari <b className="text-foreground/80">{total}</b>
@@ -528,7 +521,7 @@ export function DataTable({
               <SmartNativeSelect
                 value={String(pageSize)}
                 onChange={(e) => setPageSize(Number(e.target.value))}
-                className="w-20 h-7 px-2 py-0.5 text-[11px]"
+                className="w-20 h-7 px-2 py-0.5 text-xs"
                 searchable={false}
                 aria-label="Jumlah per halaman"
               >
