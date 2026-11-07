@@ -1,43 +1,69 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import SmartNativeSelect from '@/components/ui/smart-native-select';
+/**
+ * Dashboard Gudang — ringkasan stok, penerimaan terbuka, barang di bawah ambang, dan isi rak.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, StatTile berketerangan, daftar = tabel + unduh, warna token.
+ *
+ * Verifikasi angka (keluhan owner: kartu dashboard menyesatkan) — 8 Nov 2026 terhadap DB uji:
+ *  • "Total SKU" dulu = jumlah SEMUA baris saldo stok (termasuk baris minus/nol) dari /material-stock/summary
+ *    → tampil "1" padahal satu-satunya baris berisi −1 (tidak ada stok sama sekali). Kini "Baris stok terisi"
+ *    = `total_items` /api/wms/legacy/dashboard-kpi (baris barang × lokasi dengan qty > 0) → 0.
+ *  • "Lokasi Aktif" dulu mencampur jumlah zona WMS dengan lokasi berstok. Kini "Lokasi berisi stok"
+ *    = `total_locations` dari endpoint yang sama (lokasi yang punya qty > 0).
+ *  • "Stok Kritis 86" dulu menjumlah /materials?low_stock=true (43) + /materials/reorder-alerts (43) —
+ *    keduanya daftar 43 barang YANG SAMA, jadi terhitung dua kali dan daftar berisi pasangan LOW/REORDER
+ *    kembar. Kini digabung per barang (unik) → 43 "Di bawah ambang stok".
+ *  • Kartu antrean WMS (masuk/keluar) & isi rak hanya tampil bila Struktur Gudang punya gedung.
+ */
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { AlertTriangle, Package, MapPin, TrendingDown, RefreshCw, ArrowRight, Thermometer, Building2, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
+import { AlertTriangle, ArrowRight, RefreshCw } from 'lucide-react';
 import { toast } from '../ui/sonner';
+import { Button } from '@/components/ui/button';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { GlassCard } from '@/components/ui/glass';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
+const angka = (v) => (v === null || v === undefined || v === '' ? '—' : Number(v).toLocaleString('id-ID', { maximumFractionDigits: 2 }));
+const JENIS_BARANG = { fabric: 'Kain', yarn: 'Benang', accessory: 'Aksesoris', packaging: 'Kemasan', interlining: 'Kain keras', fg: 'Produk jadi' };
+const BARIS_RINGKAS = 10;
 
-const KPI = ({ label, value, sub, icon: Icon, color }) => (
-  <div className="bg-white dark:bg-[var(--card-surface)] border border-border rounded-xl p-4 flex items-start gap-4 shadow-sm">
-    <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${color}`}>
-      <Icon size={18} className="text-foreground" />
-    </div>
-    <div>
-      <p className="text-2xl font-bold text-foreground dark:text-foreground">{value}</p>
-      <p className="text-xs font-medium text-muted-foreground/60 dark:text-foreground/75 mt-0.5">{label}</p>
-      {sub && <p className="text-xs text-[hsl(var(--warning))] mt-0.5">{sub}</p>}
-    </div>
-  </div>
-);
+function bukaMenu(hash) {
+  if (window.location.hash === `#${hash}`) window.location.hash = '';
+  window.location.hash = `#${hash}`;
+}
 
-const ZONE_COLORS = [
-  'bg-[hsl(var(--success))]', 'bg-[hsl(var(--success))]', 'bg-[hsl(var(--primary))]', 'bg-[hsl(var(--primary))]',
-  'bg-[hsl(var(--primary))]', 'bg-[hsl(var(--primary))]', 'bg-[hsl(var(--destructive))]', 'bg-[hsl(var(--warning))]',
-];
+function nadaIsi(pct) {
+  if (pct >= 85) return { tone: 'danger', bar: 'bg-[hsl(var(--destructive))]', label: 'Hampir penuh' };
+  if (pct >= 55) return { tone: 'warning', bar: 'bg-[hsl(var(--warning))]', label: 'Sedang' };
+  return { tone: 'success', bar: 'bg-[hsl(var(--success))]', label: 'Longgar' };
+}
 
-function utilColor(pct) {
-  if (pct >= 85) return 'bg-[hsl(var(--destructive)/0.8)] border-[hsl(var(--destructive)/0.35)]';
-  if (pct >= 55) return 'bg-[hsl(var(--warning)/0.8)] border-[hsl(var(--warning)/0.35)]';
-  return 'bg-[hsl(var(--success)/0.8)] border-[hsl(var(--success)/0.35)]';
+function Bagian({ judul, keterangan, alat, children, testId }) {
+  return (
+    <GlassCard className="space-y-3 p-4" data-testid={testId}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-base font-semibold text-foreground">{judul}</p>
+          {keterangan && <p className="text-sm text-muted-foreground">{keterangan}</p>}
+        </div>
+        {alat && <div className="flex flex-wrap items-center gap-2">{alat}</div>}
+      </div>
+      {children}
+    </GlassCard>
+  );
 }
 
 export default function WarehouseDashboard({ token }) {
-  const [kpi, setKpi] = useState({ total_items: 0, total_locations: 0, pending_gr: 0, pending_putaway: 0 });
+  const [kpi, setKpi] = useState(null);
   const [lowStock, setLowStock] = useState([]);
   const [reorderAlerts, setReorderAlerts] = useState([]);
-  const [stockSummary, setStockSummary] = useState(null);
   const [stockByLoc, setStockByLoc] = useState([]);
   const [loading, setLoading] = useState(true);
-  // ── WMS multi-warehouse extension ──────────────────────────────────────────
+  // ── WMS multi-gedung ───────────────────────────────────────────────────────
   const [wmsBuildings, setWmsBuildings] = useState([]);
   const [selectedBldg, setSelectedBldg] = useState('');
   const [wmsPending, setWmsPending] = useState({ pending_inbound: 0, pending_outbound_rm: 0, pending_outbound_fg: 0, total_pending: 0 });
@@ -57,7 +83,7 @@ export default function WarehouseDashboard({ token }) {
       setWmsPending(pRes || {});
       setOccupancyAlerts(aRes || { critical: [], warning: [], total_alerts: 0 });
 
-      // Heatmap kanonik (SSOT wh_*): utilisasi bin per zona dari /api/wms/map/{building}
+      // Isi rak kanonik (SSOT wh_*): utilisasi bin per zona dari /api/wms/map/{building}
       const targets = selectedBldg ? buildings.filter(b => b.id === selectedBldg) : buildings;
       const maps = await Promise.all(
         targets.map(b =>
@@ -72,7 +98,8 @@ export default function WarehouseDashboard({ token }) {
         for (const z of m.zones) {
           tiles.push({
             location_id: z.id,
-            name: `${m.code || m.name || ''}·${z.code || z.name || ''}`,
+            gedung: m.name || m.code || '',
+            name: `${m.code || m.name || ''} · ${z.code || z.name || ''}`,
             total_positions: z.total_positions || 0,
             occupied: z.occupied_positions || 0,
             pct: z.occupancy_pct || 0,
@@ -81,23 +108,20 @@ export default function WarehouseDashboard({ token }) {
       }
       tiles.sort((a, b) => b.pct - a.pct);
       setStockByLoc(tiles);
-    } catch { /* silent */ }
+    } catch { /* senyap: bagian WMS opsional */ }
   }, [hdrs, selectedBldg]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [kpiRes, lowRes, reorderRes, sumRes] = await Promise.allSettled([
+      const [kpiRes, lowRes, reorderRes] = await Promise.allSettled([
         axios.get(`${API}/api/wms/legacy/dashboard-kpi`, { headers: hdrs }),
         axios.get(`${API}/api/rahaza/materials?low_stock=true`, { headers: hdrs }),
         axios.get(`${API}/api/rahaza/materials/reorder-alerts`, { headers: hdrs }),
-        axios.get(`${API}/api/rahaza/material-stock/summary`, { headers: hdrs }),
       ]);
-      if (kpiRes.status === 'fulfilled') setKpi(kpiRes.value.data || {});
-      if (lowRes.status === 'fulfilled') setLowStock(lowRes.value.data || []);
-      if (reorderRes.status === 'fulfilled') setReorderAlerts(reorderRes.value.data || []);
-      if (sumRes.status === 'fulfilled') setStockSummary(sumRes.value.data || null);
-      // Heatmap stok/lokasi dibangun di loadWMS() dari sumber kanonik wh_*.
+      setKpi(kpiRes.status === 'fulfilled' ? (kpiRes.value.data || {}) : null);
+      if (lowRes.status === 'fulfilled') setLowStock(Array.isArray(lowRes.value.data) ? lowRes.value.data : []);
+      if (reorderRes.status === 'fulfilled') setReorderAlerts(Array.isArray(reorderRes.value.data) ? reorderRes.value.data : []);
     } catch (err) {
       toast.error('Gagal memuat data dashboard');
     } finally {
@@ -108,196 +132,174 @@ export default function WarehouseDashboard({ token }) {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadWMS(); }, [loadWMS]);
 
-  const criticalCount = lowStock.length + reorderAlerts.length;
-  // Total SKU kanonik: jumlah baris stok ber-SKU dari SSOT rahaza_material_stock (bukan legacy warehouse_stock kosong).
-  const stockedSkuCount = stockSummary?.by_category
-    ? Object.values(stockSummary.by_category).reduce((s, c) => s + (c?.row_count || 0), 0)
-    : null;
+  // Gabungan unik per barang: dua endpoint mengembalikan barang yang sama (dulu dijumlah → angka ganda).
+  const kritis = useMemo(() => {
+    const peta = new Map();
+    for (const m of [...lowStock, ...reorderAlerts]) {
+      const k = m.id || m.code;
+      if (!k || peta.has(k)) continue;
+      const min = Number(m.alert_at ?? m.min_stock_qty ?? m.min_stock ?? 0);
+      const qty = Number(m.current_qty || 0);
+      peta.set(k, { ...m, _min: min, _kurang: m.shortage !== undefined ? Number(m.shortage) : Math.max(0, min - qty) });
+    }
+    return [...peta.values()].sort((a, b) => b._kurang - a._kurang);
+  }, [lowStock, reorderAlerts]);
+
+  const adaGedung = wmsBuildings.length > 0;
+  const namaGedung = selectedBldg ? wmsBuildings.find(b => b.id === selectedBldg)?.name : '';
+  const rakAlert = [...(occupancyAlerts.critical || []), ...(occupancyAlerts.warning || [])];
+
+  const kolomKritis = [
+    { kunci: 'barang', label: 'Barang', hp: 'judul', isi: (m) => (
+      <div className="min-w-0 md:max-w-[24rem]">
+        <p className="truncate font-medium text-foreground" title={m.name}>{m.name}</p>
+        <p className="truncate text-xs text-muted-foreground">{m.code}</p>
+      </div>) },
+    { kunci: 'jenis', label: 'Jenis', isi: (m) => JENIS_BARANG[m.type] || m.category_name || '—' },
+    { kunci: 'stok', label: 'Stok', rata: 'kanan', isi: (m) => <span className="tabular-nums">{angka(m.current_qty ?? 0)} {m.unit}</span> },
+    { kunci: 'min', label: 'Ambang', rata: 'kanan', isi: (m) => <span className="tabular-nums">{m._min ? `${angka(m._min)} ${m.unit}` : '—'}</span> },
+    { kunci: 'kurang', label: 'Kurang', rata: 'kanan', isi: (m) => (m._kurang > 0
+      ? <span className="tabular-nums font-medium text-[hsl(var(--danger-text))]">{angka(m._kurang)} {m.unit}</span>
+      : <span className="text-muted-foreground">—</span>) },
+  ];
+
+  const kolomRak = [
+    { kunci: 'zona', label: 'Gedung · zona', hp: 'judul', isi: (z) => <span className="font-medium">{z.name}</span> },
+    { kunci: 'isi', label: 'Bin terisi', rata: 'kanan', isi: (z) => <span className="tabular-nums">{angka(z.occupied)} / {angka(z.total_positions)}</span> },
+    { kunci: 'pct', label: 'Terisi', isi: (z) => {
+      const n = nadaIsi(z.pct || 0);
+      return (
+        <div className="flex items-center gap-2">
+          <div className="h-1.5 w-24 overflow-hidden rounded-full bg-foreground/10" aria-hidden="true">
+            <div className={`h-full rounded-full ${n.bar}`} style={{ width: `${Math.min(100, z.pct || 0)}%` }} />
+          </div>
+          <span className="tabular-nums text-sm">{angka(z.pct || 0)}%</span>
+        </div>);
+    } },
+    { kunci: 'status', label: 'Status', isi: (z) => { const n = nadaIsi(z.pct || 0); return <StatusBadge status={n.tone} label={n.label} tone={n.tone} />; } },
+  ];
+
+  const kolomRakAlert = [
+    { kunci: 'rak', label: 'Rak', hp: 'judul', isi: (r) => (
+      <div className="min-w-0">
+        <p className="font-medium tabular-nums">{r.building_code}-{r.zone_code}-{r.rack_code}</p>
+        {r.rack_name && <p className="truncate text-xs text-muted-foreground">{r.rack_name}</p>}
+      </div>) },
+    { kunci: 'pct', label: 'Terisi', rata: 'kanan', isi: (r) => <span className="tabular-nums">{angka(r.occupancy_pct)}%</span> },
+    { kunci: 'kosong', label: 'Slot kosong', rata: 'kanan', isi: (r) => <span className="tabular-nums">{angka(r.free_slots)}</span> },
+    { kunci: 'status', label: 'Status', isi: (r) => (r.severity === 'critical'
+      ? <StatusBadge status="critical" label="Kritis (≥ 95%)" tone="danger" />
+      : <StatusBadge status="warning" label="Perlu perhatian" tone="warning" />) },
+  ];
 
   return (
-    <div className="space-y-6 p-1" data-testid="warehouse-dashboard">
-      {/* Header with Multi-Warehouse Selector */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-foreground">Dashboard Gudang</h2>
-          <p className="text-sm text-foreground/55 mt-0.5">Ringkasan real-time Portal Gudang</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {wmsBuildings.length > 0 && (
-            <SmartNativeSelect
-              data-testid="warehouse-building-selector"
-              value={selectedBldg}
-              onChange={e => setSelectedBldg(e.target.value)}
-              className="bg-[var(--card-surface)] border border-border rounded-lg px-3 py-1.5 text-xs text-foreground"
-              title="Filter berdasarkan gedung WMS"
-            >
-              <option value="">📦 Semua Gedung</option>
-              {wmsBuildings.map(b => <option key={b.id} value={b.id}>🏢 {b.name}</option>)}
-            </SmartNativeSelect>
+    <PageLayout testId="warehouse-dashboard" title="Dashboard Gudang"
+      subtitle="Ringkasan stok, penerimaan terbuka, barang di bawah ambang stok, dan isi rak."
+      filters={adaGedung ? (
+        <SmartNativeSelect data-testid="warehouse-building-selector" value={selectedBldg}
+          onChange={e => setSelectedBldg(e.target.value)} className="w-full sm:w-56" title="Saring antrean & isi rak per gedung">
+          <option value="">Semua gedung</option>
+          {wmsBuildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </SmartNativeSelect>
+      ) : null}
+      tools={
+        <Button variant="outline" size="icon" onClick={() => { load(); loadWMS(); }} disabled={loading}
+          title="Muat ulang" aria-label="Muat ulang" data-testid="dashboard-refresh-btn">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      }
+      summary={
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="dashboard-kpi">
+            <StatTile label="Baris stok terisi" testId="kpi-baris-stok"
+              value={kpi ? angka(kpi.total_items) : '—'}
+              sub={kpi ? 'Pasangan barang × lokasi yang stoknya lebih dari 0.' : 'Gagal memuat ringkasan stok.'} />
+            <StatTile label="Lokasi berisi stok" testId="kpi-lokasi"
+              value={kpi ? angka(kpi.total_locations) : '—'}
+              sub={kpi ? 'Lokasi yang menyimpan stok lebih dari 0.' : 'Gagal memuat ringkasan stok.'} />
+            <StatTile label="Penerimaan terbuka" testId="kpi-gr"
+              value={kpi ? angka(kpi.pending_gr) : '—'} accent={kpi?.pending_gr > 0 ? 'warning' : 'default'}
+              sub="Penerimaan barang (GR) yang belum selesai." />
+            <StatTile label="Di bawah ambang stok" testId="kpi-kritis"
+              value={angka(kritis.length)} accent={kritis.length > 0 ? 'danger' : 'default'}
+              sub="Barang berambang yang stoknya di bawah stok minimum / titik pesan ulang." />
+          </div>
+          {adaGedung && (
+            <p className="text-sm text-muted-foreground" data-testid="wms-pending-strip">
+              Antrean gudang{namaGedung ? ` ${namaGedung}` : ' (semua gedung)'}:{' '}
+              <span className="font-medium text-foreground tabular-nums">{angka(wmsPending.pending_inbound ?? 0)}</span> menunggu masuk ·{' '}
+              <span className="font-medium text-foreground tabular-nums">{angka(wmsPending.pending_outbound_rm ?? 0)}</span> menunggu keluar bahan ·{' '}
+              <span className="font-medium text-foreground tabular-nums">{angka(wmsPending.pending_outbound_fg ?? 0)}</span> menunggu keluar produk jadi.
+            </p>
           )}
-          <button
-            onClick={() => { load(); loadWMS(); }}
-            className="flex items-center gap-2 text-xs text-foreground/65 hover:text-foreground px-3 py-1.5 bg-[var(--card-surface)] hover:bg-[var(--card-surface-hover)] rounded-lg border border-border transition-colors"
-            data-testid="dashboard-refresh-btn"
-          >
-            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
-            Refresh
-          </button>
+          {occupancyAlerts.total_alerts > 0 && (
+            <Notice tone="danger" icon={AlertTriangle} testId="dashboard-occupancy-alert"
+              title={`${angka(occupancyAlerts.total_alerts)} rak terisi 90% atau lebih${occupancyAlerts.critical_count > 0 ? ` · ${angka(occupancyAlerts.critical_count)} kritis (≥ 95%)` : ''}`}>
+              Pindahkan sebagian isi rak atau siapkan rak baru sebelum penerimaan berikutnya.
+            </Notice>
+          )}
         </div>
-      </div>
-
-      {/* WMS Occupancy Alert Banner */}
-      {occupancyAlerts.total_alerts > 0 && (
-        <div data-testid="dashboard-occupancy-alert" className="bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  rounded-xl p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <AlertTriangle size={16} className="text-[hsl(var(--destructive))] " />
-            <span className="text-sm font-semibold text-[hsl(var(--destructive))] ">
-              Peringatan Kapasitas Rak — {occupancyAlerts.total_alerts} rak ≥ 90% terisi
-            </span>
-            {occupancyAlerts.critical_count > 0 && (
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]  ml-2">
-                ⚠ {occupancyAlerts.critical_count} kritis (≥95%)
-              </span>
-            )}
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-            {[...(occupancyAlerts.critical || []), ...(occupancyAlerts.warning || [])].slice(0, 6).map(r => (
-              <div key={r.rack_id} className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg border ${r.severity === 'critical' ? 'bg-[hsl(var(--destructive)/0.15)]  border-[hsl(var(--destructive)/0.4)]' : 'bg-[hsl(var(--warning)/0.15)]  border-[hsl(var(--warning)/0.35)] '}`}>
-                <div className="min-w-0">
-                  <div className="text-xs tabular-nums font-bold truncate text-foreground">{r.building_code}-{r.zone_code}-{r.rack_code}</div>
-                  <div className="text-[10px] text-foreground/55 truncate">{r.rack_name}</div>
-                </div>
-                <div className="text-right">
-                  <div className={`text-sm font-bold ${r.severity === 'critical' ? 'text-[hsl(var(--destructive))] ' : 'text-[hsl(var(--warning))] '}`}>{r.occupancy_pct}%</div>
-                  <div className="text-[10px] text-foreground/55">{r.free_slots} kosong</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* WMS Pending Movements Strip */}
-      {wmsBuildings.length > 0 && (
-        <div className="bg-[var(--card-surface)] border border-border rounded-xl p-4" data-testid="wms-pending-strip">
-          <div className="flex items-center gap-2 mb-3">
-            <Building2 size={14} className="text-[hsl(var(--primary))]" />
-            <span className="text-sm font-semibold text-foreground">WMS — Pending Movements{selectedBldg ? ` (${wmsBuildings.find(b => b.id === selectedBldg)?.name})` : ' (Semua Gedung)'}</span>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="bg-[hsl(var(--success)/0.15)] border border-[hsl(var(--success)/0.35)]  rounded-lg p-3">
-              <ArrowDownToLine size={14} className="text-[hsl(var(--success))] mb-1" />
-              <div className="text-lg font-bold text-[hsl(var(--success))] ">{wmsPending.pending_inbound ?? 0}</div>
-              <div className="text-[10px] text-foreground/55">Pending Inbound</div>
-            </div>
-            <div className="bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.35)]  rounded-lg p-3">
-              <ArrowUpFromLine size={14} className="text-[hsl(var(--warning))] mb-1" />
-              <div className="text-lg font-bold text-[hsl(var(--warning))] ">{wmsPending.pending_outbound_rm ?? 0}</div>
-              <div className="text-[10px] text-foreground/55">Outbound RM (Issue)</div>
-            </div>
-            <div className="bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.35)]  rounded-lg p-3">
-              <ArrowUpFromLine size={14} className="text-[hsl(var(--warning))] mb-1" />
-              <div className="text-lg font-bold text-[hsl(var(--warning))] ">{wmsPending.pending_outbound_fg ?? 0}</div>
-              <div className="text-[10px] text-foreground/55">Outbound FG (Ship)</div>
-            </div>
-            <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-lg p-3">
-              <Package size={14} className="text-[hsl(var(--primary))] mb-1" />
-              <div className="text-lg font-bold text-[hsl(var(--primary))] ">{wmsPending.total_pending ?? 0}</div>
-              <div className="text-[10px] text-foreground/55">Total Pending</div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KPI label="Total SKU" value={stockedSkuCount ?? kpi.total_items ?? '–'} icon={Package} color="bg-[hsl(var(--primary)/0.8)]" />
-        <KPI label="Lokasi Aktif" value={stockByLoc.length || kpi.total_locations || 0} icon={MapPin} color="bg-[hsl(var(--success)/0.8)]" />
-        <KPI label="GR Pending" value={kpi.pending_gr ?? '–'} icon={RefreshCw} color="bg-[hsl(var(--primary)/0.8)]" />
-        <KPI
-          label="Stok Kritis"
-          value={criticalCount}
-          sub={criticalCount > 0 ? `${criticalCount} material perlu perhatian` : 'Semua aman'}
-          icon={AlertTriangle}
-          color={criticalCount > 0 ? 'bg-[hsl(var(--destructive)/0.8)]' : 'bg-[hsl(var(--success)/0.8)]'}
-        />
-      </div>
-
-      {/* U1 — Low-stock & Reorder Alert Panel */}
-      {criticalCount > 0 && (
-        <div className="bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  rounded-xl p-4" data-testid="low-stock-panel">
-          <div className="flex items-center gap-2 mb-3">
-            <AlertTriangle size={16} className="text-[hsl(var(--destructive))] " />
-            <span className="text-sm font-semibold text-[hsl(var(--destructive))] ">Stok Kritis & Reorder Alert ({criticalCount})</span>
-          </div>
-          <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-            {[...lowStock.map(m => ({ ...m, _type: 'low' })), ...reorderAlerts.map(m => ({ ...m, _type: 'reorder' }))]
-              .slice(0, 12)
-              .map((m, i) => (
-              <div key={`${m._type}-${m.code || m.id || i}`} className="flex items-center justify-between bg-[var(--card-surface)] border border-border rounded-lg px-3 py-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${m._type === 'low' ? 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))] ' : 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))] '}`}>
-                    {m._type === 'low' ? 'LOW' : 'REORDER'}
-                  </span>
-                  <span className="text-xs text-foreground truncate font-medium">{m.code}</span>
-                  <span className="text-xs text-foreground/55 truncate hidden sm:block">{m.name}</span>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-xs tabular-nums text-[hsl(var(--destructive))] ">
-                    {m.current_qty ?? 0} {m.unit}
-                  </span>
-                  <TrendingDown size={13} className="text-[hsl(var(--destructive))] " />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* U6 — Stock Heatmap by Location */}
-      <div className="bg-[var(--card-surface)] border border-border rounded-xl p-4" data-testid="stock-heatmap">
-        <div className="flex items-center gap-2 mb-4">
-          <Thermometer size={16} className="text-[hsl(var(--primary))]" />
-          <span className="text-sm font-semibold text-foreground">Heatmap Stok per Lokasi</span>
-          <span className="ml-auto text-xs text-foreground/45">{stockByLoc.length} zona</span>
-        </div>
-        {stockByLoc.length === 0 ? (
-          <div className="text-center py-8 text-foreground/40 text-sm">Belum ada zona/rak terisi</div>
+      }>
+      <Bagian testId="low-stock-panel" judul={`Di bawah ambang stok (${angka(kritis.length)})`}
+        keterangan={kritis.length > BARIS_RINGKAS
+          ? `${BARIS_RINGKAS} barang dengan kekurangan terbesar. Unduhan berisi semua ${angka(kritis.length)} barang.`
+          : 'Barang yang perlu dibeli atau diisi ulang.'}
+        alat={<>
+          <TombolUnduh namaBerkas="stok-di-bawah-ambang" namaLembar="Di bawah ambang" baris={kritis} testId="low-stock-unduh"
+            kolom={[
+              { label: 'Kode', nilai: (m) => m.code },
+              { label: 'Barang', nilai: (m) => m.name },
+              { label: 'Jenis', nilai: (m) => JENIS_BARANG[m.type] || m.category_name || '' },
+              { label: 'Stok', nilai: (m) => Number(m.current_qty || 0) },
+              { label: 'Ambang', nilai: (m) => m._min || '' },
+              { label: 'Kurang', nilai: (m) => m._kurang || '' },
+              { label: 'Satuan', nilai: (m) => m.unit },
+            ]} />
+          <Button variant="outline" onClick={() => bukaMenu('warehouse-smart')} data-testid="low-stock-lihat-semua">
+            Alert & Reorder<ArrowRight />
+          </Button>
+        </>}>
+        {loading && kritis.length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">Memuat…</p>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            {stockByLoc.map((loc, i) => {
-              const pct = loc.pct || 0;
-              return (
-                <div
-                  key={loc.location_id}
-                  className={`border rounded-xl p-3 transition-all hover:scale-105 cursor-default ${utilColor(pct)}`}
-                  title={`${loc.name}: ${loc.occupied}/${loc.total_positions} bin terisi (${pct}%)`}
-                  data-testid={`heatmap-loc-${i}`}
-                >
-                  <div className="text-xs font-bold text-foreground truncate">{loc.name}</div>
-                  <div className="text-lg font-bold text-foreground mt-1">
-                    {loc.occupied}<span className="text-xs font-normal text-foreground/70">/{loc.total_positions}</span>
-                  </div>
-                  <div className="text-[10px] text-foreground/85">bin terisi · {pct}%</div>
-                  <div className="mt-2 h-1.5 rounded-full bg-foreground/20">
-                    <div className="h-full rounded-full bg-white/70" style={{ width: `${pct}%` }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <TabelData kolom={kolomKritis} baris={kritis.slice(0, BARIS_RINGKAS)} kunci={(m) => m.id || m.code}
+            testId="low-stock-tabel"
+            kosong={<EmptyState title="Tidak ada barang di bawah ambang"
+              description="Hanya barang yang sudah punya stok minimum atau titik pesan ulang yang dipantau." />} />
         )}
-        {/* Legend */}
-        <div className="flex items-center gap-4 mt-3 pt-3 border-t border-border">
-          <span className="text-[10px] font-medium text-foreground dark:text-foreground/75">Utilisasi:</span>
-          {[['bg-[hsl(var(--success)/0.8)]', '< 55%'], ['bg-[hsl(var(--warning)/0.8)]', '55–85%'], ['bg-[hsl(var(--destructive)/0.8)]', '> 85%']].map(([c, l]) => (
-            <div key={l} className="flex items-center gap-1">
-              <div className={`w-2.5 h-2.5 rounded-sm ${c}`} />
-              <span className="text-[10px] font-medium text-foreground dark:text-foreground/80">{l}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
+      </Bagian>
+
+      {rakAlert.length > 0 && (
+        <Bagian testId="rak-hampir-penuh" judul={`Rak hampir penuh (${angka(rakAlert.length)})`}
+          keterangan="Rak dengan isi 90% atau lebih."
+          alat={<TombolUnduh namaBerkas="rak-hampir-penuh" namaLembar="Rak" baris={rakAlert} testId="rak-alert-unduh"
+            kolom={[
+              { label: 'Rak', nilai: (r) => `${r.building_code}-${r.zone_code}-${r.rack_code}` },
+              { label: 'Nama rak', nilai: (r) => r.rack_name || '' },
+              { label: 'Terisi (%)', nilai: (r) => r.occupancy_pct },
+              { label: 'Slot kosong', nilai: (r) => r.free_slots },
+              { label: 'Status', nilai: (r) => (r.severity === 'critical' ? 'Kritis' : 'Perlu perhatian') },
+            ]} />}>
+          <TabelData kolom={kolomRakAlert} baris={rakAlert} kunci={(r) => r.rack_id} testId="rak-alert-tabel" />
+        </Bagian>
+      )}
+
+      <Bagian testId="stock-heatmap" judul="Isi rak per zona"
+        keterangan={adaGedung ? 'Bin terisi dibanding seluruh bin di tiap zona (Struktur Gudang).' : 'Diambil dari Struktur Gudang.'}
+        alat={stockByLoc.length > 0 ? (
+          <TombolUnduh namaBerkas="isi-rak-per-zona" namaLembar="Zona" baris={stockByLoc} testId="heatmap-unduh"
+            kolom={[
+              { label: 'Gedung · zona', nilai: (z) => z.name },
+              { label: 'Bin terisi', nilai: (z) => z.occupied },
+              { label: 'Total bin', nilai: (z) => z.total_positions },
+              { label: 'Terisi (%)', nilai: (z) => z.pct },
+            ]} />
+        ) : null}>
+        <TabelData kolom={kolomRak} baris={stockByLoc} kunci={(z) => z.location_id} testId="heatmap-tabel"
+          kosong={<EmptyState title={adaGedung ? 'Belum ada zona' : 'Belum ada gedung'}
+            description={adaGedung ? 'Tambahkan zona dan rak di Struktur Gudang.' : 'Buat gedung, zona, dan rak di Struktur Gudang agar isi rak bisa dipantau.'}
+            action={<Button variant="outline" onClick={() => bukaMenu('wh-structure')}>Buka Struktur Gudang</Button>} />} />
+      </Bagian>
+    </PageLayout>
   );
 }
