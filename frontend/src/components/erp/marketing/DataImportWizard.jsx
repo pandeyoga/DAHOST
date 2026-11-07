@@ -1342,10 +1342,10 @@ export default function DataImportWizard({ token }) {
             <p className="text-xs text-muted-foreground">
               Berkas rutin dengan susunan kolom yang sama akan memakai pemetaan yang
               pernah Anda konfirmasi (langsung siap, tanpa memetakan ulang).{' '}
-              <button type="button" onClick={loadFormats} data-testid="import-formats-open-step3"
-                className="underline text-[hsl(var(--primary))] hover:opacity-80">
+              <Button type="button" variant="link" size="sm" className="h-auto p-0 text-sm" onClick={loadFormats}
+                data-testid="import-formats-open-step3">
                 Lihat / lupakan pemetaan yang diingat
-              </button>
+              </Button>
             </p>
 
             <div className="flex justify-between">
@@ -1558,13 +1558,11 @@ export default function DataImportWizard({ token }) {
                           tidak ada kolom berkas yang mirip — pilih manual di tabel bawah
                         </span>
                       ) : h.candidates.map((c) => (
-                        <button key={c.column} type="button"
+                        <Button key={c.column} type="button" variant="outline" size="sm"
                           onClick={() => changeMap(c.column, h.name)}
-                          data-testid={`required-pick-${h.name}-${c.column}`}
-                          className="px-1.5 py-0.5 rounded border border-[hsl(var(--primary))]/50
-                            text-xs text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary))]/10">
-                          pakai kolom “{c.column}” ({Math.round((c.score || 0) * 100)}%)
-                        </button>
+                          data-testid={`required-pick-${h.name}-${c.column}`}>
+                          Pakai kolom “{c.column}” ({Math.round((c.score || 0) * 100)}%)
+                        </Button>
                       ))}
                     </div>
                   ))}
@@ -1686,13 +1684,11 @@ export default function DataImportWizard({ token }) {
                         ) : fr.candidates.length ? (
                           <span className="inline-flex flex-wrap gap-1">
                             {fr.candidates.slice(0, 2).map((c) => (
-                              <button key={c.column} type="button"
+                              <Button key={c.column} type="button" variant="outline" size="sm"
                                 onClick={() => changeField(fr.name, c.column)}
-                                data-testid={`fieldpick-${fr.name}-${c.column}`}
-                                className="px-1.5 py-0.5 rounded border border-[hsl(var(--primary))]/50
-                                  text-xs text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary))]/10">
-                                pakai “{c.column}”
-                              </button>
+                                data-testid={`fieldpick-${fr.name}-${c.column}`}>
+                                Pakai “{c.column}”
+                              </Button>
                             ))}
                           </span>
                         ) : (
@@ -1762,13 +1758,11 @@ export default function DataImportWizard({ token }) {
                         {!m.field && (m.candidates || []).length > 0 && (
                           <span className="ml-2 inline-flex flex-wrap gap-1 align-middle">
                             {m.candidates.slice(0, 3).map((c) => (
-                              <button key={c.field} type="button"
+                              <Button key={c.field} type="button" variant="outline" size="sm"
                                 onClick={() => changeMap(m.column, c.field)}
-                                data-testid={`map-suggest-${m.column}-${c.field}`}
-                                className="px-1.5 py-0.5 rounded border border-[hsl(var(--primary))]/50
-                                  text-xs text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary))]/10">
-                                pakai: {c.field_label} ({Math.round((c.score || 0) * 100)}%)
-                              </button>
+                                data-testid={`map-suggest-${m.column}-${c.field}`}>
+                                Pakai: {c.field_label} ({Math.round((c.score || 0) * 100)}%)
+                              </Button>
                             ))}
                           </span>
                         )}

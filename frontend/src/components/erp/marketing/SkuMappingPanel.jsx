@@ -200,13 +200,12 @@ export default function SkuMappingPanel({ sessionId, token, onDone }) {
                           </SelectContent>
                         </Select>
                         {u.suggestion && !picks[u.platform_sku_id] && (
-                          <button type="button"
-                            className="mt-1 text-xs text-primary hover:underline"
+                          <Button type="button" variant="link" size="sm" className="mt-1 h-auto p-0"
                             onClick={() => setPicks(p => ({
                               ...p, [u.platform_sku_id]: u.suggestion.catalog_item_id }))}
                             data-testid={`sku-map-apply-suggestion-${u.platform_sku_id}`}>
-                            pakai usulan: {u.suggestion.name} ({Math.round(u.suggestion.score * 100)}% mirip)
-                          </button>
+                            Pakai usulan: {u.suggestion.name} ({Math.round(u.suggestion.score * 100)}% mirip)
+                          </Button>
                         )}
                       </td>
                     </tr>
