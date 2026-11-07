@@ -1,165 +1,176 @@
 /**
- * DisposalApprovalInbox — List disposal requests untuk Admin/Finance/Manager.
- * Section component (not a dialog) embedded in the Disposal tab.
- * Extracted from AssetManagementPortal.jsx (Phase 2 refactor)
+ * DisposalApprovalInbox — permintaan pelepasan aset (disposal) untuk Admin/Keuangan/Manajer.
+ *
+ * Standar UI/UX v2 (8 Nov 2026):
+ *  • kartu bergaris warna per permintaan → tabel TabelData; klik baris membuka detail popup;
+ *  • pil buatan sendiri → FilterChips; unduh Excel/CSV;
+ *  • Setujui (hijau) → popup form pendek dengan catatan opsional; Tolak (merah) → konfirmasi dengan alasan
+ *    wajib (aturan lama: catatan wajib saat menolak). Tanpa emoji.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { RefreshCw } from 'lucide-react';
+import { Check, RefreshCw, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { apicall, fmtCurrency, fmtDate } from '../utils';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import PageLayout from '../../layout/PageLayout';
+import { EmptyState, Notice } from '../../moduleAtoms';
+import { DISPOSAL_STATUS_CONFIG } from '../constants';
+import { angka, apicall, fmtCurrency, fmtDate } from '../utils';
+import { StatusBadge } from '../components/StatusBadge';
+
+const SARINGAN = [
+  { key: 'pending', label: 'Menunggu' },
+  { key: 'approved', label: 'Disetujui' },
+  { key: 'rejected', label: 'Ditolak' },
+  { key: 'all', label: 'Semua' },
+];
 
 export function DisposalApprovalInbox({ token, userRole, onRefresh }) {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(false);
   const [filterStatus, setFilterStatus] = useState('pending');
-  const [reviewDialog, setReviewDialog] = useState(null); // { req, action: 'approve'|'reject' }
+  const [setujui, setSetujui] = useState(null);   // permintaan yang sedang disetujui (popup form)
   const [notes, setNotes] = useState('');
   const [processing, setProcessing] = useState(false);
-  const canReview = ['admin','superadmin','finance','manager'].includes(userRole);
+  const [detail, setDetail] = useState(null);
+  const canReview = ['admin', 'superadmin', 'finance', 'manager'].includes(userRole);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const data = await apicall('GET', `/api/assets/disposal-requests?status=${filterStatus}`, token);
       if (Array.isArray(data)) setRequests(data);
-    } catch { toast.error('Gagal memuat permintaan disposal'); }
+    } catch { toast.error('Gagal memuat permintaan pelepasan'); }
     finally { setLoading(false); }
   }, [token, filterStatus]);
 
   useEffect(() => { load(); }, [load]);
 
-  const handleReview = async () => {
-    if (!reviewDialog) return;
-    const { req, action } = reviewDialog;
-    if (!notes.trim() && action === 'reject') { toast.error('Catatan wajib diisi saat menolak'); return; }
+  const kirimKeputusan = async (req, action, catatan) => {
     setProcessing(true);
     try {
-      const data = await apicall('PATCH', `/api/assets/disposal-requests/${req.id}/${action}`, token, { notes });
+      const data = await apicall('PATCH', `/api/assets/disposal-requests/${req.id}/${action}`, token, { notes: catatan });
       if (data?.ok !== undefined) {
-        toast.success(action === 'approve' ? '✅ Disposal disetujui & jurnal dibuat' : '❌ Disposal ditolak');
-        setReviewDialog(null); setNotes('');
+        toast.success(action === 'approve' ? 'Pelepasan disetujui dan jurnal dibuat' : 'Pelepasan ditolak');
+        setSetujui(null); setNotes(''); setDetail(null);
         load(); onRefresh?.();
-      } else {
-        toast.error(data?.detail || 'Gagal proses');
+        return true;
       }
-    } catch { toast.error('Gagal proses'); }
+      toast.error(data?.detail || 'Gagal memproses');
+    } catch (e) { toast.error(e.message || 'Gagal memproses'); }
     finally { setProcessing(false); }
+    return false;
   };
 
+  const tolak = async (req) => {
+    const alasan = await confirmDialog({
+      title: 'Tolak pelepasan aset?',
+      body: `${req.asset_name} (${req.asset_number}) tetap tercatat aktif. Tulis alasan agar pemohon tahu.`,
+      confirmLabel: 'Tolak', danger: true,
+      input: { label: 'Alasan penolakan (wajib)', placeholder: 'Alasan penolakan…' },
+    });
+    if (!alasan) return;
+    await kirimKeputusan(req, 'reject', alasan);
+  };
+  const bukaSetujui = (req) => { setNotes(''); setSetujui(req); };
+
+  const tombolKeputusan = (req, ukuran = 'sm') => (canReview && req.status === 'pending' ? (
+    <>
+      <Button size={ukuran} variant="success" onClick={() => bukaSetujui(req)} data-testid={`approve-disposal-${req.id}`}>
+        <Check />Setujui
+      </Button>
+      <Button size={ukuran} variant="destructive" onClick={() => tolak(req)} disabled={processing}
+        data-testid={`reject-disposal-${req.id}`}>
+        <X />Tolak
+      </Button>
+    </>
+  ) : null);
+
+  const labelSaringan = SARINGAN.find((s) => s.key === filterStatus)?.label.toLowerCase();
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2 flex-wrap">
-        <p className="text-sm font-semibold flex-1">Permintaan Disposal Aset</p>
-        {['pending','approved','rejected','all'].map(s => (
-          <button key={s} onClick={() => setFilterStatus(s)}
-            className={`text-xs px-3 py-1 rounded-full border transition-colors ${filterStatus === s ? 'bg-primary text-primary-foreground border-primary' : 'text-muted-foreground hover:text-foreground'}`}>
-            {s === 'pending' ? 'Menunggu' : s === 'approved' ? 'Disetujui' : s === 'rejected' ? 'Ditolak' : 'Semua'}
-          </button>
-        ))}
-        <Button variant="outline" size="sm" onClick={load}><RefreshCw size={14} /></Button>
-      </div>
-
-      {loading ? (
-        <div className="text-center py-8 text-muted-foreground text-sm">Memuat...</div>
-      ) : requests.length === 0 ? (
-        <div className="text-center py-8 text-muted-foreground text-sm">
-          Tidak ada permintaan disposal {filterStatus !== 'all' ? `dengan status "${filterStatus === 'pending' ? 'menunggu' : filterStatus}"` : ''}
-        </div>
+    <PageLayout testId="disposal-requests-tab" title="Pelepasan"
+      subtitle="Permintaan pelepasan aset bernilai tinggi yang perlu persetujuan."
+      filters={<FilterChips options={SARINGAN} value={filterStatus} onChange={setFilterStatus} hideWhenEmpty={false}
+        testId="disposal-filter" ariaLabel="Status permintaan" />}
+      tools={<>
+        <TombolUnduh namaBerkas="permintaan-pelepasan-aset" namaLembar="Pelepasan" baris={requests} testId="disposal-unduh"
+          kolom={[
+            { label: 'Aset', nilai: (r) => r.asset_name },
+            { label: 'No. aset', nilai: (r) => r.asset_number },
+            { label: 'Nilai buku', nilai: (r) => angka(r.nbv || 0) },
+            { label: 'Nilai jual', nilai: (r) => angka(r.disposal_value || 0) },
+            { label: 'Tanggal pelepasan', nilai: (r) => fmtDate(r.disposal_date) },
+            { label: 'Alasan', nilai: (r) => r.reason || '' },
+            { label: 'Diminta oleh', nilai: (r) => r.requested_by_name || '' },
+            { label: 'Tanggal diminta', nilai: (r) => fmtDate(r.requested_at) },
+            { label: 'Status', nilai: (r) => DISPOSAL_STATUS_CONFIG[r.status]?.label || r.status },
+            { label: 'Catatan peninjau', nilai: (r) => r.review_notes || '' },
+          ]} />
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}>
+      {loading && requests.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat permintaan…</p>
       ) : (
-        <div className="space-y-3">
-          {requests.map(req => (
-            <Card key={req.id} className={`border-l-4 ${req.status === 'pending' ? 'border-l-amber-500' : req.status === 'approved' ? 'border-l-emerald-500' : 'border-l-red-500'}`}>
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="font-semibold text-sm truncate">{req.asset_name}</p>
-                      <span className="text-xs text-muted-foreground font-mono">{req.asset_number}</span>
-                      <Badge variant={req.status === 'pending' ? 'outline' : req.status === 'approved' ? 'default' : 'destructive'} className="text-[10px] shrink-0">
-                        {req.status === 'pending' ? 'Menunggu' : req.status === 'approved' ? 'Disetujui' : 'Ditolak'}
-                      </Badge>
-                    </div>
-                    <div className="grid grid-cols-2 gap-x-4 mt-2 text-xs text-muted-foreground">
-                      <span>NBV: <strong className="text-foreground">{fmtCurrency(req.nbv || 0)}</strong></span>
-                      <span>Nilai Jual: <strong className="text-foreground">{fmtCurrency(req.disposal_value || 0)}</strong></span>
-                      <span>Tanggal: {fmtDate(req.disposal_date)}</span>
-                      <span>Diminta: {fmtDate(req.requested_at)}</span>
-                    </div>
-                    <p className="text-xs mt-1.5 text-foreground/80">"{req.reason}"</p>
-                    <p className="text-xs text-muted-foreground mt-1">Oleh: {req.requested_by_name}</p>
-                    {req.review_notes && (
-                      <p className="text-xs mt-1 text-muted-foreground italic">Catatan reviewer: {req.review_notes}</p>
-                    )}
-                  </div>
-                  {canReview && req.status === 'pending' && (
-                    <div className="flex gap-2 shrink-0">
-                      <Button size="sm" variant="outline"
-                        className="text-destructive border-destructive/30 hover:bg-destructive/10"
-                        onClick={() => { setReviewDialog({ req, action: 'reject' }); setNotes(''); }}
-                        data-testid={`reject-disposal-${req.id}`}>
-                        Tolak
-                      </Button>
-                      <Button size="sm"
-                        className="bg-emerald-600 hover:bg-emerald-700 text-foreground"
-                        onClick={() => { setReviewDialog({ req, action: 'approve' }); setNotes(''); }}
-                        data-testid={`approve-disposal-${req.id}`}>
-                        Setujui
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <TabelData baris={requests} onKlikBaris={setDetail} testId="disposal-table"
+          kosong={<EmptyState title="Tidak ada permintaan pelepasan"
+            description={filterStatus !== 'all' ? `Tidak ada permintaan berstatus "${labelSaringan}".`
+              : 'Permintaan muncul di sini saat aset bernilai buku di atas Rp 5 juta diajukan untuk dilepas.'} />}
+          kolom={[
+            { kunci: 'aset', label: 'Aset', hp: 'judul', isi: (r) => (
+              <div className="min-w-0">
+                <p className="font-medium">{r.asset_name}</p>
+                <p className="text-xs tabular-nums text-muted-foreground">{r.asset_number}</p>
+              </div>) },
+            { kunci: 'nbv', label: 'Nilai buku', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtCurrency(r.nbv || 0)}</span> },
+            { kunci: 'jual', label: 'Nilai jual', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtCurrency(r.disposal_value || 0)}</span> },
+            { kunci: 'tgl', label: 'Tanggal pelepasan', isi: (r) => fmtDate(r.disposal_date) },
+            { kunci: 'oleh', label: 'Diminta', isi: (r) => (
+              <span>{r.requested_by_name || '—'}<span className="block text-xs text-muted-foreground">{fmtDate(r.requested_at)}</span></span>) },
+            { kunci: 'alasan', label: 'Alasan', hp: 'keterangan', isi: (r) => (
+              <span className="line-clamp-2 md:max-w-[16rem]" title={r.reason}>{r.reason || '—'}</span>) },
+            { kunci: 'status', label: 'Status', isi: (r) => <StatusBadge status={r.status} configMap={DISPOSAL_STATUS_CONFIG} /> },
+            ...(canReview ? [{ kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+              <div className="flex justify-end gap-2">{tombolKeputusan(r)}</div>) }] : []),
+          ]} />
       )}
 
-      {/* Review Dialog */}
-      {reviewDialog && (
-        <Dialog open={!!reviewDialog} onOpenChange={() => setReviewDialog(null)}>
-          <DialogContent className="max-w-sm">
-            <DialogHeader>
-              <DialogTitle>{reviewDialog.action === 'approve' ? '✅ Setujui Disposal' : '❌ Tolak Disposal'}</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3">
-              <div className="bg-muted/40 rounded-lg p-3 text-xs space-y-1">
-                <p className="font-medium">{reviewDialog.req.asset_name}</p>
-                <p className="text-muted-foreground">NBV: {fmtCurrency(reviewDialog.req.nbv || 0)}</p>
-              </div>
-              {reviewDialog.action === 'approve' && (
-                <div className="bg-amber-100 dark:bg-amber-500/10 border border-amber-300 dark:border-amber-500/20 rounded-lg p-2 text-xs text-amber-700">
-                  ⚠️ Menyetujui akan <strong>langsung melepas aset</strong> dan membuat jurnal Finance.
-                </div>
-              )}
-              <div>
-                <label className="text-xs font-medium text-muted-foreground">
-                  Catatan {reviewDialog.action === 'reject' ? '(wajib)' : '(opsional)'}
-                </label>
-                <textarea
-                  className="w-full border rounded-md px-3 py-2 text-sm mt-1 min-h-[70px] bg-background resize-none"
-                  placeholder={reviewDialog.action === 'approve' ? 'Catatan persetujuan...' : 'Alasan penolakan...'}
-                  value={notes}
-                  onChange={e => setNotes(e.target.value)}
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setReviewDialog(null)}>Batal</Button>
-              <Button
-                onClick={handleReview}
-                disabled={processing}
-                className={reviewDialog.action === 'approve' ? 'bg-emerald-600 hover:bg-emerald-700 text-foreground' : 'bg-destructive hover:bg-destructive/90 text-destructive-foreground'}
-              >
-                {processing ? 'Memproses...' : reviewDialog.action === 'approve' ? 'Ya, Setujui' : 'Ya, Tolak'}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} judul={detail.asset_name} testId="disposal-detail"
+          keterangan={detail.asset_number}
+          status={<StatusBadge status={detail.status} configMap={DISPOSAL_STATUS_CONFIG} />}
+          aksi={tombolKeputusan(detail)}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Nilai buku">{fmtCurrency(detail.nbv || 0)}</BarisDetail>
+            <BarisDetail label="Nilai jual">{fmtCurrency(detail.disposal_value || 0)}</BarisDetail>
+            <BarisDetail label="Tanggal pelepasan">{fmtDate(detail.disposal_date)}</BarisDetail>
+            <BarisDetail label="Alasan">{detail.reason || '—'}</BarisDetail>
+            <BarisDetail label="Diminta">{detail.requested_by_name || '—'} · {fmtDate(detail.requested_at)}</BarisDetail>
+            {detail.review_notes && <BarisDetail label="Catatan peninjau">{detail.review_notes}</BarisDetail>}
+          </dl>
+        </DetailPopup>
       )}
-    </div>
+
+      <FormPopup open={!!setujui} onClose={() => setSetujui(null)} ukuran="pendek" testId="disposal-approve-form"
+        judul="Setujui pelepasan aset" labelSimpan="Setujui" menyimpan={processing}
+        keterangan={setujui ? `${setujui.asset_name} · nilai buku ${fmtCurrency(setujui.nbv || 0)}` : undefined}
+        onSimpan={() => kirimKeputusan(setujui, 'approve', notes)}>
+        <Notice tone="warning" title="Aset langsung dilepas">
+          Menyetujui akan langsung melepas aset ini dan membuat jurnal Keuangan.
+        </Notice>
+        <Isian label="Catatan" petunjuk="Opsional." htmlFor="disposal-approve-notes">
+          <Textarea id="disposal-approve-notes" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)}
+            placeholder="Catatan persetujuan…" />
+        </Isian>
+      </FormPopup>
+    </PageLayout>
   );
 }
