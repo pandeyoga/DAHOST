@@ -133,7 +133,7 @@ export default function RahazaModelsAndBOMModule({ token, user, headers, userRol
       summary={<p className="text-sm text-muted-foreground" data-testid="models-bom-tab-hint">
         {current.hint}
         {V.crossLink && (<>
-          {' '}<Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => onNavigate && onNavigate(V.crossLink.module)}
+          {' '}<Button type="button" variant="link" size="sm" className="h-auto p-0 whitespace-normal text-left" onClick={() => onNavigate && onNavigate(V.crossLink.module)}
             data-testid={`master-produk-crosslink-${variant}`}>{V.crossLink.label} <ArrowUpRight className="w-3.5 h-3.5" /></Button>
         </>)}
       </p>}>
