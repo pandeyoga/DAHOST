@@ -213,16 +213,16 @@ export default function WarehouseDashboard({ token }) {
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="dashboard-kpi">
             <StatTile label="Baris stok terisi" testId="kpi-baris-stok"
               value={kpi ? angka(kpi.total_items) : '—'}
-              sub={kpi ? 'Pasangan barang × lokasi yang stoknya lebih dari 0.' : 'Gagal memuat ringkasan stok.'} />
+              sub={kpi ? 'Barang × lokasi dengan stok > 0.' : 'Gagal memuat ringkasan stok.'} />
             <StatTile label="Lokasi berisi stok" testId="kpi-lokasi"
               value={kpi ? angka(kpi.total_locations) : '—'}
-              sub={kpi ? 'Lokasi yang menyimpan stok lebih dari 0.' : 'Gagal memuat ringkasan stok.'} />
+              sub={kpi ? 'Lokasi dengan stok > 0.' : 'Gagal memuat ringkasan stok.'} />
             <StatTile label="Penerimaan terbuka" testId="kpi-gr"
               value={kpi ? angka(kpi.pending_gr) : '—'} accent={kpi?.pending_gr > 0 ? 'warning' : 'default'}
-              sub="Penerimaan barang (GR) yang belum selesai." />
+              sub="GR draf / diperiksa / diproses." />
             <StatTile label="Di bawah ambang stok" testId="kpi-kritis"
               value={angka(kritis.length)} accent={kritis.length > 0 ? 'danger' : 'default'}
-              sub="Barang berambang yang stoknya di bawah stok minimum / titik pesan ulang." />
+              sub="Stok di bawah minimum / titik pesan ulang." />
           </div>
           {adaGedung && (
             <p className="text-sm text-muted-foreground" data-testid="wms-pending-strip">

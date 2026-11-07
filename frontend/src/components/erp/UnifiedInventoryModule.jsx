@@ -264,13 +264,13 @@ export default function UnifiedInventoryModule() {
             <X className="h-3.5 w-3.5" />Reset filter
           </Button>
         )}
-      </>}
-      tools={<>
-        <TombolUnduh namaBerkas={titipan ? 'stok-titipan-klien' : 'stok-barang'} namaLembar="Stok" baris={items}
-          ambilSemua={ambilSemua} kolom={kolomUnduh} testId="inv-export" />
-        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="inv-refresh">
-          <RefreshCw className={loading ? 'animate-spin' : ''} />
-        </Button>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <TombolUnduh namaBerkas={titipan ? 'stok-titipan-klien' : 'stok-barang'} namaLembar="Stok" baris={items}
+            ambilSemua={ambilSemua} kolom={kolomUnduh} testId="inv-export" />
+          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="inv-refresh">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
+          </Button>
+        </div>
       </>}
       summary={<>
         {error && <Notice tone="danger" icon={AlertTriangle} title="Gagal memuat data" testId="inv-error">{error}</Notice>}

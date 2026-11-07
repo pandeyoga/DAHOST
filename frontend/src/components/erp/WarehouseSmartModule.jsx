@@ -67,6 +67,8 @@ function KotakCari({ value, onChange, placeholder, testId }) {
   );
 }
 
+// Alat (unduh, muat ulang) ditaruh di akhir `filters` dalam div ml-auto: bila `filters` dan `tools` sama-sama diisi,
+// Toolbar bersama memeras kotak cari di HP 390 px (lihat Permintaan komponen bersama di laporan).
 const Memuat = ({ teks }) => <p className="py-10 text-center text-sm text-muted-foreground">{teks}</p>;
 
 // ─── Tab 1: Alert stok & rak ──────────────────────────────────────────────────
@@ -130,31 +132,31 @@ function AlertsTab() {
     <PageLayout testId="wh-smart-alerts" title="Alert gudang"
       subtitle="Barang di bawah ambang stok dan rak yang hampir penuh."
       filters={<>
-        <FilterChips hideWhenEmpty={false} value={jenis} onChange={setJenis} testId="wh-smart-alert-jenis"
+        <FilterChips className="w-full sm:w-auto" hideWhenEmpty={false} value={jenis} onChange={setJenis} testId="wh-smart-alert-jenis"
           options={[
             { key: '', label: 'Semua', count: alerts.length },
             { key: 'low_stock', label: 'Stok', count: nStok },
             { key: 'rack_occupancy', label: 'Rak', count: nRak },
           ]} />
         <KotakCari value={cari} onChange={setCari} placeholder="Cari barang atau kode" testId="wh-smart-alert-cari" />
-      </>}
-      tools={<>
-        <TombolUnduh namaBerkas="alert-gudang" namaLembar="Alert" baris={baris} testId="wh-smart-alert-unduh"
-          kolom={[
-            { label: 'Barang / rak', nilai: (a) => nama(a) },
-            { label: 'Kode', nilai: (a) => kode(a) },
-            { label: 'Jenis', nilai: (a) => (a.type === 'rack_occupancy' ? 'Rak' : 'Stok') },
-            { label: 'Sekarang', nilai: (a) => (a.type === 'rack_occupancy' ? a.occupancy_pct : a.current_qty) },
-            { label: 'Ambang', nilai: (a) => (a.type === 'rack_occupancy' ? (meta.threshold_pct ?? 90) : (a.alert_at ?? a.reorder_point)) },
-            { label: 'Kurang', nilai: (a) => (a.type === 'low_stock' ? a.shortage : '') },
-            { label: 'Satuan', nilai: (a) => (a.type === 'rack_occupancy' ? '%' : (a.unit || '')) },
-            { label: 'Status', nilai: (a) => (KEPARAHAN[a.severity] || KEPARAHAN.warning).label },
-          ]} />
-        {/* SESI #33 — alert stok tidak jalan buntu: langsung ke Daftar Belanja Mingguan (usul beli + PR). */}
-        <Button variant="outline" onClick={() => bukaMenu('wh-shopping-list')} data-testid="wh-smart-goto-shopping">
-          <ShoppingCart />Belanja mingguan
-        </Button>
-        <TombolMuat onClick={loadAlerts} memuat={loading} testId="wh-smart-alerts-refresh" />
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <TombolUnduh namaBerkas="alert-gudang" namaLembar="Alert" baris={baris} testId="wh-smart-alert-unduh"
+            kolom={[
+              { label: 'Barang / rak', nilai: (a) => nama(a) },
+              { label: 'Kode', nilai: (a) => kode(a) },
+              { label: 'Jenis', nilai: (a) => (a.type === 'rack_occupancy' ? 'Rak' : 'Stok') },
+              { label: 'Sekarang', nilai: (a) => (a.type === 'rack_occupancy' ? a.occupancy_pct : a.current_qty) },
+              { label: 'Ambang', nilai: (a) => (a.type === 'rack_occupancy' ? (meta.threshold_pct ?? 90) : (a.alert_at ?? a.reorder_point)) },
+              { label: 'Kurang', nilai: (a) => (a.type === 'low_stock' ? a.shortage : '') },
+              { label: 'Satuan', nilai: (a) => (a.type === 'rack_occupancy' ? '%' : (a.unit || '')) },
+              { label: 'Status', nilai: (a) => (KEPARAHAN[a.severity] || KEPARAHAN.warning).label },
+            ]} />
+          {/* SESI #33 — alert stok tidak jalan buntu: langsung ke Daftar Belanja Mingguan (usul beli + PR). */}
+          <Button variant="outline" onClick={() => bukaMenu('wh-shopping-list')} data-testid="wh-smart-goto-shopping">
+            <ShoppingCart />Belanja mingguan
+          </Button>
+          <TombolMuat onClick={loadAlerts} memuat={loading} testId="wh-smart-alerts-refresh" />
+        </div>
       </>}
       summary={!loading && belumAmbang ? (
         // W3 — "tidak ada alert" TIDAK sama dengan "stok aman" bila ambangnya belum diisi.
@@ -260,7 +262,7 @@ function SmartReorderTab() {
     <PageLayout testId="wh-smart-reorder" title="Usulan pesan ulang"
       subtitle="Usulan titik pesan ulang dari pemakaian 30 hari terakhir, waktu tunggu, dan stok pengaman."
       filters={<>
-        <FilterChips hideWhenEmpty={false} value={saring} onChange={setSaring} testId="wh-smart-reorder-saring"
+        <FilterChips className="w-full sm:w-auto" hideWhenEmpty={false} value={saring} onChange={setSaring} testId="wh-smart-reorder-saring"
           options={[
             { key: '', label: 'Semua', count: items.length },
             { key: 'perlu', label: 'Perlu diubah', count: hitung(PENYARING.perlu) },
@@ -268,23 +270,23 @@ function SmartReorderTab() {
             { key: 'tanpa', label: 'Belum ada ambang', count: hitung(PENYARING.tanpa) },
           ]} />
         <KotakCari value={cari} onChange={setCari} placeholder="Cari barang atau kode" testId="wh-smart-reorder-cari" />
-      </>}
-      tools={<>
-        <TombolUnduh namaBerkas="usulan-pesan-ulang" namaLembar="Usulan" baris={baris} testId="wh-smart-reorder-unduh"
-          kolom={[
-            { label: 'Barang', nilai: (i) => i.name },
-            { label: 'Kode', nilai: (i) => i.sku },
-            { label: 'Satuan', nilai: (i) => i.unit },
-            { label: 'Stok', nilai: (i) => i.current_qty },
-            { label: 'Titik pesan ulang', nilai: (i) => i.current_reorder_point },
-            { label: 'Usulan', nilai: (i) => i.smart_reorder_point },
-            { label: 'Pakai per hari', nilai: (i) => (i.no_usage_data ? '' : i.avg_daily_consumption) },
-            { label: 'Waktu tunggu (hari)', nilai: (i) => i.lead_time_days },
-            { label: 'Stok pengaman', nilai: (i) => i.safety_stock },
-            { label: 'Status', nilai: (i) => status(i).label },
-            { label: 'Perlu diubah', nilai: (i) => (i.needs_update ? 'Ya' : 'Tidak') },
-          ]} />
-        <TombolMuat onClick={loadData} memuat={loading} testId="wh-smart-reorder-refresh" />
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <TombolUnduh namaBerkas="usulan-pesan-ulang" namaLembar="Usulan" baris={baris} testId="wh-smart-reorder-unduh"
+            kolom={[
+              { label: 'Barang', nilai: (i) => i.name },
+              { label: 'Kode', nilai: (i) => i.sku },
+              { label: 'Satuan', nilai: (i) => i.unit },
+              { label: 'Stok', nilai: (i) => i.current_qty },
+              { label: 'Titik pesan ulang', nilai: (i) => i.current_reorder_point },
+              { label: 'Usulan', nilai: (i) => i.smart_reorder_point },
+              { label: 'Pakai per hari', nilai: (i) => (i.no_usage_data ? '' : i.avg_daily_consumption) },
+              { label: 'Waktu tunggu (hari)', nilai: (i) => i.lead_time_days },
+              { label: 'Stok pengaman', nilai: (i) => i.safety_stock },
+              { label: 'Status', nilai: (i) => status(i).label },
+              { label: 'Perlu diubah', nilai: (i) => (i.needs_update ? 'Ya' : 'Tidak') },
+            ]} />
+          <TombolMuat onClick={loadData} memuat={loading} testId="wh-smart-reorder-refresh" />
+        </div>
       </>}
       summary={!loading && items.length > 0 ? (
         <p className="text-sm text-muted-foreground" data-testid="wh-smart-reorder-ringkas">
@@ -382,14 +384,13 @@ function UndoStockTab() {
   return (
     <PageLayout testId="wh-smart-undo" title="Batalkan penyesuaian"
       subtitle="Penyesuaian stok 7 hari terakhir yang masih bisa dibatalkan atau dipulihkan."
-      filters={
-        <FilterChips hideWhenEmpty={false} value={tampil} onChange={setTampil} testId="wh-smart-undo-tampil"
+      filters={<>
+        <FilterChips className="w-full sm:w-auto" hideWhenEmpty={false} value={tampil} onChange={setTampil} testId="wh-smart-undo-tampil"
           options={[
             { key: 'undoable', label: 'Bisa dibatalkan', count: undoable.length },
             { key: 'soft_deleted', label: 'Sudah dibatalkan', count: terhapus.length },
           ]} />
-      }
-      tools={<>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
         <TombolUnduh namaBerkas={tampil === 'undoable' ? 'penyesuaian-bisa-dibatalkan' : 'penyesuaian-dibatalkan'}
           namaLembar="Penyesuaian" baris={baris} testId="wh-smart-undo-unduh"
           kolom={[
@@ -402,6 +403,7 @@ function UndoStockTab() {
             { label: 'Dibatalkan oleh', nilai: (m) => m.deleted_by || '' },
           ]} />
         <TombolMuat onClick={loadData} memuat={loading} testId="wh-smart-undo-refresh" />
+        </div>
       </>}>
       {loading && undoable.length + terhapus.length === 0 ? <Memuat teks="Memuat penyesuaian…" /> : (
         <TabelData kolom={kolom} baris={baris} kunci={(m) => m.id} testId="wh-smart-undo-tabel"
