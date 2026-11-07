@@ -9,27 +9,42 @@
  * Modul ini menyediakan: CRUD lengkap, kontak/PIC ganda, rekening bank ganda,
  * kategori barang, lead time, daftar harga per SATUAN BELI (dengan konversi
  * otomatis ke satuan dasar), scorecard, dan tarik-data supplier dari dokumen lama.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, penyaring satu baris (dulu cari & dua pilihan
+ * selebar layar, bertumpuk tiga baris), daftar = TabelData (kartu ringkas di HP), aksi baris ≤ 2 + "Lainnya",
+ * form = FormPopup, detail = DetailPopup, tambah harga = FormPopup, konfirmasi = confirmDialog.
+ * Unduh tabel utama tetap lewat Unduh/Impor Data Transfer (keputusan T4 6 Nov: satu pintu ekspor).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Ban, Building2, CheckCircle2, Contact, CreditCard,
-  Eye, Landmark, Pencil, Plus, RefreshCw, Search, Star, Tag, Trash2, Truck,
+  Ban, Building2, CheckCircle2, Contact, Eye, Landmark, MoreHorizontal, Pencil, Plus, RefreshCw,
+  Search, Star, Trash2, Truck,
 } from 'lucide-react';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Button } from '@/components/ui/button';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import PaginationLite from '@/components/ui/pagination-lite';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { materialOptionLabel } from '@/lib/materialFields';
-import Modal from '../Modal';
-import ConfirmDialog from '../ConfirmDialog';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import ImportExportToolbar from '../ImportExportToolbar';
 import { toast } from 'sonner';
 import {
   CATEGORY_LABEL, EP, PAYMENT_TERM_LABEL, apiDelete, apiGet, apiPost, apiPut,
   fmtDate, fmtNum, fmtRp,
 } from './procApi';
-
-// Kotak uang bergaya GlassInput (latar & tinggi sama dengan kolom lain di form ini).
 
 const EMPTY_FORM = {
   name: '', code: '', npwp: '', tax_name: '', tax_type: 'ppn',
@@ -42,34 +57,30 @@ const EMPTY_FORM = {
   rating_manual: '', notes: '', is_active: true,
 };
 
-function GradePill({ grade }) {
-  const map = {
-    'A+': 'bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-400/15 dark:text-emerald-300 dark:border-emerald-400/30',
-    A: 'bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-400/15 dark:text-emerald-300 dark:border-emerald-400/30',
-    B: 'bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-400/15 dark:text-blue-300 dark:border-blue-400/30',
-    C: 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-400/15 dark:text-amber-300 dark:border-amber-400/30',
-    D: 'bg-red-100 text-red-700 border-red-300 dark:bg-red-400/15 dark:text-red-300 dark:border-red-400/30',
-  };
-  return (
-    <span className={`inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full border ${map[grade] || 'bg-muted text-muted-foreground border-border'}`}>
-      {grade || '-'}
-    </span>
-  );
+// Status PO (kode server) → label Indonesia untuk rekap per supplier.
+const PO_STATUS_LABEL = {
+  draft: 'Draf', pending_approval: 'Menunggu persetujuan', approved: 'Disetujui', sent: 'Terkirim',
+  partially_received: 'Diterima sebagian', fully_received: 'Diterima penuh', received: 'Diterima',
+  completed: 'Selesai', closed: 'Ditutup', rejected: 'Ditolak', cancelled: 'Dibatalkan',
+};
+const labelStatusPO = (s) => PO_STATUS_LABEL[s]
+  || String(s || '-').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+
+const GRADE_TONE = { 'A+': 'success', A: 'success', B: 'info', C: 'warning', D: 'danger' };
+function GradeBadge({ grade }) {
+  if (!grade || grade === '-') return <span className="text-sm text-muted-foreground">—</span>;
+  return <StatusBadge status={`grade-${grade}`} label={`Grade ${grade}`} tone={GRADE_TONE[grade] || 'muted'} />;
 }
 
-function ActivePill({ active }) {
-  return active !== false ? (
-    <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-400/15 dark:text-emerald-300 dark:border-emerald-400/30">
-      <CheckCircle2 className="w-3 h-3" /> Aktif
-    </span>
-  ) : (
-    <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-muted text-muted-foreground border-border">
-      <Ban className="w-3 h-3" /> Nonaktif
-    </span>
-  );
+function ActiveBadge({ active }) {
+  return active !== false
+    ? <StatusBadge status="aktif" label="Aktif" tone="success" />
+    : <StatusBadge status="nonaktif" label="Nonaktif" tone="muted" />;
 }
 
-// ── Form supplier ───────────────────────────────────────────────────────────
+const kategoriTeks = (cats) => (cats || []).map((c) => CATEGORY_LABEL[c] || c).join(', ');
+
+// ── Form supplier (popup panjang) ────────────────────────────────────────────
 function SupplierForm({ token, meta, initial, onClose, onSaved }) {
   const isEdit = !!initial?.id;
   const [f, setF] = useState(() => ({ ...EMPTY_FORM, ...(initial || {}) }));
@@ -117,7 +128,7 @@ function SupplierForm({ token, meta, initial, onClose, onSaved }) {
       const out = isEdit
         ? await apiPut(token, EP.supplier(initial.id), payload)
         : await apiPost(token, EP.suppliers(), payload);
-      toast.success(isEdit ? 'Supplier diperbarui' : `Supplier ${out?.code || ''} dibuat`);
+      toast.success(isEdit ? 'Supplier disimpan' : `Supplier ${out?.code || ''} dibuat`);
       onSaved?.(out);
       onClose();
     } catch (e) {
@@ -127,236 +138,169 @@ function SupplierForm({ token, meta, initial, onClose, onSaved }) {
   };
 
   return (
-    <Modal onClose={onClose} title={isEdit ? `Ubah Supplier: ${initial.code}` : 'Tambah Supplier Baru'} size="2xl">
-      <div className="space-y-4">
-        {err && (
-          <div className="p-3 rounded-lg bg-red-50 dark:bg-red-400/10 border border-red-300 dark:border-red-400/30 text-red-700 dark:text-red-300 text-sm"
-               data-testid="supplier-form-error">
-            {err}
-          </div>
-        )}
+    <FormPopup open onClose={onClose} ukuran="panjang" onSimpan={save} menyimpan={saving} galat={err}
+      judul={isEdit ? `Ubah supplier ${initial.code}` : 'Tambah supplier'}
+      keterangan="Data ini dipakai otomatis di PO, penerimaan, dan faktur supplier."
+      labelSimpan={isEdit ? 'Simpan perubahan' : 'Simpan supplier'} testId="supplier-form">
+      <Isian label="Nama supplier" wajib htmlFor="sup-nama">
+        <Input id="sup-nama" value={f.name} onChange={(e) => set('name', e.target.value)}
+          placeholder="PT Benang Jaya Abadi" data-testid="supplier-form-name" />
+      </Isian>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Isian label="NPWP" htmlFor="sup-npwp">
+          <Input id="sup-npwp" value={f.npwp} onChange={(e) => set('npwp', e.target.value)}
+            placeholder="01.234.567.8-901.000" data-testid="supplier-form-npwp" />
+        </Isian>
+        <Isian label="Nama wajib pajak" htmlFor="sup-taxname">
+          <Input id="sup-taxname" value={f.tax_name} onChange={(e) => set('tax_name', e.target.value)}
+            placeholder="Sesuai NPWP" data-testid="supplier-form-taxname" />
+        </Isian>
+        <Isian label="Status pajak">
+          <SmartNativeSelect value={f.tax_type} onChange={(e) => set('tax_type', e.target.value)}
+            className="w-full" data-testid="supplier-form-taxtype">
+            {(meta?.tax_types || [{ value: 'ppn', label: 'PKP (kena PPN)' }, { value: 'non_ppn', label: 'Non-PKP' }])
+              .map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Termin bayar">
+          <SmartNativeSelect value={f.payment_terms} onChange={(e) => set('payment_terms', e.target.value)}
+            className="w-full" data-testid="supplier-form-terms">
+            {(meta?.payment_terms || []).map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Mata uang">
+          <SmartNativeSelect value={f.currency} onChange={(e) => set('currency', e.target.value)}
+            className="w-full" data-testid="supplier-form-currency">
+            {(meta?.currencies || ['IDR']).map((c) => <option key={c} value={c}>{c}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Lead time (hari)" htmlFor="sup-lead">
+          <Input id="sup-lead" type="number" min="0" value={f.lead_time_days}
+            onChange={(e) => set('lead_time_days', e.target.value)} data-testid="supplier-form-leadtime" />
+        </Isian>
+        <Isian label="Minimum order (Rp)" htmlFor="sup-minorder">
+          <MoneyInput id="sup-minorder" value={f.min_order_value}
+            onChange={(e) => set('min_order_value', e.target.value)} data-testid="supplier-form-minorder" />
+        </Isian>
+        <Isian label="Rating manual (1–5)" htmlFor="sup-rating">
+          <Input id="sup-rating" type="number" min="1" max="5" value={f.rating_manual ?? ''}
+            onChange={(e) => set('rating_manual', e.target.value)} data-testid="supplier-form-rating" />
+        </Isian>
+      </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div className="md:col-span-2">
-            <label className="block text-xs font-medium mb-1">Nama Supplier *</label>
-            <GlassInput value={f.name} onChange={(e) => set('name', e.target.value)}
-                        placeholder="PT Benang Jaya Abadi" data-testid="supplier-form-name" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1">NPWP</label>
-            <GlassInput value={f.npwp} onChange={(e) => set('npwp', e.target.value)}
-                        placeholder="01.234.567.8-901.000" data-testid="supplier-form-npwp" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1">Nama Wajib Pajak</label>
-            <GlassInput value={f.tax_name} onChange={(e) => set('tax_name', e.target.value)}
-                        placeholder="Sesuai NPWP" data-testid="supplier-form-taxname" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1">Status Pajak</label>
-            <SmartNativeSelect value={f.tax_type} onChange={(e) => set('tax_type', e.target.value)}
-              className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-              data-testid="supplier-form-taxtype">
-              {(meta?.tax_types || [{ value: 'ppn', label: 'PKP (kena PPN)' }, { value: 'non_ppn', label: 'Non-PKP' }])
-                .map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-            </SmartNativeSelect>
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1">Termin Bayar</label>
-            <SmartNativeSelect value={f.payment_terms} onChange={(e) => set('payment_terms', e.target.value)}
-              className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-              data-testid="supplier-form-terms">
-              {(meta?.payment_terms || []).map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-            </SmartNativeSelect>
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1">Mata Uang</label>
-            <SmartNativeSelect value={f.currency} onChange={(e) => set('currency', e.target.value)}
-              className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-              data-testid="supplier-form-currency">
-              {(meta?.currencies || ['IDR']).map((c) => <option key={c} value={c}>{c}</option>)}
-            </SmartNativeSelect>
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1">Lead Time (hari)</label>
-            <GlassInput type="number" min="0" value={f.lead_time_days}
-                        onChange={(e) => set('lead_time_days', e.target.value)}
-                        data-testid="supplier-form-leadtime" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1">Minimum Order (Rp)</label>
-            <MoneyInput glass value={f.min_order_value}
-                        onChange={(e) => set('min_order_value', e.target.value)}
-                        data-testid="supplier-form-minorder" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1">Rating Manual (1-5)</label>
-            <GlassInput type="number" min="1" max="5" value={f.rating_manual ?? ''}
-                        onChange={(e) => set('rating_manual', e.target.value)}
-                        data-testid="supplier-form-rating" />
-          </div>
+      <Isian label="Kategori barang / jasa yang disuplai">
+        <div className="flex flex-wrap gap-1.5">
+          {(meta?.categories || Object.entries(CATEGORY_LABEL).map(([value, label]) => ({ value, label })))
+            .map((c) => {
+              const on = f.categories?.includes(c.value);
+              return (
+                <Button key={c.value} type="button" size="sm" variant={on ? 'default' : 'outline'} aria-pressed={on}
+                  onClick={() => toggleCat(c.value)} data-testid={`supplier-form-cat-${c.value}`}>
+                  {c.label}
+                </Button>
+              );
+            })}
         </div>
+      </Isian>
 
-        <div>
-          <label className="block text-xs font-medium mb-1.5">Kategori Barang / Jasa yang Disuplai</label>
-          <div className="flex flex-wrap gap-1.5">
-            {(meta?.categories || Object.entries(CATEGORY_LABEL).map(([value, label]) => ({ value, label })))
-              .map((c) => {
-                const on = f.categories?.includes(c.value);
-                return (
-                  <button key={c.value} type="button" onClick={() => toggleCat(c.value)}
-                    data-testid={`supplier-form-cat-${c.value}`}
-                    className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${on
-                      ? 'bg-[hsl(var(--primary)/0.15)] border-[hsl(var(--primary)/0.4)] text-[hsl(var(--primary))] font-semibold'
-                      : 'bg-[var(--input-surface)] border-[var(--glass-border)] text-muted-foreground hover:bg-[var(--glass-bg-hover)]'}`}>
-                    {c.label}
-                  </button>
-                );
-              })}
-          </div>
-        </div>
+      <Isian label="Alamat" htmlFor="sup-alamat">
+        <Textarea id="sup-alamat" value={f.address} onChange={(e) => set('address', e.target.value)} rows={2}
+          placeholder="Jl. Industri Raya No. 12" data-testid="supplier-form-address" />
+      </Isian>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <Isian label="Kota" htmlFor="sup-kota">
+          <Input id="sup-kota" value={f.city} onChange={(e) => set('city', e.target.value)} data-testid="supplier-form-city" />
+        </Isian>
+        <Isian label="Provinsi" htmlFor="sup-prov">
+          <Input id="sup-prov" value={f.province} onChange={(e) => set('province', e.target.value)} />
+        </Isian>
+        <Isian label="Kode pos" htmlFor="sup-pos">
+          <Input id="sup-pos" value={f.postal_code} onChange={(e) => set('postal_code', e.target.value)} />
+        </Isian>
+        <Isian label="Telepon" htmlFor="sup-telp">
+          <Input id="sup-telp" value={f.phone} onChange={(e) => set('phone', e.target.value)}
+            placeholder="022-1234567" data-testid="supplier-form-phone" />
+        </Isian>
+        <Isian label="Email" htmlFor="sup-email">
+          <Input id="sup-email" type="email" value={f.email} onChange={(e) => set('email', e.target.value)}
+            placeholder="sales@supplier.co.id" data-testid="supplier-form-email" />
+        </Isian>
+        <Isian label="Situs web" htmlFor="sup-web">
+          <Input id="sup-web" value={f.website} onChange={(e) => set('website', e.target.value)} />
+        </Isian>
+      </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className="md:col-span-3">
-            <label className="block text-xs font-medium mb-1">Alamat</label>
-            <textarea value={f.address} onChange={(e) => set('address', e.target.value)} rows="2"
-              className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-foreground text-sm"
-              placeholder="Jl. Industri Raya No. 12" data-testid="supplier-form-address" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1">Kota</label>
-            <GlassInput value={f.city} onChange={(e) => set('city', e.target.value)} data-testid="supplier-form-city" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1">Provinsi</label>
-            <GlassInput value={f.province} onChange={(e) => set('province', e.target.value)} />
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1">Kode Pos</label>
-            <GlassInput value={f.postal_code} onChange={(e) => set('postal_code', e.target.value)} />
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1">Telepon</label>
-            <GlassInput value={f.phone} onChange={(e) => set('phone', e.target.value)}
-                        placeholder="022-1234567" data-testid="supplier-form-phone" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1">Email</label>
-            <GlassInput type="email" value={f.email} onChange={(e) => set('email', e.target.value)}
-                        placeholder="sales@supplier.co.id" data-testid="supplier-form-email" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1">Website</label>
-            <GlassInput value={f.website} onChange={(e) => set('website', e.target.value)} />
-          </div>
-        </div>
-
-        {/* Kontak / PIC */}
-        <div className="border-t border-[var(--glass-border)] pt-3">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-semibold flex items-center gap-1.5">
-              <Contact className="w-4 h-4" /> Kontak / PIC
-            </h4>
-            <Button size="sm" variant="secondary" onClick={addContact} data-testid="supplier-form-add-contact">
-              <Plus className="w-3 h-3 mr-1" /> Tambah Kontak
-            </Button>
-          </div>
-          {!f.contacts?.length && <p className="text-xs text-muted-foreground py-1">Belum ada kontak.</p>}
-          {(f.contacts || []).map((c, i) => (
-            <div key={i} className="grid grid-cols-12 gap-2 mb-2 items-center">
-              <GlassInput className="col-span-3" placeholder="Nama" value={c.name}
-                          onChange={(e) => setContact(i, 'name', e.target.value)}
-                          data-testid={`supplier-contact-name-${i}`} />
-              <GlassInput className="col-span-3" placeholder="Jabatan" value={c.position}
-                          onChange={(e) => setContact(i, 'position', e.target.value)} />
-              <GlassInput className="col-span-2" placeholder="Telepon" value={c.phone}
-                          onChange={(e) => setContact(i, 'phone', e.target.value)} />
-              <GlassInput className="col-span-3" placeholder="Email" value={c.email}
-                          onChange={(e) => setContact(i, 'email', e.target.value)} />
-              <Button variant="ghost" size="sm" className="col-span-1" onClick={() => rmContact(i)}
-                      data-testid={`supplier-contact-remove-${i}`}>
-                <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />
-              </Button>
-            </div>
-          ))}
-        </div>
-
-        {/* Rekening bank */}
-        <div className="border-t border-[var(--glass-border)] pt-3">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-semibold flex items-center gap-1.5">
-              <Landmark className="w-4 h-4" /> Rekening Bank
-            </h4>
-            <Button size="sm" variant="secondary" onClick={addBank} data-testid="supplier-form-add-bank">
-              <Plus className="w-3 h-3 mr-1" /> Tambah Rekening
-            </Button>
-          </div>
-          {!f.bank_accounts?.length && <p className="text-xs text-muted-foreground py-1">Belum ada rekening.</p>}
-          {(f.bank_accounts || []).map((b, i) => (
-            <div key={i} className="grid grid-cols-12 gap-2 mb-2 items-center">
-              <GlassInput className="col-span-3" placeholder="Bank" value={b.bank_name}
-                          onChange={(e) => setBank(i, 'bank_name', e.target.value)}
-                          data-testid={`supplier-bank-name-${i}`} />
-              <GlassInput className="col-span-3" placeholder="No. Rekening" value={b.account_number}
-                          onChange={(e) => setBank(i, 'account_number', e.target.value)}
-                          data-testid={`supplier-bank-account-${i}`} />
-              <GlassInput className="col-span-3" placeholder="Nama Pemilik" value={b.account_holder}
-                          onChange={(e) => setBank(i, 'account_holder', e.target.value)} />
-              <GlassInput className="col-span-2" placeholder="Cabang" value={b.branch}
-                          onChange={(e) => setBank(i, 'branch', e.target.value)} />
-              <Button variant="ghost" size="sm" className="col-span-1" onClick={() => rmBank(i)}>
-                <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />
-              </Button>
-            </div>
-          ))}
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium mb-1">Catatan</label>
-          <textarea value={f.notes} onChange={(e) => set('notes', e.target.value)} rows="2"
-            className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-foreground text-sm"
-            data-testid="supplier-form-notes" />
-        </div>
-
-        <div className="flex justify-end gap-2 pt-3 border-t border-[var(--glass-border)]">
-          <Button variant="secondary" onClick={onClose}>Batal</Button>
-          <Button onClick={save} disabled={saving} data-testid="supplier-form-submit">
-            {saving ? 'Menyimpan...' : (isEdit ? 'Simpan Perubahan' : 'Simpan Supplier')}
+      {/* Kontak / PIC */}
+      <div className="space-y-2 border-t border-[var(--glass-border)] pt-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="flex items-center gap-1.5 text-sm font-medium"><Contact className="h-4 w-4" /> Kontak / PIC</p>
+          <Button type="button" size="sm" variant="outline" onClick={addContact} data-testid="supplier-form-add-contact">
+            <Plus /> Tambah kontak
           </Button>
         </div>
+        {!f.contacts?.length && <p className="text-sm text-muted-foreground">Belum ada kontak.</p>}
+        {(f.contacts || []).map((c, i) => (
+          <div key={i} className="grid grid-cols-2 items-center gap-2 sm:grid-cols-12">
+            <Input className="sm:col-span-3" placeholder="Nama" aria-label="Nama kontak" value={c.name}
+              onChange={(e) => setContact(i, 'name', e.target.value)} data-testid={`supplier-contact-name-${i}`} />
+            <Input className="sm:col-span-3" placeholder="Jabatan" aria-label="Jabatan" value={c.position}
+              onChange={(e) => setContact(i, 'position', e.target.value)} />
+            <Input className="sm:col-span-2" placeholder="Telepon" aria-label="Telepon kontak" value={c.phone}
+              onChange={(e) => setContact(i, 'phone', e.target.value)} />
+            <Input className="sm:col-span-3" placeholder="Email" aria-label="Email kontak" value={c.email}
+              onChange={(e) => setContact(i, 'email', e.target.value)} />
+            <Button type="button" variant="ghost" size="icon" className="justify-self-end sm:col-span-1"
+              onClick={() => rmContact(i)} title="Hapus kontak" aria-label="Hapus kontak"
+              data-testid={`supplier-contact-remove-${i}`}>
+              <Trash2 className="text-[hsl(var(--danger-text))]" />
+            </Button>
+          </div>
+        ))}
       </div>
-    </Modal>
+
+      {/* Rekening bank */}
+      <div className="space-y-2 border-t border-[var(--glass-border)] pt-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="flex items-center gap-1.5 text-sm font-medium"><Landmark className="h-4 w-4" /> Rekening bank</p>
+          <Button type="button" size="sm" variant="outline" onClick={addBank} data-testid="supplier-form-add-bank">
+            <Plus /> Tambah rekening
+          </Button>
+        </div>
+        {!f.bank_accounts?.length && <p className="text-sm text-muted-foreground">Belum ada rekening.</p>}
+        {(f.bank_accounts || []).map((b, i) => (
+          <div key={i} className="grid grid-cols-2 items-center gap-2 sm:grid-cols-12">
+            <Input className="sm:col-span-3" placeholder="Bank" aria-label="Nama bank" value={b.bank_name}
+              onChange={(e) => setBank(i, 'bank_name', e.target.value)} data-testid={`supplier-bank-name-${i}`} />
+            <Input className="sm:col-span-3" placeholder="No. rekening" aria-label="Nomor rekening" value={b.account_number}
+              onChange={(e) => setBank(i, 'account_number', e.target.value)} data-testid={`supplier-bank-account-${i}`} />
+            <Input className="sm:col-span-3" placeholder="Nama pemilik" aria-label="Nama pemilik rekening" value={b.account_holder}
+              onChange={(e) => setBank(i, 'account_holder', e.target.value)} />
+            <Input className="sm:col-span-2" placeholder="Cabang" aria-label="Cabang" value={b.branch}
+              onChange={(e) => setBank(i, 'branch', e.target.value)} />
+            <Button type="button" variant="ghost" size="icon" className="justify-self-end sm:col-span-1"
+              onClick={() => rmBank(i)} title="Hapus rekening" aria-label="Hapus rekening">
+              <Trash2 className="text-[hsl(var(--danger-text))]" />
+            </Button>
+          </div>
+        ))}
+      </div>
+
+      <Isian label="Catatan" htmlFor="sup-catatan">
+        <Textarea id="sup-catatan" value={f.notes} onChange={(e) => set('notes', e.target.value)} rows={2}
+          data-testid="supplier-form-notes" />
+      </Isian>
+    </FormPopup>
   );
 }
 
-// ── Detail + daftar harga + scorecard ───────────────────────────────────────
-function SupplierDetail({ token, supplierId, materials, onClose, onChanged }) {
-  const [sup, setSup] = useState(null);
-  const [card, setCard] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState('info');
-  const [priceForm, setPriceForm] = useState({ material_id: '', uom: '', price: '', moq: '', lead_time_days: '', notes: '' });
+// ── Tambah harga (popup pendek, dibuka dari detail supplier) ─────────────────
+const KOSONG_HARGA = { material_id: '', uom: '', price: '', moq: '', lead_time_days: '', notes: '' };
+
+function PriceForm({ token, supplierId, materials, onClose, onSaved }) {
+  const [priceForm, setPriceForm] = useState(KOSONG_HARGA);
   const [uomOpts, setUomOpts] = useState(null);
   const [savingPrice, setSavingPrice] = useState(false);
   const [priceErr, setPriceErr] = useState('');
-  // 2026-11-07 (Tahap 5): konfirmasi aplikasi (dulu window.confirm); dirender DI DALAM Modal supaya bisa diklik
-  const [confirmDelPrice, setConfirmDelPrice] = useState(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [s, c] = await Promise.all([
-        apiGet(token, EP.supplier(supplierId)),
-        apiGet(token, EP.supplierScorecard(supplierId)).catch(() => null),
-      ]);
-      setSup(s);
-      setCard(c);
-    } catch (e) {
-      toast.error(`Gagal memuat supplier: ${e.message}`);
-    } finally { setLoading(false); }
-  }, [token, supplierId]);
-
-  useEffect(() => { load(); }, [load]);
 
   // Ambil daftar satuan sah untuk material terpilih (server yang menentukan)
   useEffect(() => {
@@ -394,18 +338,94 @@ function SupplierDetail({ token, supplierId, materials, onClose, onChanged }) {
         notes: priceForm.notes,
       });
       toast.success('Harga supplier disimpan');
-      setPriceForm({ material_id: '', uom: '', price: '', moq: '', lead_time_days: '', notes: '' });
-      await load();
-      onChanged?.();
+      await onSaved?.();
+      onClose();
     } catch (e) {
       setPriceErr(e.message);
       toast.error(e.message);
     } finally { setSavingPrice(false); }
   };
 
-  const delPrice = (rowId) => setConfirmDelPrice(rowId);
-  const doDelPrice = async (rowId) => {
-    setConfirmDelPrice(null);
+  return (
+    <FormPopup open onClose={onClose} ukuran="pendek" onSimpan={addPrice} menyimpan={savingPrice} galat={priceErr}
+      judul="Tambah harga" keterangan="Harga per satuan beli; sistem menghitung harga per satuan dasar."
+      labelSimpan="Simpan harga" testId="price-form">
+      <Isian label="Material" wajib>
+        <SmartNativeSelect value={priceForm.material_id}
+          onChange={(e) => setPriceForm((p) => ({ ...p, material_id: e.target.value, uom: '' }))}
+          className="w-full" data-testid="price-form-material">
+          <option value="">Pilih material</option>
+          {materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
+        </SmartNativeSelect>
+      </Isian>
+      <div className="grid grid-cols-2 gap-4">
+        <Isian label="Satuan beli">
+          <SmartNativeSelect value={priceForm.uom}
+            onChange={(e) => setPriceForm((p) => ({ ...p, uom: e.target.value }))}
+            disabled={!uomOpts} className="w-full" data-testid="price-form-uom">
+            {(uomOpts?.units || []).map((u) => (
+              <option key={u.unit} value={u.unit}>{u.label || u.unit}</option>
+            ))}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Harga per satuan" wajib htmlFor="price-harga">
+          <MoneyInput id="price-harga" decimals={2} value={priceForm.price}
+            onChange={(e) => setPriceForm((p) => ({ ...p, price: e.target.value }))}
+            className="text-right" data-testid="price-form-price" />
+        </Isian>
+        <Isian label="Minimum order (MOQ)" htmlFor="price-moq">
+          <Input id="price-moq" type="number" min="0" value={priceForm.moq}
+            onChange={(e) => setPriceForm((p) => ({ ...p, moq: e.target.value }))}
+            className="text-right" data-testid="price-form-moq" />
+        </Isian>
+        <Isian label="Lead time (hari)" htmlFor="price-lead">
+          <Input id="price-lead" type="number" min="0" value={priceForm.lead_time_days}
+            onChange={(e) => setPriceForm((p) => ({ ...p, lead_time_days: e.target.value }))}
+            className="text-right" />
+        </Isian>
+      </div>
+      {uomOpts && priceForm.uom && Number(priceForm.price) > 0 && (
+        <p className="text-sm text-muted-foreground" data-testid="price-form-preview">
+          1 {priceForm.uom} = {fmtNum(factor)} {uomOpts.base_unit}, jadi harga per satuan dasar{' '}
+          <span className="font-semibold text-foreground">{fmtRp(Number(priceForm.price) / (factor || 1))}</span>{' '}
+          / {uomOpts.base_unit}
+        </p>
+      )}
+    </FormPopup>
+  );
+}
+
+// ── Detail + daftar harga + scorecard (popup) ───────────────────────────────
+function SupplierDetail({ token, supplierId, materials, onClose, onChanged, onEdit }) {
+  const [sup, setSup] = useState(null);
+  const [card, setCard] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState('info');
+  const [priceOpen, setPriceOpen] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [s, c] = await Promise.all([
+        apiGet(token, EP.supplier(supplierId)),
+        apiGet(token, EP.supplierScorecard(supplierId)).catch(() => null),
+      ]);
+      setSup(s);
+      setCard(c);
+    } catch (e) {
+      toast.error(`Gagal memuat supplier: ${e.message}`);
+    } finally { setLoading(false); }
+  }, [token, supplierId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // 2026-11-07 (Tahap 5): konfirmasi aplikasi (dulu window.confirm)
+  const delPrice = async (rowId) => {
+    const ok = await confirmDialog({
+      title: 'Hapus baris harga?', body: 'Baris harga ini dihapus dari daftar harga supplier.',
+      confirmLabel: 'Hapus', danger: true,
+    });
+    if (!ok) return;
     try {
       await apiDelete(token, EP.priceRow(supplierId, rowId));
       toast.success('Baris harga dihapus');
@@ -413,314 +433,224 @@ function SupplierDetail({ token, supplierId, materials, onClose, onChanged }) {
     } catch (e) { toast.error(e.message); }
   };
 
-  if (loading) {
+  if (loading && !sup) {
     return (
-      <Modal onClose={onClose} title="Memuat supplier..." size="2xl">
-        <div className="flex items-center justify-center h-40">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--primary))]" />
-        </div>
-      </Modal>
+      <DetailPopup open onClose={onClose} judul="Memuat supplier…" testId="supplier-detail-memuat">
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat data supplier…</p>
+      </DetailPopup>
     );
   }
   if (!sup) return null;
 
   const sc = card?.scorecard || {};
+  const adaPeriksa = Number(sc.total_grns || 0) > 0;
+  const priceList = sup.price_list || [];
+  const poByStatus = Object.entries(card?.po_by_status || {});
   const TABS = [
     { key: 'info', label: 'Informasi' },
-    { key: 'price', label: `Daftar Harga (${(sup.price_list || []).length})` },
+    { key: 'price', label: 'Daftar harga', count: priceList.length },
     { key: 'score', label: 'Penilaian' },
   ];
 
   return (
-    <Modal onClose={onClose} title={`${sup.code} — ${sup.name}`} size="2xl">
-      <div className="space-y-4" data-testid="supplier-detail">
-        <div className="flex items-center gap-2 flex-wrap">
-          <ActivePill active={sup.is_active} />
-          <span className="text-xs px-2 py-0.5 rounded-full border border-[var(--glass-border)] bg-[var(--input-surface)]">
-            {PAYMENT_TERM_LABEL[sup.payment_terms] || sup.payment_terms}
-          </span>
-          <span className="text-xs px-2 py-0.5 rounded-full border border-[var(--glass-border)] bg-[var(--input-surface)]">
-            {sup.currency}
-          </span>
-          {sup.source === 'migrated' && (
-            <span className="text-xs px-2 py-0.5 rounded-full border border-amber-300 dark:border-amber-400/30 bg-amber-50 dark:bg-amber-400/10 text-amber-700 dark:text-amber-300">
-              Dari data lama
-            </span>
-          )}
-          {(sup.categories || []).map((c) => (
-            <span key={c} className="text-xs px-2 py-0.5 rounded-full border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]">
-              {CATEGORY_LABEL[c] || c}
-            </span>
-          ))}
-        </div>
+    <DetailPopup open onClose={onClose} judul={`${sup.code} — ${sup.name}`} testId="supplier-detail"
+      status={<>
+        <ActiveBadge active={sup.is_active} />
+        {sup.source === 'migrated' && <StatusBadge status="migrated" label="Dari data lama" tone="warning" />}
+      </>}
+      aksi={onEdit && (
+        <Button size="sm" variant="outline" onClick={() => onEdit(sup)} data-testid="supplier-detail-edit">
+          <Pencil /> Ubah
+        </Button>
+      )}>
+      <FilterChips options={TABS} value={tab} onChange={setTab} hideWhenEmpty={false} testId="supplier-tab" />
 
-        <div className="flex gap-1 border-b border-[var(--glass-border)]">
-          {TABS.map((t) => (
-            <button key={t.key} type="button" onClick={() => setTab(t.key)}
-              data-testid={`supplier-tab-${t.key}`}
-              className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${tab === t.key
-                ? 'border-[hsl(var(--primary))] text-[hsl(var(--primary))]'
-                : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        {tab === 'info' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-            <div className="space-y-2">
-              <div>
-                <div className="text-xs text-muted-foreground">Alamat</div>
-                <div>{[sup.address, sup.city, sup.province, sup.postal_code].filter(Boolean).join(', ') || '-'}</div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">NPWP</div>
-                <div className="font-mono text-xs">{sup.npwp || '-'}</div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">Telepon / Email</div>
-                <div>{sup.phone || '-'} · {sup.email || '-'}</div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">Lead time / Minimum order</div>
-                <div>{sup.lead_time_days || 0} hari · {fmtRp(sup.min_order_value)}</div>
-              </div>
-              {sup.notes && (
-                <div>
-                  <div className="text-xs text-muted-foreground">Catatan</div>
-                  <div className="text-xs">{sup.notes}</div>
-                </div>
-              )}
-            </div>
-            <div className="space-y-3">
-              <div>
-                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                  <Contact className="w-3 h-3" /> Kontak
-                </div>
-                {(sup.contacts || []).length === 0 ? <div className="text-xs">-</div> : (
-                  <ul className="space-y-1">
-                    {sup.contacts.map((c) => (
-                      <li key={c.id || c.name} className="text-xs">
-                        <span className="font-medium">{c.name}</span>
-                        {c.position && <span className="text-muted-foreground"> · {c.position}</span>}
-                        {c.phone && <span className="text-muted-foreground"> · {c.phone}</span>}
-                        {c.is_primary && <span className="ml-1 text-[hsl(var(--primary))]">(utama)</span>}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                  <CreditCard className="w-3 h-3" /> Rekening
-                </div>
-                {(sup.bank_accounts || []).length === 0 ? <div className="text-xs">-</div> : (
-                  <ul className="space-y-1">
-                    {sup.bank_accounts.map((b) => (
-                      <li key={b.id || b.account_number} className="text-xs font-mono">
-                        {b.bank_name} {b.account_number} — {b.account_holder}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground mb-1">Rekap PO</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {Object.keys(sup.po_stats || {}).length === 0 ? (
-                    <span className="text-xs">Belum ada PO</span>
-                  ) : Object.entries(sup.po_stats).map(([st, n]) => (
-                    <span key={st} className="text-[10px] px-2 py-0.5 rounded-full border border-[var(--glass-border)] bg-[var(--input-surface)]">
-                      {st}: {n}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {tab === 'price' && (
-          <div className="space-y-3">
-            <div className="rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] p-3">
-              <h4 className="text-sm font-semibold mb-2 flex items-center gap-1.5">
-                <Tag className="w-4 h-4" /> Tambah Harga
-              </h4>
-              {priceErr && (
-                <div className="mb-2 p-2 rounded-lg bg-red-50 dark:bg-red-400/10 border border-red-300 dark:border-red-400/30 text-red-700 dark:text-red-300 text-xs"
-                     data-testid="price-form-error">{priceErr}</div>
-              )}
-              <div className="grid grid-cols-12 gap-2 items-end">
-                <div className="col-span-12 md:col-span-4">
-                  <label className="block text-[11px] font-medium mb-1">Material</label>
-                  <SmartNativeSelect value={priceForm.material_id}
-                    onChange={(e) => setPriceForm((p) => ({ ...p, material_id: e.target.value, uom: '' }))}
-                    className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-                    data-testid="price-form-material">
-                    <option value="">Pilih material</option>
-                    {materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
-                  </SmartNativeSelect>
-                </div>
-                <div className="col-span-4 md:col-span-2">
-                  <label className="block text-[11px] font-medium mb-1">Satuan Beli</label>
-                  <SmartNativeSelect value={priceForm.uom}
-                    onChange={(e) => setPriceForm((p) => ({ ...p, uom: e.target.value }))}
-                    disabled={!uomOpts}
-                    className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-                    data-testid="price-form-uom">
-                    {(uomOpts?.units || []).map((u) => (
-                      <option key={u.unit} value={u.unit}>{u.label || u.unit}</option>
-                    ))}
-                  </SmartNativeSelect>
-                </div>
-                <div className="col-span-4 md:col-span-2">
-                  <label className="block text-[11px] font-medium mb-1">Harga / satuan</label>
-                  <MoneyInput decimals={2} value={priceForm.price}
-                              onChange={(e) => setPriceForm((p) => ({ ...p, price: e.target.value }))}
-                              glass className="text-right" data-testid="price-form-price" />
-                </div>
-                <div className="col-span-4 md:col-span-1">
-                  <label className="block text-[11px] font-medium mb-1">MOQ</label>
-                  <GlassInput type="number" min="0" value={priceForm.moq}
-                              onChange={(e) => setPriceForm((p) => ({ ...p, moq: e.target.value }))}
-                              className="text-right" data-testid="price-form-moq" />
-                </div>
-                <div className="col-span-6 md:col-span-1">
-                  <label className="block text-[11px] font-medium mb-1">Lead</label>
-                  <GlassInput type="number" min="0" value={priceForm.lead_time_days}
-                              onChange={(e) => setPriceForm((p) => ({ ...p, lead_time_days: e.target.value }))}
-                              className="text-right" />
-                </div>
-                <div className="col-span-6 md:col-span-2">
-                  <Button className="w-full" onClick={addPrice} disabled={savingPrice}
-                          data-testid="price-form-submit">
-                    {savingPrice ? '...' : 'Simpan Harga'}
-                  </Button>
-                </div>
-              </div>
-              {uomOpts && priceForm.uom && Number(priceForm.price) > 0 && (
-                <p className="text-[11px] text-muted-foreground mt-2" data-testid="price-form-preview">
-                  1 {priceForm.uom} = {fmtNum(factor)} {uomOpts.base_unit} ⇒ harga per satuan dasar{' '}
-                  <span className="font-semibold text-foreground">
-                    {fmtRp(Number(priceForm.price) / (factor || 1))}
-                  </span>{' '}/ {uomOpts.base_unit}
-                </p>
-              )}
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="border-b border-[var(--glass-border)]">
-                  <tr className="text-left text-muted-foreground text-xs uppercase tracking-wide">
-                    <th className="pb-2">Material</th>
-                    <th className="pb-2 text-right">Harga / Satuan Beli</th>
-                    <th className="pb-2 text-right">Per Satuan Dasar</th>
-                    <th className="pb-2 text-right">MOQ</th>
-                    <th className="pb-2">Berlaku</th>
-                    <th className="pb-2 text-right">Aksi</th>
-                  </tr>
-                </thead>
-                <tbody data-testid="supplier-price-list">
-                  {(sup.price_list || []).length === 0 && (
-                    <tr><td colSpan="6" className="py-6 text-center text-muted-foreground text-xs">
-                      Belum ada daftar harga. Tambahkan supaya harga PO terisi otomatis.
-                    </td></tr>
-                  )}
-                  {(sup.price_list || []).map((r) => (
-                    <tr key={r.id} className={`border-b border-[var(--glass-border)] ${r.is_active === false ? 'opacity-50' : ''}`}>
-                      <td className="py-2">
-                        <div className="font-medium text-xs">{r.material_code}</div>
-                        <div className="text-[11px] text-muted-foreground line-clamp-1">{r.material_name}</div>
-                      </td>
-                      <td className="py-2 text-right font-mono text-xs">
-                        {fmtRp(r.price)} <span className="text-muted-foreground">/ {r.uom}</span>
-                      </td>
-                      <td className="py-2 text-right font-mono text-xs">
-                        {fmtRp(r.price_base)} <span className="text-muted-foreground">/ {r.base_uom}</span>
-                      </td>
-                      <td className="py-2 text-right font-mono text-xs">
-                        {r.moq ? `${fmtNum(r.moq)} ${r.uom}` : '-'}
-                      </td>
-                      <td className="py-2 text-xs">
-                        {fmtDate(r.valid_from)}{r.valid_to ? ` – ${fmtDate(r.valid_to)}` : ''}
-                        {r.is_active === false && <span className="ml-1 text-[10px] text-muted-foreground">(riwayat)</span>}
-                      </td>
-                      <td className="py-2 text-right">
-                        <Button variant="ghost" size="sm" onClick={() => delPrice(r.id)}
-                                data-testid={`price-delete-${r.id}`}>
-                          <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {tab === 'score' && (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {[
-                { l: 'Penerimaan diperiksa', v: sc.total_grns ?? 0 },
-                { l: 'Tingkat diterima', v: `${fmtNum(sc.accept_rate ?? 0, 2)}%` },
-                { l: 'Tingkat cacat', v: `${fmtNum(sc.defect_rate ?? 0, 2)}%` },
-                { l: 'Tepat waktu', v: sc.on_time_rate == null ? '-' : `${fmtNum(sc.on_time_rate, 2)}%` },
-              ].map((x) => (
-                <div key={x.l} className="rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] p-3">
-                  <div className="text-[11px] text-muted-foreground mb-1">{x.l}</div>
-                  <div className="text-lg font-bold tabular-nums">{x.v}</div>
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground">Grade kualitas:</span>
-              <GradePill grade={sc.quality_grade} />
-              {sup.rating_manual && (
-                <span className="inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
-                  <Star className="w-3 h-3" /> Rating manual {sup.rating_manual}/5
-                </span>
-              )}
-            </div>
-            <div className="text-xs text-muted-foreground">
-              Total diterima {fmtNum(sc.total_received ?? 0)} · diterima baik {fmtNum(sc.total_accepted ?? 0)} ·
-              ditolak {fmtNum(sc.total_rejected ?? 0)} (satuan dasar material).
-            </div>
-            {(card?.po_by_status || null) && (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="border-b border-[var(--glass-border)]">
-                    <tr className="text-left text-muted-foreground text-xs uppercase tracking-wide">
-                      <th className="pb-2">Status PO</th>
-                      <th className="pb-2 text-right">Jumlah</th>
-                      <th className="pb-2 text-right">Nilai</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(card.po_by_status).map(([st, v]) => (
-                      <tr key={st} className="border-b border-[var(--glass-border)]">
-                        <td className="py-2 text-xs">{st}</td>
-                        <td className="py-2 text-xs text-right tabular-nums">{v.count}</td>
-                        <td className="py-2 text-xs text-right tabular-nums">{fmtRp(v.value)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+      {tab === 'info' && (
+        <dl className="divide-y divide-[var(--glass-border)]">
+          <BarisDetail label="Termin bayar">{PAYMENT_TERM_LABEL[sup.payment_terms] || sup.payment_terms} · {sup.currency}</BarisDetail>
+          <BarisDetail label="Kategori">{kategoriTeks(sup.categories) || '—'}</BarisDetail>
+          <BarisDetail label="Alamat">{[sup.address, sup.city, sup.province, sup.postal_code].filter(Boolean).join(', ') || '—'}</BarisDetail>
+          <BarisDetail label="NPWP">{sup.npwp || '—'}{sup.tax_name ? ` · ${sup.tax_name}` : ''}</BarisDetail>
+          <BarisDetail label="Telepon / email">{sup.phone || '—'} · {sup.email || '—'}</BarisDetail>
+          <BarisDetail label="Lead time / minimum order">{sup.lead_time_days || 0} hari · {fmtRp(sup.min_order_value)}</BarisDetail>
+          <BarisDetail label="Kontak">
+            {(sup.contacts || []).length === 0 ? '—' : (
+              <ul className="space-y-1">
+                {sup.contacts.map((c) => (
+                  <li key={c.id || c.name}>
+                    <span className="font-medium">{c.name}</span>
+                    {c.position && <span className="text-muted-foreground"> · {c.position}</span>}
+                    {c.phone && <span className="text-muted-foreground"> · {c.phone}</span>}
+                    {c.is_primary && <span className="ml-1 text-[hsl(var(--primary))]">(utama)</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </BarisDetail>
+          <BarisDetail label="Rekening">
+            {(sup.bank_accounts || []).length === 0 ? '—' : (
+              <ul className="space-y-1">
+                {sup.bank_accounts.map((b) => (
+                  <li key={b.id || b.account_number}>{b.bank_name} {b.account_number} — {b.account_holder}</li>
+                ))}
+              </ul>
+            )}
+          </BarisDetail>
+          <BarisDetail label="Rekap PO">
+            {Object.keys(sup.po_stats || {}).length === 0 ? 'Belum ada PO' : (
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(sup.po_stats).map(([st, n]) => (
+                  <StatusBadge key={st} status={st} label={`${labelStatusPO(st)}: ${n}`} />
+                ))}
               </div>
             )}
-          </div>
-        )}
-      </div>
-      {confirmDelPrice && (
-        <ConfirmDialog title="Hapus baris harga?" message="Baris harga ini dihapus dari daftar harga supplier."
-          onConfirm={() => doDelPrice(confirmDelPrice)} onCancel={() => setConfirmDelPrice(null)} />
+          </BarisDetail>
+          {sup.notes && <BarisDetail label="Catatan">{sup.notes}</BarisDetail>}
+        </dl>
       )}
-    </Modal>
+
+      {tab === 'price' && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <TombolUnduh namaBerkas={`daftar-harga-${sup.code}`} namaLembar="Daftar harga" baris={priceList}
+              testId="supplier-price-unduh"
+              kolom={[
+                { label: 'Kode material', nilai: (r) => r.material_code },
+                { label: 'Material', nilai: (r) => r.material_name },
+                { label: 'Harga per satuan beli', nilai: (r) => Number(r.price || 0) },
+                { label: 'Satuan beli', nilai: (r) => r.uom },
+                { label: 'Harga per satuan dasar', nilai: (r) => Number(r.price_base || 0) },
+                { label: 'Satuan dasar', nilai: (r) => r.base_uom },
+                { label: 'MOQ', nilai: (r) => Number(r.moq || 0) },
+                { label: 'Berlaku', nilai: (r) => `${fmtDate(r.valid_from)}${r.valid_to ? ` – ${fmtDate(r.valid_to)}` : ''}` },
+                { label: 'Status', nilai: (r) => (r.is_active === false ? 'Riwayat' : 'Berlaku') },
+              ]} />
+            <Button onClick={() => setPriceOpen(true)} data-testid="price-form-open">
+              <Plus /> Tambah harga
+            </Button>
+          </div>
+          {priceList.length === 0 ? (
+            <EmptyState title="Belum ada daftar harga"
+              description="Tambahkan harga supaya harga PO terisi otomatis." />
+          ) : (
+            <Table data-testid="supplier-price-list">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Material</TableHead>
+                  <TableHead className="text-right">Harga per satuan beli</TableHead>
+                  <TableHead className="text-right">Per satuan dasar</TableHead>
+                  <TableHead className="text-right">MOQ</TableHead>
+                  <TableHead>Berlaku</TableHead>
+                  <TableHead className="text-right"><span className="sr-only">Aksi</span></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {priceList.map((r) => (
+                  <TableRow key={r.id} className={r.is_active === false ? 'opacity-60' : ''}>
+                    <TableCell>
+                      <div className="font-medium">{r.material_code}</div>
+                      <div className="text-xs text-muted-foreground">{r.material_name}</div>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {fmtRp(r.price)} <span className="text-muted-foreground">/ {r.uom}</span>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {fmtRp(r.price_base)} <span className="text-muted-foreground">/ {r.base_uom}</span>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{r.moq ? `${fmtNum(r.moq)} ${r.uom}` : '—'}</TableCell>
+                    <TableCell>
+                      {fmtDate(r.valid_from)}{r.valid_to ? ` – ${fmtDate(r.valid_to)}` : ''}
+                      {r.is_active === false && <span className="ml-1 text-xs text-muted-foreground">(riwayat)</span>}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button variant="ghost" size="icon-sm" onClick={() => delPrice(r.id)} title="Hapus baris harga"
+                        aria-label="Hapus baris harga" data-testid={`price-delete-${r.id}`}>
+                        <Trash2 className="text-[hsl(var(--danger-text))]" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+      )}
+
+      {tab === 'score' && (
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Hasil pemeriksaan QC penerimaan {card?.period_days ? `${card.period_days} hari terakhir` : ''}.
+          </p>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <StatTile label="Penerimaan diperiksa" value={fmtNum(sc.total_grns ?? 0)}
+              hint="Jumlah penerimaan barang dari supplier ini yang sudah diperiksa QC." />
+            <StatTile label="Tingkat diterima" value={adaPeriksa ? `${fmtNum(sc.accept_rate ?? 0, 2)}%` : '—'}
+              sub={adaPeriksa ? 'Qty diterima baik ÷ qty diperiksa' : 'Belum ada penerimaan diperiksa'} />
+            <StatTile label="Tingkat cacat" value={adaPeriksa ? `${fmtNum(sc.defect_rate ?? 0, 2)}%` : '—'}
+              sub={adaPeriksa ? 'Qty ditolak ÷ qty diperiksa' : 'Belum ada penerimaan diperiksa'} />
+            <StatTile label="Tepat waktu" value={sc.on_time_rate == null ? '—' : `${fmtNum(sc.on_time_rate, 2)}%`}
+              sub={sc.on_time_rate == null ? 'Belum ada data tanggal terima' : `${fmtNum(sc.on_time_samples ?? 0)} penerimaan dinilai`} />
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-muted-foreground">Grade kualitas:</span>
+            <GradeBadge grade={sc.quality_grade} />
+            {sup.rating_manual && (
+              <span className="inline-flex items-center gap-1 text-[hsl(var(--warning-text))]">
+                <Star className="h-4 w-4" /> Rating manual {sup.rating_manual}/5
+              </span>
+            )}
+          </div>
+          {adaPeriksa && (
+            <p className="text-sm text-muted-foreground">
+              Total diterima {fmtNum(sc.total_received ?? 0)} · diterima baik {fmtNum(sc.total_accepted ?? 0)} ·
+              ditolak {fmtNum(sc.total_rejected ?? 0)} (satuan dasar material).
+            </p>
+          )}
+          {poByStatus.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium">PO per status</p>
+                <TombolUnduh namaBerkas={`po-per-status-${sup.code}`} namaLembar="PO per status" baris={poByStatus}
+                  testId="supplier-po-status-unduh"
+                  kolom={[
+                    { label: 'Status PO', nilai: ([st]) => labelStatusPO(st) },
+                    { label: 'Jumlah', nilai: ([, v]) => Number(v.count || 0) },
+                    { label: 'Nilai (Rp)', nilai: ([, v]) => Number(v.value || 0) },
+                  ]} />
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Status PO</TableHead>
+                    <TableHead className="text-right">Jumlah</TableHead>
+                    <TableHead className="text-right">Nilai</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {poByStatus.map(([st, v]) => (
+                    <TableRow key={st}>
+                      <TableCell>{labelStatusPO(st)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{v.count}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtRp(v.value)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {priceOpen && (
+        <PriceForm token={token} supplierId={supplierId} materials={materials}
+          onClose={() => setPriceOpen(false)}
+          onSaved={async () => { await load(); onChanged?.(); }} />
+      )}
+    </DetailPopup>
   );
 }
 
-// ── Modal tarik data supplier dari dokumen lama ─────────────────────────────
+// ── Popup tarik data supplier dari dokumen lama ─────────────────────────────
 function MigrateModal({ token, onClose, onDone }) {
   const [prev, setPrev] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -749,70 +679,61 @@ function MigrateModal({ token, onClose, onDone }) {
     } finally { setRunning(false); }
   };
 
+  const baru = prev?.to_create || [];
   return (
-    <Modal onClose={onClose} title="Tarik Supplier dari Dokumen Lama" size="lg">
-      <div className="space-y-3" data-testid="supplier-migrate-modal">
-        <p className="text-sm text-muted-foreground">
-          Sistem memindai nama supplier teks-bebas di Purchase Order, inspeksi QC penerimaan,
-          dokumen penerimaan gudang, purchase request aksesoris, dan faktur hutang.
-          Ejaan berbeda untuk entitas yang sama digabung otomatis, lalu dokumen lama
-          ditautkan ke master supplier. Nama asli tidak dihapus.
-        </p>
-        {loading ? (
-          <div className="flex items-center justify-center h-24">
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-[hsl(var(--primary))]" />
+    <FormPopup open onClose={onClose} ukuran="panjang" onSimpan={run} menyimpan={running} bisaSimpan={!loading}
+      judul="Tarik supplier dari dokumen lama" labelSimpan="Jalankan sekarang" testId="supplier-migrate-modal"
+      keterangan="Nama supplier teks bebas di PO, QC penerimaan, penerimaan gudang, PR aksesoris, dan faktur hutang dijadikan master; ejaan berbeda digabung, nama asli tidak dihapus.">
+      {loading ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memindai dokumen lama…</p>
+      ) : (
+        <>
+          <div className="grid grid-cols-3 gap-3">
+            <StatTile label="Nama ditemukan" value={fmtNum(prev?.summary?.legacy_names ?? 0)}
+              hint="Nama supplier berbeda di dokumen lama" />
+            <StatTile label="Akan dibuat" value={fmtNum(prev?.summary?.to_create ?? 0)}
+              hint="Master supplier baru yang akan dibuat" />
+            <StatTile label="Sudah cocok" value={fmtNum(prev?.summary?.already_matched ?? 0)}
+              hint="Sudah tertaut ke master" />
           </div>
-        ) : (
-          <>
-            <div className="grid grid-cols-3 gap-2 text-center">
-              {[
-                { l: 'Nama ditemukan', v: prev?.summary?.legacy_names ?? 0 },
-                { l: 'Akan dibuat', v: prev?.summary?.to_create ?? 0 },
-                { l: 'Sudah cocok', v: prev?.summary?.already_matched ?? 0 },
-              ].map((x) => (
-                <div key={x.l} className="rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] p-3">
-                  <div className="text-[11px] text-muted-foreground">{x.l}</div>
-                  <div className="text-xl font-bold tabular-nums">{x.v}</div>
-                </div>
-              ))}
+          {baru.length > 0 ? (
+            <div className="space-y-2">
+              <div className="flex justify-end">
+                <TombolUnduh namaBerkas="tarik-supplier-pratinjau" namaLembar="Akan dibuat" baris={baru}
+                  testId="migrate-preview-unduh"
+                  kolom={[
+                    { label: 'Nama supplier baru', nilai: (r) => r.name },
+                    { label: 'Ejaan ditemukan', nilai: (r) => (r.variants || []).join(' · ') },
+                    { label: 'Jumlah sumber', nilai: (r) => (r.sources || []).length },
+                  ]} />
+              </div>
+              <Table data-testid="migrate-preview-list">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Nama supplier baru</TableHead>
+                    <TableHead>Ejaan ditemukan</TableHead>
+                    <TableHead className="text-right">Sumber</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {baru.map((r) => (
+                    <TableRow key={r.name_key}>
+                      <TableCell className="font-medium">{r.name}</TableCell>
+                      <TableCell className="text-muted-foreground">{(r.variants || []).join(' · ')}</TableCell>
+                      <TableCell className="text-right tabular-nums">{(r.sources || []).length} jenis dokumen</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
-            {(prev?.to_create || []).length > 0 && (
-              <div className="max-h-56 overflow-y-auto rounded-lg border border-[var(--glass-border)]">
-                <table className="w-full text-sm">
-                  <thead className="border-b border-[var(--glass-border)] sticky top-0 bg-[var(--card-surface)]">
-                    <tr className="text-left text-muted-foreground text-xs uppercase tracking-wide">
-                      <th className="p-2">Nama Supplier Baru</th>
-                      <th className="p-2">Ejaan Ditemukan</th>
-                      <th className="p-2">Sumber</th>
-                    </tr>
-                  </thead>
-                  <tbody data-testid="migrate-preview-list">
-                    {prev.to_create.map((r) => (
-                      <tr key={r.name_key} className="border-b border-[var(--glass-border)] last:border-0">
-                        <td className="p-2 text-xs font-medium">{r.name}</td>
-                        <td className="p-2 text-[11px] text-muted-foreground">{(r.variants || []).join(' · ')}</td>
-                        <td className="p-2 text-[11px] text-muted-foreground">{(r.sources || []).length} koleksi</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            {(prev?.to_create || []).length === 0 && (
-              <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400 p-3 rounded-lg border border-emerald-300 dark:border-emerald-400/30 bg-emerald-50 dark:bg-emerald-400/10">
-                <CheckCircle2 className="w-4 h-4" /> Semua nama supplier lama sudah punya master. Jalankan ulang tetap aman.
-              </div>
-            )}
-          </>
-        )}
-        <div className="flex justify-end gap-2 pt-2 border-t border-[var(--glass-border)]">
-          <Button variant="secondary" onClick={onClose}>Tutup</Button>
-          <Button onClick={run} disabled={running || loading} data-testid="supplier-migrate-run">
-            {running ? 'Menjalankan...' : 'Jalankan Sekarang'}
-          </Button>
-        </div>
-      </div>
-    </Modal>
+          ) : (
+            <Notice tone="success" icon={CheckCircle2}>
+              Semua nama supplier lama sudah punya master. Menjalankan ulang tetap aman.
+            </Notice>
+          )}
+        </>
+      )}
+    </FormPopup>
   );
 }
 
@@ -833,11 +754,12 @@ export default function SupplierMasterModule({ token }) {
   const [migrateOpen, setMigrateOpen] = useState(false);
   const [err, setErr] = useState('');
 
+  const PAGE_SIZE = 50;
   const load = useCallback(async (page = 1) => {
     setLoading(true);
     setErr('');
     try {
-      const qs = new URLSearchParams({ page: String(page), limit: '50', with_stats: 'true' });
+      const qs = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE), with_stats: 'true' });
       if (search) qs.set('search', search);
       if (category) qs.set('category', category);
       if (activeFilter) qs.set('is_active', activeFilter);
@@ -866,10 +788,13 @@ export default function SupplierMasterModule({ token }) {
       .catch(() => {});
   }, [token]);
 
-  const [confirmOff, setConfirmOff] = useState(null);
-  const deactivate = (s) => setConfirmOff(s);
-  const doDeactivate = async (s) => {
-    setConfirmOff(null);
+  const deactivate = async (s) => {
+    const ok = await confirmDialog({
+      title: `Nonaktifkan supplier ${s.name}?`,
+      body: 'Supplier tidak bisa dipilih lagi di PO/PR baru; riwayatnya tetap ada.',
+      confirmLabel: 'Nonaktifkan', danger: true,
+    });
+    if (!ok) return;
     try {
       await apiDelete(token, EP.supplier(s.id));
       toast.success('Supplier dinonaktifkan');
@@ -885,203 +810,144 @@ export default function SupplierMasterModule({ token }) {
     } catch (e) { toast.error(e.message); }
   };
 
+  const bukaUbah = (s) => { setEditing(s); setFormOpen(true); };
+
   // 2026-11-06 (T4): ekspor CSV halaman ini (hanya 50 baris halaman aktif) diganti Unduh/Impor Data Transfer
   // (semua supplier, format template impor) — satu pintu, tidak dua tombol ekspor.
 
+  const kolom = [
+    { kunci: 'kode', label: 'Kode', hp: 'keterangan', isi: (s) => (
+      <span className="whitespace-nowrap tabular-nums">{s.code}{s.city ? <span className="md:hidden"> · {s.city}</span> : null}</span>) },
+    { kunci: 'supplier', label: 'Supplier', hp: 'judul', isi: (s) => (
+      <div className="min-w-0 md:max-w-[18rem]">
+        <p className="truncate font-medium text-foreground" title={s.name}>{s.name}</p>
+        {[s.city, s.phone].filter(Boolean).length > 0 && (
+          <p className="hidden truncate text-xs text-muted-foreground md:block">{[s.city, s.phone].filter(Boolean).join(' · ')}</p>
+        )}
+      </div>) },
+    { kunci: 'kategori', label: 'Kategori', isi: (s) => (
+      <span className="text-sm">{kategoriTeks(s.categories) || <span className="text-muted-foreground">—</span>}</span>) },
+    { kunci: 'termin', label: 'Termin', isi: (s) => PAYMENT_TERM_LABEL[s.payment_terms] || s.payment_terms },
+    { kunci: 'lead', label: 'Lead time', rata: 'kanan', isi: (s) => <span className="tabular-nums">{s.lead_time_days || 0} hari</span> },
+    { kunci: 'po', label: 'PO', rata: 'kanan', isi: (s) => <span className="tabular-nums">{fmtNum(s.po_count ?? 0)}</span> },
+    { kunci: 'harga', label: 'Baris harga', rata: 'kanan', isi: (s) => <span className="tabular-nums">{fmtNum(s.price_list_count ?? 0)}</span> },
+    { kunci: 'qc', label: 'Nilai QC', isi: (s) => {
+      const sc = scoreMap[s.id];
+      return sc && Number(sc.total_grns || 0) > 0 ? (
+        <span className="inline-flex items-center gap-1.5">
+          <GradeBadge grade={sc.quality_grade} />
+          <span className="text-xs tabular-nums text-muted-foreground">{fmtNum(sc.accept_rate, 1)}%</span>
+        </span>
+      ) : <span className="text-muted-foreground">—</span>;
+    } },
+    { kunci: 'status', label: 'Status', isi: (s) => <ActiveBadge active={s.is_active} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
+      <div className="flex items-center justify-end gap-1">
+        <Button variant="outline" size="icon-sm" onClick={() => bukaUbah(s)} title="Ubah supplier"
+          aria-label={`Ubah ${s.name}`} data-testid={`supplier-edit-${s.id}`}>
+          <Pencil />
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-sm" title="Lainnya" aria-label={`Aksi lain ${s.name}`}
+              data-testid={`supplier-more-${s.id}`}>
+              <MoreHorizontal />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => setDetailId(s.id)} data-testid={`supplier-view-${s.id}`}>
+              <Eye className="mr-2 h-4 w-4" /> Lihat detail & daftar harga
+            </DropdownMenuItem>
+            {s.is_active === false ? (
+              <DropdownMenuItem onSelect={() => activate(s)} data-testid={`supplier-activate-${s.id}`}>
+                <CheckCircle2 className="mr-2 h-4 w-4" /> Aktifkan
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem onSelect={() => deactivate(s)} data-testid={`supplier-deactivate-${s.id}`}
+                className="text-[hsl(var(--danger-text))]">
+                <Ban className="mr-2 h-4 w-4" /> Nonaktifkan
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>) },
+  ];
+
+  const disaring = !!(search || category || activeFilter);
+
   return (
-    <div className="space-y-5" data-testid="supplier-master-page">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Master Supplier</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Sumber tunggal data supplier: kontak, NPWP, termin bayar, rekening, dan daftar harga per satuan beli.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Button variant="secondary" onClick={() => setMigrateOpen(true)} data-testid="supplier-migrate-btn">
-            <Truck className="w-4 h-4 mr-1.5" /> Tarik Data Lama
+    <PageLayout testId="supplier-master-page" title="Master Supplier"
+      subtitle="Data supplier: kontak, NPWP, termin bayar, rekening, dan daftar harga per satuan beli."
+      actions={
+        // Banyak tombol data → dibungkus supaya tetap berbaris di HP (tidak keluar layar).
+        <div className="flex flex-wrap items-center gap-2 max-sm:max-w-[calc(100vw-2rem)]">
+          <Button variant="outline" onClick={() => setMigrateOpen(true)} data-testid="supplier-migrate-btn">
+            <Truck /> Tarik data lama
           </Button>
-          <ImportExportToolbar collectionKey="suppliers" label="Master Supplier" onImported={() => load(1)} />
-          <ImportExportToolbar collectionKey="supplier_prices" label="Daftar Harga Supplier" caption="harga"
-                               onImported={() => load(pagination.page)} />
+          <ImportExportToolbar collectionKey="suppliers" label="Master Supplier" size="default" onImported={() => load(1)} />
+          <ImportExportToolbar collectionKey="supplier_prices" label="Daftar Harga Supplier" caption="harga" size="default"
+            onImported={() => load(pagination.page)} />
           <Button onClick={() => { setEditing(null); setFormOpen(true); }} data-testid="supplier-create-btn">
-            <Plus className="w-4 h-4 mr-1.5" /> Tambah Supplier
+            <Plus /> Tambah supplier
           </Button>
         </div>
-      </div>
-
-      {err && (
-        <div className="p-3 rounded-lg bg-red-50 dark:bg-red-400/10 border border-red-300 dark:border-red-400/30 text-red-700 dark:text-red-300 text-sm">
-          {err}
-        </div>
-      )}
-
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="relative flex-1 min-w-[220px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <GlassInput className="pl-9" placeholder="Cari nama, kode, NPWP, kota..."
-                      value={search} onChange={(e) => setSearch(e.target.value)}
-                      data-testid="supplier-search" />
+      }
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input className="pl-8" placeholder="Cari nama, kode, NPWP, kota"
+            value={search} onChange={(e) => setSearch(e.target.value)} data-testid="supplier-search" />
         </div>
         <SmartNativeSelect value={category} onChange={(e) => setCategory(e.target.value)}
-          className="h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-          data-testid="supplier-filter-category">
+          className="w-44" data-testid="supplier-filter-category">
           <option value="">Semua kategori</option>
           {Object.entries(CATEGORY_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </SmartNativeSelect>
         <SmartNativeSelect value={activeFilter} onChange={(e) => setActiveFilter(e.target.value)}
-          className="h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-          data-testid="supplier-filter-active">
+          className="w-40" data-testid="supplier-filter-active">
           <option value="">Semua status</option>
           <option value="true">Aktif</option>
           <option value="false">Nonaktif</option>
         </SmartNativeSelect>
-        <Button variant="secondary" onClick={() => load(1)} data-testid="supplier-refresh">
-          <RefreshCw className="w-4 h-4" />
+      </>}
+      tools={
+        <Button variant="outline" size="icon" onClick={() => load(pagination.page)} disabled={loading}
+          title="Muat ulang" aria-label="Muat ulang" data-testid="supplier-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
-      </div>
+      }
+      footer={pagination.total_pages > 1 && (
+        <PaginationLite page={pagination.page} totalPages={pagination.total_pages} total={pagination.total}
+          pageSize={PAGE_SIZE} onPageChange={(p) => load(p)} />
+      )}>
+      {err && <Notice tone="danger">{err}</Notice>}
 
-      <GlassCard>
-        {loading ? (
-          <div className="flex items-center justify-center h-48">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--primary))]" />
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="border-b border-[var(--glass-border)]">
-                <tr className="text-left text-muted-foreground text-xs uppercase tracking-wide">
-                  <th className="pb-3 pl-4">Kode</th>
-                  <th className="pb-3">Supplier</th>
-                  <th className="pb-3">Kategori</th>
-                  <th className="pb-3">Termin</th>
-                  <th className="pb-3 text-right">Lead</th>
-                  <th className="pb-3 text-right">PO</th>
-                  <th className="pb-3 text-right">Harga</th>
-                  <th className="pb-3">Nilai QC</th>
-                  <th className="pb-3">Status</th>
-                  <th className="pb-3 pr-4 text-right">Aksi</th>
-                </tr>
-              </thead>
-              <tbody data-testid="supplier-table-body">
-                {rows.length === 0 && (
-                  <tr>
-                    <td colSpan="10" className="py-12 text-center text-muted-foreground">
-                      <Building2 className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                      <p className="text-sm">Belum ada supplier di master.</p>
-                      <p className="text-xs mt-1">
-                        Klik <span className="font-semibold">Tarik Data Lama</span> untuk membuat master
-                        dari nama supplier di dokumen yang sudah ada.
-                      </p>
-                    </td>
-                  </tr>
-                )}
-                {rows.map((s, idx) => {
-                  const sc = scoreMap[s.id];
-                  return (
-                    <tr key={s.id}
-                        className={`border-b border-[var(--glass-border)] ${idx % 2 === 0 ? 'bg-[var(--glass-bg)]/30' : ''}`}
-                        data-testid={`supplier-row-${s.id}`}>
-                      <td className="py-3 pl-4 font-mono text-xs">{s.code}</td>
-                      <td className="py-3">
-                        <div className="font-medium">{s.name}</div>
-                        <div className="text-[11px] text-muted-foreground">
-                          {[s.city, s.phone].filter(Boolean).join(' · ') || '—'}
-                        </div>
-                      </td>
-                      <td className="py-3">
-                        <div className="flex flex-wrap gap-1">
-                          {(s.categories || []).slice(0, 3).map((c) => (
-                            <span key={c} className="text-[10px] px-1.5 py-0.5 rounded-full border border-[var(--glass-border)] bg-[var(--input-surface)]">
-                              {CATEGORY_LABEL[c] || c}
-                            </span>
-                          ))}
-                          {!(s.categories || []).length && <span className="text-xs text-muted-foreground">—</span>}
-                        </div>
-                      </td>
-                      <td className="py-3 text-xs">{PAYMENT_TERM_LABEL[s.payment_terms] || s.payment_terms}</td>
-                      <td className="py-3 text-xs text-right tabular-nums">{s.lead_time_days || 0} hr</td>
-                      <td className="py-3 text-xs text-right tabular-nums">{s.po_count ?? 0}</td>
-                      <td className="py-3 text-xs text-right tabular-nums">{s.price_list_count ?? 0}</td>
-                      <td className="py-3">
-                        {sc ? (
-                          <div className="flex items-center gap-1.5">
-                            <GradePill grade={sc.quality_grade} />
-                            <span className="text-[11px] text-muted-foreground tabular-nums">
-                              {fmtNum(sc.accept_rate, 1)}%
-                            </span>
-                          </div>
-                        ) : <span className="text-xs text-muted-foreground">—</span>}
-                      </td>
-                      <td className="py-3"><ActivePill active={s.is_active} /></td>
-                      <td className="py-3 pr-4 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button variant="ghost" size="sm" onClick={() => setDetailId(s.id)}
-                                  data-testid={`supplier-view-${s.id}`} title="Detail">
-                            <Eye className="w-4 h-4" />
-                          </Button>
-                          <Button variant="ghost" size="sm"
-                                  onClick={() => { setEditing(s); setFormOpen(true); }}
-                                  data-testid={`supplier-edit-${s.id}`} title="Ubah">
-                            <Pencil className="w-4 h-4" />
-                          </Button>
-                          {s.is_active === false ? (
-                            <Button variant="ghost" size="sm" onClick={() => activate(s)}
-                                    data-testid={`supplier-activate-${s.id}`} title="Aktifkan">
-                              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                            </Button>
-                          ) : (
-                            <Button variant="ghost" size="sm" onClick={() => deactivate(s)}
-                                    data-testid={`supplier-deactivate-${s.id}`} title="Nonaktifkan">
-                              <Ban className="w-4 h-4 text-red-600 dark:text-red-400" />
-                            </Button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </GlassCard>
-
-      {pagination.total_pages > 1 && (
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>Total {pagination.total} supplier · halaman {pagination.page}/{pagination.total_pages}</span>
-          <div className="flex gap-2">
-            <Button size="sm" variant="secondary" disabled={pagination.page <= 1}
-                    onClick={() => load(pagination.page - 1)} data-testid="supplier-prev-page">
-              Sebelumnya
-            </Button>
-            <Button size="sm" variant="secondary" disabled={pagination.page >= pagination.total_pages}
-                    onClick={() => load(pagination.page + 1)} data-testid="supplier-next-page">
-              Berikutnya
-            </Button>
-          </div>
-        </div>
+      {loading && rows.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat supplier…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={rows} onKlikBaris={(s) => setDetailId(s.id)} testId="supplier-table"
+          kosong={<EmptyState icon={Building2}
+            title={disaring ? 'Tidak ada supplier yang cocok' : 'Belum ada supplier di master'}
+            description={disaring ? 'Ubah kata pencarian atau saringan.'
+              : 'Klik "Tarik data lama" untuk membuat master dari nama supplier di dokumen yang sudah ada.'} />} />
       )}
 
       {formOpen && (
         <SupplierForm token={token} meta={meta} initial={editing}
-                      onClose={() => { setFormOpen(false); setEditing(null); }}
-                      onSaved={() => load(pagination.page)} />
+          onClose={() => { setFormOpen(false); setEditing(null); }}
+          onSaved={() => load(pagination.page)} />
       )}
       {detailId && (
         <SupplierDetail token={token} supplierId={detailId} materials={materials}
-                        onClose={() => setDetailId(null)}
-                        onChanged={() => load(pagination.page)} />
+          onClose={() => setDetailId(null)}
+          onChanged={() => load(pagination.page)}
+          // Ubah memakai baris daftar (bukan objek detail yang membawa daftar harga/rekap) — sama dengan tombol Ubah di tabel.
+          onEdit={(s) => { const baris = rows.find((r) => r.id === s.id); if (!baris) return; setDetailId(null); bukaUbah(baris); }} />
       )}
       {migrateOpen && (
         <MigrateModal token={token} onClose={() => setMigrateOpen(false)}
-                      onDone={() => load(1)} />
+          onDone={() => load(1)} />
       )}
-      {confirmOff && (
-        <ConfirmDialog type="warning" title={`Nonaktifkan supplier ${confirmOff.name}?`}
-          message="Supplier tidak bisa dipilih lagi di PO/PR baru; riwayatnya tetap ada."
-          onConfirm={() => doDeactivate(confirmOff)} onCancel={() => setConfirmOff(null)} />
-      )}
-    </div>
+    </PageLayout>
   );
 }
