@@ -38,6 +38,31 @@ function Cell({ v, strong, blankZero }) {
   );
 }
 
+/**
+ * Isi unduhan (Excel/CSV) untuk laporan yang sama — Standar UI/UX v2: semua tabel bisa diunduh.
+ * Semua kelompok ikut terbuka (baris akun di bawah kelompoknya), subtotal & total ikut. Angka tetap angka.
+ *   const u = unduhanLaporan(columns, rows);  <TombolUnduh namaBerkas="laba-rugi" kolom={u.kolom} baris={u.baris} />
+ */
+export function unduhanLaporan(columns, rows, labelHeader = 'Akun') {
+  const baris = [];
+  for (const r of rows || []) {
+    if (r.kind === 'note') continue;
+    baris.push({ jenis: r.kind === 'group' ? 'Kelompok' : r.kind === 'total' ? 'Total' : r.kind === 'subtotal' ? 'Subtotal' : '',
+      kode: '', nama: r.label, values: r.values || {} });
+    if (r.kind === 'group') {
+      for (const k of r.children || []) baris.push({ jenis: 'Akun', kode: k.code || '', nama: k.label, values: k.values || {} });
+    }
+  }
+  const kolom = [
+    { label: 'Baris', nilai: (b) => b.jenis },
+    { label: 'Kode', nilai: (b) => b.kode },
+    { label: labelHeader, nilai: (b) => (typeof b.nama === 'string' ? b.nama : String(b.nama ?? '')) },
+    ...columns.map((c) => ({ label: typeof c.label === 'string' ? c.label : c.key,
+      nilai: (b) => (b.values[c.key] === undefined || b.values[c.key] === null ? '' : Math.round(Number(b.values[c.key]) || 0)) })),
+  ];
+  return { kolom, baris };
+}
+
 export default function StatementTable({ columns, rows, labelHeader = 'Akun', defaultOpen = false, testId, blankZeroChildren = false, className }) {
   const [open, setOpen] = useState(() => (defaultOpen ? new Set(rows.filter((r) => r.kind === 'group').map((r) => r.id)) : new Set()));
   const toggle = (id) => setOpen((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -92,7 +117,7 @@ export default function StatementTable({ columns, rows, labelHeader = 'Akun', de
               return (
                 <tr key={i} data-testid={r.testId}
                     className={cn(isTotal ? 'border-t-[3px] border-double border-[var(--glass-border)]' : r.kind === 'subtotal' ? 'border-t-2 border-[var(--glass-border)]' : '')}>
-                  <td className={cn('text-foreground', r.kind !== 'line' && 'font-semibold', isTotal && 'text-[15px]')}>{r.label}</td>
+                  <td className={cn('text-foreground', r.kind !== 'line' && 'font-semibold', isTotal && 'text-base')}>{r.label}</td>
                   {columns.map((c) => <Cell key={c.key} v={r.values?.[c.key]} strong={r.kind !== 'line'} />)}
                 </tr>
               );
