@@ -304,9 +304,15 @@ export default function MarketingIntegrationSettings({ token }) {
       </Notice>
 
       <section className="space-y-2" data-testid="integration-platforms">
-        <p className="text-base font-semibold text-foreground">
-          Platform · {loading ? '…' : `${jumlahSambung} dari ${platforms.length} sudah berisi kunci`}
-        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="flex-1 text-base font-semibold text-foreground">
+            Platform · {loading ? '…' : `${jumlahSambung} dari ${platforms.length} sudah berisi kunci`}
+          </p>
+          <TombolUnduh namaBerkas="integrasi-platform" namaLembar="Platform" baris={platforms} testId="integration-platform-unduh"
+            kolom={[{ label: 'Platform', nilai: (p) => p.meta?.name || p.key },
+              { label: 'Status', nilai: (p) => (p.config?.connected ? 'Kunci tersimpan' : 'Belum diatur') },
+              { label: 'Kunci tersimpan (disamarkan)', nilai: (p) => kunciTersimpan(p) }]} />
+        </div>
         {loading && platforms.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">Memuat platform…</p>
         ) : (

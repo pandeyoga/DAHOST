@@ -247,7 +247,12 @@ export default function MarketingAIInsightsDashboard({ token }) {
               </Notice>
               <div className="grid gap-4 lg:grid-cols-2">
                 <section className="space-y-2">
-                  <p className="text-base font-semibold">Tema utama</p>
+                  <div className="flex items-center gap-2">
+                    <p className="flex-1 text-base font-semibold">Tema utama</p>
+                    <TombolUnduh namaBerkas="sentimen-tema" baris={sentiment.themes || []} testId="ai-unduh-tema"
+                      kolom={[{ label: 'Tema', nilai: (t) => t.theme }, { label: 'Sentimen', nilai: (t) => (SENTIMENT_CONFIG[t.sentiment] || SENTIMENT_CONFIG.neutral).label },
+                        { label: 'Frekuensi', nilai: (t) => Number(t.frequency) || 0 }, { label: 'Dampak', nilai: (t) => DAMPAK[t.impact] || t.impact || '' }]} />
+                  </div>
                   <TabelData baris={sentiment.themes || []} kunci={(t) => t.theme} testId="ai-themes-table" kolom={[
                     { kunci: 'tema', label: 'Tema', hp: 'judul', isi: (t) => t.theme },
                     { kunci: 'sent', label: 'Sentimen', isi: (t) => <StatusBadge status={t.sentiment} label={(SENTIMENT_CONFIG[t.sentiment] || SENTIMENT_CONFIG.neutral).label}

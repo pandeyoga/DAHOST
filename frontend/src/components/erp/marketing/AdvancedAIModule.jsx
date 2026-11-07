@@ -623,6 +623,13 @@ function ABTestingTab({ authH }) {
                 {exp.winner_reason}{exp.recommendation ? ` Rekomendasi: ${exp.recommendation}` : ''}
               </Notice>
             )}
+            <div className="flex justify-end">
+              <TombolUnduh namaBerkas="varian-eksperimen-ab" namaLembar="Varian" baris={exp.variants || []} testId="ab-variants-unduh"
+                kolom={[{ label: 'Varian', nilai: (v) => v.label || '' }, { label: 'Isi', nilai: (v) => v.content || '' },
+                  { label: 'Tayangan', nilai: (v) => Number(v.views) || 0 }, { label: 'Klik', nilai: (v) => Number(v.clicks) || 0 },
+                  { label: 'Pesanan', nilai: (v) => Number(v.orders) || 0 }, { label: 'CTR (%)', nilai: (v) => Number(v.ctr) || 0 },
+                  { label: 'Konversi (%)', nilai: (v) => Number(v.conversion_rate) || 0 }, { label: 'Omzet', nilai: (v) => Number(v.revenue_rp) || 0 }]} />
+            </div>
             <TabelData kolom={kolomVarian(exp)} baris={exp.variants || []} testId="ab-variants-table" />
           </DetailPopup>
         );

@@ -70,7 +70,13 @@ function KOLDetailModal({ kolId, kolName, days, onClose }) {
               <StatTile label="Sesi" value={fmtNum(m.session_count)} />
               <StatTile label="Pesanan per sesi" value={desimal(m.orders_per_session)} />
             </div>
-            <p className="text-sm font-medium">Sesi terakhir · {(detail.sessions || []).length}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="flex-1 text-sm font-medium">Sesi terakhir · {(detail.sessions || []).length}</p>
+              <TombolUnduh namaBerkas={`sesi-kol-${days}-hari`} namaLembar="Sesi" baris={detail.sessions || []} testId="kol-detail-unduh"
+                kolom={[{ label: 'Tanggal', nilai: (s) => (s.session_date ? formatDateID(s.session_date) : '') },
+                  { label: 'Penonton', nilai: (s) => Number(s.viewers) || 0 }, { label: 'Pesanan', nilai: (s) => Number(s.orders) || 0 },
+                  { label: 'Omzet', nilai: (s) => Number(s.revenue) || 0 }]} />
+            </div>
             <TabelData kolom={kolomSesi} baris={(detail.sessions || []).slice(0, 10)} kunci={(s) => `${s.session_date}-${s.revenue}-${s.viewers}`}
               testId="kol-detail-sessions" kosong={<EmptyState title="Belum ada sesi pada periode ini" />} />
           </>

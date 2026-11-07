@@ -299,7 +299,29 @@ export default function CreatorScorecardView({ token, onNavigate }) {
               {(detail.data_notes || []).filter((n) => n.startsWith('PERLU KEPUTUSAN')).map((n, i) => (
                 <Notice key={i} tone="warning" icon={AlertTriangle} testId="scorecard-detail-decision">{rapikanCatatan(n.replace(/^PERLU KEPUTUSAN/, 'Perlu keputusan'))}</Notice>
               ))}
-              <FilterChips options={TAB_RINCIAN} value={detailTab} onChange={setDetailTab} hideWhenEmpty={false} testId="scorecard-detail-tab" />
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="min-w-0 flex-1">
+                  <FilterChips options={TAB_RINCIAN} value={detailTab} onChange={setDetailTab} hideWhenEmpty={false} testId="scorecard-detail-tab" />
+                </div>
+                <TombolUnduh namaBerkas={`rincian-${detailTab}-kreator-${bulan}`} namaLembar="Rincian" testId="scorecard-detail-unduh"
+                  baris={detailTab === 'konten' ? (detail.contents || []) : detailTab === 'pesanan' ? (detail.orders || []) : (detail.sessions || [])}
+                  kolom={detailTab === 'konten' ? [
+                    { label: 'Tanggal', nilai: (c) => tgl(c.date) }, { label: 'Judul', nilai: (c) => c.title || '' },
+                    { label: 'Status', nilai: (c) => STATUS_KONTEN[c.status] || '' }, { label: 'KPI', nilai: (c) => (c.has_kpi ? 'Ada' : 'Belum') },
+                    { label: 'Tayangan', nilai: (c) => Number(c.views) || 0 }, { label: 'GMV KPI', nilai: (c) => Number(c.gmv_kpi) || 0 },
+                    { label: 'Pesanan (KPI)', nilai: (c) => Number(c.orders) || 0 }, { label: 'Tautan', nilai: (c) => c.published_url || '' },
+                  ] : detailTab === 'pesanan' ? [
+                    { label: 'Nomor pesanan', nilai: (o) => o.order_id || '' }, { label: 'Tanggal', nilai: (o) => tgl(o.order_date) },
+                    { label: 'Toko', nilai: (o) => o.account_name || '' }, { label: 'Status', nilai: (o) => o.status || '' },
+                    { label: 'Omzet produk', nilai: (o) => Number(o.revenue_product) || 0 },
+                    { label: 'Dihitung', nilai: (o) => (o.counted ? `Ya${o.note ? ` · ${o.note}` : ''}` : `Tidak — ${o.why_not_counted || ''}`) },
+                  ] : [
+                    { label: 'Tanggal', nilai: (x) => tgl(x.date) }, { label: 'Sesi', nilai: (x) => x.title || '' },
+                    { label: 'Toko', nilai: (x) => x.account_name || '' }, { label: 'Omzet sesi', nilai: (x) => Number(x.revenue) || 0 },
+                    { label: 'Penonton', nilai: (x) => Number(x.viewers) || 0 }, { label: 'Penonton puncak', nilai: (x) => Number(x.peak_viewers) || 0 },
+                    { label: 'Pesanan', nilai: (x) => Number(x.orders) || 0 }, { label: 'Durasi (menit)', nilai: (x) => Number(x.duration_minutes) || 0 },
+                  ]} />
+              </div>
               {detailTab === 'konten' && (
                 <TabelData kolom={kolomKonten} baris={detail.contents || []} testId="scorecard-detail-contents"
                   kosong={<EmptyState title="Tidak ada konten pada bulan ini" />} />
