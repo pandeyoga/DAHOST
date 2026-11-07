@@ -4,12 +4,21 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { StatTile, EmptyState } from '../moduleAtoms';
+import { StatTile, EmptyState, Notice } from '../moduleAtoms';
+import { Checkbox } from '@/components/ui/checkbox';
+import DatePicker from '@/components/ui/date-picker';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import PageLayout from '../layout/PageLayout';
 import { formatDateID } from '@/lib/format';
 import { fmt, fmtCell, authHeaders, downloadXlsx } from './reportShared';
 
 const tdN = 'text-right tabular-nums';
+const KOLOM_BARIS = [
+  { label: 'Kode', nilai: (l) => l.account_code || l.code },
+  { label: 'Akun', nilai: (l) => l.account_name || l.name },
+  { label: 'Debit', nilai: (l) => Number(l.debit) || 0 },
+  { label: 'Kredit', nilai: (l) => Number(l.credit) || 0 },
+];
 
 function PostedJournal({ status, onVoided, token, role }) {
   const je = status.journal;
@@ -30,7 +39,10 @@ function PostedJournal({ status, onVoided, token, role }) {
   return (
     <GlassCard className="p-4 space-y-3" data-testid="ob-posted">
       <div>
-        <p className="inline-flex items-center gap-2 text-[hsl(var(--success))] font-semibold"><Lock className="w-4 h-4" />Saldo awal sudah diposting dan terkunci</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="inline-flex items-center gap-2 text-[hsl(var(--success-text))] font-semibold"><Lock className="w-4 h-4" />Saldo awal sudah diposting dan terkunci</p>
+          <TombolUnduh namaBerkas={`saldo-awal-${je.je_number}`} namaLembar="Saldo awal" baris={status.lines} kolom={KOLOM_BARIS} testId="ob-posted-unduh" />
+        </div>
         <p className="text-xs text-muted-foreground mt-1">
           Jurnal <span className="text-foreground" data-testid="ob-je-number">{je.je_number}</span> · tanggal {formatDateID(je.date)} · {status.lines.length} baris ·
           debit Rp {fmt(je.total_debit)} = kredit Rp {fmt(je.total_credit)}{je.source_ref ? ` · berkas ${je.source_ref}` : ''}
@@ -55,8 +67,8 @@ function PostedJournal({ status, onVoided, token, role }) {
         <div className="border-t border-[var(--glass-border)] pt-3 space-y-2">
           <p className="text-xs text-muted-foreground">Salah isi? Superadmin dapat membatalkan jurnal ini (pembatalan paksa, tercatat di jejak audit) lalu mengunggah ulang.</p>
           <div className="flex gap-2 flex-wrap">
-            <GlassInput value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Alasan pembatalan (wajib)" className="h-9 w-80 max-w-full" data-testid="ob-void-reason" />
-            <Button variant="outline" onClick={doVoid} disabled={busy} className="text-[hsl(var(--destructive))]" data-testid="ob-void-btn">Batalkan jurnal saldo awal</Button>
+            <GlassInput value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Alasan pembatalan (wajib)" className="h-9 w-full sm:w-80" data-testid="ob-void-reason" />
+            <Button variant="destructive" onClick={doVoid} disabled={busy} data-testid="ob-void-btn">Batalkan jurnal saldo awal</Button>
           </div>
         </div>
       )}
@@ -69,25 +81,24 @@ function PreviewTable({ preview }) {
   return (
     <div className="space-y-3" data-testid="ob-preview">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatTile label="Baris terisi" value={preview.rows.length} testId="ob-kpi-rows" />
-        <StatTile label="Total debit" value={fmt(preview.totals.debit)} testId="ob-kpi-debit" />
-        <StatTile label="Total kredit" value={fmt(preview.totals.credit)} testId="ob-kpi-credit" />
-        <StatTile label={preview.ok ? 'Siap diposting' : `${preview.errors.length} masalah`} value={preview.ok ? '✓' : '✗'} accent={preview.ok ? 'success' : 'danger'} testId="ob-kpi-status" />
+        <StatTile label="Baris terisi" value={preview.rows.length} testId="ob-kpi-rows" sub="Baris berisi angka di berkas" />
+        <StatTile label="Total debit" value={fmt(preview.totals.debit)} testId="ob-kpi-debit" sub="Jumlah kolom Debit" />
+        <StatTile label="Total kredit" value={fmt(preview.totals.credit)} testId="ob-kpi-credit" sub="Jumlah kolom Kredit" />
+        <StatTile label="Status berkas" value={preview.ok ? 'Siap diposting' : `${preview.errors.length} masalah`} accent={preview.ok ? 'success' : 'danger'} testId="ob-kpi-status" sub={preview.ok ? 'Debit = kredit, semua akun dikenali' : 'Perbaiki di Excel lalu unggah ulang'} />
       </div>
       {preview.errors.length > 0 && (
-        <div className="bg-[hsl(var(--destructive)/0.08)] border border-[hsl(var(--destructive)/0.3)] rounded-[var(--radius-md)] px-4 py-3" data-testid="ob-errors">
-          <p className="inline-flex items-center gap-2 text-[hsl(var(--destructive))] font-semibold text-sm mb-2"><AlertTriangle className="w-4 h-4" />Perbaiki dulu di Excel, lalu unggah lagi</p>
-          <ul className="text-xs space-y-1 list-disc pl-5">{preview.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>
-        </div>
+        <Notice tone="danger" icon={AlertTriangle} testId="ob-errors" title="Perbaiki dulu di Excel, lalu unggah lagi">
+          <ul className="text-sm space-y-1 list-disc pl-5 text-foreground">{preview.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>
+        </Notice>
       )}
       {preview.balancing && (
-        <p className="text-xs text-[hsl(var(--warning))]" data-testid="ob-balancing">
+        <p className="text-sm text-[hsl(var(--warning-text))]" data-testid="ob-balancing">
           Selisih Rp {fmt(Math.max(preview.balancing.debit, preview.balancing.credit))} ditutup otomatis ke {preview.balancing.account_code} {preview.balancing.account_name} ({preview.balancing.debit ? 'debit' : 'kredit'}).
         </p>
       )}
       {preview.relations?.length > 0 && (
         <GlassCard className="p-0 overflow-hidden">
-          <p className="px-4 pt-3 text-xs font-semibold text-muted-foreground">Rincian per relasi dibanding akun kontrol</p>
+          <p className="px-4 pt-3 text-sm font-semibold text-foreground">Rincian per relasi dibanding akun kontrol</p>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead><tr><th className="text-left">Sheet</th><th className="text-left">Baris → akun kontrol</th><th className="text-right">Total rincian</th><th className="text-right">Saldo akun kontrol</th><th className="text-left">Hasil</th></tr></thead>
@@ -98,7 +109,7 @@ function PreviewTable({ preview }) {
                     <td className="text-muted-foreground">{r.rows} baris → {r.control_account}</td>
                     <td className={tdN}>{fmt(r.detail_total)}</td>
                     <td className={tdN}>{fmt(r.control_balance)}</td>
-                    <td className={r.match ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--destructive))]'}>{r.match ? (r.rows ? 'Cocok' : 'Kosong') : 'Tidak cocok'}</td>
+                    <td className={r.match ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--danger-text))]'}>{r.match ? (r.rows ? 'Cocok' : 'Kosong') : 'Tidak cocok'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -107,6 +118,13 @@ function PreviewTable({ preview }) {
         </GlassCard>
       )}
       <GlassCard className="p-0 overflow-hidden">
+        {preview.rows.length > 0 && (
+          <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-2">
+            <p className="text-sm font-semibold text-foreground">Pratinjau baris saldo awal</p>
+            <TombolUnduh namaBerkas="pratinjau-saldo-awal" namaLembar="Pratinjau" baris={preview.rows} testId="ob-preview-unduh"
+              kolom={[{ label: 'Baris', nilai: (r) => r.row }, ...KOLOM_BARIS, { label: 'Status', nilai: (r) => r.error || 'Siap' }]} />
+          </div>
+        )}
         {preview.rows.length === 0 ? (
           <EmptyState icon={FileSpreadsheet} title="Semua saldo 0" description="Tidak ada yang akan diposting dari berkas ini." />
         ) : (
@@ -122,7 +140,7 @@ function PreviewTable({ preview }) {
                     <td className="whitespace-nowrap">{r.code}</td>
                     <td>{r.name}</td>
                     <td className={tdN}>{fmtCell(r.debit)}</td><td className={tdN}>{fmtCell(r.credit)}</td>
-                    <td className={r.error ? 'text-[hsl(var(--destructive))]' : 'text-[hsl(var(--success))]'}>{r.error || 'Siap'}</td>
+                    <td className={r.error ? 'text-[hsl(var(--danger-text))]' : 'text-[hsl(var(--success-text))]'}>{r.error || 'Siap'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -130,7 +148,7 @@ function PreviewTable({ preview }) {
           </div>
         )}
       </GlassCard>
-      {errRows.length > 0 && <p className="text-[11px] text-muted-foreground">{errRows.length} baris bermasalah ditandai merah.</p>}
+      {errRows.length > 0 && <p className="text-xs text-muted-foreground">{errRows.length} baris bermasalah ditandai merah.</p>}
     </div>
   );
 }
@@ -203,28 +221,32 @@ export default function RahazaOpeningBalanceModule({ token, user }) {
         <>
           <div className="grid md:grid-cols-3 gap-4">
             <GlassCard className="p-4 space-y-3" data-testid="ob-step-1">
-              <p className="text-xs text-muted-foreground font-semibold">Langkah 1</p>
-              <h3 className="font-semibold text-sm">Unduh template</h3>
+              <p className="text-xs text-muted-foreground font-medium">Langkah 1</p>
+              <p className="font-semibold text-base">Unduh format isian</p>
               <p className="text-xs text-muted-foreground">{status?.balance_accounts || 0} akun neraca aktif + sheet rincian {status?.relation_sheets?.map((s) => s.control_account).join(', ')}. Isi debit/kredit per akun dan rincian piutang/hutang per relasi.</p>
-              <Button variant="outline" onClick={dlTemplate} className="w-full" data-testid="ob-download-template"><Download className="w-4 h-4" />Unduh template Excel</Button>
+              <Button variant="outline" onClick={dlTemplate} className="w-full" data-testid="ob-download-template"><Download className="w-4 h-4" />Unduh format isian Excel</Button>
             </GlassCard>
             <GlassCard className="p-4 space-y-3" data-testid="ob-step-2">
-              <p className="text-xs text-muted-foreground font-semibold">Langkah 2</p>
-              <h3 className="font-semibold text-sm">Unggah berkas terisi</h3>
-              <input ref={inputRef} type="file" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} className="block w-full text-xs text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/20 file:px-3 file:py-1.5 file:text-xs file:text-primary" data-testid="ob-file-input" />
-              <label className="inline-flex items-center gap-2 text-xs text-foreground/80">
-                <input type="checkbox" checked={toRetained} onChange={(e) => setToRetained(e.target.checked)} data-testid="ob-to-retained" />
+              <p className="text-xs text-muted-foreground font-medium">Langkah 2</p>
+              <p className="font-semibold text-base">Unggah berkas terisi</p>
+              <input ref={inputRef} type="file" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} className="hidden" data-testid="ob-file-input" />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="outline" onClick={() => inputRef.current?.click()} data-testid="ob-pick-file">Pilih berkas .xlsx</Button>
+                <span className="text-sm text-muted-foreground min-w-0 truncate">{file ? file.name : 'Belum ada berkas'}</span>
+              </div>
+              <label className="inline-flex items-center gap-2 text-sm text-foreground/80">
+                <Checkbox checked={toRetained} onCheckedChange={(v) => setToRetained(!!v)} data-testid="ob-to-retained" />
                 Tutup selisih debit ≠ kredit ke 3-2000 Laba Ditahan
               </label>
             </GlassCard>
             <GlassCard className="p-4 space-y-3" data-testid="ob-step-3">
-              <p className="text-xs text-muted-foreground font-semibold">Langkah 3</p>
-              <h3 className="font-semibold text-sm">Posting jurnal pembuka</h3>
+              <p className="text-xs text-muted-foreground font-medium">Langkah 3</p>
+              <p className="font-semibold text-base">Posting jurnal pembuka</p>
               <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">Per tanggal</span>
-                <GlassInput type="date" value={obDate} onChange={(e) => setObDate(e.target.value)} className="h-9 w-40" data-testid="ob-date" />
+                <span className="text-sm text-muted-foreground">Per tanggal</span>
+                <div className="w-44"><DatePicker value={obDate} onChange={(v) => v && setObDate(v)} bolehKosong={false} testId="ob-date" /></div>
               </div>
-              <Button onClick={doApply} disabled={!preview?.ok || !preview.lines?.length || busy} className="w-full" data-testid="ob-apply">
+              <Button variant="success" onClick={doApply} disabled={!preview?.ok || !preview.lines?.length || busy} className="w-full" data-testid="ob-apply">
                 {preview?.ok ? <CheckCircle2 className="w-4 h-4" /> : <Upload className="w-4 h-4" />}Posting saldo awal
               </Button>
             </GlassCard>
