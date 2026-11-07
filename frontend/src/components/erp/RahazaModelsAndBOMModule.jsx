@@ -51,7 +51,7 @@ const VARIANTS = {
     tabs: ['categories', 'variants', 'bom', 'fill', 'sizes', 'colors'],
     eyebrow: 'Portal RnD · Master Data (SSOT)',
     title: 'Master produk',
-    subtitle: 'Sumber tunggal resep produk CV. Dewi Aditya — kategori, varian/SKU, BOM potongan, ukuran, dan warna. Dipakai Cutting, HPP, dan katalog.',
+    subtitle: 'Resep produk untuk Cutting, HPP, dan katalog: kategori, varian/SKU, BOM, ukuran, dan warna.',
     icon: FlaskConical,
     crossLink: { module: 'prod-master-product-hub', label: 'Model DA (HPP · SOP · bundle) tetap di Portal Produksi → Produk' },
   },

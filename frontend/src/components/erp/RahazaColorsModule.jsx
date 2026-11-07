@@ -82,7 +82,7 @@ export function RahazaColorsModule({ token }) {
       <span className="inline-block w-7 h-7 rounded-md border border-[var(--glass-border)]" style={{ backgroundColor: row.hex || 'transparent' }} title={row.hex} />) },
     { kunci: 'kode', label: 'Kode', hp: 'judul', isi: (row) => <span className="tabular-nums font-medium">{row.code}</span> },
     { kunci: 'nama', label: 'Nama', hp: 'keterangan', isi: (row) => row.name },
-    { kunci: 'hex', label: 'Hex', isi: (row) => <span className="tabular-nums text-xs text-muted-foreground">{row.hex}</span> },
+    { kunci: 'hex', label: 'Kode warna', isi: (row) => <span className="tabular-nums text-xs text-muted-foreground">{row.hex}</span> },
     { kunci: 'status', label: 'Status', isi: (row) => (row.active === false
       ? <StatusBadge status="inactive" tone="muted" label="Nonaktif" /> : <StatusBadge status="active" tone="success" label="Aktif" />) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (row) => (
@@ -98,7 +98,7 @@ export function RahazaColorsModule({ token }) {
       subtitle="Palet warna (gaya techpack). Kode singkatan dipakai di SKU varian: KODE-WARNA-UKURAN."
       actions={<Button type="button" onClick={openCreate} data-testid="color-create-btn"><Plus className="w-4 h-4" /> Tambah warna</Button>}
       tools={<TombolUnduh namaBerkas="master-warna" baris={rows} testId="color-unduh" kolom={[
-        { label: 'Kode', nilai: (r) => r.code || '' }, { label: 'Nama', nilai: (r) => r.name || '' }, { label: 'Hex', nilai: (r) => r.hex || '' },
+        { label: 'Kode', nilai: (r) => r.code || '' }, { label: 'Nama', nilai: (r) => r.name || '' }, { label: 'Kode warna (hex)', nilai: (r) => r.hex || '' },
         { label: 'Urutan', nilai: (r) => Number(r.order_seq) || 0 }, { label: 'Status', nilai: (r) => (r.active === false ? 'Nonaktif' : 'Aktif') },
       ]} />}>
       {loading ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat…</p> : (
