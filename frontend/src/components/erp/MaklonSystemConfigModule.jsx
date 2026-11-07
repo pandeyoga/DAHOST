@@ -1,26 +1,53 @@
+/**
+ * Konfigurasi Maklon (Administrasi Sistem) — setelan sistem yang bisa diatur (pajak, ambang, kunci integrasi).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, 22 setelan = satu tabel dengan penyaring kategori (dulu 6 tab berisi
+ * form di halaman), ubah satu setelan = FormPopup pendek (jalur simpan sama: POST /config/bulk), unduh Excel/CSV
+ * tanpa nilai rahasia, kode setelan (`maklon_cmt_buffer_days`) dan "system_init" tidak tampil di layar.
+ * Hak ubah tetap: hanya admin/owner/superadmin (isCurrentUserConfigAdmin); peran lain mode baca.
+ */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Settings, Save, RefreshCw, Lock, Eye, EyeOff } from 'lucide-react';
-import { GlassCard } from '@/components/ui/glass';
+import { Eye, EyeOff, Lock, Pencil, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Textarea } from '@/components/ui/textarea';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { toast } from 'sonner';
-import { motion } from 'framer-motion';
-import { PageHeader, Notice } from './moduleAtoms';
+import { formatDateTimeID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import { isCurrentUserConfigAdmin } from '@/lib/systemConfigRoles';
 
 const CATEGORY_META = {
-  inventory:    { label: 'Gudang & Stok',      color: 'text-rose-700 dark:text-rose-400' },
-  production:   { label: 'Produksi',           color: 'text-sky-700 dark:text-sky-400' },
-  maklon:       { label: 'Maklon & Invoice',   color: 'text-violet-600 dark:text-violet-400' },
-  hpp:          { label: 'HPP & Costing',      color: 'text-amber-700 dark:text-amber-400' },
-  notification: { label: 'Notifikasi (WA/TG)', color: 'text-green-700 dark:text-green-400' },
-  marketplace:  { label: 'Marketplace',        color: 'text-blue-600 dark:text-blue-400' },
+  inventory:    { label: 'Gudang & stok' },
+  production:   { label: 'Produksi' },
+  maklon:       { label: 'Maklon & tagihan' },
+  hpp:          { label: 'HPP & biaya' },
+  notification: { label: 'Notifikasi (WA/TG)' },
+  marketplace:  { label: 'Marketplace' },
 };
+// Nama setelan dari server sebagian masih berbahasa Inggris — diterjemahkan untuk tampilan saja.
+const LABEL_ID = {
+  maklon_cmt_buffer_days: 'Cadangan waktu target CMT (hari)',
+  maklon_cmt_late_grace_days: 'Toleransi telat CMT (hari, H+N)',
+  maklon_invoice_prefix: 'Awalan nomor tagihan maklon',
+  maklon_payment_terms_default: 'Jangka bayar bawaan',
+  maklon_permak_return_grace_days: 'Toleransi kembali permak (hari, H+N)',
+  maklon_qc_reject_threshold_pct: 'Ambang tolak QC (%)',
+  production_require_material_issued: 'Progres produksi wajib material sudah dikeluarkan (GDG-2)',
+  notification_whatsapp_api_key: 'Kunci API / token WhatsApp',
+  notification_whatsapp_sender: 'Nomor pengirim WhatsApp',
+  notification_telegram_bot_token: 'Token bot Telegram',
+  notification_telegram_chat_id: 'ID obrolan Telegram bawaan',
+};
+const labelSetelan = (c) => LABEL_ID[c.key] || c.label || c.key;
+const labelKategori = (k) => (CATEGORY_META[k] || { label: k }).label;
+const oleh = (u) => (!u || u === 'system_init' ? 'bawaan sistem' : u);
+const instan = (ts) => (typeof ts === 'string' && /T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(ts) ? `${ts}Z` : ts);
 
 export default function MaklonSystemConfigModule({ token }) {
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
@@ -28,9 +55,10 @@ export default function MaklonSystemConfigModule({ token }) {
   const [configs, setConfigs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState('maklon');
+  const [activeTab, setActiveTab] = useState('');
   const [edited, setEdited] = useState({});
   const [showSecret, setShowSecret] = useState({});
+  const [ubah, setUbah] = useState(null);
   // 2026-11-07 (Tahap 6, SY2): hanya admin/owner/superadmin yang boleh mengubah (server menolak peran lain).
   const canEdit = useMemo(() => isCurrentUserConfigAdmin(), []);
 
@@ -39,8 +67,8 @@ export default function MaklonSystemConfigModule({ token }) {
     try {
       const r = await fetch('/api/dewi/system/config', { headers });
       if (r.ok) { setConfigs(await r.json()); setEdited({}); }
-      else toast.error('Gagal memuat config');
-    } catch (e) { toast.error('Gagal memuat config'); }
+      else toast.error('Gagal memuat konfigurasi');
+    } catch (e) { toast.error('Gagal memuat konfigurasi'); }
     finally { setLoading(false); }
   }, [headers]);
 
@@ -53,23 +81,35 @@ export default function MaklonSystemConfigModule({ token }) {
     return cfg.value !== undefined ? cfg.value : '';
   };
 
+  // Simpan satu setelan lewat jalur yang sama (bulk) — hanya kunci yang diubah dikirim.
   const saveAll = async () => {
-    if (Object.keys(edited).length === 0) { toast.info('Tidak ada perubahan'); return; }
+    if (Object.keys(edited).length === 0) { toast.info('Tidak ada perubahan'); setUbah(null); return; }
     setSaving(true);
-    const r = await fetch('/api/dewi/system/config/bulk', { method: 'POST', headers, body: JSON.stringify(edited) });
-    setSaving(false);
-    if (r.ok) {
-      const d = await r.json();
-      toast.success(`${d.updated} setelan disimpan`);
-      if (d.errors?.length) toast.error(`Tidak tersimpan — ${d.errors.join('; ')}`);
-      fetchConfigs();
-    } else {
-      toast.error('Gagal menyimpan');
-    }
+    try {
+      const r = await fetch('/api/dewi/system/config/bulk', { method: 'POST', headers, body: JSON.stringify(edited) });
+      if (r.ok) {
+        const d = await r.json();
+        toast.success(`${d.updated} setelan disimpan`);
+        if (d.errors?.length) toast.error(`Tidak tersimpan — ${d.errors.join('; ')}`);
+        setUbah(null);
+        fetchConfigs();
+      } else {
+        toast.error('Gagal menyimpan');
+      }
+    } finally { setSaving(false); }
   };
 
   const categories = [...new Set(configs.map(c => c.category))];
-  const byCategory = configs.filter(c => c.category === activeTab);
+  const byCategory = configs.filter(c => !activeTab || c.category === activeTab);
+
+  const tampilNilai = (cfg) => {
+    const v = cfg.value;
+    if (cfg.is_secret) return v || cfg.value_masked ? (cfg.value_masked || 'Tersimpan (rahasia)') : '';
+    if (cfg.data_type === 'boolean') return v ? 'Aktif' : 'Nonaktif';
+    if (Array.isArray(cfg.choices) && cfg.choices.length) return cfg.choices.find((c) => c.value === v)?.label || (v ? `${v} (tidak dikenal)` : '');
+    if (v === null || v === undefined) return '';
+    return typeof v === 'number' ? v.toLocaleString('id-ID') : String(v);
+  };
 
   const renderInput = (cfg) => {
     const val = currentValue(cfg);
@@ -77,7 +117,10 @@ export default function MaklonSystemConfigModule({ token }) {
     const show = showSecret[cfg.key];
     if (cfg.data_type === 'boolean') {
       return (
-        <Switch checked={!!val} onCheckedChange={(v) => setValue(cfg.key, v)} disabled={!canEdit} data-testid={`cfg-${cfg.key}`} />
+        <label className="flex items-center gap-3 text-sm">
+          <Switch checked={!!val} onCheckedChange={(v) => setValue(cfg.key, v)} disabled={!canEdit} data-testid={`cfg-${cfg.key}`} />
+          {val ? 'Aktif' : 'Nonaktif'}
+        </label>
       );
     }
     // 2026-11-07 (Tahap 5) — setelan berkode tetap dipilih, bukan diketik (server menolak nilai lain).
@@ -91,14 +134,15 @@ export default function MaklonSystemConfigModule({ token }) {
       );
     }
     if (cfg.data_type === 'number') {
-      return <Input type="number" step="any" value={val ?? ''} onChange={e => setValue(cfg.key, e.target.value)} disabled={!canEdit} data-testid={`cfg-${cfg.key}`} />;
+      return <Input type="number" step="any" value={val ?? ''} onChange={e => setValue(cfg.key, e.target.value)} disabled={!canEdit} className="w-40 tabular-nums" data-testid={`cfg-${cfg.key}`} />;
     }
     if (isSecret) {
       return (
         <div className="flex gap-2">
-          <Input type={show ? 'text' : 'password'} value={val ?? ''} onChange={e => setValue(cfg.key, e.target.value)} placeholder={cfg.value_masked || '•••••'} disabled={!canEdit} data-testid={`cfg-${cfg.key}`} />
-          <Button size="icon" variant="ghost" className="w-9 h-9" onClick={() => setShowSecret(p => ({ ...p, [cfg.key]: !p[cfg.key] }))}>
-            {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          <Input type={show ? 'text' : 'password'} autoComplete="off" value={val ?? ''} onChange={e => setValue(cfg.key, e.target.value)} placeholder={cfg.value_masked || '•••••'} disabled={!canEdit} data-testid={`cfg-${cfg.key}`} />
+          <Button type="button" size="icon" variant="outline" onClick={() => setShowSecret(p => ({ ...p, [cfg.key]: !p[cfg.key] }))}
+            title={show ? 'Sembunyikan' : 'Tampilkan yang diketik'} aria-label={show ? 'Sembunyikan' : 'Tampilkan yang diketik'}>
+            {show ? <EyeOff /> : <Eye />}
           </Button>
         </div>
       );
@@ -106,80 +150,73 @@ export default function MaklonSystemConfigModule({ token }) {
     return <Input value={val ?? ''} onChange={e => setValue(cfg.key, e.target.value)} disabled={!canEdit} data-testid={`cfg-${cfg.key}`} />;
   };
 
-  return (
-    <div className="p-6 space-y-6" data-testid="maklon-system-config">
-      <PageHeader
-        title="System Configuration"
-        subtitle="Pengaturan sistem yang dapat dikonfigurasi (tax, threshold, API keys) — bukan hardcode"
-        icon={Settings}
-        actions={
-          <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={fetchConfigs} className="gap-2" data-testid="cfg-refresh-btn">
-              <RefreshCw className="w-3.5 h-3.5" /> Refresh
-            </Button>
-            {canEdit && (
-              <Button size="sm" onClick={saveAll} disabled={saving || Object.keys(edited).length === 0} className="gap-1.5" data-testid="cfg-save-btn">
-                <Save className="w-3.5 h-3.5" /> Simpan{Object.keys(edited).length > 0 ? ` (${Object.keys(edited).length})` : ''}
-              </Button>
-            )}
-          </div>
-        }
-      />
+  const kolom = [
+    { kunci: 'label', label: 'Setelan', hp: 'judul', isi: (c) => (
+      <div className="min-w-0 md:max-w-[26rem]">
+        <p className="font-medium text-foreground">{labelSetelan(c)}{c.is_secret && <Lock className="ml-1 inline h-3.5 w-3.5 text-muted-foreground" aria-label="rahasia" />}</p>
+        {c.description && <p className="text-xs text-muted-foreground">{c.description}</p>}
+      </div>) },
+    { kunci: 'kategori', label: 'Kategori', isi: (c) => <span className="text-sm">{labelKategori(c.category)}</span> },
+    { kunci: 'nilai', label: 'Nilai', isi: (c) => (c.data_type === 'boolean'
+      ? <StatusBadge status={c.value ? 'aktif' : 'nonaktif'} label={c.value ? 'Aktif' : 'Nonaktif'} tone={c.value ? 'success' : 'muted'} />
+      : <span className="break-all text-sm">{tampilNilai(c) || <span className="text-muted-foreground">Belum diisi</span>}</span>) },
+    { kunci: 'diperbarui', label: 'Diperbarui', isi: (c) => (c.updated_at
+      ? <span className="text-sm">{formatDateTimeID(instan(c.updated_at))}<span className="block text-xs text-muted-foreground">oleh {oleh(c.updated_by)}</span></span>
+      : <span className="text-sm text-muted-foreground">—</span>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (c) => (
+      <Button size="sm" variant="outline" onClick={() => { setEdited({}); setUbah(c); }} data-testid={`cfg-edit-${c.key}`}>
+        {canEdit ? <><Pencil />Ubah</> : <><Eye />Lihat</>}
+      </Button>) },
+  ];
 
+  return (
+    <PageLayout testId="maklon-system-config" title="Konfigurasi maklon"
+      subtitle="Setelan sistem yang bisa diatur tanpa mengubah program: pajak, ambang, jangka bayar, dan kunci integrasi."
+      filters={configs.length > 0 && (
+        <FilterChips value={activeTab} onChange={setActiveTab} hideWhenEmpty={false} testId="cfg-category-filter" options={[
+          { key: '', label: 'Semua', count: configs.length },
+          ...categories.map((cat) => ({ key: cat, label: labelKategori(cat), count: configs.filter((c) => c.category === cat).length })),
+        ]} />
+      )}
+      tools={<>
+        <TombolUnduh namaBerkas="konfigurasi-maklon" namaLembar="Setelan" baris={byCategory} testId="cfg-unduh" kolom={[
+          { label: 'Setelan', nilai: (c) => labelSetelan(c) }, { label: 'Kategori', nilai: (c) => labelKategori(c.category) },
+          // Nilai rahasia TIDAK ikut diunduh.
+          { label: 'Nilai', nilai: (c) => (c.is_secret ? (c.value || c.value_masked ? 'Tersimpan (rahasia)' : 'Belum diisi') : tampilNilai(c)) },
+          { label: 'Keterangan', nilai: (c) => c.description || '' },
+          { label: 'Diperbarui', nilai: (c) => (c.updated_at ? formatDateTimeID(instan(c.updated_at)) : '') },
+          { label: 'Oleh', nilai: (c) => oleh(c.updated_by) },
+        ]} />
+        <Button variant="outline" size="icon" onClick={fetchConfigs} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="cfg-refresh-btn">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}>
       {!canEdit && (
         <Notice tone="info" icon={Lock} testId="cfg-readonly-note" title="Mode baca saja">
           Pengaturan sistem hanya bisa diubah oleh admin, owner, atau superadmin.
         </Notice>
       )}
 
-      {loading ? (
-        <GlassCard className="p-10 text-center text-foreground/50">Memuat...</GlassCard>
+      {loading && configs.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat konfigurasi…</p>
       ) : (
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-4 flex-wrap">
-            {categories.map(cat => {
-              const meta = CATEGORY_META[cat] || { label: cat };
-              return <TabsTrigger key={cat} value={cat} data-testid={`cfg-tab-${cat}`}>{meta.label}</TabsTrigger>;
-            })}
-          </TabsList>
-
-          {categories.map(cat => (
-            <TabsContent key={cat} value={cat}>
-              <GlassCard className="p-5 space-y-4">
-                {byCategory.length === 0 && activeTab === cat && (
-                  <div className="text-foreground/40 text-sm py-6 text-center">Tidak ada config di kategori ini</div>
-                )}
-                {activeTab === cat && byCategory.map((cfg, i) => (
-                  <motion.div
-                    key={cfg.key}
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.02 * i }}
-                    className="grid grid-cols-1 md:grid-cols-[1fr_1fr] gap-4 pb-3 border-b border-foreground/5 last:border-0 last:pb-0"
-                  >
-                    <div>
-                      <Label className="flex items-center gap-1.5">
-                        {cfg.label}
-                        {cfg.is_secret && <Lock className="w-3 h-3 text-amber-700 dark:text-amber-400" />}
-                      </Label>
-                      <div className="text-xs text-foreground/50 mt-1">{cfg.description}</div>
-                      <div className="text-[10px] font-mono text-foreground/30 mt-0.5">{cfg.key}</div>
-                    </div>
-                    <div>
-                      {renderInput(cfg)}
-                      {cfg.updated_at && (
-                        <div className="text-[10px] text-foreground/40 mt-1">
-                          Diupdate: {(cfg.updated_at || '').slice(0, 19).replace('T', ' ')} oleh {cfg.updated_by || '-'}
-                        </div>
-                      )}
-                    </div>
-                  </motion.div>
-                ))}
-              </GlassCard>
-            </TabsContent>
-          ))}
-        </Tabs>
+        <TabelData kolom={kolom} baris={byCategory} kunci={(c) => c.key} onKlikBaris={(c) => { setEdited({}); setUbah(c); }}
+          testId="cfg-table" kosong={<EmptyState title="Tidak ada setelan di kategori ini" />} />
       )}
-    </div>
+
+      <FormPopup open={!!ubah} onClose={() => { setEdited({}); setUbah(null); }} ukuran="pendek" testId="cfg-form"
+        judul={ubah ? labelSetelan(ubah) : ''} keterangan={ubah?.description}
+        onSimpan={saveAll} menyimpan={saving} bisaSimpan={canEdit && Object.keys(edited).length > 0}>
+        {ubah && (
+          <Isian label="Nilai" petunjuk={ubah.is_secret ? 'Nilai rahasia tidak ditampilkan. Isi untuk menggantinya.' : `Kategori: ${labelKategori(ubah.category)}`}>
+            {renderInput(ubah)}
+          </Isian>
+        )}
+        {canEdit && (
+          <p className="text-xs text-muted-foreground">Perubahan berlaku setelah disimpan.</p>
+        )}
+      </FormPopup>
+    </PageLayout>
   );
 }
