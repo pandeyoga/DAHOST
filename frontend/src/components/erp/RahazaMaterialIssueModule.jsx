@@ -67,6 +67,7 @@ const STATUS_META = {
 };
 const JENIS_MATERIAL = { fabric: 'Kain', yarn: 'Benang', accessory: 'Aksesoris', packaging: 'Kemasan', interlining: 'Kain keras', fg: 'Produk jadi' };
 const fmtQty = (v) => Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 3 });
+const BATAS_MI = 500; // batas efektif GET /rahaza/material-issues (to_list(500))
 
 function StatusMI({ status }) {
   const s = STATUS_META[status] || STATUS_META.draft;
@@ -100,7 +101,8 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
   const fetchList = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
+      // Server memotong di `limit` (bawaan 200, maks 500 lewat to_list) tanpa keterangan → minta 500 dan sebutkan bila penuh.
+      const params = new URLSearchParams({ limit: String(BATAS_MI) });
       if (filterStatus) params.set('status', filterStatus);
       if (filterBuilding) params.set('building_id', filterBuilding);
       if (filterSource) params.set('source', filterSource);   // FASE H-6b
@@ -523,6 +525,11 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
           </Button>
         </div>
       </>}>
+      {list.length >= BATAS_MI && (
+        <p className="text-sm text-muted-foreground" data-testid="mi-batas">
+          Menampilkan {BATAS_MI} dokumen terbaru (batas server). Persempit dengan pil sumber atau status.
+        </p>
+      )}
       <GlassCard className="p-0 overflow-hidden">
         {list.length === 0 ? (
           <EmptyState icon={Package}
