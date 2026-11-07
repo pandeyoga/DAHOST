@@ -191,8 +191,8 @@ export default function RnDProductViewer() {
       <div className="flex min-w-0 items-center gap-3" data-testid={`rnd-product-${r.sku}`}>
         <Gambar src={r.images?.[0]} alt={r.name} />
         <div className="min-w-0">
-          <p className="truncate font-medium text-foreground md:max-w-[18rem]" title={r.name}>{r.name}</p>
-          <p className="truncate text-xs text-muted-foreground">
+          <p className="font-medium text-foreground md:max-w-[18rem] md:truncate" title={r.name}>{r.name}</p>
+          <p className="text-xs text-muted-foreground md:truncate">
             <span className="font-mono">{r.sku}</span>
             {[r.category, r.color, r.size].filter(Boolean).length > 0 && ` · ${[r.category, r.color, r.size].filter(Boolean).join(' · ')}`}
           </p>
@@ -209,10 +209,10 @@ export default function RnDProductViewer() {
     { kunci: 'katalog', label: 'Katalog', isi: (r) => (r.marketing_sync.synced
       ? <StatusBadge status="ok" tone="success" label={`${r.marketing_sync.item_count} toko`} />
       : <StatusBadge status="belum" tone="warning" label="Belum" />) },
-    { kunci: 'produksi', label: 'Produksi', isi: (r) => (r.production.qty_ordered
+    { kunci: 'produksi', label: 'Produksi', hp: false, isi: (r) => (r.production.qty_ordered
       ? <span className="tabular-nums">SPK {r.production.qty_ordered} pcs</span>
       : <span className="text-muted-foreground">Belum</span>) },
-    { kunci: 'stok', label: 'Stok', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.stock_qty}</span> },
+    { kunci: 'stok', label: 'Stok', rata: 'kanan', hp: false, isi: (r) => <span className="tabular-nums">{r.stock_qty}</span> },
     { kunci: 'lengkap', label: 'Kelengkapan', isi: (r) => (r.gaps.length
       ? <span data-testid={`rnd-gaps-${r.sku}`} title={r.gaps.join('\n')}>
           <StatusBadge status="kurang" tone="warning" label={`${r.gaps.length} kekurangan`} />
@@ -312,7 +312,7 @@ export default function RnDProductViewer() {
             ? <StatusBadge status="kurang" tone="warning" label={`${baris.gaps.length} kekurangan`} />
             : <StatusBadge status="lengkap" tone="success" label="Lengkap" />}>
           <div className="flex flex-col gap-4 sm:flex-row">
-            <Gambar src={baris.images?.[0]} alt={baris.name} besar />
+            {baris.images?.[0] && <Gambar src={baris.images[0]} alt={baris.name} besar />}
             <dl className="min-w-0 flex-1 divide-y divide-[var(--glass-border)]">
               <BarisDetail label="HPP">
                 {rp(hppOf(baris))} <span className="text-muted-foreground">({baris.hpp.layer_count ? `${baris.hpp.layer_count} batch` : 'perkiraan BOM'})</span>
@@ -348,18 +348,18 @@ export default function RnDProductViewer() {
                     { label: 'Biaya per pcs (Rp)', nilai: (l) => Number(l.unit_cost || 0) },
                   ]} />
               )}>
-                <p className="text-sm text-muted-foreground">
-                  {SUMBER_HPP[det.hpp_layers?.source] || 'Sumber tidak diketahui'} · rata-rata {rp(det.hpp_layers?.hpp_fifo_avg)}
-                  {' '}· batch terakhir {rp(det.hpp_layers?.hpp_last_batch)}
-                </p>
-                {layers.length > 0 ? (
+                {layers.length > 0 ? (<>
+                  <p className="text-sm text-muted-foreground">
+                    {SUMBER_HPP[det.hpp_layers?.source] || 'Sumber tidak diketahui'} · rata-rata {rp(det.hpp_layers?.hpp_fifo_avg)}
+                    {' '}· batch terakhir {rp(det.hpp_layers?.hpp_last_batch)}
+                  </p>
                   <TabelData baris={layers} testId="rnd-detail-layers"
                     kolom={[
                       { kunci: 'po', label: 'Batch / PO', hp: 'judul', isi: (l) => l.batch?.po_number || '—' },
                       { kunci: 'sisa', label: 'Sisa / masuk', rata: 'kanan', isi: (l) => <span className="tabular-nums">{l.qty_remaining}/{l.qty_in} pcs</span> },
                       { kunci: 'biaya', label: 'Biaya per pcs', rata: 'kanan', isi: (l) => <span className="tabular-nums">{rp(l.unit_cost)}</span> },
                     ]} />
-                ) : (
+                </>) : (
                   <p className="text-sm text-[hsl(var(--warning-text))]">Belum ada batch masuk gudang — HPP yang terlihat masih perkiraan BOM.</p>
                 )}
               </Seksi>

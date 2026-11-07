@@ -378,7 +378,7 @@ export default function RnDPatternModule({ token }) {
             onKeyDown={e => e.key === 'Enter' && loadPatterns()} />
         </div>
         <SmartNativeSelect value={filterStyle} onChange={e => setFilterStyle(e.target.value)}
-          className="w-full sm:w-56" data-testid="rnd-pattern-style-filter">
+          className="w-56" data-testid="rnd-pattern-style-filter">
           <option value="">Semua style</option>
           {styles.map(s => <option key={s.id} value={s.id}>{s.style_code} — {s.style_name}</option>)}
         </SmartNativeSelect>

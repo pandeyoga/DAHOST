@@ -877,16 +877,26 @@ export default function SupplierMasterModule({ token }) {
 
   return (
     <PageLayout testId="supplier-master-page" title="Master Supplier"
-      subtitle="Data supplier: kontak, NPWP, termin bayar, rekening, dan daftar harga per satuan beli."
+      subtitle="Kontak, NPWP, termin bayar, rekening, dan daftar harga pemasok."
       actions={
-        // Banyak tombol data → dibungkus supaya tetap berbaris di HP (tidak keluar layar).
+        // Banyak tombol data → dibungkus supaya tetap berbaris di HP (tidak keluar layar). "Tarik data lama"
+        // (jarang dipakai) masuk menu Lainnya supaya kepala tidak setinggi tiga baris.
         <div className="flex flex-wrap items-center gap-2 max-sm:max-w-[calc(100vw-2rem)]">
-          <Button variant="outline" onClick={() => setMigrateOpen(true)} data-testid="supplier-migrate-btn">
-            <Truck /> Tarik data lama
-          </Button>
           <ImportExportToolbar collectionKey="suppliers" label="Master Supplier" size="default" onImported={() => load(1)} />
           <ImportExportToolbar collectionKey="supplier_prices" label="Daftar Harga Supplier" caption="harga" size="default"
             onImported={() => load(pagination.page)} />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" aria-label="Lainnya" title="Lainnya" data-testid="supplier-more-actions">
+                <MoreHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => setMigrateOpen(true)} data-testid="supplier-migrate-btn">
+                <Truck className="mr-2 h-4 w-4" />Tarik data lama
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button onClick={() => { setEditing(null); setFormOpen(true); }} data-testid="supplier-create-btn">
             <Plus /> Tambah supplier
           </Button>
@@ -929,7 +939,7 @@ export default function SupplierMasterModule({ token }) {
           kosong={<EmptyState icon={Building2}
             title={disaring ? 'Tidak ada supplier yang cocok' : 'Belum ada supplier di master'}
             description={disaring ? 'Ubah kata pencarian atau saringan.'
-              : 'Klik "Tarik data lama" untuk membuat master dari nama supplier di dokumen yang sudah ada.'} />} />
+              : 'Pilih "Tarik data lama" di menu Lainnya (⋯) untuk membuat master dari nama supplier di dokumen lama.'} />} />
       )}
 
       {formOpen && (

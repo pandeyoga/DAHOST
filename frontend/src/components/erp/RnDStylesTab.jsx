@@ -365,8 +365,8 @@ export default function RnDStylesTab({ token, user }) {
         )}
       </div>) },
     { kunci: 'kategori', label: 'Kategori', isi: (s) => s.category || '—' },
-    { kunci: 'klien', label: 'Klien', isi: (s) => s.client_name || s.buyer || 'Internal DA' },
-    { kunci: 'musim', label: 'Musim', isi: (s) => s.season || '—' },
+    { kunci: 'klien', label: 'Klien', hp: false, isi: (s) => s.client_name || s.buyer || 'Internal DA' },
+    { kunci: 'musim', label: 'Musim', hp: false, isi: (s) => s.season || '—' },
     { kunci: 'varian', label: 'Varian', rata: 'kanan', isi: (s) => {
       const n = s.variants_count ?? (s.variants || []).length;
       return n > 0 ? <span className="tabular-nums">{n}</span> : <span className="text-muted-foreground">—</span>;

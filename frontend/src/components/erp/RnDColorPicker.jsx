@@ -110,7 +110,7 @@ export function ColorSelect({ colors, addColor, value, onChange, testId, placeho
             onChange(c || null);
           }}
           data-testid={testId} aria-label="Warna"
-          className="w-full" wrapperClassName="min-w-0 flex-1">
+          className="w-full" wrapperClassName="min-w-0 flex-1 sm:max-w-sm">
           <option value="">{placeholder}</option>
           {colors.map(c => <option key={c.color_id} value={c.color_id}>{`${c.name} (${c.code})`}</option>)}
           {allowCreate && <option value={NEW}>+ Warna baru…</option>}
@@ -165,7 +165,7 @@ export function ColorMultiSelect({ colors, addColor, value = [], onChange, testI
           add(colors.find(c => c.color_id === e.target.value));
         }}
           data-testid={testId ? `${testId}-select` : undefined} aria-label={label}
-          className="w-full" wrapperClassName="min-w-0 flex-1">
+          className="w-full" wrapperClassName="min-w-0 flex-1 sm:max-w-sm">
           <option value="">{label}…</option>
           {colors.filter(c => !chosenIds.has(c.color_id)).map(c => (
             <option key={c.color_id} value={c.color_id}>{`${c.name} (${c.code})`}</option>

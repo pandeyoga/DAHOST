@@ -9,7 +9,7 @@ import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import { toast } from '../ui/sonner';
 import PageLayout from './layout/PageLayout';
-import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
+import { Notice, StatTile, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -173,9 +173,10 @@ export default function RnDSizeMappingModule({ token }) {
       {loading && !data ? (
         <p className="py-6 text-center text-sm text-muted-foreground">Memuat pemadanan ukuran…</p>
       ) : allClear ? (
-        <EmptyState icon={CheckCircle2} testId="rnd-size-mapping-allclear" className="py-6"
-          title="Semua ukuran sudah dipadankan ke master produksi"
-          description="Tidak ada style yang tertahan karena ukuran." />
+        <Notice tone="success" icon={CheckCircle2} testId="rnd-size-mapping-allclear"
+          title="Semua ukuran sudah dipadankan ke master produksi">
+          Tidak ada style yang tertahan karena ukuran.
+        </Notice>
       ) : (
         <div className="space-y-3">
           <Notice tone="info" icon={Info}>

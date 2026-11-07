@@ -536,7 +536,7 @@ export default function RnDTechPackModule({ token }) {
             placeholder="Cari style atau judul" className="pl-8" data-testid="techpack-search" />
         </div>
         <SmartNativeSelect value={filterStyle} onChange={e => setFilterStyle(e.target.value)}
-          className="w-full sm:w-56" data-testid="techpack-style-filter">
+          className="w-56" data-testid="techpack-style-filter">
           <option value="">Semua style</option>
           {styles.map(s => <option key={s.id} value={s.id}>{s.style_code} — {s.style_name}</option>)}
         </SmartNativeSelect>

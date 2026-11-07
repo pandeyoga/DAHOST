@@ -262,7 +262,13 @@ function CreatePRModal({ onClose, onCreated, token }) {
     <FormPopup open onClose={onClose} ukuran="panjang" testId="pr-create-form"
       judul="Buat permintaan pengadaan"
       keterangan="Disimpan sebagai draf. Ajukan ke approver dari detail permintaan."
-      onSimpan={submit} menyimpan={saving} galat={error} labelSimpan="Simpan draf">
+      onSimpan={submit} menyimpan={saving} galat={error} labelSimpan="Simpan draf"
+      aksiKiri={
+        // Total selalu terlihat di kaki popup (dulu di ujung daftar item, tertutup kaki saat item banyak).
+        <span className="text-sm text-muted-foreground" data-testid="pr-form-total">
+          Total estimasi: <span className="font-semibold tabular-nums text-foreground">{fmtRp(totalEst)}</span>
+        </span>
+      }>
       <DocNumberField
         policy={numPolicy}
         value={form.request_number}
@@ -274,7 +280,7 @@ function CreatePRModal({ onClose, onCreated, token }) {
         <Input id="pr-form-title" placeholder="mis. Pembelian laptop karyawan baru" value={form.title}
           onChange={e => setForm(p => ({ ...p, title: e.target.value }))} data-testid="pr-form-title" />
       </Isian>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-3">
         <Isian label="Tipe pengadaan">
           <SmartNativeSelect value={form.request_type} onChange={e => setForm(p => ({ ...p, request_type: e.target.value }))} data-testid="pr-form-type">
             {requestTypes.map(rt => <option key={rt.value} value={rt.value}>{rt.label}</option>)}
@@ -285,12 +291,12 @@ function CreatePRModal({ onClose, onCreated, token }) {
             {Object.entries(PRIORITY_CFG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </SmartNativeSelect>
         </Isian>
+        <Isian label="Departemen" petunjuk="Bawaan = departemen Anda.">
+          {/* 2026-11-07 (OR1): dari Struktur Organisasi; bawaan = departemen karyawan pemohon */}
+          <DepartmentSelect token={token} value={form.department} defaultToMine testId="pr-form-department"
+            className="w-full h-9" onChange={v => setForm(p => ({ ...p, department: v }))} />
+        </Isian>
       </div>
-      <Isian label="Departemen" petunjuk="Dari struktur organisasi; bawaan = departemen Anda.">
-        {/* 2026-11-07 (OR1): dari Struktur Organisasi; bawaan = departemen karyawan pemohon */}
-        <DepartmentSelect token={token} value={form.department} defaultToMine testId="pr-form-department"
-          className="w-full h-9" onChange={v => setForm(p => ({ ...p, department: v }))} />
-      </Isian>
       <Isian label="Justifikasi / alasan" htmlFor="pr-form-justification">
         <Textarea id="pr-form-justification" rows={2} placeholder="Jelaskan mengapa pengadaan ini diperlukan"
           value={form.justification} onChange={e => setForm(p => ({ ...p, justification: e.target.value }))} />
@@ -310,7 +316,7 @@ function CreatePRModal({ onClose, onCreated, token }) {
           return (
             <div key={i} className="space-y-2 rounded-lg border border-[var(--glass-border)] p-3">
               <div className="flex gap-2">
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1 sm:max-w-sm">
                   <SmartNativeSelect
                     value={it.material_id}
                     onChange={e => pickMaterial(i, e.target.value)}
@@ -323,7 +329,7 @@ function CreatePRModal({ onClose, onCreated, token }) {
                   </SmartNativeSelect>
                 </div>
                 {items.length > 1 && (
-                  <Button type="button" variant="ghost" size="icon" onClick={() => rmItem(i)}
+                  <Button type="button" variant="ghost" size="icon" className="ml-auto" onClick={() => rmItem(i)}
                     title="Hapus item" aria-label="Hapus item" data-testid={`pr-item-remove-${i}`}>
                     <Trash2 className="text-[hsl(var(--danger-text))]" />
                   </Button>
@@ -362,9 +368,6 @@ function CreatePRModal({ onClose, onCreated, token }) {
             </div>
           );
         })}
-        <p className="text-right text-sm text-muted-foreground">
-          Total estimasi: <span className="font-semibold tabular-nums text-foreground">{fmtRp(totalEst)}</span>
-        </p>
       </div>
     </FormPopup>
   );
@@ -1012,7 +1015,7 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
 
   const tabOpsi = [
     { key: 'all', label: 'Semua', count: stats?.total },
-    { key: 'inbox', label: 'Perlu keputusan saya', count: inbox.length },
+    { key: 'inbox', label: 'Perlu keputusan', count: inbox.length },
     { key: 'mine', label: 'Milik saya', count: stats?.my_requests },
   ];
 
@@ -1130,7 +1133,7 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
         {tab !== 'inbox' && (<>
           <div className="relative w-full sm:w-48">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input className="pl-8" placeholder="Cari judul atau nomor PR"
+            <Input className="pl-8" placeholder="Cari judul / nomor PR"
               value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }}
               data-testid="pr-search" />
           </div>
@@ -1140,7 +1143,7 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
             <option value="">Semua status</option>
             {Object.entries(STATUS_CFG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </SmartNativeSelect>
-          <SmartNativeSelect className="w-36 h-9"
+          <SmartNativeSelect className="w-44 h-9"
             value={filterPriority} onChange={(e) => { setFilterPriority(e.target.value); setPage(1); }}
             data-testid="pr-filter-priority">
             <option value="">Semua prioritas</option>
@@ -1175,7 +1178,7 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
             <StatTile label="Total PR" value={Number(stats.total).toLocaleString('id-ID')}
               hint="Semua permintaan pengadaan, tanpa saringan." />
             <StatTile label="Perlu keputusan saya" value={Number(stats.my_pending_approval || 0).toLocaleString('id-ID')}
-              accent="warning" hint="Hanya permintaan yang tahap aktifnya memang hak Anda (aturan sama dengan pil Perlu keputusan saya)." />
+              accent="warning" hint="Hanya permintaan yang tahap aktifnya memang hak Anda (aturan sama dengan pil Perlu keputusan)." />
             <StatTile label="Disetujui, belum diproses" value={Number(stats.approved || 0).toLocaleString('id-ID')}
               accent="success" hint="Permintaan berstatus Disetujui yang belum dijadikan PO atau selesai." />
             <StatTile label="Nilai disetujui bulan ini" value={fmtRp(stats.total_value_approved_this_month)}

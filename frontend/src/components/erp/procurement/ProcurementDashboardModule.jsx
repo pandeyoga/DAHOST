@@ -127,38 +127,45 @@ export default function ProcurementDashboardModule({ token, onNavigate }) {
       }
       summary={loading && !ov ? (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="proc-dashboard-loading">
-          {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-[var(--radius-md)]" />)}
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-[var(--radius-md)]" />)}
         </div>
       ) : (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <StatTile label="Permintaan menunggu" value={k.pr_pending ?? 0} accent={k.pr_pending ? 'warning' : 'default'}
-            sub={`dari ${k.pr_total ?? 0} permintaan seluruhnya`}
-            hint="Menunggu persetujuan dept, keuangan, atau final" onClick={go('proc-requests')}
-            testId="proc-kpi-pr-pending" />
-          <StatTile label="PO berjalan" value={k.po_open ?? 0}
-            sub={`Nilai ${fmtRp(k.open_po_value)} · ${k.po_pending_approval ?? 0} menunggu persetujuan`}
-            hint="PO disetujui yang barangnya belum diterima penuh" onClick={go('proc-purchase-orders')}
-            testId="proc-kpi-po-open" />
-          <StatTile label="Penerimaan barang" value={k.gr_received ?? 0}
-            sub={`${k.gr_draft ?? 0} draf · ${k.qc_pending ?? 0} belum diperiksa QC`}
-            testId="proc-kpi-gr" />
-          <StatTile label="Hutang pemasok" value={fmtRp(k.ap_outstanding)} accent={k.ap_outstanding ? 'danger' : 'default'}
-            sub={`${k.ap_unpaid ?? 0} faktur belum lunas (sisa tagihan)`}
-            hint="Sama dengan Keuangan › Hutang, tanpa CMT" onClick={go('proc-ap-invoices')}
-            testId="proc-kpi-ap" />
-          <StatTile label="Belanja bulan ini" value={fmtRp(k.po_value_this_month)}
-            sub="Nilai PO bertanggal bulan ini, tanpa draf/ditolak/batal"
-            hint="Rincian per pemasok dan bulan" onClick={go('proc-analytics')}
-            testId="proc-kpi-spend-month" />
-          <StatTile label="Pemasok aktif" value={k.suppliers_active ?? 0}
-            sub={`dari ${k.suppliers_total ?? 0} pemasok di master`}
-            hint="Buka Master Supplier" onClick={go('proc-suppliers')} testId="proc-kpi-suppliers" />
-          <StatTile label="Baris daftar harga" value={k.price_list_rows ?? 0}
-            sub="Harga aktif per satuan beli"
-            hint="Diisi di Master Supplier" onClick={go('proc-suppliers')} testId="proc-kpi-price-rows" />
-          <StatTile label="Request aksesoris" value={k.accessory_pr_total ?? 0}
-            sub={`${k.accessory_pr_awaiting_approval ?? 0} menunggu persetujuan · ${k.accessory_pr_pending ?? 0} berjalan`}
-            hint="Buka Request Aksesoris" onClick={go('proc-accessory-pr')} testId="proc-kpi-acc-pr" />
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <StatTile label="Permintaan menunggu" value={k.pr_pending ?? 0} accent={k.pr_pending ? 'warning' : 'default'}
+              sub={`dari ${k.pr_total ?? 0} permintaan · menunggu persetujuan dept, keuangan, atau final`}
+              hint="Buka permintaan" onClick={go('proc-requests')} testId="proc-kpi-pr-pending" />
+            <StatTile label="PO berjalan" value={k.po_open ?? 0}
+              sub={`Nilai ${fmtRp(k.open_po_value)} · disetujui, barang belum diterima penuh · ${k.po_pending_approval ?? 0} menunggu persetujuan`}
+              hint="Buka PO" onClick={go('proc-purchase-orders')} testId="proc-kpi-po-open" />
+            <StatTile label="Hutang pemasok" value={fmtRp(k.ap_outstanding)} accent={k.ap_outstanding ? 'danger' : 'default'}
+              sub={`Sisa tagihan ${k.ap_unpaid ?? 0} faktur belum lunas (sama dengan Keuangan › Hutang, tanpa CMT)`}
+              hint="Buka faktur" onClick={go('proc-ap-invoices')} testId="proc-kpi-ap" />
+            <StatTile label="Belanja bulan ini" value={fmtRp(k.po_value_this_month)}
+              sub="Nilai PO bertanggal bulan ini, tanpa draf, ditolak, atau batal"
+              hint="Buka analisis" onClick={go('proc-analytics')} testId="proc-kpi-spend-month" />
+          </div>
+          {/* Angka pendukung dalam satu kalimat (dulu 4 kartu tambahan → 8 kartu berjejer). */}
+          <p className="flex flex-wrap items-center gap-x-1 gap-y-1 text-sm text-muted-foreground" data-testid="proc-dashboard-sekunder">
+            <span data-testid="proc-kpi-gr">Penerimaan barang <b className="tabular-nums text-foreground">{k.gr_received ?? 0}</b>
+              {' '}({k.gr_draft ?? 0} draf, {k.qc_pending ?? 0} belum diperiksa QC)</span>
+            <span aria-hidden="true">·</span>
+            <Button variant="link" size="sm" className="h-auto p-0" onClick={go('proc-suppliers')} disabled={!onNavigate}
+              data-testid="proc-kpi-suppliers">
+              Pemasok aktif <b className="tabular-nums">{k.suppliers_active ?? 0}</b> dari {k.suppliers_total ?? 0}
+            </Button>
+            <span aria-hidden="true">·</span>
+            <Button variant="link" size="sm" className="h-auto p-0" onClick={go('proc-suppliers')} disabled={!onNavigate}
+              data-testid="proc-kpi-price-rows">
+              Baris daftar harga aktif <b className="tabular-nums">{k.price_list_rows ?? 0}</b>
+            </Button>
+            <span aria-hidden="true">·</span>
+            <Button variant="link" size="sm" className="h-auto p-0" onClick={go('proc-accessory-pr')} disabled={!onNavigate}
+              data-testid="proc-kpi-acc-pr">
+              Request aksesoris <b className="tabular-nums">{k.accessory_pr_total ?? 0}</b>
+              {' '}({k.accessory_pr_awaiting_approval ?? 0} menunggu persetujuan, {k.accessory_pr_pending ?? 0} berjalan)
+            </Button>
+          </p>
         </div>
       )}>
       {err && <Notice tone="danger" title="Dashboard gagal dimuat">{err}</Notice>}
@@ -177,10 +184,12 @@ export default function ProcurementDashboardModule({ token, onNavigate }) {
         </Notice>
       )}
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      {poPerhatian.length === 0 ? (
+        <Notice tone="success" testId="proc-alert-po">Tidak ada PO berjalan yang terlambat atau dijadwalkan tiba 7 hari ke depan.</Notice>
+      ) : (
         <Bagian judul="PO perlu perhatian" testId="proc-alert-po"
           keterangan="PO berjalan yang lewat tanggal terima atau dijadwalkan tiba 7 hari ke depan."
-          alat={poPerhatian.length > 0 && (
+          alat={(
             <TombolUnduh namaBerkas="po-perlu-perhatian" namaLembar="PO perlu perhatian" baris={poPerhatian}
               testId="proc-alert-po-unduh"
               kolom={[
@@ -190,10 +199,7 @@ export default function ProcurementDashboardModule({ token, onNavigate }) {
                 { label: 'Keadaan', nilai: (p) => (p.keadaan === 'terlambat' ? 'Terlambat' : 'Tiba ≤ 7 hari') },
               ]} />
           )}>
-          {poPerhatian.length === 0 ? (
-            <Kosong>Tidak ada PO yang terlambat atau dijadwalkan tiba minggu ini.</Kosong>
-          ) : (
-            <TabelData baris={poPerhatian} kunci={(p) => p._kunci} testId="proc-alert-po-table"
+          <TabelData baris={poPerhatian} kunci={(p) => p._kunci} testId="proc-alert-po-table"
               onKlikBaris={onNavigate ? () => onNavigate('proc-purchase-orders') : undefined}
               kolom={[
                 { kunci: 'po', label: 'No. PO', hp: 'judul', isi: (p) => <span className="font-mono text-xs">{p.po_number}</span> },
@@ -203,9 +209,9 @@ export default function ProcurementDashboardModule({ token, onNavigate }) {
                   ? <StatusBadge status="overdue" label="Terlambat" tone="danger" />
                   : <StatusBadge status="pending" label="Tiba ≤ 7 hari" tone="warning" />) },
               ]} />
-          )}
         </Bagian>
 
+      )}
         <Bagian judul="Dokumen per tahap" testId="proc-pipeline"
           keterangan="Jumlah dokumen tiap tahap dan rincian statusnya."
           alat={
@@ -227,6 +233,7 @@ export default function ProcurementDashboardModule({ token, onNavigate }) {
             ]} />
         </Bagian>
 
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Bagian judul="Permintaan terbaru" testId="proc-recent-pr"
           alat={recentPr.length > 0 && (
             <>
