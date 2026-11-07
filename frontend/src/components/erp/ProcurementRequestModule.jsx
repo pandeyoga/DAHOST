@@ -1011,9 +1011,9 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
   const adaSaringan = !!(search || filterStatus || filterPriority);
 
   const tabOpsi = [
-    { key: 'all', label: 'Semua permintaan', count: stats?.total },
-    { key: 'inbox', label: 'Menunggu keputusan saya', count: inbox.length },
-    { key: 'mine', label: 'Permintaan saya', count: stats?.my_requests },
+    { key: 'all', label: 'Semua', count: stats?.total },
+    { key: 'inbox', label: 'Perlu keputusan saya', count: inbox.length },
+    { key: 'mine', label: 'Milik saya', count: stats?.my_requests },
   ];
 
   const kolomInbox = [
@@ -1128,19 +1128,19 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
         <FilterChips options={tabOpsi} value={tab} onChange={selectTab} hideWhenEmpty={false}
           testId="pr-tab" ariaLabel="Pilih daftar" />
         {tab !== 'inbox' && (<>
-          <div className="relative w-full sm:w-56">
+          <div className="relative w-full sm:w-48">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input className="pl-8" placeholder="Cari judul atau nomor PR"
               value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }}
               data-testid="pr-search" />
           </div>
-          <SmartNativeSelect className="w-48 h-9"
+          <SmartNativeSelect className="w-44 h-9"
             value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }}
             data-testid="pr-filter-status">
             <option value="">Semua status</option>
             {Object.entries(STATUS_CFG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </SmartNativeSelect>
-          <SmartNativeSelect className="w-40 h-9"
+          <SmartNativeSelect className="w-36 h-9"
             value={filterPriority} onChange={(e) => { setFilterPriority(e.target.value); setPage(1); }}
             data-testid="pr-filter-priority">
             <option value="">Semua prioritas</option>
@@ -1174,8 +1174,8 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="pr-stats">
             <StatTile label="Total PR" value={Number(stats.total).toLocaleString('id-ID')}
               hint="Semua permintaan pengadaan, tanpa saringan." />
-            <StatTile label="Menunggu keputusan saya" value={Number(stats.my_pending_approval || 0).toLocaleString('id-ID')}
-              accent="warning" hint="Hanya permintaan yang tahap aktifnya memang hak Anda (sama dengan daftar Menunggu keputusan saya)." />
+            <StatTile label="Perlu keputusan saya" value={Number(stats.my_pending_approval || 0).toLocaleString('id-ID')}
+              accent="warning" hint="Hanya permintaan yang tahap aktifnya memang hak Anda (aturan sama dengan pil Perlu keputusan saya)." />
             <StatTile label="Disetujui, belum diproses" value={Number(stats.approved || 0).toLocaleString('id-ID')}
               accent="success" hint="Permintaan berstatus Disetujui yang belum dijadikan PO atau selesai." />
             <StatTile label="Nilai disetujui bulan ini" value={fmtRp(stats.total_value_approved_this_month)}
