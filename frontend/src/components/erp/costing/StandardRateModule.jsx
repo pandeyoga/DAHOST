@@ -16,6 +16,7 @@ import { GlassCard } from '@/components/ui/glass';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import PageLayout from '../layout/PageLayout';
 import { EmptyState, StatusBadge } from '../moduleAtoms';
 import { costingApi } from './costingApi';
@@ -66,10 +67,17 @@ export default function StandardRateModule({ token }) {
       testId="hpp-standard-rates"
       title="Tarif standar per tahap"
       subtitle="Tarif per pcs tahap internal — dipakai HPP standar per potong bila produk belum punya laporan produksi bertarif."
-      actions={<Button onClick={save} disabled={saving || !dirty} data-testid="std-rate-save"><Save className="w-4 h-4" />{saving ? 'Menyimpan…' : 'Simpan tarif'}</Button>}
-      tools={<Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="std-rate-refresh">
-        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-      </Button>}
+      actions={<Button variant="success" onClick={save} disabled={saving || !dirty} data-testid="std-rate-save"><Save className="w-4 h-4" />{saving ? 'Menyimpan…' : 'Simpan tarif'}</Button>}
+      tools={<>
+        <TombolUnduh namaBerkas="tarif-standar-per-tahap" namaLembar="Tarif" baris={rows} testId="std-rate-unduh" kolom={[
+          { label: 'Tahap', nilai: (r) => r.name || r.code }, { label: 'Kode', nilai: (r) => r.code || '' },
+          { label: 'Keterangan', nilai: (r) => (r.is_cmt ? 'Upah CMT diisi di form PO' : r.active === false ? 'Nonaktif' : 'Tahap internal') },
+          { label: 'Tarif standar per pcs (Rp)', nilai: (r) => (r.is_cmt ? '' : Number(r.rate_per_pcs) || 0) },
+        ]} />
+        <Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="std-rate-refresh">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </>}
       summary={!loading && rows.length > 0 && (
         <p className="text-sm text-muted-foreground" data-testid="std-rate-summary">
           Jumlah tarif standar tahap internal: <span className="font-semibold text-foreground tabular-nums">{rp(total)}</span> per pcs.
@@ -77,7 +85,7 @@ export default function StandardRateModule({ token }) {
         </p>
       )}
     >
-      <GlassCard className="p-0 overflow-hidden">
+      <GlassCard className="p-0 overflow-x-auto">
         {loading && !rows.length ? (
           <div className="space-y-2 p-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
         ) : rows.length === 0 ? (

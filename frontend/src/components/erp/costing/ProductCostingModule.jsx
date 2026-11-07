@@ -33,6 +33,12 @@ import { Skeleton } from '@/components/ui/skeleton';
 import Modal from '../Modal';
 import { StatusBadge, EmptyState } from '../moduleAtoms';
 import PageLayout, { DetailPanel } from '../layout/PageLayout';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Notice } from '../moduleAtoms';
 import { MoneyInput } from '@/components/ui/money-input';
 import { formatDateTimeID } from '@/lib/format';
 import { categoryLabel } from '@/lib/itemTaxonomy';
@@ -182,23 +188,21 @@ export default function ProductCostingModule({ token, onNavigate }) {
       <FilterChips value={statusTab} onChange={setStatusTab} testId="costing-summary" ariaLabel="Status HPP" hideWhenEmpty={false}
         options={[{ key: '', label: 'Semua', count: stat('models') }, { key: 'ready', label: 'Siap', count: stat('ready') },
           { key: 'partial', label: 'Masih ada kekurangan', count: stat('partial') }, { key: 'no_bom', label: 'Belum ada BOM', count: stat('no_bom') }]} />
-      <div className="relative w-64 max-w-full">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <GlassInput value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Cari kode / nama produk…" className="pl-9 h-9"
+      <div className="relative w-full sm:w-64">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <Input value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="Cari kode atau nama produk" className="pl-8"
           data-testid="costing-search" />
       </div>
-      <label className="flex items-center gap-2 text-sm text-foreground/80 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)]">
+      <label className="flex items-center gap-2 text-sm text-foreground">
         <span>Target margin</span>
-        <input type="number" min="0" max="99" step="1" value={targetMargin}
-          onChange={e => setTargetMargin(e.target.value)}
-          className="w-12 bg-transparent text-right font-semibold text-foreground focus:outline-none"
-          data-testid="costing-target-margin" />
+        <Input type="number" min="0" max="99" step="1" value={targetMargin}
+          onChange={e => setTargetMargin(e.target.value)} className="w-20 text-right"
+          aria-label="Target margin (%)" data-testid="costing-target-margin" />
         <span>%</span>
       </label>
-      <label className="flex items-center gap-2 text-sm text-foreground/80 cursor-pointer">
-        <input type="checkbox" checked={onlyGaps} onChange={e => setOnlyGaps(e.target.checked)}
-          data-testid="costing-filter-gaps" />
+      <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
+        <Checkbox checked={onlyGaps} onCheckedChange={(v) => setOnlyGaps(!!v)} data-testid="costing-filter-gaps" />
         Hanya yang masih ada kekurangan
       </label>
     </>
@@ -219,11 +223,22 @@ export default function ProductCostingModule({ token, onNavigate }) {
         </Button>
       </>}
       filters={filters}
-      tools={
+      tools={<>
+        <TombolUnduh namaBerkas="hpp-standar-per-potong" namaLembar="HPP standar" baris={shownRows} testId="costing-unduh" kolom={[
+          { label: 'Kode', nilai: (r) => r.code }, { label: 'Produk', nilai: (r) => r.name || '' },
+          { label: 'Kategori', nilai: (r) => r.category_name || '' }, { label: 'Ukuran ber-BOM', nilai: (r) => `${r.sizes_with_bom}/${r.size_count}` },
+          { label: 'Bahan/pcs (Rp)', nilai: (r) => Number(r.material_cost_avg) || 0 }, { label: 'Upah CMT (Rp)', nilai: (r) => Number(r.cmt_cost) || 0 },
+          { label: 'Upah internal, tidak masuk HPP (Rp)', nilai: (r) => Number(r.internal_labor_cost) || 0 },
+          { label: 'HPP/pcs (Rp)', nilai: (r) => (r.hpp_avg > 0 ? Number(r.hpp_avg) : '') },
+          { label: 'Harga jual (Rp)', nilai: (r) => (r.price_best > 0 ? Number(r.price_best) : '') },
+          { label: 'Margin (%)', nilai: (r) => (r.margin_known ? Number(r.margin_pct) : '') },
+          { label: 'Usulan harga (Rp)', nilai: (r) => (r.suggested_price > 0 ? Number(r.suggested_price) : '') },
+          { label: 'Status', nilai: (r) => r.status || '' }, { label: 'Kekurangan', nilai: (r) => Number(r.gap_count) || 0 },
+        ]} />
         <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} disabled={loading} data-testid="costing-refresh">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </Button>
-      }
+      </>}
       summary={<>
         {totalModels != null && totalModels > stat('models') && (
           <p className="text-sm text-[hsl(var(--warning-text))]" data-testid="costing-truncated">
@@ -232,16 +247,11 @@ export default function ProductCostingModule({ token, onNavigate }) {
         )}
         {/* penjelasan jujur bila belum ada yang siap */}
         {!loading && stat('ready') === 0 && (
-          <div className="flex items-start gap-2 rounded-[var(--radius-md)] bg-[hsl(var(--warning)/0.08)] px-4 py-3 text-sm text-[hsl(var(--warning-text))]"
-            data-testid="costing-empty-warning">
-            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-            <p>
-              <strong>Belum ada produk yang bisa dihitung penuh.</strong> Yang paling sering kurang:
-              BOM per ukuran belum dibuat, ada bahan yang belum pernah dibeli (jadi belum punya
-              harga), atau upah CMT/cutting belum dikunci. Buka <em>Rincian</em> pada baris mana pun
-              untuk melihat daftar kekurangannya dan tombol perbaikannya.
-            </p>
-          </div>
+          <Notice tone="warning" icon={AlertTriangle} testId="costing-empty-warning" title="Belum ada produk yang bisa dihitung penuh">
+            Yang paling sering kurang: BOM per ukuran belum dibuat, ada bahan yang belum pernah dibeli (jadi belum punya
+            harga), atau upah CMT/cutting belum dikunci. Buka <em>Rincian</em> pada baris mana pun untuk melihat daftar
+            kekurangannya dan tombol perbaikannya.
+          </Notice>
         )}
         {detailBusy && !detail && (
           <p className="text-sm text-muted-foreground flex items-center gap-2">
@@ -258,7 +268,7 @@ export default function ProductCostingModule({ token, onNavigate }) {
       )}
     >
       {/* ── tabel ──────────────────────────────────────────────────────── */}
-      <GlassCard className="p-0 overflow-hidden">
+      <GlassCard className="p-0 overflow-x-auto">
         {loading && rows.length === 0 ? (
           <div className="space-y-2 p-4">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
         ) : shownRows.length === 0 ? (
@@ -266,30 +276,30 @@ export default function ProductCostingModule({ token, onNavigate }) {
             description="Ubah pencarian, pil status, atau hilangkan centang “Hanya yang masih ada kekurangan”." />
         ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm" data-testid="costing-table">
-            <thead>
-              <tr>
-                <th className="text-left">Kode</th>
-                <th className="text-left">Produk</th>
-                <th className="text-center">Ukuran ber-BOM</th>
-                <th className="text-right">Bahan/pcs</th>
-                <th className="text-right">Upah CMT</th>
-                <th className="text-right">Upah internal (tidak masuk HPP)</th>
-                <th className="text-right">HPP/pcs</th>
-                <th className="text-right">Harga jual</th>
-                <th className="text-right">Margin</th>
-                <th className="text-right">Usulan harga</th>
-                <th className="text-left">Status</th>
-                <th className="text-right">Aksi</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table data-testid="costing-table">
+            <TableHeader>
+              <TableRow>
+                <TableHead >Kode</TableHead>
+                <TableHead >Produk</TableHead>
+                <TableHead className="text-center">Ukuran ber-BOM</TableHead>
+                <TableHead className="text-right">Bahan/pcs</TableHead>
+                <TableHead className="text-right">Upah CMT</TableHead>
+                <TableHead className="text-right">Upah internal (tidak masuk HPP)</TableHead>
+                <TableHead className="text-right">HPP/pcs</TableHead>
+                <TableHead className="text-right">Harga jual</TableHead>
+                <TableHead className="text-right">Margin</TableHead>
+                <TableHead className="text-right">Usulan harga</TableHead>
+                <TableHead >Status</TableHead>
+                <TableHead className="text-right">Aksi</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {shownRows.map(r => (
-                <tr key={r.model_id}
+                <TableRow key={r.model_id}
                   className={`border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] ${openId === r.model_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}
                   data-testid={`costing-row-${r.code}`}>
-                  <td className="text-xs text-muted-foreground whitespace-nowrap">{r.code}</td>
-                  <td className="text-foreground">
+                  <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{r.code}</TableCell>
+                  <TableCell className="text-foreground">
                     {r.name}
                     <span className="block text-xs text-muted-foreground">
                       {r.category_name || 'tanpa kategori'}
@@ -299,26 +309,26 @@ export default function ProductCostingModule({ token, onNavigate }) {
                         </span>
                       )}
                     </span>
-                  </td>
-                  <td className="text-center text-xs text-foreground whitespace-nowrap tabular-nums">
+                  </TableCell>
+                  <TableCell className="text-center text-xs text-foreground whitespace-nowrap tabular-nums">
                     {r.sizes_with_bom}/{r.size_count}
-                  </td>
-                  <td className="text-right tabular-nums text-foreground whitespace-nowrap">
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-foreground whitespace-nowrap">
                     {r.material_cost_avg > 0 ? fmtRp(r.material_cost_avg) : '—'}
-                  </td>
-                  <td className="text-right whitespace-nowrap">
+                  </TableCell>
+                  <TableCell className="text-right whitespace-nowrap">
                     <span className="tabular-nums text-foreground">
                       {r.cmt_cost > 0 ? fmtRp(r.cmt_cost) : '—'}
                     </span>
                     <span className="block mt-0.5"><SourcePill source={r.cmt_source} /></span>
-                  </td>
-                  <td className="text-right whitespace-nowrap">
+                  </TableCell>
+                  <TableCell className="text-right whitespace-nowrap">
                     <span className="tabular-nums text-foreground">
                       {r.internal_labor_cost > 0 ? fmtRp(r.internal_labor_cost) : '—'}
                     </span>
                     <span className="block mt-0.5"><SourcePill source={r.internal_labor_source} /></span>
-                  </td>
-                  <td className="text-right tabular-nums font-bold text-foreground whitespace-nowrap"
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums font-bold text-foreground whitespace-nowrap"
                     data-testid={`costing-hpp-${r.code}`}>
                     {r.hpp_avg > 0 ? fmtRp(r.hpp_avg) : '—'}
                     {r.hpp_min > 0 && r.hpp_max > r.hpp_min && (
@@ -326,12 +336,12 @@ export default function ProductCostingModule({ token, onNavigate }) {
                         {fmtRp(r.hpp_min)}–{fmtRp(r.hpp_max)} per ukuran
                       </span>
                     )}
-                  </td>
-                  <td className="text-right tabular-nums text-foreground whitespace-nowrap">
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-foreground whitespace-nowrap">
                     {r.price_best > 0 ? fmtRp(r.price_best)
                       : <span className="text-muted-foreground">belum ada</span>}
-                  </td>
-                  <td className="text-right tabular-nums whitespace-nowrap"
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap"
                     data-testid={`costing-margin-${r.code}`}>
                     {r.margin_known ? (
                       <span className={posCls(r.margin_pct)}>
@@ -347,19 +357,19 @@ export default function ProductCostingModule({ token, onNavigate }) {
                         {r.price_best > 0 ? 'HPP belum ada' : 'harga jual belum ada'}
                       </span>
                     )}
-                  </td>
-                  <td className="text-right tabular-nums text-[hsl(var(--primary))] whitespace-nowrap">
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-[hsl(var(--primary))] whitespace-nowrap">
                     {r.suggested_price > 0 ? fmtRp(r.suggested_price) : '—'}
-                  </td>
-                  <td className="whitespace-nowrap">
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap">
                     <StatusPill status={r.status} />
                     {r.gap_count > 0 && (
                       <span className="block text-xs text-[hsl(var(--warning-text))] mt-0.5">
                         {r.gap_count} kekurangan
                       </span>
                     )}
-                  </td>
-                  <td className="text-right whitespace-nowrap">
+                  </TableCell>
+                  <TableCell className="text-right whitespace-nowrap">
                     <span className="inline-flex items-center gap-2">
                       <Button variant="link" size="sm" className="h-auto p-0" onClick={() => toggleDetail(r.model_id)}
                         data-testid={`costing-detail-${r.code}`}>{openId === r.model_id ? 'Tutup' : 'Rincian'}</Button>
@@ -367,11 +377,11 @@ export default function ProductCostingModule({ token, onNavigate }) {
                         disabled={r.sizes_with_bom === 0}
                         data-testid={`costing-apply-${r.code}`}>Terapkan</Button>
                     </span>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
         )}
       </GlassCard>
@@ -584,42 +594,42 @@ function CostDetail({ detail, token, onClose, onApply, onReload, onGoto }) {
 
             {s.lines?.length > 0 && (
               <div className="overflow-x-auto mt-2">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr>
-                      <th className="text-left">Bahan</th>
-                      <th className="text-left">Jenis</th>
-                      <th className="text-right">Pakai (BOM)</th>
-                      <th className="text-right">Satuan dasar</th>
-                      <th className="text-right">Harga satuan</th>
-                      <th className="text-right">Biaya/pcs</th>
-                      <th className="text-left">Catatan</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Bahan</TableHead>
+                      <TableHead>Jenis</TableHead>
+                      <TableHead className="text-right">Pakai (BOM)</TableHead>
+                      <TableHead className="text-right">Satuan dasar</TableHead>
+                      <TableHead className="text-right">Harga satuan</TableHead>
+                      <TableHead className="text-right">Biaya/pcs</TableHead>
+                      <TableHead>Catatan</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {s.lines.map((ln, i) => {
                       const cs = COST_SOURCE_LABEL[ln.cost_source] || COST_SOURCE_LABEL.none;
                       return (
-                        <tr key={i} className="border-b border-[var(--glass-border)]/50">
-                          <td className="text-foreground">
+                        <TableRow key={i} className="border-b border-[var(--glass-border)]/50">
+                          <TableCell className="text-foreground">
                             <span className="text-xs text-muted-foreground">{ln.code}</span>
                             <span className="block">{ln.name}</span>
-                          </td>
-                          <td className="text-muted-foreground">{ln.material_type ? categoryLabel(ln.material_type) : '—'}</td>
-                          <td className="text-right tabular-nums whitespace-nowrap text-foreground">
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">{ln.material_type ? categoryLabel(ln.material_type) : '—'}</TableCell>
+                          <TableCell className="text-right tabular-nums whitespace-nowrap text-foreground">
                             {fmtNum(ln.qty_input, 4)} {ln.unit_input}
-                          </td>
-                          <td className="text-right tabular-nums whitespace-nowrap text-foreground">
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums whitespace-nowrap text-foreground">
                             {fmtNum(ln.qty_base, 4)} {ln.unit_base}
-                          </td>
-                          <td className="text-right tabular-nums whitespace-nowrap text-foreground">
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums whitespace-nowrap text-foreground">
                             {ln.unit_cost > 0 ? fmtRp(ln.unit_cost) : '—'}
                             <span className={`block text-xs ${COST_SOURCE_TONE[ln.cost_source] || COST_SOURCE_TONE.none}`}>{cs.text}</span>
-                          </td>
-                          <td className="text-right tabular-nums whitespace-nowrap font-semibold text-foreground">
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums whitespace-nowrap font-semibold text-foreground">
                             {fmtRp(ln.amount)}
-                          </td>
-                          <td className="text-muted-foreground">
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
                             {ln.status === 'unvalued' && (
                               <span className="text-[hsl(var(--danger-text))]">belum punya harga — belum pernah dibeli</span>)}
                             {ln.status === 'unlinked' && (
@@ -627,12 +637,12 @@ function CostDetail({ detail, token, onClose, onApply, onReload, onGoto }) {
                             {ln.status === 'uom_unclear' && (
                               <span className="text-[hsl(var(--warning-text))]">{ln.uom_note || 'satuan belum jelas'}</span>)}
                             {ln.status === 'ok' && <span className="text-xs">{ln.notes || ''}</span>}
-                          </td>
-                        </tr>
+                          </TableCell>
+                        </TableRow>
                       );
                     })}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
               </div>
             )}
 
@@ -725,49 +735,32 @@ function CostingSettingsModal({ token, onClose, onSaved }) {
   };
 
   return (
-    <Modal title="Setelan margin & tarif cadangan" onClose={onClose} size="lg"
-      data-testid="costing-settings-modal">
+    // Standar UI/UX v2 (8 Nov 2026): popup form standar (FormPopup pendek) — kaki Batal · Simpan hijau.
+    <FormPopup open onClose={onClose} ukuran="pendek" judul="Setelan margin & tarif cadangan" testId="costing-settings-modal"
+      keterangan="Tarif standar per tahap diatur di tab Tarif standar (menu HPP). Proses jahit/CMT memakai upah di form PO."
+      onSimpan={save} menyimpan={saving} bisaSimpan={!loading && !!settings} labelSimpan="Simpan setelan">
       {loading || !settings ? (
         <div className="py-8 text-center text-muted-foreground text-sm">Memuat…</div>
       ) : (
-        <div className="space-y-4">
-          <p className="text-xs text-muted-foreground" data-testid="costing-settings-rates-moved">
-            Tarif standar per tahap diatur di tab Tarif standar (menu HPP). Proses jahit/CMT memakai upah di form PO.
-          </p>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <label className="block">
-              <span className="text-xs font-medium text-foreground/80">Overhead per pcs (tidak masuk HPP)</span>
-              <MoneyInput unstyled value={settings.overhead_rate_per_pcs}
-                onChange={e => setSettings({ ...settings, overhead_rate_per_pcs: e.target.value })}
-                className={`${inputCls} mt-1`} data-testid="costing-setting-overhead" />
-            </label>
-            <label className="block">
-              <span className="text-xs font-medium text-foreground/80">Target margin bawaan (%)</span>
-              <input type="number" min="0" max="99" step="1" value={settings.target_margin_pct}
-                onChange={e => setSettings({ ...settings, target_margin_pct: e.target.value })}
-                className={`${inputCls} mt-1`} data-testid="costing-setting-margin" />
-            </label>
-            <label className="block">
-              <span className="text-xs font-medium text-foreground/80">Tarif cadangan upah/pcs</span>
-              <MoneyInput unstyled value={settings.labor_rate_fallback_per_pcs}
-                onChange={e => setSettings({ ...settings, labor_rate_fallback_per_pcs: e.target.value })}
-                className={`${inputCls} mt-1`} data-testid="costing-setting-fallback" />
-            </label>
-          </div>
-
+        <>
+          <span className="sr-only" data-testid="costing-settings-rates-moved">Tarif standar per tahap diatur di tab Tarif standar.</span>
+          <Isian label="Overhead per pcs (tidak masuk HPP)">
+            <MoneyInput glass value={settings.overhead_rate_per_pcs}
+              onChange={e => setSettings({ ...settings, overhead_rate_per_pcs: e.target.value })} data-testid="costing-setting-overhead" />
+          </Isian>
+          <Isian label="Target margin bawaan (%)">
+            <Input type="number" min="0" max="99" step="1" value={settings.target_margin_pct}
+              onChange={e => setSettings({ ...settings, target_margin_pct: e.target.value })} data-testid="costing-setting-margin" />
+          </Isian>
+          <Isian label="Tarif cadangan upah per pcs">
+            <MoneyInput glass value={settings.labor_rate_fallback_per_pcs}
+              onChange={e => setSettings({ ...settings, labor_rate_fallback_per_pcs: e.target.value })} data-testid="costing-setting-fallback" />
+          </Isian>
           <p className="text-sm text-muted-foreground" data-testid="costing-setting-include-overhead">
             Upah internal dan overhead pabrik tidak masuk HPP produk (keputusan pemilik 6 Nov 2026); keduanya tetap beban bulanan.
           </p>
-
-          <div className="flex justify-end gap-2 pt-1">
-            <Button variant="outline" onClick={onClose} data-testid="costing-settings-cancel">Batal</Button>
-            <Button onClick={save} disabled={saving} data-testid="costing-settings-save">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}Simpan setelan
-            </Button>
-          </div>
-        </div>
+        </>
       )}
-    </Modal>
+    </FormPopup>
   );
 }
