@@ -70,6 +70,7 @@ from pydantic import BaseModel, Field
 
 from auth import require_auth
 from core import marketing_account_scope as _scope
+from core import marketing_daily_rollup as _rollup
 from core import platform_balance as _bal
 from core import settlement_import as _simport
 from database import get_db
@@ -950,10 +951,20 @@ async def reconcile(
         sq["account_id"] = {"$in": vis}
     if account_id:
         sq["account_id"] = account_id
-    if date_from:
-        sq.setdefault("settlement_date", {})["$gte"] = date_from
-    if date_to:
-        sq.setdefault("settlement_date", {})["$lte"] = date_to
+    # 2026-11-07 (Asisten AI, audit §3.C #7) — rentang di layar ini adalah TANGGAL
+    # PESANAN. Dulu pencairan disaring `settlement_date` di rentang yang sama, padahal
+    # uang pesanan akhir bulan baru cair bulan berikutnya: rekonsiliasi membandingkan
+    # pesanan Oktober dengan pencairan yang memuat pesanan September. Sekarang pencairan
+    # dipilih menurut PERIODE PESANAN-nya (`period_from..period_to` bertumpang dengan
+    # rentang); pencairan lama tanpa periode jatuh ke `settlement_date` dan disebut.
+    from core import ukuran_penjualan as _ukuran
+    sq["_seed_origin"] = {"$ne": True}
+    if date_from and date_to:
+        sq["$or"] = [
+            {"period_from": {"$lte": date_to}, "period_to": {"$gte": date_from}},
+            {"period_from": {"$in": [None, ""]},
+             "settlement_date": {"$gte": date_from, "$lte": date_to}},
+        ]
     if focus:
         # Fokus satu dokumen: `settlement_date` bisa jatuh di luar periode
         # omzetnya sendiri (uang cair beberapa hari kemudian), jadi menyaring
@@ -990,33 +1001,27 @@ async def reconcile(
         if vis is not None and account_id not in vis:  # FIN-19
             raise HTTPException(403, "Toko di luar lingkup akses Anda.")
         oq["account_id"] = account_id
-    _dt = {}
-    if date_from:
-        _dt["$gte"] = datetime.fromisoformat(f"{date_from}T00:00:00+00:00")
-    if date_to:
-        _dt["$lte"] = datetime.fromisoformat(f"{date_to}T23:59:59+00:00")
-    if _dt:
-        oq["order_date"] = _dt
-    # Pesanan BATAL tidak pernah dicairkan platform — memasukkannya membuat
-    # "pesanan belum cair" selalu besar dan selisihnya tidak berarti apa-apa.
-    oq["status"] = {"$nin": list(CANCELLED_STATUSES)}
-    oagg = await db.marketing_orders.aggregate([
-        {"$match": oq},
-        {"$group": {"_id": None, "n": {"$sum": 1},
-                    "order_amount": {"$sum": "$order_amount"},
-                    "revenue_gross": {"$sum": "$revenue_gross"},
-                    "revenue_product": {"$sum": "$revenue_product"}}},
-    ]).to_list(1)
-    o = oagg[0] if oagg else {}
+    # 2026-11-07 (audit §3.C #7) — tanggal pesanan dibaca DUA bentuk (datetime & teks)
+    # dan uang dibaca lewat pembaca defensif rekap harian: ekspor Shopee tidak punya
+    # `order_amount` (memakai `total_payment`), dan `$sum: "$order_amount"` dulu
+    # memberi Rp 0 untuk seluruh toko Shopee. Pesanan BATAL dan BELUM DIBAYAR tidak
+    # pernah dicairkan platform (satu definisi omzet, `core.ukuran_penjualan`).
+    if date_from and date_to:
+        oq["$or"] = _ukuran.filter_tanggal("order_date", date_from[:10], date_to[:10])["$or"]
+    oq["_seed_origin"] = {"$ne": True}
+    o_rows = [x async for x in db.marketing_orders.find(oq, {"_id": 0})]
+    o_live = [x for x in o_rows if _ukuran.dihitung_omzet(x)]
+    o_ret = [x for x in o_live if str(x.get("status") or "").lower() == "returned"]
+    o = {"n": len(o_live),
+         "order_amount": sum(_rollup.order_amount_of(x) for x in o_live),
+         "revenue_gross": sum(_rollup.order_revenue_gross(x) for x in o_live),
+         "revenue_product": sum(_rollup.order_revenue_product(x) for x in o_live)}
+    unpaid_count = sum(1 for x in o_rows if _ukuran.belum_dibayar(x))
     # 2026-11-02 (K5) — omzet pesanan RETUR (tidak akan cair) dipisah, dan refund parsial
     # retur modul atas pesanan periode ini (pesanan yang tidak berstatus retur/batal).
-    ragg = await db.marketing_orders.aggregate([
-        {"$match": {**oq, "status": "returned"}},
-        {"$group": {"_id": None, "n": {"$sum": 1},
-                    "revenue_product": {"$sum": "$revenue_product"}}},
-    ]).to_list(1)
-    r_ = ragg[0] if ragg else {}
+    r_ = {"n": len(o_ret), "revenue_product": sum(_rollup.order_revenue_product(x) for x in o_ret)}
     returned_product = round(float(r_.get("revenue_product") or 0), 2)
+    oq["status"] = {"$nin": list(CANCELLED_STATUSES)}
     partial = await _partial_refunds_for_orders(db, oq)
 
     gross = round(float(s.get("gross") or 0), 2)
@@ -1024,6 +1029,16 @@ async def reconcile(
     omzet_product = round(float(o.get("revenue_product") or 0), 2)
     order_amount = round(float(o.get("order_amount") or 0), 2)
     unverified = await db[COLL].count_documents({**sq, "math_verified": False})
+    # pencairan yang periodenya melewati batas rentang (sebagian uangnya milik periode lain)
+    straddle = 0
+    no_period = 0
+    if not focus and date_from and date_to:
+        async for _sd in db[COLL].find(sq, {"_id": 0, "period_from": 1, "period_to": 1}):
+            pf, pt = str(_sd.get("period_from") or ""), str(_sd.get("period_to") or "")
+            if not pf:
+                no_period += 1
+            elif pf < date_from or pt > date_to:
+                straddle += 1
 
     # ── SELISIH YANG DIBERI NAMA (sesi #37) ───────────────────────────────────
     # Angka selisih tanpa nama tidak bisa ditindaklanjuti: staf melihat
@@ -1033,9 +1048,8 @@ async def reconcile(
     # pesanan yang belum diimpor). Karena itu selisihnya dipecah dan DINAMAI —
     # dan tetap ditampilkan APA ADANYA, tidak di-nol-kan.
     gap_gross = round(gross - omzet_gross, 2)
-    cancelled_count = await db.marketing_orders.count_documents(
-        {**{k: v for k, v in oq.items() if k != "status"},
-         "status": {"$in": list(CANCELLED_STATUSES)}})
+    cancelled_count = sum(1 for x in o_rows
+                          if str(x.get("status") or "").lower() in CANCELLED_STATUSES)
     # 2026-11-02 (K5) — PEMBANDING UTAMA: omzet SETELAH diskon penjual (Σ SKU Subtotal
     # After Discount) vs (bruto pencairan − diskon penjual). Selisihnya dipecah & dinamai.
     seller_discount = round(float(s.get("seller_discount") or 0), 2)
@@ -1048,6 +1062,28 @@ async def reconcile(
             "label": f"{cancelled_count} pesanan berstatus batal TIDAK dihitung "
                      f"sebagai omzet periode.",
             "action": "Informasi saja — pesanan batal memang tidak dicairkan.",
+        })
+    if unpaid_count:
+        named.append({
+            "name": "pesanan_belum_dibayar_dikecualikan", "amount": 0.0,
+            "label": f"{unpaid_count} pesanan belum dibayar TIDAK dihitung sebagai omzet periode.",
+            "action": "Informasi saja — pesanan belum dibayar tidak dicairkan.",
+        })
+    if straddle:
+        named.append({
+            "name": "periode_pencairan_melewati_rentang", "amount": 0.0,
+            "label": f"{straddle} pencairan memuat pesanan di luar rentang ini (periodenya "
+                     f"melewati {date_from}..{date_to}).",
+            "action": "Wajar di awal/akhir bulan. Persempit atau perlebar rentang mengikuti "
+                      "periode pencairan bila ingin cocok penuh.",
+        })
+    if no_period:
+        named.append({
+            "name": "pencairan_tanpa_periode", "amount": 0.0,
+            "label": f"{no_period} pencairan belum punya periode pesanan; dipilih menurut "
+                     "tanggal dana dilepas.",
+            "action": "Isi 'Periode dari' & 'sampai' pada pencairan itu supaya dicocokkan "
+                      "dengan pesanan yang benar.",
         })
     if unverified:
         named.append({

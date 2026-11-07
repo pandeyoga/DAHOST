@@ -21,6 +21,8 @@ import calendar
 from database import get_db
 from auth import require_auth, serialize_doc
 from core import marketing_sales_shape as _shape
+# 2026-11-07 (Asisten AI) — aktual bulanan lewat SATU definisi omzet.
+from core import ukuran_penjualan as _ukuran
 # F6 (sesi #9) — layar daftar WAJIB berlingkup toko: staf pemegang satu toko
 # tidak boleh melihat omzet/tugas delapan toko lain di laporan harian & bulanan.
 from core import marketing_account_scope as _scope
@@ -70,8 +72,8 @@ async def daily_report(
 
         # Cek apakah sales data sudah diinput
         sales = await db.marketing_sales_data.find(
-            {"account_id": acc_id, "date": target_date},
-            {"_id": 0, "revenue_type": 1, "metrics": 1}
+            {"account_id": acc_id, "date": target_date, **_ukuran.TANPA_CONTOH},
+            {"_id": 0}      # F0.3 — dokumen lama menaruh `revenue` di akar
         ).to_list(10)
 
         total_data = [s for s in sales if s.get("revenue_type") == "total"]
@@ -185,6 +187,12 @@ async def monthly_report(
     total_days = last_day
 
     accounts = await _scope.visible_accounts(db, user, base={"status": "active"})
+    # 2026-11-07 (Asisten AI) — satu bacaan rekap untuk semua toko (tanpa data contoh,
+    # satu dokumen per toko-tanggal), sama dengan dashboard, target, dan Asisten AI.
+    _oms = await _ukuran.ringkas_omzet(db, accounts, date_from, date_to)
+    _rows_by_acc: dict = {}
+    for _r in _oms["baris"]:
+        _rows_by_acc.setdefault(_r["account_id"], []).append(_r)
 
     result = []
     for acc in accounts:
@@ -195,26 +203,16 @@ async def monthly_report(
             {"account_id": acc_id, "year": y, "month": m}, {"_id": 0}
         )
 
-        # Actual sales per day (total type)
-        sales = await db.marketing_sales_data.find(
-            {"account_id": acc_id, "date": {"$gte": date_from, "$lte": date_to},
-             "revenue_type": "total"},
-            # F0.3 — proyeksi TIDAK boleh dibatasi ke `metrics` saja: dokumen lama
-            # berbentuk rata menaruh `revenue` di akar, dan proyeksi sempit membuat
-            # angkanya hilang tanpa galat.
-            {"_id": 0}
-        ).sort("date", 1).to_list(500)
-
-        rev_actual  = sum(_shape.read_metrics(s).get("revenue", 0) for s in sales)
-        ord_actual  = sum(_shape.read_metrics(s).get("orders", 0) for s in sales)
-        sales_days  = len({s["date"] for s in sales})
+        _act = _oms["per_toko"].get(acc_id) or _ukuran.jumlahkan([])
+        rev_actual  = _act["omzet"]
+        ord_actual  = _act["pesanan"]
+        sales_days  = _act["hari_ada_data"]
         input_rate  = round(sales_days / total_days * 100, 1)
 
         # Daily chart data
         daily_chart = [
-            {"date": s["date"], "revenue": _shape.read_metrics(s).get("revenue", 0),
-             "orders": _shape.read_metrics(s).get("orders", 0)}
-            for s in sales
+            {"date": r["date"], "revenue": r["omzet"], "orders": r["pesanan"]}
+            for r in _rows_by_acc.get(acc_id, [])
         ]
 
         # Task stats
@@ -334,19 +332,17 @@ async def export_monthly_report_pdf(
     total_days = last_day
 
     accounts = await _scope.visible_accounts(db, user, base={"status": "active"})
+    _oms = await _ukuran.ringkas_omzet(db, accounts, date_from, date_to)   # 2026-11-07
     result = []
     for acc in accounts:
         acc_id = acc["id"]
         tgt = await db.marketing_account_targets.find_one(
             {"account_id": acc_id, "year": y, "month": m}, {"_id": 0}
         )
-        sales = await db.marketing_sales_data.find(
-            {"account_id": acc_id, "date": {"$gte": date_from, "$lte": date_to}, "revenue_type": "total"},
-            {"_id": 0}      # F0.3 — jangan batasi ke `metrics` (dokumen lama = rata)
-        ).to_list(500)
-        rev_actual  = sum(_shape.read_metrics(s).get("revenue", 0) for s in sales)
-        ord_actual  = sum(_shape.read_metrics(s).get("orders", 0) for s in sales)
-        sales_days  = len({s["date"] for s in sales})
+        _act = _oms["per_toko"].get(acc_id) or _ukuran.jumlahkan([])
+        rev_actual  = _act["omzet"]
+        ord_actual  = _act["pesanan"]
+        sales_days  = _act["hari_ada_data"]
         input_rate  = round(sales_days / total_days * 100, 1)
         tasks_all   = await db.marketing_tasks.count_documents({
             "account_id": acc_id, "created_at": {"$gte": month_start, "$lt": month_end}, "status": {"$ne": "cancelled"}

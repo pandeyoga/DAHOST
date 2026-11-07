@@ -68,8 +68,10 @@ def _cells(raw: bytes) -> List[List[str]]:
     out: List[List[str]] = []
     for row in csv.reader(io.StringIO(text), delimiter=delim):
         out.append([("" if c is None else str(c).strip()) for c in row])
-        if len(out) > MAX_ROWS:
-            break
+        if len(out) > MAX_ROWS + 50:          # +50 baris judul/metadata ekspor KPI
+            # 2026-11-07 (audit §3.C #10) — tidak lagi dipotong diam-diam.
+            from core.marketing_import_engine import TooManyRows
+            raise TooManyRows()
     return out
 
 

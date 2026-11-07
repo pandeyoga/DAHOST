@@ -21,8 +21,8 @@ jobs:
         run: |
           # versi diambil dari requirements.txt; uji unit mengimpor auth (PyJWT, bcrypt, motor, dotenv),
           # rute unggah berkas (python-multipart), ekspor Excel (openpyxl), dateutil, pencetak label
-          # (reportlab, python-barcode, qrcode, pillow) penjadwal (APScheduler) dan requests — semuanya dipakai produksi.
-          pip install pytest pytest-xdist $(grep -iE '^(fastapi|pydantic|starlette|PyJWT|bcrypt|motor|pymongo|python-dotenv|python-multipart|openpyxl|et_xmlfile|python-dateutil|six|reportlab|python-barcode|qrcode|pillow|APScheduler|tzlocal|requests)==' backend/requirements.txt)
+          # (reportlab, python-barcode, qrcode, pillow) penjadwal (APScheduler) dan requests; PyPDF2 + httpx untuk uji laporan dan unduhan Asisten AI — semuanya dipakai produksi.
+          pip install pytest pytest-xdist $(grep -iE '^(fastapi|pydantic|starlette|PyJWT|bcrypt|motor|pymongo|python-dotenv|python-multipart|openpyxl|et_xmlfile|python-dateutil|six|reportlab|python-barcode|qrcode|pillow|APScheduler|tzlocal|requests|PyPDF2|httpx)==' backend/requirements.txt)
           cd backend && python -m pytest tests/unit -n 0 -q
       - name: Gate statis (T-01 authz · T-03/T-17 koleksi hantu · T-21 to_list(None))
         run: |

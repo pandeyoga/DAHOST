@@ -46,45 +46,55 @@ USAGE_LOGS = "rahaza_ai_usage_logs"
 # Tabel lama memakai tarif keliru (opus $15/$75, sonnet $3/$15) sehingga anggaran
 # harian "habis" 1,5–3× lebih cepat dari kenyataan. Biaya di log dihitung saat
 # panggilan, jadi entri OpenAI/Google lama tidak dibutuhkan lagi dan dibuang.
+#
+# 2026-11-07 (Asisten AI, Tahap A): tarif cache & pencarian web dari skill `claude-api`
+# (shared/model-migration.md › Claude Opus 5.5 › Pricing; shared/prompt-caching.md › Economics):
+#   Opus 5.5: baca cache $0,20/MTok (0,05× input), tulis cache 5 menit $5/MTok (1,25× input).
+#   Model lain: baca 0,1× input, tulis 1,25× input (TTL 5 menit — satu-satunya TTL yang dipakai).
+#   Pencarian web: $10 per 1.000 pencarian. Pengambilan halaman web tidak ditagih terpisah (hanya token).
 MODEL_PRICING = {
-    ("anthropic", "claude-opus-5-5"): {"input": 4.0, "output": 20.0},
-    ("anthropic", "claude-sonnet-5-5"): {"input": 2.0, "output": 10.0},
+    ("anthropic", "claude-opus-5-5"): {"input": 4.0, "output": 20.0, "cache_read": 0.20, "cache_write": 5.0},
+    ("anthropic", "claude-sonnet-5-5"): {"input": 2.0, "output": 10.0, "cache_read": 0.20, "cache_write": 2.5},
     # Model tak dikenal → tarif tertinggi yang dipakai (konservatif, tidak meremehkan biaya).
-    ("default", "default"): {"input": 4.0, "output": 20.0},
+    ("default", "default"): {"input": 4.0, "output": 20.0, "cache_read": 0.20, "cache_write": 5.0},
 }
+CACHE_READ_MULT = 0.1      # cadangan bila tabel model tidak menyebut `cache_read`
+CACHE_WRITE_MULT = 1.25    # TTL 5 menit
+WEB_SEARCH_USD_PER_REQUEST = 10.0 / 1000
 
 # Budget limits (configurable via env, default values)
-DEFAULT_DAILY_BUDGET_USD = float(os.environ.get("LLM_DAILY_BUDGET_USD", "5.0"))
-DEFAULT_MONTHLY_BUDGET_USD = float(os.environ.get("LLM_MONTHLY_BUDGET_USD", "100.0"))
-DEFAULT_PER_FEATURE_DAILY_USD = float(os.environ.get("LLM_PER_FEATURE_DAILY_USD", "2.0"))
+# 2026-11-07 (keputusan owner no. 3, Asisten AI): bawaan $10/hari, $150/bulan, $5/hari per fitur;
+# peringatan di 80% (lihat `_check_budget`). Setelan Monitor AI (`ai_config`) tetap mengalahkan bawaan ini.
+DEFAULT_DAILY_BUDGET_USD = float(os.environ.get("LLM_DAILY_BUDGET_USD", "10.0"))
+DEFAULT_MONTHLY_BUDGET_USD = float(os.environ.get("LLM_MONTHLY_BUDGET_USD", "150.0"))
+DEFAULT_PER_FEATURE_DAILY_USD = float(os.environ.get("LLM_PER_FEATURE_DAILY_USD", "5.0"))
+BUDGET_WARN_RATIO = 0.8
 
-# ── Tier → model (No.60: generasi terbaru Sonnet & Opus) ─────────────────────
-#   executive : reasoning berat / analitik eksekutif → Opus 5.5
-#   standard  : mayoritas tugas                      → Sonnet 5.5
-#   light     : klasifikasi/ekstraksi ringan         → Sonnet 5.5
-# 2026-11-02: "light" sengaja TIDAK memakai Haiku karena keputusan No.60 hanya
-# menyebut Sonnet & Opus (pilihan Haiku 5.5 menunggu owner, audit A §8.4 no.1).
+# ── Tier → model ────────────────────────────────────────────────────────────
+# 2026-11-07 (keputusan owner no. 5): SEMUA fitur AI memakai Claude Opus 5.5. Tier kini hanya
+# menentukan effort: executive & standard = `medium`, light (tugas ringan) = `low`.
+# Ini menggantikan aturan lama K29 ("Opus hanya untuk Laporan Eksekutif").
+OPUS_MODEL = ("anthropic", "claude-opus-5-5")
 TIER_MODELS = {
-    "executive": ("anthropic", "claude-opus-5-5"),
-    "standard": ("anthropic", "claude-sonnet-5-5"),
-    "light": ("anthropic", "claude-sonnet-5-5"),
+    "executive": OPUS_MODEL,
+    "standard": OPUS_MODEL,
+    "light": OPUS_MODEL,
 }
-# Effort diset EKSPLISIT (skill: default Opus 5.5 = medium, Sonnet 5.5 = high).
+# Effort diset EKSPLISIT (skill: default Opus 5.5 = medium).
 # Thinking tidak bisa dimatikan di Opus 5.5 → kedalaman diatur lewat effort.
 TIER_EFFORT = {"executive": "medium", "standard": "medium", "light": "low"}
 DEFAULT_TIER = "standard"
 
-# 2026-11-02 (keputusan owner K29): Opus HANYA untuk narasi Laporan Eksekutif.
-# Fitur lain yang (masih/keliru) meminta tier executive DITURUNKAN ke standard
-# (Sonnet) di sini — satu gerbang, sehingga pemanggil baru tidak bisa diam-diam
-# memakai Opus. Fitur ringan (asisten ERP, klasifikasi) memakai tier light = effort low.
+# K29 (2026-11-02) dicabut 2026-11-07 (keputusan no. 5): tidak ada lagi penurunan tier.
+# Daftar & `executive_allowed()` dibiarkan (tidak berbahaya) untuk pemanggil lama.
 EXECUTIVE_FEATURES = ("executive-narrative",)
 
 # 2026-11-02 (K29): SSOT grup fitur yang bisa di-on/off di Monitor AI (dulu hanya di
 # routes/ai_usage_monitor.py). Label fitur di log dicocokkan per prefiks ke grup ini
 # sehingga biaya per fitur selalu cocok dengan toggle-nya (`feature_group` di log).
 AI_FEATURE_GROUPS = [
-    {"key": "executive-narrative", "label": "Analisis Eksekutif AI (Opus)"},
+    {"key": "asisten-ai", "label": "Asisten AI (chat analis Portal Manajemen)"},  # 2026-11-07 Tahap A
+    {"key": "executive-narrative", "label": "Analisis Eksekutif AI"},
     {"key": "daily-summary", "label": "Ringkasan Bisnis Harian"},
     {"key": "revenue-forecast", "label": "Prediksi Pendapatan"},
     {"key": "cashflow", "label": "Prediksi Arus Kas"},
@@ -113,6 +123,7 @@ def feature_group(feature: Optional[str]) -> Optional[str]:
 
 
 def executive_allowed(feature: Optional[str]) -> bool:
+    """Sisa K29 (dicabut 2026-11-07): hanya informasi, TIDAK lagi dipakai untuk menurunkan tier."""
     f = (feature or "").lower().strip().replace("_", "-")
     return any(f == k or f.startswith(k + "-") for k in EXECUTIVE_FEATURES)
 
@@ -292,9 +303,31 @@ def _approx_tokens(text: str) -> int:
     return max(1, len(text) // 3)
 
 
-def _calc_cost(model: Tuple[str, str], tokens_in: int, tokens_out: int) -> float:
-    pricing = MODEL_PRICING.get(tuple(model), MODEL_PRICING[("default", "default")])
-    return (tokens_in * pricing["input"] + tokens_out * pricing["output"]) / 1_000_000
+def _calc_cost(model: Tuple[str, str], tokens_in: int, tokens_out: int, *,
+               cache_read: int = 0, cache_write: int = 0, web_search: int = 0) -> float:
+    """Biaya USD satu panggilan.
+
+    `tokens_in` = token input TANPA cache (sisa di luar cache, sesuai `usage.input_tokens`);
+    `cache_read` / `cache_write` = `cache_read_input_tokens` / `cache_creation_input_tokens`;
+    `web_search` = jumlah pencarian web (`usage.server_tool_use.web_search_requests`).
+    Model berlabel "fake" (mode uji) dihitung dengan tarif model yang ditiru.
+    """
+    key = tuple(model) if isinstance(model, (tuple, list)) else ("default", "default")
+    if key and key[0] == "fake":
+        key = ("anthropic", key[1])
+    pricing = MODEL_PRICING.get(key, MODEL_PRICING[("default", "default")])
+    p_read = pricing.get("cache_read", pricing["input"] * CACHE_READ_MULT)
+    p_write = pricing.get("cache_write", pricing["input"] * CACHE_WRITE_MULT)
+    token_cost = (int(tokens_in or 0) * pricing["input"] + int(tokens_out or 0) * pricing["output"]
+                  + int(cache_read or 0) * p_read + int(cache_write or 0) * p_write) / 1_000_000
+    return token_cost + int(web_search or 0) * WEB_SEARCH_USD_PER_REQUEST
+
+
+def calc_cost(model: Tuple[str, str], tokens_in: int, tokens_out: int, *,
+              cache_read: int = 0, cache_write: int = 0, web_search: int = 0) -> float:
+    """Versi publik `_calc_cost` (dipakai loop Asisten AI)."""
+    return _calc_cost(model, tokens_in, tokens_out, cache_read=cache_read, cache_write=cache_write,
+                      web_search=web_search)
 
 
 def _effective_max_tokens(requested: Optional[int]) -> int:
@@ -499,13 +532,111 @@ async def _check_budget(db, feature: str, *, daily_budget=None, monthly_budget=N
     if monthly_total >= monthly_budget:
         return True, f"Batas anggaran AI bulanan tercapai (${monthly_total:.4f} dari ${monthly_budget})."
 
-    # Warning thresholds
-    if daily_total >= daily_budget * 0.8:
+    # Peringatan 80% (keputusan owner no. 3, 2026-11-07: harian, bulanan, dan per fitur).
+    if daily_total >= daily_budget * BUDGET_WARN_RATIO:
         return False, f"⚠️ Anggaran AI harian sudah 80%: ${daily_total:.4f} / ${daily_budget}"
-    if monthly_total >= monthly_budget * 0.8:
+    if monthly_total >= monthly_budget * BUDGET_WARN_RATIO:
         return False, f"⚠️ Anggaran AI bulanan sudah 80%: ${monthly_total:.4f} / ${monthly_budget}"
+    if feat_total >= per_feature_budget * BUDGET_WARN_RATIO:
+        return False, f"⚠️ Anggaran harian fitur AI ini sudah 80%: ${feat_total:.4f} / ${per_feature_budget}"
 
     return False, None
+
+
+async def budget_snapshot(db, feature: Optional[str] = None) -> dict:
+    """Pemakaian vs batas EFEKTIF (setelan Monitor AI → bawaan) untuk hari ini / bulan ini / satu fitur.
+
+    Dipakai `GET /api/asisten-ai/status` (sisa anggaran). Angka USD dibulatkan 4 desimal.
+    """
+    s = await get_ai_settings(db)
+    today = today_wib().isoformat()
+    daily_budget = float(s.get("daily_budget_usd") or 0)
+    monthly_budget = float(s.get("monthly_budget_usd") or 0)
+    per_feature_budget = float(s.get("per_feature_daily_usd") or 0)
+    daily_total = await sum_cost(db, {"date": today})
+    monthly_total = await month_to_date_cost(db)
+    feat_total = await sum_cost(db, {"date": today, "feature": _normalize_feature(feature)}) if feature else 0.0
+
+    def _r(x):
+        return round(float(x), 4)
+    return {
+        "harian_usd": _r(daily_budget), "terpakai_hari_ini_usd": _r(daily_total),
+        "sisa_hari_ini_usd": _r(max(0.0, daily_budget - daily_total)),
+        "bulanan_usd": _r(monthly_budget), "terpakai_bulan_ini_usd": _r(monthly_total),
+        "sisa_bulan_ini_usd": _r(max(0.0, monthly_budget - monthly_total)),
+        "fitur_harian_usd": _r(per_feature_budget), "terpakai_fitur_hari_ini_usd": _r(feat_total),
+        "sisa_fitur_hari_ini_usd": _r(max(0.0, per_feature_budget - feat_total)),
+    }
+
+
+@dataclass
+class GateResult:
+    """Hasil gerbang sebelum memanggil Anthropic (kunci, saklar utama, toggle fitur, anggaran)."""
+    ok: bool = False
+    code: Optional[str] = None
+    message: Optional[str] = None       # pesan ramah (aman ditampilkan)
+    warning: Optional[str] = None       # peringatan 80% (bukan penolakan)
+    api_key: str = ""
+    over_budget: bool = False
+
+
+async def check_gate(feature: str, user_id: Optional[str] = None, *, db=None, model=None,
+                     require_key: bool = True, skip_budget_check: bool = False,
+                     log_blocked: bool = True) -> GateResult:
+    """SATU gerbang yang dipakai `tracked_llm_call` dan loop Asisten AI (2026-11-07).
+
+    Urutan: SDK terpasang → kunci (layar Integrasi → env) → saklar utama → toggle fitur →
+    anggaran harian/per fitur/bulanan. Penolakan dicatat ke log pemakaian (biaya 0) supaya
+    Monitor AI jujur. `require_key=False` hanya untuk mode uji (`ASISTEN_AI_FAKE=1`).
+    """
+    feature = _normalize_feature(feature)
+    model = model or TIER_MODELS[DEFAULT_TIER]
+    db = db if db is not None else get_db()
+    res = GateResult()
+
+    async def _blocked(code: str, detail: Optional[str] = None, message: Optional[str] = None):
+        res.ok = False
+        res.code = code
+        res.message = message or friendly_error(code)
+        res.over_budget = code == "over_budget"
+        if log_blocked:
+            await log_usage(feature, user_id, model, 0, 0, 0.0, 0.0, False, res.message,
+                            error_code=code, error_detail=detail)
+        return res
+
+    if require_key:
+        if not sdk_available():
+            return await _blocked("sdk_missing")
+        api_key, _src = await resolve_api_key(db)
+        if not api_key:
+            return await _blocked("not_configured")
+        res.api_key = api_key
+
+    if not skip_budget_check:
+        try:
+            settings = await get_ai_settings(db)
+        except Exception as e:  # pragma: no cover
+            logger.warning(f"AI settings load failed (continuing): {e}")
+            settings = _default_ai_settings()
+        if not settings.get("ai_enabled", True):
+            return await _blocked("disabled")
+        if _feature_disabled(feature, settings.get("disabled_features")):
+            return await _blocked("feature_disabled")
+        try:
+            over, warning = await _check_budget(
+                db, feature,
+                daily_budget=settings.get("daily_budget_usd"),
+                monthly_budget=settings.get("monthly_budget_usd"),
+                per_feature_budget=settings.get("per_feature_daily_usd"),
+            )
+            res.warning = warning
+            if over:
+                return await _blocked("over_budget", detail=warning, message=warning)
+        except Exception as e:
+            logger.warning(f"Budget check failed (continuing): {e}")
+
+    res.ok = True
+    return res
 
 
 async def log_usage(
@@ -521,23 +652,37 @@ async def log_usage(
     error_code: Optional[str] = None,
     error_detail: Optional[str] = None,
     stop_reason: Optional[str] = None,
+    *,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    web_search_requests: int = 0,
+    web_fetch_requests: int = 0,
+    session_id: Optional[str] = None,
 ):
     """Insert usage log into rahaza_ai_usage_logs.
 
     `error` = pesan ramah; `error_detail` = ringkasan teknis (hanya untuk admin).
+    2026-11-07: + token cache (baca/tulis) dan jumlah pencarian/pengambilan web per panggilan.
+    `tokens_total` = input tanpa cache + output + baca cache + tulis cache (seluruh token yang diproses).
     """
     try:
         db = get_db()
+        cr, cw = int(cache_read_tokens or 0), int(cache_write_tokens or 0)
         await db[USAGE_LOGS].insert_one({
             "id": str(uuid.uuid4()),
             "feature": feature,
             "feature_group": feature_group(feature),  # K29: cocok dengan toggle Monitor AI
             "user_id": user_id,
+            "session_id": session_id,
             "model_provider": model[0] if isinstance(model, (tuple, list)) else "unknown",
             "model_name": model[1] if isinstance(model, (tuple, list)) else str(model),
             "tokens_in": int(tokens_in),
             "tokens_out": int(tokens_out),
-            "tokens_total": int(tokens_in + tokens_out),
+            "cache_read_tokens": cr,
+            "cache_write_tokens": cw,
+            "web_search_requests": int(web_search_requests or 0),
+            "web_fetch_requests": int(web_fetch_requests or 0),
+            "tokens_total": int(tokens_in + tokens_out + cr + cw),
             "cost_usd": round(float(cost_usd), 6),
             "latency_ms": round(float(latency_ms), 2),
             "success": bool(success),
@@ -555,10 +700,7 @@ async def log_usage(
 async def record_ai_failure(feature: str, code: str, *, user_id: Optional[str] = None,
                             tier: str = DEFAULT_TIER, detail: Optional[str] = None) -> None:
     """Catat percobaan AI yang gagal sebelum sampai ke Anthropic (mis. kunci kosong)."""
-    t_name = _tier_name(tier)
-    if t_name == "executive" and not executive_allowed(_normalize_feature(feature)):
-        t_name = "standard"  # K29: log menampilkan model yang SEBENARNYA akan dipakai
-    model = TIER_MODELS.get(t_name, TIER_MODELS[DEFAULT_TIER])
+    model = TIER_MODELS.get(_tier_name(tier), TIER_MODELS[DEFAULT_TIER])
     await log_usage(_normalize_feature(feature), user_id, model, 0, 0, 0.0, 0.0, False,
                     friendly_error(code), error_code=code, error_detail=detail)
 
@@ -580,19 +722,18 @@ async def tracked_llm_call(
     skip_budget_check: bool = False,
     image_base64: Optional[str] = None,
     max_tokens: Optional[int] = None,
+    history: Optional[list] = None,
 ) -> TrackedResult:
     """Wrapper terpusat yang melacak biaya LLM.
 
     `model` WAJIB tier string ('executive'/'standard'/'light'). Kunci diambil dari
     layar Integrasi (DB) lalu env `ANTHROPIC_API_KEY`. `image_base64` = JPEG/PNG.
+    `history` (opsional) = giliran sebelumnya `[{"role": "user"|"assistant", "content": str}]`,
+    dikirim apa adanya sebelum pesan baru (multi-giliran, mis. Asisten ERP).
     Return TrackedResult: `.text` saat sukses; `.error` (ramah) + `.error_code` saat gagal.
     """
     feature = _normalize_feature(feature)
     tier = _tier_name(model)
-    if tier == "executive" and not executive_allowed(feature):
-        # K29 (2026-11-02): Opus hanya untuk Laporan Eksekutif → selain itu Sonnet.
-        logger.info("AI tier executive diturunkan ke standard untuk fitur %s (K29)", feature)
-        tier = model = "standard"
     try:
         resolved = resolve_model(model)
     except ValueError as e:
@@ -609,40 +750,13 @@ async def tracked_llm_call(
                         error_code=code, error_detail=detail)
         return result
 
-    if not sdk_available():
-        return await _blocked("sdk_missing")
-    api_key, _src = await resolve_api_key(db)
-    if not api_key:
-        return await _blocked("not_configured")
-
-    # WS-B(d): setting DB — master switch, toggle fitur, & budget dari admin
-    if not skip_budget_check:
-        try:
-            settings = await get_ai_settings(db)
-        except Exception as e:  # pragma: no cover
-            logger.warning(f"AI settings load failed (continuing): {e}")
-            settings = _default_ai_settings()
-        if not settings.get("ai_enabled", True):
-            return await _blocked("disabled")
-        if _feature_disabled(feature, settings.get("disabled_features")):
-            return await _blocked("feature_disabled")
-
-        # Budget check (limits dari settings)
-        try:
-            over, warning = await _check_budget(
-                db, feature,
-                daily_budget=settings.get("daily_budget_usd"),
-                monthly_budget=settings.get("monthly_budget_usd"),
-                per_feature_budget=settings.get("per_feature_daily_usd"),
-            )
-            if over:
-                result.over_budget = True
-                result.budget_warning = warning
-                return await _blocked("over_budget", detail=warning, message=warning)
-            if warning:
-                result.budget_warning = warning
-        except Exception as e:
-            logger.warning(f"Budget check failed (continuing): {e}")
+    # Satu gerbang (2026-11-07): SDK, kunci, saklar utama, toggle fitur, anggaran.
+    gate = await check_gate(feature, user_id, db=db, model=resolved, skip_budget_check=skip_budget_check)
+    result.budget_warning = gate.warning
+    if not gate.ok:
+        result.over_budget = gate.over_budget
+        return _fail(result, gate.code, gate.message)
+    api_key = gate.api_key
 
     # Konten pesan (teks / gambar + teks)
     if image_base64:
@@ -656,6 +770,7 @@ async def tracked_llm_call(
         ]
     else:
         content = user_message or ""
+    messages = _history_messages(history) + [{"role": "user", "content": content}]
 
     tokens_in_approx = _approx_tokens(system_message) + _approx_tokens(user_message)
     start = time.time()
@@ -665,7 +780,7 @@ async def tracked_llm_call(
             model=resolved[1],
             max_tokens=_effective_max_tokens(max_tokens),
             system=system_message or "",
-            messages=[{"role": "user", "content": content}],
+            messages=messages,
             output_config={"effort": TIER_EFFORT.get(tier, "medium")},
         )
     except Exception as e:
@@ -688,8 +803,11 @@ async def tracked_llm_call(
     )
     tokens_in = int(getattr(usage, "input_tokens", 0) or tokens_in_approx)
     tokens_out = int(getattr(usage, "output_tokens", 0) or _approx_tokens(text))
-    cost = _calc_cost(resolved, tokens_in, tokens_out)
+    cache_read = _int_attr(usage, "cache_read_input_tokens")
+    cache_write = _int_attr(usage, "cache_creation_input_tokens")
+    cost = _calc_cost(resolved, tokens_in, tokens_out, cache_read=cache_read, cache_write=cache_write)
     stop = getattr(msg, "stop_reason", None)
+    cache_kw = {"cache_read_tokens": cache_read, "cache_write_tokens": cache_write}
 
     result.tokens_in = tokens_in
     result.tokens_out = tokens_out
@@ -710,14 +828,39 @@ async def tracked_llm_call(
         _fail(result, code)
         # Token tetap ditagih Anthropic → dicatat sebagai biaya, tetapi success=False.
         await log_usage(feature, user_id, resolved, tokens_in, tokens_out, cost, elapsed_ms, False,
-                        result.error, error_code=code, stop_reason=stop)
+                        result.error, error_code=code, stop_reason=stop, **cache_kw)
         return result
 
     result.text = text
     result.success = True
     await log_usage(feature, user_id, resolved, tokens_in, tokens_out, cost, elapsed_ms, True,
-                    stop_reason=stop)
+                    stop_reason=stop, **cache_kw)
     return result
+
+
+def _int_attr(obj, name: str) -> int:
+    try:
+        return int(getattr(obj, name, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _history_messages(history: Optional[list]) -> list:
+    """Giliran lama yang sah untuk API: hanya peran user/assistant berisi teks, diawali `user`.
+
+    Giliran kosong dibuang; giliran pertama yang bukan `user` dilewati (API mewajibkan pesan
+    pertama dari pengguna). Giliran berperan sama yang berurutan boleh (API menggabungkannya).
+    """
+    out = []
+    for h in history or []:
+        role = (h or {}).get("role")
+        text = (h or {}).get("content")
+        if role not in ("user", "assistant") or not isinstance(text, str) or not text.strip():
+            continue
+        if not out and role != "user":
+            continue
+        out.append({"role": role, "content": text})
+    return out
 
 
 # ── WS-C: High-level helpers ─────────────────────────────────────────────────
@@ -805,6 +948,14 @@ async def get_usage_summary(days: int = 7) -> dict:
     db = get_db()
     cutoff = (today_wib() - timedelta(days=days)).isoformat()
 
+    # 2026-11-07: token cache + pencarian web ikut dijumlah (nama field sama dengan di log).
+    extra_sums = {
+        "cache_read_tokens": {"$sum": {"$ifNull": ["$cache_read_tokens", 0]}},
+        "cache_write_tokens": {"$sum": {"$ifNull": ["$cache_write_tokens", 0]}},
+        "web_search_requests": {"$sum": {"$ifNull": ["$web_search_requests", 0]}},
+    }
+    extra_keys = {k: 1 for k in extra_sums}
+
     # Overall totals
     overall = await db.rahaza_ai_usage_logs.aggregate([
         {"$match": {"date": {"$gte": cutoff}}},
@@ -816,6 +967,7 @@ async def get_usage_summary(days: int = 7) -> dict:
             "total_cost_usd": {"$sum": "$cost_usd"},
             "total_tokens": {"$sum": "$tokens_total"},
             "avg_latency_ms": {"$avg": "$latency_ms"},
+            **extra_sums,
         }},
     ]).to_list(length=1)
 
@@ -824,6 +976,8 @@ async def get_usage_summary(days: int = 7) -> dict:
         "total_cost_usd": 0, "total_tokens": 0, "avg_latency_ms": 0,
     }
     overall_stats.pop("_id", None)
+    for k in extra_sums:
+        overall_stats[k] = int(overall_stats.get(k) or 0)
 
     # By feature
     by_feature = await db.rahaza_ai_usage_logs.aggregate([
@@ -836,12 +990,14 @@ async def get_usage_summary(days: int = 7) -> dict:
             "cost_usd": {"$sum": "$cost_usd"},
             "tokens": {"$sum": "$tokens_total"},
             "avg_latency_ms": {"$avg": "$latency_ms"},
+            **extra_sums,
         }},
         {"$project": {
             "_id": 0, "feature": "$_id", "calls": 1, "successful": 1, "failed": 1,
             "cost_usd": {"$round": ["$cost_usd", 4]},
             "tokens": 1,
             "avg_latency_ms": {"$round": ["$avg_latency_ms", 0]},
+            **extra_keys,
         }},
         {"$sort": {"cost_usd": -1}},
     ]).to_list(length=100)
@@ -854,11 +1010,13 @@ async def get_usage_summary(days: int = 7) -> dict:
             "calls": {"$sum": 1},
             "cost_usd": {"$sum": "$cost_usd"},
             "tokens": {"$sum": "$tokens_total"},
+            **extra_sums,
         }},
         {"$project": {
             "_id": 0, "date": "$_id", "calls": 1,
             "cost_usd": {"$round": ["$cost_usd", 4]},
             "tokens": 1,
+            **extra_keys,
         }},
         {"$sort": {"date": 1}},
     ]).to_list(length=days + 5)

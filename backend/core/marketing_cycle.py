@@ -53,6 +53,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from core import marketing_sales_shape as _shape
 from core import marketing_daily_rollup as _rollup
 from core import marketing_returns as _ret
+from core import ukuran_penjualan as _ukuran
 from utils.waktu import WIB, now_wib
 
 logger = logging.getLogger(__name__)
@@ -264,10 +265,10 @@ async def margin_from_orders(db, account_id: str, period: str) -> Dict[str, Any]
             {'order_date': {'$gte': start, '$lt': end}},
             {'order_date': {'$gte': date_from, '$lte': date_to + '\uffff'}},
         ],
-    }, {'_id': 0, 'status': 1, 'items': 1, 'buyer_username': 1,
-        'customer_phone': 1, 'customer_name': 1}).to_list(30000)
+    }, {'_id': 0, 'items': 1, 'buyer_username': 1,
+        'customer_phone': 1, 'customer_name': 1, **_ukuran.PROYEKSI_STATUS}).to_list(30000)
 
-    live = [o for o in orders if (o.get('status') or '') not in EXCLUDED_FOR_REVENUE]
+    live = [o for o in orders if _ukuran.dihitung_omzet(o)]   # 2026-11-07: satu definisi omzet
 
     item_ids = set()
     for o in live:
@@ -375,9 +376,9 @@ async def _auto_diskon(db, account_id: str, period: str,
             {'order_date': {'$gte': start, '$lt': end}},
             {'order_date': {'$gte': date_from, '$lte': date_to + '\uffff'}},
         ],
-    }, {'_id': 0, 'status': 1, 'seller_discount_total': 1, 'discount_seller': 1,
-        'items': 1, 'shipping_fee_seller_discount': 1}).to_list(30000)
-    live = [r for r in rows if (r.get('status') or '') not in EXCLUDED_FOR_REVENUE]
+    }, {'_id': 0, 'seller_discount_total': 1, 'discount_seller': 1,
+        'items': 1, 'shipping_fee_seller_discount': 1, **_ukuran.PROYEKSI_STATUS}).to_list(30000)
+    live = [r for r in rows if _ukuran.dihitung_omzet(r)]   # 2026-11-07: satu definisi omzet
     if live:
         # `discount_seller` (pesanan input manual) ikut terbaca lewat SSOT pembaca
         # defensif — kalau tidak, diskon yang diberikan staf lewat layar hilang
@@ -453,9 +454,9 @@ async def _auto_komisi(db, account_id: str, period: str) -> Dict[str, Any]:
             {'order_date': {'$gte': start, '$lt': end}},
             {'order_date': {'$gte': date_from, '$lte': date_to + '\uffff'}},
         ],
-    }, {'_id': 0, 'status': 1, 'creator_id': 1, 'revenue_product': 1,
-        'order_amount': 1}).to_list(30000)
-    live = [r for r in rows if (r.get('status') or '') not in EXCLUDED_FOR_REVENUE]
+    }, {'_id': 0, 'creator_id': 1, 'revenue_product': 1,
+        'order_amount': 1, **_ukuran.PROYEKSI_STATUS}).to_list(30000)
+    live = [r for r in rows if _ukuran.dihitung_omzet(r)]   # 2026-11-07: satu definisi omzet
     if not live:
         return {'amount': 0.0, 'basis': 'orders_creator',
                 'evidence': '0 pesanan membawa kreator (ekspor pesanan tidak memuat kreator)',

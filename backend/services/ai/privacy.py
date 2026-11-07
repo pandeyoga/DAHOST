@@ -118,9 +118,11 @@ _STOP_PARTS = {"bin", "binti", "ibu", "bapak", "pak", "mas", "mbak", "kak", "dra
 # ── Gaji & angka pribadi: tidak pernah dikirim ──────────────────────────────
 # Kunci per-orang yang berisi gaji / upah / kasbon (K27). Dicocokkan pada nama kunci
 # yang dinormalkan (huruf kecil, '-'→'_').
+# 2026-11-07 (audit AI): + `payroll` — total penggajian (mis. `payroll_total_rp` narasi eksekutif) dulu lolos ke
+# model. Bila sebuah fitur benar-benar butuh angka itu, kirim sebagai KISARAN berlabel lain, bukan nominalnya.
 _SALARY_KEY_RE = re.compile(
     r"(salary|gaji|base_rate|basic_pay|wage|upah|net_pay|gross_pay|take_home|\bthp\b|"
-    r"kasbon|cash_advance|loan_amount|pinjaman|tunjangan|allowance|bonus_amount|payslip|slip_gaji)"
+    r"kasbon|cash_advance|loan_amount|pinjaman|tunjangan|allowance|bonus_amount|payslip|slip_gaji|payroll)"
 )
 
 
@@ -135,6 +137,28 @@ def strip_sensitive(obj: Any) -> Any:
     if isinstance(obj, list):
         return [strip_sensitive(x) for x in obj]
     return obj
+
+
+def _satuan_rupiah(n: float) -> str:
+    for batas, nama in ((1e12, "triliun"), (1e9, "miliar"), (1e6, "juta"), (1e3, "ribu")):
+        if n >= batas:
+            return f"{n / batas:g} {nama}".replace(".", ",")
+    return f"{n:g}"
+
+
+def rupiah_band(value: Any) -> str:
+    """Nominal → KISARAN kasar untuk prompt ('Rp 100–150 juta'), dipakai bila angka sensitif (mis. total gaji)
+    memang dibutuhkan narasi AI tetapi nominal persisnya tidak boleh dikirim."""
+    import math
+    try:
+        n = float(value or 0)
+    except (TypeError, ValueError):
+        return "tidak diketahui"
+    if n <= 0:
+        return "Rp 0"
+    langkah = 10 ** math.floor(math.log10(n)) / 2
+    bawah = math.floor(n / langkah) * langkah
+    return f"Rp {_satuan_rupiah(bawah) if bawah else '0'}–{_satuan_rupiah(bawah + langkah)}"
 
 
 def ai_json(obj: Any, **kw) -> str:

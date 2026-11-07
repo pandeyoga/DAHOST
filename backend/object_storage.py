@@ -96,3 +96,27 @@ def get_object(path: str):
         except Exception as e:  # noqa: BLE001
             logger.warning("object storage get gagal (%s): %s", path, e)
     return None
+
+
+def delete_object(path: str) -> bool:
+    """Hapus berkas yang disimpan lewat :func:`put_object`. True bila ada yang terhapus.
+
+    2026-11-07 (Asisten AI, audit §3.C #15) — dulu pemanggil memakai `os.remove(kunci)`
+    atas kunci relatif (bukan path disk), sehingga berkas yang ditolak tidak pernah
+    terhapus. Salinan lokal dihapus di sini; object storage Emergent tidak menyediakan
+    API hapus di modul ini, jadi bila mode `object` dipakai hal itu dicatat di log.
+    """
+    try:
+        p = _local_path(path)
+    except ValueError:
+        return False
+    removed = False
+    if p.is_file():
+        try:
+            p.unlink()
+            removed = True
+        except OSError as e:
+            logger.warning("hapus berkas lokal gagal (%s): %s", path, e)
+    if _mode() == "object" and _key():
+        logger.info("berkas %s di object storage tidak dihapus (API hapus tidak tersedia)", path)
+    return removed

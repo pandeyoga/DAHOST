@@ -69,6 +69,12 @@ MODULES: list[dict] = [
     _m("management", "mgmt_digest", "Digest Mingguan & Audit Manajemen", ["mgmt-tools"],
        ["/api/management/weekly-digest", "/api/management/audit"], _VE),
     _m("management", "mgmt_ai_usage", "Monitor AI", ["ai-usage-monitor"], ["/api/ai/usage"], _VE),
+    # Asisten AI (inti) — 2026-11-07 Tahap A: chat analis menggantikan "AI Business Intelligence"
+    # (menu lama `ai-business-dashboard` ikut di modul ini). Lihat/Ekspor saja: percakapan milik
+    # pribadi, jadi kirim pesan/ubah judul/hapus percakapan = aksi Lihat (bukan Tambah/Ubah/Hapus data).
+    _m("management", "mgmt_asisten_ai", "Asisten AI", ["asisten-ai", "ai-business-dashboard"],
+       ["/api/asisten-ai"], _VE),
+    # ── akhir Asisten AI (inti) ──
 
     # ── PRODUKSI ────────────────────────────────────────────────────────────
     _m("production", "prod_master_product", "Master Produk (Model & Varian)", ["prod-master-product-hub"],
@@ -512,6 +518,22 @@ ALSO_PORTALS = {
 }
 for _mod in MODULES:
     _mod["also_portals"] = ALSO_PORTALS.get(_mod["id"], [])
+
+# ── Asisten AI (data) ── analitik Marketing baca-saja → modul BACA Marketing yang sudah ada.
+# Endpoint `/api/marketing/analitik/*` (routes/marketing_analitik.py) hanya GET dan menyalin
+# angka layar yang sudah ada, jadi izinnya mengikuti modul layar asalnya — tidak ada modul baru.
+_ANALITIK_PATHS = {
+    "mkt_dashboard": ("/api/marketing/analitik/penjualan", "/api/marketing/analitik/produk"),
+    "mkt_targets": ("/api/marketing/analitik/target",),
+    "mkt_content": ("/api/marketing/analitik/iklan",),
+    "mkt_live": ("/api/marketing/analitik/live",),
+    "fin_marketplace": ("/api/marketing/analitik/setoran",),
+}
+for _mod in MODULES:
+    for _p in _ANALITIK_PATHS.get(_mod["id"], ()):
+        if _p not in _mod["paths"]:
+            _mod["paths"].append(_p)
+# ── akhir Asisten AI (data) ──
 
 # prefix API -> modul, urut dari prefix terpanjang (longest-prefix-match)
 _PATH_INDEX = sorted(((p.rstrip("/"), m) for m in MODULES for p in m["paths"]), key=lambda x: -len(x[0]))

@@ -18,6 +18,8 @@ from auth import require_auth, serialize_doc, log_activity, require_demo_seed_al
 from core import marketing_account_scope as _scope
 from routes.marketing_shared import _uid, _now, _get_user, _sanitize, _recalculate_health_score
 from core import marketing_sales_shape as _shape
+# 2026-11-07 (Asisten AI) — SATU definisi omzet untuk dashboard, laporan, dan AI.
+from core import ukuran_penjualan as _ukuran
 from utils.waktu import today_wib, wib_date_str
 
 logger = logging.getLogger(__name__)
@@ -50,40 +52,20 @@ async def get_dashboard_overview(
     if not date_from:
         date_from = (today_wib() - timedelta(days=30)).isoformat()
     
-    # Bug #2 fix: Filter sales ONLY for active account_ids
-    query = {
-        "date": {"$gte": date_from, "$lte": date_to},
-        "account_id": {"$in": active_ids} if active_ids else {"$in": []}
-    }
-    
-    # Total revenue (both total + live types, but we'll separate in response)
-    total_sales = await db.marketing_sales_data.find(query, {"_id": 0}).to_list(500)
-    
-    total_revenue = 0
-    total_revenue_live = 0
-    total_orders = 0
-    
-    for sale in total_sales:
-        # F0.3 — DULU `sale["metrics"]` diindeks LANGSUNG: satu dokumen berbentuk
-        # rata (hasil impor sebelum F0.2) membuat SELURUH layar mati HTTP 500.
-        # `read_metrics()` tetap benar untuk dokumen lama maupun kanonik.
-        m = _shape.read_metrics(sale)
-        if sale.get("revenue_type") == "total":
-            total_revenue += m.get("revenue", 0)
-            total_orders += m.get("orders", 0)
-        elif sale.get("revenue_type") == "live":
-            total_revenue_live += m.get("revenue", 0)
-    
+    # 2026-11-07 (Asisten AI, audit §3.C #1/#9) — dulu `to_list(500)`: 9 toko × 31 hari
+    # × 2 jenis sudah melebihi batas itu, jadi omzet terhitung kurang tanpa galat. Sekarang
+    # dibaca lewat `core.ukuran_penjualan` (tanpa batas baris, tanpa data contoh, satu
+    # dokumen per toko-tanggal) — angka yang sama dengan laporan bulanan & Asisten AI.
+    oms = await _ukuran.ringkas_omzet(db, active_accounts_list, date_from, date_to)
+    live_rows, _dup_live = await _ukuran.baca_rekap(db, active_ids, date_from, date_to,
+                                                    revenue_type="live")
+    total_revenue = oms["total"]["omzet"]
+    total_orders = oms["total"]["pesanan"]
+    total_revenue_live = sum(r["omzet"] for r in live_rows)
+
     # Top performing account (by revenue) — only from active accounts
-    account_revenue = {}
-    for sale in total_sales:
-        acc_id = sale.get("account_id")
-        if not acc_id:
-            continue
-        if sale.get("revenue_type") == "total":
-            account_revenue[acc_id] = account_revenue.get(acc_id, 0) + \
-                _shape.read_metrics(sale).get("revenue", 0)
-    
+    account_revenue = {aid: t["omzet"] for aid, t in oms["per_toko"].items() if t["hari_ada_data"]}
+
     top_account_id = max(account_revenue, key=account_revenue.get) if account_revenue else None
     top_account = None
     if top_account_id:
@@ -141,7 +123,9 @@ async def get_account_dashboard(
         "date": {"$gte": date_from, "$lte": date_to}
     }
     
-    sales_data = await db.marketing_sales_data.find(query, {"_id": 0}).sort("date", 1).to_list(500)
+    # 2026-11-07 (audit #1) — tanpa batas 500 baris & tanpa data contoh.
+    query.update(_ukuran.TANPA_CONTOH)
+    sales_data = [s async for s in db.marketing_sales_data.find(query, {"_id": 0}).sort("date", 1)]
     
     # Separate total vs live
     total_revenue = 0
@@ -285,7 +269,8 @@ async def get_comparison_dashboard(
         {
             "account_id": {"$in": account_ids},
             "date": {"$gte": date_from, "$lte": date_to},
-            "revenue_type": "total"
+            "revenue_type": "total",
+            **_ukuran.TANPA_CONTOH,     # 2026-11-07 — data contoh tidak pernah dihitung
         },
         {"_id": 0}
     ).sort("date", 1)]

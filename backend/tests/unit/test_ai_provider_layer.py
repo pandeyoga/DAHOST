@@ -53,9 +53,10 @@ def _logs(db):
 
 # ── Model & harga (skill claude-api) ─────────────────────────────────────────
 def test_tier_hanya_ke_model_anthropic_terbaru():
+    # 2026-11-07 (keputusan owner no. 5): SEMUA tier = Claude Opus 5.5; tier hanya mengatur effort.
     assert t.resolve_model("executive") == ("anthropic", "claude-opus-5-5")
-    assert t.resolve_model("standard") == ("anthropic", "claude-sonnet-5-5")
-    assert t.resolve_model("light") == ("anthropic", "claude-sonnet-5-5")
+    assert t.resolve_model("standard") == ("anthropic", "claude-opus-5-5")
+    assert t.resolve_model("light") == ("anthropic", "claude-opus-5-5")
     assert t.resolve_model(" Executive ") == ("anthropic", "claude-opus-5-5")
 
 
@@ -66,8 +67,10 @@ def test_resolve_model_menolak_tuple_dan_nama_model(bad):
 
 
 def test_tabel_harga_sesuai_skill():
-    assert t.MODEL_PRICING[("anthropic", "claude-opus-5-5")] == {"input": 4.0, "output": 20.0}
-    assert t.MODEL_PRICING[("anthropic", "claude-sonnet-5-5")] == {"input": 2.0, "output": 10.0}
+    # 2026-11-07: + tarif baca cache ($0,20/MTok) & tulis cache 5 menit ($5/MTok) Opus 5.5
+    assert t.MODEL_PRICING[("anthropic", "claude-opus-5-5")] == {"input": 4.0, "output": 20.0,
+                                                                "cache_read": 0.20, "cache_write": 5.0}
+    assert t.MODEL_PRICING[("anthropic", "claude-sonnet-5-5")]["input"] == 2.0
     assert not any(k[0] in ("openai", "google") for k in t.MODEL_PRICING)
     # 1 jt token input + 1 jt output Sonnet 5.5 = $12
     assert t._calc_cost(("anthropic", "claude-sonnet-5-5"), 1_000_000, 1_000_000) == pytest.approx(12.0)
@@ -122,7 +125,7 @@ def test_kunci_dari_layar_integrasi_diutamakan(monkeypatch):
 # ── tracked_llm_call ─────────────────────────────────────────────────────────
 def test_panggilan_sukses_parameter_dan_teks(env):
     env["fake"].messages.responses = [fake_message("Ringkasan OK")]
-    # K29 (2026-11-02): Opus hanya untuk Laporan Eksekutif → pakai label fitur itu.
+    # 2026-11-07 (keputusan no. 5): K29 dicabut — semua fitur memakai Opus 5.5.
     res = run(t.tracked_llm_call("executive-narrative-1a2b3c4d", "u1", "executive", "sys", "isi", max_tokens=400))
     assert res.success and res.text == "Ringkasan OK" and res.error is None
     kw = env["fake"].messages.calls[0]

@@ -411,7 +411,7 @@ def test_dashboard_eksekutif_tidak_navigasi_saat_render():
     src = open(os.path.join(FE, "ManagementDashboard.jsx"), encoding="utf-8").read()
     # `onClick={drill('x')()}` memanggil navigasi saat render → layar tak bisa dibuka
     assert not re.search(r"onClick=\{drill\([^)]*\)\(\)\}", src)
-    assert "onClick={drill('ai-business-dashboard')}" in src
+    assert "onClick={drill('asisten-ai')}" in src
 
 
 @pytest.mark.skipif(not os.path.isdir(FE), reason="frontend tidak tersedia")

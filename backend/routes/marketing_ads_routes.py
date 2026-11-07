@@ -50,7 +50,17 @@ def _get_user(request: Request) -> dict:
 
 # ── Seed Demo Data ──
 async def seed_ads_if_empty():
-    """Auto-seed realistic ads campaign data if collection is empty."""
+    """Isi data iklan CONTOH — hanya di lingkungan demo (ALLOW_DEMO_SEED=true).
+
+    2026-11-07 (audit §3.C #4) — dulu dipanggil setiap GET saat koleksi kosong,
+    sehingga 25 baris iklan acak masuk koleksi PRODUKSI dan terbaca sebagai biaya
+    iklan & ROAS sungguhan. Sekarang tidak pernah dipanggil dari layar, dan menolak
+    berjalan di luar lingkungan demo. Data contoh lama dibuang lewat migrasi
+    `scripts/migrations/2026_11_08_hapus_data_contoh_marketing.py`.
+    """
+    from core.demo_seed_guard import demo_seed_enabled
+    if not demo_seed_enabled():
+        return
     db = get_db()
     if await db.marketing_ads_data.count_documents({}) > 0:
         return
@@ -139,15 +149,37 @@ async def seed_ads_if_empty():
 
 @router.get("/summary")
 async def ads_summary(request: Request,
-                      account_id: Optional[str] = Query(None)):
+                      account_id: Optional[str] = Query(None),
+                      date_from: Optional[str] = Query(None, description="YYYY-MM-DD (tanggal iklan)"),
+                      date_to: Optional[str] = Query(None, description="YYYY-MM-DD (tanggal iklan)")):
+    """Ringkasan iklan.
+
+    2026-11-07 (Asisten AI, audit §3.C #4/#5/#6):
+      * tidak lagi mengisi data contoh saat koleksi kosong;
+      * pecahan per platform dulu dihitung dari SELURUH koleksi (tanpa lingkup toko
+        maupun tanggal) — kartu total dan kartu platform menyebut dua kenyataan;
+        sekarang keduanya memakai saringan yang sama;
+      * rentang tanggal boleh dikirim (`date_from`/`date_to`); tanpa rentang =
+        semua periode, sama dengan tabel kampanye di bawahnya;
+      * tanggal iklan bisa tersimpan sebagai datetime ATAU teks — keduanya terbaca;
+      * baris data contoh (`_seed_origin`) tidak ikut dijumlah.
+    """
     user = await require_auth(request)
     db = get_db()
-    await seed_ads_if_empty()
+    from core import ukuran_penjualan as _ukuran
 
     # F14 — ringkasan harus bisa dilingkupi toko yang sama dengan tabelnya.
     # F6 (sesi #9) — tanpa filter toko, staf berlingkup hanya menjumlah tokonya.
     _m = await _scope.scope_filter(db, user, {"account_id": account_id} if account_id else None)
-    pipeline = ([{"$match": _m}] if _m else []) + [
+    conds = [dict(_m or {}), dict(_ukuran.TANPA_CONTOH)]
+    if date_from or date_to:
+        try:
+            d0, d1 = _ukuran.periode(date_from, date_to, maks_hari=3700)
+        except _ukuran.PeriodeSalah as e:
+            raise HTTPException(400, str(e)) from None
+        conds.append(_ukuran.filter_tanggal("date", d0, d1))
+    match = {"$and": conds}
+    pipeline = [{"$match": match}] + [
         {"$group": {
             "_id": None,
             "total_spend": {"$sum": "$spend"},
@@ -169,8 +201,9 @@ async def ads_summary(request: Request,
     overall_ctr = (stats["total_clicks"] / stats["total_impressions"] * 100) if stats["total_impressions"] > 0 else 0
     overall_cpa = (stats["total_spend"] / stats["total_conversions"]) if stats["total_conversions"] > 0 else 0
     
-    # By platform
+    # By platform — saringan SAMA dengan total di atas (2026-11-07, audit #5)
     platform_pipeline = [
+        {"$match": match},
         {"$group": {
             "_id": "$platform",
             "spend": {"$sum": "$spend"},
@@ -196,7 +229,7 @@ async def ads_summary(request: Request,
         "overall_cpa": round(overall_cpa, 2),
         "total_conversions": stats["total_conversions"],
         "by_platform": by_platform
-    })
+    }, metadata={"date_from": date_from, "date_to": date_to})
 
 @router.get("/campaigns")
 async def list_campaigns(
@@ -210,7 +243,6 @@ async def list_campaigns(
 ):
     user = await require_auth(request)
     db = get_db()
-    await seed_ads_if_empty()
 
     query = {}
     if account_id:
@@ -244,28 +276,34 @@ async def performance_trend(
     request: Request,
     days: int = Query(30, ge=7, le=90)
 ):
+    """Tren harian iklan.
+
+    2026-11-07 (audit §3.C #6) — dulu disaring `date >= datetime` lalu
+    dikelompokkan `$dateToString`: baris yang tanggalnya TEKS (laporan CPC Shopee)
+    dibuang diam-diam. Sekarang tanggal dinormalkan saat dibaca
+    (`core.ukuran_penjualan.tanggal_iklan`) dan data contoh tidak ikut.
+    """
     user = await require_auth(request)
     db = get_db()
-    await seed_ads_if_empty()
+    from core import ukuran_penjualan as _ukuran
+    from utils.waktu import today_wib
+    today = today_wib()
+    d0, d1 = (today - timedelta(days=days)).isoformat(), today.isoformat()
+    accounts = await _ukuran.toko_terlihat(db, user)
+    rows = await _ukuran.baca_iklan(db, [a["id"] for a in accounts], d0, d1)
+    by_day: dict = {}
+    for r in rows:
+        b = by_day.setdefault(r["_tanggal"], {"spend": 0.0, "revenue": 0.0, "conversions": 0})
+        b["spend"] += float(r.get("spend") or 0)
+        b["revenue"] += float(r.get("revenue") or 0)
+        b["conversions"] += int(r.get("conversions") or 0)
 
-    start_dt = _now() - timedelta(days=days)
-
-    pipeline = [
-        {"$match": await _scope.scope_filter(db, user, {"date": {"$gte": start_dt}})},
-        {"$group": {
-            "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$date"}},
-            "spend": {"$sum": "$spend"},
-            "revenue": {"$sum": "$revenue"},
-            "conversions": {"$sum": "$conversions"}
-        }},
-        {"$sort": {"_id": 1}}
-    ]
-    
     trend = []
-    async for doc in db.marketing_ads_data.aggregate(pipeline):
+    for day in sorted(by_day):
+        doc = by_day[day]
         roas = (doc["revenue"] / doc["spend"]) if doc["spend"] > 0 else 0
         trend.append({
-            "date": doc["_id"],
+            "date": day,
             "spend": doc["spend"],
             "revenue": doc["revenue"],
             "conversions": doc["conversions"],
@@ -283,13 +321,14 @@ async def get_ai_recommendations(request: Request):
     """
     user = await require_auth(request)
     db = get_db()
-    await seed_ads_if_empty()
 
     # 2026-11-02: gerbang tunggal services.ai (pesan ramah; dulu 500 "AI tidak dikonfigurasi").
     await require_ai("marketing-ads-rec", user_id=user.get("id"), db=db, tier="light")
 
-    # Ambil data campaign terakhir (max 20)
-    campaigns = await db.marketing_ads_data.find({}).sort("date", -1).limit(20).to_list(20)
+    # Ambil data campaign terakhir (max 20) — 2026-11-07 (audit #3/#4): berlingkup toko
+    # pemakai & tanpa data contoh.
+    _q = await _scope.scope_filter(db, user, {"_seed_origin": {"$ne": True}})
+    campaigns = await db.marketing_ads_data.find(_q).sort("date", -1).limit(20).to_list(20)
 
     if not campaigns:
         return success_response(data={"recommendations": [], "summary": "Belum ada data campaign."})

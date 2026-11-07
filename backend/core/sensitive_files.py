@@ -24,6 +24,9 @@ SENSITIVE_UPLOAD_PREFIXES: tuple = (
     "attendance/",   # selfie absen masuk/pulang — utils/attendance_policy.save_selfie
     "leave_docs/",   # lampiran cuti (surat dokter, dsb.) — routes/rahaza_leave.py
     "profile/",      # foto profil Portal Saya — routes/dewi_portal_saya_hr.py
+    # Asisten AI (laporan): PDF/Excel buatan Asisten AI (angka keuangan/SDM). Unduhan resminya lewat
+    # GET /api/asisten-ai/laporan/{id} (cek pembuat); di sini minimal wajib login — core/laporan_ai.py.
+    "ai_reports/",
 )
 
 # `entity_type` lampiran (`db.attachments`) yang memuat data pribadi/HR.

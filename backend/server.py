@@ -1119,6 +1119,10 @@ app.include_router(marketing_returns_router, dependencies=_DENY_EXTERNAL)
 app.include_router(marketing_samples_router, dependencies=_DENY_EXTERNAL)
 app.include_router(marketing_ai_insights_router, dependencies=_DENY_EXTERNAL)
 app.include_router(marketing_advanced_ai_router, dependencies=_DENY_EXTERNAL)
+# ── Asisten AI (data) ── analitik Marketing baca-saja (satu definisi omzet) ──
+from routes.marketing_analitik import router as marketing_analitik_router  # noqa: E402
+app.include_router(marketing_analitik_router, dependencies=_DENY_EXTERNAL)
+# ── akhir Asisten AI (data) ──
 
 # WMS Phase 1 — Units, Structure, Receiving
 from routes.wms_units import router as wms_units_router
@@ -1390,6 +1394,15 @@ app.include_router(maklon_quote_router, dependencies=_DENY_MKT)
 from routes.ai_usage_monitor import router as ai_usage_router
 app.include_router(ai_usage_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 
+# ── Asisten AI (inti) — chat analis Portal Manajemen (Tahap A, 2026-11-07) ──────────────
+# Router sendiri menegakkan akses Portal Manajemen (require_portal_dep("management")).
+# Modul alat di core/asisten_ai/alat/ dimuat sekali saat impor (modul rusak dilewati + dicatat).
+from routes.asisten_ai_routes import router as asisten_ai_router
+from core.asisten_ai.alat_base import muat_semua_alat as _muat_alat_asisten_ai
+app.include_router(asisten_ai_router, dependencies=_DENY_EXTERNAL_AND_MKT)
+_muat_alat_asisten_ai()
+# ── akhir Asisten AI (inti) ──────────────────────────────────────────────────────────────
+
 # New Portals — Communication Hub + Asset Management + Procurement + Workspace + LMS Student
 from routes.dewi_communication import router as comm_router
 from routes.dewi_asset_management import router as asset_router
@@ -1489,6 +1502,13 @@ app.include_router(admin_backup_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 # ─── Universal Export / Import (registry-driven data transfer) ───────────────
 from routes.data_transfer import router as data_transfer_router
 app.include_router(data_transfer_router, dependencies=_DENY_MKT)
+
+# ── Asisten AI (laporan) — unduh laporan PDF/Excel buatan Asisten AI (Tahap A, 7 Nov 2026) ──
+# Gerbang sama dengan Asisten AI: tolak peran eksternal + akses Portal Management; pemilik dicek di rute.
+from routes.asisten_ai_laporan_routes import router as asisten_ai_laporan_router  # noqa: E402
+app.include_router(asisten_ai_laporan_router,
+                   dependencies=_DENY_EXTERNAL + [_Depends(_require_portal_dep("management"))])
+# ── akhir Asisten AI (laporan) ──
 
 # ─── Production Seed ─────────────────────────────────────────────────────────
 # FASE 5 (AD-4): production_seed_full diarsip (menulis koleksi engine lama yang

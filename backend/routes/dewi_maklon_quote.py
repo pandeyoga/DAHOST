@@ -209,6 +209,32 @@ def _heuristic_quote(payload: QuoteRequestIn) -> dict:
     }
 
 
+def quote_prompt_body(payload) -> str:
+    """Isi permintaan estimasi untuk model — TANPA identitas klien (audit AI 7 Nov 2026).
+
+    Nama klien tidak dibutuhkan untuk menghitung harga, jadi tidak dikirim. Bila nama itu tertulis di isian
+    bebas (produk, bahan, catatan), diganti "[KLIEN]"; nomor HP/e-mail/nomor panjang ikut disamarkan."""
+    from services.ai.privacy import redact
+    names = [getattr(payload, "client_name", None)]
+
+    def bebas(v):
+        return redact(v, names, "[KLIEN]") if v else "-"
+
+    return (
+        f"Product: {bebas(payload.product_name)}\n"
+        f"Category: {bebas(payload.category)}\n"
+        f"Quantity: {payload.quantity}\n"
+        f"Target market: {bebas(payload.target_market)}\n"
+        f"Target unit price (jika ada): {payload.target_unit_price or '-'}\n"
+        f"Materials: {bebas(payload.materials)}\n"
+        f"Bahan utama disediakan oleh: {'klien' if client_supplies_material(payload) else 'CV. DA'}\n"
+        f"Finishing: {bebas(payload.finishing)}\n"
+        f"Required lead time: {payload.required_lead_time_days or '-'} hari\n"
+        f"Target margin: {payload.target_margin_pct or 25}%\n"
+        f"Notes: {bebas(payload.additional_notes)}\n\n"
+    )
+
+
 async def _generate_ai_quote(payload: QuoteRequestIn, user_id: Optional[str] = None) -> dict:
     """Use LLM to enrich the heuristic baseline."""
     base = _heuristic_quote(payload)
@@ -241,19 +267,7 @@ async def _generate_ai_quote(payload: QuoteRequestIn, user_id: Optional[str] = N
             "labor = upah CMT/jahit per pcs; margin dihitung atas harga jual: "
             "harga = HPP ÷ (1 − margin)."
         )
-        user_msg = (
-            f"Product: {payload.product_name}\n"
-            f"Category: {payload.category or '-'}\n"
-            f"Quantity: {payload.quantity}\n"
-            f"Target market: {payload.target_market or '-'}\n"
-            f"Target unit price (jika ada): {payload.target_unit_price or '-'}\n"
-            f"Materials: {payload.materials or '-'}\n"
-            f"Bahan utama disediakan oleh: {'klien' if client_supplies_material(payload) else 'CV. DA'}\n"
-            f"Finishing: {payload.finishing or '-'}\n"
-            f"Required lead time: {payload.required_lead_time_days or '-'} hari\n"
-            f"Target margin: {payload.target_margin_pct or 25}%\n"
-            f"Client: {payload.client_name or '-'}\n"
-            f"Notes: {payload.additional_notes or '-'}\n\n"
+        user_msg = quote_prompt_body(payload) + (
             f"Heuristik baseline (untuk referensi, silakan koreksi):\n"
             f"{json.dumps(base, indent=2, ensure_ascii=False)}\n\n"
             "Kembalikan JSON akhir saja."
