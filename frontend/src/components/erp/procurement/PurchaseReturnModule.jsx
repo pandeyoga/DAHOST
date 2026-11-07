@@ -374,7 +374,7 @@ export default function PurchaseReturnModule({ token }) {
       </>}>
       {err && <p className="text-sm text-[hsl(var(--danger-text))]" role="alert">{err}</p>}
       {loading && rows.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat retur pembelian…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat retur pembelian…</p>
       ) : (
         <TabelData kolom={kolom} baris={rows} onKlikBaris={setDetail} testId="rtp-table"
           kosong={<EmptyState title="Belum ada retur pembelian"

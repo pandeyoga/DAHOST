@@ -545,7 +545,7 @@ export default function QuarantineModule({ token: tokenProp }) {
       {err && <Notice tone="danger" title={err} />}
 
       {loading && items.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat karantina…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat karantina…</p>
       ) : (
         <TabelData kolom={kolom} baris={pg.paged} onKlikBaris={setDetail} testId="quarantine-table"
           kosong={needsAction ? (

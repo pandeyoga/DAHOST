@@ -590,7 +590,7 @@ export default function WMSFabricRollsModule({ token }) {
             {missingTotal > missing.length && ` Menampilkan ${missing.length} dari ${missingTotal} baris.`}
           </p>
           {missingLoading && missing.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">Memuat…</p>
+            <p className="py-6 text-center text-sm text-muted-foreground">Memuat…</p>
           ) : (
             <TabelData kolom={kolomMissing} baris={missing} kunci={(m) => m.item_id} testId="missing-rolls-table"
               kosong={<EmptyState icon={CheckCircle2} testId="missing-rolls-empty"
@@ -599,7 +599,7 @@ export default function WMSFabricRollsModule({ token }) {
           )}
         </div>
       ) : loading && rolls.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground" data-testid="loading-rolls">Memuat roll…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground" data-testid="loading-rolls">Memuat roll…</p>
       ) : (
         <TabelData kolom={kolomRoll} baris={paged} onKlikBaris={handleView} testId="rolls-table"
           kosong={<EmptyState icon={Package}
@@ -757,7 +757,7 @@ export default function WMSFabricRollsModule({ token }) {
           <div>
             <p className="mb-2 text-sm font-medium text-foreground">Riwayat pergerakan</p>
             {!viewDialog.movements?.length ? (
-              <p className="text-sm text-muted-foreground">Belum ada pergerakan.</p>
+              <p className="text-sm text-muted-foreground">Roll ini belum pernah bergerak sejak dibuat.</p>
             ) : (
               <div className="overflow-x-auto">
                 <Table className="min-w-[32rem]">

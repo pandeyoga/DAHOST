@@ -285,7 +285,7 @@ export default function PutAwayModule({ token, onNavigate }) {
       </div>
 
       {loading && totalPending === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat barang yang belum dirak…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat barang yang belum dirak…</p>
       ) : (
         <TabelData kolom={kolom} baris={pendingItems} kunci={(it) => `${it._cat}-${it.material_id}`}
           onKlikBaris={(it) => { selectItem(it); setItemScan(null); }} testId="putaway-table"
