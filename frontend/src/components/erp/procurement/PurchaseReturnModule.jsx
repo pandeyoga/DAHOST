@@ -7,15 +7,27 @@
  * rata-rata → PPV. DA bukan PKP → tanpa PPN retur. Nota Debit & refund diselesaikan Keuangan
  * (layar Nota Debit). Backend: /api/rahaza/purchase-returns (routes/rahaza_purchase_returns.py).
  *
- * `PurchaseReturnCreateModal` dipakai juga oleh Karantina QC (tombol "Buat Retur Pembelian").
+ * `PurchaseReturnCreateModal` dipakai juga oleh Karantina QC (tombol "Buat retur pembelian").
+ * `StatusBadge` & `SETTLEMENT_OPTIONS` dipakai juga oleh Nota Debit (Portal Keuangan).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, penyaring pil, tabel + unduhan Excel/CSV, form = FormPopup,
+ * detail = DetailPopup, tanggal kirim = DatePicker. Isian, aturan, dan API tidak berubah.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { PackageCheck, Plus, RefreshCw, Send, Undo2, XCircle } from 'lucide-react';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { PackageCheck, Plus, RefreshCw, Send, XCircle } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import Modal from '../Modal';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker from '@/components/ui/date-picker';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, StatusBadge as Lencana } from '../moduleAtoms';
 import { apiGet, apiPost, fmtDate, fmtNum, fmtRp } from './procApi';
 
 export const SETTLEMENT_OPTIONS = [
@@ -26,17 +38,24 @@ export const SETTLEMENT_OPTIONS = [
   { value: 'destroy', label: 'Dimusnahkan', hint: 'Barang dimusnahkan; pilih siapa yang menanggung.' },
 ];
 const STATUS_META = {
-  draft: { label: 'Draft', cls: 'bg-muted text-muted-foreground border-border' },
-  awaiting_settlement: { label: 'Menunggu Penyelesaian', cls: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]   ' },
-  settled: { label: 'Selesai', cls: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]   ' },
-  cancelled: { label: 'Batal', cls: 'bg-muted text-muted-foreground border-border line-through' },
+  draft: { label: 'Draf', tone: 'muted' },
+  awaiting_settlement: { label: 'Menunggu penyelesaian', tone: 'warning' },
+  settled: { label: 'Selesai', tone: 'success' },
+  cancelled: { label: 'Batal', tone: 'muted' },
 };
 const SHIPPING = ['exchange', 'debit_note', 'refund', 'destroy'];
 const settlementLabel = (v) => (SETTLEMENT_OPTIONS.find((o) => o.value === v) || {}).label || v;
+const statusLabel = (s) => (STATUS_META[s] || STATUS_META.draft).label;
+// Riwayat & jurnal dokumen dalam bahasa staf (kode dari routes/rahaza_purchase_returns.py)
+const AKSI_RIWAYAT = {
+  create: 'Dibuat', send: 'Dikirim', destroy: 'Dimusnahkan', receive_replacement: 'Pengganti diterima',
+  refund: 'Refund dicatat', cancel: 'Dibatalkan', debit_note: 'Nota debit terbit',
+};
+const TAHAP_JURNAL = { send: 'Pengiriman', replacement: 'Penerimaan pengganti', refund: 'Refund', debit_note: 'Nota debit' };
 
 export function StatusBadge({ status }) {
   const m = STATUS_META[status] || STATUS_META.draft;
-  return <span className={`inline-flex text-[10px] font-semibold px-2 py-0.5 rounded-full border ${m.cls}`}>{m.label}</span>;
+  return <Lencana status={status} label={m.label} tone={m.tone} className={status === 'cancelled' ? 'line-through' : undefined} />;
 }
 
 /** Form buat Retur Pembelian — dari item karantina (`quarantineItem`) atau dari stok (pilih GR). */
@@ -128,123 +147,96 @@ export function PurchaseReturnCreateModal({ token, quarantineItem, onClose, onSa
           : [{ material_id: line.material_id, location_id: locId, qty: q, gr_item_id: lineId }],
       };
       const doc = await apiPost(token, '/api/rahaza/purchase-returns', body);
-      toast.success(`Retur Pembelian ${doc.rtp_number} dibuat (Draft)`);
+      toast.success(`Retur Pembelian ${doc.rtp_number} dibuat (draf)`);
       onSaved?.(doc);
     } catch (e) { setErr(e.message); setBusy(false); }
   };
 
+  const ketKarantina = fromQ ? [
+    `Karantina sisa ${fmtNum(quarantineItem.remaining_qty)} ${quarantineItem.unit}`,
+    quarantineItem.source?.number, quarantineItem.source?.supplier_name,
+    unvalued > 0 ? `${fmtNum(unvalued)} belum bernilai (reject GR, belum ditagih)` : null,
+  ].filter(Boolean).join(' · ') : '';
+
   return (
-    <Modal title="Buat Retur Pembelian" onClose={onClose} size="lg">
-      <div className="space-y-3 text-sm" data-testid="rtp-create-modal">
-        {fromQ && (
-          <div className="rounded-lg border border-border px-3 py-2 text-xs">
-            <div className="font-medium">{quarantineItem.material_code} · {quarantineItem.material_name}</div>
-            <div className="text-muted-foreground">
-              Karantina sisa {fmtNum(quarantineItem.remaining_qty)} {quarantineItem.unit}
-              {quarantineItem.source?.number ? ` · ${quarantineItem.source.number}` : ''}
-              {quarantineItem.source?.supplier_name ? ` · ${quarantineItem.source.supplier_name}` : ''}
-              {unvalued > 0 ? ` · ${fmtNum(unvalued)} belum bernilai (reject GR, belum ditagih)` : ''}
-            </div>
-          </div>
-        )}
-        <div>
-          <label className="text-xs text-muted-foreground block mb-1">Penyelesaian *</label>
-          <SmartNativeSelect value={settlement} onChange={(e) => setSettlement(e.target.value)}
-            className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="rtp-settlement">
-            {SETTLEMENT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="rtp-create-modal"
+      judul="Buat retur pembelian"
+      keterangan={fromQ ? `${quarantineItem.material_code} · ${quarantineItem.material_name}` : 'Barang dari stok dikembalikan ke pemasok. Harga = harga GR asal; tanpa PPN.'}
+      onSimpan={submit} menyimpan={busy} galat={err} labelSimpan="Buat retur (draf)">
+      {fromQ && <p className="text-sm text-muted-foreground" data-testid="rtp-quarantine-info">{ketKarantina}</p>}
+      <Isian label="Penyelesaian" wajib htmlFor="rtp-penyelesaian"
+        petunjuk={(SETTLEMENT_OPTIONS.find((o) => o.value === settlement) || {}).hint}>
+        <SmartNativeSelect id="rtp-penyelesaian" value={settlement} onChange={(e) => setSettlement(e.target.value)} data-testid="rtp-settlement">
+          {SETTLEMENT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </SmartNativeSelect>
+      </Isian>
+      {settlement === 'destroy' && (
+        <Isian label="Ditanggung" wajib htmlFor="rtp-ditanggung">
+          <SmartNativeSelect id="rtp-ditanggung" value={borne} onChange={(e) => setBorne(e.target.value)} data-testid="rtp-borne">
+            <option value="supplier">Pemasok (tagihan dipotong lewat nota debit)</option>
+            <option value="da">DA (dibebankan; reject GR menjadi bisa ditagih pemasok)</option>
           </SmartNativeSelect>
-          <p className="text-[11px] text-muted-foreground mt-1">{(SETTLEMENT_OPTIONS.find((o) => o.value === settlement) || {}).hint}</p>
-        </div>
-        {settlement === 'destroy' && (
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Ditanggung *</label>
-            <SmartNativeSelect value={borne} onChange={(e) => setBorne(e.target.value)}
-              className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="rtp-borne">
-              <option value="supplier">Pemasok (tagihan dipotong lewat nota debit)</option>
-              <option value="da">DA (dibebankan; reject GR menjadi bisa ditagih pemasok)</option>
+        </Isian>
+      )}
+      {needGr && (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="GR asal" wajib htmlFor="rtp-gr" petunjuk="Harga & pemasok diambil dari penerimaan ini.">
+            <SmartNativeSelect id="rtp-gr" value={grId} onChange={(e) => { setGrId(e.target.value); setLineId(''); }} data-testid="rtp-gr">
+              <option value="">— pilih GR —</option>
+              {grs.map((g) => <option key={g.id} value={g.id}>{g.receipt_number} · {g.supplier_name || '-'}{g.po_number ? ` · ${g.po_number}` : ''}</option>)}
             </SmartNativeSelect>
-          </div>
-        )}
-        {needGr && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">GR asal * (harga & pemasok)</label>
-              <SmartNativeSelect value={grId} onChange={(e) => { setGrId(e.target.value); setLineId(''); }}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="rtp-gr">
-                <option value="">— pilih GR —</option>
-                {grs.map((g) => <option key={g.id} value={g.id}>{g.receipt_number} · {g.supplier_name || '-'}{g.po_number ? ` · ${g.po_number}` : ''}</option>)}
-              </SmartNativeSelect>
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Baris GR *</label>
-              <SmartNativeSelect value={lineId} onChange={(e) => setLineId(e.target.value)}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="rtp-gr-line">
-                <option value="">— pilih baris —</option>
-                {grLines.map((li) => (
-                  <option key={li.id || li.po_item_id} value={li.id || li.po_item_id}>
-                    {li.sku || ''} {li.material_name || li.product_name} · @ {fmtRp(li.unit_price || li.unit_cost || 0)}
-                  </option>
-                ))}
-              </SmartNativeSelect>
-            </div>
-          </div>
-        )}
-        {!fromQ && (
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Lokasi asal stok *</label>
-            <SmartNativeSelect value={locId} onChange={(e) => setLocId(e.target.value)}
-              disabled={!lineMaterialId || stockLocs === null || stockLocs.length === 0}
-              className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="rtp-location">
-              <option value="">
-                {!lineMaterialId ? '— pilih baris GR dulu —'
-                  : stockLocs === null ? 'Memuat lokasi stok…'
-                    : stockLocs.length === 0 ? '— tidak ada stok barang ini di lokasi mana pun —' : '— pilih lokasi —'}
-              </option>
-              {(stockLocs || []).map((l) => (
-                <option key={l.id} value={l.id}>
-                  {`${l.code ? `${l.code} · ` : ''}${l.name || l.code || 'Lokasi'} — stok ${fmtNum(l.qty)} ${l.unit || ''}`.trim()}
+          </Isian>
+          <Isian label="Baris GR" wajib htmlFor="rtp-baris">
+            <SmartNativeSelect id="rtp-baris" value={lineId} onChange={(e) => setLineId(e.target.value)} data-testid="rtp-gr-line">
+              <option value="">— pilih baris —</option>
+              {grLines.map((li) => (
+                <option key={li.id || li.po_item_id} value={li.id || li.po_item_id}>
+                  {li.sku || ''} {li.material_name || li.product_name} · @ {fmtRp(li.unit_price || li.unit_cost || 0)}
                 </option>
               ))}
             </SmartNativeSelect>
-            <p className="text-[11px] text-muted-foreground mt-1" data-testid="rtp-location-hint">
-              {lineMaterialId && stockLocs && stockLocs.length === 0
-                ? 'Barang ini tidak punya stok di lokasi mana pun, jadi tidak bisa diretur dari stok. Bila barangnya ada di Karantina QC, buat retur dari layar Karantina.'
-                : 'Hanya lokasi yang memegang stok barang baris GR terpilih.'}
-            </p>
-          </div>
-        )}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Qty *</label>
-            <GlassInput type="number" min="0" step="any" value={qty} onChange={(e) => setQty(e.target.value)} data-testid="rtp-qty" />
-            {price > 0 && Number(qty) > 0 && (
-              <p className="text-[11px] text-muted-foreground mt-1">Nilai pada harga GR: {fmtRp(Number(qty) * price)} (tanpa PPN — DA bukan PKP)</p>
-            )}
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Tanggal kirim</label>
-            <GlassInput type="date" value={shipDate} onChange={(e) => setShipDate(e.target.value)} data-testid="rtp-ship-date" />
-          </div>
+          </Isian>
         </div>
-        <div>
-          <label className="text-xs text-muted-foreground block mb-1">Alasan *</label>
-          <GlassInput value={reason} onChange={(e) => setReason(e.target.value)} placeholder="mis. kain berlubang, salah warna" data-testid="rtp-reason" />
-        </div>
-        <div>
-          <label className="text-xs text-muted-foreground block mb-1">Tautan foto bukti (pisahkan spasi)</label>
-          <GlassInput value={photos} onChange={(e) => setPhotos(e.target.value)} placeholder="https://..." data-testid="rtp-photos" />
-        </div>
-        <div>
-          <label className="text-xs text-muted-foreground block mb-1">Catatan</label>
-          <GlassInput value={notes} onChange={(e) => setNotes(e.target.value)} data-testid="rtp-notes" />
-        </div>
-        {err && <div className="text-sm text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.15)]  rounded-lg px-3 py-2">{err}</div>}
-        <div className="flex justify-end gap-2 pt-1">
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={submit} disabled={busy} data-testid="rtp-create-submit">{busy ? 'Menyimpan…' : 'Buat Retur (Draft)'}</Button>
-        </div>
+      )}
+      {!fromQ && (
+        <Isian label="Lokasi asal stok" wajib htmlFor="rtp-lokasi"
+          petunjuk={<span data-testid="rtp-location-hint">{lineMaterialId && stockLocs && stockLocs.length === 0
+            ? 'Barang ini tidak punya stok di lokasi mana pun, jadi tidak bisa diretur dari stok. Bila barangnya ada di Karantina QC, buat retur dari layar Karantina.'
+            : 'Hanya lokasi yang memegang stok barang baris GR terpilih.'}</span>}>
+          <SmartNativeSelect id="rtp-lokasi" value={locId} onChange={(e) => setLocId(e.target.value)}
+            disabled={!lineMaterialId || stockLocs === null || stockLocs.length === 0} data-testid="rtp-location">
+            <option value="">
+              {!lineMaterialId ? '— pilih baris GR dulu —'
+                : stockLocs === null ? 'Memuat lokasi stok…'
+                  : stockLocs.length === 0 ? '— tidak ada stok barang ini di lokasi mana pun —' : '— pilih lokasi —'}
+            </option>
+            {(stockLocs || []).map((l) => (
+              <option key={l.id} value={l.id}>
+                {`${l.code ? `${l.code} · ` : ''}${l.name || l.code || 'Lokasi'} — stok ${fmtNum(l.qty)} ${l.unit || ''}`.trim()}
+              </option>
+            ))}
+          </SmartNativeSelect>
+        </Isian>
+      )}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Qty" wajib htmlFor="rtp-qty"
+          petunjuk={price > 0 && Number(qty) > 0 ? `Nilai pada harga GR: ${fmtRp(Number(qty) * price)} (tanpa PPN — DA bukan PKP)` : undefined}>
+          <Input id="rtp-qty" type="number" min="0" step="any" value={qty} onChange={(e) => setQty(e.target.value)} data-testid="rtp-qty" />
+        </Isian>
+        <Isian label="Tanggal kirim">
+          <DatePicker value={shipDate} onChange={setShipDate} placeholder="Belum ditentukan" testId="rtp-ship-date" />
+        </Isian>
       </div>
-    </Modal>
+      <Isian label="Alasan" wajib htmlFor="rtp-alasan">
+        <Input id="rtp-alasan" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="mis. kain berlubang, salah warna" data-testid="rtp-reason" />
+      </Isian>
+      <Isian label="Tautan foto bukti" htmlFor="rtp-foto" petunjuk="Pisahkan beberapa tautan dengan spasi.">
+        <Input id="rtp-foto" value={photos} onChange={(e) => setPhotos(e.target.value)} placeholder="https://..." data-testid="rtp-photos" />
+      </Isian>
+      <Isian label="Catatan" htmlFor="rtp-catatan">
+        <Input id="rtp-catatan" value={notes} onChange={(e) => setNotes(e.target.value)} data-testid="rtp-notes" />
+      </Isian>
+    </FormPopup>
   );
 }
 
@@ -264,26 +256,21 @@ function ReplacementModal({ token, rtp, onClose, onDone }) {
     } catch (e) { setErr(e.message); setBusy(false); }
   };
   return (
-    <Modal title={`Terima Barang Pengganti · ${rtp.rtp_number}`} onClose={onClose} size="sm">
-      <div className="space-y-3 text-sm">
-        <p className="text-xs text-muted-foreground">
-          Barang pengganti masuk stok pada harga GR asal. Bagian yang dulu bernilai menutup klaim retur; bagian reject GR
-          menjadi penerimaan susulan yang bisa ditagih pemasok.
-        </p>
-        <SmartNativeSelect value={locId} onChange={(e) => setLocId(e.target.value)}
-          className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="rtp-replacement-location">
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="rtp-replacement-form"
+      judul={`Terima barang pengganti · ${rtp.rtp_number}`}
+      keterangan="Barang pengganti masuk stok pada harga GR asal. Bagian yang dulu bernilai menutup klaim retur; bagian reject GR menjadi penerimaan susulan yang bisa ditagih pemasok."
+      onSimpan={submit} menyimpan={busy} galat={err} labelSimpan="Terima pengganti">
+      <Isian label="Lokasi penerima" wajib htmlFor="rtp-lokasi-pengganti">
+        <SmartNativeSelect id="rtp-lokasi-pengganti" value={locId} onChange={(e) => setLocId(e.target.value)} data-testid="rtp-replacement-location">
           <option value="">— lokasi penerima —</option>
           {locs.map((l) => <option key={l.id} value={l.id}>{l.code ? `${l.code} · ` : ''}{l.name || l.code}</option>)}
         </SmartNativeSelect>
-        {err && <div className="text-sm text-[hsl(var(--destructive))] ">{err}</div>}
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={submit} disabled={busy}>{busy ? 'Memproses…' : 'Terima Pengganti'}</Button>
-        </div>
-      </div>
-    </Modal>
+      </Isian>
+    </FormPopup>
   );
 }
+
+const STATUS_PILIHAN = [['all', 'Semua'], ['draft', 'Draf'], ['awaiting_settlement', 'Menunggu penyelesaian'], ['settled', 'Selesai'], ['cancelled', 'Batal']];
 
 export default function PurchaseReturnModule({ token }) {
   const [rows, setRows] = useState([]);
@@ -316,82 +303,83 @@ export default function PurchaseReturnModule({ token }) {
     finally { setBusy(''); }
   };
 
+  const menungguKeuangan = (r) => (r.status === 'awaiting_settlement' && ['debit_note', 'destroy', 'refund'].includes(r.settlement))
+    || (r.status === 'draft' && r.settlement === 'accept_discount');
+  const aksiBaris = (r) => (
+    <div className="flex flex-wrap justify-end gap-1">
+      {r.status === 'draft' && SHIPPING.includes(r.settlement) && (
+        <Button size="sm" disabled={busy === r.id} onClick={() => act(r, 'send', r.settlement === 'destroy' ? 'Dimusnahkan' : 'Dikirim')}
+          data-testid={`rtp-send-${r.id}`}><Send />{r.settlement === 'destroy' ? 'Proses musnah' : 'Kirim'}</Button>
+      )}
+      {r.status === 'draft' && (
+        <Button size="sm" variant="outline" disabled={busy === r.id} onClick={() => act(r, 'cancel', 'Dibatalkan')}
+          title="Batalkan retur" aria-label="Batalkan retur" data-testid={`rtp-cancel-${r.id}`}><XCircle /></Button>
+      )}
+      {r.status === 'awaiting_settlement' && r.settlement === 'exchange' && (
+        <Button size="sm" variant="success" onClick={() => setReplacing(r)} data-testid={`rtp-replace-${r.id}`}>
+          <PackageCheck />Terima pengganti</Button>
+      )}
+      {menungguKeuangan(r) && (
+        <span className="text-xs text-muted-foreground">Menunggu Keuangan ({r.settlement === 'refund' ? 'refund' : 'nota debit'})</span>
+      )}
+    </div>
+  );
+
+  const kolom = [
+    { kunci: 'no', label: 'No. retur', hp: 'judul', isi: (r) => (
+      <div>
+        <p className="font-medium tabular-nums">{r.rtp_number}</p>
+        <p className="text-xs text-muted-foreground">{fmtDate(r.created_at)}</p>
+      </div>) },
+    { kunci: 'pemasok', label: 'Pemasok · GR', hp: 'keterangan', isi: (r) => (
+      <div className="text-sm">{r.supplier_name || '-'}
+        <div className="text-xs text-muted-foreground">{r.gr_number}{r.po_number ? ` · ${r.po_number}` : ''}</div>
+      </div>) },
+    { kunci: 'penyelesaian', label: 'Penyelesaian', isi: (r) => (
+      <div className="text-sm">{settlementLabel(r.settlement)}{r.settlement === 'destroy' ? ` (${r.destroy_borne_by === 'da' ? 'DA' : 'pemasok'})` : ''}
+        {r.debit_note_number && <div className="text-xs text-muted-foreground">ND {r.debit_note_number}</div>}
+      </div>) },
+    { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtNum(r.total_qty)}</span> },
+    { kunci: 'nilai', label: 'Nilai (harga GR)', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtRp(r.total_amount)}</span> },
+    { kunci: 'status', label: 'Status', isi: (r) => <StatusBadge status={r.status} /> },
+    { kunci: 'umur', label: 'Umur', rata: 'kanan', isi: (r) => (
+      <span className={`tabular-nums ${r.status === 'awaiting_settlement' && r.age_days >= 14 ? 'font-medium text-[hsl(var(--danger-text))]' : ''}`}>{r.age_days} hari</span>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: aksiBaris },
+  ];
+
   return (
-    <div className="space-y-4" data-testid="purchase-return-module">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold flex items-center gap-2"><Undo2 className="w-5 h-5" /> Retur Pembelian</h2>
-          <p className="text-sm text-muted-foreground mt-1 max-w-3xl">
-            Barang dikembalikan ke pemasok dengan penyelesaian yang jelas. Harga = harga GR asal; tanpa PPN (DA bukan PKP).
-            Potong tagihan &amp; diterima dengan diskon diselesaikan Keuangan lewat <strong>Nota Debit</strong>; refund dicatat Keuangan saat uang masuk.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load}><RefreshCw className="w-4 h-4" /></Button>
-          <Button onClick={() => setShowCreate(true)} data-testid="rtp-new"><Plus className="w-4 h-4 mr-1" /> Retur dari Stok</Button>
-        </div>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {[['all', 'Semua'], ['draft', 'Draft'], ['awaiting_settlement', 'Menunggu Penyelesaian'], ['settled', 'Selesai'], ['cancelled', 'Batal']].map(([k, l]) => (
-          <button key={k} onClick={() => setStatus(k)}
-            className={`px-3 py-1.5 rounded-full text-xs border ${status === k ? 'bg-primary/15 border-primary' : 'border-border'}`}
-            data-testid={`rtp-filter-${k}`}>{l}</button>
-        ))}
-      </div>
-      {err && <div className="text-sm text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.15)]  rounded-lg px-4 py-2">{err}</div>}
-      <GlassCard className="overflow-x-auto p-0">
-        <table className="w-full text-sm min-w-[900px]">
-          <thead className="border-b border-border text-xs text-muted-foreground">
-            <tr>
-              <th className="text-left px-3 py-2">No. Retur</th><th className="text-left px-3 py-2">Pemasok · GR</th>
-              <th className="text-left px-3 py-2">Penyelesaian</th><th className="text-right px-3 py-2">Qty</th>
-              <th className="text-right px-3 py-2">Nilai (harga GR)</th><th className="text-center px-3 py-2">Status</th>
-              <th className="text-center px-3 py-2">Umur</th><th className="text-right px-3 py-2">Aksi</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr><td colSpan="8" className="px-3 py-6 text-center text-muted-foreground">Memuat…</td></tr>
-            ) : rows.length === 0 ? (
-              <tr><td colSpan="8" className="px-3 py-6 text-center text-muted-foreground">Belum ada Retur Pembelian.</td></tr>
-            ) : rows.map((r) => (
-              <tr key={r.id} className="border-b border-border" data-testid={`rtp-row-${r.id}`}>
-                <td className="px-3 py-2"><button className="tabular-nums text-xs underline" onClick={() => setDetail(r)}>{r.rtp_number}</button>
-                  <div className="text-[11px] text-muted-foreground">{fmtDate(r.created_at)}</div></td>
-                <td className="px-3 py-2 text-xs">{r.supplier_name || '-'}<div className="text-muted-foreground">{r.gr_number}{r.po_number ? ` · ${r.po_number}` : ''}</div></td>
-                <td className="px-3 py-2 text-xs">{settlementLabel(r.settlement)}{r.settlement === 'destroy' ? ` (${r.destroy_borne_by === 'da' ? 'DA' : 'pemasok'})` : ''}
-                  {r.debit_note_number && <div className="text-muted-foreground">ND {r.debit_note_number}</div>}</td>
-                <td className="px-3 py-2 text-right">{fmtNum(r.total_qty)}</td>
-                <td className="px-3 py-2 text-right">{fmtRp(r.total_amount)}</td>
-                <td className="px-3 py-2 text-center"><StatusBadge status={r.status} /></td>
-                <td className="px-3 py-2 text-center text-xs">
-                  <span className={r.status === 'awaiting_settlement' && r.age_days >= 14 ? 'text-[hsl(var(--destructive))]  font-semibold' : ''}>{r.age_days} hari</span>
-                </td>
-                <td className="px-3 py-2">
-                  <div className="flex justify-end gap-1 flex-wrap">
-                    {r.status === 'draft' && SHIPPING.includes(r.settlement) && (
-                      <Button size="sm" disabled={busy === r.id} onClick={() => act(r, 'send', r.settlement === 'destroy' ? 'Dimusnahkan' : 'Dikirim')}
-                        data-testid={`rtp-send-${r.id}`}><Send className="w-3.5 h-3.5 mr-1" />{r.settlement === 'destroy' ? 'Proses Musnah' : 'Kirim'}</Button>
-                    )}
-                    {r.status === 'draft' && (
-                      <Button size="sm" variant="outline" disabled={busy === r.id} onClick={() => act(r, 'cancel', 'Dibatalkan')}
-                        data-testid={`rtp-cancel-${r.id}`}><XCircle className="w-3.5 h-3.5" /></Button>
-                    )}
-                    {r.status === 'awaiting_settlement' && r.settlement === 'exchange' && (
-                      <Button size="sm" onClick={() => setReplacing(r)} data-testid={`rtp-replace-${r.id}`}>
-                        <PackageCheck className="w-3.5 h-3.5 mr-1" />Terima Pengganti</Button>
-                    )}
-                    {((r.status === 'awaiting_settlement' && ['debit_note', 'destroy', 'refund'].includes(r.settlement))
-                      || (r.status === 'draft' && r.settlement === 'accept_discount')) && (
-                      <span className="text-[11px] text-muted-foreground">Menunggu Keuangan ({r.settlement === 'refund' ? 'refund' : 'Nota Debit'})</span>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </GlassCard>
+    <PageLayout testId="purchase-return-module" title="Retur Pembelian"
+      subtitle="Barang dikembalikan ke pemasok pada harga GR asal; nota debit & refund diselesaikan Keuangan."
+      actions={<Button onClick={() => setShowCreate(true)} data-testid="rtp-new"><Plus />Retur dari stok</Button>}
+      filters={<FilterChips options={STATUS_PILIHAN.map(([key, label]) => ({ key, label }))} value={status} onChange={setStatus}
+        hideWhenEmpty={false} testId="rtp-filter" />}
+      tools={<>
+        <TombolUnduh namaBerkas="retur-pembelian" namaLembar="Retur pembelian" baris={rows} testId="rtp-unduh"
+          kolom={[
+            { label: 'No. retur', nilai: (r) => r.rtp_number },
+            { label: 'Tanggal', nilai: (r) => fmtDate(r.created_at) },
+            { label: 'Pemasok', nilai: (r) => r.supplier_name || '' },
+            { label: 'No. GR', nilai: (r) => r.gr_number || '' },
+            { label: 'No. PO', nilai: (r) => r.po_number || '' },
+            { label: 'Penyelesaian', nilai: (r) => settlementLabel(r.settlement) },
+            { label: 'Nota debit', nilai: (r) => r.debit_note_number || '' },
+            { label: 'Qty', nilai: (r) => Number(r.total_qty || 0) },
+            { label: 'Nilai (Rp)', nilai: (r) => Number(r.total_amount || 0) },
+            { label: 'Status', nilai: (r) => statusLabel(r.status) },
+            { label: 'Umur (hari)', nilai: (r) => Number(r.age_days || 0) },
+          ]} />
+        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} disabled={loading}>
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}>
+      {err && <p className="text-sm text-[hsl(var(--danger-text))]" role="alert">{err}</p>}
+      {loading && rows.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat retur pembelian…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={rows} onKlikBaris={setDetail} testId="rtp-table"
+          kosong={<EmptyState title="Belum ada retur pembelian"
+            description={status === 'all' ? 'Retur dibuat dari Karantina QC atau dengan tombol "Retur dari stok".' : 'Tidak ada retur dengan status ini.'} />} />
+      )}
 
       {showCreate && (
         <PurchaseReturnCreateModal token={token} onClose={() => setShowCreate(false)}
@@ -402,50 +390,53 @@ export default function PurchaseReturnModule({ token }) {
           onDone={() => { setReplacing(null); load(); }} />
       )}
       {detail && (
-        <Modal title={`Retur Pembelian ${detail.rtp_number}`} onClose={() => setDetail(null)} size="xl">
-          <div className="space-y-3 text-sm" data-testid="rtp-detail">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-              <div><div className="text-muted-foreground">Pemasok</div>{detail.supplier_name}</div>
-              <div><div className="text-muted-foreground">GR / PO</div>{detail.gr_number} {detail.po_number ? `· ${detail.po_number}` : ''}</div>
-              <div><div className="text-muted-foreground">Penyelesaian</div>{settlementLabel(detail.settlement)}</div>
-              <div><div className="text-muted-foreground">Status</div><StatusBadge status={detail.status} /></div>
-            </div>
-            <div className="text-xs"><span className="text-muted-foreground">Alasan:</span> {detail.reason}</div>
-            <table className="w-full text-xs">
-              <thead className="text-muted-foreground border-b border-border"><tr>
-                <th className="text-left py-1">Material</th><th className="text-left py-1">Sumber</th><th className="text-right py-1">Qty</th>
-                <th className="text-right py-1">Harga GR</th><th className="text-right py-1">Bernilai / belum</th><th className="text-right py-1">Klaim</th>
-              </tr></thead>
-              <tbody>
+        <DetailPopup open onClose={() => setDetail(null)} judul={`Retur pembelian ${detail.rtp_number}`} testId="rtp-detail"
+          status={<StatusBadge status={detail.status} />}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Pemasok">{detail.supplier_name || '—'}</BarisDetail>
+            <BarisDetail label="GR / PO">{detail.gr_number}{detail.po_number ? ` · ${detail.po_number}` : ''}</BarisDetail>
+            <BarisDetail label="Penyelesaian">{settlementLabel(detail.settlement)}</BarisDetail>
+            <BarisDetail label="Alasan">{detail.reason || '—'}</BarisDetail>
+          </dl>
+          <div className="overflow-x-auto">
+            <Table className="min-w-[40rem]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Material</TableHead><TableHead>Sumber</TableHead><TableHead className="text-right">Qty</TableHead>
+                  <TableHead className="text-right">Harga GR</TableHead><TableHead className="text-right">Bernilai / belum</TableHead>
+                  <TableHead className="text-right">Klaim</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {(detail.lines || []).map((ln) => (
-                  <tr key={ln.id} className="border-b border-border">
-                    <td className="py-1">{ln.material_code} · {ln.material_name}</td>
-                    <td className="py-1">{ln.source === 'quarantine' ? 'Karantina' : 'Stok'}</td>
-                    <td className="py-1 text-right">{fmtNum(ln.qty)} {ln.unit}</td>
-                    <td className="py-1 text-right">{fmtRp(ln.gr_price)}</td>
-                    <td className="py-1 text-right">{fmtNum(ln.valued_qty ?? ln.valued_qty_est)} / {fmtNum(ln.unvalued_qty ?? ln.unvalued_qty_est)}</td>
-                    <td className="py-1 text-right">{fmtRp(ln.claim_amount || 0)}</td>
-                  </tr>
+                  <TableRow key={ln.id}>
+                    <TableCell>{ln.material_code} · {ln.material_name}</TableCell>
+                    <TableCell>{ln.source === 'quarantine' ? 'Karantina' : 'Stok'}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmtNum(ln.qty)} {ln.unit}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmtRp(ln.gr_price)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmtNum(ln.valued_qty ?? ln.valued_qty_est)} / {fmtNum(ln.unvalued_qty ?? ln.unvalued_qty_est)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmtRp(ln.claim_amount || 0)}</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-            {(detail.journals || []).length > 0 && (
-              <div className="text-xs">
-                <div className="font-medium mb-1">Jurnal</div>
-                {detail.journals.map((j, i) => (
-                  <div key={i}>{j.stage}: {j.je_number || (j.skipped ? 'tanpa jurnal' : `GAGAL — ${j.error || ''}`)}</div>
-                ))}
-              </div>
-            )}
-            <div className="text-xs">
-              <div className="font-medium mb-1">Riwayat</div>
-              {(detail.history || []).map((h, i) => (
-                <div key={i} className="text-muted-foreground">{fmtDate(h.at)} · {h.by} · {h.action}{h.note ? ` — ${h.note}` : ''}</div>
+              </TableBody>
+            </Table>
+          </div>
+          {(detail.journals || []).length > 0 && (
+            <div className="text-sm">
+              <p className="mb-1 font-medium">Jurnal</p>
+              {detail.journals.map((j, i) => (
+                <p key={i} className="text-muted-foreground">{TAHAP_JURNAL[j.stage] || j.stage}: {j.je_number || (j.skipped ? 'tanpa jurnal' : `GAGAL — ${j.error || ''}`)}</p>
               ))}
             </div>
+          )}
+          <div className="text-sm">
+            <p className="mb-1 font-medium">Riwayat</p>
+            {(detail.history || []).map((h, i) => (
+              <p key={i} className="text-muted-foreground">{fmtDate(h.at)} · {h.by} · {AKSI_RIWAYAT[h.action] || h.action}{h.note ? ` — ${h.note}` : ''}</p>
+            ))}
           </div>
-        </Modal>
+        </DetailPopup>
       )}
-    </div>
+    </PageLayout>
   );
 }
