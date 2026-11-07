@@ -16,7 +16,7 @@
  */
 import { Fragment, useEffect, useMemo, useState, useCallback } from 'react';
 import {
-  Wrench, RefreshCw, Search, Plus, Play, CheckCircle2, XCircle, Trash2, Loader2, AlertTriangle,
+  Wrench, RefreshCw, Search, Plus, Play, CheckCircle2, XCircle, Trash2, Loader2, AlertTriangle, MoreHorizontal,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiGet, apiPost, apiDelete } from '../../lib/api';
@@ -31,7 +31,14 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PageLayout, { DetailPanel, RowDetail, RowToggle } from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
-import FormDialog, { Field } from './engine/FormDialog';
+import { Field } from './engine/FormDialog';
+import FormPopup from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Input } from '@/components/ui/input';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { portalBusinessType, portalQuery } from '@/lib/portalScope';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 import { formatDateID } from '@/lib/format';
@@ -120,17 +127,27 @@ export default function CMTPermakModule({ portalId }) {
       subtitle="Perbaikan barang cacat dari CMT. Permak yang belum selesai mengurangi stok barang jadi."
       actions={<Button onClick={() => setCreating(true)} data-testid="btn-open-create-permak"><Plus className="w-4 h-4" />Buat permak</Button>}
       filters={<>
-        <div className="relative w-72 max-w-full">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari no. permak / SKU / produk / PO…"
-            data-testid="input-search-permak" className="pl-9 h-9" />
+        <div className="relative w-full sm:w-64">
+          <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari permak, SKU, produk, PO"
+            data-testid="input-search-permak" className="pl-8" />
         </div>
         <FilterChips value={tab} onChange={setTab} testId="tab-permak" ariaLabel="Penyaring status permak"
           hideWhenEmpty={false} options={tabs.map((t) => ({ ...t, count: summary ? Number(t.count || 0) : undefined }))} />
       </>}
-      tools={<Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="btn-refresh-permak">
-        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-      </Button>}
+      tools={<>
+        <TombolUnduh namaBerkas="perbaikan-permak" namaLembar="Permak" baris={filtered} testId="permak-unduh" kolom={[
+          { label: 'No. permak', nilai: (r) => r.permak_number || '' }, { label: 'Produk', nilai: (r) => r.product_name || '' },
+          { label: 'SKU', nilai: (r) => r.sku || '' }, { label: 'PO', nilai: (r) => r.po_number || '' },
+          { label: 'Jenis', nilai: (r) => (r.permak_type === 'retur_ke_cmt' ? 'Retur ke CMT' : 'Permak sendiri') },
+          { label: 'Qty', nilai: (r) => Number(r.qty) || 0 }, { label: 'Diperbaiki', nilai: (r) => Number(r.qty_fixed) || 0 },
+          { label: 'Dibuang', nilai: (r) => Number(r.qty_scrap) || 0 }, { label: 'Biaya (Rp)', nilai: (r) => Number(r.total_cost) || 0 },
+          { label: 'Status', nilai: (r) => r.status || '' }, { label: 'Dibuat', nilai: (r) => formatDateID(r.created_at, { fallback: '' }) },
+        ]} />
+        <Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="btn-refresh-permak">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </>}
       summary={anyKpi ? (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <StatTile testId="permak-kpi-open" label="Menunggu" value={fmt(s.open)} accent="warning" sub={`${fmt(s.qty_open)} pcs`} />
@@ -151,7 +168,7 @@ export default function CMTPermakModule({ portalId }) {
         <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
       )}
     >
-      <GlassCard className="p-0 overflow-hidden">
+      <GlassCard className="p-0 overflow-x-auto">
         {loading && !rows.length ? (
           <div className="p-4 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin inline mr-2" />Memuat…</div>
         ) : filtered.length === 0 ? (
@@ -194,22 +211,30 @@ export default function CMTPermakModule({ portalId }) {
                       <TableCell className="text-right tabular-nums whitespace-nowrap">{r.total_cost ? fmtRp(r.total_cost) : '—'}</TableCell>
                       <TableCell><StatusBadge status={r.status} label={meta.label} tone={meta.tone} /></TableCell>
                       <TableCell className="text-right">
+                        {/* Standar UI/UX v2: aksi utama tampil (Mulai / Selesai); Gagal-buang & Hapus di menu Lainnya. */}
                         <div className="flex items-center justify-end gap-1">
                           {r.status === 'open' && (
                             <Button variant="ghost" size="icon-sm" onClick={() => setStatusTarget({ record: r, action: 'in_progress' })}
                               data-testid={`btn-start-${r.id}`} title="Mulai kerjakan" aria-label="Mulai kerjakan"><Play className="w-4 h-4" /></Button>
                           )}
                           {!terminal && (
-                            <>
-                              <Button variant="ghost" size="icon-sm" onClick={() => setStatusTarget({ record: r, action: 'selesai_berhasil' })}
-                                data-testid={`btn-complete-${r.id}`} title="Selesai (berhasil)" aria-label="Selesai (berhasil)"><CheckCircle2 className="w-4 h-4" /></Button>
-                              <Button variant="ghost" size="icon-sm" onClick={() => setStatusTarget({ record: r, action: 'gagal_buang' })}
-                                data-testid={`btn-scrap-${r.id}`} title="Gagal / buang" aria-label="Gagal / buang"><XCircle className="w-4 h-4" /></Button>
-                            </>
+                            <Button variant="ghost" size="icon-sm" onClick={() => setStatusTarget({ record: r, action: 'selesai_berhasil' })}
+                              data-testid={`btn-complete-${r.id}`} title="Selesai (berhasil)" aria-label="Selesai (berhasil)"><CheckCircle2 className="w-4 h-4" /></Button>
                           )}
-                          {r.status === 'open' && (
-                            <Button variant="ghost" size="icon-sm" onClick={() => doDelete(r)}
-                              data-testid={`btn-delete-${r.id}`} title="Hapus" aria-label="Hapus"><Trash2 className="w-4 h-4" /></Button>
+                          {!terminal && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon-sm" title="Aksi lainnya" aria-label="Aksi lainnya"><MoreHorizontal className="w-4 h-4" /></Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onSelect={() => setStatusTarget({ record: r, action: 'gagal_buang' })} data-testid={`btn-scrap-${r.id}`}>
+                                  <XCircle className="mr-2 h-4 w-4" />Gagal / buang</DropdownMenuItem>
+                                {r.status === 'open' && (
+                                  <DropdownMenuItem onSelect={() => doDelete(r)} data-testid={`btn-delete-${r.id}`}
+                                    className="text-[hsl(var(--danger-text))] focus:text-[hsl(var(--danger-text))]"><Trash2 className="mr-2 h-4 w-4" />Hapus</DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           )}
                         </div>
                       </TableCell>
@@ -328,12 +353,11 @@ function CreatePermakPanel({ businessType, onClose, onCreated }) {
   };
 
   return (
-    <DetailPanel title="Buat permak" description="Barang yang dipermak mengurangi stok barang jadi sampai permaknya selesai."
-      onClose={onClose} testId="create-permak-dialog"
-      actions={<Button onClick={submit} disabled={saving} data-testid="btn-submit-create-permak">
-        {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}Simpan
-      </Button>}>
-      <div className="grid gap-3 md:grid-cols-2">
+    // Standar UI/UX v2 (8 Nov 2026): form = FormPopup panjang (dulu panel di atas tabel, label pilihan terpotong).
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="create-permak-dialog" judul="Buat permak"
+      keterangan="Barang yang dipermak mengurangi stok barang jadi sampai permaknya selesai."
+      onSimpan={submit} menyimpan={saving} labelSimpan="Simpan">
+      <div className="grid gap-4 md:grid-cols-2">
         <Field label="PO *">
           <SmartNativeSelect value={poId} onChange={(e) => setPoId(e.target.value)} className="w-full h-9" data-testid="select-permak-po" aria-label="PO">
             <option value="">— Pilih PO —</option>
@@ -363,7 +387,7 @@ function CreatePermakPanel({ businessType, onClose, onCreated }) {
           <b className="text-foreground tabular-nums">{fmt(selectedItem.qty_rework_open)}</b>
         </p>
       )}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Asal barang">
           <SmartNativeSelect value={source} onChange={(e) => setSource(e.target.value)} className="w-full h-9" data-testid="select-permak-source" aria-label="Asal barang">
             <option value="good">Dari barang jadi (mengurangi stok)</option>
@@ -389,9 +413,9 @@ function CreatePermakPanel({ businessType, onClose, onCreated }) {
           <MoneyInput glass value={costPerPcs} onChange={(e) => setCostPerPcs(e.target.value)} placeholder="0" className="h-9" data-testid="input-permak-cost" />
         </Field>
         <Field label="Target kembali">
-          <GlassInput type="date" value={returnDeadline} onChange={(e) => setReturnDeadline(e.target.value)} className="h-9" data-testid="input-permak-deadline" />
+          <DatePicker value={returnDeadline} onChange={setReturnDeadline} placeholder="Belum diisi" testId="input-permak-deadline" />
         </Field>
-        <Field label="Vendor / workshop permak" className="lg:col-span-2"
+        <Field label="Vendor / workshop permak" className="sm:col-span-2"
           hint="Dari master Vendor CMT. Vendor baru ditambahkan di menu Vendor CMT.">
           <SmartNativeSelect value={workshopId} onChange={(e) => setWorkshopId(e.target.value)} className="w-full h-9"
             aria-label="Vendor / workshop permak" data-testid="select-permak-workshop">
@@ -403,7 +427,7 @@ function CreatePermakPanel({ businessType, onClose, onCreated }) {
           </SmartNativeSelect>
         </Field>
       </div>
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2">
         <DocNumberField policy={numPolicy} value={permakNumber} onChange={setPermakNumber} testId="permak-docnum" label="Nomor permak" />
         <Field label="Alasan / catatan">
           <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Contoh: jahitan lepas, noda, salah ukuran…"
@@ -416,7 +440,7 @@ function CreatePermakPanel({ businessType, onClose, onCreated }) {
           nomor ketikan hanya bisa dipakai untuk pengajuan yang menghasilkan satu dokumen.
         </Notice>
       )}
-    </DetailPanel>
+    </FormPopup>
   );
 }
 
@@ -453,14 +477,9 @@ function StatusDialog({ target, onClose, onDone }) {
   };
 
   return (
-    <FormDialog onClose={onClose} testId="permak-status-dialog" title={titles[action] || 'Ubah status'}
-      description={`${record.permak_number} — ${record.product_name || record.sku} (${fmt(qty)} pcs)`}
-      footer={<>
-        <Button variant="outline" onClick={onClose}>Batal</Button>
-        <Button onClick={submit} disabled={saving} data-testid="btn-submit-status">
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}Konfirmasi
-        </Button>
-      </>}>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="permak-status-dialog" judul={titles[action] || 'Ubah status'}
+      keterangan={`${record.permak_number} — ${record.product_name || record.sku} (${fmt(qty)} pcs)`}
+      onSimpan={submit} menyimpan={saving} labelSimpan="Konfirmasi">
       {action === 'selesai_berhasil' && (
         <Field label="Qty berhasil diperbaiki"
           hint={`Diperbaiki ${fmt(qtyFixed)} + dibuang ${fmt(qtyScrap)} = ${fmt(qty)}. Yang diperbaiki menambah stok barang jadi.`}>
@@ -474,6 +493,6 @@ function StatusDialog({ target, onClose, onDone }) {
       <Field label="Catatan (opsional)">
         <GlassInput value={note} onChange={(e) => setNote(e.target.value)} className="h-9" data-testid="input-status-note" />
       </Field>
-    </FormDialog>
+    </FormPopup>
   );
 }
