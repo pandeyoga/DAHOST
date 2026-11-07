@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout, { RowDetail, RowToggle } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../engine/DataTable';
 import { EmptyState, Notice } from '../moduleAtoms';
 import { formatDateID } from '@/lib/format';
 import {
@@ -40,7 +41,7 @@ export default function PerPOTab(props) {
   useEffect(() => { if (q && rows.length === 1) setOpen(rows[0].po_id); }, [q, rows]);
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="pantau-po"
       title="Per PO"
       filters={<>
@@ -113,7 +114,7 @@ export default function PerPOTab(props) {
           </Table>
         )}
       </Section>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 

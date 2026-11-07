@@ -26,6 +26,7 @@ import PaginationLite from '@/components/ui/pagination-lite';
 import { Skeleton } from '@/components/ui/skeleton';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PageLayout, { DetailPanel } from './layout/PageLayout';
+import { PageLayoutSatuBaris } from './engine/DataTable';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Input } from '@/components/ui/input';
 import { ambilSemuaHalaman } from './engine/DataTable';
@@ -128,7 +129,7 @@ export default function RahazaHPPModule({ portalId, userRole }) {
   const showMargin = isMaklon || (!businessType && items.some((r) => r.business_type === 'maklon'));
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="hpp-po-page"
       title="HPP per PO"
       subtitle="HPP aktual = potongan + aksesoris yang diserahkan + upah CMT + permak. Biaya umum tidak masuk HPP."
@@ -303,7 +304,7 @@ export default function RahazaHPPModule({ portalId, userRole }) {
           </Table>
         )}
       </GlassCard>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 

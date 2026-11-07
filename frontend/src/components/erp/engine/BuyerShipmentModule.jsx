@@ -31,6 +31,7 @@ import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PageLayout, { DetailPanel, RowDetail, RowToggle } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from './DataTable';
 import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import { Field } from './FormDialog';
 import FormPopup from '@/components/ui/form-popup';
@@ -246,7 +247,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
   const KEY_VIEW = { 'shipment-list': 'list', 'receipt-variance': 'variance', 'dispatch-outstanding': 'outstanding', 'buyer-shorts': 'shorts' };
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="buyer-shipment-module"
       title="Kirim hasil"
       subtitle={businessType === 'internal'
@@ -458,7 +459,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
         <BuyerShortDialog short={resolveBShort} onClose={() => setResolveBShort(null)}
           onSaved={() => { setResolveBShort(null); fetchAll(); }} />
       )}
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 

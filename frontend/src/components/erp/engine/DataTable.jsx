@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { Children, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Search, Download, Loader2, Inbox, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,6 +7,7 @@ import { EmptyState } from '../moduleAtoms';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useSortableTable } from './useSortableTable';
 import PaginationFooter from './PaginationFooter';
+import PageLayout from '../layout/PageLayout';
 
 /**
  * DataTable
@@ -49,6 +50,25 @@ import PaginationFooter from './PaginationFooter';
  *   unduh       : { namaBerkas, kolom:[{label,nilai}], ambilSemua?, namaLembar? } — tombol Unduh (Excel + CSV) di
  *                 kepala tabel. Mode server: tanpa `ambilSemua` yang diunduh baris halaman yang tampil.
  */
+
+/**
+ * PageLayoutSatuBaris — PageLayout yang menaruh `tools` di UJUNG baris penyaring (satu baris flex-wrap).
+ * Alasan (8 Nov 2026): di Toolbar bersama, kotak penyaring ber-`flex-1 min-w-0` sedangkan alat `shrink-0`, sehingga
+ * di HP (390 px) alat yang lebar (Unduh, muat ulang, …) memeras kotak cari menjadi 46 px dan pil penyaring terpotong.
+ * Di sini alat ikut membungkus ke baris berikutnya; di layar lebar tetap rata kanan (ml-auto). Tanpa penyaring →
+ * perilaku PageLayout biasa (di hub alat pindah ke baris tab). Usulan perbaikan permanen di Toolbar ada di laporan.
+ */
+export function PageLayoutSatuBaris({ filters, tools, ...rest }) {
+  const adaPenyaring = Children.toArray(filters).length > 0;
+  const adaAlat = Children.toArray(tools).length > 0;
+  if (!adaPenyaring || !adaAlat) return <PageLayout filters={filters} tools={tools} {...rest} />;
+  return (
+    <PageLayout {...rest} filters={<>
+      {filters}
+      <div className="ml-auto flex flex-wrap items-center gap-2" data-alat-baris="">{tools}</div>
+    </>} />
+  );
+}
 
 /** Ambil SEMUA halaman dari endpoint berhalaman ({items,total_pages}) — untuk `ambilSemua` TombolUnduh. */
 export async function ambilSemuaHalaman(ambilHalaman, { perHalaman = 200, maksHalaman = 50 } = {}) {

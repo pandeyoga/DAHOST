@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout, { RowDetail, RowToggle } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../engine/DataTable';
 import { EmptyState, Notice } from '../moduleAtoms';
 import { formatDateID, formatRupiah } from '@/lib/format';
 import {
@@ -28,7 +29,7 @@ export default function KejarCMTTab(props) {
   const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 25);
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="pantau-kejar"
       title="Kejar CMT"
       filters={<>
@@ -112,7 +113,7 @@ export default function KejarCMTTab(props) {
           </Table>
         )}
       </Section>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 

@@ -26,6 +26,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import FilterChips from '@/components/ui/filter-chips';
 import PageLayout, { RowDetail, RowToggle } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from './DataTable';
 import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
 import { Field } from './FormDialog';
 import FormPopup from '@/components/ui/form-popup';
@@ -112,7 +113,7 @@ export default function POClosureModule({ portalId }) {
   };
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="po-closure-module"
       title="Tutup PO"
       subtitle="Pemenuhan PO per ukuran. PO yang ditutup terkunci dari kiriman, penerimaan, dan perubahan."
@@ -268,6 +269,6 @@ export default function POClosureModule({ portalId }) {
           </Field>
         </FormPopup>
       )}
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }

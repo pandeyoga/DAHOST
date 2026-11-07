@@ -16,6 +16,7 @@ import PaginationLite from '@/components/ui/pagination-lite';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { apiFetch, apiGet } from '../../../../lib/api';
 import PageLayout, { RowDetail, RowToggle } from '../../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../DataTable';
 import { EmptyState, Notice } from '../../moduleAtoms';
 import KirimanDetail, { downloadPdf } from './KirimanDetail';
 import KirimanForm from './KirimanForm';
@@ -81,7 +82,7 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="kirim-kiriman"
       title="Kirim ke CMT"
       subtitle="Potongan & aksesoris keluar gudang otomatis saat kiriman dibuat; angkanya sama dengan surat jalan."
@@ -204,6 +205,6 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
           </Table>
         )}
       </GlassCard>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }

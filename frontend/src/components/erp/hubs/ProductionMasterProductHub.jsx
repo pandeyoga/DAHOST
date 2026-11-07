@@ -4,6 +4,7 @@ import { ArrowUpRight } from 'lucide-react';
 import { lazyRetry } from '../../../lib/lazyRetry';
 import { Button } from '@/components/ui/button';
 import PageLayout from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../engine/DataTable';
 // 2026-09-12 (keputusan owner): tab "Lokasi Kerja" & "Operator & Skill" dihapus dari
 // Master Produk Produksi — tidak relevan di sini. Master Lokasi pindah ke
 // Gudang → Master Item → tab "Lokasi Gudang"; Operator/karyawan tetap di Portal HR.
@@ -24,7 +25,7 @@ export default function ProductionMasterProductHub(props) {
   return (
     <Suspense fallback={<Spinner />}>
       <RahazaModelsAndBOMModule {...props} variant="production" renderPage={(slots, body) => (
-        <PageLayout testId="prod-master-product-hub" title="Master produk"
+        <PageLayoutSatuBaris testId="prod-master-product-hub" title="Master produk"
           subtitle="Model DA: HPP, harga jual resmi, berat, dan panduan produksi yang dibaca vendor CMT."
           filters={slots.filters} tools={slots.tools} actions={slots.actions}
           summary={<>
@@ -39,7 +40,7 @@ export default function ProductionMasterProductHub(props) {
             )}
           </>}>
           {body}
-        </PageLayout>
+        </PageLayoutSatuBaris>
       )} />
     </Suspense>
   );

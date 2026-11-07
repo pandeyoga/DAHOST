@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout, { RowDetail, RowToggle } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../engine/DataTable';
 import { EmptyState, Notice, StatTile } from '../moduleAtoms';
 import { formatDateID } from '@/lib/format';
 import { Badge, LoadingRows, RefreshButton, Section, Signed, n, useApi } from './pantauShared';
@@ -44,7 +45,7 @@ export default function SelisihBarisTab() {
   const finalLabel = maklon ? 'Diterima klien' : 'Masuk stok';
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="selisih-baris"
       title="Per baris PO"
       filters={<>
@@ -127,7 +128,7 @@ export default function SelisihBarisTab() {
           </Table>
         )}
       </Section>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 

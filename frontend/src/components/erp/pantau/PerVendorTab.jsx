@@ -9,6 +9,7 @@ import { AlertCircle, Factory } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout, { RowDetail, RowToggle } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../engine/DataTable';
 import { EmptyState, Notice } from '../moduleAtoms';
 import { formatDateID } from '@/lib/format';
 import {
@@ -31,7 +32,7 @@ export default function PerVendorTab(props) {
   const COLS = 12;
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="pantau-vendor"
       title="Per vendor CMT"
       filters={<>
@@ -94,7 +95,7 @@ export default function PerVendorTab(props) {
           </Table>
         )}
       </Section>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 

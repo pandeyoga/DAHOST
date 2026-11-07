@@ -17,6 +17,7 @@ import FormPopup, { Isian } from '@/components/ui/form-popup';
 import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import { formatDateTimeID } from '@/lib/format';
 import PageLayout from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from './DataTable';
 import { EmptyState, StatusBadge } from '../moduleAtoms';
 import { apiGet, apiPut } from '../../../lib/api';
 
@@ -72,7 +73,7 @@ export default function VendorReminderInbox() {
   ];
 
   return (
-    <PageLayout testId="vendor-reminder-inbox" title="Pengingat" subtitle="Pesan dan pengingat dari admin DA."
+    <PageLayoutSatuBaris testId="vendor-reminder-inbox" title="Pengingat" subtitle="Pesan dan pengingat dari admin DA."
       filters={<FilterChips value={saring} onChange={setSaring} hideWhenEmpty={false} ariaLabel="Saring pengingat"
         options={[{ key: '', label: 'Semua', count: reminders.length }, { key: 'pending', label: 'Menunggu balasan', count: pending.length },
           { key: 'dibalas', label: 'Dibalas', count: reminders.length - pending.length }]} />}
@@ -109,6 +110,6 @@ export default function VendorReminderInbox() {
           </Isian>
         </FormPopup>
       )}
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }

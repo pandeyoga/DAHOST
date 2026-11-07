@@ -33,6 +33,7 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 import { formatDateTimeID } from '@/lib/format';
 import { apiGet, setCmtOverrideVendor, clearCmtOverrideVendor } from '../../lib/api';
 import PageLayout from './layout/PageLayout';
+import { PageLayoutSatuBaris } from './engine/DataTable';
 import HubTabs from './hubs/HubTabs';
 import { EmptyState, Notice, StatTile } from './moduleAtoms';
 
@@ -108,13 +109,13 @@ const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
 
 function AccessDenied({ role }) {
   return (
-    <PageLayout testId="cmt-override-denied" title="Input atas nama CMT"
+    <PageLayoutSatuBaris testId="cmt-override-denied" title="Input atas nama CMT"
       subtitle="Mengisi data atas nama vendor CMT berpengaruh langsung ke tagihan CMT.">
       <GlassCard>
         <EmptyState icon={ShieldCheck} title="Tidak berwenang"
           description={`Layar ini hanya untuk: ${ALLOWED_ROLES.map((r) => ROLE_LABEL[r]).join(', ')}. Peran Anda: ${ROLE_LABEL[role] || role || '—'}.`} />
       </GlassCard>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 
@@ -158,7 +159,7 @@ function VendorPicker({ vendors, loading, err, onPick, onReload }) {
   ];
 
   return (
-    <PageLayout testId="cmt-override-picker" title="Pilih vendor" subtitle="Vendor CMT aktif yang bisa diisi atas namanya."
+    <PageLayoutSatuBaris testId="cmt-override-picker" title="Pilih vendor" subtitle="Vendor CMT aktif yang bisa diisi atas namanya."
       filters={<div className="relative w-full sm:w-64">
         <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
         <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nama, kode, kontak"
@@ -198,7 +199,7 @@ function VendorPicker({ vendors, loading, err, onPick, onReload }) {
               action={search ? <Button variant="outline" size="sm" onClick={() => setSearch('')}><X className="w-3.5 h-3.5" />Hapus pencarian</Button> : null} />
           </div>} />
       )}
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 
@@ -370,7 +371,7 @@ export default function CMTOverridePortalModule({ user, token }) {
 
   // ── LAYAR 2: mode isi atas nama vendor ──────────────────────────────────
   return (
-    <PageLayout testId="cmt-override-active" title={`Atas nama ${selected.name}`}
+    <PageLayoutSatuBaris testId="cmt-override-active" title={`Atas nama ${selected.name}`}
       subtitle={`Layar ini sama persis dengan Portal Vendor milik ${selected.name}. Yang Anda simpan tercatat dengan nama Anda.`}
       actions={<Button variant="outline" onClick={backToPicker} data-testid="cmt-override-change-vendor"><ArrowLeft className="h-4 w-4" />Ganti vendor</Button>}
       summary={<>
@@ -396,6 +397,6 @@ export default function CMTOverridePortalModule({ user, token }) {
         )}
       </>}>
       <HubTabs hubId="cmt-override-modules" tabs={groupTabs} value={groupOf(activeModule).key} onValueChange={setActiveModule} />
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }

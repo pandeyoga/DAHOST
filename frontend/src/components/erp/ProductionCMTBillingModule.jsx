@@ -35,6 +35,7 @@ import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB } from '@/lib/waktu';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PageLayout, { DetailPanel } from './layout/PageLayout';
+import { PageLayoutSatuBaris } from './engine/DataTable';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import { formatDateID } from '@/lib/format';
 
@@ -134,7 +135,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
   const filtered = partnerId || status || search.trim();
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="prod-cmt-billing"
       title="Tagihan vendor CMT"
       subtitle="Hutang jasa jahit: terjadwal sejak PO dikonfirmasi, matang saat barang lolos QC, lalu dibayar."
@@ -297,7 +298,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
           </Table>
         )}
       </GlassCard>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 

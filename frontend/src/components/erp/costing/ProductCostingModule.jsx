@@ -33,6 +33,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import Modal from '../Modal';
 import { StatusBadge, EmptyState } from '../moduleAtoms';
 import PageLayout, { DetailPanel } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../engine/DataTable';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
@@ -209,7 +210,7 @@ export default function ProductCostingModule({ token, onNavigate }) {
   );
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="product-costing-page"
       title="HPP per potong & per model"
       subtitle="HPP/pcs = BOM × harga beli rata-rata + upah CMT. Upah internal dan overhead tidak masuk HPP."
@@ -390,7 +391,7 @@ export default function ProductCostingModule({ token, onNavigate }) {
         <CostingSettingsModal token={token} onClose={() => setShowSettings(false)}
           onSaved={() => { setShowSettings(false); load(); }} />
       )}
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 

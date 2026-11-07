@@ -29,6 +29,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { apiDelete, apiGet, apiPost, apiPut } from '../../lib/api';
 import { formatDateTimeID } from '@/lib/format';
 import PageLayout, { DetailPanel } from './layout/PageLayout';
+import { PageLayoutSatuBaris } from './engine/DataTable';
 import HubTabs from './hubs/HubTabs';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import ImportExportToolbar from './ImportExportToolbar';
@@ -290,7 +291,7 @@ export function VendorPartnersTab() {
   const resetFilters = () => { setSearch(''); setStatus(''); };
 
   return (
-    <PageLayout testId="vendor-partners-tab" title="Vendor CMT" subtitle="Daftar penjahit (CMT) beserta kontak, kapasitas, dan catatan."
+    <PageLayoutSatuBaris testId="vendor-partners-tab" title="Vendor CMT" subtitle="Daftar penjahit (CMT) beserta kontak, kapasitas, dan catatan."
       actions={<Button onClick={() => setCreating(true)} data-testid="btn-add-partner"><Plus className="w-4 h-4" />Vendor baru</Button>}
       filters={<>
         <SearchBox value={search} onChange={setSearch} placeholder="Cari nama / kode / kontak…" testId="partner-search" />
@@ -348,7 +349,7 @@ export function VendorPartnersTab() {
         )}
       </GlassCard>
       {creating && <NewPartnerDialog onClose={() => setCreating(false)} onCreated={async (id) => { setCreating(false); await afterChange(id || null); }} />}
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 
@@ -530,7 +531,7 @@ export function VendorAccountsTab() {
   const afterChange = async (id) => { await load(); setSelectedId(id); };
 
   return (
-    <PageLayout testId="vendor-accounts-tab" title="Akun vendor" subtitle="Login Portal Vendor untuk penjahit yang mengisi sendiri."
+    <PageLayoutSatuBaris testId="vendor-accounts-tab" title="Akun vendor" subtitle="Login Portal Vendor untuk penjahit yang mengisi sendiri."
       actions={<Button onClick={() => setCreating(true)} data-testid="btn-add-account"><Plus className="w-4 h-4" />Akun baru</Button>}
       filters={<>
         <SearchBox value={search} onChange={setSearch} placeholder="Cari nama / email / vendor…" testId="account-search" />
@@ -582,7 +583,7 @@ export function VendorAccountsTab() {
       </GlassCard>
       {creating && <NewAccountDialog partners={partners} onClose={() => setCreating(false)}
         onCreated={async (id) => { setCreating(false); await afterChange(id || null); }} />}
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 

@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout, { RowDetail, RowToggle } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../engine/DataTable';
 import { EmptyState, Notice, StatTile } from '../moduleAtoms';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { formatDateID } from '@/lib/format';
@@ -37,7 +38,7 @@ export default function SelisihVendorTab() {
   const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 25);
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="selisih-vendor"
       title="Laporan vendor"
       filters={<SelisihFilters testId="selisih-vendor-filter" />}
@@ -122,7 +123,7 @@ export default function SelisihVendorTab() {
         )}
       </Section>
       {editing && <StatusForm v={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); reload(); }} />}
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 

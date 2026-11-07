@@ -30,6 +30,7 @@ import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PageLayout, { DetailPanel, RowDetail, RowToggle } from './layout/PageLayout';
+import { PageLayoutSatuBaris } from './engine/DataTable';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import { Field } from './engine/FormDialog';
 import FormPopup from '@/components/ui/form-popup';
@@ -121,7 +122,7 @@ export default function CMTPermakModule({ portalId }) {
   ];
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="cmt-permak-module"
       title="Perbaikan (permak)"
       subtitle="Perbaikan barang cacat dari CMT. Permak yang belum selesai mengurangi stok barang jadi."
@@ -268,7 +269,7 @@ export default function CMTPermakModule({ portalId }) {
         <StatusDialog target={statusTarget} onClose={() => setStatusTarget(null)}
           onDone={() => { setStatusTarget(null); load(); }} />
       )}
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 

@@ -20,6 +20,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout, { DetailPanel } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../engine/DataTable';
 import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
 import { apiGet } from '../../../lib/api';
 import { portalBusinessType, portalQuery } from '@/lib/portalScope';
@@ -77,7 +78,7 @@ export default function KebutuhanBahan({ portalId }) {
   const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(filtered, 25);
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="bahan-kebutuhan"
       title="Kebutuhan bahan"
       subtitle="Bahan dan aksesoris yang dibutuhkan tiap PO, yang sudah keluar, dan yang masih kurang di gudang."
@@ -131,7 +132,7 @@ export default function KebutuhanBahan({ portalId }) {
           </Table>
         )}
       </GlassCard>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 

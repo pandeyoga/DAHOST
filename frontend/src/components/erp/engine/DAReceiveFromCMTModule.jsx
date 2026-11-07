@@ -46,6 +46,7 @@ import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PageLayout, { DetailPanel, RowDetail, RowToggle } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from './DataTable';
 import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import { formatDateID } from '@/lib/format';
 import { portalBusinessType, portalQuery } from '@/lib/portalScope';
@@ -339,7 +340,7 @@ export default function DAReceiveFromCMTModule({ portalId }) {
   ];
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="da-receive-cmt-module"
       title="Terima & QC"
       subtitle="Barang jadi dari CMT: hitung fisik, catat lolos dan ditolak, lalu selesaikan QC."
@@ -608,7 +609,7 @@ export default function DAReceiveFromCMTModule({ portalId }) {
           onConfirm={async (cols) => { const receipt = sjReceipt; setSjReceipt(null); await downloadSuratJalan(receipt, cols); }}
         />
       )}
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 

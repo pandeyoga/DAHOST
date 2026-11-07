@@ -20,6 +20,7 @@ import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatDateID } from '@/lib/format';
 import PageLayout from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from './DataTable';
 import AdditionalRequestModal from './AdditionalRequestModal';
 import MaterialRequestTracker from './MaterialRequestTracker';
 import { apiGet, apiFetch } from '../../../lib/api';
@@ -290,7 +291,7 @@ export default function VendorMaterialRequests({ user }) {
   ];
 
   return (
-    <PageLayout testId="vendor-material-requests" title="Permintaan material"
+    <PageLayoutSatuBaris testId="vendor-material-requests" title="Permintaan material"
       subtitle="Permintaan bahan tambahan (kurang kirim) dan pengganti (cacat) ke DA."
       actions={isAdditional ? (
         <Button onClick={() => openShipmentPicker('ADDITIONAL')} data-testid="vendor-create-manual-request-btn">
@@ -485,6 +486,6 @@ export default function VendorMaterialRequests({ user }) {
           }}
         />
       )}
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }

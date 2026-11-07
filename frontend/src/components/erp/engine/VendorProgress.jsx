@@ -11,6 +11,7 @@ import TombolUnduh from '@/components/ui/tombol-unduh';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import DatePicker from '@/components/ui/date-picker';
 import PageLayout from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from './DataTable';
 import { EmptyState, StatusBadge } from '../moduleAtoms';
 import { MiniBar } from './VendorShared';
 import { apiGet, apiPost } from '../../../lib/api';
@@ -117,7 +118,7 @@ export default function VendorProgress({ token, user }) {
   const maks = selectedItem ? sisaDari(selectedItem) : 0;
 
   return (
-    <PageLayout testId="vendor-progress" title="Progress produksi"
+    <PageLayoutSatuBaris testId="vendor-progress" title="Progress produksi"
       subtitle="Isi progress harian per SKU: pilih job produksi, lalu isi qty yang selesai."
       filters={jobs.length > 0 && (
         <SmartNativeSelect className="w-full sm:w-96" value={selectedJob?.id || ''} onChange={(e) => loadJobItems(e.target.value)}
@@ -196,7 +197,7 @@ export default function VendorProgress({ token, user }) {
           </Isian>
         </FormPopup>
       )}
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 

@@ -23,6 +23,7 @@ import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { apiGet, apiPost } from '../../../../lib/api';
 import PageLayout, { DetailPanel } from '../../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../DataTable';
 import { EmptyState, Notice, StatusBadge } from '../../moduleAtoms';
 import { AksesorisTable, PotonganTable, SectionLabel, fmtDate, fmtNum, handoverOptions } from './kirimShared';
 
@@ -65,7 +66,7 @@ export default function PermintaanTab({ portalId, userRole }) {
 
   const allCount = (counts.menunggu || 0) + (counts.dikirim || 0) + (counts.ditolak || 0);
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="kirim-permintaan"
       title="Permintaan tambahan"
       subtitle="Permintaan vendor dan input staf; setelah disetujui menjadi kiriman tambahan yang mengurangi stok."
@@ -168,7 +169,7 @@ export default function PermintaanTab({ portalId, userRole }) {
           </Table>
         )}
       </GlassCard>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 

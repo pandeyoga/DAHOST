@@ -16,6 +16,7 @@ import TombolUnduh from '@/components/ui/tombol-unduh';
 import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import { formatDateID } from '@/lib/format';
 import PageLayout from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from './DataTable';
 import { EmptyState, StatusBadge } from '../moduleAtoms';
 import { apiGet } from '../../../lib/api';
 
@@ -63,7 +64,7 @@ export default function VendorSerialTracking() {
   ];
 
   return (
-    <PageLayout testId="vendor-serial-tracking" title="Lacak nomor seri"
+    <PageLayoutSatuBaris testId="vendor-serial-tracking" title="Lacak nomor seri"
       subtitle="Jejak tiap nomor seri: order, produksi, dan kiriman."
       filters={<>
         <FilterChips value={filter} onChange={setFilter} hideWhenEmpty={false} ariaLabel="Saring status" testId="vendor-serial-filter"
@@ -113,6 +114,6 @@ export default function VendorSerialTracking() {
           </section>
         </DetailPopup>
       )}
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }

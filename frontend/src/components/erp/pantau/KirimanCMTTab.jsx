@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout, { RowDetail, RowToggle } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../engine/DataTable';
 import { EmptyState, Notice } from '../moduleAtoms';
 import { formatDateID } from '@/lib/format';
 import { Badge, KIND_LABEL, LoadingRows, RefreshButton, SearchBox, Section, n, portalBusinessType, useApi } from './pantauShared';
@@ -44,7 +45,7 @@ export default function KirimanCMTTab(props) {
   const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 25);
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="pantau-kiriman"
       title="Kiriman ke CMT"
       filters={<>
@@ -135,6 +136,6 @@ export default function KirimanCMTTab(props) {
           </Table>
         )}
       </Section>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }

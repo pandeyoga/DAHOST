@@ -9,6 +9,7 @@ import { AlertCircle, PackageCheck } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout, { RowDetail, RowToggle } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../engine/DataTable';
 import { EmptyState, Notice, StatTile } from '../moduleAtoms';
 import { Badge, LoadingRows, RefreshButton, Section, n, useApi } from './pantauShared';
 import { SelisihFilters, useSelisihFilter } from './selisihShared';
@@ -29,7 +30,7 @@ export default function SelisihKlienTab() {
   const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 25);
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="selisih-klien"
       title="Terima klien"
       filters={<SelisihFilters testId="selisih-klien-filter" />}
@@ -113,6 +114,6 @@ export default function SelisihKlienTab() {
           </Table>
         )}
       </Section>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }

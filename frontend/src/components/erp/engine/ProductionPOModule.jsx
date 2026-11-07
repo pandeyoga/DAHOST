@@ -32,6 +32,7 @@ import FilterChips from '@/components/ui/filter-chips';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Notice, StatTile, StatusBadge as LabelBadge } from '../moduleAtoms';
 import PageLayout from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from './DataTable';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import RencanaAksesorisPO, { planRowsFromPo } from './kirim/RencanaAksesorisPO';   // Tahap 9 (kirim)
 
@@ -755,7 +756,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
   const autoNumber = numPolicy?.mode === 'auto' && !editData;
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       title={isInternal ? 'PO Produksi Internal' : 'PO Maklon'}
       subtitle={isInternal
         ? 'Pesanan produksi untuk stok sendiri: model, varian, qty, dan upah jahit per baris.'
@@ -1175,7 +1176,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
           onSuccess={() => { setQuickCompletePO(null); refetchPOs(); reloadDetail(); }}
         />
       )}
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 
