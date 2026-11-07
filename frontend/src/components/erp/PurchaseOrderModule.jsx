@@ -1,37 +1,66 @@
+/**
+ * PurchaseOrderModule — Purchase Order (Portal Pengadaan).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, penyaring satu baris, daftar = tabel (kartu ringkas di HP)
+ * dengan paling banyak 2 tombol aksi + menu "Lainnya", detail = popup, form = FormPopup (buat PO, ubah harga,
+ * setujui, impor), konfirmasi ajukan/tolak/batalkan/hapus lewat confirmDialog, tanggal lewat DatePicker,
+ * unduh Excel/CSV. Endpoint, isian, aturan, dan hak akses tidak berubah.
+ */
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { materialOptionLabel } from '@/lib/materialFields';
-import { Plus, Eye, Trash2, CheckCircle2, XCircle, AlertTriangle, Send, Package, FileText, TruckIcon, Upload, Download, Building2, Tag } from 'lucide-react';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import {
+  Plus, Eye, Trash2, CheckCircle2, XCircle, AlertTriangle, Send, TruckIcon, Upload, Download, Tag,
+  MoreHorizontal, RefreshCw, Package,
+} from 'lucide-react';
 import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB } from '@/lib/waktu';
+import { formatDateID, formatDateTimeID } from '@/lib/format';
 import { Button } from '@/components/ui/button';
-import Modal from './Modal';
-import ConfirmDialog from './ConfirmDialog';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker from '@/components/ui/date-picker';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 
 const STATUS_META = {
-  draft:               { label: 'Draft',               bg: 'bg-muted dark:bg-slate-400/15',   border: 'border-border/25',   text: 'text-foreground/70', icon: FileText },
-  pending_approval:    { label: 'Menunggu Approval',   bg: 'bg-amber-50 dark:bg-amber-400/15',   border: 'border-amber-300/25',   text: 'text-amber-600 dark:text-amber-300', icon: AlertTriangle },
-  approved:            { label: 'Disetujui',           bg: 'bg-emerald-50 dark:bg-emerald-400/15', border: 'border-emerald-300/25', text: 'text-emerald-600 dark:text-emerald-300', icon: CheckCircle2 },
-  partially_received:  { label: 'Diterima Sebagian',   bg: 'bg-blue-50 dark:bg-blue-400/15',    border: 'border-blue-300/25',    text: 'text-blue-600 dark:text-blue-300', icon: Package },
-  fully_received:      { label: 'Diterima Penuh',      bg: 'bg-green-50 dark:bg-green-400/15',   border: 'border-green-300/25',   text: 'text-green-600 dark:text-green-300', icon: CheckCircle2 },
-  rejected:            { label: 'Ditolak',             bg: 'bg-red-50 dark:bg-red-400/15',     border: 'border-red-300/25',     text: 'text-red-600 dark:text-red-300', icon: XCircle },
-  cancelled:           { label: 'Dibatalkan',          bg: 'bg-muted dark:bg-gray-400/15',    border: 'border-border/25',    text: 'text-foreground/80', icon: XCircle },
+  draft:               { label: 'Draf',                tone: 'muted' },
+  pending_approval:    { label: 'Menunggu persetujuan', tone: 'warning' },
+  approved:            { label: 'Disetujui',           tone: 'success' },
+  partially_received:  { label: 'Diterima sebagian',   tone: 'info' },
+  fully_received:      { label: 'Diterima penuh',      tone: 'success' },
+  rejected:            { label: 'Ditolak',             tone: 'danger' },
+  cancelled:           { label: 'Dibatalkan',          tone: 'muted' },
 };
 
-function StatusBadge({ status }) {
+function POStatusBadge({ status }) {
   const s = STATUS_META[status] || STATUS_META.draft;
-  const Icon = s.icon;
-  return (
-    <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${s.bg} ${s.border} border ${s.text}`}>
-      <Icon className="w-3 h-3" />
-      {s.label}
-    </span>
-  );
+  return <StatusBadge status={status} label={s.label} tone={s.tone} />;
 }
+
+const GR_STATUS = {
+  draft: { label: 'Draf', tone: 'muted' },
+  received: { label: 'Diterima', tone: 'success' },
+  completed: { label: 'Selesai', tone: 'success' },
+  partial_received: { label: 'Diterima sebagian', tone: 'warning' },
+};
+
+const fmtTgl = (v) => formatDateID(v);
+const fmtRpNum = (v, max = 0) => `Rp ${Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: max })}`;
+const fmtQty = (v) => Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 4 });
 
 export default function PurchaseOrderModule({ token, onNavigate }) {
   const [list, setList] = useState([]);
@@ -44,16 +73,9 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
   const [filterSupplier, setFilterSupplier] = useState('');
   const [createModal, setCreateModal] = useState(false);
   const [detailModal, setDetailModal] = useState(false);
-  const [submitModal, setSubmitModal] = useState(false);
   const [approveModal, setApproveModal] = useState(false);
-  const [rejectModal, setRejectModal] = useState(false);
-  const [cancelModal, setCancelModal] = useState(false);
-  // 2026-11-07 (Tahap 5): konfirmasi hapus memakai dialog aplikasi (dulu window.confirm bawaan browser)
-  const [confirmDelPO, setConfirmDelPO] = useState(null);
   const [selectedPO, setSelectedPO] = useState(null);
-  const [rejectReason, setRejectReason] = useState('');
   const [approveNote, setApproveNote] = useState('');
-  const [cancelReason, setCancelReason] = useState('');
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   // 2026-11-06 (Tahap 2): ubah harga baris PO yang sudah keluar dari draf — Keuangan saja, alasan wajib
@@ -293,7 +315,7 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
         throw new Error(typeof err.detail === 'string' ? err.detail : `Gagal membuat PO (HTTP ${r.status})`);
       }
 
-      toast.success('Purchase Order berhasil dibuat');
+      toast.success('Purchase order berhasil dibuat');
       setCreateModal(false);
       resetForm();
       fetchList();
@@ -321,11 +343,6 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
       setSelectedPO(detail);
       setDetailModal(true);
     }
-  };
-
-  const openSubmitModal = (po) => {
-    setSelectedPO(po);
-    setSubmitModal(true);
   };
 
   const savePriceEdit = async () => {
@@ -361,11 +378,11 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
     } catch { return fallback; }
   };
 
-  const submitPO = async () => {
-    if (!selectedPO) return;
+  const submitPO = async (po) => {
+    if (!po) return;
     setSaving(true);
     try {
-      const r = await fetch(`/api/rahaza/purchase-orders/${selectedPO.id}/submit`, { method: 'POST', headers });
+      const r = await fetch(`/api/rahaza/purchase-orders/${po.id}/submit`, { method: 'POST', headers });
       if (r.ok) {
         const d = await r.json().catch(() => ({}));
         toast.success(
@@ -373,7 +390,6 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
             ? `PO diajukan — butuh ${d.total_stages} tahap persetujuan, sekarang menunggu ${d.stage_label || 'tahap pertama'}`
             : `PO diajukan — menunggu ${d?.stage_label || 'persetujuan'}`
         );
-        setSubmitModal(false);
         await fetchList();
       } else {
         throw new Error(await serverError(r, 'Gagal mengajukan PO'));
@@ -383,6 +399,17 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
     } finally {
       setSaving(false);
     }
+  };
+
+  // Konfirmasi ajukan (dulu popup buatan sendiri; teks dan aksi sama)
+  const openSubmitModal = async (po) => {
+    setSelectedPO(po);
+    const ok = await confirmDialog({
+      title: `Ajukan PO ${po.po_number} untuk persetujuan?`,
+      body: 'Setelah diajukan, status PO menjadi Menunggu persetujuan dan menunggu approver menyetujui sebelum dapat dibuatkan penerimaan barang.',
+      confirmLabel: 'Ya, ajukan',
+    });
+    if (ok) submitPO(po);
   };
 
   const openApproveModal = (po) => {
@@ -419,32 +446,24 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
     }
   };
 
-  const openRejectModal = (po) => {
-    setSelectedPO(po);
-    setRejectReason('');
-    setRejectModal(true);
-  };
-
-  const rejectPO = async () => {
+  const rejectPO = async (po, reason) => {
     // Alasan WAJIB. Dulu frontend mengirim "Tidak ada alasan" secara otomatis,
     // sehingga aturan "penolakan harus beralasan" tidak ada artinya dan pembuat
     // PO tidak pernah tahu apa yang harus diperbaiki.
-    if (!rejectReason.trim()) {
+    if (!String(reason || '').trim()) {
       toast.error('Alasan penolakan wajib diisi agar pembuat PO tahu apa yang harus diperbaiki.');
       return;
     }
     setSaving(true);
     try {
-      const r = await fetch(`/api/rahaza/purchase-orders/${selectedPO.id}/reject`, {
+      const r = await fetch(`/api/rahaza/purchase-orders/${po.id}/reject`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ reason: rejectReason.trim() }),
+        body: JSON.stringify({ reason: String(reason).trim() }),
       });
       if (r.ok) {
-        toast.success(`PO ${selectedPO.po_number} ditolak`);
-        setRejectModal(false);
+        toast.success(`PO ${po.po_number} ditolak`);
         fetchList();
-        if (detailModal) openDetail(selectedPO);
       } else {
         throw new Error(await serverError(r, 'Gagal menolak PO'));
       }
@@ -455,25 +474,29 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
     }
   };
 
-  const openCancelModal = (po) => {
+  // Tolak: alasan wajib diisi di dialog konfirmasi (dulu popup buatan sendiri dengan isian yang sama)
+  const openRejectModal = async (po) => {
     setSelectedPO(po);
-    setCancelReason('');
-    setCancelModal(true);
+    const reason = await confirmDialog({
+      title: `Tolak PO ${po.po_number}?`,
+      body: 'Alasan dikirim ke pembuat PO supaya ia tahu apa yang harus diperbaiki.',
+      confirmLabel: 'Tolak PO', danger: true,
+      input: { label: 'Alasan penolakan (wajib)', placeholder: 'Masukkan alasan penolakan' },
+    });
+    if (reason) rejectPO(po, reason);
   };
 
-  const cancelPO = async () => {
+  const cancelPO = async (po, reason) => {
     setSaving(true);
     try {
-      const r = await fetch(`/api/rahaza/purchase-orders/${selectedPO.id}/cancel`, {
+      const r = await fetch(`/api/rahaza/purchase-orders/${po.id}/cancel`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ reason: cancelReason || 'Tidak ada alasan' }),
+        body: JSON.stringify({ reason: reason || 'Tidak ada alasan' }),
       });
       if (r.ok) {
-        toast.success(`PO ${selectedPO.po_number} dibatalkan`);
-        setCancelModal(false);
+        toast.success(`PO ${po.po_number} dibatalkan`);
         fetchList();
-        if (detailModal) openDetail(selectedPO);
       } else {
         throw new Error('Gagal membatalkan PO');
       }
@@ -484,9 +507,26 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
     }
   };
 
-  const deletePO = (po) => setConfirmDelPO(po);
+  const openCancelModal = async (po) => {
+    setSelectedPO(po);
+    const reason = await confirmDialog({
+      title: `Batalkan PO ${po.po_number}?`,
+      body: 'PO yang dibatalkan tidak bisa diterima di gudang.',
+      confirmLabel: 'Batalkan PO', danger: true,
+      input: { label: 'Alasan pembatalan (wajib)', placeholder: 'Masukkan alasan pembatalan' },
+    });
+    if (reason) cancelPO(po, reason);
+  };
+
+  // 2026-11-07 (Tahap 5): konfirmasi hapus memakai dialog aplikasi (dulu window.confirm bawaan browser)
+  const deletePO = async (po) => {
+    const ok = await confirmDialog({
+      title: `Hapus PO ${po.po_number}?`, body: 'PO draf ini akan dihapus permanen.',
+      confirmLabel: 'Hapus', danger: true,
+    });
+    if (ok) doDeletePO(po);
+  };
   const doDeletePO = async (po) => {
-    setConfirmDelPO(null);
     const r = await fetch(`/api/rahaza/purchase-orders/${po.id}`, { method: 'DELETE', headers });
     if (r.ok) {
       toast.success('PO berhasil dihapus');
@@ -506,1134 +546,849 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
         body: JSON.stringify({ notes: `Auto-created from PO ${po.po_number}` }),
       });
       if (!r.ok) {
-        const err = await r.json().catch(() => ({ detail: 'Gagal membuat GR' }));
-        toast.error(err.detail || 'Gagal membuat GR dari PO');
+        const err = await r.json().catch(() => ({ detail: 'Gagal membuat penerimaan barang' }));
+        toast.error(err.detail || 'Gagal membuat penerimaan barang dari PO');
         return;
       }
       const gr = await r.json();
-      toast.success(`GR ${gr.receipt_number} berhasil dibuat dari PO ${po.po_number}. ${gr.items.length} item siap diterima.`);
+      toast.success(`Penerimaan ${gr.receipt_number} dibuat dari PO ${po.po_number}. ${gr.items.length} item siap diterima.`);
       // Navigate to ReceivingModule with the new GR id (let module handle the deep link)
       onNavigate?.('wh-receiving', { receipt_id: gr.id, po_id: po.id, po_number: po.po_number });
       fetchList();
       setDetailModal(false);
     } catch (e) {
-      toast.error('Gagal membuat GR: ' + (e?.message || ''));
+      toast.error('Gagal membuat penerimaan barang: ' + (e?.message || ''));
     }
   };
 
-  if (loading) {
+  const runBulkImport = async () => {
+    setSaving(true);
+    try {
+      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/rahaza/purchase-orders/bulk-import`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vendor_name: bulkVendor, rows: bulkRows }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        setBulkErrors(d.errors || [d.detail || 'Impor gagal']);
+      } else {
+        toast.success(`${d.created} PO berhasil dibuat`);
+        if (d.row_errors?.length) setBulkErrors(d.row_errors);
+        else { setBulkModal(false); setBulkRows([]); setBulkErrors([]); }
+        // BUG-FIX 2026-07-25: dulu memanggil `loadList()` yang TIDAK ADA
+        // ⇒ ReferenceError setelah import sukses ⇒ tertangkap catch di
+        // bawah sehingga user melihat toast "Gagal import PO" padahal PO
+        // BERHASIL dibuat, dan daftar tidak pernah ter-refresh.
+        fetchList();
+      }
+    } catch {
+      toast.error('Gagal impor PO');
+    } finally {
+      setSaving(false);
+    }
+  };
+  const closeBulk = () => { setBulkModal(false); setBulkRows([]); setBulkErrors([]); };
+
+  const { paged, page, setPage, totalPages, total, pageSize } = useClientPagination(list, 25);
+
+  // ── Kolom daftar ──────────────────────────────────────────────────────────
+  const aksiBaris = (po) => {
+    const bisaAjukan = (po.status === 'draft' || po.status === 'rejected') && po.can_submit !== false;
+    const bisaHapus = bisaAjukan && po.status === 'draft';
+    const bisaPutus = po.status === 'pending_approval' && po.can_approve;
+    const bisaGR = po.status === 'approved' || po.status === 'partially_received';
+    const bisaBatal = po.status !== 'fully_received' && po.status !== 'cancelled';
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+      <div className="flex items-center justify-end gap-1">
+        {bisaAjukan && (
+          <Button size="sm" variant="outline" onClick={() => openSubmitModal(po)} data-testid={`po-submit-${po.id}`}>
+            <Send />Ajukan
+          </Button>
+        )}
+        {/* 2026-08-07 — tombol Setujui/Tolak mengikuti FLAG SERVER (`can_approve`/`can_reject`),
+            bukan sekadar status. Kalau tidak berhak, alasannya DITAMPILKAN di kolom status. */}
+        {bisaPutus && (
+          <Button size="sm" variant="success" onClick={() => openApproveModal(po)}
+            title={po.stage_label ? `Setujui — ${po.stage_label}` : 'Setujui'} data-testid={`po-approve-${po.id}`}>
+            <CheckCircle2 />Setujui
+          </Button>
+        )}
+        {bisaGR && (
+          <Button size="sm" variant="outline" onClick={() => createGRFromPO(po)} data-testid={`po-create-gr-${po.id}`}>
+            <TruckIcon />Terima barang
+          </Button>
+        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="icon-sm" variant="ghost" title="Lainnya" aria-label="Aksi lainnya" data-testid={`po-more-${po.id}`}>
+              <MoreHorizontal />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => openDetail(po)} data-testid={`po-view-${po.id}`}>
+              <Eye className="mr-2 h-4 w-4" />Lihat detail
+            </DropdownMenuItem>
+            {bisaPutus && (
+              <DropdownMenuItem onSelect={() => openRejectModal(po)} data-testid={`po-reject-${po.id}`}>
+                <XCircle className="mr-2 h-4 w-4" />Tolak
+              </DropdownMenuItem>
+            )}
+            {(bisaBatal || bisaHapus) && <DropdownMenuSeparator />}
+            {bisaBatal && (
+              <DropdownMenuItem onSelect={() => openCancelModal(po)} data-testid={`po-cancel-${po.id}`}>
+                <XCircle className="mr-2 h-4 w-4" />Batalkan PO
+              </DropdownMenuItem>
+            )}
+            {bisaHapus && (
+              <DropdownMenuItem onSelect={() => deletePO(po)} data-testid={`po-delete-${po.id}`}
+                className="text-[hsl(var(--danger-text))]">
+                <Trash2 className="mr-2 h-4 w-4" />Hapus draf
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     );
-  }
+  };
+
+  const kolom = [
+    { kunci: 'no', label: 'No. PO', hp: 'judul', isi: (po) => (
+      <span className="font-medium whitespace-nowrap" data-testid={`po-row-${po.id}`}>{po.po_number}</span>) },
+    { kunci: 'tgl', label: 'Tanggal', isi: (po) => <span className="whitespace-nowrap">{fmtTgl(po.po_date)}</span> },
+    { kunci: 'supplier', label: 'Supplier', hp: 'keterangan', isi: (po) => (
+      <div className="min-w-0">
+        <p className="font-medium text-foreground">{po.supplier_name || po.vendor_name}</p>
+        <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+          {po.supplier_code
+            ? <span>{po.supplier_code}</span>
+            : <span className="inline-flex items-center gap-1 text-[hsl(var(--warning-text))]">
+                <AlertTriangle className="h-3 w-3" /> belum tertaut master
+              </span>}
+          {po.vendor_contact && <span>· {po.vendor_contact}</span>}
+        </p>
+      </div>) },
+    { kunci: 'item', label: 'Item', rata: 'kanan', isi: (po) => <span className="tabular-nums">{po.item_count}</span> },
+    { kunci: 'nilai', label: 'Total nilai', rata: 'kanan', isi: (po) => (
+      <span className="whitespace-nowrap tabular-nums">{fmtRpNum(po.total_value)}</span>) },
+    { kunci: 'status', label: 'Status', isi: (po) => (
+      <div className="space-y-1">
+        <POStatusBadge status={po.status} />
+        {/* Tahap aktif dari SERVER — dulu kolom ini hanya menampilkan
+            "Menunggu Persetujuan" tanpa memberi tahu tahap ke berapa
+            dari berapa, sehingga tidak ada yang tahu siapa gilirannya. */}
+        {po.status === 'pending_approval' && po.stage_label && (
+          <p className="text-xs text-muted-foreground" data-testid={`po-stage-${po.id}`}>
+            {po.stage_label}{po.total_stages ? ` (${po.stage_order}/${po.total_stages})` : ''}
+          </p>
+        )}
+        {po.status === 'pending_approval' && !po.can_approve && (
+          <p className="max-w-[16rem] text-xs text-muted-foreground" data-testid={`po-blocked-${po.id}`}>
+            {po.blocked_reason || 'Menunggu approver yang berhak.'}
+          </p>
+        )}
+        {po.exceeds_pr_value && (
+          <p className="text-xs font-medium text-[hsl(var(--warning-text))]" data-testid={`po-exceeds-${po.id}`}>
+            Melebihi nilai PR yang disetujui
+          </p>
+        )}
+      </div>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: aksiBaris },
+  ];
+
+  const kolomUnduh = [
+    { label: 'No. PO', nilai: (po) => po.po_number },
+    { label: 'Tanggal', nilai: (po) => fmtTgl(po.po_date) },
+    { label: 'Kode supplier', nilai: (po) => po.supplier_code || '' },
+    { label: 'Supplier', nilai: (po) => po.supplier_name || po.vendor_name || '' },
+    { label: 'Kontak', nilai: (po) => po.vendor_contact || '' },
+    { label: 'Jumlah item', nilai: (po) => Number(po.item_count || 0) },
+    { label: 'Total nilai (Rp)', nilai: (po) => Number(po.total_value || 0) },
+    { label: 'Diterima (%)', nilai: (po) => Number(po.received_pct || 0) },
+    { label: 'Status', nilai: (po) => (STATUS_META[po.status] || STATUS_META.draft).label },
+    { label: 'Tahap persetujuan', nilai: (po) => (po.status === 'pending_approval' ? po.stage_label || '' : '') },
+    { label: 'Dari permintaan', nilai: (po) => po.from_pr_number || '' },
+  ];
+
+  const adaSaringan = !!(filterStatus || filterSupplier);
+  const sp = selectedPO;
+  const spItems = sp?.items || [];
 
   return (
-    <div className="space-y-5" data-testid="purchase-order-page">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Purchase Order (PO)</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Kelola pembelian material dari vendor. PO harus disetujui sebelum bisa diterima di Gudang.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <SmartNativeSelect
-            value={filterStatus}
-            onChange={e => setFilterStatus(e.target.value)}
-            className="w-44 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-            data-testid="po-filter-status"
-          >
-            <option value="">Semua Status</option>
-            <option value="draft">Draft</option>
-            <option value="pending_approval">Menunggu Approval</option>
-            <option value="approved">Disetujui</option>
-            <option value="partially_received">Diterima Sebagian</option>
-            <option value="fully_received">Diterima Penuh</option>
-            <option value="rejected">Ditolak</option>
-            <option value="cancelled">Dibatalkan</option>
-          </SmartNativeSelect>
-          <SmartNativeSelect
-            value={filterSupplier}
-            onChange={e => setFilterSupplier(e.target.value)}
-            className="w-56 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-            data-testid="po-filter-supplier"
-          >
-            <option value="">Semua Supplier</option>
-            {suppliers.map(s => (
-              <option key={s.id} value={s.id}>{`${s.code} — ${s.name}`}</option>
-            ))}
-          </SmartNativeSelect>
-          <Button onClick={openCreate} data-testid="po-create-btn">
-            <Plus className="w-4 h-4 mr-1.5" /> Buat PO
-          </Button>
-          {/* U2 — Bulk CSV Import */}
-          <button
-            onClick={() => setBulkModal(true)}
-            className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 hover:text-emerald-600 dark:text-emerald-300 px-3 py-1.5 bg-emerald-100 dark:bg-emerald-500/10 rounded-lg border border-emerald-300 dark:border-emerald-500/20 transition-colors"
-            data-testid="po-bulk-import-btn"
-          >
-            <Upload size={13} /> Import CSV
-          </button>
-        </div>
-      </div>
-
-      {/* PO List */}
-      <GlassCard>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="border-b border-[var(--glass-border)]">
-              <tr className="text-left text-muted-foreground">
-                <th className="pb-3 pl-4 font-semibold">No. PO</th>
-                <th className="pb-3 font-semibold">Tanggal</th>
-                <th className="pb-3 font-semibold">Supplier</th>
-                <th className="pb-3 font-semibold">Items</th>
-                <th className="pb-3 font-semibold">Total Nilai</th>
-                <th className="pb-3 font-semibold">Status</th>
-                <th className="pb-3 pr-4 font-semibold text-right">Aksi</th>
-              </tr>
-            </thead>
-            <tbody className="text-foreground">
-              {list.length === 0 && (
-                <tr>
-                  <td colSpan="7" className="py-12 text-center text-muted-foreground">
-                    <Package className="w-12 h-12 mx-auto mb-2 opacity-30" />
-                    <p>Belum ada Purchase Order</p>
-                  </td>
-                </tr>
-              )}
-              {list.map((po, idx) => (
-                <tr key={po.id} className={`border-b border-[var(--glass-border)] ${idx % 2 === 0 ? 'bg-[var(--glass-bg)]/30' : ''}`} data-testid={`po-row-${po.id}`}>
-                  <td className="py-3 pl-4 font-mono text-xs">{po.po_number}</td>
-                  <td className="py-3 text-xs">{new Date(po.po_date).toLocaleDateString('id-ID')}</td>
-                  <td className="py-3">
-                    <div className="font-medium">{po.supplier_name || po.vendor_name}</div>
-                    <div className="text-xs text-muted-foreground flex items-center gap-1.5">
-                      {po.supplier_code
-                        ? <span className="font-mono">{po.supplier_code}</span>
-                        : <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
-                            <AlertTriangle className="w-3 h-3" /> belum tertaut master
-                          </span>}
-                      {po.vendor_contact && <span>· {po.vendor_contact}</span>}
-                    </div>
-                  </td>
-                  <td className="py-3 text-xs">{po.item_count} item</td>
-                  <td className="py-3 font-mono text-xs">Rp {(po.total_value || 0).toLocaleString('id-ID')}</td>
-                  <td className="py-3">
-                    <StatusBadge status={po.status} />
-                    {/* Tahap aktif dari SERVER — dulu kolom ini hanya menampilkan
-                        "Menunggu Persetujuan" tanpa memberi tahu tahap ke berapa
-                        dari berapa, sehingga tidak ada yang tahu siapa gilirannya. */}
-                    {po.status === 'pending_approval' && po.stage_label && (
-                      <div className="mt-1 text-[10px] text-muted-foreground" data-testid={`po-stage-${po.id}`}>
-                        {po.stage_label}{po.total_stages ? ` (${po.stage_order}/${po.total_stages})` : ''}
-                      </div>
-                    )}
-                    {po.exceeds_pr_value && (
-                      <div className="mt-1 text-[10px] font-medium text-amber-700 dark:text-amber-400"
-                           data-testid={`po-exceeds-${po.id}`}>
-                        Melebihi nilai PR yang disetujui
-                      </div>
-                    )}
-                  </td>
-                  <td className="py-3 pr-4 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <Button variant="ghost" size="sm" onClick={() => openDetail(po)} data-testid={`po-view-${po.id}`}>
-                        <Eye className="w-4 h-4" />
-                      </Button>
-                      {(po.status === 'draft' || po.status === 'rejected') && po.can_submit !== false && (
-                        <>
-                          <Button variant="ghost" size="sm" onClick={() => openSubmitModal(po)} data-testid={`po-submit-${po.id}`}>
-                            <Send className="w-4 h-4" />
-                          </Button>
-                          {po.status === 'draft' && (
-                            <Button variant="ghost" size="sm" onClick={() => deletePO(po)} data-testid={`po-delete-${po.id}`}>
-                              <Trash2 className="w-4 h-4 text-red-700 dark:text-red-400" />
-                            </Button>
-                          )}
-                        </>
-                      )}
-                      {/* 2026-08-07 — tombol Setujui/Tolak mengikuti FLAG SERVER
-                          (`can_approve`/`can_reject`), bukan sekadar status.
-                          Dulu digating hanya `status === 'pending_approval'`
-                          sehingga SIAPA PUN yang login melihat tombolnya lalu
-                          backend membalas 403 — tombol yang tampak bisa dipakai
-                          tapi selalu gagal. Kalau tidak berhak, alasannya
-                          DITAMPILKAN, bukan tombolnya hilang tanpa penjelasan. */}
-                      {po.status === 'pending_approval' && po.can_approve && (
-                        <>
-                          <Button variant="ghost" size="sm" onClick={() => openApproveModal(po)}
-                                  title={po.stage_label ? `Setujui — ${po.stage_label}` : 'Setujui'}
-                                  data-testid={`po-approve-${po.id}`}>
-                            <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => openRejectModal(po)} data-testid={`po-reject-${po.id}`}>
-                            <XCircle className="w-4 h-4 text-red-700 dark:text-red-400" />
-                          </Button>
-                        </>
-                      )}
-                      {po.status === 'pending_approval' && !po.can_approve && (
-                        <span className="max-w-[260px] text-[10px] leading-snug text-muted-foreground text-right"
-                              data-testid={`po-blocked-${po.id}`}>
-                          {po.blocked_reason || 'Menunggu approver yang berhak.'}
-                        </span>
-                      )}
-                      {(po.status === 'approved' || po.status === 'partially_received') && (
-                        <Button variant="ghost" size="sm" onClick={() => createGRFromPO(po)} data-testid={`po-create-gr-${po.id}`}>
-                          <TruckIcon className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                        </Button>
-                      )}
-                      {po.status !== 'fully_received' && po.status !== 'cancelled' && (
-                        <Button variant="ghost" size="sm" onClick={() => openCancelModal(po)} data-testid={`po-cancel-${po.id}`}>
-                          <XCircle className="w-4 h-4 text-muted-foreground" />
-                        </Button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </GlassCard>
-
-      {/* Create PO Modal */}
-      {createModal && (
-        <Modal onClose={() => setCreateModal(false)} title="Buat Purchase Order Baru" size="2xl">
-          <div className="space-y-4">
-            {formError && (
-              <div className="p-3 rounded-lg bg-red-50 dark:bg-red-400/10 border border-red-400 dark:border-red-400/30 text-red-600 dark:text-red-300 text-sm">
-                {formError}
-              </div>
-            )}
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1.5 flex items-center gap-1.5">
-                  <Building2 className="w-3.5 h-3.5" /> Supplier *
-                </label>
-                <SmartNativeSelect
-                  value={poForm.supplier_id}
-                  onChange={(e) => {
-                    const sid = e.target.value;
-                    const s = suppliers.find(x => x.id === sid);
-                    const prevSup = suppliers.find(x => x.id === poForm.supplier_id);
-                    // 2026-11-07 (Tahap 5): kontak & alamat MENGIKUTI supplier yang baru dipilih. Dulu supplier
-                    // tanpa telepon/alamat mewarisi kontak supplier SEBELUMNYA (tercetak di PO yang salah).
-                    // Isian ketikan sendiri (bukan dari master) tetap dipertahankan.
-                    const fromPrev = (v, k) => !prevSup || v === (prevSup[k] || '');
-                    setPOForm(prev => ({
-                      ...prev,
-                      supplier_id: sid,
-                      vendor_name: s?.name || '',
-                      vendor_contact: s?.phone || (fromPrev(prev.vendor_contact, 'phone') ? '' : prev.vendor_contact),
-                      vendor_address: s?.address || (fromPrev(prev.vendor_address, 'address') ? '' : prev.vendor_address),
-                    }));
-                    // Harga bisa berbeda per supplier → segarkan saran harga
-                    poForm.items.forEach(it => {
-                      if (it.material_id) fetchPriceHint(it.id, it.material_id, sid);
-                    });
-                  }}
-                  className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-                  data-testid="po-form-supplier"
-                >
-                  <option value="">Pilih supplier dari master</option>
-                  {suppliers.map(s => (
-                    <option key={s.id} value={s.id}>{`${s.code} — ${s.name}`}</option>
-                  ))}
-                </SmartNativeSelect>
-                {suppliers.length === 0 && (
-                  <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
-                    Master Supplier masih kosong. Buka menu Master Supplier untuk menambah
-                    atau menarik data supplier dari dokumen lama.
-                  </p>
-                )}
-                {selectedSupplier && (
-                  <p className="text-[11px] text-muted-foreground mt-1" data-testid="po-form-supplier-info">
-                    Termin {selectedSupplier.payment_terms || '-'} · {selectedSupplier.currency || 'IDR'}
-                    {selectedSupplier.lead_time_days ? ` · lead time ${selectedSupplier.lead_time_days} hari` : ''}
-                  </p>
-                )}
-                {selectedSupplier && materialChoices.priced.length > 0 && (
-                  <p className="text-[11px] text-[hsl(var(--primary))] mt-0.5" data-testid="po-form-supplier-pricelist-info">
-                    {materialChoices.priced.length} barang ada di daftar harga supplier ini — tampil paling atas di pilihan material.
-                  </p>
-                )}
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1.5">Kontak Supplier</label>
-                <GlassInput
-                  value={poForm.vendor_contact}
-                  onChange={e => setPOForm({ ...poForm, vendor_contact: e.target.value })}
-                  placeholder="0812-3456-7890"
-                  data-testid="po-form-vendor-contact"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1.5">Alamat Supplier</label>
-              <textarea
-                value={poForm.vendor_address}
-                onChange={e => setPOForm({ ...poForm, vendor_address: e.target.value })}
-                placeholder="Jl. Raya Industri No. 123, Bandung"
-                className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-foreground text-sm"
-                rows="2"
-                data-testid="po-form-vendor-address"
-              />
-            </div>
-
-            <DocNumberField
-              policy={numPolicy}
-              value={poNumber}
-              onChange={setPoNumber}
-              label="Nomor PO"
-              testId="po-number"
-              className="mb-3"
-            />
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1.5">Tanggal PO</label>
-                <GlassInput
-                  type="date"
-                  value={poForm.po_date}
-                  onChange={e => setPOForm({ ...poForm, po_date: e.target.value })}
-                  data-testid="po-form-date"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1.5">Estimasi Terima</label>
-                <GlassInput
-                  type="date"
-                  value={poForm.expected_delivery_date}
-                  onChange={e => setPOForm({ ...poForm, expected_delivery_date: e.target.value })}
-                  data-testid="po-form-expected-delivery"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1.5">Catatan</label>
-              <textarea
-                value={poForm.notes}
-                onChange={e => setPOForm({ ...poForm, notes: e.target.value })}
-                placeholder="Catatan tambahan..."
-                className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-foreground text-sm"
-                rows="2"
-                data-testid="po-form-notes"
-              />
-            </div>
-
-            <div className="border-t border-[var(--glass-border)] pt-4">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <h3 className="font-semibold">Item Pesanan</h3>
-                  <p className="text-[11px] text-muted-foreground">
-                    Pilih satuan beli (mis. karton). Qty & harga otomatis dikonversi ke satuan dasar
-                    untuk stok dan jurnal.
-                  </p>
-                </div>
-                <Button size="sm" onClick={addItem} data-testid="po-form-add-item">
-                  <Plus className="w-3 h-3 mr-1" /> Tambah Item
-                </Button>
-              </div>
-
-              {poForm.items.length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-4">Belum ada item. Klik &quot;Tambah Item&quot; untuk menambahkan.</p>
-              )}
-
-              {poForm.items.map((item, idx) => {
-                const opt = uomMap[item.material_id];
-                const f = factorOf(item);
-                const hint = priceHint[item.id];
-                const qtyBase = (Number(item.qty_input) || 0) * f;
-                const costBase = f ? (Number(item.unit_cost_input) || 0) / f : Number(item.unit_cost_input) || 0;
-                return (
-                  <div key={item.id} className="mb-3 pb-3 border-b border-[var(--glass-border)] last:border-0">
-                    <div className="grid grid-cols-12 gap-2 items-end">
-                      <div className="col-span-12 md:col-span-4">
-                        {idx === 0 && <label className="block text-xs font-medium mb-1">Material / Keterangan</label>}
-                        <SmartNativeSelect
-                          value={item.material_id}
-                          onChange={e => pickMaterial(item.id, e.target.value)}
-                          className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-                          data-testid={`po-form-item-material-${idx}`}
-                        >
-                          <option value="">Item bebas (jasa / non-master)</option>
-                          {materialChoices.priced.map(m => (
-                            <option key={m.id} value={m.id}>{pricedLabel(m)}</option>
-                          ))}
-                          {materialChoices.priced.length > 0 && (
-                            <option value="__lain" disabled>Material lain (tanpa daftar harga supplier ini)</option>
-                          )}
-                          {materialChoices.others.map(m => (
-                            <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>
-                          ))}
-                        </SmartNativeSelect>
-                        {!item.material_id && (
-                          <GlassInput
-                            className="mt-1"
-                            value={item.description}
-                            onChange={e => updateItem(item.id, 'description', e.target.value)}
-                            placeholder="Keterangan item, mis. Jasa kirim ekspedisi"
-                            data-testid={`po-form-item-desc-${idx}`}
-                          />
-                        )}
-                      </div>
-                      <div className="col-span-4 md:col-span-2">
-                        {idx === 0 && <label className="block text-xs font-medium mb-1">Satuan Beli</label>}
-                        {item.material_id && opt ? (
-                          <SmartNativeSelect
-                            value={item.uom}
-                            onChange={e => updateItem(item.id, 'uom', e.target.value)}
-                            className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-                            data-testid={`po-form-item-uom-${idx}`}
-                          >
-                            {(opt.units || []).map(u => (
-                              <option key={u.unit} value={u.unit}>{u.unit}</option>
-                            ))}
-                          </SmartNativeSelect>
-                        ) : (
-                          <GlassInput
-                            value={item.uom}
-                            onChange={e => updateItem(item.id, 'uom', e.target.value)}
-                            placeholder="pcs"
-                            data-testid={`po-form-item-uom-${idx}`}
-                          />
-                        )}
-                      </div>
-                      <div className="col-span-4 md:col-span-2">
-                        {idx === 0 && <label className="block text-xs font-medium mb-1">Qty</label>}
-                        <GlassInput
-                          type="number"
-                          step="0.01"
-                          value={item.qty_input}
-                          onChange={e => updateItem(item.id, 'qty_input', parseFloat(e.target.value) || 0)}
-                          placeholder="0"
-                          className="text-right"
-                          data-testid={`po-form-item-qty-${idx}`}
-                        />
-                      </div>
-                      <div className="col-span-4 md:col-span-2">
-                        {idx === 0 && <label className="block text-xs font-medium mb-1">Harga / satuan</label>}
-                        <MoneyInput
-                          decimals={2}
-                          value={item.unit_cost_input}
-                          onChange={e => updateItem(item.id, 'unit_cost_input', parseFloat(e.target.value) || 0)}
-                          placeholder="0"
-                          className="h-10 rounded-[var(--radius-sm)] bg-[var(--input-surface)] border-[var(--glass-border)] text-right"
-                          data-testid={`po-form-item-cost-${idx}`}
-                        />
-                      </div>
-                      <div className="col-span-8 md:col-span-1">
-                        {idx === 0 && <label className="block text-xs font-medium mb-1">Total</label>}
-                        <div className="h-10 flex items-center justify-end px-1 text-xs font-mono text-muted-foreground"
-                             data-testid={`po-form-item-total-${idx}`}>
-                          {((Number(item.qty_input) || 0) * (Number(item.unit_cost_input) || 0)).toLocaleString('id-ID', { maximumFractionDigits: 0 })}
-                        </div>
-                      </div>
-                      <div className="col-span-4 md:col-span-1">
-                        {idx === 0 && <div className="h-4 mb-1" />}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => removeItem(item.id)}
-                          data-testid={`po-form-item-remove-${idx}`}
-                        >
-                          <Trash2 className="w-4 h-4 text-red-700 dark:text-red-400" />
-                        </Button>
-                      </div>
-                    </div>
-
-                    {/* Pratinjau konversi + saran harga dari daftar harga supplier */}
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5">
-                      {item.material_id && opt && item.uom && item.uom !== opt.base_unit && (
-                        <span className="text-[11px] text-muted-foreground" data-testid={`po-form-item-preview-${idx}`}>
-                          1 {item.uom} = {f.toLocaleString('id-ID', { maximumFractionDigits: 4 })} {opt.base_unit} ⇒{' '}
-                          <span className="font-semibold text-foreground">
-                            {qtyBase.toLocaleString('id-ID', { maximumFractionDigits: 4 })} {opt.base_unit}
-                          </span>{' '}
-                          @ Rp {costBase.toLocaleString('id-ID', { maximumFractionDigits: 2 })}/{opt.base_unit}
-                        </span>
-                      )}
-                      {hint && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            updateItem(item.id, 'unit_cost_input', Number(hint.price));
-                            if ((uomMap[item.material_id]?.units || []).some(u => u.unit === hint.uom)) {
-                              updateItem(item.id, 'uom', hint.uom);
-                            }
-                            toast.success(hint.from_last_po ? `Harga diisi dari ${hint.supplier_name}` : `Harga diisi dari daftar harga ${hint.supplier_name}`);
-                          }}
-                          className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.18)]"
-                          data-testid={`po-form-item-price-hint-${idx}`}
-                        >
-                          <Tag className="w-3 h-3" />
-                          Harga {hint.supplier_name}: Rp {Number(hint.price).toLocaleString('id-ID')} / {hint.uom}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-
-              {poForm.items.length > 0 && (
-                <div className="flex justify-end items-baseline gap-3 pt-2">
-                  <span className="text-sm text-muted-foreground">Total nilai PO</span>
-                  <span className="text-lg font-bold tabular-nums" data-testid="po-form-grand-total">
-                    Rp {formTotal.toLocaleString('id-ID', { maximumFractionDigits: 0 })}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            <div className="flex justify-end gap-2 pt-4 border-t border-[var(--glass-border)]">
-              <Button variant="secondary" onClick={() => setCreateModal(false)}>Batal</Button>
-              <Button onClick={createPO} disabled={saving} data-testid="po-form-submit">
-                {saving ? 'Menyimpan...' : 'Simpan Draft PO'}
-              </Button>
-            </div>
-          </div>
-        </Modal>
+    <PageLayout testId="purchase-order-page" title="Purchase Order"
+      subtitle="Kelola pembelian material dari supplier. PO harus disetujui sebelum bisa diterima di gudang."
+      actions={<>
+        {/* U2 — Impor massal dari CSV/Excel */}
+        <Button variant="outline" onClick={() => setBulkModal(true)} data-testid="po-bulk-import-btn">
+          <Upload />Impor CSV
+        </Button>
+        <Button onClick={openCreate} data-testid="po-create-btn"><Plus />Buat PO</Button>
+      </>}
+      filters={<>
+        <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+          className="w-48 h-9" data-testid="po-filter-status">
+          <option value="">Semua status</option>
+          {Object.entries(STATUS_META).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+        </SmartNativeSelect>
+        <SmartNativeSelect value={filterSupplier} onChange={e => setFilterSupplier(e.target.value)}
+          className="w-56 h-9" data-testid="po-filter-supplier">
+          <option value="">Semua supplier</option>
+          {suppliers.map(s => (
+            <option key={s.id} value={s.id}>{`${s.code} — ${s.name}`}</option>
+          ))}
+        </SmartNativeSelect>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="purchase-order" namaLembar="Purchase order" baris={list} kolom={kolomUnduh}
+          testId="po-unduh" />
+        <Button variant="outline" size="icon" onClick={fetchList} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="po-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      footer={list.length > 0 && (
+        <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
+      )}>
+      {loading && list.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat purchase order…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={paged} onKlikBaris={openDetail} testId="po-table"
+          kosong={<EmptyState icon={Package}
+            title={adaSaringan ? 'Tidak ada PO yang cocok dengan saringan' : 'Belum ada purchase order'}
+            description={adaSaringan ? 'Ubah saringan status atau supplier.' : 'Buat PO baru atau impor dari CSV. PO juga bisa dibuat dari permintaan pengadaan yang disetujui.'}
+            action={!adaSaringan && <Button onClick={openCreate}><Plus />Buat PO</Button>} />} />
       )}
 
-      {/* Detail PO Modal */}
-      {detailModal && selectedPO && (
-        <Modal onClose={() => setDetailModal(false)} title={`Detail PO: ${selectedPO.po_number}`} size="2xl">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-[var(--glass-border)]">
-              <div>
-                <StatusBadge status={selectedPO.status} />
-                {selectedPO.rejected_reason && (
-                  <p className="text-xs text-red-600 dark:text-red-300 mt-1">Alasan ditolak: {selectedPO.rejected_reason}</p>
-                )}
-                {selectedPO.cancelled_reason && (
-                  <p className="text-xs text-foreground/80 mt-1">Alasan dibatalkan: {selectedPO.cancelled_reason}</p>
-                )}
-              </div>
-              <div className="text-right text-sm text-muted-foreground">
-                <div>Dibuat: {new Date(selectedPO.created_at).toLocaleString('id-ID')}</div>
-                <div>Oleh: {selectedPO.created_by_name}</div>
-              </div>
-            </div>
+      {/* ── Form buat PO ─────────────────────────────────────────────────── */}
+      <FormPopup open={createModal} onClose={() => setCreateModal(false)} ukuran="panjang" testId="po-form"
+        judul="Buat purchase order" keterangan="Disimpan sebagai draf; ajukan untuk persetujuan dari daftar atau detail PO."
+        onSimpan={createPO} menyimpan={saving} galat={formError} labelSimpan="Simpan draf PO">
+        <div className="grid gap-4 md:grid-cols-2">
+          <Isian label="Supplier" wajib>
+            <SmartNativeSelect
+              value={poForm.supplier_id}
+              onChange={(e) => {
+                const sid = e.target.value;
+                const s = suppliers.find(x => x.id === sid);
+                const prevSup = suppliers.find(x => x.id === poForm.supplier_id);
+                // 2026-11-07 (Tahap 5): kontak & alamat MENGIKUTI supplier yang baru dipilih. Dulu supplier
+                // tanpa telepon/alamat mewarisi kontak supplier SEBELUMNYA (tercetak di PO yang salah).
+                // Isian ketikan sendiri (bukan dari master) tetap dipertahankan.
+                const fromPrev = (v, k) => !prevSup || v === (prevSup[k] || '');
+                setPOForm(prev => ({
+                  ...prev,
+                  supplier_id: sid,
+                  vendor_name: s?.name || '',
+                  vendor_contact: s?.phone || (fromPrev(prev.vendor_contact, 'phone') ? '' : prev.vendor_contact),
+                  vendor_address: s?.address || (fromPrev(prev.vendor_address, 'address') ? '' : prev.vendor_address),
+                }));
+                // Harga bisa berbeda per supplier → segarkan saran harga
+                poForm.items.forEach(it => {
+                  if (it.material_id) fetchPriceHint(it.id, it.material_id, sid);
+                });
+              }}
+              data-testid="po-form-supplier"
+            >
+              <option value="">Pilih supplier dari master</option>
+              {suppliers.map(s => (
+                <option key={s.id} value={s.id}>{`${s.code} — ${s.name}`}</option>
+              ))}
+            </SmartNativeSelect>
+            {suppliers.length === 0 && (
+              <p className="text-xs text-[hsl(var(--warning-text))]">
+                Master Supplier masih kosong. Buka menu Master Supplier untuk menambah
+                atau menarik data supplier dari dokumen lama.
+              </p>
+            )}
+            {selectedSupplier && (
+              <p className="text-xs text-muted-foreground" data-testid="po-form-supplier-info">
+                Termin {selectedSupplier.payment_terms || '-'} · {selectedSupplier.currency || 'IDR'}
+                {selectedSupplier.lead_time_days ? ` · waktu kirim ${selectedSupplier.lead_time_days} hari` : ''}
+              </p>
+            )}
+            {selectedSupplier && materialChoices.priced.length > 0 && (
+              <p className="text-xs text-primary" data-testid="po-form-supplier-pricelist-info">
+                {materialChoices.priced.length} barang ada di daftar harga supplier ini — tampil paling atas di pilihan material.
+              </p>
+            )}
+          </Isian>
+          <Isian label="Kontak supplier" htmlFor="po-form-vendor-contact">
+            <Input id="po-form-vendor-contact" value={poForm.vendor_contact}
+              onChange={e => setPOForm({ ...poForm, vendor_contact: e.target.value })}
+              placeholder="0812-3456-7890" data-testid="po-form-vendor-contact" />
+          </Isian>
+        </div>
 
-            {/* ── Rantai persetujuan PO (2026-08-07) ───────────────────────
-                Dulu tidak ada apa pun di sini: PO hanya punya satu langkah
-                "approve" tanpa tahap, tanpa siapa & kapan. Sekarang approver
-                bisa melihat tahap ke berapa dari berapa, siapa yang sudah
-                memutuskan, dan siapa giliran berikutnya. */}
-            {Array.isArray(selectedPO.chain) && selectedPO.chain.length > 0 && (
-              <div className="rounded-xl border border-[var(--glass-border)] p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-sm font-semibold text-foreground">Rantai Persetujuan</div>
-                  <div className="text-xs text-muted-foreground">
-                    {selectedPO.total_stages} tahap untuk nilai Rp {(selectedPO.total_value || 0).toLocaleString('id-ID')}
+        <Isian label="Alamat supplier" htmlFor="po-form-vendor-address">
+          <Textarea id="po-form-vendor-address" rows={2} value={poForm.vendor_address}
+            onChange={e => setPOForm({ ...poForm, vendor_address: e.target.value })}
+            placeholder="Jl. Raya Industri No. 123, Bandung" data-testid="po-form-vendor-address" />
+        </Isian>
+
+        <DocNumberField policy={numPolicy} value={poNumber} onChange={setPoNumber} label="Nomor PO" testId="po-number" />
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Tanggal PO">
+            <DatePicker value={poForm.po_date} onChange={(v) => setPOForm({ ...poForm, po_date: v })}
+              bolehKosong={false} testId="po-form-date" />
+          </Isian>
+          <Isian label="Estimasi terima">
+            <DatePicker value={poForm.expected_delivery_date} min={poForm.po_date || undefined}
+              onChange={(v) => setPOForm({ ...poForm, expected_delivery_date: v })}
+              placeholder="Pilih tanggal" testId="po-form-expected-delivery" />
+          </Isian>
+        </div>
+
+        <Isian label="Catatan" htmlFor="po-form-notes">
+          <Textarea id="po-form-notes" rows={2} value={poForm.notes}
+            onChange={e => setPOForm({ ...poForm, notes: e.target.value })}
+            placeholder="Catatan tambahan" data-testid="po-form-notes" />
+        </Isian>
+
+        <div className="space-y-3 border-t border-[var(--glass-border)] pt-4">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <p className="text-sm font-semibold text-foreground">Item pesanan</p>
+              <p className="text-xs text-muted-foreground">
+                Pilih satuan beli (mis. karton). Qty & harga otomatis dikonversi ke satuan dasar untuk stok dan jurnal.
+              </p>
+            </div>
+            <Button type="button" size="sm" variant="outline" onClick={addItem} data-testid="po-form-add-item">
+              <Plus />Tambah item
+            </Button>
+          </div>
+
+          {poForm.items.length === 0 && (
+            <p className="py-3 text-center text-sm text-muted-foreground">Belum ada item. Klik &quot;Tambah item&quot; untuk menambahkan.</p>
+          )}
+
+          {poForm.items.map((item, idx) => {
+            const opt = uomMap[item.material_id];
+            const f = factorOf(item);
+            const hint = priceHint[item.id];
+            const qtyBase = (Number(item.qty_input) || 0) * f;
+            const costBase = f ? (Number(item.unit_cost_input) || 0) / f : Number(item.unit_cost_input) || 0;
+            // Label kolom: baris pertama di layar lebar; tiap baris di HP (tanpa kepala kolom).
+            const lbl = idx === 0 ? 'mb-1 block text-xs font-medium' : 'mb-1 block text-xs font-medium md:hidden';
+            return (
+              <div key={item.id} className="border-b border-[var(--glass-border)] pb-3 last:border-0">
+                <div className="grid grid-cols-12 items-end gap-2">
+                  <div className="col-span-12 md:col-span-4">
+                    <span className={lbl}>Material / keterangan</span>
+                    <SmartNativeSelect
+                      value={item.material_id}
+                      onChange={e => pickMaterial(item.id, e.target.value)}
+                      data-testid={`po-form-item-material-${idx}`}
+                    >
+                      <option value="">Item bebas (jasa / non-master)</option>
+                      {materialChoices.priced.map(m => (
+                        <option key={m.id} value={m.id}>{pricedLabel(m)}</option>
+                      ))}
+                      {materialChoices.priced.length > 0 && (
+                        <option value="__lain" disabled>Material lain (tanpa daftar harga supplier ini)</option>
+                      )}
+                      {materialChoices.others.map(m => (
+                        <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>
+                      ))}
+                    </SmartNativeSelect>
+                    {!item.material_id && (
+                      <Input className="mt-1" value={item.description} aria-label="Keterangan item"
+                        onChange={e => updateItem(item.id, 'description', e.target.value)}
+                        placeholder="Keterangan item, mis. jasa kirim ekspedisi" data-testid={`po-form-item-desc-${idx}`} />
+                    )}
+                  </div>
+                  <div className="col-span-4 md:col-span-2">
+                    <span className={lbl}>Satuan beli</span>
+                    {item.material_id && opt ? (
+                      <SmartNativeSelect value={item.uom} onChange={e => updateItem(item.id, 'uom', e.target.value)}
+                        data-testid={`po-form-item-uom-${idx}`}>
+                        {(opt.units || []).map(u => (
+                          <option key={u.unit} value={u.unit}>{u.unit}</option>
+                        ))}
+                      </SmartNativeSelect>
+                    ) : (
+                      <Input value={item.uom} aria-label="Satuan beli" onChange={e => updateItem(item.id, 'uom', e.target.value)}
+                        placeholder="pcs" data-testid={`po-form-item-uom-${idx}`} />
+                    )}
+                  </div>
+                  <div className="col-span-4 md:col-span-2">
+                    <span className={lbl}>Qty</span>
+                    <Input type="number" step="0.01" value={item.qty_input} aria-label="Qty"
+                      onChange={e => updateItem(item.id, 'qty_input', parseFloat(e.target.value) || 0)}
+                      placeholder="0" className="text-right" data-testid={`po-form-item-qty-${idx}`} />
+                  </div>
+                  <div className="col-span-4 md:col-span-2">
+                    <span className={lbl}>Harga / satuan</span>
+                    <MoneyInput decimals={2} value={item.unit_cost_input} aria-label="Harga per satuan"
+                      onChange={e => updateItem(item.id, 'unit_cost_input', parseFloat(e.target.value) || 0)}
+                      placeholder="0" className="text-right" data-testid={`po-form-item-cost-${idx}`} />
+                  </div>
+                  <div className="col-span-8 md:col-span-1">
+                    <span className={lbl}>Total</span>
+                    <div className="flex h-9 items-center justify-end px-1 text-sm tabular-nums text-muted-foreground"
+                      data-testid={`po-form-item-total-${idx}`}>
+                      {((Number(item.qty_input) || 0) * (Number(item.unit_cost_input) || 0)).toLocaleString('id-ID', { maximumFractionDigits: 0 })}
+                    </div>
+                  </div>
+                  <div className="col-span-4 flex justify-end md:col-span-1">
+                    <Button type="button" variant="ghost" size="icon" onClick={() => removeItem(item.id)}
+                      title="Hapus item" aria-label="Hapus item" data-testid={`po-form-item-remove-${idx}`}>
+                      <Trash2 className="text-[hsl(var(--danger-text))]" />
+                    </Button>
                   </div>
                 </div>
-                <div className="space-y-2" data-testid="po-approval-stepper">
-                  {selectedPO.chain.map((s) => (
-                    <div key={s.stage}
-                         className={`flex items-start gap-3 rounded-lg px-3 py-2 border ${
-                           s.done ? 'bg-emerald-50 dark:bg-emerald-400/10 border-emerald-300/30'
-                           : s.current ? 'bg-amber-50 dark:bg-amber-400/10 border-amber-300/40'
-                           : 'bg-foreground/5 border-transparent'}`}>
-                      <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${
-                        s.done ? 'bg-emerald-600 text-white'
-                        : s.current ? 'bg-amber-500 text-white' : 'bg-foreground/15 text-muted-foreground'}`}>
-                        {s.order}
-                      </span>
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-foreground">
-                          {s.label}
-                          {s.current && (
-                            <span className="ml-2 text-[10px] font-normal text-amber-700 dark:text-amber-400">
-                              Menunggu sekarang
-                            </span>
-                          )}
-                          {s.override && (
-                            <span className="ml-2 text-[10px] font-normal text-violet-700 dark:text-violet-400">
-                              override admin
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {s.done
-                            ? `${s.actor_name}${s.timestamp ? ` — ${new Date(s.timestamp).toLocaleString('id-ID')}` : ''}`
-                            : `Menunggu ${s.role_hint}`}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+
+                {/* Pratinjau konversi + saran harga dari daftar harga supplier */}
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+                  {item.material_id && opt && item.uom && item.uom !== opt.base_unit && (
+                    <span className="text-xs text-muted-foreground" data-testid={`po-form-item-preview-${idx}`}>
+                      1 {item.uom} = {f.toLocaleString('id-ID', { maximumFractionDigits: 4 })} {opt.base_unit} ⇒{' '}
+                      <span className="font-semibold text-foreground">
+                        {qtyBase.toLocaleString('id-ID', { maximumFractionDigits: 4 })} {opt.base_unit}
+                      </span>{' '}
+                      @ Rp {costBase.toLocaleString('id-ID', { maximumFractionDigits: 2 })}/{opt.base_unit}
+                    </span>
+                  )}
+                  {hint && (
+                    <Button type="button" size="sm" variant="outline" className="h-7 rounded-full text-xs"
+                      onClick={() => {
+                        updateItem(item.id, 'unit_cost_input', Number(hint.price));
+                        if ((uomMap[item.material_id]?.units || []).some(u => u.unit === hint.uom)) {
+                          updateItem(item.id, 'uom', hint.uom);
+                        }
+                        toast.success(hint.from_last_po ? `Harga diisi dari ${hint.supplier_name}` : `Harga diisi dari daftar harga ${hint.supplier_name}`);
+                      }}
+                      data-testid={`po-form-item-price-hint-${idx}`}>
+                      <Tag />Harga {hint.supplier_name}: Rp {Number(hint.price).toLocaleString('id-ID')} / {hint.uom}
+                    </Button>
+                  )}
                 </div>
-                {selectedPO.next_approver_label && (
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Berikutnya setelah tahap ini: {selectedPO.next_approver_label}
-                  </p>
-                )}
-                {selectedPO.status === 'pending_approval' && !selectedPO.can_approve && selectedPO.blocked_reason && (
-                  <p className="mt-2 rounded-lg bg-amber-50 dark:bg-amber-400/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300"
-                     data-testid="po-detail-blocked">
-                    {selectedPO.blocked_reason}
-                  </p>
-                )}
-                {selectedPO.exceeds_pr_value && (
-                  <p className="mt-2 rounded-lg bg-red-50 dark:bg-red-400/10 px-3 py-2 text-xs text-red-700 dark:text-red-300"
-                     data-testid="po-detail-exceeds">
-                    Nilai PO ini <strong>Rp {(selectedPO.total_value || 0).toLocaleString('id-ID')}</strong> melebihi
-                    nilai permintaan yang sudah disetujui
-                    (<strong>Rp {(selectedPO.pr_approved_value || 0).toLocaleString('id-ID')}</strong>
-                    {selectedPO.from_pr_number ? ` pada ${selectedPO.from_pr_number}` : ''}).
-                    Karena itu PO ini wajib melewati rantai persetujuan penuh.
-                  </p>
-                )}
-                {Array.isArray(selectedPO.approval_steps) && selectedPO.approval_steps.length > 0 && (
-                  <div className="mt-3 border-t border-[var(--glass-border)] pt-2">
-                    <div className="text-xs font-semibold text-foreground mb-1">Riwayat</div>
-                    {selectedPO.approval_steps.map((s, i) => (
-                      <div key={s.id || i} className="flex flex-wrap items-baseline gap-2 text-xs py-0.5">
-                        <span className="text-muted-foreground tabular-nums">
-                          {s.timestamp ? new Date(s.timestamp).toLocaleString('id-ID') : '-'}
-                        </span>
+              </div>
+            );
+          })}
+
+          {poForm.items.length > 0 && (
+            <div className="flex items-baseline justify-end gap-3">
+              <span className="text-sm text-muted-foreground">Total nilai PO</span>
+              <span className="text-lg font-bold tabular-nums" data-testid="po-form-grand-total">
+                Rp {formTotal.toLocaleString('id-ID', { maximumFractionDigits: 0 })}
+              </span>
+            </div>
+          )}
+        </div>
+      </FormPopup>
+
+      {/* ── Detail PO (popup) ────────────────────────────────────────────── */}
+      {detailModal && sp && (
+        <DetailPopup open onClose={() => setDetailModal(false)} testId="po-detail"
+          judul={`PO ${sp.po_number}`}
+          keterangan={`Dibuat ${formatDateTimeID(sp.created_at)}${sp.created_by_name ? ` oleh ${sp.created_by_name}` : ''}`}
+          status={<POStatusBadge status={sp.status} />}
+          aksi={<>
+            {(sp.status === 'draft' || sp.status === 'rejected') && sp.can_submit !== false && (
+              <Button size="sm" onClick={() => { setDetailModal(false); openSubmitModal(sp); }} data-testid="po-detail-submit">
+                <Send />{sp.status === 'rejected' ? 'Ajukan ulang' : 'Ajukan persetujuan'}
+              </Button>
+            )}
+            {sp.status === 'pending_approval' && sp.can_approve && (<>
+              <Button size="sm" variant="success" onClick={() => { setDetailModal(false); openApproveModal(sp); }}
+                data-testid="po-detail-approve">
+                <CheckCircle2 />{sp.stage_label ? `Setujui — ${sp.stage_label}` : 'Setujui'}
+              </Button>
+              <Button size="sm" variant="destructive" onClick={() => { setDetailModal(false); openRejectModal(sp); }}
+                data-testid="po-detail-reject">
+                <XCircle />Tolak
+              </Button>
+            </>)}
+            {(sp.status === 'approved' || sp.status === 'partially_received') && (
+              <Button size="sm" onClick={() => createGRFromPO(sp)} data-testid="po-detail-create-gr">
+                <TruckIcon />Buat penerimaan barang
+              </Button>
+            )}
+          </>}>
+          {sp.rejected_reason && <Notice tone="danger" title="Alasan ditolak">{sp.rejected_reason}</Notice>}
+          {sp.cancelled_reason && <Notice tone="info" title="Alasan dibatalkan">{sp.cancelled_reason}</Notice>}
+
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Supplier">
+              <p className="font-medium">{sp.supplier_name || sp.vendor_name}</p>
+              {sp.supplier_code && <p className="text-xs text-muted-foreground">{sp.supplier_code}</p>}
+              {sp.vendor_contact && <p className="text-xs text-muted-foreground">{sp.vendor_contact}</p>}
+              {sp.vendor_address && <p className="text-xs text-muted-foreground">{sp.vendor_address}</p>}
+              {sp.supplier?.npwp && <p className="text-xs text-muted-foreground">NPWP: {sp.supplier.npwp}</p>}
+              {sp.payment_terms && <p className="text-xs text-muted-foreground">Termin: {sp.payment_terms} · {sp.currency || 'IDR'}</p>}
+              {sp.supplier?.bank_accounts?.[0] && (
+                <p className="text-xs text-muted-foreground">
+                  {sp.supplier.bank_accounts[0].bank_name} {sp.supplier.bank_accounts[0].account_number}
+                </p>
+              )}
+            </BarisDetail>
+            <BarisDetail label="Tanggal PO">{fmtTgl(sp.po_date)}</BarisDetail>
+            {sp.expected_delivery_date && <BarisDetail label="Estimasi terima">{fmtTgl(sp.expected_delivery_date)}</BarisDetail>}
+            {sp.from_pr_number && <BarisDetail label="Dari permintaan">{sp.from_pr_number}</BarisDetail>}
+            {sp.notes && <BarisDetail label="Catatan">{sp.notes}</BarisDetail>}
+          </dl>
+
+          {/* ── Rantai persetujuan PO (2026-08-07) — tahap ke berapa dari berapa, siapa yang sudah
+              memutuskan, dan siapa giliran berikutnya. */}
+          {Array.isArray(sp.chain) && sp.chain.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <p className="text-sm font-semibold text-foreground">Rantai persetujuan</p>
+                <p className="text-xs text-muted-foreground">
+                  {sp.total_stages} tahap untuk nilai {fmtRpNum(sp.total_value)}
+                </p>
+              </div>
+              <ol className="space-y-2" data-testid="po-approval-stepper">
+                {sp.chain.map((s) => (
+                  <li key={s.stage} className="flex items-start gap-3 rounded-lg border border-[var(--glass-border)] px-3 py-2">
+                    <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
+                      s.done ? 'bg-[hsl(var(--success-strong))] text-white'
+                        : s.current ? 'bg-[hsl(var(--warning))] text-white' : 'bg-foreground/10 text-muted-foreground'}`}>
+                      {s.order}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
+                        {s.label}
+                        {s.current && <StatusBadge status="current" label="Menunggu sekarang" tone="warning" />}
+                        {s.override && <StatusBadge status="override" label="Ditembus admin" tone="primary" />}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {s.done
+                          ? `${s.actor_name}${s.timestamp ? ` — ${formatDateTimeID(s.timestamp)}` : ''}`
+                          : `Menunggu ${s.role_hint}`}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+              {sp.next_approver_label && (
+                <p className="text-xs text-muted-foreground">Berikutnya setelah tahap ini: {sp.next_approver_label}</p>
+              )}
+              {sp.status === 'pending_approval' && !sp.can_approve && sp.blocked_reason && (
+                <Notice tone="warning" testId="po-detail-blocked">{sp.blocked_reason}</Notice>
+              )}
+              {sp.exceeds_pr_value && (
+                <Notice tone="danger" testId="po-detail-exceeds">
+                  Nilai PO ini <strong>{fmtRpNum(sp.total_value)}</strong> melebihi nilai permintaan yang sudah disetujui
+                  (<strong>{fmtRpNum(sp.pr_approved_value)}</strong>{sp.from_pr_number ? ` pada ${sp.from_pr_number}` : ''}).
+                  Karena itu PO ini wajib melewati rantai persetujuan penuh.
+                </Notice>
+              )}
+              {Array.isArray(sp.approval_steps) && sp.approval_steps.length > 0 && (
+                <div className="border-t border-[var(--glass-border)] pt-2">
+                  <p className="mb-1 text-xs font-semibold text-foreground">Riwayat</p>
+                  <ul className="space-y-0.5">
+                    {sp.approval_steps.map((s, i) => (
+                      <li key={s.id || i} className="flex flex-wrap items-baseline gap-2 text-xs">
+                        <span className="tabular-nums text-muted-foreground">{s.timestamp ? formatDateTimeID(s.timestamp) : '-'}</span>
                         <span className="font-medium text-foreground">{s.action_label || s.action}</span>
                         <span className="text-muted-foreground">— {s.actor_name}</span>
-                        {s.comment && <span className="text-muted-foreground/80 italic">“{s.comment}”</span>}
-                      </div>
+                        {s.comment && <span className="italic text-muted-foreground">“{s.comment}”</span>}
+                      </li>
                     ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <div className="text-muted-foreground mb-1">Supplier</div>
-                <div className="font-medium">{selectedPO.supplier_name || selectedPO.vendor_name}</div>
-                {selectedPO.supplier_code && (
-                  <div className="text-xs font-mono text-muted-foreground">{selectedPO.supplier_code}</div>
-                )}
-                {selectedPO.vendor_contact && <div className="text-xs text-muted-foreground">{selectedPO.vendor_contact}</div>}
-                {selectedPO.vendor_address && <div className="text-xs text-muted-foreground mt-1">{selectedPO.vendor_address}</div>}
-                {selectedPO.supplier?.npwp && (
-                  <div className="text-xs text-muted-foreground mt-1">NPWP: {selectedPO.supplier.npwp}</div>
-                )}
-                {selectedPO.payment_terms && (
-                  <div className="text-xs text-muted-foreground mt-1">
-                    Termin: {selectedPO.payment_terms} · {selectedPO.currency || 'IDR'}
-                  </div>
-                )}
-                {selectedPO.supplier?.bank_accounts?.[0] && (
-                  <div className="text-xs font-mono text-muted-foreground mt-1">
-                    {selectedPO.supplier.bank_accounts[0].bank_name} {selectedPO.supplier.bank_accounts[0].account_number}
-                  </div>
-                )}
-              </div>
-              <div>
-                <div className="text-muted-foreground mb-1">Tanggal</div>
-                <div>PO: {new Date(selectedPO.po_date).toLocaleDateString('id-ID')}</div>
-                {selectedPO.expected_delivery_date && (
-                  <div className="text-xs">Estimasi Terima: {new Date(selectedPO.expected_delivery_date).toLocaleDateString('id-ID')}</div>
-                )}
-                {selectedPO.from_pr_number && (
-                  <div className="text-xs mt-1">Dari permintaan: <span className="font-mono">{selectedPO.from_pr_number}</span></div>
-                )}
-              </div>
-            </div>
-
-            {selectedPO.notes && (
-              <div className="p-3 rounded-lg bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-                <div className="text-xs text-muted-foreground mb-1">Catatan</div>
-                <div className="text-sm">{selectedPO.notes}</div>
-              </div>
-            )}
-
-            <div>
-              <h3 className="font-semibold mb-2">Items ({selectedPO.items?.length || 0})</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="border-b border-[var(--glass-border)]">
-                    <tr className="text-left text-muted-foreground text-xs">
-                      <th className="pb-2">Item</th>
-                      <th className="pb-2 text-right">Dipesan</th>
-                      <th className="pb-2 text-right">Diterima</th>
-                      <th className="pb-2 text-right">Harga</th>
-                      <th className="pb-2 text-right">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody data-testid="po-detail-items">
-                    {selectedPO.items?.map((it, idx) => {
-                      const f = Number(it.uom_factor || 1) || 1;
-                      const hasPack = it.uom && it.base_uom && it.uom !== it.base_uom && f !== 1;
-                      return (
-                        <tr key={it.id} className={`border-b border-[var(--glass-border)] ${idx % 2 === 0 ? 'bg-[var(--glass-bg)]/30' : ''}`}>
-                          <td className="py-2">
-                            {/* 2026-08-07 — dulu baris utama adalah KODE material,
-                                sehingga item bebas (jasa / non-master) tampil
-                                berjudul "Item bebas" dan nama barangnya turun ke
-                                baris kecil. Approver yang memutuskan uang perlu
-                                melihat APA yang dibeli lebih dulu, baru kodenya. */}
-                            <div className="font-medium">
-                              {it.material_name || it.description || 'Item tanpa nama'}
-                            </div>
-                            <div className="text-xs text-muted-foreground font-mono">
-                              {it.material_code || (it.material_linked === false ? 'Item bebas (non-master)' : '')}
-                            </div>
-                            {hasPack && (
-                              <div className="text-[11px] text-[hsl(var(--primary))]">
-                                1 {it.uom} = {Number(f).toLocaleString('id-ID', { maximumFractionDigits: 4 })} {it.base_uom}
-                              </div>
-                            )}
-                          </td>
-                          <td className="py-2 text-right font-mono">
-                            <div>{Number(it.qty_ordered || 0).toLocaleString('id-ID', { maximumFractionDigits: 4 })} {it.base_uom || it.unit}</div>
-                            {hasPack && (
-                              <div className="text-[11px] text-muted-foreground">
-                                ({Number(it.qty_input || 0).toLocaleString('id-ID', { maximumFractionDigits: 4 })} {it.uom})
-                              </div>
-                            )}
-                          </td>
-                          <td className="py-2 text-right font-mono">
-                            <span className={Number(it.qty_received) >= Number(it.qty_ordered) ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}>
-                              {Number(it.qty_received || 0).toLocaleString('id-ID', { maximumFractionDigits: 4 })} {it.base_uom || it.unit}
-                            </span>
-                            {Number(it.qty_remaining) > 0 && (
-                              <div className="text-[11px] text-muted-foreground">
-                                sisa {Number(it.qty_remaining).toLocaleString('id-ID', { maximumFractionDigits: 4 })}
-                              </div>
-                            )}
-                          </td>
-                          <td className="py-2 text-right font-mono">
-                            <div>Rp {Number(it.unit_cost || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })}</div>
-                            <div className="text-[11px] text-muted-foreground">/ {it.base_uom || it.unit}</div>
-                            {hasPack && (
-                              <div className="text-[11px] text-muted-foreground">
-                                (Rp {Number(it.unit_cost_input || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })} / {it.uom})
-                              </div>
-                            )}
-                            {selectedPO.can_edit_price && (
-                              <Button variant="link" size="sm" className="h-auto p-0 text-[11px]"
-                                onClick={() => setPriceEdit({ item: it, value: Number(it.unit_cost_input || it.unit_cost || 0), reason: '' })}
-                                data-testid={`po-detail-price-edit-${idx}`}>
-                                Ubah harga
-                              </Button>
-                            )}
-                          </td>
-                          <td className="py-2 text-right font-mono">
-                            Rp {Number(it.subtotal ?? (it.qty_ordered * it.unit_cost)).toLocaleString('id-ID', { maximumFractionDigits: 0 })}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot className="border-t-2 border-[var(--glass-border)] font-semibold">
-                    <tr>
-                      <td colSpan="4" className="pt-2 text-right">Total Nilai PO:</td>
-                      <td className="pt-2 text-right font-mono">
-                        Rp {(selectedPO.items?.reduce((sum, it) => sum + (it.qty_ordered * it.unit_cost), 0) || 0).toLocaleString('id-ID')}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </div>
-
-            {/* 2026-11-06 (Tahap 2): jejak perubahan harga baris PO (Keuangan, dengan alasan) */}
-            {(selectedPO.price_changes?.length || 0) > 0 && (
-              <div data-testid="po-detail-price-changes">
-                <h3 className="font-semibold mb-2">Perubahan harga ({selectedPO.price_changes.length})</h3>
-                <ul className="space-y-1 text-xs">
-                  {selectedPO.price_changes.map((c) => (
-                    <li key={c.id} className="text-muted-foreground">
-                      <span className="text-foreground">{c.description || 'Baris PO'}</span>
-                      {' · '}Rp {Number(c.old_unit_cost_input || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })}
-                      {' → '}Rp {Number(c.new_unit_cost_input || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })}
-                      {c.uom ? ` / ${c.uom}` : ''} · {c.by_name} · {c.at ? new Date(c.at).toLocaleString('id-ID') : ''}
-                      {' · '}Alasan: {c.reason}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* P1.C: GR Audit Trail (Goods Receipts linked to this PO) */}
-            {(selectedPO._grs?.length || 0) > 0 && (
-              <div data-testid="po-detail-grs">
-                <h3 className="font-semibold mb-2 flex items-center gap-2">
-                  <TruckIcon className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                  Goods Receipts ({selectedPO._grs.length})
-                </h3>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="border-b border-[var(--glass-border)]">
-                      <tr className="text-left text-muted-foreground text-xs">
-                        <th className="pb-2">No. GR</th>
-                        <th className="pb-2">Tanggal</th>
-                        <th className="pb-2">Penerima</th>
-                        <th className="pb-2 text-right">Total Items</th>
-                        <th className="pb-2 text-right">Net Diterima</th>
-                        <th className="pb-2">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedPO._grs.map((gr, idx) => (
-                        <tr key={gr.id} className={`border-b border-[var(--glass-border)] ${idx % 2 === 0 ? 'bg-[var(--glass-bg)]/30' : ''}`} data-testid={`po-gr-row-${gr.id}`}>
-                          <td className="py-2 font-mono text-xs">{gr.receipt_number}</td>
-                          <td className="py-2 text-xs">{gr.created_at ? new Date(gr.created_at).toLocaleString('id-ID') : '-'}</td>
-                          <td className="py-2 text-xs">{gr.received_by || '-'}</td>
-                          <td className="py-2 text-right">{gr.items_count}</td>
-                          <td className="py-2 text-right font-mono text-emerald-600 dark:text-emerald-400">{gr.total_net}</td>
-                          <td className="py-2">
-                            <span className={`inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                              gr.status === 'received' ? 'bg-green-50 dark:bg-green-400/15 border-green-300/25 text-green-600 dark:text-green-300' :
-                              gr.status === 'draft' ? 'bg-muted dark:bg-slate-400/15 border-border/25 text-foreground/70' :
-                              'bg-amber-50 dark:bg-amber-400/15 border-amber-300/25 text-amber-600 dark:text-amber-300'
-                            } border`}>
-                              {gr.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  </ul>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
+          )}
 
-            <div className="flex justify-between gap-2 pt-4 border-t border-[var(--glass-border)]">
-              <div>
-                {(selectedPO.status === 'draft' || selectedPO.status === 'rejected') && selectedPO.can_submit !== false && (
-                  <Button onClick={() => { setDetailModal(false); openSubmitModal(selectedPO); }}
-                          data-testid="po-detail-submit">
-                    <Send className="w-4 h-4 mr-1.5" />
-                    {selectedPO.status === 'rejected' ? 'Ajukan Ulang' : 'Ajukan Approval'}
-                  </Button>
-                )}
-                {selectedPO.status === 'pending_approval' && selectedPO.can_approve && (
-                  <>
-                    <Button onClick={() => { setDetailModal(false); openApproveModal(selectedPO); }}
-                            className="mr-2" data-testid="po-detail-approve">
-                      <CheckCircle2 className="w-4 h-4 mr-1.5" />
-                      {selectedPO.stage_label ? `Setujui — ${selectedPO.stage_label}` : 'Setujui'}
-                    </Button>
-                    <Button variant="secondary" onClick={() => { setDetailModal(false); openRejectModal(selectedPO); }}
-                            data-testid="po-detail-reject">
-                      <XCircle className="w-4 h-4 mr-1.5" /> Tolak
-                    </Button>
-                  </>
-                )}
-                {(selectedPO.status === 'approved' || selectedPO.status === 'partially_received') && (
-                  <Button onClick={() => createGRFromPO(selectedPO)}>
-                    <TruckIcon className="w-4 h-4 mr-1.5" /> Buat Goods Receipt
-                  </Button>
-                )}
-              </div>
-              <Button variant="secondary" onClick={() => setDetailModal(false)}>Tutup</Button>
+          <div>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-foreground">Item ({spItems.length})</p>
+              <TombolUnduh namaBerkas={`item-${sp.po_number}`} namaLembar="Item PO" baris={spItems} testId="po-detail-unduh"
+                kolom={[
+                  { label: 'Kode', nilai: (it) => it.material_code || '' },
+                  { label: 'Item', nilai: (it) => it.material_name || it.description || '' },
+                  { label: 'Satuan dasar', nilai: (it) => it.base_uom || it.unit || '' },
+                  { label: 'Dipesan', nilai: (it) => Number(it.qty_ordered || 0) },
+                  { label: 'Diterima', nilai: (it) => Number(it.qty_received || 0) },
+                  { label: 'Sisa', nilai: (it) => Number(it.qty_remaining || 0) },
+                  { label: 'Harga per satuan dasar (Rp)', nilai: (it) => Number(it.unit_cost || 0) },
+                  { label: 'Total (Rp)', nilai: (it) => Number(it.subtotal ?? (it.qty_ordered * it.unit_cost)) },
+                ]} />
+            </div>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Item</TableHead>
+                    <TableHead className="text-right">Dipesan</TableHead>
+                    <TableHead className="text-right">Diterima</TableHead>
+                    <TableHead className="text-right">Harga</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody data-testid="po-detail-items">
+                  {spItems.map((it, idx) => {
+                    const f = Number(it.uom_factor || 1) || 1;
+                    const hasPack = it.uom && it.base_uom && it.uom !== it.base_uom && f !== 1;
+                    const lengkap = Number(it.qty_received) >= Number(it.qty_ordered);
+                    return (
+                      <TableRow key={it.id}>
+                        <TableCell>
+                          {/* 2026-08-07 — APA yang dibeli lebih dulu, baru kodenya. */}
+                          <p className="font-medium">{it.material_name || it.description || 'Item tanpa nama'}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {it.material_code || (it.material_linked === false ? 'Item bebas (non-master)' : '')}
+                          </p>
+                          {hasPack && (
+                            <p className="text-xs text-primary">1 {it.uom} = {fmtQty(f)} {it.base_uom}</p>
+                          )}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-right tabular-nums">
+                          <p>{fmtQty(it.qty_ordered)} {it.base_uom || it.unit}</p>
+                          {hasPack && <p className="text-xs text-muted-foreground">({fmtQty(it.qty_input)} {it.uom})</p>}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-right tabular-nums">
+                          <p className={lengkap ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--warning-text))]'}>
+                            {fmtQty(it.qty_received)} {it.base_uom || it.unit}
+                          </p>
+                          {Number(it.qty_remaining) > 0 && (
+                            <p className="text-xs text-muted-foreground">sisa {fmtQty(it.qty_remaining)}</p>
+                          )}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-right tabular-nums">
+                          <p>{fmtRpNum(it.unit_cost, 2)}</p>
+                          <p className="text-xs text-muted-foreground">/ {it.base_uom || it.unit}</p>
+                          {hasPack && (
+                            <p className="text-xs text-muted-foreground">({fmtRpNum(it.unit_cost_input, 2)} / {it.uom})</p>
+                          )}
+                          {sp.can_edit_price && (
+                            <Button variant="link" size="sm" className="h-auto p-0 text-xs"
+                              onClick={() => setPriceEdit({ item: it, value: Number(it.unit_cost_input || it.unit_cost || 0), reason: '' })}
+                              data-testid={`po-detail-price-edit-${idx}`}>
+                              Ubah harga
+                            </Button>
+                          )}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-right tabular-nums">
+                          {fmtRpNum(it.subtotal ?? (it.qty_ordered * it.unit_cost))}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+                <TableFooter>
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-right font-semibold">Total nilai PO</TableCell>
+                    <TableCell className="whitespace-nowrap text-right font-semibold tabular-nums">
+                      {fmtRpNum(spItems.reduce((sum, it) => sum + (it.qty_ordered * it.unit_cost), 0) || 0)}
+                    </TableCell>
+                  </TableRow>
+                </TableFooter>
+              </Table>
             </div>
           </div>
-        </Modal>
+
+          {/* 2026-11-06 (Tahap 2): jejak perubahan harga baris PO (Keuangan, dengan alasan) */}
+          {(sp.price_changes?.length || 0) > 0 && (
+            <div data-testid="po-detail-price-changes">
+              <p className="mb-2 text-sm font-semibold text-foreground">Perubahan harga ({sp.price_changes.length})</p>
+              <ul className="space-y-1 text-xs">
+                {sp.price_changes.map((c) => (
+                  <li key={c.id} className="text-muted-foreground">
+                    <span className="text-foreground">{c.description || 'Baris PO'}</span>
+                    {' · '}{fmtRpNum(c.old_unit_cost_input, 2)}
+                    {' → '}{fmtRpNum(c.new_unit_cost_input, 2)}
+                    {c.uom ? ` / ${c.uom}` : ''} · {c.by_name} · {c.at ? formatDateTimeID(c.at) : ''}
+                    {' · '}Alasan: {c.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* P1.C: jejak penerimaan barang atas PO ini */}
+          {(sp._grs?.length || 0) > 0 && (
+            <div data-testid="po-detail-grs">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <TruckIcon className="h-4 w-4 text-muted-foreground" />Penerimaan barang ({sp._grs.length})
+                </p>
+                <TombolUnduh namaBerkas={`penerimaan-${sp.po_number}`} namaLembar="Penerimaan" baris={sp._grs}
+                  testId="po-detail-grs-unduh"
+                  kolom={[
+                    { label: 'No. penerimaan', nilai: (g) => g.receipt_number },
+                    { label: 'Tanggal', nilai: (g) => (g.created_at ? formatDateTimeID(g.created_at) : '') },
+                    { label: 'Penerima', nilai: (g) => g.received_by || '' },
+                    { label: 'Jumlah item', nilai: (g) => Number(g.items_count || 0) },
+                    { label: 'Net diterima', nilai: (g) => Number(g.total_net || 0) },
+                    { label: 'Status', nilai: (g) => (GR_STATUS[g.status] || { label: g.status }).label },
+                  ]} />
+              </div>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>No. penerimaan</TableHead>
+                      <TableHead>Tanggal</TableHead>
+                      <TableHead>Penerima</TableHead>
+                      <TableHead className="text-right">Item</TableHead>
+                      <TableHead className="text-right">Net diterima</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {sp._grs.map((gr) => {
+                      const g = GR_STATUS[gr.status] || { label: gr.status || '—', tone: 'warning' };
+                      return (
+                        <TableRow key={gr.id} data-testid={`po-gr-row-${gr.id}`}>
+                          <TableCell className="font-medium">{gr.receipt_number}</TableCell>
+                          <TableCell className="whitespace-nowrap">{gr.created_at ? formatDateTimeID(gr.created_at) : '-'}</TableCell>
+                          <TableCell>{gr.received_by || '-'}</TableCell>
+                          <TableCell className="text-right tabular-nums">{gr.items_count}</TableCell>
+                          <TableCell className="text-right tabular-nums">{fmtQty(gr.total_net)}</TableCell>
+                          <TableCell><StatusBadge status={gr.status} label={g.label} tone={g.tone} /></TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+        </DetailPopup>
       )}
 
       {/* 2026-11-06 (Tahap 2): ubah harga satu baris PO — formulir pendek Keuangan */}
-      {priceEdit && selectedPO && (
-        <Modal onClose={() => setPriceEdit(null)} title="Ubah harga baris PO">
-          <div className="space-y-3" data-testid="po-price-edit-modal">
-            <p className="text-sm">
-              <strong>{priceEdit.item.material_name || priceEdit.item.description || 'Baris PO'}</strong> di {selectedPO.po_number}.
-              Harga baru berlaku untuk barang yang belum diterima; selisih dengan barang yang sudah diterima
-              diselesaikan lewat faktur pemasok (masuk HPP).
-            </p>
-            <div>
-              <label className="block text-xs font-medium mb-1" htmlFor="po-price-edit-value">
-                Harga per {priceEdit.item.uom || priceEdit.item.base_uom || 'satuan'} (Rp)
-              </label>
-              <MoneyInput glass id="po-price-edit-value" value={priceEdit.value}
-                onChange={e => setPriceEdit(p => ({ ...p, value: e.target.value }))}
-                className="text-right" data-testid="po-price-edit-value" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium mb-1" htmlFor="po-price-edit-reason">Alasan (wajib)</label>
-              <GlassInput id="po-price-edit-reason" value={priceEdit.reason}
-                onChange={e => setPriceEdit(p => ({ ...p, reason: e.target.value }))}
-                placeholder="mis. harga naik sesuai penawaran baru" data-testid="po-price-edit-reason" />
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="secondary" onClick={() => setPriceEdit(null)}>Batal</Button>
-              <Button onClick={savePriceEdit} disabled={saving || !String(priceEdit.reason || '').trim()}
-                data-testid="po-price-edit-save">
-                {saving ? 'Menyimpan...' : 'Simpan harga'}
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      )}
+      <FormPopup open={!!(priceEdit && selectedPO)} onClose={() => setPriceEdit(null)} ukuran="pendek"
+        testId="po-price-edit-modal" judul="Ubah harga baris PO"
+        keterangan={priceEdit && selectedPO
+          ? `${priceEdit.item.material_name || priceEdit.item.description || 'Baris PO'} di ${selectedPO.po_number}. Harga baru berlaku untuk barang yang belum diterima; selisih barang yang sudah diterima diselesaikan lewat faktur pemasok (masuk HPP).`
+          : undefined}
+        onSimpan={savePriceEdit} menyimpan={saving} labelSimpan="Simpan harga"
+        bisaSimpan={!!String(priceEdit?.reason || '').trim()}>
+        {priceEdit && (<>
+          <Isian label={`Harga per ${priceEdit.item.uom || priceEdit.item.base_uom || 'satuan'} (Rp)`} htmlFor="po-price-edit-value">
+            <MoneyInput id="po-price-edit-value" value={priceEdit.value}
+              onChange={e => setPriceEdit(p => ({ ...p, value: e.target.value }))}
+              className="text-right" data-testid="po-price-edit-value" />
+          </Isian>
+          <Isian label="Alasan" wajib htmlFor="po-price-edit-reason">
+            <Input id="po-price-edit-reason" value={priceEdit.reason}
+              onChange={e => setPriceEdit(p => ({ ...p, reason: e.target.value }))}
+              placeholder="mis. harga naik sesuai penawaran baru" data-testid="po-price-edit-reason" />
+          </Isian>
+        </>)}
+      </FormPopup>
 
-      {/* Submit Modal */}
-      {submitModal && selectedPO && (
-        <Modal onClose={() => setSubmitModal(false)} title="Ajukan PO untuk Approval">
-          <div className="space-y-4">
-            <p>Ajukan PO <strong>{selectedPO.po_number}</strong> untuk persetujuan?</p>
-            <p className="text-sm text-muted-foreground">
-              Setelah diajukan, status PO menjadi <strong>Menunggu Persetujuan</strong> dan menunggu approver menyetujui sebelum dapat dibuatkan Goods Receipt.
-            </p>
-            <div className="flex justify-end gap-2 pt-4">
-              <Button variant="secondary" onClick={() => setSubmitModal(false)} data-testid="po-submit-cancel-btn">Batal</Button>
-              <Button onClick={submitPO} disabled={saving} data-testid="po-submit-confirm-btn">
-                {saving ? 'Memproses...' : 'Ya, Ajukan'}
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      )}
+      {/* Setujui PO — catatan opsional */}
+      <FormPopup open={!!(approveModal && selectedPO)} onClose={() => setApproveModal(false)} ukuran="pendek"
+        testId="po-approve-form" judul="Konfirmasi persetujuan"
+        keterangan={selectedPO ? `Setujui PO ${selectedPO.po_number} senilai ${fmtRpNum(selectedPO.total_value)}?` : undefined}
+        onSimpan={approvePO} menyimpan={saving}
+        labelSimpan={selectedPO?.stage_label ? `Setujui — ${selectedPO.stage_label}` : 'Ya, setujui'}>
+        {selectedPO && (<>
+          {/* Tahap yang SEDANG disetujui harus jelas — approver perlu tahu ini
+              langkah ke berapa dan siapa yang harus memutuskan setelahnya. */}
+          {selectedPO.stage_label && (
+            <Notice tone="warning">
+              Anda menyetujui tahap <strong>{selectedPO.stage_label}</strong>
+              {selectedPO.total_stages ? ` (${selectedPO.stage_order} dari ${selectedPO.total_stages})` : ''}.
+              {selectedPO.next_stage
+                ? ` Setelah ini masih menunggu ${selectedPO.next_approver_label}.`
+                : ' Ini tahap terakhir — PO langsung disetujui penuh.'}
+            </Notice>
+          )}
+          {selectedPO.is_override && selectedPO.override_note && (
+            <Notice tone="info" testId="po-override-note">{selectedPO.override_note}</Notice>
+          )}
+          {selectedPO.exceeds_pr_value && (
+            <Notice tone="danger">
+              Perhatian: nilai PO ini melebihi nilai permintaan yang sudah disetujui
+              ({fmtRpNum(selectedPO.pr_approved_value)}).
+            </Notice>
+          )}
+          <Isian label="Catatan persetujuan (opsional)" htmlFor="po-approve-note">
+            <Textarea id="po-approve-note" rows={2} value={approveNote} onChange={e => setApproveNote(e.target.value)}
+              placeholder="Mis. harga sudah dicek terhadap daftar harga supplier" data-testid="po-approve-note" />
+          </Isian>
+        </>)}
+      </FormPopup>
 
-      {/* Approve Modal */}
-      {approveModal && selectedPO && (
-        <Modal onClose={() => setApproveModal(false)} title="Konfirmasi Persetujuan">
-          <div className="space-y-4">
-            <p>
-              Setujui PO <strong>{selectedPO.po_number}</strong> senilai{' '}
-              <strong>Rp {(selectedPO.total_value || 0).toLocaleString('id-ID')}</strong>?
-            </p>
-            {/* Tahap yang SEDANG disetujui harus jelas — approver perlu tahu ini
-                langkah ke berapa dan siapa yang harus memutuskan setelahnya. */}
-            {selectedPO.stage_label && (
-              <div className="rounded-lg bg-amber-50 dark:bg-amber-400/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
-                Anda menyetujui tahap <strong>{selectedPO.stage_label}</strong>
-                {selectedPO.total_stages ? ` (${selectedPO.stage_order} dari ${selectedPO.total_stages})` : ''}.
-                {selectedPO.next_stage
-                  ? ` Setelah ini masih menunggu ${selectedPO.next_approver_label}.`
-                  : ' Ini tahap terakhir — PO langsung disetujui penuh.'}
-              </div>
+      {/* U2 — Impor PO massal dari CSV/Excel */}
+      <FormPopup open={bulkModal} onClose={closeBulk} ukuran="panjang" testId="bulk-po-modal"
+        judul="Impor PO dari CSV" keterangan="Satu baris = satu item PO. Baris dengan supplier yang sama digabung menjadi satu PO."
+        onSimpan={runBulkImport} menyimpan={saving} bisaSimpan={bulkRows.length > 0}
+        labelSimpan={`Impor ${bulkRows.length} baris`}>
+        <Notice tone="info" icon={Download}
+          action={
+            <Button type="button" size="sm" variant="outline" data-testid="po-template-download"
+              onClick={() => {
+                const ws = XLSX.utils.json_to_sheet([
+                  { vendor_name: 'PT Supplier A', material_code: 'ACC-BTN-001', qty_ordered: 100, unit_cost: 500, unit: 'pcs' },
+                  { vendor_name: 'PT Supplier A', material_code: 'YRN-W-001',   qty_ordered: 50,  unit_cost: 12000, unit: 'kg' },
+                ]);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, 'Template PO');
+                XLSX.writeFile(wb, 'template-bulk-po.xlsx');
+              }}>
+              <Download />Templat Excel
+            </Button>
+          }>
+          Unduh templat Excel untuk format kolom yang benar.
+        </Notice>
+
+        <Isian label="Supplier bawaan" petunjuk="Opsional — bisa diganti per baris lewat kolom vendor_name di berkas.">
+          {/* 2026-11-07 (Tahap 5): dipilih dari Master Supplier (dulu teks bebas → PO "belum tertaut master"
+              bila ejaannya beda). Server menautkan lewat nama yang sama persis dengan master. */}
+          <SmartNativeSelect value={bulkVendor} onChange={e => setBulkVendor(e.target.value)} data-testid="bulk-vendor-input">
+            <option value="">Tanpa supplier bawaan (ambil dari kolom vendor_name)</option>
+            {suppliers.map(s => (
+              <option key={s.id} value={s.name}>{`${s.code} — ${s.name}`}</option>
+            ))}
+          </SmartNativeSelect>
+        </Isian>
+
+        <Isian label="Berkas Excel/CSV">
+          <input
+            ref={csvRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            className="hidden"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              const buf = await file.arrayBuffer();
+              const wb = XLSX.read(buf);
+              const ws = wb.Sheets[wb.SheetNames[0]];
+              const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+              setBulkRows(rows);
+              setBulkErrors([]);
+            }}
+          />
+          <Button type="button" variant="outline" className="w-full border-dashed" onClick={() => csvRef.current?.click()}
+            data-testid="bulk-file-picker">
+            <Upload />Pilih berkas Excel/CSV
+          </Button>
+        </Isian>
+
+        {bulkRows.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">{bulkRows.length} baris terbaca{bulkRows.length > 8 ? ' (8 pertama ditampilkan)' : ''}:</p>
+            <div className="max-h-48 overflow-auto rounded-lg border border-[var(--glass-border)]">
+              <Table>
+                <TableHeader>
+                  <TableRow>{Object.keys(bulkRows[0]).map(k => <TableHead key={k}>{k}</TableHead>)}</TableRow>
+                </TableHeader>
+                <TableBody>
+                  {bulkRows.slice(0, 8).map((r, i) => (
+                    <TableRow key={i}>
+                      {Object.values(r).map((v, j) => <TableCell key={j} className="whitespace-nowrap">{String(v)}</TableCell>)}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            {bulkErrors.length > 0 && (
+              <Notice tone="danger" icon={AlertTriangle}>
+                <ul className="space-y-0.5">{bulkErrors.map((e, i) => <li key={i}>{e}</li>)}</ul>
+              </Notice>
             )}
-            {selectedPO.is_override && selectedPO.override_note && (
-              <div className="rounded-lg bg-violet-50 dark:bg-violet-400/10 px-3 py-2 text-sm text-violet-800 dark:text-violet-300"
-                   data-testid="po-override-note">
-                {selectedPO.override_note}
-              </div>
-            )}
-            {selectedPO.exceeds_pr_value && (
-              <div className="rounded-lg bg-red-50 dark:bg-red-400/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
-                Perhatian: nilai PO ini melebihi nilai permintaan yang sudah disetujui
-                (Rp {(selectedPO.pr_approved_value || 0).toLocaleString('id-ID')}).
-              </div>
-            )}
-            <div>
-              <label className="block text-sm font-medium mb-1.5">Catatan persetujuan (opsional)</label>
-              <textarea
-                value={approveNote}
-                onChange={e => setApproveNote(e.target.value)}
-                placeholder="Mis. harga sudah dicek terhadap daftar harga supplier"
-                className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-foreground text-sm"
-                rows="2"
-                data-testid="po-approve-note"
-              />
-            </div>
-            <div className="flex justify-end gap-2 pt-4">
-              <Button variant="secondary" onClick={() => setApproveModal(false)}>Batal</Button>
-              <Button onClick={approvePO} disabled={saving} data-testid="po-approve-confirm-btn">
-                {saving ? 'Memproses...' : (selectedPO.stage_label ? `Setujui — ${selectedPO.stage_label}` : 'Ya, Setujui')}
-              </Button>
-            </div>
           </div>
-        </Modal>
-      )}
-
-      {/* Reject Modal */}
-      {rejectModal && selectedPO && (
-        <Modal onClose={() => setRejectModal(false)} title="Tolak Purchase Order">
-          <div className="space-y-4">
-            <p>Anda akan menolak PO <strong>{selectedPO.po_number}</strong>.</p>
-            <div>
-              <label className="block text-sm font-medium mb-1.5">Alasan Penolakan *</label>
-              <textarea
-                value={rejectReason}
-                onChange={e => setRejectReason(e.target.value)}
-                placeholder="Masukkan alasan penolakan..."
-                className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-foreground text-sm"
-                rows="3"
-                data-testid="po-reject-reason"
-              />
-            </div>
-            <div className="flex justify-end gap-2 pt-4">
-              <Button variant="secondary" onClick={() => setRejectModal(false)}>Batal</Button>
-              <Button variant="destructive" onClick={rejectPO} disabled={saving || !rejectReason.trim()}>
-                {saving ? 'Memproses...' : 'Tolak PO'}
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {/* Cancel Modal */}
-      {cancelModal && selectedPO && (
-        <Modal onClose={() => setCancelModal(false)} title="Batalkan Purchase Order">
-          <div className="space-y-4">
-            <p>Anda akan membatalkan PO <strong>{selectedPO.po_number}</strong>.</p>
-            <div>
-              <label className="block text-sm font-medium mb-1.5">Alasan Pembatalan *</label>
-              <textarea
-                value={cancelReason}
-                onChange={e => setCancelReason(e.target.value)}
-                placeholder="Masukkan alasan pembatalan..."
-                className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-foreground text-sm"
-                rows="3"
-                data-testid="po-cancel-reason"
-              />
-            </div>
-            <div className="flex justify-end gap-2 pt-4">
-              <Button variant="secondary" onClick={() => setCancelModal(false)}>Batal</Button>
-              <Button variant="destructive" onClick={cancelPO} disabled={saving || !cancelReason.trim()}>
-                {saving ? 'Memproses...' : 'Batalkan PO'}
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {/* U2 — Bulk PO CSV Import Modal */}
-      {bulkModal && (
-        <Modal onClose={() => { setBulkModal(false); setBulkRows([]); setBulkErrors([]); }} title="Import PO dari CSV" size="lg">
-          <div className="space-y-4" data-testid="bulk-po-modal">
-            {/* Template download */}
-            <div className="flex items-center gap-2 p-3 bg-sky-100 dark:bg-sky-500/10 rounded-lg border border-sky-300 dark:border-sky-500/20">
-              <Download size={14} className="text-sky-600 dark:text-sky-400 flex-shrink-0" />
-              <span className="text-xs text-sky-600 dark:text-sky-300 flex-1">Download template CSV untuk format yang benar</span>
-              <button
-                onClick={() => {
-                  const ws = XLSX.utils.json_to_sheet([
-                    { vendor_name: 'PT Supplier A', material_code: 'ACC-BTN-001', qty_ordered: 100, unit_cost: 500, unit: 'pcs' },
-                    { vendor_name: 'PT Supplier A', material_code: 'YRN-W-001',   qty_ordered: 50,  unit_cost: 12000, unit: 'kg' },
-                  ]);
-                  const wb = XLSX.utils.book_new();
-                  XLSX.utils.book_append_sheet(wb, ws, 'Template PO');
-                  XLSX.writeFile(wb, 'template-bulk-po.xlsx');
-                }}
-                className="text-xs text-sky-600 dark:text-sky-400 hover:text-sky-600 dark:text-sky-300 px-2 py-1 bg-sky-100 dark:bg-sky-500/20 rounded border border-sky-400 dark:border-sky-500/30"
-                data-testid="po-template-download"
-              >
-                <Download size={12} className="inline mr-1" /> Template Excel
-              </button>
-            </div>
-
-            {/* Default vendor */}
-            <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Supplier default (opsional — bisa diganti per baris file)</label>
-              {/* 2026-11-07 (Tahap 5): dipilih dari Master Supplier (dulu teks bebas → PO "belum tertaut master"
-                  bila ejaannya beda). Server menautkan lewat nama yang sama persis dengan master. */}
-              <SmartNativeSelect
-                value={bulkVendor}
-                onChange={e => setBulkVendor(e.target.value)}
-                className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-                data-testid="bulk-vendor-input"
-              >
-                <option value="">Tanpa supplier default (ambil dari kolom vendor_name)</option>
-                {suppliers.map(s => (
-                  <option key={s.id} value={s.name}>{`${s.code} — ${s.name}`}</option>
-                ))}
-              </SmartNativeSelect>
-            </div>
-
-            {/* File picker */}
-            <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Upload File Excel/CSV</label>
-              <input
-                ref={csvRef}
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                className="hidden"
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  const buf = await file.arrayBuffer();
-                  const wb = XLSX.read(buf);
-                  const ws = wb.Sheets[wb.SheetNames[0]];
-                  const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
-                  setBulkRows(rows);
-                  setBulkErrors([]);
-                }}
-              />
-              <button
-                onClick={() => csvRef.current?.click()}
-                className="flex items-center gap-2 text-sm text-foreground/70 hover:text-foreground px-4 py-2 bg-foreground/5 rounded-lg border border-dashed border-foreground/20 hover:border-foreground/40 transition-colors w-full justify-center"
-                data-testid="bulk-file-picker"
-              >
-                <Upload size={15} /> Pilih file Excel/CSV
-              </button>
-            </div>
-
-            {/* Preview */}
-            {bulkRows.length > 0 && (
-              <div>
-                <p className="text-xs text-foreground/60 mb-2">{bulkRows.length} baris terdeteksi:</p>
-                <div className="overflow-x-auto max-h-40 rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-                  <table className="w-full text-xs">
-                    <thead className="bg-foreground/5 sticky top-0">
-                      <tr>{Object.keys(bulkRows[0]).map(k => <th key={k} className="px-2 py-1.5 text-left text-foreground/50 font-medium">{k}</th>)}</tr>
-                    </thead>
-                    <tbody>
-                      {bulkRows.slice(0, 8).map((r, i) => (
-                        <tr key={i} className="border-t border-foreground/5">
-                          {Object.values(r).map((v, j) => <td key={j} className="px-2 py-1 text-foreground/70">{String(v)}</td>)}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {bulkErrors.length > 0 && (
-                  <div className="mt-2 p-2 bg-red-100 dark:bg-red-500/10 rounded-lg border border-red-300 dark:border-red-500/20 text-xs text-red-600 dark:text-red-300 space-y-0.5">
-                    {bulkErrors.map((e, i) => <div key={i}>{e}</div>)}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="ghost" onClick={() => { setBulkModal(false); setBulkRows([]); setBulkErrors([]); }}>Batal</Button>
-              <Button
-                disabled={bulkRows.length === 0 || saving}
-                onClick={async () => {
-                  setSaving(true);
-                  try {
-                    const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/rahaza/purchase-orders/bulk-import`, {
-                      method: 'POST',
-                      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ vendor_name: bulkVendor, rows: bulkRows }),
-                    });
-                    const d = await r.json();
-                    if (!r.ok) {
-                      setBulkErrors(d.errors || [d.detail || 'Import gagal']);
-                    } else {
-                      toast.success(`${d.created} PO berhasil dibuat`);
-                      if (d.row_errors?.length) setBulkErrors(d.row_errors);
-                      else { setBulkModal(false); setBulkRows([]); setBulkErrors([]); }
-                      // BUG-FIX 2026-07-25: dulu memanggil `loadList()` yang TIDAK ADA
-                      // ⇒ ReferenceError setelah import sukses ⇒ tertangkap catch di
-                      // bawah sehingga user melihat toast "Gagal import PO" padahal PO
-                      // BERHASIL dibuat, dan daftar tidak pernah ter-refresh.
-                      fetchList();
-                    }
-                  } catch {
-                    toast.error('Gagal import PO');
-                  } finally {
-                    setSaving(false);
-                  }
-                }}
-                data-testid="bulk-import-submit"
-              >
-                {saving ? 'Importing...' : `Import ${bulkRows.length} Baris`}
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {confirmDelPO && (
-        <ConfirmDialog title={`Hapus PO ${confirmDelPO.po_number}?`}
-          message="PO draft ini akan dihapus permanen."
-          onConfirm={() => doDeletePO(confirmDelPO)} onCancel={() => setConfirmDelPO(null)} />
-      )}
-    </div>
+        )}
+      </FormPopup>
+    </PageLayout>
   );
 }
