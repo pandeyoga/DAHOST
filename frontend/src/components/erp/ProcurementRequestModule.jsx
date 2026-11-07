@@ -715,7 +715,7 @@ function DetailModal({ item, onClose, onAction, token, focusReject = false }) {
           {loadTL ? (
             <p className="text-sm text-muted-foreground">Memuat riwayat…</p>
           ) : timeline.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Belum ada langkah — permintaan masih draf.</p>
+            <p className="text-sm text-muted-foreground">Permintaan masih draf — riwayat muncul setelah diajukan.</p>
           ) : (
             <ul className="space-y-1" data-testid="pr-timeline">
               {timeline.map((t, i) => (
@@ -1202,7 +1202,7 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
       {tab === 'inbox' ? (
         <div data-testid="pr-inbox-panel">
           {inboxLoading ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">Memuat daftar persetujuan…</p>
+            <p className="py-6 text-center text-sm text-muted-foreground">Memuat daftar persetujuan…</p>
           ) : (
             <TabelData kolom={kolomInbox} baris={inbox} onKlikBaris={setDetail} testId="pr-inbox-table"
               kosong={<EmptyState testId="pr-inbox-empty" title="Tidak ada permintaan yang menunggu keputusan Anda"
@@ -1210,7 +1210,7 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
           )}
         </div>
       ) : loading ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat permintaan…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat permintaan…</p>
       ) : prRows.length === 0 ? (
         <EmptyState icon={ShoppingCart}
           title={adaSaringan ? 'Tidak ada permintaan yang cocok' : tab === 'mine' ? 'Anda belum pernah membuat permintaan pengadaan' : 'Belum ada permintaan pengadaan'}

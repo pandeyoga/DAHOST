@@ -312,7 +312,7 @@ function PODetailPopup({ poId, headers, onClose }) {
             <BarisDetail label="Pemasok">{po.vendor_name || '—'}</BarisDetail>
             <BarisDetail label="Tanggal PO">{fmtDate(po.po_date)}</BarisDetail>
             <BarisDetail label={`Penerimaan barang (${grs.length})`}>
-              {grs.length === 0 ? <span className="text-muted-foreground">Belum ada penerimaan.</span> : (
+              {grs.length === 0 ? <span className="text-muted-foreground">Barang belum diterima.</span> : (
                 <ul className="space-y-1">
                   {grs.map(gr => (
                     <li key={gr.id} className="flex flex-wrap items-center gap-2">
@@ -325,7 +325,7 @@ function PODetailPopup({ poId, headers, onClose }) {
               )}
             </BarisDetail>
             <BarisDetail label={`Faktur supplier (${invoices.length})`}>
-              {invoices.length === 0 ? <span className="text-muted-foreground">Belum ada faktur.</span> : (
+              {invoices.length === 0 ? <span className="text-muted-foreground">Belum ditagih supplier.</span> : (
                 <ul className="space-y-1">
                   {invoices.map(inv => (
                     <li key={inv.id} className="flex flex-wrap items-center gap-2">
@@ -343,7 +343,7 @@ function PODetailPopup({ poId, headers, onClose }) {
           <div>
             <p className="mb-2 text-sm font-semibold text-foreground">Rekonsiliasi per item ({lines.length})</p>
             {lines.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Belum ada item.</p>
+              <p className="text-sm text-muted-foreground">PO ini tidak punya baris item.</p>
             ) : (
               <div className="overflow-x-auto">
                 <Table>
@@ -531,7 +531,7 @@ export default function ThreeWayMatchModule({ token, onNavigate }) {
         </div>
       )}>
       {loading && !data ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat rekonsiliasi…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat rekonsiliasi…</p>
       ) : (
         <TabelData kolom={kolom} baris={filtered} kunci={(r) => r.po_id} onKlikBaris={(r) => setSelectedPoId(r.po_id)}
           testId="3way-table"

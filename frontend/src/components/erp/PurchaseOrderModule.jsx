@@ -750,7 +750,7 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
         <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
       )}>
       {loading && list.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat purchase order…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat purchase order…</p>
       ) : (
         <TabelData kolom={kolom} baris={paged} onKlikBaris={openDetail} testId="po-table"
           kosong={<EmptyState icon={Package}
@@ -859,7 +859,7 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
           </div>
 
           {poForm.items.length === 0 && (
-            <p className="py-3 text-center text-sm text-muted-foreground">Belum ada item. Klik &quot;Tambah item&quot; untuk menambahkan.</p>
+            <p className="py-3 text-center text-sm text-muted-foreground">Klik &quot;Tambah item&quot; untuk menambahkan barang yang dipesan.</p>
           )}
 
           {poForm.items.map((item, idx) => {
@@ -950,7 +950,7 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
                     </span>
                   )}
                   {hint && (
-                    <Button type="button" size="sm" variant="outline" className="h-7 rounded-full text-xs"
+                    <Button type="button" size="sm" variant="outline" className="rounded-full"
                       onClick={() => {
                         updateItem(item.id, 'unit_cost_input', Number(hint.price));
                         if ((uomMap[item.material_id]?.units || []).some(u => u.unit === hint.uom)) {
