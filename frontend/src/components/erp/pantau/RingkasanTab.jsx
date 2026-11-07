@@ -45,7 +45,7 @@ export default function RingkasanTab(props) {
       </>}
     >
       {loading && !data ? <Section><LoadingRows /></Section> : data && <>
-        <Section title="Alur barang" hint="Jumlah barang yang SEDANG berada di tiap tahap (PO berjalan)." testId="pantau-alur"
+        <Section title="Alur barang" hint="Jumlah barang yang sedang berada di tiap tahap (PO berjalan)." testId="pantau-alur"
           unduh={{ namaBerkas: 'alur-barang', baris: data.alur || [], kolom: [
             { label: 'Tahap', nilai: (s) => s.label }, { label: 'Pcs', nilai: (s) => Number(s.qty) || 0 },
             { label: 'Dokumen', nilai: (s) => Number(s.docs) || 0 }, { label: 'Jenis dokumen', nilai: (s) => s.doc_label || '' },

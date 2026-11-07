@@ -515,7 +515,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
         );
       },
     },
-    { key: 'material_kg_per_pcs', label: 'Kain/pcs (kg) · info lama', render: (row) => { const v = readNumber(row, FIELD.materialKgPerPcs); return v ? Number(v).toFixed(3) : '-'; } },
+    { key: 'material_kg_per_pcs', label: 'Kain/pcs (kg) · catatan lama', render: (row) => { const v = readNumber(row, FIELD.materialKgPerPcs); return v ? Number(v).toFixed(3) : '-'; } },
     { key: 'bundle_size', label: 'Bundle', render: (row, v) => `${v || 30} pcs` },
     {
       key: 'actions', label: 'Aksi',

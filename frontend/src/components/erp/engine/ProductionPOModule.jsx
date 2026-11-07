@@ -761,16 +761,9 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
       subtitle={isInternal
         ? 'Pesanan produksi untuk stok sendiri: model, varian, qty, dan upah jahit per baris.'
         : 'Pesanan jasa maklon per klien: artikel katalog, varian, qty, harga jasa, dan upah jahit.'}
-      // Standar UI/UX v2: impor & unduh rinci (alat jarang) di kepala sebagai tombol garis; satu tombol utama Buat PO.
-      actions={<>
-        {/* 2026-11-06 (T6): impor PO lama (/import-data) dihentikan — satu jalur impor PO berjalan saat
-            cutoff lewat Data Transfer (pratinjau per baris; hanya admin/owner yang melihat tombolnya). */}
-        <ImportExportPanel importType={null} exportType="production-pos" exportFilters={{ status: filterStatus }}
-          exportLabel="Unduh per baris produk" exportTitle="Excel dari server: satu baris per produk PO" />
-        <ImportExportToolbar collectionKey="po_berjalan" label="PO berjalan saat cutoff"
-          importLabel="Impor PO berjalan" size="default" onImported={() => refetchPOs()} />
-        {canCreate && <Button type="button" onClick={openCreate} data-testid="create-po-btn"><Plus className="w-4 h-4" /> Buat PO</Button>}
-      </>}
+      // Standar UI/UX v2: kepala hanya tombol utama Buat PO; impor & unduh rinci (alat jarang) di baris alat
+      // supaya Buat PO tidak terdorong keluar layar HP.
+      actions={canCreate && <Button type="button" onClick={openCreate} data-testid="create-po-btn"><Plus className="w-4 h-4" /> Buat PO</Button>}
       detail={detailPo && (
         <PODetailPanel
           key={detailPo.id}
@@ -788,7 +781,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
           onQuickComplete={(po) => setQuickCompletePO(po)}
         />
       )}
-      tools={(
+      tools={(<>
         <TombolUnduh testId="po-unduh" baris={pos}
           namaBerkas={isInternal ? 'po-produksi-internal' : 'po-maklon'} namaLembar="PO"
           // semua PO hasil saringan (status + kata cari), bukan hanya halaman yang tampil
@@ -811,7 +804,13 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
             { label: 'Status', nilai: (r) => PO_STATUS_LABEL[r.status] || r.status || '' },
             { label: 'No. seri', nilai: (r) => (r.serial_numbers || []).join(', ') },
           ]} />
-      )}
+        {/* 2026-11-06 (T6): impor PO lama (/import-data) dihentikan — satu jalur impor PO berjalan saat
+            cutoff lewat Data Transfer (pratinjau per baris; hanya admin/owner yang melihat tombolnya). */}
+        <ImportExportPanel importType={null} exportType="production-pos" exportFilters={{ status: filterStatus }}
+          exportLabel="Unduh per baris produk" exportTitle="Excel dari server: satu baris per produk PO" />
+        <ImportExportToolbar collectionKey="po_berjalan" label="PO berjalan saat cutoff"
+          importLabel="Impor PO berjalan" size="default" onImported={() => refetchPOs()} />
+      </>)}
       filters={(
         <>
           <div className="relative w-full sm:w-64">
