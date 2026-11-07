@@ -74,11 +74,11 @@ function ImageThumb({ path, token, onDelete, large = false }) {
       <img src={url} alt="model" className="w-full h-full object-cover"
         onError={(e) => { e.target.src = IMAGE_FALLBACK; e.target.style.objectFit = 'contain'; e.target.style.padding = '6px'; }} />
       {onDelete && (
-        <button type="button" onClick={onDelete}
-          className="absolute top-0.5 right-0.5 p-1 rounded-full bg-[hsl(var(--destructive)/0.9)] text-white opacity-0 group-hover:opacity-100 transition-opacity"
-          data-testid="model-image-delete" title="Hapus foto">
-          <X className="w-3 h-3" />
-        </button>
+        <Button type="button" variant="destructive" size="icon-sm" onClick={onDelete}
+          className="absolute top-0.5 right-0.5 h-6 w-6 rounded-full opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity [&_svg]:size-3"
+          data-testid="model-image-delete" title="Hapus foto" aria-label="Hapus foto">
+          <X />
+        </Button>
       )}
     </div>
   );
@@ -234,8 +234,8 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
                           <div className="relative group">
                             <img src={fileUrl(st.image_path, token)} alt="step" className="w-20 h-20 rounded-lg object-cover border border-[var(--glass-border)]"
                               onError={(e) => { e.target.src = IMAGE_FALLBACK; }} />
-                            <button type="button" onClick={() => updateStep(idx, { image_path: '' })}
-                              className="absolute -top-1.5 -right-1.5 p-1 rounded-full bg-[hsl(var(--destructive)/0.9)] text-white" title="Hapus foto langkah"><X className="w-3 h-3" /></button>
+                            <Button type="button" variant="destructive" size="icon-sm" onClick={() => updateStep(idx, { image_path: '' })}
+                              className="absolute -top-1.5 -right-1.5 h-6 w-6 rounded-full [&_svg]:size-3" title="Hapus foto langkah" aria-label="Hapus foto langkah"><X /></Button>
                           </div>
                         ) : (
                           <label className="w-20 h-20 rounded-lg border-2 border-dashed border-[var(--glass-border)] flex flex-col items-center justify-center gap-1 cursor-pointer hover:border-primary text-muted-foreground"
@@ -244,9 +244,9 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
                             <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadStepPhoto(idx, e.target.files?.[0])} />
                           </label>
                         )}
-                        <button type="button" onClick={() => removeStep(idx)} className="ml-auto flex items-center gap-1 text-xs text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))]" data-testid={`sop-step-${idx}-remove`}>
-                          <Trash2 className="w-3.5 h-3.5" /> Hapus langkah
-                        </button>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => removeStep(idx)} className="ml-auto text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))]" data-testid={`sop-step-${idx}-remove`}>
+                          <Trash2 /> Hapus langkah
+                        </Button>
                       </div>
                     </div>
                   </div>
