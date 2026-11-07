@@ -339,11 +339,11 @@ export default function HRLMSModule({ token }) {
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari kursus" className="pl-8" data-testid="lms-search" />
               </div>
-              <SmartNativeSelect value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="w-[calc(50%-0.25rem)] sm:w-44" data-testid="lms-filter-cat">
+              <SmartNativeSelect value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="w-44" data-testid="lms-filter-cat">
                 <option value="">Semua kategori</option>
                 {categories.map((c) => <option key={c} value={c}>{c}</option>)}
               </SmartNativeSelect>
-              <SmartNativeSelect searchable={false} value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="w-[calc(50%-0.25rem)] sm:w-40">
+              <SmartNativeSelect searchable={false} value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="w-40">
                 <option value="">Semua status</option>
                 <option value="active">Aktif</option>
                 <option value="draft">Draf</option>

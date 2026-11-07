@@ -199,7 +199,7 @@ export default function RahazaHRReportsModule({ token }) {
   // ─── Penyaring (satu baris) ───
   const penyaring = (
     <>
-      <SmartNativeSelect value={periode.preset || 'custom'} searchable={false} className="w-[calc(50%-0.25rem)] sm:w-40" aria-label="Periode"
+      <SmartNativeSelect value={periode.preset || 'custom'} searchable={false} className="w-40" aria-label="Periode"
         onChange={(e) => setPeriode(periodFromPreset(e.target.value, periode))} data-testid="filter-period-preset">
         {PERIOD_PRESETS.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
       </SmartNativeSelect>
@@ -212,28 +212,28 @@ export default function RahazaHRReportsModule({ token }) {
             onChange={(v) => setPeriode((p) => ({ ...p, preset: 'custom', to: v }))} /></div>
         </>
       ) : null}
-      <SmartNativeSelect value={departmentId} onChange={e => setDepartmentId(e.target.value)} className="w-[calc(50%-0.25rem)] sm:w-48" data-testid="filter-department">
+      <SmartNativeSelect value={departmentId} onChange={e => setDepartmentId(e.target.value)} className="w-48" data-testid="filter-department">
         <option value="">Semua departemen</option>
         {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
       </SmartNativeSelect>
-      <SmartNativeSelect value={locationId} onChange={e => setLocationId(e.target.value)} className="w-[calc(50%-0.25rem)] sm:w-40" data-testid="filter-location">
+      <SmartNativeSelect value={locationId} onChange={e => setLocationId(e.target.value)} className="w-40" data-testid="filter-location">
         <option value="">Semua lokasi</option>
         {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
       </SmartNativeSelect>
       {activeTab !== 'turnover' && (
         <>
-          <SmartNativeSelect value={shiftId} onChange={e => setShiftId(e.target.value)} className="w-[calc(50%-0.25rem)] sm:w-40" data-testid="filter-shift">
+          <SmartNativeSelect value={shiftId} onChange={e => setShiftId(e.target.value)} className="w-40" data-testid="filter-shift">
             <option value="">Semua shift</option>
             {shifts.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </SmartNativeSelect>
-          <SmartNativeSelect value={employeeId} onChange={e => setEmployeeId(e.target.value)} className="w-[calc(50%-0.25rem)] sm:w-44" data-testid="filter-employee">
+          <SmartNativeSelect value={employeeId} onChange={e => setEmployeeId(e.target.value)} className="w-44" data-testid="filter-employee">
             <option value="">Semua karyawan</option>
             {employees.map(emp => <option key={emp.id} value={emp.id}>{`${emp.employee_code} - ${emp.name}`}</option>)}
           </SmartNativeSelect>
         </>
       )}
       {activeTab === 'payroll' && (
-        <SmartNativeSelect value={periodCode} onChange={e => setPeriodCode(e.target.value)} className="w-[calc(50%-0.25rem)] sm:w-52" data-testid="filter-period">
+        <SmartNativeSelect value={periodCode} onChange={e => setPeriodCode(e.target.value)} className="w-52" data-testid="filter-period">
           <option value="">Periode gaji terakhir</option>
           {payrollRuns.map(pr => <option key={pr.id} value={pr.period_code}>{pr.period_code}</option>)}
         </SmartNativeSelect>
