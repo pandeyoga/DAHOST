@@ -11,6 +11,10 @@ import { AlertTriangle, CheckCircle2, Inbox, Loader2, Plus, RefreshCw, Search, X
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { Input } from '@/components/ui/input';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { ambilSemuaHalaman } from '../DataTable';
 import { Textarea } from '@/components/ui/textarea';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
@@ -75,12 +79,12 @@ export default function PermintaanTab({ portalId, userRole }) {
             { key: 'dikirim', label: 'Sudah dikirim', count: counts.dikirim || 0 },
             { key: 'ditolak', label: 'Ditolak', count: counts.ditolak || 0 },
             { key: '', label: 'Semua', count: allCount }]} />
-        <div className="relative w-64 max-w-full">
+        <div className="relative w-full sm:w-64">
           <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nomor / vendor / PO…"
-            onKeyDown={(e) => { if (e.key === 'Enter') { setPage(1); load(); } }} className="pl-8 h-9" data-testid="permintaan-search" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nomor, vendor, PO (Enter)"
+            onKeyDown={(e) => { if (e.key === 'Enter') { setPage(1); load(); } }} className="pl-8" data-testid="permintaan-search" />
         </div>
-        <SmartNativeSelect value={source} onChange={(e) => { setPage(1); setSource(e.target.value); }} className="h-9 w-52"
+        <SmartNativeSelect value={source} onChange={(e) => { setPage(1); setSource(e.target.value); }} className="w-52"
           aria-label="Asal permintaan" data-testid="permintaan-source">
           <option value="">Semua asal</option>
           <option value="vendor">Portal vendor</option>
@@ -88,8 +92,26 @@ export default function PermintaanTab({ portalId, userRole }) {
           <option value="pemeriksaan">Hasil pemeriksaan vendor</option>
         </SmartNativeSelect>
       </>}
-      tools={<Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="permintaan-refresh">
-        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>}
+      tools={<>
+        <TombolUnduh namaBerkas="permintaan-tambahan-cmt" namaLembar="Permintaan" baris={rows} testId="permintaan-unduh"
+          ambilSemua={() => ambilSemuaHalaman(({ page: pg, per_page }) => {
+            const qs = new URLSearchParams({ page: String(pg), per_page: String(per_page) });
+            if (businessType) qs.set('business_type', businessType);
+            if (status) qs.set('status', status);
+            if (source) qs.set('source', source);
+            if (search.trim()) qs.set('search', search.trim());
+            return apiGet(`/kirim-cmt/requests?${qs}`);
+          })}
+          kolom={[
+            { label: 'No. permintaan', nilai: (r) => r.number }, { label: 'Jenis', nilai: (r) => r.kind_label || '' },
+            { label: 'Asal', nilai: (r) => r.source_label || '' }, { label: 'Vendor CMT', nilai: (r) => r.vendor_name || '' },
+            { label: 'PO', nilai: (r) => r.po_number || '' }, { label: 'Kiriman asal', nilai: (r) => r.shipment_number || '' },
+            { label: 'Isi', nilai: (r) => r.summary || '' }, { label: 'Status', nilai: (r) => STATUS_LABEL[r.status] || r.status || '' },
+            { label: 'Kiriman tambahan', nilai: (r) => r.child_shipment_number || '' }, { label: 'Tanggal', nilai: (r) => fmtDate(r.created_at) },
+          ]} />
+        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="permintaan-refresh">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>
+      </>}
       summary={error && <Notice tone="danger" title="Gagal memuat data">{error}</Notice>}
       detail={creating ? (
         <PermintaanForm businessType={businessType} onClose={() => setCreating(false)}
@@ -102,7 +124,7 @@ export default function PermintaanTab({ portalId, userRole }) {
         <PaginationLite page={page} totalPages={Math.max(1, Math.ceil(total / PER_PAGE))} total={total} pageSize={PER_PAGE} onPageChange={setPage} />
       )}
     >
-      <GlassCard className="p-0 overflow-hidden">
+      <GlassCard className="p-0 overflow-x-auto">
         {loading && !rows.length ? (
           <div className="p-4 text-sm text-muted-foreground"><RefreshCw className="w-4 h-4 animate-spin inline mr-2" />Memuat permintaan…</div>
         ) : rows.length === 0 ? (
@@ -197,8 +219,8 @@ function PermintaanDetail({ src, id, canDecide, onClose, onChanged }) {
       title={`${r.number} · ${r.vendor_name || '—'}`}
       description={`${r.kind_label} · ${r.source_label} · PO ${r.po_number || '—'}${r.shipment_number ? ` · dari ${r.shipment_number}` : ''} · ${fmtDate(r.created_at)}`}
       actions={pending && canDecide && <>
-        <Button variant="outline" onClick={reject} data-testid="permintaan-reject"><X className="w-4 h-4" />Tolak</Button>
-        <Button onClick={approve} disabled={busy || !pv || pv.blocking} data-testid="permintaan-approve">
+        <Button variant="destructive" onClick={reject} data-testid="permintaan-reject"><X className="w-4 h-4" />Tolak</Button>
+        <Button variant="success" onClick={approve} disabled={busy || !pv || pv.blocking} data-testid="permintaan-approve">
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}Setujui & kirim
         </Button>
       </>}>
@@ -301,31 +323,29 @@ function PermintaanForm({ businessType, onClose, onSaved }) {
     finally { setSaving(false); }
   };
   return (
-    <DetailPanel testId="permintaan-form" closeTestId="permintaan-form-close" onClose={onClose} title="Permintaan tambahan baru"
-      description="Input staf: pcs per SKU (potongan diambil dari BOM) dan/atau aksesoris dalam satuan serah."
-      actions={<Button onClick={save} disabled={!canSave} data-testid="permintaan-form-submit">
-        {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}Simpan permintaan</Button>}>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <label className="text-xs font-medium text-foreground/80 space-y-1">
-          <span>PO</span>
-          <SmartNativeSelect value={poId} onChange={(e) => pickPo(e.target.value)} className="h-9 w-full" aria-label="PO" data-testid="permintaan-form-po">
+    // Standar UI/UX v2 (8 Nov 2026): form = FormPopup panjang (dulu panel di atas tabel).
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="permintaan-form" judul="Permintaan tambahan baru"
+      keterangan="Input staf: pcs per SKU (potongan diambil dari BOM) dan/atau aksesoris dalam satuan serah."
+      onSimpan={save} bisaSimpan={!!canSave} menyimpan={saving} labelSimpan="Simpan permintaan">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Isian label="PO" wajib>
+          <SmartNativeSelect value={poId} onChange={(e) => pickPo(e.target.value)} className="w-full" aria-label="PO" data-testid="permintaan-form-po">
             <option value="">Pilih PO</option>
             {pos.map((p) => <option key={p.id} value={p.id}>{p.po_number} · {p.vendor_name || 'belum ada vendor'}</option>)}
           </SmartNativeSelect>
-        </label>
-        <label className="text-xs font-medium text-foreground/80 space-y-1">
-          <span>Kiriman asal (opsional)</span>
-          <SmartNativeSelect value={shipId} onChange={(e) => setShipId(e.target.value)} disabled={!poId} className="h-9 w-full"
+        </Isian>
+        <Isian label="Kiriman asal (opsional)">
+          <SmartNativeSelect value={shipId} onChange={(e) => setShipId(e.target.value)} disabled={!poId} className="w-full"
             aria-label="Kiriman asal" data-testid="permintaan-form-ship">
             <option value="">Tanpa kiriman asal</option>
             {ships.map((s) => <option key={s.id} value={s.id}>{s.shipment_number} · {fmtDate(s.shipment_date)}</option>)}
           </SmartNativeSelect>
-        </label>
+        </Isian>
       </div>
       {items.length > 0 && (
         <>
           <SectionLabel>Pcs per SKU (potongan dari BOM)</SectionLabel>
-          <Table data-testid="permintaan-form-lines">
+          <div className="overflow-x-auto"><Table data-testid="permintaan-form-lines">
             <TableHeader><TableRow><TableHead>SKU</TableHead><TableHead>Produk</TableHead><TableHead>Ukuran / warna</TableHead>
               <TableHead className="text-right">Qty diminta (pcs)</TableHead></TableRow></TableHeader>
             <TableBody>
@@ -341,7 +361,7 @@ function PermintaanForm({ businessType, onClose, onSaved }) {
                 </TableRow>
               ))}
             </TableBody>
-          </Table>
+          </Table></div>
         </>
       )}
       {poId && (
@@ -372,11 +392,10 @@ function PermintaanForm({ businessType, onClose, onSaved }) {
           })}
         </>
       )}
-      <label className="block text-xs font-medium text-foreground/80 space-y-1">
-        <span>Alasan (wajib)</span>
+      <Isian label="Alasan" wajib petunjuk="Minimal 3 huruf.">
         <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="mis. potongan rusak saat dijahit"
           data-testid="permintaan-form-reason" />
-      </label>
-    </DetailPanel>
+      </Isian>
+    </FormPopup>
   );
 }
