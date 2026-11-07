@@ -1,157 +1,139 @@
 /**
- * ProcurementTab — Procurement Request list + approval inbox (with role-based filter)
- * Extracted from AssetManagementPortal.jsx during Phase 4 refactor.
+ * ProcurementTab — permintaan pengadaan + kotak persetujuan (saringan peran dari server).
+ *
+ * Standar UI/UX v2 (8 Nov 2026):
+ *  • tab di dalam tab ("Semua Request" / "Inbox Approval") → pil penyaring satu baris dengan angka;
+ *  • daftar kartu berulang → tabel TabelData, klik baris membuka detail popup;
+ *  • kotak penyaring abu + emoji pada pilihan → pilihan biasa di baris penyaring;
+ *  • unduh Excel/CSV; daftar semua permintaan berhalaman (dulu diam-diam hanya 50 pertama).
  */
+import { Plus, RefreshCw, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, RefreshCw, ShoppingCart, CheckCheck } from 'lucide-react';
-import { PR_STATUS_CONFIG } from '../constants';
-import { fmtCurrency, fmtDate } from '../utils';
+import FilterChips from '@/components/ui/filter-chips';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import PaginationLite from '@/components/ui/pagination-lite';
+import PageLayout from '../../layout/PageLayout';
+import { EmptyState, StatusBadge as Lencana } from '../../moduleAtoms';
+import { PR_STATUS_CONFIG, PR_PRIORITY_LABEL } from '../constants';
+import { angka, ambilSemuaHalaman, fmtCurrency, fmtDate } from '../utils';
 import { StatusBadge } from '../components/StatusBadge';
+
+const labelStatus = (s) => PR_STATUS_CONFIG[s]?.label || PR_STATUS_CONFIG[String(s || '').toLowerCase()]?.label || s || '';
+
+const KOLOM_UNDUH = [
+  { label: 'No. permintaan', nilai: (p) => p.request_number },
+  { label: 'Judul', nilai: (p) => p.title },
+  { label: 'Pemohon', nilai: (p) => p.requested_by_name || '' },
+  { label: 'Departemen', nilai: (p) => p.department || '' },
+  { label: 'Prioritas', nilai: (p) => PR_PRIORITY_LABEL[p.priority] || p.priority || '' },
+  { label: 'Tanggal dibuat', nilai: (p) => fmtDate(p.created_at) },
+  { label: 'Perkiraan total', nilai: (p) => angka(p.total_estimated) },
+  { label: 'Status', nilai: (p) => labelStatus(p.status) },
+];
 
 export function ProcurementTab({
   prTab, setPrTab,
-  prData, prInbox,
+  prData, prInbox, prPagination, loading,
   prSearch, setPrSearch,
-  loadPRs,
-  onSelectPR,
+  loadPRs, fetchPRPage,
+  onSelectPR, onBuatPR,
   isAdminLike,
   inboxScope, setInboxScope,
   inboxDept, setInboxDept,
   uniqueDepartments,
 }) {
-  return (
-    <Tabs value={prTab} onValueChange={setPrTab}>
-      <TabsList>
-        <TabsTrigger value="all">Semua Request</TabsTrigger>
-        <TabsTrigger value="inbox">
-          Inbox Approval
-          {prInbox.length > 0 && (
-            <Badge className="ml-1 text-[10px] h-4 px-1.5 bg-amber-500 text-foreground">{prInbox.length}</Badge>
-          )}
-        </TabsTrigger>
-      </TabsList>
+  const kotak = prTab === 'inbox';
+  const halaman = prPagination?.page || 1;
+  const muatUlang = () => loadPRs(kotak ? 1 : halaman);
 
-      {/* All PRs */}
-      <TabsContent value="all" className="mt-3">
-        <div className="flex gap-2 mb-3">
-          <div className="relative flex-1 max-w-sm">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input placeholder="Cari request..." className="pl-8" value={prSearch}
+  const kolomUmum = [
+    { kunci: 'no', label: 'No. permintaan', hp: 'keterangan', isi: (p) => <span className="tabular-nums text-muted-foreground">{p.request_number}</span> },
+    { kunci: 'judul', label: 'Judul', hp: 'judul', isi: (p) => (
+      <span className="inline-flex flex-wrap items-center gap-1.5">
+        <span className="font-medium">{p.title}</span>
+        {kotak && p.can_approve === false && <Lencana status="muted" label="Hanya lihat" tone="muted" />}
+        {kotak && p.kind_label && p.kind !== 'pr' && <Lencana status="info" label={p.kind_label} tone="info" />}
+      </span>) },
+    { kunci: 'pemohon', label: 'Pemohon', isi: (p) => p.requested_by_name || '—' },
+    { kunci: 'dept', label: 'Departemen', isi: (p) => p.department || '—' },
+    { kunci: 'tgl', label: 'Tanggal', isi: (p) => fmtDate(p.created_at) },
+    { kunci: 'total', label: 'Perkiraan total', rata: 'kanan', isi: (p) => <span className="tabular-nums">{fmtCurrency(p.total_estimated)}</span> },
+    { kunci: 'status', label: 'Status', isi: (p) => <StatusBadge status={p.status} configMap={PR_STATUS_CONFIG} /> },
+  ];
+
+  const pesanKosongKotak = inboxScope === 'mine'
+    ? 'Anda belum memiliki permintaan yang menunggu persetujuan.'
+    : inboxScope === 'all'
+      ? 'Tidak ada permintaan yang menunggu persetujuan.'
+      : 'Tidak ada permintaan yang menunggu persetujuan Anda.';
+
+  return (
+    <PageLayout testId="asset-procurement" title="Pengadaan" subtitle="Permintaan pengadaan dan persetujuannya."
+      actions={<Button onClick={onBuatPR} data-testid="asset-pr-new-btn"><Plus />Buat permintaan</Button>}
+      filters={<>
+        <FilterChips value={prTab} onChange={setPrTab} hideWhenEmpty={false} testId="pr-view" ariaLabel="Tampilan"
+          options={[
+            { key: 'all', label: 'Semua permintaan', count: prPagination?.total ?? prData.length },
+            { key: 'inbox', label: 'Menunggu persetujuan', count: prInbox.length },
+          ]} />
+        {!kotak ? (
+          <div className="relative w-full sm:w-64">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input placeholder="Cari judul atau nomor" className="pl-8" value={prSearch}
               onChange={e => setPrSearch(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && loadPRs()}
+              onKeyDown={e => e.key === 'Enter' && loadPRs(1)}
               data-testid="pr-search-input" />
           </div>
-          <Button size="sm" onClick={loadPRs} data-testid="pr-refresh-btn"><RefreshCw size={14} /></Button>
-        </div>
-        <div className="space-y-2">
-          {prData.map(pr => (
-            <div key={pr.id}
-              className="flex items-center justify-between py-3 px-4 bg-[hsl(var(--card))] rounded-xl border cursor-pointer hover:bg-muted/30 transition-colors"
-              onClick={() => onSelectPR?.(pr)}
-              data-testid={`pr-row-${pr.id}`}>
-              <div className="flex items-start gap-3">
-                <ShoppingCart size={16} className="text-muted-foreground mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium">{pr.title}</p>
-                  <p className="text-xs text-muted-foreground">{pr.request_number} · {pr.requested_by_name}</p>
-                </div>
-              </div>
-              <div className="text-right flex items-center gap-3">
-                <div>
-                  <p className="text-sm font-semibold">{fmtCurrency(pr.total_estimated)}</p>
-                  <p className="text-xs text-muted-foreground">{fmtDate(pr.created_at)}</p>
-                </div>
-                <StatusBadge status={pr.status} configMap={PR_STATUS_CONFIG} />
-              </div>
-            </div>
-          ))}
-          {prData.length === 0 && (
-            <div className="text-center py-12 text-muted-foreground">
-              <ShoppingCart size={32} className="mx-auto mb-2 opacity-40" />
-              <p className="text-sm">Belum ada request pengadaan</p>
-            </div>
-          )}
-        </div>
-      </TabsContent>
-
-      {/* Approval Inbox */}
-      <TabsContent value="inbox" className="mt-3">
-        {/* Filter Toolbar */}
-        <div className="flex flex-wrap items-center gap-2 mb-3 p-3 bg-muted/30 rounded-lg border" data-testid="inbox-filter-toolbar">
-          <span className="text-xs font-medium text-muted-foreground mr-1">Tampilkan:</span>
-          <Select value={inboxScope} onValueChange={setInboxScope}>
-            <SelectTrigger className="h-8 w-[180px] text-xs" data-testid="inbox-scope-select">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="relevant">📥 Untuk Saya (sesuai role)</SelectItem>
-              {isAdminLike && <SelectItem value="all">🌐 Semua Pending</SelectItem>}
-              <SelectItem value="mine">📤 Permintaan Saya</SelectItem>
-            </SelectContent>
-          </Select>
-          {isAdminLike && uniqueDepartments.length > 0 && (
-            <Select value={inboxDept || '__all__'} onValueChange={(v) => setInboxDept(v === '__all__' ? '' : v)}>
-              <SelectTrigger className="h-8 w-[160px] text-xs" data-testid="inbox-dept-select">
-                <SelectValue placeholder="Semua Departemen" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Semua Departemen</SelectItem>
-                {uniqueDepartments.map(d => (
-                  <SelectItem key={d} value={d}>{d}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          <Button variant="ghost" size="sm" className="h-8 px-2 text-xs ml-auto" onClick={loadPRs} data-testid="inbox-refresh-btn">
-            <RefreshCw size={12} className="mr-1" /> Muat ulang
-          </Button>
-        </div>
-
-        <div className="space-y-2">
-          {prInbox.map(pr => (
-            <div key={pr.id}
-              className={`flex items-center justify-between py-3 px-4 border rounded-xl cursor-pointer transition-colors ${
-                pr.can_approve === false
-                  ? 'bg-muted/30 border-border/60 hover:bg-muted/50'
-                  : 'bg-amber-100 dark:bg-amber-500/5 border-amber-300 dark:border-amber-500/20 hover:bg-amber-100 dark:bg-amber-500/10'
-              }`}
-              onClick={() => onSelectPR?.(pr)}
-              data-testid={`inbox-item-${pr.request_number}`}>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium truncate">{pr.title}</p>
-                  {pr.can_approve === false && (
-                    <Badge variant="outline" className="text-[10px] h-4 px-1.5">read-only</Badge>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground truncate">
-                  {pr.request_number} · {pr.requested_by_name} · {pr.department || '—'}
-                </p>
-              </div>
-              <div className="text-right flex items-center gap-3 shrink-0">
-                <span className="text-sm font-bold">{fmtCurrency(pr.total_estimated)}</span>
-                <StatusBadge status={pr.status} configMap={PR_STATUS_CONFIG} />
-              </div>
-            </div>
-          ))}
-          {prInbox.length === 0 && (
-            <div className="text-center py-12 text-muted-foreground">
-              <CheckCheck size={32} className="mx-auto mb-2 opacity-40" />
-              <p className="text-sm">
-                {inboxScope === 'mine'
-                  ? 'Anda belum memiliki request pending.'
-                  : inboxScope === 'all'
-                    ? 'Tidak ada request menunggu approval.'
-                    : 'Tidak ada request yang menunggu persetujuan Anda.'}
-              </p>
-            </div>
-          )}
-        </div>
-      </TabsContent>
-    </Tabs>
+        ) : (
+          <>
+            <SmartNativeSelect value={inboxScope} onChange={e => setInboxScope(e.target.value)} searchable={false}
+              className="w-56" aria-label="Tampilkan" data-testid="inbox-scope-select">
+              <option value="relevant">Untuk saya (sesuai peran)</option>
+              {isAdminLike && <option value="all">Semua yang menunggu</option>}
+              <option value="mine">Permintaan saya</option>
+            </SmartNativeSelect>
+            {isAdminLike && uniqueDepartments.length > 0 && (
+              <SmartNativeSelect value={inboxDept} onChange={e => setInboxDept(e.target.value)}
+                className="w-48" aria-label="Departemen" data-testid="inbox-dept-select">
+                <option value="">Semua departemen</option>
+                {uniqueDepartments.map(d => <option key={d} value={d}>{d}</option>)}
+              </SmartNativeSelect>
+            )}
+          </>
+        )}
+      </>}
+      tools={<>
+        {kotak ? (
+          <TombolUnduh namaBerkas="pengadaan-menunggu-persetujuan" namaLembar="Menunggu persetujuan" baris={prInbox}
+            kolom={[...KOLOM_UNDUH, { label: 'Bisa saya setujui', nilai: (p) => (p.can_approve === false ? 'Tidak' : 'Ya') }]}
+            testId="inbox-unduh" />
+        ) : (
+          <TombolUnduh namaBerkas="permintaan-pengadaan" namaLembar="Permintaan pengadaan" baris={prData}
+            kolom={KOLOM_UNDUH} testId="pr-unduh" ambilSemua={() => ambilSemuaHalaman(fetchPRPage)} />
+        )}
+        <Button variant="outline" size="icon" onClick={muatUlang} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid={kotak ? 'inbox-refresh-btn' : 'pr-refresh-btn'}>
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      footer={!kotak && prPagination?.total > 0 ? (
+        <PaginationLite page={halaman} totalPages={prPagination.total_pages} total={prPagination.total}
+          pageSize={prPagination.page_size || 50} onPageChange={(p) => loadPRs(p)} />
+      ) : null}>
+      {kotak ? (
+        <TabelData baris={prInbox} kolom={kolomUmum} onKlikBaris={onSelectPR} testId="inbox-table"
+          kunci={(p) => `${p.kind || 'pr'}-${p.id}`}
+          kosong={<EmptyState title="Kotak persetujuan kosong" description={pesanKosongKotak} testId="inbox-kosong" />} />
+      ) : loading && prData.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat permintaan…</p>
+      ) : (
+        <TabelData baris={prData} kolom={kolomUmum} onKlikBaris={onSelectPR} testId="pr-table"
+          kosong={<EmptyState title={prSearch ? 'Tidak ada permintaan yang cocok' : 'Belum ada permintaan pengadaan'}
+            description={prSearch ? 'Ubah kata pencarian.' : 'Buat permintaan lewat tombol "Buat permintaan".'} />} />
+      )}
+    </PageLayout>
   );
 }

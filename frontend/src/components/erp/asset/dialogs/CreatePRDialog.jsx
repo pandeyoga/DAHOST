@@ -1,26 +1,33 @@
 /**
- * CreatePRDialog — Procurement Request creation form with line items.
- * Extracted from AssetManagementPortal.jsx (Phase 2 refactor)
+ * CreatePRDialog — buat permintaan pengadaan beserta daftar barang.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): popup form standar ukuran panjang; setiap isian berlabel (dulu hanya
+ * placeholder); kotak abu per barang → baris bergaris tipis; konfirmasi "tutup tanpa simpan" memakai dialog
+ * aplikasi (dulu konfirmasi bawaan peramban); Enter di isian = simpan (dulu Ctrl+Enter). Isian & data yang dikirim sama.
  */
 import { useState, useEffect } from 'react';
+import { Plus, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Plus, X } from 'lucide-react';
-import { toast } from 'sonner';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { apicall, fmtCurrency } from '../utils';
 import { DepartmentSelect } from '../../hr/hrPickers';
+
+const barisBaru = () => ({ name: '', specification: '', qty: 1, unit: 'pcs', estimated_price: '', notes: '' });
 
 export function CreatePRDialog({ open, onClose, token, onCreated }) {
   const initialForm = {
     title: '', description: '', justification: '', priority: 'medium',
     request_type: 'asset', department: '',
-    items: [{ name: '', specification: '', qty: 1, unit: 'pcs', estimated_price: '', notes: '' }],
+    items: [barisBaru()],
   };
   const [form, setForm] = useState(initialForm);
   const [loading, setLoading] = useState(false);
+  const [galat, setGalat] = useState('');
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
   // Reset form whenever dialog re-opens (clear stale data)
@@ -28,6 +35,7 @@ export function CreatePRDialog({ open, onClose, token, onCreated }) {
     if (open) {
       setForm(initialForm);
       setLoading(false);
+      setGalat('');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -37,7 +45,7 @@ export function CreatePRDialog({ open, onClose, token, onCreated }) {
     items: p.items.map((it, i) => i === idx ? { ...it, [k]: v } : it),
   }));
 
-  const addItem = () => setForm(p => ({ ...p, items: [...p.items, { name: '', specification: '', qty: 1, unit: 'pcs', estimated_price: '', notes: '' }] }));
+  const addItem = () => setForm(p => ({ ...p, items: [...p.items, barisBaru()] }));
   const removeItem = (idx) => setForm(p => ({ ...p, items: p.items.filter((_, i) => i !== idx) }));
 
   const totalEst = form.items.reduce((s, i) => s + (Number(i.estimated_price) || 0) * (Number(i.qty) || 1), 0);
@@ -50,17 +58,22 @@ export function CreatePRDialog({ open, onClose, token, onCreated }) {
     form.justification.trim() !== '' ||
     form.items.some(i => (i.name || '').trim() !== '' || (i.specification || '').trim() !== '' || Number(i.estimated_price) > 0);
 
-  const safeClose = () => {
+  const safeClose = async () => {
     if (loading) return; // tidak boleh close saat submit
     if (isDirty) {
-      if (!window.confirm('Form berisi data yang belum disimpan. Yakin ingin menutup?')) return;
+      const ok = await confirmDialog({
+        title: 'Tutup tanpa menyimpan?', body: 'Isian permintaan ini belum disimpan dan akan hilang.',
+        confirmLabel: 'Tutup', danger: true,
+      });
+      if (!ok) return;
     }
     onClose();
   };
 
   const submit = async () => {
-    if (!form.title.trim()) { toast.error('Judul wajib diisi'); return; }
-    if (form.items.some(i => !i.name)) { toast.error('Nama item wajib diisi'); return; }
+    if (!form.title.trim()) { setGalat('Judul wajib diisi.'); return; }
+    if (form.items.some(i => !i.name)) { setGalat('Nama barang wajib diisi.'); return; }
+    setGalat('');
     setLoading(true);
     try {
       const data = await apicall('POST', '/api/procurement/requests', token, {
@@ -68,116 +81,93 @@ export function CreatePRDialog({ open, onClose, token, onCreated }) {
         items: form.items.map(i => ({ ...i, qty: Number(i.qty) || 1, estimated_price: Number(i.estimated_price) || 0 })),
       });
       if (data.id) {
-        toast.success(`PR ${data.request_number} berhasil dibuat`);
+        toast.success(`Permintaan ${data.request_number} berhasil dibuat`);
         // Close dialog FIRST so UI updates immediately, then trigger reload.
         onClose();
         // defer onCreated to next tick so dialog close animation can start
         setTimeout(() => onCreated && onCreated(data), 0);
       } else {
-        toast.error(data.detail || 'Gagal membuat request');
+        setGalat(data.detail || 'Gagal membuat permintaan.');
       }
-    } catch {
-      toast.error('Gagal membuat request');
+    } catch (e) {
+      setGalat(e.message || 'Gagal membuat permintaan.');
     } finally {
       setLoading(false);
     }
   };
 
-  // Ctrl/Cmd + Enter to submit
-  const handleKeyDown = (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-      e.preventDefault();
-      if (!loading && isValid) submit();
-    }
-  };
-
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) safeClose(); }}>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto" onKeyDown={handleKeyDown} data-testid="create-pr-dialog">
-        <DialogHeader>
-          <DialogTitle>Buat Request Pengadaan</DialogTitle>
-          <DialogDescription>Ajukan permintaan pengadaan baru beserta daftar item, estimasi harga, dan prioritas.</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3 py-2">
-          <Input placeholder="Judul request... *" value={form.title}
-            onChange={e => set('title', e.target.value)} data-testid="pr-title-input" autoFocus />
-          <div className="grid grid-cols-3 gap-2">
-            <Select value={form.priority} onValueChange={v => set('priority', v)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="low">Prioritas Rendah</SelectItem>
-                <SelectItem value="medium">Prioritas Sedang</SelectItem>
-                <SelectItem value="high">Prioritas Tinggi</SelectItem>
-                <SelectItem value="urgent">Mendesak</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={form.request_type} onValueChange={v => set('request_type', v)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="asset">Aset</SelectItem>
-                <SelectItem value="consumable">Habis Pakai</SelectItem>
-                <SelectItem value="service">Jasa/Layanan</SelectItem>
-                <SelectItem value="other">Lainnya</SelectItem>
-              </SelectContent>
-            </Select>
-            {/* 2026-11-07 (OR1): Struktur Organisasi; bawaan = departemen karyawan pemohon (isian bawaan
-                tidak dihitung "belum disimpan") */}
-            {open && <DepartmentSelect token={token} value={form.department} defaultToMine testId="asset-pr-department"
-              onChange={v => set('department', v)} />}
-          </div>
-          <Input placeholder="Justifikasi kebutuhan..." value={form.justification}
-            onChange={e => set('justification', e.target.value)} />
+    <FormPopup open={open} onClose={safeClose} ukuran="panjang" testId="create-pr-dialog"
+      judul="Buat permintaan pengadaan"
+      keterangan="Ajukan permintaan pengadaan beserta daftar barang, perkiraan harga, dan prioritas."
+      onSimpan={submit} labelSimpan="Buat permintaan" menyimpan={loading} bisaSimpan={isValid} galat={galat}>
+      <Isian label="Judul" wajib htmlFor="pr-title">
+        <Input id="pr-title" placeholder="Contoh: Mesin obras tambahan line 3" value={form.title}
+          onChange={e => set('title', e.target.value)} data-testid="pr-title-input" autoFocus />
+      </Isian>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Isian label="Prioritas">
+          <SmartNativeSelect value={form.priority} onChange={e => set('priority', e.target.value)} searchable={false}
+            className="h-9 w-full" aria-label="Prioritas" data-testid="pr-priority">
+            <option value="low">Rendah</option>
+            <option value="medium">Sedang</option>
+            <option value="high">Tinggi</option>
+            <option value="urgent">Mendesak</option>
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Jenis">
+          <SmartNativeSelect value={form.request_type} onChange={e => set('request_type', e.target.value)} searchable={false}
+            className="h-9 w-full" aria-label="Jenis" data-testid="pr-type">
+            <option value="asset">Aset</option>
+            <option value="consumable">Habis pakai</option>
+            <option value="service">Jasa/layanan</option>
+            <option value="other">Lainnya</option>
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Departemen">
+          {/* 2026-11-07 (OR1): Struktur Organisasi; bawaan = departemen karyawan pemohon (isian bawaan
+              tidak dihitung "belum disimpan") */}
+          {open && <DepartmentSelect token={token} value={form.department} defaultToMine testId="asset-pr-department"
+            onChange={v => set('department', v)} />}
+        </Isian>
+      </div>
+      <Isian label="Justifikasi" htmlFor="pr-justification" petunjuk="Mengapa barang ini dibutuhkan.">
+        <Input id="pr-justification" placeholder="Justifikasi kebutuhan…" value={form.justification}
+          onChange={e => set('justification', e.target.value)} />
+      </Isian>
 
-          {/* Items */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-sm font-medium">Daftar Item</p>
-              <Button variant="outline" size="sm" onClick={addItem}><Plus size={12} className="mr-1" /> Tambah</Button>
-            </div>
-            <div className="space-y-2">
-              {form.items.map((item, idx) => (
-                <div key={idx} className="bg-muted/40 rounded-lg p-3 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Input placeholder={`Item ${idx + 1} *`} value={item.name}
-                      onChange={e => setItem(idx, 'name', e.target.value)} className="flex-1" />
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500" onClick={() => removeItem(idx)}
-                      disabled={form.items.length === 1}><X size={14} /></Button>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <Input placeholder="Qty" type="number" value={item.qty}
-                      onChange={e => setItem(idx, 'qty', e.target.value)} />
-                    <Input placeholder="Satuan (pcs)" value={item.unit}
-                      onChange={e => setItem(idx, 'unit', e.target.value)} />
-                    <MoneyInput placeholder="Est. Harga (Rp)" value={item.estimated_price}
-                      onChange={e => setItem(idx, 'estimated_price', e.target.value)} />
-                  </div>
-                  <Input placeholder="Spesifikasi / catatan" value={item.specification}
-                    onChange={e => setItem(idx, 'specification', e.target.value)} />
-                </div>
-              ))}
-            </div>
-            <div className="mt-2 text-right text-sm">
-              Total Estimasi: <span className="font-bold">{fmtCurrency(totalEst)}</span>
-            </div>
-          </div>
+      {/* Daftar barang */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-medium text-foreground">Daftar barang <span className="text-[hsl(var(--danger-text))]">*</span></p>
+          <Button type="button" variant="outline" size="sm" onClick={addItem} data-testid="pr-add-item"><Plus />Tambah barang</Button>
         </div>
-        <DialogFooter className="flex items-center !justify-between gap-2">
-          <span className="text-[10px] text-muted-foreground italic hidden sm:inline">
-            Tip: tekan Ctrl+Enter untuk submit cepat
-          </span>
-          <div className="flex gap-2 ml-auto">
-            <Button variant="outline" onClick={safeClose} disabled={loading} data-testid="create-pr-cancel">Batal</Button>
-            <Button onClick={submit} disabled={loading || !isValid} data-testid="create-pr-submit">
-              {loading ? (
-                <span className="inline-flex items-center gap-2">
-                  <span className="h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
-                  Menyimpan...
-                </span>
-              ) : 'Buat Request'}
-            </Button>
+        {form.items.map((item, idx) => (
+          <div key={idx} className="space-y-2 rounded-lg border border-[var(--glass-border)] p-3" data-testid={`pr-item-${idx}`}>
+            <div className="flex items-center gap-2">
+              <Input placeholder={`Nama barang ${idx + 1}`} aria-label={`Nama barang ${idx + 1}`} value={item.name}
+                onChange={e => setItem(idx, 'name', e.target.value)} className="flex-1" />
+              <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeItem(idx)}
+                disabled={form.items.length === 1} title="Hapus barang" aria-label={`Hapus barang ${idx + 1}`}>
+                <X />
+              </Button>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <Input placeholder="Jumlah" aria-label="Jumlah" type="number" inputMode="numeric" value={item.qty}
+                onChange={e => setItem(idx, 'qty', e.target.value)} />
+              <Input placeholder="Satuan (pcs)" aria-label="Satuan" value={item.unit}
+                onChange={e => setItem(idx, 'unit', e.target.value)} />
+              <MoneyInput placeholder="Perkiraan harga (Rp)" aria-label="Perkiraan harga satuan" value={item.estimated_price}
+                onChange={e => setItem(idx, 'estimated_price', e.target.value)} />
+            </div>
+            <Input placeholder="Spesifikasi / catatan" aria-label="Spesifikasi" value={item.specification}
+              onChange={e => setItem(idx, 'specification', e.target.value)} />
           </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        ))}
+        <p className="text-right text-sm">
+          Perkiraan total: <span className="font-semibold tabular-nums">{fmtCurrency(totalEst)}</span>
+        </p>
+      </div>
+    </FormPopup>
   );
 }

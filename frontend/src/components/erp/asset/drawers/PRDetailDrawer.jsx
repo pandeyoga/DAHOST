@@ -1,23 +1,28 @@
 /**
- * PRDetailDrawer — Procurement Request detail panel with approval workflow & timeline.
- * Extracted from AssetManagementPortal.jsx (Phase 3 refactor)
+ * PRDetailDrawer — detail permintaan pengadaan: data, daftar barang, riwayat persetujuan, tombol keputusan.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): panel samping (Sheet) → DetailPopup; tombol keputusan di kepala popup
+ * (Ajukan · Setujui hijau · Tolak merah · Batalkan); alasan penolakan lewat dialog konfirmasi (server
+ * mewajibkan alasan); kode mentah (prioritas, jenis, langkah persetujuan) → label Indonesia; daftar barang =
+ * tabel yang bisa diunduh. Endpoint & syarat tombol tidak berubah.
  */
 import { useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Separator } from '@/components/ui/separator';
-import { ShoppingCart, Send, CheckCheck, X } from 'lucide-react';
+import { Ban, Check, Send, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { apicall, fmtCurrency, fmtDate } from '../utils';
+import { Button } from '@/components/ui/button';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { cn } from '@/lib/utils';
+import { angka, apicall, fmtCurrency, fmtDate, fmtDateTime } from '../utils';
 import { StatusBadge } from '../components/StatusBadge';
-import { PR_STATUS_CONFIG } from '../constants';
+import { Bagian } from '../components/KPICard';
+import { PR_STATUS_CONFIG, PR_PRIORITY_LABEL, PR_TYPE_LABEL, PR_STEP_LABEL } from '../constants';
 
 export function PRDetailDrawer({ pr, token, open, onClose, onRefresh, currentUser }) {
   const [loading, setLoading] = useState(false);
-  const [comment, setComment] = useState('');
-  const [rejectReason, setRejectReason] = useState('');
-  const [showRejectInput, setShowRejectInput] = useState(false);
+  const [comment] = useState('');
 
   if (!pr) return null;
 
@@ -32,125 +37,105 @@ export function PRDetailDrawer({ pr, token, open, onClose, onRefresh, currentUse
       const d = await apicall('POST', `/api/procurement/requests/${pr.id}/${endpoint}`, token, body);
       if (d.ok) { toast.success('Berhasil'); onRefresh(); onClose(); }
       else toast.error(d.detail || 'Gagal');
-    } catch { toast.error('Gagal'); }
+    } catch (e) { toast.error(e.message || 'Gagal'); }
     finally { setLoading(false); }
   };
 
+  const tolak = async () => {
+    const reason = await confirmDialog({
+      title: 'Tolak permintaan ini?', body: `${pr.request_number} — ${pr.title}. Tulis alasan agar pemohon tahu.`,
+      confirmLabel: 'Tolak', danger: true,
+      input: { label: 'Alasan penolakan (wajib)', placeholder: 'Alasan penolakan…' },
+    });
+    if (reason) action('reject', { reason });
+  };
+  const batalkan = async () => {
+    const ok = await confirmDialog({
+      title: 'Batalkan permintaan ini?', body: `${pr.request_number} — ${pr.title} tidak akan diproses lagi.`,
+      confirmLabel: 'Batalkan permintaan', danger: true,
+    });
+    if (ok) action('cancel');
+  };
+
+  const items = pr.items || [];
+  const steps = pr.approval_steps || [];
+
   return (
-    <Sheet open={open} onOpenChange={onClose}>
-      <SheetContent className="w-full sm:w-[480px] overflow-y-auto">
-        <SheetHeader>
-          <SheetTitle className="flex items-center gap-2">
-            <ShoppingCart size={16} />
-            <span className="truncate">{pr.title}</span>
-          </SheetTitle>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-mono text-muted-foreground">{pr.request_number}</span>
-            <StatusBadge status={pr.status} configMap={PR_STATUS_CONFIG} />
-          </div>
-        </SheetHeader>
+    <DetailPopup open={open} onClose={onClose} judul={pr.title} testId="pr-detail"
+      keterangan={[pr.request_number, pr.requested_by_name].filter(Boolean).join(' · ')}
+      status={<StatusBadge status={pr.status} configMap={PR_STATUS_CONFIG} />}
+      aksi={(canSubmit || canApprove || canCancel) ? (
+        <>
+          {canSubmit && (
+            <Button size="sm" onClick={() => action('submit')} disabled={loading} data-testid="pr-submit-btn">
+              <Send />Ajukan persetujuan
+            </Button>
+          )}
+          {canApprove && (
+            <>
+              <Button size="sm" variant="success" onClick={() => action('approve', { comment })} disabled={loading}
+                data-testid="pr-approve-btn">
+                <Check />Setujui
+              </Button>
+              <Button size="sm" variant="destructive" onClick={tolak} disabled={loading} data-testid="pr-reject-btn">
+                <X />Tolak
+              </Button>
+            </>
+          )}
+          {canCancel && (
+            <Button size="sm" variant="outline" onClick={batalkan} disabled={loading} data-testid="pr-cancel-btn">
+              <Ban />Batalkan permintaan
+            </Button>
+          )}
+        </>
+      ) : null}>
+      <dl className="divide-y divide-[var(--glass-border)]">
+        <BarisDetail label="Pemohon">{pr.requested_by_name || '—'}</BarisDetail>
+        <BarisDetail label="Departemen">{pr.department || '—'}</BarisDetail>
+        <BarisDetail label="Prioritas">{PR_PRIORITY_LABEL[pr.priority] || pr.priority || '—'}</BarisDetail>
+        <BarisDetail label="Jenis">{PR_TYPE_LABEL[pr.request_type] || pr.request_type || '—'}</BarisDetail>
+        <BarisDetail label="Tanggal dibuat">{fmtDate(pr.created_at)}</BarisDetail>
+        <BarisDetail label="Perkiraan total"><span className="tabular-nums">{fmtCurrency(pr.total_estimated)}</span></BarisDetail>
+        {pr.justification && <BarisDetail label="Justifikasi">{pr.justification}</BarisDetail>}
+      </dl>
 
-        <div className="mt-4 space-y-4">
-          {/* Info */}
-          <div className="grid grid-cols-2 gap-2">
-            {[
-              ['Pemohon', pr.requested_by_name], ['Departemen', pr.department || '-'],
-              ['Prioritas', pr.priority], ['Tipe', pr.request_type],
-              ['Tgl Dibuat', fmtDate(pr.created_at)], ['Total Est.', fmtCurrency(pr.total_estimated)],
-            ].map(([k, v]) => (
-              <div key={k} className="bg-muted/40 rounded-lg p-2">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">{k}</p>
-                <p className="text-sm font-medium">{v}</p>
-              </div>
+      <Bagian judul={`Daftar barang (${items.length})`} testId="pr-detail-items"
+        alat={<TombolUnduh namaBerkas={`barang-${pr.request_number || 'permintaan'}`} namaLembar="Barang" baris={items}
+          testId="pr-items-unduh" kolom={[
+            { label: 'Barang', nilai: (it) => it.name },
+            { label: 'Spesifikasi', nilai: (it) => it.specification || '' },
+            { label: 'Jumlah', nilai: (it) => Number(it.qty) || 0 },
+            { label: 'Satuan', nilai: (it) => it.unit || '' },
+            { label: 'Perkiraan total', nilai: (it) => angka(it.total_price) },
+          ]} />}>
+        <TabelData baris={items} kunci={(it) => `${it.name}-${it.specification || ''}-${it.qty}`} testId="pr-items-table"
+          kosong={<p className="py-4 text-center text-sm text-muted-foreground">Tidak ada barang.</p>}
+          kolom={[
+            { kunci: 'nama', label: 'Barang', hp: 'judul', isi: (it) => <span className="font-medium">{it.name}</span> },
+            { kunci: 'spek', label: 'Spesifikasi', hp: 'keterangan', isi: (it) => it.specification || '—' },
+            { kunci: 'qty', label: 'Jumlah', rata: 'kanan', isi: (it) => <span className="tabular-nums">{Number(it.qty || 0).toLocaleString('id-ID')} {it.unit}</span> },
+            { kunci: 'total', label: 'Perkiraan total', rata: 'kanan', isi: (it) => <span className="tabular-nums">{fmtCurrency(it.total_price)}</span> },
+          ]} />
+      </Bagian>
+
+      {steps.length > 0 && (
+        <Bagian judul="Riwayat persetujuan" testId="pr-detail-steps">
+          <ol className="space-y-3 border-l border-[var(--glass-border)] pl-4">
+            {steps.map((s, i) => (
+              <li key={s.id || i} className="relative">
+                <span aria-hidden="true" className={cn('absolute -left-[1.4rem] top-1.5 h-2.5 w-2.5 rounded-full',
+                  s.action === 'approved' ? 'bg-[hsl(var(--success))]' : s.action === 'rejected' ? 'bg-[hsl(var(--destructive))]' : 'bg-primary')} />
+                <p className="text-sm">
+                  <span className="font-medium">{s.actor_name}</span>{' '}
+                  <span className="text-muted-foreground">{PR_STEP_LABEL[s.action] || 'memperbarui'}</span>
+                </p>
+                {s.comment && <p className="text-sm text-muted-foreground">{s.comment}</p>}
+                {s.timestamp && <p className="text-xs text-muted-foreground">{fmtDateTime(s.timestamp)}</p>}
+              </li>
             ))}
-          </div>
-
-          {pr.justification && (
-            <div className="bg-muted/40 rounded-lg p-3">
-              <p className="text-xs text-muted-foreground mb-1">Justifikasi</p>
-              <p className="text-sm">{pr.justification}</p>
-            </div>
-          )}
-
-          {/* Items */}
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Daftar Item</p>
-            <div className="space-y-1">
-              {(pr.items || []).map((item, i) => (
-                <div key={i} className="flex items-center justify-between py-2 px-3 bg-muted/40 rounded-lg">
-                  <div>
-                    <p className="text-sm font-medium">{item.name}</p>
-                    {item.specification && <p className="text-xs text-muted-foreground">{item.specification}</p>}
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-muted-foreground">{item.qty} {item.unit}</p>
-                    <p className="text-sm font-medium">{fmtCurrency(item.total_price)}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Timeline */}
-          {(pr.approval_steps || []).length > 0 && (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Timeline Approval</p>
-              <div className="relative pl-4 space-y-3">
-                <div className="absolute left-2 top-1 bottom-1 w-px bg-border" />
-                {pr.approval_steps.map((s, i) => (
-                  <div key={s.id || i} className="relative pl-4">
-                    <div className={`absolute left-0 top-1 w-3 h-3 rounded-full border-2 border-background ${
-                      s.action === 'approved' ? 'bg-emerald-500' : s.action === 'rejected' ? 'bg-red-500' : 'bg-primary'
-                    }`} />
-                    <p className="text-sm font-medium">{s.actor_name} <span className="text-muted-foreground font-normal text-xs">– {s.action}</span></p>
-                    {s.comment && <p className="text-xs text-muted-foreground">{s.comment}</p>}
-                    <p className="text-[10px] text-muted-foreground">{s.timestamp ? new Date(s.timestamp).toLocaleString('id-ID') : ''}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Actions */}
-          <Separator />
-          <div className="space-y-2">
-            {canSubmit && (
-              <Button className="w-full" size="sm" onClick={() => action('submit')} disabled={loading}>
-                <Send size={14} className="mr-1" /> Submit untuk Approval
-              </Button>
-            )}
-            {canApprove && !showRejectInput && (
-              <div className="flex gap-2">
-                <Button className="flex-1" size="sm" variant="default" onClick={() => action('approve', { comment })} disabled={loading}>
-                  <CheckCheck size={14} className="mr-1" /> Approve
-                </Button>
-                <Button className="flex-1" size="sm" variant="destructive" onClick={() => setShowRejectInput(true)}>
-                  <X size={14} className="mr-1" /> Tolak
-                </Button>
-              </div>
-            )}
-            {showRejectInput && (
-              <div className="space-y-2">
-                <Input placeholder="Alasan penolakan..." value={rejectReason}
-                  onChange={e => setRejectReason(e.target.value)} />
-                <div className="flex gap-2">
-                  <Button variant="destructive" size="sm" className="flex-1"
-                    onClick={() => action('reject', { reason: rejectReason })} disabled={loading}>
-                    Konfirmasi Tolak
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => setShowRejectInput(false)}>Batal</Button>
-                </div>
-              </div>
-            )}
-            {canCancel && (
-              <Button variant="outline" size="sm" className="w-full text-red-500 hover:text-red-500"
-                onClick={() => action('cancel')} disabled={loading}>
-                Batalkan Request
-              </Button>
-            )}
-          </div>
-        </div>
-      </SheetContent>
-    </Sheet>
+          </ol>
+        </Bagian>
+      )}
+    </DetailPopup>
   );
 }
