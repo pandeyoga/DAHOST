@@ -683,7 +683,7 @@ function AccountCards({ list, q, onEdit, onDelete, onReactivate, onUsage }) {
               return (
                 <tr key={a.code} className={`border-b border-[var(--glass-border)] hover:bg-foreground/5 ${a.active === false ? 'opacity-60' : ''}`} data-testid={`coa-flat-${a.code}`}>
                   <td className="whitespace-nowrap">{a.code}</td>
-                  <td className="py-1.5 px-2 min-w-[12rem]">{a.name}{a.is_group && <span className="text-xs text-muted-foreground ml-1">(grup)</span>}{a.active === false && <span className="text-[10px] text-muted-foreground ml-1">(nonaktif)</span>}</td>
+                  <td className="py-1.5 px-2 min-w-[12rem]">{a.name}{a.is_group && <span className="text-xs text-muted-foreground ml-1">(grup)</span>}{a.active === false && <span className="text-xs text-muted-foreground ml-1">(nonaktif)</span>}</td>
                   <td className="py-1.5 px-2"><TypeBadge type={a.type} /></td>
                   <td className="py-1.5 px-2 text-xs whitespace-nowrap" data-testid={`coa-entities-${a.code}`}>{entitiesLabel(a.entities)}</td>
                   <td className="text-muted-foreground whitespace-nowrap">{a.parent_code || '—'}</td>
