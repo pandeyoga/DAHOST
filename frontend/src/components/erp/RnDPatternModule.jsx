@@ -1,26 +1,43 @@
+/**
+ * Pola & marking (Portal RnD › Style & Desain › tab "Pola & Marking").
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, tabel + unduh Excel/CSV (kartu ringkas di HP), rincian = popup,
+ * form = FormPopup panjang, hapus pola & hapus media lewat confirmDialog, status = StatusBadge, warna token.
+ * Hanya tampilan yang berubah — API, isian, unggah media, dan setujui pola sama seperti sebelumnya.
+ */
 import { useState, useEffect, useRef } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { MoneyInput } from '@/components/ui/money-input';
-import { Label } from '@/components/ui/label';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
-  Ruler, Plus, Trash2, Pencil, Search, CheckCircle2, Clock,
-  Calculator, FileImage, ChevronDown, Upload, X as XIcon, Image as ImageIcon, Video as VideoIcon
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Ruler, Plus, Trash2, Pencil, Search, CheckCircle2, MoreHorizontal, RefreshCw,
+  Calculator, FileImage, Upload, X as XIcon, Image as ImageIcon, Video as VideoIcon,
 } from 'lucide-react';
 import { toast } from '../ui/sonner';
-import Modal from './Modal';
-import ConfirmDialog from './ConfirmDialog';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { formatRupiah } from '@/lib/format';
 import { apiPost, apiPut, apiDelete } from '@/lib/api';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
-const STATUS_COLOR = {
-  approved: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 border-emerald-400 dark:border-emerald-500/30',
-  draft:    'bg-amber-100 dark:bg-amber-500/20 text-amber-600 border-amber-400 dark:border-amber-500/30',
+const STATUS_POLA = {
+  approved: { label: 'Disetujui', tone: 'success' },
+  draft:    { label: 'Draf', tone: 'warning' },
 };
+const statusPola = (s) => STATUS_POLA[s] || STATUS_POLA.draft;
+const fmtAngka = (n, akhiran = '') => (n ? `${Number(n).toLocaleString('id-ID', { maximumFractionDigits: 2 })}${akhiran}` : '—');
 
 const emptyForm = {
   pattern_code: '', style_id: '', style_code: '', style_name: '',
@@ -37,6 +54,34 @@ const emptyForm = {
   status: 'draft',
 };
 
+/** Gambar/ikon satu media marking (dipakai di form & rincian). */
+function MediaThumb({ m, token }) {
+  if (m.kind === 'video') {
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center text-muted-foreground">
+        <VideoIcon className="mb-1 h-6 w-6" />
+        <span className="w-full truncate px-1 text-center text-xs">{m.original_filename || 'video'}</span>
+      </div>
+    );
+  }
+  if (m.url) {
+    return (
+      <img
+        src={`${m.url}${m.url.includes('?') ? '&' : '?'}auth=${encodeURIComponent(token)}`}
+        alt={m.original_filename || 'marking'}
+        className="h-full w-full object-cover"
+        onError={(e) => { e.currentTarget.style.display = 'none'; }}
+      />
+    );
+  }
+  return (
+    <div className="flex h-full w-full flex-col items-center justify-center text-muted-foreground">
+      <ImageIcon className="mb-1 h-6 w-6" />
+      <span className="w-full truncate px-1 text-center text-xs">{m.original_filename || 'foto'}</span>
+    </div>
+  );
+}
+
 export default function RnDPatternModule({ token }) {
   const h = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   const [patterns, setPatterns] = useState([]);
@@ -47,7 +92,7 @@ export default function RnDPatternModule({ token }) {
   const [showForm, setShowForm] = useState(false);
   const [editing,  setEditing]  = useState(null);
   const [form,     setForm]     = useState({ ...emptyForm });
-  const [delId,    setDelId]    = useState(null);
+  const [detail,   setDetail]   = useState(null);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -57,15 +102,15 @@ export default function RnDPatternModule({ token }) {
   const [fabricEst, setFabricEst] = useState(null);
   const [fabricEstLoading, setFabricEstLoading] = useState(false);
   const loadFabricEstimate = async () => {
-    if (!form.style_id) { toast.error('Pilih Style dulu untuk tarik data dari techpack'); return; }
+    if (!form.style_id) { toast.error('Pilih style dulu untuk menarik data dari tech pack'); return; }
     setFabricEstLoading(true);
     try {
       const res = await fetch(`${API}/api/dewi/rnd/hpp/fabric-estimate?style_id=${form.style_id}`, { headers: h });
       const data = await res.json();
-      if (!res.ok) { toast.error(data?.detail || 'Techpack belum ada untuk style ini'); setFabricEst(null); return; }
-      if (!data.sizes?.length) { toast.error('Techpack belum punya data Penggunaan Bahan'); setFabricEst(null); return; }
+      if (!res.ok) { toast.error(data?.detail || 'Tech pack belum ada untuk style ini'); setFabricEst(null); return; }
+      if (!data.sizes?.length) { toast.error('Tech pack belum punya data penggunaan bahan'); setFabricEst(null); return; }
       setFabricEst(data);
-      if (data.has_unresolved_price) toast.warning('Sebagian harga kain belum diset di Riset Material (HPP dianggap Rp0).');
+      if (data.has_unresolved_price) toast.warning('Sebagian harga kain belum diisi di Riset Material (HPP dianggap Rp0).');
     } catch { toast.error('Gagal memuat estimasi kain'); }
     finally { setFabricEstLoading(false); }
   };
@@ -75,7 +120,7 @@ export default function RnDPatternModule({ token }) {
       hpp_fabric_per_pcs: sz.fabric_cost_per_pcs,
       fabric_source: 'techpack', fabric_size: sz.size,
     }));
-    toast.success(`Kain size ${sz.size} diterapkan (${sz.meters_per_pcs}m, HPP Rp${Number(sz.fabric_cost_per_pcs).toLocaleString('id-ID')})`);
+    toast.success(`Kain ukuran ${sz.size} diterapkan (${sz.meters_per_pcs} m, HPP ${formatRupiah(sz.fabric_cost_per_pcs)})`);
   };
 
   const loadPatterns = async () => {
@@ -117,6 +162,7 @@ export default function RnDPatternModule({ token }) {
   };
 
   const openEdit = (p) => {
+    setDetail(null);
     setForm({
       pattern_code: p.pattern_code || '',
       style_id: p.style_id || '',
@@ -150,7 +196,7 @@ export default function RnDPatternModule({ token }) {
       // 2026-11-06 (pola P6): helper lib/api melempar bila server menolak → pesan sukses hanya bila benar tersimpan
       if (editing) await apiPut(`/api/dewi/rnd/patterns/${editing}`, form);
       else await apiPost('/api/dewi/rnd/patterns', form);
-      toast.success(editing ? 'Pola diperbarui' : 'Pola ditambahkan');
+      toast.success(editing ? 'Pola disimpan' : 'Pola ditambahkan');
       setShowForm(false);
       loadPatterns();
     } catch { toast.error('Gagal menyimpan pola'); }
@@ -160,15 +206,22 @@ export default function RnDPatternModule({ token }) {
     try {
       await apiPost(`/api/dewi/rnd/patterns/${id}/approve`, {});  // 2026-11-06 (pola P6): lihat handleSave
       toast.success('Pola disetujui');
+      setDetail(null);
       loadPatterns();
-    } catch { toast.error('Gagal approve'); }
+    } catch { toast.error('Gagal menyetujui pola'); }
   };
 
-  const handleDelete = async () => {
+  const handleDelete = async (p) => {
+    const ok = await confirmDialog({
+      title: 'Hapus pola ini?',
+      body: `Pola ${p.pattern_code || ''} dihapus permanen.`,
+      confirmLabel: 'Hapus', danger: true,
+    });
+    if (!ok) return;
     try {
-      await apiDelete(`/api/dewi/rnd/patterns/${delId}`);  // 2026-11-06 (pola P6): lihat handleSave
+      await apiDelete(`/api/dewi/rnd/patterns/${p.id}`);  // 2026-11-06 (pola P6): lihat handleSave
       toast.success('Pola dihapus');
-      setDelId(null);
+      setDetail(null);
       loadPatterns();
     } catch { toast.error('Gagal menghapus'); }
   };
@@ -208,7 +261,7 @@ export default function RnDPatternModule({ token }) {
           body: fd,
         });
         if (!upRes.ok) {
-          toast.error(`${file.name}: upload gagal`);
+          toast.error(`${file.name}: unggah gagal`);
           continue;
         }
         const upData = await upRes.json();
@@ -246,7 +299,8 @@ export default function RnDPatternModule({ token }) {
 
   const handleRemoveMedia = async (attachmentId) => {
     if (!editing) return;
-    if (!window.confirm('Hapus media ini?')) return;
+    const ok = await confirmDialog({ title: 'Hapus media ini?', body: 'Foto/video marking dilepas dari pola ini.', confirmLabel: 'Hapus', danger: true });
+    if (!ok) return;
     try {
       const res = await fetch(`${API}/api/dewi/rnd/patterns/${editing}/media/${attachmentId}`, {
         method: 'DELETE', headers: h,
@@ -269,303 +323,287 @@ export default function RnDPatternModule({ token }) {
       || (p.style_name || '').toLowerCase().includes(q);
   });
 
-  const { page, setPage, totalPages, total, paged } = useClientPagination(filtered, 10);
-  return (
-    <div className="p-6" data-testid="rnd-pattern-module">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-            <Ruler className="w-5 h-5 text-violet-500" /> Pola & Marking
-          </h1>
-          <p className="text-sm text-foreground/50 mt-0.5">Dokumentasi pola, marking, dan kalkulasi HPP bahan</p>
-        </div>
-        <Button onClick={openNew} className="gap-2" data-testid="rnd-pattern-add-btn">
-          <Plus className="w-4 h-4" /> Tambah Pola
-        </Button>
-      </div>
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(filtered, 10);
 
-      <div className="flex flex-wrap gap-3 mb-5">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground/40" />
+  const kolom = [
+    { kunci: 'kode', label: 'Kode pola', hp: 'judul', isi: (p) => <span className="font-medium text-foreground">{p.pattern_code}</span> },
+    { kunci: 'style', label: 'Style', hp: 'keterangan', isi: (p) => (
+      <div className="min-w-0">
+        <p className="text-foreground">{p.style_code || '—'}</p>
+        {p.style_name && <p className="text-xs text-muted-foreground">{p.style_name}</p>}
+      </div>) },
+    { kunci: 'ukuran', label: 'Ukuran', isi: (p) => p.size_range || '—' },
+    { kunci: 'kain', label: 'Kain/pcs', rata: 'kanan', isi: (p) => <span className="tabular-nums">{fmtAngka(p.fabric_usage_per_pcs, ' m')}</span> },
+    { kunci: 'hpp', label: 'HPP bahan/pcs', rata: 'kanan', isi: (p) => <span className="tabular-nums">{p.hpp_fabric_per_pcs ? formatRupiah(p.hpp_fabric_per_pcs) : '—'}</span> },
+    { kunci: 'efisiensi', label: 'Efisiensi', rata: 'kanan', isi: (p) => <span className="tabular-nums">{fmtAngka(p.efficiency_pct, '%')}</span> },
+    { kunci: 'media', label: 'Media', rata: 'kanan', isi: (p) => ((p.marking_media || []).length > 0 ? (
+      <span className="inline-flex items-center gap-1 text-sm tabular-nums" data-testid={`rnd-pattern-media-count-${p.id}`}>
+        <FileImage className="h-3.5 w-3.5 text-muted-foreground" />{p.marking_media.length}
+      </span>) : <span className="text-muted-foreground">—</span>) },
+    { kunci: 'status', label: 'Status', isi: (p) => <StatusBadge status={p.status} label={statusPola(p.status).label} tone={statusPola(p.status).tone} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (p) => (
+      <div className="flex justify-end gap-1">
+        <Button variant="ghost" size="icon-sm" onClick={() => openEdit(p)} title="Ubah" aria-label="Ubah"
+          data-testid={`rnd-pattern-edit-${p.id}`}><Pencil /></Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-sm" title="Lainnya" aria-label="Lainnya" data-testid={`rnd-pattern-more-${p.id}`}>
+              <MoreHorizontal />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {p.status !== 'approved' && (
+              <DropdownMenuItem onSelect={() => handleApprove(p.id)} data-testid={`rnd-pattern-approve-${p.id}`}>
+                <CheckCircle2 className="mr-2 h-4 w-4" />Setujui
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onSelect={() => handleDelete(p)} className="text-[hsl(var(--danger-text))]"
+              data-testid={`rnd-pattern-delete-${p.id}`}>
+              <Trash2 className="mr-2 h-4 w-4" />Hapus
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>) },
+  ];
+
+  return (
+    <PageLayout testId="rnd-pattern-module" title="Pola & marking"
+      subtitle="Dokumentasi pola, marking, dan perhitungan HPP bahan per pcs."
+      actions={<Button onClick={openNew} data-testid="rnd-pattern-add-btn"><Plus />Tambah pola</Button>}
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={search} onChange={e => { setSearch(e.target.value); }}
-            placeholder="Cari kode pola / style..." className="pl-9"
+            placeholder="Cari kode pola atau style" className="pl-8" data-testid="rnd-pattern-search"
             onKeyDown={e => e.key === 'Enter' && loadPatterns()} />
         </div>
         <SmartNativeSelect value={filterStyle} onChange={e => setFilterStyle(e.target.value)}
-          className="border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground min-w-[200px]">
-          <option value="">Semua Style</option>
+          className="w-full sm:w-56" data-testid="rnd-pattern-style-filter">
+          <option value="">Semua style</option>
           {styles.map(s => <option key={s.id} value={s.id}>{s.style_code} — {s.style_name}</option>)}
         </SmartNativeSelect>
-      </div>
-
-      {loading ? (
-        <div className="flex justify-center h-32 items-center">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-500" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <GlassCard className="p-10 text-center">
-          <Ruler className="w-10 h-10 text-foreground/20 mx-auto mb-3" />
-          <p className="text-foreground/50 text-sm">Belum ada dokumentasi pola.</p>
-          <Button variant="outline" className="mt-3" onClick={openNew}>+ Tambah Pola Pertama</Button>
-        </GlassCard>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="pola-marking" namaLembar="Pola" baris={filtered} testId="rnd-pattern-unduh"
+          kolom={[
+            { label: 'Kode pola', nilai: (p) => p.pattern_code || '' },
+            { label: 'Kode style', nilai: (p) => p.style_code || '' },
+            { label: 'Nama style', nilai: (p) => p.style_name || '' },
+            { label: 'Rentang ukuran', nilai: (p) => p.size_range || '' },
+            { label: 'Jumlah potongan', nilai: (p) => Number(p.total_pieces || 0) },
+            { label: 'Lebar kain (cm)', nilai: (p) => Number(p.fabric_width || 0) },
+            { label: 'Kain per pcs (m)', nilai: (p) => Number(p.fabric_usage_per_pcs || 0) },
+            { label: 'HPP bahan per pcs (Rp)', nilai: (p) => Number(p.hpp_fabric_per_pcs || 0) },
+            { label: 'Efisiensi (%)', nilai: (p) => Number(p.efficiency_pct || 0) },
+            { label: 'Jumlah media', nilai: (p) => (p.marking_media || []).length },
+            { label: 'Status', nilai: (p) => statusPola(p.status).label },
+            { label: 'Catatan', nilai: (p) => p.notes || '' },
+          ]} />
+        <Button variant="outline" size="icon" onClick={loadPatterns} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      footer={total > pageSize && (
+        <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
+      )}>
+      {loading && patterns.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat pola…</p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm border border-foreground/10 rounded-xl overflow-hidden">
-            <thead className="bg-foreground/5 border-b border-foreground/10">
-              <tr>
-                {['Kode Pola', 'Style', 'Ukuran', 'Penggunaan Kain', 'HPP Bahan/pcs', 'Efisiensi', 'Media', 'Status', 'Aksi'].map(h => (
-                  <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-foreground/50 uppercase tracking-wider">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {paged.map(p => (
-                <tr key={p.id} className="border-b border-foreground/5 hover:bg-foreground/[0.03]">
-                  <td className="px-4 py-3 font-mono text-xs text-foreground/80">{p.pattern_code}</td>
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-foreground">{p.style_code}</div>
-                    <div className="text-xs text-foreground/50">{p.style_name}</div>
-                  </td>
-                  <td className="px-4 py-3 text-foreground/70">{p.size_range || '—'}</td>
-                  <td className="px-4 py-3 text-foreground">{p.fabric_usage_per_pcs ? `${p.fabric_usage_per_pcs}m` : '—'}</td>
-                  <td className="px-4 py-3 text-foreground">
-                    {p.hpp_fabric_per_pcs ? `Rp ${Number(p.hpp_fabric_per_pcs).toLocaleString('id-ID')}` : '—'}
-                  </td>
-                  <td className="px-4 py-3 text-foreground">{p.efficiency_pct ? `${p.efficiency_pct}%` : '—'}</td>
-                  <td className="px-4 py-3">
-                    {(p.marking_media && p.marking_media.length > 0) ? (
-                      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-500/15 text-violet-500 border border-violet-400 dark:border-violet-500/30" data-testid={`rnd-pattern-media-count-${p.id}`}>
-                        <FileImage className="w-3 h-3" />
-                        {p.marking_media.length}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-foreground/30">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs px-2 py-0.5 rounded-full border ${STATUS_COLOR[p.status] || 'bg-muted dark:bg-zinc-500/20 text-muted-foreground dark:text-zinc-500 border-border dark:border-zinc-500/30'}`}>
-                      {p.status === 'approved' ? 'Disetujui' : 'Draft'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-1">
-                      {p.status !== 'approved' && (
-                        <Button variant="ghost" size="sm" onClick={() => handleApprove(p.id)}
-                          className="h-7 px-2 text-xs text-emerald-500 hover:text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:bg-emerald-500/10">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                        </Button>
-                      )}
-                      <Button variant="ghost" size="sm" onClick={() => openEdit(p)}
-                        className="h-7 w-7 p-0">
-                        <Pencil className="w-3.5 h-3.5" />
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => setDelId(p.id)}
-                        className="h-7 w-7 p-0 text-red-700 dark:text-red-500 hover:text-red-700 dark:text-red-400 hover:bg-red-100 dark:bg-red-500/10">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
-        </div>
+        <TabelData kolom={kolom} baris={paged} onKlikBaris={setDetail} testId="rnd-pattern-table"
+          kosong={<EmptyState icon={Ruler}
+            title={patterns.length ? 'Tidak ada pola yang cocok' : 'Belum ada dokumentasi pola'}
+            description={patterns.length ? 'Ubah kata pencarian atau pilihan style.' : 'Catat pola, marking, dan pemakaian kain per pcs untuk style.'}
+            action={!patterns.length && <Button onClick={openNew}><Plus />Tambah pola</Button>} />} />
       )}
 
-      {showForm && (
-      <Modal open={showForm} onClose={() => setShowForm(false)}
-        title={editing ? 'Edit Pola' : 'Tambah Pola'} size="lg">
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label>Kode Pola <span className="text-red-700 dark:text-red-400">*</span></Label>
-              <Input className="mt-1" value={form.pattern_code}
-                onChange={e => f('pattern_code', e.target.value)} placeholder="POL-xxx" />
-            </div>
-            <div>
-              <Label>Style <span className="text-red-700 dark:text-red-400">*</span></Label>
-              <SmartNativeSelect value={form.style_id} onChange={e => setStyleField(e.target.value)}
-                className="w-full mt-1 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground">
-                <option value="">-- Pilih Style --</option>
-                {styles.map(s => <option key={s.id} value={s.id}>{s.style_code} — {s.style_name}</option>)}
-              </SmartNativeSelect>
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <Label>Range Ukuran</Label>
-              <Input className="mt-1" value={form.size_range} onChange={e => f('size_range', e.target.value)} placeholder="S-XL" />
-            </div>
-            <div>
-              <Label>Jumlah Pieces</Label>
-              <Input className="mt-1" type="number" value={form.total_pieces} onChange={e => f('total_pieces', Number(e.target.value))} />
-            </div>
-            <div>
-              <Label>Lebar Kain (cm)</Label>
-              <Input className="mt-1" type="number" value={form.fabric_width} onChange={e => f('fabric_width', Number(e.target.value))} />
-            </div>
-          </div>
-          <div className="flex items-center justify-between">
-            <Label className="text-xs text-foreground/60">Data Kain & Marking</Label>
-            <Button type="button" variant="outline" size="sm" onClick={loadFabricEstimate}
-              disabled={fabricEstLoading} className="h-7 text-xs gap-1" data-testid="pattern-fabric-from-techpack">
-              <Calculator className="w-3 h-3" /> {fabricEstLoading ? 'Memuat...' : 'Tarik dari Techpack'}
-            </Button>
-          </div>
-          {fabricEst && fabricEst.sizes?.length > 0 && (
-            <div className="rounded-md border border-border p-2 bg-foreground/[0.02]" data-testid="pattern-fabric-estimate-panel">
-              <div className="text-xs text-foreground/50 mb-1.5">
-                Techpack <b>{fabricEst.style_code}</b> — klik size untuk isi Penggunaan Kain & HPP Bahan/pcs:
-                {fabricEst.has_unresolved_price && <span className="text-amber-600 ml-1">(harga sebagian Rp0)</span>}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {fabricEst.sizes.map(sz => (
-                  <button key={sz.size} type="button" onClick={() => applyFabricSize(sz)}
-                    className={`text-xs px-2 py-1 rounded-md border transition-colors ${form.fabric_size === sz.size && form.fabric_source === 'techpack'
-                      ? 'bg-violet-100 dark:bg-violet-500/20 border-violet-400 text-violet-700 dark:text-violet-300'
-                      : 'bg-background border-border text-foreground/70 hover:border-violet-400'}`}>
-                    <b>{sz.size}</b>: {sz.meters_per_pcs}m · Rp{Number(sz.fabric_cost_per_pcs).toLocaleString('id-ID')}/pcs
-                  </button>
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} testId="rnd-pattern-detail"
+          judul={`Pola ${detail.pattern_code}`}
+          keterangan={[detail.style_code, detail.style_name].filter(Boolean).join(' · ') || undefined}
+          status={<StatusBadge status={detail.status} label={statusPola(detail.status).label} tone={statusPola(detail.status).tone} />}
+          aksi={<>
+            {detail.status !== 'approved' && (
+              <Button size="sm" variant="success" onClick={() => handleApprove(detail.id)}><CheckCircle2 />Setujui</Button>
+            )}
+            <Button size="sm" variant="outline" onClick={() => openEdit(detail)}><Pencil />Ubah</Button>
+            <Button size="sm" variant="destructive" onClick={() => handleDelete(detail)}><Trash2 />Hapus</Button>
+          </>}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Rentang ukuran">{detail.size_range || '—'}</BarisDetail>
+            <BarisDetail label="Jumlah potongan">{detail.total_pieces || '—'}</BarisDetail>
+            <BarisDetail label="Lebar kain">{fmtAngka(detail.fabric_width, ' cm')}</BarisDetail>
+            <BarisDetail label="Kain per pcs">
+              {fmtAngka(detail.fabric_usage_per_pcs, ' m')}
+              {detail.fabric_source === 'techpack' && <span className="text-muted-foreground"> (dari tech pack{detail.fabric_size ? `, ukuran ${detail.fabric_size}` : ''})</span>}
+            </BarisDetail>
+            <BarisDetail label="HPP bahan per pcs">{detail.hpp_fabric_per_pcs ? formatRupiah(detail.hpp_fabric_per_pcs) : '—'}</BarisDetail>
+            <BarisDetail label="Efisiensi">{fmtAngka(detail.efficiency_pct, '%')}</BarisDetail>
+            {detail.marking_photo_url && (
+              <BarisDetail label="Tautan foto marking">
+                <a href={detail.marking_photo_url} target="_blank" rel="noreferrer" className="break-all text-primary underline-offset-4 hover:underline">
+                  {detail.marking_photo_url}
+                </a>
+              </BarisDetail>
+            )}
+            {detail.notes && <BarisDetail label="Catatan">{detail.notes}</BarisDetail>}
+          </dl>
+          {(detail.marking_media || []).length > 0 && (
+            <div className="space-y-2">
+              <p className="text-sm font-semibold text-foreground">Dokumentasi marking ({detail.marking_media.length})</p>
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+                {detail.marking_media.map((m, idx) => (
+                  <div key={m.attachment_id || idx}
+                    className="aspect-square overflow-hidden rounded-[var(--radius-md)] border border-[var(--glass-border)]">
+                    <MediaThumb m={m} token={token} />
+                  </div>
                 ))}
               </div>
             </div>
           )}
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <Label>Penggunaan Kain/pcs (m)</Label>
-              <Input className="mt-1" type="number" step="0.01" value={form.fabric_usage_per_pcs}
-                onChange={e => { f('fabric_usage_per_pcs', Number(e.target.value)); f('fabric_source', 'manual'); }} />
-            </div>
-            <div>
-              <Label>HPP Bahan/pcs (Rp)</Label>
-              <MoneyInput className="mt-1" value={form.hpp_fabric_per_pcs}
-                onChange={e => f('hpp_fabric_per_pcs', Number(e.target.value))} />
-            </div>
-            <div>
-              <Label>Efisiensi (%)</Label>
-              <Input className="mt-1" type="number" step="0.1" max="100" value={form.efficiency_pct}
-                onChange={e => f('efficiency_pct', Number(e.target.value))} />
-            </div>
-          </div>
-          <div>
-            <Label>URL Foto Marking (opsional, manual link)</Label>
-            <Input className="mt-1" value={form.marking_photo_url}
-              onChange={e => f('marking_photo_url', e.target.value)}
-              placeholder="https://..." />
-          </div>
+        </DetailPopup>
+      )}
 
-          {/* ── Session 27 GAP-R4: Marking Media Upload ─────────────── */}
-          <div className="border-t border-foreground/10 pt-4">
-            <div className="flex items-center justify-between mb-2">
-              <Label className="flex items-center gap-2">
-                <FileImage className="w-4 h-4 text-violet-500" />
-                Dokumentasi Marking (Foto/Video)
-                {form.marking_media && form.marking_media.length > 0 && (
-                  <span className="text-xs px-1.5 py-0.5 rounded-full bg-violet-100 dark:bg-violet-500/15 text-violet-500 border border-violet-400 dark:border-violet-500/30">
-                    {form.marking_media.length}
-                  </span>
-                )}
-              </Label>
-              {editing && (
-                <>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*,video/*"
-                    multiple
-                    className="hidden"
-                    onChange={e => handleUploadMedia(e.target.files)}
-                    data-testid="rnd-pattern-media-input"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={uploadingMedia}
-                    onClick={() => fileInputRef.current?.click()}
-                    className="gap-2"
-                    data-testid="rnd-pattern-media-upload-btn"
-                  >
-                    {uploadingMedia ? (
-                      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-current" />
-                    ) : (
-                      <Upload className="w-3.5 h-3.5" />
-                    )}
-                    {uploadingMedia ? 'Mengunggah...' : 'Unggah Foto/Video'}
-                  </Button>
-                </>
-              )}
-            </div>
-            {!editing ? (
-              <p className="text-xs text-foreground/50 italic">
-                Simpan pola terlebih dahulu untuk dapat mengunggah dokumentasi marking.
+      {/* Form pola (popup standar, panjang) */}
+      <FormPopup open={showForm} onClose={() => setShowForm(false)} ukuran="panjang" onSimpan={handleSave}
+        judul={editing ? 'Ubah pola' : 'Tambah pola'}
+        keterangan="Data kain bisa ditarik dari penggunaan bahan di tech pack style."
+        testId="rnd-pattern-form">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Kode pola" wajib htmlFor="pola-kode">
+            <Input id="pola-kode" value={form.pattern_code}
+              onChange={e => f('pattern_code', e.target.value)} placeholder="POL-xxx" data-testid="rnd-pattern-code-input" />
+          </Isian>
+          <Isian label="Style" wajib>
+            <SmartNativeSelect value={form.style_id} onChange={e => setStyleField(e.target.value)}
+              className="w-full" data-testid="rnd-pattern-style-select">
+              <option value="">Pilih style</option>
+              {styles.map(s => <option key={s.id} value={s.id}>{s.style_code} — {s.style_name}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Isian label="Rentang ukuran" htmlFor="pola-ukuran">
+            <Input id="pola-ukuran" value={form.size_range} onChange={e => f('size_range', e.target.value)} placeholder="S-XL" />
+          </Isian>
+          <Isian label="Jumlah potongan" htmlFor="pola-potong">
+            <Input id="pola-potong" type="number" value={form.total_pieces} onChange={e => f('total_pieces', Number(e.target.value))} />
+          </Isian>
+          <Isian label="Lebar kain (cm)" htmlFor="pola-lebar">
+            <Input id="pola-lebar" type="number" value={form.fabric_width} onChange={e => f('fabric_width', Number(e.target.value))} />
+          </Isian>
+        </div>
+
+        <section className="space-y-3 border-t border-[var(--glass-border)] pt-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-foreground">Data kain & marking</p>
+            <Button type="button" variant="outline" size="sm" onClick={loadFabricEstimate}
+              disabled={fabricEstLoading} data-testid="pattern-fabric-from-techpack">
+              <Calculator />{fabricEstLoading ? 'Memuat…' : 'Tarik dari tech pack'}
+            </Button>
+          </div>
+          {fabricEst && fabricEst.sizes?.length > 0 && (
+            <div className="space-y-2" data-testid="pattern-fabric-estimate-panel">
+              <p className="text-xs text-muted-foreground">
+                Tech pack <b>{fabricEst.style_code}</b> — klik ukuran untuk mengisi kain per pcs & HPP bahan per pcs.
+                {fabricEst.has_unresolved_price && <span className="ml-1 text-[hsl(var(--warning-text))]">Sebagian harga Rp0.</span>}
               </p>
-            ) : (form.marking_media && form.marking_media.length > 0) ? (
-              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2" data-testid="rnd-pattern-media-grid">
-                {form.marking_media.map((m, idx) => (
-                  <div key={m.attachment_id || idx}
-                    className="relative group aspect-square rounded-lg border border-foreground/10 overflow-hidden bg-foreground/5">
-                    {m.kind === 'video' ? (
-                      <div className="flex flex-col items-center justify-center w-full h-full text-foreground/60">
-                        <VideoIcon className="w-6 h-6 mb-1" />
-                        <span className="text-[10px] truncate w-full text-center px-1">{m.original_filename || 'video'}</span>
-                      </div>
-                    ) : m.url ? (
-                      <img
-                        src={`${m.url}${m.url.includes('?') ? '&' : '?'}auth=${encodeURIComponent(token)}`}
-                        alt={m.original_filename || 'marking'}
-                        className="w-full h-full object-cover"
-                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                      />
-                    ) : (
-                      <div className="flex flex-col items-center justify-center w-full h-full text-foreground/60">
-                        <ImageIcon className="w-6 h-6 mb-1" />
-                        <span className="text-[10px] truncate w-full text-center px-1">{m.original_filename || 'foto'}</span>
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveMedia(m.attachment_id)}
-                      className="absolute top-1 right-1 w-5 h-5 rounded-full bg-red-500/80 text-foreground opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-                      title="Hapus"
-                      data-testid={`rnd-pattern-media-remove-${idx}`}
-                    >
-                      <XIcon className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
+              <div className="flex flex-wrap gap-2">
+                {fabricEst.sizes.map(sz => {
+                  const dipilih = form.fabric_size === sz.size && form.fabric_source === 'techpack';
+                  return (
+                    <Button key={sz.size} type="button" size="sm" variant={dipilih ? 'default' : 'outline'}
+                      onClick={() => applyFabricSize(sz)}>
+                      <b>{sz.size}</b>: {sz.meters_per_pcs} m · {formatRupiah(sz.fabric_cost_per_pcs)}/pcs
+                    </Button>
+                  );
+                })}
               </div>
-            ) : (
-              <div className="text-center py-6 rounded-lg border border-dashed border-foreground/[0.15] bg-foreground/[0.03]">
-                <FileImage className="w-7 h-7 mx-auto text-foreground/20 mb-2" />
-                <p className="text-xs text-foreground/50">Belum ada dokumentasi marking. Klik tombol "Unggah Foto/Video" di atas.</p>
-              </div>
+            </div>
+          )}
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Isian label="Kain per pcs (m)" htmlFor="pola-kain">
+              <Input id="pola-kain" type="number" step="0.01" value={form.fabric_usage_per_pcs}
+                onChange={e => { f('fabric_usage_per_pcs', Number(e.target.value)); f('fabric_source', 'manual'); }} />
+            </Isian>
+            <Isian label="HPP bahan per pcs (Rp)">
+              <MoneyInput value={form.hpp_fabric_per_pcs}
+                onChange={e => f('hpp_fabric_per_pcs', Number(e.target.value))} />
+            </Isian>
+            <Isian label="Efisiensi (%)" htmlFor="pola-efisiensi">
+              <Input id="pola-efisiensi" type="number" step="0.1" max="100" value={form.efficiency_pct}
+                onChange={e => f('efficiency_pct', Number(e.target.value))} />
+            </Isian>
+          </div>
+          <Isian label="Tautan foto marking" htmlFor="pola-url" petunjuk="Opsional, tautan manual.">
+            <Input id="pola-url" value={form.marking_photo_url}
+              onChange={e => f('marking_photo_url', e.target.value)} placeholder="https://..." />
+          </Isian>
+        </section>
+
+        {/* ── Session 27 GAP-R4: Marking Media Upload ─────────────── */}
+        <section className="space-y-2 border-t border-[var(--glass-border)] pt-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              Dokumentasi marking (foto/video)
+              {form.marking_media && form.marking_media.length > 0 && (
+                <span className="text-xs font-normal text-muted-foreground">({form.marking_media.length})</span>
+              )}
+            </p>
+            {editing && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*,video/*"
+                  multiple
+                  className="hidden"
+                  onChange={e => handleUploadMedia(e.target.files)}
+                  data-testid="rnd-pattern-media-input"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={uploadingMedia}
+                  onClick={() => fileInputRef.current?.click()}
+                  data-testid="rnd-pattern-media-upload-btn"
+                >
+                  {uploadingMedia ? <RefreshCw className="animate-spin" /> : <Upload />}
+                  {uploadingMedia ? 'Mengunggah…' : 'Unggah foto/video'}
+                </Button>
+              </>
             )}
           </div>
+          {!editing ? (
+            <p className="text-xs text-muted-foreground">
+              Simpan pola terlebih dahulu untuk dapat mengunggah dokumentasi marking.
+            </p>
+          ) : (form.marking_media && form.marking_media.length > 0) ? (
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4" data-testid="rnd-pattern-media-grid">
+              {form.marking_media.map((m, idx) => (
+                <div key={m.attachment_id || idx}
+                  className="relative aspect-square overflow-hidden rounded-[var(--radius-md)] border border-[var(--glass-border)]">
+                  <MediaThumb m={m} token={token} />
+                  <Button type="button" size="icon-sm" variant="destructive"
+                    onClick={() => handleRemoveMedia(m.attachment_id)}
+                    className="absolute right-1 top-1 h-6 w-6"
+                    title="Hapus media" aria-label="Hapus media"
+                    data-testid={`rnd-pattern-media-remove-${idx}`}>
+                    <XIcon className="h-3 w-3" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">Belum ada dokumentasi marking. Klik "Unggah foto/video".</p>
+          )}
+        </section>
 
-          <div>
-            <Label>Catatan</Label>
-            <textarea value={form.notes} onChange={e => f('notes', e.target.value)}
-              className="w-full mt-1 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground h-20 resize-none"
-              placeholder="Catatan tambahan pola..." />
-          </div>
-        </div>
-        <div className="flex justify-end gap-3 mt-6">
-          <Button variant="outline" onClick={() => setShowForm(false)}>Batal</Button>
-          <Button onClick={handleSave} data-testid="rnd-pattern-save-btn">Simpan</Button>
-        </div>
-      </Modal>
-      )}
-
-      {!!delId && (
-      <ConfirmDialog
-        title="Hapus Pola?"
-        message="Data pola akan dihapus permanen."
-        onConfirm={handleDelete}
-        onCancel={() => setDelId(null)}
-      />
-      )}
-    </div>
+        <Isian label="Catatan" htmlFor="pola-catatan">
+          <Textarea id="pola-catatan" rows={3} value={form.notes} onChange={e => f('notes', e.target.value)}
+            placeholder="Catatan tambahan pola…" />
+        </Isian>
+      </FormPopup>
+    </PageLayout>
   );
 }
