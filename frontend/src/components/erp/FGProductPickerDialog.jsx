@@ -27,13 +27,14 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Search, Package, Loader2, AlertCircle, CheckCircle2, X } from 'lucide-react';
+import { EmptyState } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
 const stockBadgeVariant = (qty) => {
   if (qty <= 0) return { variant: 'destructive', label: 'Habis' };
-  if (qty <= 10) return { variant: 'outline', label: `Low (${qty})` };
-  return { variant: 'default', label: `Stok: ${qty}` };
+  if (qty <= 10) return { variant: 'outline', label: `Stok menipis (${qty})` };
+  return { variant: 'outline', label: `Stok ${qty}` };
 };
 
 export function FGProductPickerDialog({
@@ -44,8 +45,8 @@ export function FGProductPickerDialog({
   multiple = false,
   token,
   excludeIds = [],
-  title = 'Pilih Produk dari Master FG',
-  description = 'Pilih produk Finished Goods (FG) yang sudah ada di Inventory untuk ditambahkan ke katalog.',
+  title = 'Pilih produk dari Master FG',
+  description = 'Pilih produk barang jadi (FG) yang sudah ada di gudang untuk ditambahkan ke katalog.',
 }) {
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
@@ -130,12 +131,10 @@ export function FGProductPickerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col" data-testid="fg-picker-dialog">
+      <DialogContent data-testid="fg-picker-dialog"
+        className="flex max-h-[90vh] flex-col sm:max-w-2xl max-sm:left-0 max-sm:top-0 max-sm:h-[100dvh] max-sm:max-h-none max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Package className="w-5 h-5" />
-            {title}
-          </DialogTitle>
+          <DialogTitle className="text-base font-semibold">{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
@@ -151,13 +150,11 @@ export function FGProductPickerDialog({
             autoFocus
           />
           {query && (
-            <button
-              type="button"
-              onClick={() => setQuery('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            <Button type="button" variant="ghost" size="icon-sm" onClick={() => setQuery('')}
+              aria-label="Kosongkan pencarian" title="Kosongkan pencarian"
+              className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground">
+              <X />
+            </Button>
           )}
         </div>
 
@@ -166,7 +163,7 @@ export function FGProductPickerDialog({
           <div className="px-2 space-y-2">
             {loading && (
               <div className="flex items-center justify-center py-8 text-muted-foreground">
-                <Loader2 className="w-5 h-5 animate-spin mr-2" /> Memuat FG produk...
+                <Loader2 className="w-5 h-5 animate-spin mr-2" /> Memuat produk FG…
               </div>
             )}
             {error && !loading && (
@@ -175,27 +172,20 @@ export function FGProductPickerDialog({
               </div>
             )}
             {!loading && !error && items.length === 0 && (
-              <div className="text-center py-8 text-muted-foreground">
-                <Package className="w-10 h-10 mx-auto opacity-30 mb-2" />
-                <p>Tidak ada produk FG yang cocok.</p>
-                <p className="text-xs mt-1">
-                  Hubungi tim Inventory untuk menambah FG di Inventory Module.
-                </p>
-              </div>
+              <EmptyState icon={Package} title="Tidak ada produk FG yang cocok"
+                description="Ubah kata pencarian, atau minta tim gudang menambah barang jadi di master." />
             )}
             {!loading && items.map((fg) => {
               const sb = stockBadgeVariant(fg.stock_qty);
               const isSelected = selectedIds.has(fg.id);
               return (
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   key={fg.id}
                   onClick={() => handleItemClick(fg)}
-                  className={`w-full text-left p-3 rounded-md border transition-all
-                    ${isSelected
-                      ? 'border-primary bg-primary/5 ring-1 ring-primary'
-                      : 'border-border hover:border-primary/50 hover:bg-muted/50'
-                    }`}
+                  aria-pressed={multiple ? isSelected : undefined}
+                  className={`block h-auto w-full whitespace-normal p-3 text-left ${isSelected ? 'border-primary ring-1 ring-primary' : ''}`}
                   data-testid={`fg-picker-item-${fg.code}`}
                 >
                   <div className="flex items-start justify-between gap-3">
@@ -207,9 +197,7 @@ export function FGProductPickerDialog({
                         <span className="font-semibold text-sm truncate">{fg.name}</span>
                       </div>
                       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                        <code className="px-1.5 py-0.5 bg-muted rounded text-[10px] font-mono">
-                          {fg.code}
-                        </code>
+                        <span>{fg.code}</span>
                         {/* 2026-11-07 (Tahap 5) — varian = warna · ukuran; dulu ukuran tidak tampil */}
                         {fg.color && <span>Warna: {fg.color}</span>}
                         {fg.size_code && <span>Ukuran: {fg.size_code}</span>}
@@ -220,7 +208,7 @@ export function FGProductPickerDialog({
                       {sb.label}
                     </Badge>
                   </div>
-                </button>
+                </Button>
               );
             })}
           </div>
@@ -229,7 +217,9 @@ export function FGProductPickerDialog({
         <DialogFooter className="flex items-center justify-between gap-2">
           <div className="flex-1 text-xs text-muted-foreground">
             {multiple && `${selectedIds.size} dipilih`}
-            {!multiple && `${items.length} produk ditampilkan`}
+            {!multiple && (items.length >= 50
+              ? `${items.length} produk pertama ditampilkan — ketik nama/kode untuk mencari yang lain`
+              : `${items.length} produk ditampilkan`)}
           </div>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Batal

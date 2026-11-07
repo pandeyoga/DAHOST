@@ -266,6 +266,11 @@ async def stock_dashboard(
 
     counts = {'in_stock': 0, 'low_stock': 0, 'out_of_stock': 0, 'unlinked': 0}
     platform_summary: dict = {}
+    # 2026-11-08 (Standar UI/UX v2) — jumlah PER KATALOG dihitung langsung di sini (stok jual LIVE).
+    # Tabel katalog dulu memakai `low_stock_count/out_of_stock_count` TERSIMPAN di `marketing_catalogs`
+    # (cache yang tidak ikut diperbarui saat stok FG berubah) → "100% sehat" padahal 640 item habis.
+    per_catalog: dict = {cid: {'total': 0, 'in_stock': 0, 'low_stock': 0, 'out_of_stock': 0, 'unlinked': 0}
+                         for cid in cat_platform}
     low_groups: list = []          # (available, indeks grup, status)
     for i, g in enumerate(groups):
         key = g.get('_id') or {}
@@ -278,6 +283,10 @@ async def stock_dashboard(
         else:
             avail, st = None, 'unlinked'
         counts[st] += n
+        pc = per_catalog.setdefault(key.get('catalog_id'), {'total': 0, 'in_stock': 0, 'low_stock': 0,
+                                                            'out_of_stock': 0, 'unlinked': 0})
+        pc['total'] += n
+        pc[st] += n
         p = cat_platform.get(key.get('catalog_id'), 'Other')
         ps = platform_summary.setdefault(p, {'platform': p, 'total': 0, 'in_stock': 0,
                                              'low_stock': 0, 'out_of_stock': 0, 'unlinked': 0})
@@ -351,6 +360,9 @@ async def stock_dashboard(
         'restock_excluded': {'count': excluded_n, 'skus': sorted(excluded_skus)[:20],
                              'reason': _pstatus.STOP_REASON},
         'platform_breakdown': list(platform_summary.values()),
+        # {catalog_id: {total, in_stock, low_stock, out_of_stock, unlinked}} — item AKTIF, stok LIVE.
+        # Hanya katalog aktif yang terlihat pemakai (katalog nonaktif tidak dihitung → tabel menampilkan "—").
+        'catalog_breakdown': per_catalog,
         'last_sync': _s(last_sync) if last_sync else None,
     }
 
