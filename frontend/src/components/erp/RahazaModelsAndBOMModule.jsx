@@ -30,7 +30,7 @@ const ALL_TABS = [
     hint: 'Kombinasi model × warna × ukuran yang menjadi SKU barang jadi.' },
   { key: 'bom', label: 'BOM', icon: ListTree, count: null,
     hint: 'Resep per model + ukuran + warna: 1 pcs potongan (biaya dari kain roll yang benar-benar dipotong) + aksesoris. Dasar HPP produk.' },
-  { key: 'fill', label: 'Isi Massal (Excel)', icon: FileSpreadsheet, count: null,
+  { key: 'fill', label: 'Isi massal (Excel)', icon: FileSpreadsheet, count: null,
     hint: 'Satu template Excel: harga & satuan beli material, aksesoris/bahan BOM per model, berat model, rekening bank & rekening pencairan toko — unggah, HPP standar dihitung otomatis.' },
   { key: 'sizes', label: 'Ukuran', icon: Ruler, count: 'sizes',
     hint: 'Master ukuran (S · M · L · ALLSIZE …) beserta urutannya.' },
@@ -42,18 +42,18 @@ const VARIANTS = {
   production: {
     tabs: ['models'],
     eyebrow: 'Portal Produksi · Master Data',
-    title: 'Master Produk',
-    subtitle: 'Model DA — HPP, harga jual resmi, berat, bundle, dan Panduan Produksi yang dibaca Vendor CMT.',
+    title: 'Master produk',
+    subtitle: 'Model DA — HPP, harga jual resmi, berat, bundle, dan panduan produksi yang dibaca vendor CMT.',
     icon: Shirt,
-    crossLink: { module: 'rnd-master-product-hub', label: 'Kategori · Varian · BOM · Ukuran · Warna kini disunting di Portal RnD → Master Produk' },
+    crossLink: { module: 'rnd-master-product-hub', label: 'Kategori · Varian · BOM · Ukuran · Warna kini disunting di Portal RnD → Master produk' },
   },
   rnd: {
     tabs: ['categories', 'variants', 'bom', 'fill', 'sizes', 'colors'],
     eyebrow: 'Portal RnD · Master Data (SSOT)',
-    title: 'Master Produk',
+    title: 'Master produk',
     subtitle: 'Sumber tunggal resep produk CV. Dewi Aditya — kategori, varian/SKU, BOM potongan, ukuran, dan warna. Dipakai Cutting, HPP, dan katalog.',
     icon: FlaskConical,
-    crossLink: { module: 'prod-master-product-hub', label: 'Model DA (HPP · SOP · bundle) tetap di Portal Produksi → Master Produk' },
+    crossLink: { module: 'prod-master-product-hub', label: 'Model DA (HPP · SOP · bundle) tetap di Portal Produksi → Produk' },
   },
 };
 

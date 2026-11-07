@@ -434,12 +434,12 @@ export default function RahazaBOMModuleV2({ token }) {
           </p>
         </Notice>
       ) : (
-        <Notice tone="success" testId="bom-link-health-banner" title="Kopling BOM sehat"
+        <Notice tone="success" testId="bom-link-health-banner" title="Kaitan BOM sehat"
           action={
             <Button type="button" size="sm" variant="outline" onClick={runRelink} disabled={relinking}
               data-testid="bom-relink-btn">
               <Wrench className="w-3.5 h-3.5" />
-              {relinking ? 'Memeriksa...' : 'Periksa Ulang'}
+              {relinking ? 'Memeriksa…' : 'Periksa ulang'}
             </Button>
           }>
           <p>
@@ -465,7 +465,7 @@ export default function RahazaBOMModuleV2({ token }) {
               Editor {selectedSize ? `· ${selectedSize.code}` : ''}
             </TabsTrigger>
             <TabsTrigger value="preview" disabled={!selectedVersion} data-testid="bom-tab-preview">
-              Preview Kebutuhan
+              Pratinjau kebutuhan
             </TabsTrigger>
           </TabsList>
 
@@ -497,12 +497,12 @@ export default function RahazaBOMModuleV2({ token }) {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Size</TableHead>
+                        <TableHead>Ukuran</TableHead>
                         <TableHead>Warna</TableHead>
-                        <TableHead>Versi Aktif</TableHead>
+                        <TableHead>Versi aktif</TableHead>
                         <TableHead><Scale className="w-3 h-3 inline mr-1" /> Bahan utama /pcs</TableHead>
                         <TableHead>Material</TableHead>
-                        <TableHead>Terakhir Update</TableHead>
+                        <TableHead>Terakhir diubah</TableHead>
                         <TableHead className="text-right">Aksi</TableHead>
                       </TableRow>
                     </TableHeader>

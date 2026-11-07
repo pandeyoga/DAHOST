@@ -114,7 +114,7 @@ export default function RahazaProductCategoriesModule({ token }) {
         </span>
       ),
     },
-    { key: 'name', label: 'Nama Kategori', sortable: true },
+    { key: 'name', label: 'Nama kategori', sortable: true },
     { key: 'code', label: 'Kode', sortable: true, render: (row) => <span className="tabular-nums text-xs text-muted-foreground">{row.code}</span> },
     {
       key: 'usage', label: 'Dipakai',

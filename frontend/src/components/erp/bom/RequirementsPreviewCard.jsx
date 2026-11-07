@@ -87,7 +87,7 @@ export const RequirementsPreviewCard = ({ bom, token }) => {
       <div>
         <p className="text-base font-semibold text-foreground flex items-center gap-2 mb-1">
           <Calculator className="w-5 h-5 text-primary" />
-          Preview Kebutuhan Material
+          Pratinjau kebutuhan bahan
         </p>
         <p className="text-sm text-muted-foreground">
           Hitung kebutuhan material untuk produksi quantity tertentu

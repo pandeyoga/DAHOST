@@ -46,7 +46,7 @@ export function BomShortcuts({ headers, token, selectedModelId, modelLabel, cate
       <Button type="button" size="sm" variant="outline" disabled={!selectedModelId || !!busy} onClick={() => copyMissing(false)} title="Buat BOM untuk semua varian model ini yang belum punya BOM — potongan & kain otomatis mengikuti warna/ukuran tujuan, aksesoris disalin" data-testid="bom-copy-missing-model">
         <Copy className="w-3.5 h-3.5 mr-1" />{busy === 'copy' ? 'Menyalin…' : 'Salin ke varian tanpa BOM'}
       </Button>
-      <Button type="button" size="sm" variant="ghost" disabled={!!busy} onClick={() => copyMissing(true)} className="text-xs" data-testid="bom-copy-missing-all">semua model</Button>
+      <Button type="button" size="sm" variant="outline" disabled={!!busy} onClick={() => copyMissing(true)} title="Buat BOM untuk varian yang belum punya BOM di semua model sekaligus" data-testid="bom-copy-missing-all">Salin untuk semua model</Button>
       <Button type="button" size="sm" variant="outline" disabled={!selectedModelId || !!busy} onClick={() => setAccOpen(true)} title="Tambah aksesoris yang sama ke SEMUA BOM aktif model ini" data-testid="bom-add-acc-bulk">
         <PackagePlus className="w-3.5 h-3.5 mr-1" />Aksesoris massal
       </Button>
