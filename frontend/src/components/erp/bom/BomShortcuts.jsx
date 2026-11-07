@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Copy, PackagePlus, Calculator, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import FormPopup from '@/components/ui/form-popup';
 import { GlassInput } from '@/components/ui/glass';
 import { toast } from 'sonner';
 import { InlineMaterialPicker } from './InlineMaterialPicker';
@@ -53,29 +53,24 @@ export function BomShortcuts({ headers, token, selectedModelId, modelLabel, cate
       <Button type="button" size="sm" variant="outline" disabled={!!busy} onClick={recalc} title="Nilai potongan = qty kain × harga kain (standar, sampai cutting nyata), lalu HPP semua model diterapkan ke barang jadi & katalog" data-testid="bom-recalc-hpp">
         <Calculator className="w-3.5 h-3.5 mr-1" />{busy === 'hpp' ? 'Menghitung…' : 'Hitung HPP standar'}
       </Button>
-      <Dialog open={accOpen} onOpenChange={setAccOpen}>
-        <DialogContent className="max-w-2xl" data-testid="bom-acc-bulk-dialog">
-          <DialogHeader><DialogTitle>Tambah aksesoris ke semua BOM · {modelLabel}</DialogTitle></DialogHeader>
-          <p className="text-xs text-muted-foreground">Baris ditambahkan ke setiap BOM aktif model ini (semua warna & ukuran). Yang sudah ada dilewati.</p>
-          <div className="space-y-2 max-h-[45vh] overflow-auto">
+      <FormPopup open={accOpen} onClose={() => setAccOpen(false)} ukuran="panjang" testId="bom-acc-bulk-dialog"
+        judul={`Tambah aksesoris ke semua BOM · ${modelLabel}`}
+        keterangan="Baris ditambahkan ke setiap BOM aktif model ini (semua warna & ukuran). Yang sudah ada dilewati."
+        onSimpan={addAccessories} menyimpan={busy === 'acc'} bisaSimpan={lines.length > 0} labelSimpan={`Tambahkan ${lines.length} baris`}>
+          <div className="space-y-2">
             {lines.map((l, i) => (
               <div key={l.id} className="flex items-center gap-2 text-sm" data-testid={`bom-acc-bulk-line-${l.code}`}>
-                <span className="font-mono text-xs w-28 truncate">{l.code}</span><span className="flex-1 truncate">{l.name}</span>
+                <span className="tabular-nums text-xs w-28 truncate">{l.code}</span><span className="flex-1 truncate">{l.name}</span>
                 <GlassInput type="number" min="0" step="0.01" value={l.qty} onChange={(e) => setLines((xs) => xs.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} className="h-8 w-24" data-testid={`bom-acc-bulk-qty-${l.code}`} />
                 <span className="text-xs text-muted-foreground w-10">{l.unit}</span>
-                <button type="button" onClick={() => setLines((xs) => xs.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-rose-400"><X className="w-4 h-4" /></button>
+                <Button type="button" variant="ghost" size="icon-sm" onClick={() => setLines((xs) => xs.filter((_, j) => j !== i))} title="Hapus baris" aria-label="Hapus baris"><X className="w-4 h-4" /></Button>
               </div>
             ))}
             <InlineMaterialPicker type="accessory" categories={categories} token={token} onSelect={(m) => setLines((xs) => (xs.some((x) => x.id === m.id) ? xs : [...xs, { id: m.id, code: m.code, name: m.name, type: m.type, unit: m.unit, qty: 1 }]))}>
               <Button type="button" size="sm" variant="outline" data-testid="bom-acc-bulk-pick"><PackagePlus className="w-3.5 h-3.5 mr-1" />Pilih aksesoris</Button>
             </InlineMaterialPicker>
           </div>
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => setAccOpen(false)}>Batal</Button>
-            <Button type="button" onClick={addAccessories} disabled={!lines.length || busy === 'acc'} data-testid="bom-acc-bulk-save">{busy === 'acc' ? 'Menyimpan…' : `Tambahkan ${lines.length} baris`}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      </FormPopup>
     </div>
   );
 }

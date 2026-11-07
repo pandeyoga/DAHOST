@@ -61,7 +61,7 @@ export const VersionRail = ({
       <GlassPanel className="p-0 h-full flex flex-col" data-testid="version-rail">
         <div className="p-4 border-b border-[var(--glass-border)]">
           <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-foreground">Versi BOM</h3>
+            <p className="text-sm font-semibold text-foreground">Versi BOM</p>
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
