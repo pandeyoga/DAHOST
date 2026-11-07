@@ -1,29 +1,46 @@
 /**
  * HRATSModule — Rekrutmen & ATS (Actionable Pipeline)
- * Features:
- *  - Actionable stage transitions (Interview form, Offer form, screening notes)
- *  - CV upload (file or URL)
- *  - Interview scheduling + scoring
- *  - Offer management
- *  - Auto-onboarding on Hired
- *  - Full candidate detail with tabs
+ * Fitur:
+ *  - Pindah tahap dengan isian per tahap (jadwal wawancara, penawaran, catatan screening, alasan tolak)
+ *  - Unggah CV (berkas atau tautan)
+ *  - Jadwal + nilai wawancara
+ *  - Penawaran kerja
+ *  - Onboarding otomatis saat diterima
+ *  - Detail kandidat lengkap
+ *
+ * Standar UI/UX v2 (8 Nov 2026): tab halaman (HubTabs) + cetakan PageLayout, lowongan/kandidat/talent pool/
+ * analitik = tabel + unduh Excel/CSV (dulu kartu berulang & grafik berwarna hex), papan pipeline ringkas
+ * (kolom berisi daftar, bukan kartu bertumpuk), detail kandidat = DetailPopup (bagian bertumpuk, tanpa tab di
+ * dalam popup), semua form = FormPopup, tanggal = DatePicker (+ jam), nama tahap berbahasa Indonesia di layar
+ * (nilai yang dikirim ke server tetap sama), warna token.
+ * Perbaikan angka: "Diterima" per lowongan dulu penghitung tersimpan (data contoh mengisinya angka karangan) —
+ * kini dihitung dari kandidat bertahap "Hired". Daftar lowongan/kandidat dulu diam-diam 50/100 pertama.
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
 import {
-  Briefcase, Users, TrendingUp, Plus, Search, RefreshCw,
-  X, Clock, Star, Phone, Mail, Eye,
-  BarChart3, AlertCircle, Pencil, Trash2, UserCheck,
-  CheckCircle2, ChevronDown, Calendar, Bookmark, BookmarkCheck,
-  Upload, Link2, FileText, MessageSquare, Send, ChevronRight,
-  Video, MapPin, Award, DollarSign, ArrowRight, ClipboardCheck
+  Bookmark, BookmarkCheck, ChevronDown, ChevronRight, FileText, Link2, Pencil, Plus, RefreshCw, Search, Send,
+  Star, Upload, UserMinus, X,
 } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker from '@/components/ui/date-picker';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { MoneyInput } from '@/components/ui/money-input';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { cn } from '@/lib/utils';
+import { formatDateID, formatDateTimeID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import HubTabs from './hubs/HubTabs';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import { useHrMasters, departmentOptions } from './hr/hrPickers';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 
@@ -31,48 +48,55 @@ const BASE = process.env.REACT_APP_BACKEND_URL;
 const api = (path, opts = {}) =>
   fetch(`${BASE}/api/dewi/recruitment${path}`, { cache: 'no-store', ...opts });
 
-const fmtDate = d =>
-  d ? new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
+const fmtDate = (d) => (d ? formatDateID(d) : '—');
 const fmtCurrency = n =>
   n ? new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(n) : 'Negosiasi';
 
 const STAGES = ['Lamaran Masuk','Screening CV','Interview HR','Interview User','Offering','Hired','Rejected'];
-
+// Nilai tahap di server tetap; layar memakai label Indonesia.
 const STAGE_CFG = {
-  'Lamaran Masuk':  { color: '#6366f1', bg: '#6366f115', icon: FileText },
-  'Screening CV':   { color: '#3b82f6', bg: '#3b82f615', icon: Eye },
-  'Interview HR':   { color: '#8b5cf6', bg: '#8b5cf615', icon: MessageSquare },
-  'Interview User': { color: '#f59e0b', bg: '#f59e0b15', icon: Users },
-  'Offering':       { color: '#14b8a6', bg: '#14b8a615', icon: DollarSign },
-  'Hired':          { color: '#10b981', bg: '#10b98115', icon: CheckCircle2 },
-  'Rejected':       { color: '#ef4444', bg: '#ef444415', icon: X },
+  'Lamaran Masuk':  { label: 'Lamaran masuk',    tone: 'default' },
+  'Screening CV':   { label: 'Screening CV',     tone: 'info' },
+  'Interview HR':   { label: 'Wawancara SDM',    tone: 'primary' },
+  'Interview User': { label: 'Wawancara atasan', tone: 'primary' },
+  'Offering':       { label: 'Penawaran',        tone: 'warning' },
+  'Hired':          { label: 'Diterima',         tone: 'success' },
+  'Rejected':       { label: 'Ditolak',          tone: 'danger' },
 };
+const labelTahap = (s) => STAGE_CFG[s]?.label || s || '—';
 const JOB_STATUS = {
-  open:    'bg-emerald-50 dark:bg-emerald-400/15 text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-400/20',
-  closed:  'bg-muted dark:bg-slate-400/15 text-muted-foreground border-border dark:border-slate-400/20',
-  draft:   'bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-400/20',
-  on_hold: 'bg-orange-50 dark:bg-orange-400/15 text-orange-600 dark:text-orange-400 border-orange-300 dark:border-orange-400/20',
+  open:    { label: 'Buka',    tone: 'success' },
+  closed:  { label: 'Ditutup', tone: 'muted' },
+  draft:   { label: 'Draf',    tone: 'muted' },
+  on_hold: { label: 'Ditunda', tone: 'warning' },
 };
+const JOB_TYPE = { 'Full-time': 'Penuh waktu', 'Part-time': 'Paruh waktu', Contract: 'Kontrak', Magang: 'Magang' };
+const JOB_LEVEL = { Staff: 'Staf', Senior: 'Senior', Supervisor: 'Supervisor', Manager: 'Manajer' };
+const MODE_LABEL = { 'Tatap Muka': 'Tatap muka', 'Video Call': 'Panggilan video', Phone: 'Telepon' };
+const SUMBER_LABEL = { 'Walk-in': 'Datang langsung', Referral: 'Rekomendasi', Website: 'Situs web' };
+const labelSumber = (s) => SUMBER_LABEL[s] || s || '—';
+const IV_STATUS = { scheduled: { label: 'Terjadwal', tone: 'info' }, done: { label: 'Selesai', tone: 'success' },
+  cancelled: { label: 'Dibatalkan', tone: 'danger' }, no_show: { label: 'Tidak hadir', tone: 'warning' } };
+const IV_RESULT = { pass: { label: 'Lulus', tone: 'success' }, fail: { label: 'Tidak lulus', tone: 'danger' }, hold: { label: 'Ditunda', tone: 'warning' } };
 
 function StageBadge({ stage }) {
-  const c = STAGE_CFG[stage] || { color: '#64748b', bg: '#64748b15' };
-  return (
-    <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: c.bg, color: c.color }}>{stage}</span>
-  );
+  const c = STAGE_CFG[stage] || { label: stage || '—', tone: 'default' };
+  return <StatusBadge status="tahap" label={c.label} tone={c.tone} />;
 }
 function RatingStars({ rating = 0, onRate }) {
   return (
-    <div className="flex gap-0.5">
+    <div className="flex gap-0.5" aria-label={`Nilai ${rating || 0} dari 5`}>
       {[1,2,3,4,5].map(s => (
-        <Star key={s} className="w-3 h-3 cursor-pointer" onClick={() => onRate && onRate(s)}
-          fill={s <= rating ? '#f59e0b' : 'none'} stroke={s <= rating ? '#f59e0b' : '#64748b'} />
+        <Star key={s} className={cn('h-3.5 w-3.5', onRate && 'cursor-pointer')} onClick={() => onRate && onRate(s)}
+          fill={s <= rating ? 'hsl(var(--warning))' : 'none'} stroke={s <= rating ? 'hsl(var(--warning))' : 'hsl(var(--muted-foreground))'} />
       ))}
     </div>
   );
 }
+const gabungTanggalJam = (tgl, jam) => (tgl ? `${tgl}T${jam || '09:00'}` : '');
 
 // ────────────────────────────────────────────────────────────────────────────
-// STAGE ACTION MODAL
+// PINDAH TAHAP (form popup)
 // ────────────────────────────────────────────────────────────────────────────
 function StageActionModal({ candidate, targetStage, headers, onSuccess, onClose }) {
   const [form, setForm] = useState({
@@ -88,7 +112,14 @@ function StageActionModal({ candidate, targetStage, headers, onSuccess, onClose 
     position: candidate?.job_title || '',
     rejection_reason: 'Tidak memenuhi kualifikasi',
   });
+  const [tglWawancara, setTglWawancara] = useState('');
+  const [jamWawancara, setJamWawancara] = useState('09:00');
   const [saving, setSaving] = useState(false);
+
+  // Nilai tanggal-jam tetap "YYYY-MM-DDTHH:mm" seperti input datetime-local dulu.
+  useEffect(() => {
+    setForm(p => ({ ...p, scheduled_at: gabungTanggalJam(tglWawancara, jamWawancara) }));
+  }, [tglWawancara, jamWawancara]);
 
   const handleSubmit = async () => {
     setSaving(true);
@@ -132,7 +163,7 @@ function StageActionModal({ candidate, targetStage, headers, onSuccess, onClose 
       if (d.ok) {
         toast.success(targetStage === 'Hired'
           ? 'Kandidat diterima! Onboarding otomatis dibuat.'
-          : `Kandidat dipindahkan ke "${targetStage}"`);
+          : `Kandidat dipindahkan ke "${labelTahap(targetStage)}"`);
         onSuccess();
       } else {
         // 2026-11-06 (pola P6): dulu penolakan server diam saja (popup tetap terbuka tanpa pesan)
@@ -149,173 +180,108 @@ function StageActionModal({ candidate, targetStage, headers, onSuccess, onClose 
   const isReject = targetStage === 'Rejected';
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-[var(--card-surface)] rounded-2xl border border-[var(--glass-border)] shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
-        <div className="p-5">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <div className="flex items-center gap-2 mb-0.5">
-                <StageBadge stage={candidate?.stage} />
-                <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
-                <StageBadge stage={targetStage} />
-              </div>
-              <p className="font-semibold text-foreground mt-1">{candidate?.name}</p>
-            </div>
-            <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-[var(--nav-pill-active)] flex items-center justify-center">
-              <X className="w-4 h-4" />
-            </button>
+    <FormPopup open onClose={onClose} ukuran="pendek" onSimpan={handleSubmit} menyimpan={saving} testId="ats-stage-form"
+      judul={`Pindahkan ke "${labelTahap(targetStage)}"`}
+      keterangan={`${candidate?.name || 'Kandidat'}: ${labelTahap(candidate?.stage)} → ${labelTahap(targetStage)}`}
+      labelSimpan={isHired ? 'Terima kandidat' : isReject ? 'Simpan penolakan' : 'Pindahkan'}>
+      {targetStage === 'Screening CV' && (
+        <Isian label="Catatan screening" htmlFor="ats-catatan-screening">
+          <Textarea id="ats-catatan-screening" rows={4} value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
+            placeholder="Kualifikasi yang terpenuhi, poin penting dari CV" />
+        </Isian>
+      )}
+
+      {isInterview && (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Isian label="Tanggal wawancara" wajib petunjuk="Kosong = tahap dipindah tanpa jadwal.">
+              <DatePicker value={tglWawancara} onChange={setTglWawancara} testId="ats-iv-tanggal" />
+            </Isian>
+            <Isian label="Jam" htmlFor="ats-iv-jam">
+              <Input id="ats-iv-jam" type="time" value={jamWawancara} onChange={e => setJamWawancara(e.target.value)} />
+            </Isian>
+            <Isian label="Cara wawancara">
+              <SmartNativeSelect searchable={false} value={form.mode} onChange={e => setForm(p => ({ ...p, mode: e.target.value }))}>
+                <option value="Tatap Muka">Tatap muka</option><option value="Video Call">Panggilan video</option><option value="Phone">Telepon</option>
+              </SmartNativeSelect>
+            </Isian>
+            <Isian label="Pewawancara" htmlFor="ats-iv-pewawancara">
+              <Input id="ats-iv-pewawancara" value={form.interviewer} onChange={e => setForm(p => ({ ...p, interviewer: e.target.value }))} placeholder="Nama pewawancara" />
+            </Isian>
           </div>
+          <Isian label="Catatan tambahan" htmlFor="ats-iv-catatan">
+            <Textarea id="ats-iv-catatan" rows={2} value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
+              placeholder="Topik yang akan dibahas, persiapan khusus" />
+          </Isian>
+        </>
+      )}
 
-          <div className="space-y-3">
-            {/* Screening CV */}
-            {targetStage === 'Screening CV' && (
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Catatan Screening</label>
-                <textarea value={form.notes} onChange={e => setForm(p => ({...p, notes: e.target.value}))}
-                  className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm h-24 resize-none"
-                  placeholder="Kualifikasi yang terpenuhi, poin penting dari CV..." />
-              </div>
-            )}
-
-            {/* Interview */}
-            {isInterview && (
-              <>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Tanggal & Waktu *</label>
-                    <input type="datetime-local" value={form.scheduled_at} onChange={e => setForm(p => ({...p, scheduled_at: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Mode Interview</label>
-                    <SmartNativeSelect searchable={false} value={form.mode} onChange={e => setForm(p => ({...p, mode: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                      <option value="Tatap Muka">Tatap Muka</option><option value="Video Call">Panggilan video</option><option value="Phone">Telepon</option>
-                    </SmartNativeSelect>
-                  </div>
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">Interviewer</label>
-                  <input value={form.interviewer} onChange={e => setForm(p => ({...p, interviewer: e.target.value}))}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm"
-                    placeholder="Nama interviewer" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">Catatan tambahan</label>
-                  <textarea value={form.notes} onChange={e => setForm(p => ({...p, notes: e.target.value}))}
-                    className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm h-16 resize-none"
-                    placeholder="Topik yang akan dibahas, persiapan khusus..." />
-                </div>
-              </>
-            )}
-
-            {/* Offering */}
-            {isOffer && (
-              <>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Gaji Ditawarkan (Rp)</label>
-                    <MoneyInput unstyled value={form.salary} onChange={e => setForm(p => ({...p, salary: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm"
-                      placeholder="3.000.000" />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Tipe Kontrak</label>
-                    <SmartNativeSelect searchable={false} value={form.contract_type} onChange={e => setForm(p => ({...p, contract_type: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                      <option value="PKWTT">PKWTT (Tetap)</option>
-                      <option value="PKWT">PKWT (Kontrak)</option>
-                      <option value="Magang">Magang</option>
-                    </SmartNativeSelect>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Mulai Bekerja</label>
-                    <GlassInput type="date" value={form.start_date} onChange={e => setForm(p => ({...p, start_date: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Posisi</label>
-                    <input value={form.position} onChange={e => setForm(p => ({...p, position: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-                  </div>
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">Tunjangan / Benefit</label>
-                  <input value={form.allowances} onChange={e => setForm(p => ({...p, allowances: e.target.value}))}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm"
-                    placeholder="BPJS, transport, makan, dll." />
-                </div>
-              </>
-            )}
-
-            {/* Hired */}
-            {isHired && (
-              <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20">
-                <div className="flex items-center gap-2 mb-2">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-                  <span className="font-semibold text-emerald-700 dark:text-emerald-400">Konfirmasi Penerimaan</span>
-                </div>
-                <p className="text-sm text-emerald-700 dark:text-emerald-400">
-                  <strong>{candidate?.name}</strong> akan ditandai sebagai karyawan diterima.
-                  Sistem akan otomatis membuat:
-                </p>
-                <ul className="mt-2 space-y-1 text-sm text-emerald-700 dark:text-emerald-400">
-                  <li className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 shrink-0" />Data karyawan baru</li>
-                  <li className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 shrink-0" />Checklist onboarding</li>
-                </ul>
-                <textarea value={form.notes} onChange={e => setForm(p => ({...p, notes: e.target.value}))}
-                  className="mt-3 w-full px-3 py-2 rounded-lg border border-emerald-200 dark:border-emerald-500/30 bg-white/50 dark:bg-emerald-500/5 text-sm h-16 resize-none"
-                  placeholder="Catatan penerimaan (opsional)" />
-              </div>
-            )}
-
-            {/* Rejected */}
-            {isReject && (
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Alasan Penolakan</label>
-                <SmartNativeSelect searchable={false} value={form.rejection_reason} onChange={e => setForm(p => ({...p, rejection_reason: e.target.value}))}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm mb-2">
-                  <option value="Tidak memenuhi kualifikasi">Tidak memenuhi kualifikasi</option>
-                  <option value="Gaji tidak sesuai">Gaji tidak sesuai</option>
-                  <option value="Posisi sudah diisi">Posisi sudah diisi</option>
-                  <option value="Hasil interview kurang">Hasil interview kurang</option>
-                  <option value="Mengundurkan diri">Mengundurkan diri</option>
-                </SmartNativeSelect>
-                <textarea value={form.notes} onChange={e => setForm(p => ({...p, notes: e.target.value}))}
-                  className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm h-16 resize-none"
-                  placeholder="Catatan tambahan (opsional)" />
-              </div>
-            )}
+      {isOffer && (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Isian label="Gaji ditawarkan (Rp)">
+              <MoneyInput value={form.salary} onChange={e => setForm(p => ({ ...p, salary: e.target.value }))} placeholder="3.000.000" />
+            </Isian>
+            <Isian label="Jenis kontrak">
+              <SmartNativeSelect searchable={false} value={form.contract_type} onChange={e => setForm(p => ({ ...p, contract_type: e.target.value }))}>
+                <option value="PKWTT">PKWTT (tetap)</option>
+                <option value="PKWT">PKWT (kontrak)</option>
+                <option value="Magang">Magang</option>
+              </SmartNativeSelect>
+            </Isian>
+            <Isian label="Mulai bekerja">
+              <DatePicker value={form.start_date} onChange={v => setForm(p => ({ ...p, start_date: v }))} testId="ats-offer-mulai" />
+            </Isian>
+            <Isian label="Posisi" htmlFor="ats-offer-posisi">
+              <Input id="ats-offer-posisi" value={form.position} onChange={e => setForm(p => ({ ...p, position: e.target.value }))} />
+            </Isian>
           </div>
+          <Isian label="Tunjangan / fasilitas" htmlFor="ats-offer-tunjangan">
+            <Input id="ats-offer-tunjangan" value={form.allowances} onChange={e => setForm(p => ({ ...p, allowances: e.target.value }))}
+              placeholder="BPJS, transport, makan, dll." />
+          </Isian>
+        </>
+      )}
 
-          <div className="flex gap-3 mt-5">
-            <button onClick={onClose} className="flex-1 h-10 rounded-xl border border-[var(--glass-border)] text-sm text-muted-foreground">Batal</button>
-            <button onClick={handleSubmit} disabled={saving}
-              className={`flex-1 h-10 rounded-xl text-sm font-semibold disabled:opacity-50 transition-opacity ${
-                isReject ? 'bg-red-500 text-white' : isHired ? 'bg-emerald-500 text-white' : 'bg-[hsl(var(--primary))] text-foreground'
-              }`}>
-              {saving ? 'Menyimpan...' : isHired ? 'Terima Kandidat' : isReject ? 'Tolak' : 'Lanjutkan'}
-            </button>
-          </div>
+      {isHired && (
+        <>
+          <Notice tone="success" title="Konfirmasi penerimaan">
+            {candidate?.name} ditandai diterima. Sistem otomatis membuat data karyawan baru dan checklist onboarding.
+          </Notice>
+          <Isian label="Catatan penerimaan (opsional)" htmlFor="ats-catatan-terima">
+            <Textarea id="ats-catatan-terima" rows={2} value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} />
+          </Isian>
+        </>
+      )}
 
-          {/* Mock email notice */}
-          {candidate?.email && (
-            <div className="mt-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20">
-              <Mail className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-xs text-blue-700 dark:text-blue-400">Email notifikasi akan dikirim ke <strong>{candidate.email}</strong></p>
-              </div>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-400/20 text-amber-700 dark:text-amber-400 font-medium shrink-0">MOCK</span>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+      {isReject && (
+        <>
+          <Isian label="Alasan penolakan">
+            <SmartNativeSelect searchable={false} value={form.rejection_reason} onChange={e => setForm(p => ({ ...p, rejection_reason: e.target.value }))}>
+              <option value="Tidak memenuhi kualifikasi">Tidak memenuhi kualifikasi</option>
+              <option value="Gaji tidak sesuai">Gaji tidak sesuai</option>
+              <option value="Posisi sudah diisi">Posisi sudah diisi</option>
+              <option value="Hasil interview kurang">Hasil wawancara kurang</option>
+              <option value="Mengundurkan diri">Mengundurkan diri</option>
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Catatan tambahan (opsional)" htmlFor="ats-catatan-tolak">
+            <Textarea id="ats-catatan-tolak" rows={2} value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} />
+          </Isian>
+        </>
+      )}
+
+      {candidate?.email && (
+        <p className="text-xs text-muted-foreground">
+          Email pemberitahuan dicatat untuk {candidate.email} — integrasi email belum aktif, jadi email belum benar-benar terkirim.
+        </p>
+      )}
+    </FormPopup>
   );
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// INTERVIEW RESULT MODAL
+// HASIL WAWANCARA (form popup)
 // ────────────────────────────────────────────────────────────────────────────
 function InterviewResultModal({ interview, candidateId, headers, onSuccess, onClose }) {
   const [form, setForm] = useState({
@@ -339,69 +305,59 @@ function InterviewResultModal({ interview, candidateId, headers, onSuccess, onCl
         }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);  // 2026-11-06 (pola P6): sukses hanya bila server menerima
-      toast.success('Hasil interview disimpan');
+      toast.success('Hasil wawancara disimpan');
       onSuccess();
     } catch { toast.error('Gagal menyimpan'); }
     finally { setSaving(false); }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-[var(--card-surface)] rounded-2xl border border-[var(--glass-border)] shadow-2xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
-        <div className="p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold">Hasil Interview</h3>
-            <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-[var(--nav-pill-active)] flex items-center justify-center"><X className="w-4 h-4" /></button>
-          </div>
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Hasil</label>
-                <SmartNativeSelect searchable={false} value={form.result} onChange={e => setForm(p => ({...p, result: e.target.value}))}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                  <option value="">Pilih hasil</option>
-                  <option value="pass">Lulus</option>
-                  <option value="fail">Tidak Lulus</option>
-                  <option value="hold">Ditunda</option>
-                </SmartNativeSelect>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Skor (1-100)</label>
-                <input type="number" min="0" max="100" value={form.score} onChange={e => setForm(p => ({...p, score: e.target.value}))}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" placeholder="75" />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Catatan Interviewer</label>
-              <textarea value={form.notes} onChange={e => setForm(p => ({...p, notes: e.target.value}))}
-                className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm h-20 resize-none" />
-            </div>
-          </div>
-          <div className="flex gap-3 mt-4">
-            <button onClick={onClose} className="flex-1 h-9 rounded-xl border border-[var(--glass-border)] text-sm">Batal</button>
-            <button onClick={handleSubmit} disabled={saving}
-              className="flex-1 h-9 rounded-xl bg-[hsl(var(--primary))] text-foreground text-sm font-medium disabled:opacity-50">
-              {saving ? 'Simpan...' : 'Simpan'}
-            </button>
-          </div>
-        </div>
+    <FormPopup open onClose={onClose} ukuran="pendek" onSimpan={handleSubmit} menyimpan={saving} testId="ats-iv-result-form"
+      judul="Hasil wawancara" keterangan={`${labelTahap(interview?.type)} · ${formatDateTimeID(interview?.scheduled_at)}`}>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Hasil">
+          <SmartNativeSelect searchable={false} value={form.result} onChange={e => setForm(p => ({ ...p, result: e.target.value }))}>
+            <option value="">Pilih hasil</option>
+            <option value="pass">Lulus</option>
+            <option value="fail">Tidak lulus</option>
+            <option value="hold">Ditunda</option>
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Skor (1–100)" htmlFor="ats-iv-skor">
+          <Input id="ats-iv-skor" type="number" min="0" max="100" value={form.score} onChange={e => setForm(p => ({ ...p, score: e.target.value }))} placeholder="75" />
+        </Isian>
       </div>
-    </div>
+      <Isian label="Catatan pewawancara" htmlFor="ats-iv-hasil-catatan">
+        <Textarea id="ats-iv-hasil-catatan" rows={3} value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} />
+      </Isian>
+    </FormPopup>
+  );
+}
+
+function Bagian({ judul, children, alat }) {
+  return (
+    <section className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-foreground">{judul}</p>
+        {alat}
+      </div>
+      {children}
+    </section>
   );
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// CANDIDATE DETAIL MODAL (Enhanced with tabs)
+// DETAIL KANDIDAT (popup)
 // ────────────────────────────────────────────────────────────────────────────
 function CandidateDetailModal({ candidate: initCandidate, headers, jobs, onStageAction, onRefresh, onClose }) {
   const [candidate, setCandidate] = useState(initCandidate);
-  const [detailTab, setDetailTab] = useState('info');
   const [stageAction, setStageAction] = useState(null);
   const [interviewResult, setInterviewResult] = useState(null);
   const [noteText, setNoteText] = useState('');
   const [savingNote, setSavingNote] = useState(false);
   const [cvInput, setCvInput] = useState({ url: candidate?.cv_url || '', mode: 'url' });
   const [uploadingCV, setUploadingCV] = useState(false);
+  const [emailBuka, setEmailBuka] = useState(null);
   const fileRef = useRef(null);
 
   const refreshCandidate = async () => {
@@ -444,7 +400,7 @@ function CandidateDetailModal({ candidate: initCandidate, headers, jobs, onStage
 
   const handleFileUpload = async (file) => {
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { toast.error('File terlalu besar. Maks 5MB'); return; }
+    if (file.size > 5 * 1024 * 1024) { toast.error('Berkas terlalu besar. Maks 5 MB'); return; }
     setUploadingCV(true);
     try {
       const reader = new FileReader();
@@ -456,12 +412,12 @@ function CandidateDetailModal({ candidate: initCandidate, headers, jobs, onStage
         });
         setUploadingCV(false);
         // 2026-11-06 (pola P6): onload berjalan di luar try → cek jawaban di sini
-        if (!r.ok) { toast.error('Gagal upload CV'); return; }
-        toast.success('CV berhasil diupload');
+        if (!r.ok) { toast.error('Gagal mengunggah CV'); return; }
+        toast.success('CV berhasil diunggah');
         refreshCandidate();
       };
       reader.readAsDataURL(file);
-    } catch { toast.error('Gagal upload CV'); setUploadingCV(false); }
+    } catch { toast.error('Gagal mengunggah CV'); setUploadingCV(false); }
   };
 
   const handleRating = async (rating) => {
@@ -473,368 +429,191 @@ function CandidateDetailModal({ candidate: initCandidate, headers, jobs, onStage
     onRefresh();
   };
 
-  const ivStatusColor = {
-    scheduled: 'text-blue-600 dark:text-blue-400',
-    done: 'text-emerald-600 dark:text-emerald-400',
-    cancelled: 'text-red-600 dark:text-red-400',
-    no_show: 'text-orange-600 dark:text-orange-400',
+  const alihTalentPool = async () => {
+    const r = await api(`/talent-pool/${candidate.candidate_id}/toggle`, { method: 'POST', headers });
+    if (!r.ok) { toast.error('Gagal mengubah talent pool'); return; }  // 2026-11-06 (pola P6): dulu selalu "berhasil"
+    setCandidate(p => ({...p, is_talent_pool: !p.is_talent_pool}));
+    onRefresh();
+    toast.success(candidate.is_talent_pool ? 'Dikeluarkan dari talent pool' : 'Ditambahkan ke talent pool');
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-[var(--card-surface)] rounded-2xl border border-[var(--glass-border)] shadow-2xl max-w-2xl w-full max-h-[88vh] flex flex-col" onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className="p-5 border-b border-[var(--glass-border)] shrink-0">
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-full bg-[hsl(var(--primary)/0.15)] flex items-center justify-center text-primary text-lg font-bold shrink-0">
-                {candidate.name?.[0]?.toUpperCase()}
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-foreground">{candidate.name}</h2>
-                <p className="text-sm text-muted-foreground">{candidate.job_title}</p>
-                <div className="flex items-center gap-2 mt-1">
-                  <StageBadge stage={candidate.stage} />
-                  <RatingStars rating={candidate.rating} onRate={handleRating} />
-                </div>
-              </div>
-            </div>
-            <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-[var(--nav-pill-active)] flex items-center justify-center shrink-0">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+  // Pilihan tahap sama seperti dulu: tiga tahap pertama selain tahap sekarang & Ditolak.
+  const pilihanTahap = STAGES.filter(s => s !== candidate.stage && s !== 'Rejected').slice(0, 3);
+  const interviews = candidate.interviews || [];
+  const catatan = [...(candidate.activity_notes || [])].reverse();
+  const emails = [...(candidate.email_logs || [])].reverse();
 
-          {/* Stage Actions */}
-          <div className="flex items-center gap-2 mt-3 flex-wrap">
-            <span className="text-xs text-muted-foreground">Pindahkan ke:</span>
-            {STAGES.filter(s => s !== candidate.stage && s !== 'Rejected').slice(0, 3).map(s => {
-              const cfg = STAGE_CFG[s];
-              return (
-                <button key={s} onClick={() => setStageAction(s)}
-                  className="text-xs px-3 py-1 rounded-lg border font-medium transition-all hover:opacity-80"
-                  style={{ borderColor: cfg?.color + '60', color: cfg?.color, background: cfg?.bg }}>
-                  <span>{s}</span>
-                </button>
-              );
-            })}
-            {candidate.stage !== 'Rejected' && (
-              <button onClick={() => setStageAction('Rejected')}
-                className="text-xs px-3 py-1 rounded-lg border border-red-300 dark:border-red-400/30 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-400/10 font-medium">
-                Tolak
-              </button>
+  return (
+    <DetailPopup open onClose={onClose} testId="ats-candidate-detail" judul={candidate.name}
+      keterangan={candidate.job_title}
+      status={<><StageBadge stage={candidate.stage} /><RatingStars rating={candidate.rating} onRate={handleRating} /></>}
+      aksi={<>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" variant="outline" data-testid="ats-move-stage">Pindahkan ke<ChevronDown /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {pilihanTahap.map(s => (
+              <DropdownMenuItem key={s} onSelect={() => setStageAction(s)}>{labelTahap(s)}</DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {candidate.stage !== 'Rejected' && (
+          <Button size="sm" variant="destructive" onClick={() => setStageAction('Rejected')} data-testid="ats-reject-btn"><X />Tolak</Button>
+        )}
+        <Button size="sm" variant="outline" onClick={alihTalentPool} data-testid="toggle-talent-pool-btn">
+          {candidate.is_talent_pool ? <><BookmarkCheck />Dalam talent pool</> : <><Bookmark />Masukkan talent pool</>}
+        </Button>
+      </>}>
+      <Bagian judul="Data pelamar">
+        <dl className="divide-y divide-[var(--glass-border)]">
+          <BarisDetail label="Email">{candidate.email || '—'}</BarisDetail>
+          <BarisDetail label="No. HP">{candidate.phone || '—'}</BarisDetail>
+          <BarisDetail label="Pendidikan">{candidate.education || '—'}</BarisDetail>
+          <BarisDetail label="Pengalaman">{candidate.experience_years ?? 0} tahun</BarisDetail>
+          <BarisDetail label="Sumber">{labelSumber(candidate.source)}</BarisDetail>
+          <BarisDetail label="Melamar">{fmtDate(candidate.applied_at)}</BarisDetail>
+          {candidate.address && <BarisDetail label="Alamat">{candidate.address}</BarisDetail>}
+          {candidate.skills?.length > 0 && <BarisDetail label="Keahlian">{candidate.skills.join(', ')}</BarisDetail>}
+          {candidate.portfolio_url && (
+            <BarisDetail label="Portofolio">
+              <a href={candidate.portfolio_url} target="_blank" rel="noreferrer" className="break-all text-primary hover:underline">{candidate.portfolio_url}</a>
+            </BarisDetail>
+          )}
+        </dl>
+      </Bagian>
+
+      {candidate.timeline?.length > 0 && (
+        <Bagian judul="Riwayat tahap">
+          <TabelData baris={[...candidate.timeline].reverse()} kunci={(t) => `${t.stage}-${t.date}`} testId="ats-timeline"
+            kolom={[
+              { kunci: 'tahap', label: 'Tahap', hp: 'judul', isi: (t) => <StageBadge stage={t.stage} /> },
+              { kunci: 'tgl', label: 'Tanggal', isi: (t) => fmtDate(t.date) },
+              { kunci: 'oleh', label: 'Oleh', isi: (t) => t.by || '—' },
+              { kunci: 'catatan', label: 'Catatan', hp: 'keterangan', isi: (t) => <span className="text-sm text-muted-foreground">{t.note || '—'}</span> },
+            ]} />
+        </Bagian>
+      )}
+
+      <Bagian judul="CV & dokumen">
+        {(candidate.cv_url || candidate.cv_filename) ? (
+          <div className="space-y-1 text-sm">
+            {candidate.cv_filename && (
+              <p className="flex flex-wrap items-center gap-2">
+                <FileText className="h-4 w-4 text-primary" />{candidate.cv_filename}
+                {candidate.cv_data && (
+                  <a href={`data:application/pdf;base64,${candidate.cv_data}`} download={candidate.cv_filename} className="text-primary hover:underline">Unduh</a>
+                )}
+              </p>
+            )}
+            {candidate.cv_url && (
+              <p className="flex items-center gap-2"><Link2 className="h-4 w-4 text-primary" />
+                <a href={candidate.cv_url} target="_blank" rel="noreferrer" className="truncate text-primary hover:underline">{candidate.cv_url}</a>
+              </p>
             )}
           </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex gap-1 p-3 border-b border-[var(--glass-border)] shrink-0 overflow-x-auto">
-          {[['info','Info'],['cv','CV & Dokumen'],['interviews','Wawancara'],['offer','Penawaran'],['notes','Catatan'],['emails','Email']].map(([k,l]) => (
-            <button key={k} onClick={() => setDetailTab(k)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
-                detailTab === k ? 'bg-[var(--nav-pill-active)] text-foreground' : 'text-muted-foreground hover:text-foreground'
-              }`}>{l}
-              {k === 'interviews' && candidate.interviews?.length > 0 && (
-                <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-[hsl(var(--primary)/0.15)] text-primary">{candidate.interviews.length}</span>
-              )}
-              {k === 'emails' && candidate.email_logs?.length > 0 && (
-                <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-blue-100 dark:bg-blue-400/20 text-blue-600 dark:text-blue-400">{candidate.email_logs.length}</span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        {/* Tab content */}
-        <div className="flex-1 overflow-y-auto p-5">
-          {/* INFO */}
-          {detailTab === 'info' && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div className="flex items-center gap-2"><Mail className="w-4 h-4 text-muted-foreground shrink-0" /><span>{candidate.email || '—'}</span></div>
-                <div className="flex items-center gap-2"><Phone className="w-4 h-4 text-muted-foreground shrink-0" /><span>{candidate.phone || '—'}</span></div>
-                <div><span className="text-muted-foreground">Pendidikan:</span> {candidate.education || '—'}</div>
-                <div><span className="text-muted-foreground">Pengalaman:</span> {candidate.experience_years} tahun</div>
-                <div><span className="text-muted-foreground">Sumber:</span> {candidate.source || '—'}</div>
-                <div><span className="text-muted-foreground">Melamar:</span> {fmtDate(candidate.applied_at)}</div>
-                {candidate.address && <div className="col-span-2"><span className="text-muted-foreground">Alamat:</span> {candidate.address}</div>}
-              </div>
-              {candidate.skills?.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Skill</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {candidate.skills.map(s => <span key={s} className="text-xs px-2 py-0.5 rounded-full bg-[var(--nav-pill-active)] text-muted-foreground">{s}</span>)}
-                  </div>
-                </div>
-              )}
-              {/* Timeline */}
-              {candidate.timeline?.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Timeline</p>
-                  <div className="space-y-2">
-                    {[...candidate.timeline].reverse().map((t, i) => (
-                      <div key={i} className="flex items-start gap-3">
-                        <div className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{ background: STAGE_CFG[t.stage]?.color || '#64748b' }} />
-                        <div className="flex-1">
-                          <p className="text-sm font-medium text-foreground">{t.stage}</p>
-                          <p className="text-xs text-muted-foreground">{fmtDate(t.date)} · {t.by}</p>
-                          {t.note && <p className="text-xs text-muted-foreground italic mt-0.5">&quot;{t.note}&quot;</p>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* CV & DOKUMEN */}
-          {detailTab === 'cv' && (
-            <div className="space-y-4">
-              {/* Existing CV */}
-              {(candidate.cv_url || candidate.cv_filename) && (
-                <div className="p-4 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">CV Tersimpan</p>
-                  {candidate.cv_filename && (
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-5 h-5 text-primary" />
-                      <span className="text-sm font-medium">{candidate.cv_filename}</span>
-                      {candidate.cv_data && (
-                        <a href={`data:application/pdf;base64,${candidate.cv_data}`} download={candidate.cv_filename}
-                          className="ml-auto text-xs px-2 py-1 rounded-lg bg-[hsl(var(--primary)/0.15)] text-primary hover:opacity-80">
-                          Download
-                        </a>
-                      )}
-                    </div>
-                  )}
-                  {candidate.cv_url && (
-                    <div className="flex items-center gap-2">
-                      <Link2 className="w-5 h-5 text-primary" />
-                      <a href={candidate.cv_url} target="_blank" rel="noreferrer"
-                        className="text-sm text-primary hover:underline truncate">{candidate.cv_url}</a>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Upload / Link */}
-              <div className="p-4 rounded-xl border border-dashed border-[var(--glass-border)] space-y-3">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Upload / Perbarui CV</p>
-                <div className="flex gap-2">
-                  <button onClick={() => setCvInput(p => ({...p, mode: 'url'}))}
-                    className={`flex-1 h-8 rounded-lg text-xs font-medium border transition-all ${cvInput.mode === 'url' ? 'bg-[var(--nav-pill-active)] text-foreground border-[var(--glass-border)]' : 'border-[var(--glass-border)] text-muted-foreground'}`}>
-                    <Link2 className="w-3.5 h-3.5 inline mr-1" />Link URL
-                  </button>
-                  <button onClick={() => setCvInput(p => ({...p, mode: 'file'}))}
-                    className={`flex-1 h-8 rounded-lg text-xs font-medium border transition-all ${cvInput.mode === 'file' ? 'bg-[var(--nav-pill-active)] text-foreground border-[var(--glass-border)]' : 'border-[var(--glass-border)] text-muted-foreground'}`}>
-                    <Upload className="w-3.5 h-3.5 inline mr-1" />Upload File
-                  </button>
-                </div>
-
-                {cvInput.mode === 'url' ? (
-                  <div className="flex gap-2">
-                    <input value={cvInput.url} onChange={e => setCvInput(p => ({...p, url: e.target.value}))}
-                      placeholder="https://drive.google.com/..." 
-                      className="flex-1 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-                    <button onClick={handleCVSave} disabled={uploadingCV || !cvInput.url}
-                      className="h-9 px-3 rounded-lg bg-[hsl(var(--primary))] text-foreground text-xs font-medium disabled:opacity-50">
-                      {uploadingCV ? '...' : 'Simpan'}
-                    </button>
-                  </div>
-                ) : (
-                  <div>
-                    <input type="file" ref={fileRef} className="hidden" accept=".pdf,.doc,.docx"
-                      onChange={e => handleFileUpload(e.target.files?.[0])} />
-                    <button onClick={() => fileRef.current?.click()} disabled={uploadingCV}
-                      className="w-full h-20 rounded-xl border-2 border-dashed border-[var(--glass-border)] flex flex-col items-center justify-center gap-1 hover:border-[hsl(var(--primary)/0.5)] transition-colors disabled:opacity-50">
-                      <Upload className="w-5 h-5 text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground">{uploadingCV ? 'Mengupload...' : 'Klik untuk pilih file (PDF, max 5MB)'}</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {candidate.portfolio_url && (
-                <div className="flex items-center gap-2 text-sm">
-                  <Link2 className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-muted-foreground">Portfolio:</span>
-                  <a href={candidate.portfolio_url} target="_blank" rel="noreferrer" className="text-primary hover:underline">{candidate.portfolio_url}</a>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* WAWANCARA */}
-          {detailTab === 'interviews' && (
-            <div className="space-y-3">
-              {candidate.interviews?.length === 0 || !candidate.interviews ? (
-                <div className="text-center py-8">
-                  <MessageSquare className="w-10 h-10 mx-auto mb-2 text-muted-foreground/30" />
-                  <p className="text-sm text-muted-foreground">Belum ada jadwal interview</p>
-                  <p className="text-xs text-muted-foreground mt-1">Pindahkan kandidat ke &quot;Interview HR&quot; untuk menjadwalkan</p>
-                </div>
-              ) : (
-                candidate.interviews.map(iv => (
-                  <div key={iv.interview_id} className="p-4 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-                    <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <p className="text-sm font-semibold text-foreground">{iv.type}</p>
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
-                          {iv.mode === 'Video Call' ? <Video className="w-3.5 h-3.5" /> : <MapPin className="w-3.5 h-3.5" />}
-                          <span>{iv.mode}</span>
-                          {iv.interviewer && <><span>·</span><span>{iv.interviewer}</span></>}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <span className={`text-xs font-medium ${ivStatusColor[iv.status] || 'text-muted-foreground'}`}>
-                          {iv.status === 'scheduled' ? 'Terjadwal' : iv.status === 'done' ? 'Selesai' : iv.status === 'cancelled' ? 'Dibatalkan' : 'No Show'}
-                        </span>
-                        {iv.score != null && <p className="text-xs text-muted-foreground">Skor: {iv.score}/100</p>}
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />{fmtDate(iv.scheduled_at)}</span>
-                      {iv.result && (
-                        <span className={`px-2 py-0.5 rounded-full font-medium ${
-                          iv.result === 'pass' ? 'bg-emerald-50 dark:bg-emerald-400/10 text-emerald-600 dark:text-emerald-400' :
-                          iv.result === 'fail' ? 'bg-red-50 dark:bg-red-400/10 text-red-600 dark:text-red-400' :
-                          'bg-amber-50 dark:bg-amber-400/10 text-amber-600 dark:text-amber-400'
-                        }`}>{iv.result === 'pass' ? 'Lulus' : iv.result === 'fail' ? 'Tidak Lulus' : 'On Hold'}</span>
-                      )}
-                      {iv.status === 'scheduled' && (
-                        <button onClick={() => setInterviewResult(iv)}
-                          className="text-xs px-2 py-0.5 rounded-lg bg-[hsl(var(--primary)/0.15)] text-primary hover:opacity-80 font-medium">
-                          Isi Hasil
-                        </button>
-                      )}
-                    </div>
-                    {iv.notes && <p className="text-xs text-muted-foreground mt-2 italic">&quot;{iv.notes}&quot;</p>}
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-
-          {/* PENAWARAN */}
-          {detailTab === 'offer' && (
-            <div className="space-y-3">
-              {candidate.offer ? (
-                <div className="p-5 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)] space-y-3">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Award className="w-5 h-5 text-primary" />
-                    <p className="font-semibold text-foreground">Detail Penawaran</p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div><span className="text-muted-foreground">Gaji:</span><p className="font-semibold text-emerald-600 dark:text-emerald-400">{fmtCurrency(candidate.offer.salary)}</p></div>
-                    <div><span className="text-muted-foreground">Tipe Kontrak:</span><p className="font-medium">{candidate.offer.contract_type || '—'}</p></div>
-                    <div><span className="text-muted-foreground">Mulai Kerja:</span><p className="font-medium">{fmtDate(candidate.offer.start_date)}</p></div>
-                    <div><span className="text-muted-foreground">Posisi:</span><p className="font-medium">{candidate.offer.position || candidate.job_title || '—'}</p></div>
-                    {candidate.offer.allowances && <div className="col-span-2"><span className="text-muted-foreground">Tunjangan:</span><p className="font-medium">{candidate.offer.allowances}</p></div>}
-                  </div>
-                  <p className="text-xs text-muted-foreground">Ditawarkan: {fmtDate(candidate.offer.offered_at)}</p>
-                </div>
-              ) : (
-                <div className="text-center py-8">
-                  <DollarSign className="w-10 h-10 mx-auto mb-2 text-muted-foreground/30" />
-                  <p className="text-sm text-muted-foreground">Belum ada penawaran</p>
-                  <p className="text-xs text-muted-foreground mt-1">Pindahkan kandidat ke tahap &quot;Offering&quot; untuk membuat penawaran</p>
-                </div>
-              )}
-              {candidate.onboarding_checklist_id && (
-                <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20">
-                  <div className="flex items-center gap-2">
-                    <ClipboardCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-                    <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">Onboarding telah dibuat</p>
-                  </div>
-                  <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-1">ID: {candidate.onboarding_checklist_id}</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* CATATAN */}
-          {detailTab === 'notes' && (
-            <div className="space-y-3">
-              <div className="space-y-2">
-                {(candidate.activity_notes || []).length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-4">Belum ada catatan</p>
-                ) : (
-                  [...(candidate.activity_notes || [])].reverse().map(n => (
-                    <div key={n.note_id} className="p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-                      <p className="text-sm text-foreground">{n.text}</p>
-                      <p className="text-xs text-muted-foreground mt-1">{n.by} · {fmtDate(n.created_at)}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-              <div className="flex gap-2">
-                <input value={noteText} onChange={e => setNoteText(e.target.value)} placeholder="Tambah catatan..."
-                  className="flex-1 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm"
-                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAddNote(); }}} />
-                <button onClick={handleAddNote} disabled={savingNote || !noteText.trim()}
-                  className="h-9 w-9 rounded-lg bg-[hsl(var(--primary))] text-foreground flex items-center justify-center disabled:opacity-50">
-                  <Send className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* EMAIL HISTORY */}
-          {detailTab === 'emails' && (
-            <div className="space-y-3">
-              {/* Mock banner */}
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20">
-                <AlertCircle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
-                <p className="text-xs text-amber-700 dark:text-amber-400">Integrasi email belum aktif — email tersimpan di log (MOCK). Email tidak benar-benar terkirim.</p>
-              </div>
-
-              {!candidate.email_logs?.length ? (
-                <div className="text-center py-8">
-                  <Mail className="w-10 h-10 mx-auto mb-2 text-muted-foreground/30" />
-                  <p className="text-sm text-muted-foreground">Belum ada email terkirim</p>
-                  <p className="text-xs text-muted-foreground mt-1">Email otomatis dikirim saat stage kandidat berubah</p>
-                </div>
-              ) : (
-                [...candidate.email_logs].reverse().map(log => (
-                  <div key={log.log_id} className="rounded-xl border border-[var(--glass-border)] overflow-hidden">
-                    {/* Email header */}
-                    <div className="flex items-start justify-between p-4 bg-[var(--glass-bg)]">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <StageBadge stage={log.stage} />
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-400/20 text-amber-700 dark:text-amber-400 font-medium">MOCK</span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-400/20 text-emerald-700 dark:text-emerald-400">Terkirim</span>
-                        </div>
-                        <p className="text-sm font-semibold text-foreground truncate">{log.subject}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">Ke: {log.to} · {fmtDate(log.sent_at)} · Oleh: {log.sent_by}</p>
-                      </div>
-                    </div>
-                    {/* Email body */}
-                    <div className="p-4 border-t border-[var(--glass-border)] bg-[var(--card-surface)]">
-                      <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed font-mono">{log.body}</p>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
+        ) : <p className="text-sm text-muted-foreground">Belum ada CV.</p>}
+        <div className="flex flex-wrap items-center gap-2">
+          <SmartNativeSelect searchable={false} value={cvInput.mode} onChange={e => setCvInput(p => ({ ...p, mode: e.target.value }))} className="w-40"
+            aria-label="Cara menyimpan CV">
+            <option value="url">Tautan</option>
+            <option value="file">Unggah berkas</option>
+          </SmartNativeSelect>
+          {cvInput.mode === 'url' ? (
+            <>
+              <Input value={cvInput.url} onChange={e => setCvInput(p => ({ ...p, url: e.target.value }))} placeholder="https://drive.google.com/…" className="w-full sm:w-80" />
+              <Button size="sm" variant="success" onClick={handleCVSave} disabled={uploadingCV || !cvInput.url}>{uploadingCV ? 'Menyimpan…' : 'Simpan'}</Button>
+            </>
+          ) : (
+            <>
+              <input type="file" ref={fileRef} className="hidden" accept=".pdf,.doc,.docx" onChange={e => handleFileUpload(e.target.files?.[0])} />
+              <Button size="sm" variant="outline" onClick={() => fileRef.current?.click()} disabled={uploadingCV}>
+                <Upload />{uploadingCV ? 'Mengunggah…' : 'Pilih berkas (PDF, maks 5 MB)'}
+              </Button>
+            </>
           )}
         </div>
+      </Bagian>
 
-        {/* Talent pool footer */}
-        <div className="p-4 border-t border-[var(--glass-border)] shrink-0">
-          <button onClick={async () => {
-            const r = await api(`/talent-pool/${candidate.candidate_id}/toggle`, { method: 'POST', headers });
-            if (!r.ok) { toast.error('Gagal mengubah Talent Pool'); return; }  // 2026-11-06 (pola P6): dulu selalu "berhasil"
-            setCandidate(p => ({...p, is_talent_pool: !p.is_talent_pool}));
-            onRefresh();
-            toast.success(candidate.is_talent_pool ? 'Dikeluarkan dari Talent Pool' : 'Ditambahkan ke Talent Pool');
-          }} className={`w-full py-2 px-4 rounded-xl border text-sm font-medium flex items-center justify-center gap-2 transition-all ${
-            candidate.is_talent_pool
-              ? 'border-emerald-400 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-              : 'border-amber-400 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400'
-          }`} data-testid="toggle-talent-pool-btn">
-            {candidate.is_talent_pool ? <><BookmarkCheck className="w-4 h-4" />Dalam Talent Pool</> : <><Bookmark className="w-4 h-4" />Masukkan ke Talent Pool</>}
-          </button>
+      <Bagian judul={`Wawancara (${interviews.length})`}>
+        <TabelData baris={interviews} kunci={(iv) => iv.interview_id} testId="ats-interviews"
+          kolom={[
+            { kunci: 'jenis', label: 'Wawancara', hp: 'judul', isi: (iv) => (
+              <div><p className="font-medium text-foreground">{labelTahap(iv.type)}</p>
+                <p className="text-xs text-muted-foreground">{MODE_LABEL[iv.mode] || iv.mode}{iv.interviewer ? ` · ${iv.interviewer}` : ''}</p></div>) },
+            { kunci: 'jadwal', label: 'Jadwal', isi: (iv) => <span className="text-sm">{formatDateTimeID(iv.scheduled_at)}</span> },
+            { kunci: 'status', label: 'Status', isi: (iv) => {
+              const c = IV_STATUS[iv.status] || { label: iv.status || '—', tone: 'default' };
+              return <StatusBadge status={iv.status} label={c.label} tone={c.tone} />;
+            } },
+            { kunci: 'hasil', label: 'Hasil', isi: (iv) => (iv.result
+              ? <StatusBadge status={iv.result} label={IV_RESULT[iv.result]?.label || iv.result} tone={IV_RESULT[iv.result]?.tone} />
+              : '—') },
+            { kunci: 'skor', label: 'Skor', rata: 'kanan', isi: (iv) => <span className="tabular-nums">{iv.score != null ? iv.score : '—'}</span> },
+            { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (iv) => (iv.status === 'scheduled'
+              ? <Button size="sm" variant="outline" onClick={() => setInterviewResult(iv)}>Isi hasil</Button> : null) },
+          ]}
+          kosong={<p className="text-sm text-muted-foreground">Belum ada jadwal wawancara. Pindahkan kandidat ke "Wawancara SDM" untuk menjadwalkan.</p>} />
+      </Bagian>
+
+      <Bagian judul="Penawaran">
+        {candidate.offer ? (
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Gaji">{fmtCurrency(candidate.offer.salary)}</BarisDetail>
+            <BarisDetail label="Jenis kontrak">{candidate.offer.contract_type || '—'}</BarisDetail>
+            <BarisDetail label="Mulai kerja">{fmtDate(candidate.offer.start_date)}</BarisDetail>
+            <BarisDetail label="Posisi">{candidate.offer.position || candidate.job_title || '—'}</BarisDetail>
+            {candidate.offer.allowances && <BarisDetail label="Tunjangan">{candidate.offer.allowances}</BarisDetail>}
+            <BarisDetail label="Ditawarkan">{fmtDate(candidate.offer.offered_at)}</BarisDetail>
+          </dl>
+        ) : <p className="text-sm text-muted-foreground">Belum ada penawaran. Pindahkan kandidat ke tahap "Penawaran" untuk membuatnya.</p>}
+        {candidate.onboarding_checklist_id && (
+          <Notice tone="success" title="Onboarding sudah dibuat">Checklist onboarding karyawan ini tersedia di menu Onboarding.</Notice>
+        )}
+      </Bagian>
+
+      <Bagian judul={`Catatan (${catatan.length})`}>
+        {catatan.length > 0 && (
+          <ul className="divide-y divide-[var(--glass-border)] rounded-lg border border-[var(--glass-border)]">
+            {catatan.map(n => (
+              <li key={n.note_id} className="px-3 py-2">
+                <p className="text-sm text-foreground">{n.text}</p>
+                <p className="text-xs text-muted-foreground">{n.by} · {fmtDate(n.created_at)}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="flex gap-2">
+          <Input value={noteText} onChange={e => setNoteText(e.target.value)} placeholder="Tambah catatan"
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAddNote(); } }} />
+          <Button size="icon" onClick={handleAddNote} disabled={savingNote || !noteText.trim()} aria-label="Kirim catatan" title="Kirim catatan">
+            <Send />
+          </Button>
         </div>
-      </div>
+      </Bagian>
+
+      <Bagian judul={`Email (${emails.length})`}>
+        <p className="text-xs text-muted-foreground">Integrasi email belum aktif — email hanya tersimpan di catatan ini, belum benar-benar terkirim.</p>
+        {emails.length > 0 && (
+          <ul className="divide-y divide-[var(--glass-border)] rounded-lg border border-[var(--glass-border)]">
+            {emails.map(log => (
+              <li key={log.log_id} className="px-3 py-2">
+                <div className="flex items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-foreground">{log.subject}</p>
+                    <p className="text-xs text-muted-foreground">Ke {log.to} · {fmtDate(log.sent_at)} · oleh {log.sent_by} · {labelTahap(log.stage)}</p>
+                  </div>
+                  <Button variant="ghost" size="icon-sm" onClick={() => setEmailBuka(emailBuka === log.log_id ? null : log.log_id)}
+                    aria-label={emailBuka === log.log_id ? 'Tutup isi email' : 'Lihat isi email'} title={emailBuka === log.log_id ? 'Tutup isi email' : 'Lihat isi email'}>
+                    {emailBuka === log.log_id ? <ChevronDown /> : <ChevronRight />}
+                  </Button>
+                </div>
+                {emailBuka === log.log_id && <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{log.body}</p>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Bagian>
 
       {stageAction && (
         <StageActionModal
@@ -854,79 +633,55 @@ function CandidateDetailModal({ candidate: initCandidate, headers, jobs, onStage
           onClose={() => setInterviewResult(null)}
         />
       )}
-    </div>
+    </DetailPopup>
   );
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// PIPELINE KANBAN
+// PAPAN PIPELINE (kolom berisi daftar ringkas)
 // ────────────────────────────────────────────────────────────────────────────
 function PipelineView({ pipeline, onViewCandidate }) {
   const stages = STAGES.filter(s => s !== 'Rejected');
   return (
-    <div className="overflow-x-auto pb-4 -mx-1 px-1">
-      <div className="flex gap-3 min-w-max">
+    <div className="overflow-x-auto rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)]">
+      <div className="flex min-w-max divide-x divide-[var(--glass-border)]">
         {stages.map(stage => {
           const col = pipeline?.[stage] || { count: 0, candidates: [] };
-          const cfg = STAGE_CFG[stage];
-          const StageIcon = cfg?.icon || Briefcase;
           return (
-            <div key={stage} className="w-60 flex-shrink-0">
-              <div className="flex items-center justify-between mb-2 px-1">
-                <div className="flex items-center gap-1.5">
-                  <StageIcon className="w-3.5 h-3.5" style={{ color: cfg?.color }} />
-                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{stage}</span>
-                </div>
-                <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: cfg?.bg, color: cfg?.color }}>{col.count}</span>
+            <section key={stage} className="w-56 shrink-0" data-testid={`pipeline-col-${stage}`}>
+              <div className="flex items-center justify-between border-b border-[var(--glass-border)] px-3 py-2">
+                <span className="text-sm font-medium text-foreground">{labelTahap(stage)}</span>
+                <span className="text-sm tabular-nums text-muted-foreground">{col.count}</span>
               </div>
-              <div className="space-y-2 min-h-[60px]">
-                {col.candidates.map(c => (
-                  <div key={c.candidate_id}
-                    className="p-3 rounded-xl bg-[var(--card-surface)] border border-[var(--glass-border)] cursor-pointer hover:border-[hsl(var(--primary)/0.3)] hover:shadow-sm transition-all group"
-                    onClick={() => onViewCandidate(c)}
-                    data-testid={`pipeline-card-${c.candidate_id}`}>
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="w-7 h-7 rounded-full bg-[hsl(var(--primary)/0.15)] flex items-center justify-center text-primary text-xs font-bold">
-                        {c.name?.[0]?.toUpperCase() || 'K'}
-                      </div>
-                      <RatingStars rating={c.rating} />
-                    </div>
-                    <p className="text-sm font-semibold text-foreground leading-tight">{c.name}</p>
-                    <p className="text-xs text-muted-foreground mb-2">{c.job_title}</p>
-                    {c.cv_url || c.cv_filename ? (
-                      <div className="flex items-center gap-1 text-[10px] text-primary mb-1.5">
-                        <FileText className="w-3 h-3" /><span>CV tersedia</span>
-                      </div>
-                    ) : null}
-                    {c.interviews?.length > 0 && (
-                      <div className="flex items-center gap-1 text-[10px] text-muted-foreground mb-1.5">
-                        <Calendar className="w-3 h-3" /><span>{c.interviews.length} interview</span>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between mt-1">
-                      <span className="text-[10px] text-muted-foreground">{c.source}</span>
-                      <span className="text-[10px] text-muted-foreground">{fmtDate(c.applied_at)}</span>
-                    </div>
-                    <div className="mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={e => { e.stopPropagation(); onViewCandidate(c); }}
-                        className="w-full text-[10px] py-1 rounded-lg border border-[var(--glass-border)] text-muted-foreground hover:text-foreground">
-                        Lihat Detail & Aksi
-                      </button>
-                    </div>
-                  </div>
-                ))}
-                {col.candidates.length === 0 && (
-                  <div className="h-16 rounded-xl border border-dashed border-[var(--glass-border)] flex items-center justify-center">
-                    <span className="text-xs text-muted-foreground/50">Kosong</span>
-                  </div>
-                )}
-              </div>
-            </div>
+              {col.candidates.length === 0 ? (
+                <p className="px-3 py-3 text-xs text-muted-foreground">Kosong</p>
+              ) : (
+                <ul className="max-h-[28rem] divide-y divide-[var(--glass-border)] overflow-y-auto">
+                  {col.candidates.map(c => (
+                    <li key={c.candidate_id} data-testid={`pipeline-card-${c.candidate_id}`}>
+                      <Button variant="ghost" onClick={() => onViewCandidate(c)}
+                        className="h-auto w-full flex-col items-start gap-0.5 whitespace-normal rounded-none px-3 py-2 text-left font-normal">
+                        <span className="text-sm font-medium text-foreground">{c.name}</span>
+                        <span className="text-xs text-muted-foreground">{c.job_title || '—'}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {fmtDate(c.applied_at)}{(c.cv_url || c.cv_filename) ? ' · CV ada' : ''}{c.interviews?.length ? ` · ${c.interviews.length} wawancara` : ''}
+                        </span>
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
           );
         })}
       </div>
     </div>
   );
+}
+
+/** Isi satu tab: cetakan PageLayout di dalam hub. */
+function IsiTab({ actions, filters, tools, summary, footer, children }) {
+  return <PageLayout actions={actions} filters={filters} tools={tools} summary={summary} footer={footer}>{children}</PageLayout>;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -965,7 +720,7 @@ export default function HRATSModule({ token }) {
       setLoading(true); setError(null);
       try {
         const [jRes, pRes, aRes] = await Promise.all([
-          api(`/jobs?limit=50`, { headers }),
+          api(`/jobs?limit=500`, { headers }),
           api(`/pipeline`, { headers }),
           api(`/analytics`, { headers }),
         ]);
@@ -982,7 +737,7 @@ export default function HRATSModule({ token }) {
     if (tab !== 'candidates') return;
     (async () => {
       try {
-        const r = await api(`/candidates?limit=100${filterJobId ? `&job_id=${filterJobId}` : ''}`, { headers });
+        const r = await api(`/candidates?limit=500${filterJobId ? `&job_id=${filterJobId}` : ''}`, { headers });
         const d = await r.json();
         setCandidates(d.candidates || []);
       } catch (_e) { /* ignore */ }
@@ -1005,14 +760,14 @@ export default function HRATSModule({ token }) {
       const [pRes, aRes, jRes] = await Promise.all([
         api(`/pipeline${filterJobId ? `?job_id=${filterJobId}` : ''}`, { headers }),
         api(`/analytics`, { headers }),
-        api(`/jobs?limit=50`, { headers }),
+        api(`/jobs?limit=500`, { headers }),
       ]);
       const [pd, ad, jd] = await Promise.all([pRes.json(), aRes.json(), jRes.json()]);
       setPipeline(pd.pipeline || null);
       setAnalytics(ad);
       setJobs(jd.jobs || []);
       if (tab === 'candidates') {
-        const r = await api(`/candidates?limit=100${filterJobId ? `&job_id=${filterJobId}` : ''}`, { headers });
+        const r = await api(`/candidates?limit=500${filterJobId ? `&job_id=${filterJobId}` : ''}`, { headers });
         const d = await r.json();
         setCandidates(d.candidates || []);
       }
@@ -1023,6 +778,18 @@ export default function HRATSModule({ token }) {
       }
     } catch (_e) { /* ignore */ }
   }, [headers, filterJobId, tab, talentSearch]);
+
+  // Pipeline ikut saringan lowongan (dulu hanya saat muat ulang).
+  useEffect(() => {
+    if (loading) return;
+    (async () => {
+      try {
+        const r = await api(`/pipeline${filterJobId ? `?job_id=${filterJobId}` : ''}`, { headers });
+        const d = await r.json();
+        setPipeline(d.pipeline || null);
+      } catch (_e) { /* ignore */ }
+    })();
+  }, [filterJobId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSeed = async () => {
     // Tahap 5 (2026-11-07): data contoh dulu MENGHAPUS semua lowongan & kandidat; kini hanya ke rekrutmen kosong
@@ -1083,271 +850,209 @@ export default function HRATSModule({ token }) {
     } catch { toast.error('Gagal menambah kandidat'); } finally { setSaving(false); }
   };
 
+  const keluarkanPool = async (c) => {
+    const r = await api(`/talent-pool/${c.candidate_id}/toggle`, { method: 'POST', headers });
+    if (!r.ok) { toast.error('Gagal mengeluarkan dari talent pool'); return; }
+    refresh();
+    toast.success('Dikeluarkan dari talent pool');
+  };
+
   const filteredCandidates = useMemo(() =>
     candidates.filter(c => !q || c.name?.toLowerCase().includes(q.toLowerCase()) || c.email?.toLowerCase().includes(q.toLowerCase())),
   [candidates, q]);
-  const { page, setPage, totalPages, total, paged } = useClientPagination(filteredCandidates, 10);
+  const { page, setPage, totalPages, total, paged } = useClientPagination(filteredCandidates, 20);
 
-  if (loading) return (
-    <div className="space-y-4 p-4" data-testid="hr-ats-skeleton">
-      <Skeleton className="h-16 rounded-xl" />
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">{Array.from({length:4}).map((_,i) => <Skeleton key={i} className="h-20 rounded-xl" />)}</div>
-      <Skeleton className="h-64 rounded-xl" />
+  // "Diterima" per lowongan dihitung dari kandidat bertahap Hired di pipeline (bukan penghitung tersimpan).
+  const diterimaPerLowongan = useMemo(() => {
+    const m = {};
+    (pipeline?.Hired?.candidates || []).forEach((c) => { m[c.job_id] = (m[c.job_id] || 0) + 1; });
+    return m;
+  }, [pipeline]);
+  const diterima = (j) => (filterJobId && filterJobId !== j.job_id ? (j.hired_count || 0) : (diterimaPerLowongan[j.job_id] || 0));
+
+  const s = analytics?.summary || {};
+  const ringkasan = analytics && (
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <StatTile label="Lowongan dibuka" value={s.open_jobs ?? 0} sub={`Dari ${s.total_jobs ?? 0} lowongan.`} />
+      <StatTile label="Kandidat" value={s.total_candidates ?? 0} sub={`${s.in_progress ?? 0} masih diproses, ${s.rejected ?? 0} ditolak.`} />
+      <StatTile label="Diterima" value={s.hired ?? 0} accent={s.hired ? 'success' : 'default'} sub="Kandidat di tahap diterima." />
+      <StatTile label="Tingkat diterima" value={`${s.conversion_rate || 0}%`} sub="Diterima ÷ semua kandidat." />
     </div>
   );
+  const muatUlang = <Button variant="outline" size="icon" onClick={refresh} title="Muat ulang" aria-label="Muat ulang"><RefreshCw /></Button>;
+  const pilihLowongan = (
+    <SmartNativeSelect value={filterJobId} onChange={e => setFilterJobId(e.target.value)} className="w-56" aria-label="Saring lowongan">
+      <option value="">Semua lowongan</option>
+      {jobs.map(j => <option key={j.job_id} value={j.job_id}>{j.title}</option>)}
+    </SmartNativeSelect>
+  );
+  const galat = error && <Notice tone="danger" title="Gagal memuat data rekrutmen">{error}</Notice>;
+  const memuat = <p className="py-10 text-center text-sm text-muted-foreground">Memuat rekrutmen…</p>;
+  const aksiHalaman = <>
+    <Button variant="outline" onClick={handleSeed} disabled={seeding}>{seeding ? 'Memuat…' : 'Muat contoh'}</Button>
+    <Button onClick={() => openJobForm()} data-testid="ats-new-job"><Plus />Buat lowongan</Button>
+  </>;
+
+  const kolomLowongan = [
+    { kunci: 'posisi', label: 'Posisi', hp: 'judul', isi: (j) => (
+      <div className="min-w-0" data-testid={`job-card-${j.job_id}`}>
+        <p className="font-medium text-foreground">{j.title}</p>
+        <p className="text-xs text-muted-foreground">
+          {[j.department, j.location, JOB_TYPE[j.type] || j.type, JOB_LEVEL[j.level] || j.level].filter(Boolean).join(' · ')}
+        </p>
+      </div>) },
+    { kunci: 'status', label: 'Status', isi: (j) => {
+      const c = JOB_STATUS[j.status] || JOB_STATUS.draft;
+      return <StatusBadge status={j.status} label={c.label} tone={c.tone} />;
+    } },
+    { kunci: 'kandidat', label: 'Kandidat', rata: 'kanan', isi: (j) => <span className="tabular-nums">{j.candidate_count || 0}</span> },
+    { kunci: 'diterima', label: 'Diterima', rata: 'kanan', isi: (j) => <span className="tabular-nums">{diterima(j)}</span> },
+    { kunci: 'tenggat', label: 'Tenggat', isi: (j) => <span className="text-sm md:whitespace-nowrap">{fmtDate(j.deadline)}</span> },
+    { kunci: 'gaji', label: 'Kisaran gaji', isi: (j) => <span className="text-sm tabular-nums">{j.salary_min && j.salary_max ? `${fmtCurrency(j.salary_min)} – ${fmtCurrency(j.salary_max)}` : 'Negosiasi'}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (j) => <Button size="sm" variant="outline" onClick={() => openJobForm(j)}><Pencil />Ubah</Button> },
+  ];
+  const kolomKandidat = [
+    { kunci: 'nama', label: 'Nama', hp: 'judul', isi: (c) => (
+      <div className="min-w-0"><p className="font-medium text-foreground">{c.name}</p><p className="text-xs text-muted-foreground">{c.email || '—'}</p></div>) },
+    { kunci: 'posisi', label: 'Posisi', isi: (c) => <span className="text-sm">{c.job_title || '—'}</span> },
+    { kunci: 'tahap', label: 'Tahap', isi: (c) => <StageBadge stage={c.stage} /> },
+    { kunci: 'cv', label: 'CV', isi: (c) => <span className="text-sm">{c.cv_url || c.cv_filename ? 'Ada' : '—'}</span> },
+    { kunci: 'nilai', label: 'Nilai', isi: (c) => <RatingStars rating={c.rating} /> },
+    { kunci: 'melamar', label: 'Melamar', isi: (c) => <span className="text-sm md:whitespace-nowrap">{fmtDate(c.applied_at)}</span> },
+  ];
+  const kolomUnduhKandidat = [
+    { label: 'Nama', nilai: (c) => c.name }, { label: 'Email', nilai: (c) => c.email || '' }, { label: 'No. HP', nilai: (c) => c.phone || '' },
+    { label: 'Posisi', nilai: (c) => c.job_title || c.position_applied || '' }, { label: 'Tahap', nilai: (c) => labelTahap(c.stage) },
+    { label: 'Sumber', nilai: (c) => labelSumber(c.source) }, { label: 'Pendidikan', nilai: (c) => c.education || '' },
+    { label: 'Pengalaman (tahun)', nilai: (c) => c.experience_years ?? '' }, { label: 'Nilai', nilai: (c) => c.rating || '' },
+    { label: 'CV', nilai: (c) => (c.cv_url || c.cv_filename ? 'Ada' : '') }, { label: 'Melamar', nilai: (c) => fmtDate(c.applied_at) },
+  ];
+  const kolomPool = [
+    { kunci: 'nama', label: 'Kandidat', hp: 'judul', isi: (c) => (
+      <div className="min-w-0"><p className="font-medium text-foreground">{c.name}</p><p className="text-xs text-muted-foreground">{c.education || '—'}</p></div>) },
+    { kunci: 'posisi', label: 'Posisi', isi: (c) => (
+      <div><p className="text-sm">{c.position_applied || c.job_title || '—'}</p><p className="text-xs text-muted-foreground">{labelSumber(c.source)}</p></div>) },
+    { kunci: 'tahap', label: 'Tahap', isi: (c) => <StageBadge stage={c.stage} /> },
+    { kunci: 'kontak', label: 'Kontak', isi: (c) => <div className="text-sm"><p>{c.phone || '—'}</p><p className="text-xs text-muted-foreground">{c.email || '—'}</p></div> },
+    { kunci: 'ditambahkan', label: 'Ditambahkan', isi: (c) => <span className="text-sm">{fmtDate(c.talent_pool_added_at)}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (c) => (
+      <Button size="sm" variant="destructive" onClick={() => keluarkanPool(c)} data-testid={`remove-talent-pool-${c.candidate_id}`}>
+        <UserMinus />Keluarkan
+      </Button>) },
+  ];
+  const totalKandidat = s.total_candidates || 0;
+  const tahapRows = (analytics?.pipeline_stages || []).map((r) => ({ ...r, porsi: totalKandidat ? Math.round((r.count / totalKandidat) * 100) : 0 }));
+  const sumberRows = (analytics?.source_breakdown || []).map((r) => ({
+    sumber: r.source ?? r._id, count: r.count, porsi: totalKandidat ? Math.round((r.count / totalKandidat) * 100) : 0,
+  }));
 
   return (
-    <div className="space-y-5" data-testid="hr-ats-module">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><Briefcase className="w-6 h-6 text-primary" />Rekrutmen & ATS</h1>
-          <p className="text-sm text-muted-foreground">Pipeline kandidat actionable — dari lamaran hingga onboarding</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={handleSeed} disabled={seeding}
-            className="h-9 px-3 rounded-lg border border-dashed border-[var(--glass-border)] text-xs text-muted-foreground hover:text-foreground">
-            {seeding ? 'Memuat...' : 'Muat Demo'}
-          </button>
-          <button onClick={refresh} className="h-9 w-9 rounded-lg border border-[var(--glass-border)] flex items-center justify-center text-muted-foreground hover:text-foreground">
-            <RefreshCw className="w-4 h-4" />
-          </button>
-          <button onClick={() => openJobForm()}
-            className="h-9 px-4 rounded-xl bg-[hsl(var(--primary))] text-foreground text-sm font-medium hover:opacity-90 flex items-center gap-1.5">
-            <Plus className="w-4 h-4" /> Buat Lowongan
-          </button>
-        </div>
-      </div>
-
-      {/* KPI */}
-      {analytics && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {[
-            { label: 'Lowongan Buka', value: analytics.summary?.open_jobs, color: '#10b981', icon: Briefcase },
-            { label: 'Total Kandidat', value: analytics.summary?.total_candidates, color: '#6366f1', icon: Users },
-            { label: 'Sudah Diterima', value: analytics.summary?.hired, color: '#10b981', icon: UserCheck },
-            { label: 'Conversion Rate', value: `${analytics.summary?.conversion_rate || 0}%`, color: '#8b5cf6', icon: TrendingUp },
-          ].map((k, i) => (
-            <GlassCard key={i} hover={false} className="p-4 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${k.color}20`, border: `1px solid ${k.color}35` }}>
-                <k.icon className="w-5 h-5" style={{ color: k.color }} />
+    <div data-testid="hr-ats-module">
+      <HubTabs hubId="hr-recruitment" title="Rekrutmen & ATS" subtitle="Lowongan dan kandidat, dari lamaran masuk sampai diterima dan onboarding."
+        value={tab} onValueChange={setTab}
+        tabs={[
+          { key: 'pipeline', label: 'Pipeline', Component: IsiTab, props: {
+            actions: aksiHalaman, summary: ringkasan,
+            filters: <>
+              {pilihLowongan}
+              <Button variant="outline" onClick={() => setShowCandForm(true)} data-testid="ats-add-candidate"><Plus />Tambah kandidat</Button>
+            </>,
+            tools: muatUlang,
+            children: <>
+              {galat}
+              {loading ? memuat : pipeline ? <PipelineView pipeline={pipeline} onViewCandidate={setSelectedCandidate} />
+                : <EmptyState title="Belum ada kandidat" description="Tambah kandidat atau muat data contoh." />}
+            </>,
+          } },
+          { key: 'jobs', label: `Lowongan (${jobs.length})`, Component: IsiTab, props: {
+            actions: aksiHalaman,
+            tools: <>
+              <TombolUnduh namaBerkas="lowongan-rekrutmen" namaLembar="Lowongan" baris={jobs} testId="ats-unduh-lowongan"
+                kolom={[
+                  { label: 'Posisi', nilai: (j) => j.title }, { label: 'Departemen', nilai: (j) => j.department || '' },
+                  { label: 'Lokasi', nilai: (j) => j.location || '' }, { label: 'Jenis', nilai: (j) => JOB_TYPE[j.type] || j.type || '' },
+                  { label: 'Tingkat', nilai: (j) => JOB_LEVEL[j.level] || j.level || '' },
+                  { label: 'Status', nilai: (j) => (JOB_STATUS[j.status] || JOB_STATUS.draft).label },
+                  { label: 'Kebutuhan orang', nilai: (j) => j.headcount ?? '' }, { label: 'Kandidat', nilai: (j) => j.candidate_count || 0 },
+                  { label: 'Diterima', nilai: (j) => diterima(j) }, { label: 'Tenggat', nilai: (j) => fmtDate(j.deadline) },
+                  { label: 'Gaji minimum', nilai: (j) => j.salary_min || '' }, { label: 'Gaji maksimum', nilai: (j) => j.salary_max || '' },
+                ]} />
+              {muatUlang}
+            </>,
+            children: loading ? memuat : (
+              <TabelData kolom={kolomLowongan} baris={jobs} kunci={(j) => j.job_id} onKlikBaris={openJobForm} testId="ats-jobs"
+                kosong={<EmptyState title="Belum ada lowongan" action={<Button onClick={() => openJobForm()}><Plus />Buat lowongan</Button>} />} />
+            ),
+          } },
+          { key: 'candidates', label: 'Kandidat', Component: IsiTab, props: {
+            actions: <Button onClick={() => setShowCandForm(true)} data-testid="ats-add-candidate-2"><Plus />Tambah kandidat</Button>,
+            filters: <>
+              <div className="relative w-full sm:w-64">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Cari nama atau email" className="pl-8" />
               </div>
-              <div>
-                <p className="text-xl font-bold text-foreground">{k.value}</p>
-                <p className="text-xs text-muted-foreground">{k.label}</p>
+              {pilihLowongan}
+            </>,
+            tools: <>
+              <TombolUnduh namaBerkas="kandidat-rekrutmen" namaLembar="Kandidat" baris={filteredCandidates} kolom={kolomUnduhKandidat} testId="ats-unduh-kandidat" />
+              {muatUlang}
+            </>,
+            footer: total > 20 ? <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={20} onPageChange={setPage} /> : null,
+            children: (
+              <TabelData kolom={kolomKandidat} baris={paged} kunci={(c) => c.candidate_id} onKlikBaris={setSelectedCandidate} testId="ats-candidates"
+                kosong={<EmptyState title={candidates.length ? 'Tidak ada kandidat yang cocok' : 'Belum ada kandidat'}
+                  description={candidates.length ? 'Ubah kata pencarian atau saringan lowongan.' : 'Tambah kandidat dari tombol di atas.'} />} />
+            ),
+          } },
+          { key: 'talent_pool', label: 'Talent pool', Component: IsiTab, props: {
+            filters: (
+              <div className="relative w-full sm:w-64">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input value={talentSearch} onChange={e => setTalentSearch(e.target.value)} placeholder="Cari nama, posisi, keahlian"
+                  className="pl-8" data-testid="talent-pool-search" />
               </div>
-            </GlassCard>
-          ))}
-        </div>
-      )}
+            ),
+            tools: <>
+              <TombolUnduh namaBerkas="talent-pool" namaLembar="Talent pool" baris={talentPool} kolom={kolomUnduhKandidat} testId="ats-unduh-pool" />
+              {muatUlang}
+            </>,
+            children: (
+              <TabelData kolom={kolomPool} baris={talentPool} kunci={(c) => c.candidate_id} onKlikBaris={setSelectedCandidate} testId="ats-talent-pool"
+                kosong={<EmptyState title="Talent pool kosong" description="Kandidat bagus yang belum diterima bisa disimpan di sini dari detail kandidat." />} />
+            ),
+          } },
+          { key: 'analytics', label: 'Analitik', Component: IsiTab, props: {
+            tools: muatUlang,
+            children: (
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <Bagian judul="Kandidat per tahap" alat={
+                  <TombolUnduh namaBerkas="kandidat-per-tahap" namaLembar="Per tahap" baris={tahapRows}
+                    kolom={[{ label: 'Tahap', nilai: (r) => labelTahap(r.stage) }, { label: 'Kandidat', nilai: (r) => r.count }, { label: 'Porsi (%)', nilai: (r) => r.porsi }]} />}>
+                  <TabelData baris={tahapRows} kunci={(r) => r.stage} testId="ats-per-tahap"
+                    kolom={[
+                      { kunci: 'tahap', label: 'Tahap', hp: 'judul', isi: (r) => labelTahap(r.stage) },
+                      { kunci: 'jumlah', label: 'Kandidat', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.count}</span> },
+                      { kunci: 'porsi', label: 'Porsi', rata: 'kanan', isi: (r) => <span className="tabular-nums text-muted-foreground">{r.porsi}%</span> },
+                    ]}
+                    kosong={<EmptyState title="Belum ada kandidat" />} />
+                </Bagian>
+                <Bagian judul="Sumber kandidat" alat={
+                  <TombolUnduh namaBerkas="sumber-kandidat" namaLembar="Sumber" baris={sumberRows}
+                    kolom={[{ label: 'Sumber', nilai: (r) => labelSumber(r.sumber) }, { label: 'Kandidat', nilai: (r) => r.count }, { label: 'Porsi (%)', nilai: (r) => r.porsi }]} />}>
+                  <TabelData baris={sumberRows} kunci={(r) => String(r.sumber)} testId="ats-per-sumber"
+                    kolom={[
+                      { kunci: 'sumber', label: 'Sumber', hp: 'judul', isi: (r) => labelSumber(r.sumber) },
+                      { kunci: 'jumlah', label: 'Kandidat', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.count}</span> },
+                      { kunci: 'porsi', label: 'Porsi', rata: 'kanan', isi: (r) => <span className="tabular-nums text-muted-foreground">{r.porsi}%</span> },
+                    ]}
+                    kosong={<EmptyState title="Belum ada kandidat" />} />
+                </Bagian>
+              </div>
+            ),
+          } },
+        ]} />
 
-      {/* Tabs */}
-      <div className="flex gap-1 p-1 rounded-xl bg-[var(--nav-pill-bg)] border border-[var(--glass-border)] w-fit flex-wrap">
-        {[['pipeline','Pipeline'],['jobs','Lowongan'],['candidates','Kandidat'],['talent_pool','Talent Pool'],['analytics','Analitik']].map(([k,l]) => (
-          <button key={k} onClick={() => setTab(k)}
-            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${tab === k ? 'bg-[var(--nav-pill-active)] text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-            data-testid={`ats-tab-${k}`}>{l}</button>
-        ))}
-      </div>
-
-      {error && (
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-400/10 border border-red-300 dark:border-red-400/20 text-sm text-red-700 dark:text-red-400">
-          <AlertCircle className="w-4 h-4" />{error}
-        </div>
-      )}
-
-      {/* PIPELINE */}
-      {tab === 'pipeline' && (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2 flex-wrap">
-            <SmartNativeSelect value={filterJobId} onChange={e => setFilterJobId(e.target.value)}
-              className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-              <option value="">Semua Lowongan</option>
-              {jobs.map(j => <option key={j.job_id} value={j.job_id}>{j.title}</option>)}
-            </SmartNativeSelect>
-            <button onClick={() => setShowCandForm(true)}
-              className="h-9 px-3 rounded-lg border border-[var(--glass-border)] text-sm text-muted-foreground hover:text-foreground flex items-center gap-1.5">
-              <Plus className="w-4 h-4" /> Tambah Kandidat
-            </button>
-            <span className="text-xs text-muted-foreground ml-auto hidden md:block">Klik kartu untuk aksi</span>
-          </div>
-          {pipeline ? <PipelineView pipeline={pipeline} onViewCandidate={setSelectedCandidate} />
-            : <div className="text-center py-12 text-muted-foreground text-sm">Belum ada kandidat. Tambah kandidat atau muat data demo.</div>}
-        </div>
-      )}
-
-      {/* JOBS */}
-      {tab === 'jobs' && (
-        <div className="space-y-4">
-          {jobs.length === 0 ? <div className="text-center py-12 text-muted-foreground text-sm">Belum ada lowongan</div> : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {jobs.map(j => (
-                <GlassCard key={j.job_id} hover className="p-5 group" data-testid={`job-card-${j.job_id}`}>
-                  <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium border ${JOB_STATUS[j.status] || JOB_STATUS.draft}`}>{j.status === 'open' ? 'Buka' : j.status}</span>
-                      <h3 className="font-semibold text-foreground mt-1">{j.title}</h3>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
-                        <span>{j.location}</span><span>·</span><span>{j.department}</span><span>·</span><span>{j.type}</span>
-                      </div>
-                    </div>
-                    <button onClick={() => openJobForm(j)} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-[var(--nav-pill-active)] text-muted-foreground opacity-0 group-hover:opacity-100">
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <div className="flex gap-3">
-                      <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" />{j.candidate_count || 0}</span>
-                      <span className="flex items-center gap-1"><UserCheck className="w-3.5 h-3.5" />{j.hired_count || 0}</span>
-                    </div>
-                    <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" />Deadline: {fmtDate(j.deadline)}</span>
-                  </div>
-                  <div className="mt-2 text-xs font-medium text-primary">
-                    {j.salary_min && j.salary_max ? `${fmtCurrency(j.salary_min)} – ${fmtCurrency(j.salary_max)}` : 'Gaji: Negosiasi'}
-                  </div>
-                </GlassCard>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* CANDIDATES */}
-      {tab === 'candidates' && (
-        <div className="space-y-4">
-          <div className="flex flex-wrap gap-2">
-            <div className="flex items-center gap-2 flex-1 min-w-48 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)]">
-              <Search className="w-4 h-4 text-muted-foreground" />
-              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Cari kandidat..."
-                className="flex-1 bg-transparent text-sm focus:outline-none" />
-            </div>
-            <SmartNativeSelect value={filterJobId} onChange={e => setFilterJobId(e.target.value)}
-              className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-              <option value="">Semua Lowongan</option>
-              {jobs.map(j => <option key={j.job_id} value={j.job_id}>{j.title}</option>)}
-            </SmartNativeSelect>
-            <button onClick={() => setShowCandForm(true)} className="h-9 px-3 rounded-xl bg-[hsl(var(--primary))] text-foreground text-sm flex items-center gap-1">
-              <Plus className="w-4 h-4" /> Tambah
-            </button>
-          </div>
-          <GlassCard hover={false} className="overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="border-b border-[var(--glass-border)]">
-                  <tr>{['Nama','Posisi','Stage','CV','Rating','Lamaran'].map(h =>
-                    <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">{h}</th>)}
-                    <th className="px-4 py-3"></th></tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--glass-border)]">
-                  {paged.map(c => (
-                    <tr key={c.candidate_id} className="hover:bg-[var(--glass-bg-hover)] cursor-pointer" onClick={() => setSelectedCandidate(c)}>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-full bg-[hsl(var(--primary)/0.15)] flex items-center justify-center text-xs font-bold text-primary">{c.name?.[0]}</div>
-                          <div><p className="font-medium">{c.name}</p><p className="text-xs text-muted-foreground">{c.email}</p></div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground">{c.job_title}</td>
-                      <td className="px-4 py-3"><StageBadge stage={c.stage} /></td>
-                      <td className="px-4 py-3">
-                        {c.cv_url || c.cv_filename ? <FileText className="w-4 h-4 text-primary" /> : <span className="text-xs text-muted-foreground">—</span>}
-                      </td>
-                      <td className="px-4 py-3"><RatingStars rating={c.rating} /></td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">{fmtDate(c.applied_at)}</td>
-                      <td className="px-4 py-3">
-                        <button onClick={e => { e.stopPropagation(); setSelectedCandidate(c); }}
-                          className="p-1.5 rounded hover:bg-foreground/10 text-muted-foreground">
-                          <Eye className="w-4 h-4" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
-              {filteredCandidates.length === 0 && <div className="py-10 text-center text-sm text-muted-foreground">Belum ada kandidat</div>}
-            </div>
-          </GlassCard>
-        </div>
-      )}
-
-      {/* TALENT POOL */}
-      {tab === 'talent_pool' && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="relative flex-1 min-w-48">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <input value={talentSearch} onChange={e => setTalentSearch(e.target.value)} placeholder="Cari nama, posisi, skill..."
-                className="w-full pl-9 pr-3 h-9 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" data-testid="talent-pool-search" />
-            </div>
-            <span className="text-sm text-muted-foreground">{talentPool.length} kandidat</span>
-          </div>
-          {talentPool.length > 0 ? (
-            <GlassCard hover={false} className="overflow-hidden p-0">
-              <table className="w-full text-sm">
-                <thead><tr className="border-b border-[var(--glass-border)] text-xs text-muted-foreground">
-                  {['Kandidat','Posisi','Stage','Kontak','Ditambahkan',''].map(h => <th key={h} className="text-left px-4 py-3">{h}</th>)}
-                </tr></thead>
-                <tbody className="divide-y divide-[var(--glass-border)]">
-                  {talentPool.map(c => (
-                    <tr key={c.candidate_id} className="hover:bg-foreground/5">
-                      <td className="px-4 py-3"><div className="font-medium">{c.name}</div><div className="text-xs text-muted-foreground">{c.education}</div>{c.rating > 0 && <RatingStars rating={c.rating} />}</td>
-                      <td className="px-4 py-3"><div>{c.position_applied || c.job_title || '—'}</div><div className="text-xs text-muted-foreground">{c.source}</div></td>
-                      <td className="px-4 py-3"><StageBadge stage={c.stage} /></td>
-                      <td className="px-4 py-3"><div className="text-xs">{c.phone || '—'}</div><div className="text-xs text-muted-foreground">{c.email || '—'}</div></td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">{c.talent_pool_added_at ? fmtDate(c.talent_pool_added_at) : '—'}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex gap-1">
-                          <button onClick={() => setSelectedCandidate(c)} className="p-1.5 rounded hover:bg-foreground/10 text-muted-foreground"><Eye className="w-4 h-4" /></button>
-                          <button onClick={async () => { const r = await api(`/talent-pool/${c.candidate_id}/toggle`, { method: 'POST', headers }); if (!r.ok) { toast.error('Gagal mengeluarkan dari pool'); return; } refresh(); toast.success('Dikeluarkan dari pool'); }}
-                            className="p-1.5 rounded hover:bg-red-100 dark:hover:bg-red-500/10 text-red-700 dark:text-red-400" data-testid={`remove-talent-pool-${c.candidate_id}`}>
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </GlassCard>
-          ) : <GlassCard hover={false} className="py-16 text-center"><Users className="w-12 h-12 mx-auto mb-3 text-muted-foreground opacity-30" /><p className="text-muted-foreground">Talent Pool kosong</p></GlassCard>}
-        </div>
-      )}
-
-      {/* ANALYTICS */}
-      {tab === 'analytics' && analytics && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          <GlassCard hover={false} className="p-5">
-            <h3 className="text-sm font-semibold mb-4 flex items-center gap-2"><BarChart3 className="w-4 h-4 text-primary" />Funnel Pipeline</h3>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={analytics.pipeline_stages} layout="vertical" margin={{ left: 80 }}>
-                <XAxis type="number" tick={{ fontSize: 11 }} />
-                <YAxis type="category" dataKey="stage" tick={{ fontSize: 10 }} width={80} />
-                <Tooltip contentStyle={{ background: 'var(--glass-bg)', border: '1px solid var(--glass-border)', borderRadius: 10, fontSize: 12 }} />
-                <Bar dataKey="count" radius={[0,4,4,0]}>
-                  {(analytics.pipeline_stages || []).map((s, i) => <Cell key={i} fill={STAGE_CFG[s.stage]?.color || '#6366f1'} />)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </GlassCard>
-          <GlassCard hover={false} className="p-5">
-            <h3 className="text-sm font-semibold mb-4 flex items-center gap-2"><BarChart3 className="w-4 h-4 text-primary" />Sumber Kandidat</h3>
-            <div className="space-y-2">
-              {(analytics.source_breakdown || []).map((s, i) => (
-                <div key={i} className="flex items-center gap-3">
-                  <span className="text-xs w-20 text-muted-foreground truncate">{s.source}</span>
-                  <div className="flex-1 h-2 rounded-full bg-[var(--glass-border)] overflow-hidden">
-                    <div className="h-full rounded-full" style={{ width: `${(s.count / (analytics.summary?.total_candidates || 1)) * 100}%`, background: ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6'][i % 5] }} />
-                  </div>
-                  <span className="text-xs font-medium w-6 text-right">{s.count}</span>
-                </div>
-              ))}
-            </div>
-          </GlassCard>
-        </div>
-      )}
-
-      {/* CANDIDATE DETAIL MODAL */}
+      {/* DETAIL KANDIDAT */}
       {selectedCandidate && (
         <CandidateDetailModal
           candidate={selectedCandidate}
@@ -1359,140 +1064,106 @@ export default function HRATSModule({ token }) {
         />
       )}
 
-      {/* JOB FORM */}
-      {showJobForm && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-[var(--card-surface)] rounded-2xl border border-[var(--glass-border)] shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-5">
-                <h2 className="text-lg font-bold">{editJob ? 'Edit Lowongan' : 'Buat Lowongan Baru'}</h2>
-                <button onClick={() => setShowJobForm(false)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-[var(--nav-pill-active)]"><X className="w-4 h-4" /></button>
-              </div>
-              <div className="space-y-3">
-                <div><label className="text-xs font-medium text-muted-foreground block mb-1">Judul Posisi *</label>
-                  <input value={jobForm.title} onChange={e => setJobForm(p => ({...p, title: e.target.value}))}
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div><label className="text-xs font-medium text-muted-foreground block mb-1">Departemen</label>
-                    <SmartNativeSelect value={jobForm.department || ''} onChange={e => setJobForm(p => ({...p, department: e.target.value}))}
-                      data-testid="ats-job-department" className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                      <option value="">— Pilih departemen —</option>
-                      {departmentOptions(orgUnits, jobForm.department).map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
-                    </SmartNativeSelect></div>
-                  <div><label className="text-xs font-medium text-muted-foreground block mb-1">Lokasi</label>
-                    <input value={jobForm.location} onChange={e => setJobForm(p => ({...p, location: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
-                  <div><label className="text-xs font-medium text-muted-foreground block mb-1">Tipe</label>
-                    <SmartNativeSelect searchable={false} value={jobForm.type} onChange={e => setJobForm(p => ({...p, type: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                      <option value="Full-time">Penuh waktu</option><option value="Part-time">Paruh waktu</option><option value="Contract">Kontrak</option><option value="Magang">Magang</option>
-                    </SmartNativeSelect></div>
-                  <div><label className="text-xs font-medium text-muted-foreground block mb-1">Level</label>
-                    <SmartNativeSelect searchable={false} value={jobForm.level} onChange={e => setJobForm(p => ({...p, level: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                      <option value="Staff">Staff</option><option value="Senior">Senior</option><option value="Supervisor">Supervisor</option><option value="Manager">Manager</option>
-                    </SmartNativeSelect></div>
-                  <div><label className="text-xs font-medium text-muted-foreground block mb-1">Gaji Min (Rp)</label>
-                    <MoneyInput unstyled value={jobForm.salary_min} onChange={e => setJobForm(p => ({...p, salary_min: +e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
-                  <div><label className="text-xs font-medium text-muted-foreground block mb-1">Gaji Max (Rp)</label>
-                    <MoneyInput unstyled value={jobForm.salary_max} onChange={e => setJobForm(p => ({...p, salary_max: +e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
-                  <div><label className="text-xs font-medium text-muted-foreground block mb-1">Headcount</label>
-                    <input type="number" min={1} value={jobForm.headcount} onChange={e => setJobForm(p => ({...p, headcount: +e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
-                  <div><label className="text-xs font-medium text-muted-foreground block mb-1">Deadline</label>
-                    <GlassInput type="date" value={jobForm.deadline} onChange={e => setJobForm(p => ({...p, deadline: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
-                  <div className="col-span-2"><label className="text-xs font-medium text-muted-foreground block mb-1">Status</label>
-                    <SmartNativeSelect searchable={false} value={jobForm.status} onChange={e => setJobForm(p => ({...p, status: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                      <option value="open">Buka</option><option value="draft">Draf</option><option value="on_hold">Tunda</option><option value="closed">Tutup</option>
-                    </SmartNativeSelect></div>
-                </div>
-                <div><label className="text-xs font-medium text-muted-foreground block mb-1">Deskripsi</label>
-                  <textarea value={jobForm.description} onChange={e => setJobForm(p => ({...p, description: e.target.value}))}
-                    className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm h-20 resize-none" /></div>
-              </div>
-              <div className="flex gap-3 mt-5">
-                <button onClick={() => setShowJobForm(false)} className="flex-1 h-10 rounded-xl border border-[var(--glass-border)] text-sm">Batal</button>
-                <button onClick={handleSaveJob} disabled={saving || !jobForm.title}
-                  className="flex-1 h-10 rounded-xl bg-[hsl(var(--primary))] text-foreground text-sm font-medium disabled:opacity-50">
-                  {saving ? 'Menyimpan...' : editJob ? 'Simpan' : 'Buat'}
-                </button>
-              </div>
-            </div>
-          </div>
+      {/* FORM LOWONGAN */}
+      <FormPopup open={showJobForm} onClose={() => setShowJobForm(false)} ukuran="panjang" onSimpan={handleSaveJob} menyimpan={saving}
+        bisaSimpan={!!jobForm.title} judul={editJob ? 'Ubah lowongan' : 'Buat lowongan baru'} labelSimpan={editJob ? 'Simpan' : 'Buat lowongan'}
+        testId="ats-job-form">
+        <Isian label="Judul posisi" wajib htmlFor="ats-job-judul">
+          <Input id="ats-job-judul" value={jobForm.title} onChange={e => setJobForm(p => ({ ...p, title: e.target.value }))} />
+        </Isian>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Departemen">
+            <SmartNativeSelect value={jobForm.department || ''} onChange={e => setJobForm(p => ({ ...p, department: e.target.value }))} data-testid="ats-job-department">
+              <option value="">— Pilih departemen —</option>
+              {departmentOptions(orgUnits, jobForm.department).map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Lokasi" htmlFor="ats-job-lokasi">
+            <Input id="ats-job-lokasi" value={jobForm.location} onChange={e => setJobForm(p => ({ ...p, location: e.target.value }))} />
+          </Isian>
+          <Isian label="Jenis">
+            <SmartNativeSelect searchable={false} value={jobForm.type} onChange={e => setJobForm(p => ({ ...p, type: e.target.value }))}>
+              <option value="Full-time">Penuh waktu</option><option value="Part-time">Paruh waktu</option><option value="Contract">Kontrak</option><option value="Magang">Magang</option>
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Tingkat">
+            <SmartNativeSelect searchable={false} value={jobForm.level} onChange={e => setJobForm(p => ({ ...p, level: e.target.value }))}>
+              <option value="Staff">Staf</option><option value="Senior">Senior</option><option value="Supervisor">Supervisor</option><option value="Manager">Manajer</option>
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Gaji minimum (Rp)">
+            <MoneyInput value={jobForm.salary_min} onChange={e => setJobForm(p => ({ ...p, salary_min: +e.target.value }))} />
+          </Isian>
+          <Isian label="Gaji maksimum (Rp)">
+            <MoneyInput value={jobForm.salary_max} onChange={e => setJobForm(p => ({ ...p, salary_max: +e.target.value }))} />
+          </Isian>
+          <Isian label="Kebutuhan orang" htmlFor="ats-job-headcount">
+            <Input id="ats-job-headcount" type="number" min={1} value={jobForm.headcount} onChange={e => setJobForm(p => ({ ...p, headcount: +e.target.value }))} />
+          </Isian>
+          <Isian label="Tenggat" petunjuk="Kosong = tanpa tenggat.">
+            <DatePicker value={jobForm.deadline} onChange={v => setJobForm(p => ({ ...p, deadline: v }))} placeholder="Tanpa tenggat" testId="ats-job-deadline" />
+          </Isian>
+          <Isian label="Status">
+            <SmartNativeSelect searchable={false} value={jobForm.status} onChange={e => setJobForm(p => ({ ...p, status: e.target.value }))}>
+              <option value="open">Buka</option><option value="draft">Draf</option><option value="on_hold">Tunda</option><option value="closed">Tutup</option>
+            </SmartNativeSelect>
+          </Isian>
         </div>
-      )}
+        <Isian label="Deskripsi" htmlFor="ats-job-desk">
+          <Textarea id="ats-job-desk" rows={3} value={jobForm.description} onChange={e => setJobForm(p => ({ ...p, description: e.target.value }))} />
+        </Isian>
+      </FormPopup>
 
-      {/* CANDIDATE FORM */}
-      {showCandForm && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-[var(--card-surface)] rounded-2xl border border-[var(--glass-border)] shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-5">
-                <h2 className="text-lg font-bold">Tambah Kandidat</h2>
-                <button onClick={() => setShowCandForm(false)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-[var(--nav-pill-active)]"><X className="w-4 h-4" /></button>
-              </div>
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="col-span-2"><label className="text-xs font-medium text-muted-foreground block mb-1">Nama Lengkap *</label>
-                    <input value={candForm.name} onChange={e => setCandForm(p => ({...p, name: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
-                  <div><label className="text-xs font-medium text-muted-foreground block mb-1">Email</label>
-                    <input value={candForm.email} onChange={e => setCandForm(p => ({...p, email: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
-                  <div><label className="text-xs font-medium text-muted-foreground block mb-1">No. HP</label>
-                    <input value={candForm.phone} onChange={e => setCandForm(p => ({...p, phone: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
-                  <div><label className="text-xs font-medium text-muted-foreground block mb-1">Lowongan</label>
-                    <SmartNativeSelect value={candForm.job_id} onChange={e => setCandForm(p => ({...p, job_id: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                      <option value="">Pilih lowongan</option>
-                      {jobs.map(j => <option key={j.job_id} value={j.job_id}>{j.title}</option>)}
-                    </SmartNativeSelect></div>
-                  <div><label className="text-xs font-medium text-muted-foreground block mb-1">Sumber</label>
-                    <SmartNativeSelect searchable={false} value={candForm.source} onChange={e => setCandForm(p => ({...p, source: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                      <option value="Walk-in">Datang langsung</option><option value="Jobstreet">Jobstreet</option><option value="LinkedIn">LinkedIn</option><option value="Referral">Rekomendasi</option><option value="Website">Situs web</option>
-                    </SmartNativeSelect></div>
-                  <div><label className="text-xs font-medium text-muted-foreground block mb-1">Pendidikan</label>
-                    <SmartNativeSelect searchable={false} value={candForm.education} onChange={e => setCandForm(p => ({...p, education: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                      <option value="SMA/SMK">SMA/SMK</option><option value="D3">D3</option><option value="S1">S1</option><option value="S2">S2</option>
-                    </SmartNativeSelect></div>
-                  <div><label className="text-xs font-medium text-muted-foreground block mb-1">Pengalaman (tahun)</label>
-                    <input type="number" min={0} value={candForm.experience_years} onChange={e => setCandForm(p => ({...p, experience_years: +e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
-                </div>
-                {/* CV Upload */}
-                <div className="p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)] space-y-2">
-                  <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" />CV / Resume</p>
-                  <input value={candForm.cv_url} onChange={e => setCandForm(p => ({...p, cv_url: e.target.value}))} placeholder="Link CV (Google Drive, dll.)"
-                    className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">atau</span>
-                    <input type="file" ref={cvFileRef} className="hidden" accept=".pdf,.doc,.docx" onChange={e => setCvFile(e.target.files?.[0] || null)} />
-                    <button type="button" onClick={() => cvFileRef.current?.click()}
-                      className="h-8 px-3 rounded-lg border border-dashed border-[var(--glass-border)] text-xs text-muted-foreground hover:text-foreground flex items-center gap-1.5">
-                      <Upload className="w-3.5 h-3.5" />{cvFile ? cvFile.name : 'Upload file PDF'}
-                    </button>
-                    {cvFile && <button onClick={() => setCvFile(null)} className="text-xs text-red-600 dark:text-red-400"><X className="w-3.5 h-3.5" /></button>}
-                  </div>
-                </div>
-              </div>
-              <div className="flex gap-3 mt-5">
-                <button onClick={() => setShowCandForm(false)} className="flex-1 h-10 rounded-xl border border-[var(--glass-border)] text-sm">Batal</button>
-                <button onClick={handleSaveCand} disabled={saving || !candForm.name}
-                  className="flex-1 h-10 rounded-xl bg-[hsl(var(--primary))] text-foreground text-sm font-medium disabled:opacity-50">
-                  {saving ? 'Menambahkan...' : 'Tambah Kandidat'}
-                </button>
-              </div>
+      {/* FORM KANDIDAT */}
+      <FormPopup open={showCandForm} onClose={() => setShowCandForm(false)} ukuran="panjang" onSimpan={handleSaveCand} menyimpan={saving}
+        bisaSimpan={!!candForm.name} judul="Tambah kandidat" labelSimpan="Tambah kandidat" testId="ats-cand-form">
+        <Isian label="Nama lengkap" wajib htmlFor="ats-cand-nama">
+          <Input id="ats-cand-nama" value={candForm.name} onChange={e => setCandForm(p => ({ ...p, name: e.target.value }))} />
+        </Isian>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Email" htmlFor="ats-cand-email">
+            <Input id="ats-cand-email" value={candForm.email} onChange={e => setCandForm(p => ({ ...p, email: e.target.value }))} />
+          </Isian>
+          <Isian label="No. HP" htmlFor="ats-cand-hp">
+            <Input id="ats-cand-hp" value={candForm.phone} onChange={e => setCandForm(p => ({ ...p, phone: e.target.value }))} />
+          </Isian>
+          <Isian label="Lowongan">
+            <SmartNativeSelect value={candForm.job_id} onChange={e => setCandForm(p => ({ ...p, job_id: e.target.value }))}>
+              <option value="">Pilih lowongan</option>
+              {jobs.map(j => <option key={j.job_id} value={j.job_id}>{j.title}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Sumber">
+            <SmartNativeSelect searchable={false} value={candForm.source} onChange={e => setCandForm(p => ({ ...p, source: e.target.value }))}>
+              <option value="Walk-in">Datang langsung</option><option value="Jobstreet">Jobstreet</option><option value="LinkedIn">LinkedIn</option><option value="Referral">Rekomendasi</option><option value="Website">Situs web</option>
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Pendidikan">
+            <SmartNativeSelect searchable={false} value={candForm.education} onChange={e => setCandForm(p => ({ ...p, education: e.target.value }))}>
+              <option value="SMA/SMK">SMA/SMK</option><option value="D3">D3</option><option value="S1">S1</option><option value="S2">S2</option>
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Pengalaman (tahun)" htmlFor="ats-cand-pengalaman">
+            <Input id="ats-cand-pengalaman" type="number" min={0} value={candForm.experience_years} onChange={e => setCandForm(p => ({ ...p, experience_years: +e.target.value }))} />
+          </Isian>
+        </div>
+        <Isian label="CV" petunjuk="Isi tautan CV, atau unggah berkas PDF.">
+          <div className="space-y-2">
+            <Input value={candForm.cv_url} onChange={e => setCandForm(p => ({ ...p, cv_url: e.target.value }))} placeholder="Tautan CV (Google Drive, dll.)" />
+            <div className="flex flex-wrap items-center gap-2">
+              <input type="file" ref={cvFileRef} className="hidden" accept=".pdf,.doc,.docx" onChange={e => setCvFile(e.target.files?.[0] || null)} />
+              <Button type="button" size="sm" variant="outline" onClick={() => cvFileRef.current?.click()}>
+                <Upload />{cvFile ? cvFile.name : 'Unggah berkas PDF'}
+              </Button>
+              {cvFile && (
+                <Button type="button" size="icon-sm" variant="ghost" onClick={() => setCvFile(null)} aria-label="Batalkan berkas" title="Batalkan berkas">
+                  <X />
+                </Button>
+              )}
             </div>
           </div>
-        </div>
-      )}
+        </Isian>
+      </FormPopup>
     </div>
   );
 }
