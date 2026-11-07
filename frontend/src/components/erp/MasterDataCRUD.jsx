@@ -139,10 +139,10 @@ export default function MasterDataCRUD({
     key: '_actions', label: '',
     render: (_, row) => (
       <div className="flex items-center justify-end gap-1">
-        <Button variant="ghost" size="icon" onClick={() => openEdit(row)} title="Ubah" aria-label={`Ubah ${row.name || row.code || ''}`}
+        <Button variant="ghost" size="icon-sm" onClick={() => openEdit(row)} title="Ubah" aria-label={`Ubah ${row.name || row.code || ''}`}
           data-testid={`${testIdPrefix}-edit-${row.id}`}><Pencil /></Button>
         {row.active && (
-          <Button variant="ghost" size="icon" onClick={() => handleDeactivate(row)} title="Nonaktifkan"
+          <Button variant="ghost" size="icon-sm" onClick={() => handleDeactivate(row)} title="Nonaktifkan"
             aria-label={`Nonaktifkan ${row.name || row.code || ''}`}
             data-testid={`${testIdPrefix}-deactivate-${row.id}`}><Ban /></Button>
         )}

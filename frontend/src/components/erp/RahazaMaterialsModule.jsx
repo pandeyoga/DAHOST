@@ -242,10 +242,10 @@ export default function RahazaMaterialsModule({ token }) {
       : <StatusBadge status="nonaktif" label="Nonaktif" tone="muted" />) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
       <div className="inline-flex items-center gap-1">
-        <Button variant="ghost" size="icon" onClick={() => openEdit(r)} title="Ubah" aria-label={`Ubah ${r.code}`}
+        <Button variant="ghost" size="icon-sm" onClick={() => openEdit(r)} title="Ubah" aria-label={`Ubah ${r.code}`}
           data-testid={`mat-edit-${r.code}`}><Pencil /></Button>
         {r.active && (
-          <Button variant="ghost" size="icon" onClick={() => remove(r)} title="Nonaktifkan" aria-label={`Nonaktifkan ${r.code}`}
+          <Button variant="ghost" size="icon-sm" onClick={() => remove(r)} title="Nonaktifkan" aria-label={`Nonaktifkan ${r.code}`}
             data-testid={`mat-deactivate-${r.code}`}><Ban /></Button>
         )}
       </div>
