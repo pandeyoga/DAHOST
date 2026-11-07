@@ -1,30 +1,49 @@
+/**
+ * Tunjangan tetap (tab di hub Penggajian) — template tunjangan yang otomatis masuk slip saat run gaji dibuat.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (dulu judul buatan sendiri + kotak info biru + `p-6`),
+ * penyaring satu baris, daftar = TabelData + unduh Excel/CSV, tombol baris selalu tampak (dulu hanya saat
+ * kursor di atas baris), form = FormPopup standar. API & data yang dikirim tidak berubah.
+ * Perbaikan pemilih: daftar "Karyawan tertentu" dulu hanya menampilkan 50 karyawan pertama hasil saringan
+ * (karyawan ke-51 dst. tidak bisa dipilih tanpa mencari) — kini semua karyawan aktif tampil (gulir).
+ */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import {
-  HandCoins, Plus, Edit2, Trash2, RefreshCw, Save, X, Loader2,
-  Users as UsersIcon, Building2, User as UserIcon, Info,
-} from 'lucide-react';
+import { Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
+import PageLayout from './layout/PageLayout';
+import { EmptyState } from './moduleAtoms';
 import { useHrMasters, useDepartmentFilterOptions } from './hr/hrPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmtRp = formatRupiah;
 
 const SCOPE_CFG = {
-  all:        { label: 'Semua Karyawan', icon: UsersIcon,   color: 'text-emerald-600 dark:text-emerald-400' },
-  department: { label: 'Per Departemen', icon: Building2,   color: 'text-blue-600 dark:text-blue-400' },
-  employee:   { label: 'Karyawan Tertentu', icon: UserIcon, color: 'text-purple-600 dark:text-purple-400' },
+  all:        { label: 'Semua karyawan' },
+  department: { label: 'Per departemen' },
+  employee:   { label: 'Karyawan tertentu' },
+};
+const CALC_LABEL = { fixed: 'Jumlah tetap', percentage_gross: '% dari bruto' };
+const jumlahLabel = (it) => (it.calc_type === 'percentage_gross'
+  ? `${String(it.amount ?? 0).replace('.', ',')}% dari bruto` : fmtRp(it.amount));
+const cakupanLabel = (it) => {
+  const s = (SCOPE_CFG[it.applicable_to] || SCOPE_CFG.all).label;
+  if (it.applicable_to === 'department' && it.department) return `${s} · ${it.department}`;
+  if (it.applicable_to === 'employee') return `${s} · ${(it.employee_ids || []).length} karyawan`;
+  return s;
 };
 
 export default function RahazaPayrollAllowancesModule({ token }) {
@@ -33,6 +52,8 @@ export default function RahazaPayrollAllowancesModule({ token }) {
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(false);
   const [editDialog, setEditDialog] = useState(null);
+  const [cakupan, setCakupan] = useState('');
+  const [cari, setCari] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -54,6 +75,7 @@ export default function RahazaPayrollAllowancesModule({ token }) {
 
   useEffect(() => { load(); }, [load]);
 
+  /** Mengembalikan pesan galat (string) bila gagal, supaya tampil di kaki form. */
   const handleSave = async (form) => {
     const isEdit = !!form.allowance_id;
     const url = isEdit
@@ -61,15 +83,16 @@ export default function RahazaPayrollAllowancesModule({ token }) {
       : `${API}/api/rahaza/payroll-allowances`;
     const r = await fetch(url, { method: isEdit ? 'PUT' : 'POST', headers, body: JSON.stringify(form) });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) { toast.error(d.detail || 'Gagal simpan'); return; }
-    toast.success(isEdit ? 'Tunjangan diupdate' : 'Tunjangan ditambahkan');
+    if (!r.ok) return (typeof d.detail === 'string' && d.detail) || 'Gagal menyimpan tunjangan.';
+    toast.success(isEdit ? 'Tunjangan disimpan' : 'Tunjangan ditambahkan');
     setEditDialog(null);
     load();
+    return null;
   };
 
-  const handleDelete = async (id) => {
-    if (!(await confirmDialog({ title: 'Hapus tunjangan ini?', body: 'Gaji yang sudah final tidak berubah.', confirmLabel: 'Hapus', danger: true }))) return;
-    const r = await fetch(`${API}/api/rahaza/payroll-allowances/${id}`, { method: 'DELETE', headers });
+  const handleDelete = async (it) => {
+    if (!(await confirmDialog({ title: 'Hapus tunjangan ini?', body: `"${it.name}" — gaji yang sudah final tidak berubah.`, confirmLabel: 'Hapus', danger: true }))) return;
+    const r = await fetch(`${API}/api/rahaza/payroll-allowances/${it.allowance_id}`, { method: 'DELETE', headers });
     if (!r.ok) { toast.error('Gagal hapus'); return; }
     toast.success('Tunjangan dihapus');
     load();
@@ -80,7 +103,7 @@ export default function RahazaPayrollAllowancesModule({ token }) {
       method: 'PUT', headers,
       body: JSON.stringify({ ...item, is_active: !item.is_active }),
     });
-    if (!r.ok) { toast.error('Gagal update status'); return; }
+    if (!r.ok) { toast.error('Gagal mengubah status'); return; }
     load();
   };
 
@@ -89,166 +112,116 @@ export default function RahazaPayrollAllowancesModule({ token }) {
   const { units } = useHrMasters(token, { positions: false, shifts: false });
   const departments = useDepartmentFilterOptions(units, employees);
 
-  const { page, setPage, totalPages, total, paged } = useClientPagination(items, 10);
+  const opsi = [
+    { key: '', label: 'Semua', count: items.length },
+    ...Object.entries(SCOPE_CFG).map(([k, s]) => ({ key: k, label: s.label, count: items.filter(i => (i.applicable_to || 'all') === k).length }))
+      .filter(o => o.count > 0 || o.key === cakupan),
+  ];
+  const q = cari.trim().toLowerCase();
+  const baris = useMemo(() => items
+    .filter(i => !cakupan || (i.applicable_to || 'all') === cakupan)
+    .filter(i => !q || `${i.name || ''} ${i.description || ''} ${i.code || ''}`.toLowerCase().includes(q)),
+  [items, cakupan, q]);
+  const { page, setPage, totalPages, total, paged } = useClientPagination(baris, 10);
+
+  const kolom = [
+    { kunci: 'nama', label: 'Tunjangan', hp: 'judul', isi: (it) => (
+      <div className="min-w-0 md:max-w-[22rem]">
+        <p className="font-medium text-foreground">{it.name}</p>
+        {it.description && <p className="hidden truncate text-xs text-muted-foreground md:block" title={it.description}>{it.description}</p>}
+      </div>) },
+    { kunci: 'jumlah', label: 'Jumlah', rata: 'kanan', isi: (it) => <span className="tabular-nums">{jumlahLabel(it)}</span> },
+    { kunci: 'jenis', label: 'Cara hitung', isi: (it) => <span className="text-sm">{CALC_LABEL[it.calc_type] || CALC_LABEL.fixed}</span> },
+    { kunci: 'cakupan', label: 'Berlaku untuk', isi: (it) => <span className="text-sm">{cakupanLabel(it)}</span> },
+    { kunci: 'aktif', label: 'Aktif', hp: 'aksi', isi: (it) => (
+      <Switch checked={!!it.is_active} onCheckedChange={() => handleToggleActive(it)}
+        aria-label={it.is_active ? `Nonaktifkan ${it.name}` : `Aktifkan ${it.name}`} title={it.is_active ? 'Aktif — klik untuk menonaktifkan' : 'Nonaktif — klik untuk mengaktifkan'}
+        data-testid={`allowance-toggle-${it.allowance_id}`} />) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (
+      <div className="flex items-center justify-end gap-1">
+        <Button size="sm" variant="outline" onClick={() => setEditDialog(it)} data-testid={`allowance-edit-${it.allowance_id}`}>
+          <Pencil />Ubah
+        </Button>
+        <Button size="icon-sm" variant="ghost" onClick={() => handleDelete(it)} title="Hapus tunjangan" aria-label="Hapus tunjangan"
+          data-testid={`allowance-delete-${it.allowance_id}`}><Trash2 /></Button>
+      </div>) },
+  ];
+
   return (
-    <div className="space-y-6 p-6" data-testid="payroll-allowances-page">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <HandCoins className="w-6 h-6 text-emerald-600 dark:text-emerald-400" /> Tunjangan Tetap (Fixed Allowances)
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Konfigurasi tunjangan yang otomatis ditambahkan ke slip gaji · {items.length} template
-          </p>
+    <PageLayout testId="payroll-allowances-page" title="Tunjangan tetap"
+      subtitle="Tunjangan yang otomatis ditambahkan ke slip gaji saat proses gaji dibuat."
+      actions={<Button onClick={() => setEditDialog({})} data-testid="allowances-add"><Plus />Tambah tunjangan</Button>}
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={cari} onChange={(e) => setCari(e.target.value)} placeholder="Cari nama tunjangan"
+            className="pl-8" data-testid="allowances-search" />
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={load} data-testid="allowances-refresh">
-            <RefreshCw className="w-4 h-4 mr-1" /> Refresh
-          </Button>
-          <Button size="sm" onClick={() => setEditDialog({})} data-testid="allowances-add">
-            <Plus className="w-4 h-4 mr-1" /> Tambah Tunjangan
-          </Button>
-        </div>
-      </div>
-
-      {/* Info banner */}
-      <div className="flex items-start gap-2 rounded-xl border border-blue-300 dark:border-blue-500/20 bg-blue-100 dark:bg-blue-500/5 px-4 py-3">
-        <Info className="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" />
-        <div className="text-xs text-muted-foreground">
-          Tunjangan tetap akan otomatis dihitung & ditambahkan ke slip gaji saat payroll run dibuat.
-          Gunakan cakupan <strong>Semua</strong> untuk tunjangan seluruh karyawan, atau pilih <strong>Per Departemen</strong>/<strong>Karyawan Tertentu</strong>
-          untuk tunjangan spesifik (contoh: tunjangan jabatan, insentif supervisor).
-        </div>
-      </div>
-
-      {/* Table */}
-      <div className="rounded-xl border overflow-hidden border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-foreground/10 text-xs text-muted-foreground">
-              <th className="text-left px-4 py-3">Nama Tunjangan</th>
-              <th className="text-left px-4 py-3">Jumlah</th>
-              <th className="text-left px-4 py-3">Tipe</th>
-              <th className="text-left px-4 py-3">Cakupan</th>
-              <th className="text-left px-4 py-3">Aktif</th>
-              <th className="px-4 py-3"></th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-white/5">
-            {paged.map(it => {
-              const s = SCOPE_CFG[it.applicable_to] || SCOPE_CFG.all;
-              const Icon = s.icon;
-              return (
-                <tr key={it.allowance_id} className="hover:bg-foreground/5 group">
-                  <td className="px-4 py-3">
-                    <div className="font-medium">{it.name}</div>
-                    {it.description && <div className="text-xs text-muted-foreground">{it.description}</div>}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-sm">
-                    {it.calc_type === 'percentage_gross'
-                      ? <span className="text-amber-700 dark:text-amber-400">{it.amount}% dari Gross</span>
-                      : <span className="text-emerald-600 dark:text-emerald-400">{fmtRp(it.amount)}</span>}
-                  </td>
-                  <td className="px-4 py-3 text-xs">
-                    <span className="px-2 py-0.5 rounded-full bg-muted dark:bg-slate-500/20 text-foreground/70">
-                      {it.calc_type === 'percentage_gross' ? '% Gross' : 'Tetap'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1.5 text-xs">
-                      <Icon className={`w-3.5 h-3.5 ${s.color}`} />
-                      <span>{s.label}</span>
-                      {it.applicable_to === 'department' && it.department && (
-                        <span className="text-muted-foreground">· {it.department}</span>
-                      )}
-                      {it.applicable_to === 'employee' && (
-                        <span className="text-muted-foreground">· {(it.employee_ids || []).length} karyawan</span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Switch
-                      checked={!!it.is_active}
-                      onCheckedChange={() => handleToggleActive(it)}
-                      data-testid={`allowance-toggle-${it.allowance_id}`}
-                    />
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button size="icon" variant="ghost" className="h-7 w-7"
-                        onClick={() => setEditDialog(it)}
-                        data-testid={`allowance-edit-${it.allowance_id}`}>
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </Button>
-                      <Button size="icon" variant="ghost" className="h-7 w-7 text-red-700 dark:text-red-400"
-                        onClick={() => handleDelete(it.allowance_id)}
-                        data-testid={`allowance-delete-${it.allowance_id}`}>
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-            {items.length === 0 && !loading && (
-              <tr>
-                <td colSpan={6} className="text-center py-12 text-muted-foreground">
-                  <HandCoins className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                  <p>Belum ada template tunjangan</p>
-                  <Button size="sm" className="mt-3" onClick={() => setEditDialog({})}>
-                    Tambah Tunjangan Pertama
-                  </Button>
-                </td>
-              </tr>
-            )}
-            {loading && (
-              <tr><td colSpan={6} className="text-center py-8"><Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" /></td></tr>
-            )}
-          </tbody>
-        </table>
-        <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
-      </div>
-
-      {editDialog !== null && (
-        <AllowanceDialog
-          initial={editDialog}
-          departments={departments}
-          employees={employees}
-          onSave={handleSave}
-          onClose={() => setEditDialog(null)}
-        />
+        <FilterChips options={opsi} value={cakupan} onChange={setCakupan} testId="allowances-scope" ariaLabel="Berlaku untuk" />
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="tunjangan-tetap" namaLembar="Tunjangan" baris={baris} testId="allowances-unduh"
+          kolom={[
+            { label: 'Kode', nilai: (it) => it.code || '' },
+            { label: 'Nama tunjangan', nilai: (it) => it.name },
+            { label: 'Cara hitung', nilai: (it) => CALC_LABEL[it.calc_type] || CALC_LABEL.fixed },
+            { label: 'Jumlah (Rp atau %)', nilai: (it) => Number(it.amount || 0) },
+            { label: 'Berlaku untuk', nilai: cakupanLabel },
+            { label: 'Aktif', nilai: (it) => (it.is_active ? 'Ya' : 'Tidak') },
+            { label: 'Keterangan', nilai: (it) => it.description || '' },
+          ]} />
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="allowances-refresh"><RefreshCw className={loading ? 'animate-spin' : ''} /></Button>
+      </>}
+      footer={baris.length > 10 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}
+    >
+      {loading && items.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat tunjangan…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={paged} kunci={(it) => it.allowance_id} onKlikBaris={setEditDialog} testId="allowances-table"
+          kosong={<EmptyState title={items.length ? 'Tidak ada tunjangan yang cocok' : 'Belum ada tunjangan tetap'}
+            description={items.length ? 'Ubah saringan atau kata pencarian.' : 'Tunjangan yang dibuat di sini otomatis ditambahkan ke slip gaji.'}
+            action={!items.length && <Button onClick={() => setEditDialog({})}><Plus />Tambah tunjangan</Button>} />} />
       )}
-    </div>
+
+      <AllowanceDialog
+        open={editDialog !== null}
+        initial={editDialog}
+        departments={departments}
+        employees={employees}
+        onSave={handleSave}
+        onClose={() => setEditDialog(null)}
+      />
+    </PageLayout>
   );
 }
 
-function AllowanceDialog({ initial, departments, employees, onSave, onClose }) {
-  const [form, setForm] = useState({
-    name: '',
-    amount: 0,
-    calc_type: 'fixed',
-    applicable_to: 'all',
-    department: '',
-    employee_ids: [],
-    description: '',
-    is_active: true,
-    ...initial,
-  });
+const KOSONG = {
+  name: '', amount: 0, calc_type: 'fixed', applicable_to: 'all', department: '', employee_ids: [], description: '', is_active: true,
+};
+
+function AllowanceDialog({ open, initial, departments, employees, onSave, onClose }) {
+  const [form, setForm] = useState(KOSONG);
   const [saving, setSaving] = useState(false);
   const [empSearch, setEmpSearch] = useState('');
+  const [galat, setGalat] = useState('');
 
-  const submit = async (e) => {
-    e.preventDefault();
-    if (!form.name.trim()) { toast.error('Nama tunjangan wajib diisi'); return; }
-    if (form.applicable_to === 'department' && !form.department) {
-      toast.error('Pilih departemen'); return;
-    }
-    if (form.applicable_to === 'employee' && (form.employee_ids || []).length === 0) {
-      toast.error('Pilih minimal 1 karyawan'); return;
-    }
+  useEffect(() => {
+    if (!open) return;
+    setForm({ ...KOSONG, ...(initial || {}), employee_ids: (initial && initial.employee_ids) || [] });
+    setEmpSearch('');
+    setGalat('');
+  }, [open, initial]);
+
+  const submit = async () => {
+    if (!form.name.trim()) { setGalat('Nama tunjangan wajib diisi.'); return; }
+    if (form.applicable_to === 'department' && !form.department) { setGalat('Pilih departemen.'); return; }
+    if (form.applicable_to === 'employee' && (form.employee_ids || []).length === 0) { setGalat('Pilih minimal 1 karyawan.'); return; }
+    setGalat('');
     setSaving(true);
-    await onSave(form);
+    const pesan = await onSave(form);
     setSaving(false);
+    if (pesan) setGalat(pesan);
   };
 
   const toggleEmp = (id) => {
@@ -262,120 +235,97 @@ function AllowanceDialog({ initial, departments, employees, onSave, onClose }) {
 
   const filteredEmps = employees.filter(e =>
     empSearch
-      ? e.name.toLowerCase().includes(empSearch.toLowerCase()) ||
-        e.employee_code.toLowerCase().includes(empSearch.toLowerCase())
+      ? (e.name || '').toLowerCase().includes(empSearch.toLowerCase()) ||
+        (e.employee_code || '').toLowerCase().includes(empSearch.toLowerCase())
       : true
   );
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-md max-h-[92vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{form.allowance_id ? 'Edit Tunjangan' : 'Tambah Tunjangan'}</DialogTitle>
-        </DialogHeader>
-        <form onSubmit={submit} className="space-y-3">
-          <div className="space-y-1">
-            <Label>Nama Tunjangan <span className="text-red-700 dark:text-red-400">*</span></Label>
-            <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-              placeholder="Tunjangan Makan, Transport, Jabatan..." required data-testid="allowance-name" />
-          </div>
+    <FormPopup open={open} onClose={onClose} ukuran="panjang" onSimpan={submit} menyimpan={saving} galat={galat}
+      judul={form.allowance_id ? 'Ubah tunjangan' : 'Tambah tunjangan'}
+      keterangan="Dihitung dan ditambahkan ke slip gaji saat proses gaji dibuat." testId="allowance-form">
+      <Isian label="Nama tunjangan" wajib htmlFor="tj-nama">
+        <Input id="tj-nama" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+          placeholder="Contoh: Tunjangan makan, transport, jabatan" data-testid="allowance-name" />
+      </Isian>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>Tipe Perhitungan</Label>
-              <Select value={form.calc_type} onValueChange={v => setForm(f => ({ ...f, calc_type: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="fixed">Jumlah Tetap (Rp)</SelectItem>
-                  <SelectItem value="percentage_gross">% dari Gross</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label>{form.calc_type === 'percentage_gross' ? 'Persentase (%)' : 'Jumlah (Rp)'}</Label>
-              {/* Kolom yang sama melayani % (persen tetap input angka) dan Rp (MoneyInput, No.45). */}
-              {form.calc_type === 'percentage_gross' ? (
-                <Input type="number" min={0} step={0.1}
-                  value={form.amount}
-                  onChange={e => setForm(f => ({ ...f, amount: parseFloat(e.target.value) || 0 }))}
-                  data-testid="allowance-amount" />
-              ) : (
-                <MoneyInput
-                  value={form.amount}
-                  onChange={e => setForm(f => ({ ...f, amount: parseFloat(e.target.value) || 0 }))}
-                  data-testid="allowance-amount" />
-              )}
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <Label>Cakupan</Label>
-            <Select value={form.applicable_to} onValueChange={v => setForm(f => ({ ...f, applicable_to: v }))}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Semua Karyawan</SelectItem>
-                <SelectItem value="department">Per Departemen</SelectItem>
-                <SelectItem value="employee">Karyawan Tertentu</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {form.applicable_to === 'department' && (
-            <div className="space-y-1">
-              <Label>Departemen</Label>
-              <SmartNativeSelect value={form.department || ''} onChange={e => setForm(f => ({ ...f, department: e.target.value }))}
-                data-testid="allowance-department"
-                className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm text-foreground">
-                <option value="">— Pilih departemen —</option>
-                {departments.map(d => <option key={d.value} value={d.value}>{d.legacy ? d.value : d.label}</option>)}
-              </SmartNativeSelect>
-            </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Cara hitung">
+          <SmartNativeSelect value={form.calc_type} onChange={e => setForm(f => ({ ...f, calc_type: e.target.value }))}
+            searchable={false} data-testid="allowance-calc-type">
+            <option value="fixed">Jumlah tetap (Rp)</option>
+            <option value="percentage_gross">% dari gaji bruto</option>
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label={form.calc_type === 'percentage_gross' ? 'Persentase (%)' : 'Jumlah (Rp)'}>
+          {/* Kolom yang sama melayani % (persen tetap input angka) dan Rp (MoneyInput, No.45). */}
+          {form.calc_type === 'percentage_gross' ? (
+            <Input type="number" min={0} step={0.1}
+              value={form.amount}
+              onChange={e => setForm(f => ({ ...f, amount: parseFloat(e.target.value) || 0 }))}
+              data-testid="allowance-amount" />
+          ) : (
+            <MoneyInput
+              value={form.amount}
+              onChange={e => setForm(f => ({ ...f, amount: parseFloat(e.target.value) || 0 }))}
+              data-testid="allowance-amount" />
           )}
+        </Isian>
+      </div>
 
-          {form.applicable_to === 'employee' && (
-            <div className="space-y-2">
-              <Label>Pilih Karyawan ({form.employee_ids.length} dipilih)</Label>
-              <Input placeholder="Cari karyawan..." value={empSearch}
-                onChange={e => setEmpSearch(e.target.value)} className="h-8" />
-              <div className="max-h-52 overflow-y-auto rounded-xl border border-foreground/10 bg-foreground/5 divide-y divide-white/5">
-                {filteredEmps.slice(0, 50).map(e => (
-                  <label key={e.id} className="flex items-center gap-2 px-3 py-2 hover:bg-foreground/10 cursor-pointer text-sm">
-                    <input type="checkbox" checked={form.employee_ids.includes(e.id)}
-                      onChange={() => toggleEmp(e.id)} className="accent-emerald-500" />
-                    <div className="flex-1">
-                      <div className="font-medium text-xs">{e.name}</div>
-                      <div className="text-[10px] text-muted-foreground">{e.employee_code} · {e.department || '—'}</div>
-                    </div>
-                  </label>
-                ))}
-              </div>
+      <Isian label="Berlaku untuk"
+        petunjuk="Semua karyawan untuk tunjangan umum; per departemen atau karyawan tertentu untuk tunjangan khusus (mis. jabatan, insentif supervisor).">
+        <SmartNativeSelect value={form.applicable_to} onChange={e => setForm(f => ({ ...f, applicable_to: e.target.value }))}
+          searchable={false} data-testid="allowance-scope">
+          <option value="all">Semua karyawan</option>
+          <option value="department">Per departemen</option>
+          <option value="employee">Karyawan tertentu</option>
+        </SmartNativeSelect>
+      </Isian>
+
+      {form.applicable_to === 'department' && (
+        <Isian label="Departemen" wajib>
+          <SmartNativeSelect value={form.department || ''} onChange={e => setForm(f => ({ ...f, department: e.target.value }))}
+            data-testid="allowance-department">
+            <option value="">Pilih departemen</option>
+            {departments.map(d => <option key={d.value} value={d.value}>{d.legacy ? d.value : d.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+      )}
+
+      {form.applicable_to === 'employee' && (
+        <Isian label={`Pilih karyawan (${form.employee_ids.length} dipilih)`} wajib>
+          <div className="space-y-2">
+            <div className="relative w-full sm:w-64">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input placeholder="Cari kode atau nama" value={empSearch} onChange={e => setEmpSearch(e.target.value)} className="pl-8" />
             </div>
-          )}
-
-          <div className="space-y-1">
-            <Label>Deskripsi (opsional)</Label>
-            <Textarea value={form.description} rows={2}
-              onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-              placeholder="Keterangan tambahan..." />
+            <div className="max-h-56 divide-y divide-[var(--glass-border)] overflow-y-auto rounded-[var(--radius-md)] border border-[var(--glass-border)]">
+              {filteredEmps.map(e => (
+                <label key={e.id} className="flex cursor-pointer items-center gap-3 px-3 py-2 text-sm hover:bg-foreground/5">
+                  <Checkbox checked={form.employee_ids.includes(e.id)} onCheckedChange={() => toggleEmp(e.id)} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium text-foreground">{e.name}</span>
+                    <span className="block text-xs text-muted-foreground">{e.employee_code} · {e.department || '—'}</span>
+                  </span>
+                </label>
+              ))}
+              {filteredEmps.length === 0 && <p className="px-3 py-2 text-sm text-muted-foreground">Tidak ada karyawan yang cocok.</p>}
+            </div>
           </div>
+        </Isian>
+      )}
 
-          <div className="flex items-center gap-2">
-            <Switch checked={!!form.is_active}
-              onCheckedChange={v => setForm(f => ({ ...f, is_active: v }))} />
-            <Label className="cursor-pointer">Aktif (ikut dihitung di payroll)</Label>
-          </div>
+      <Isian label="Keterangan (opsional)">
+        <Textarea value={form.description || ''} rows={2}
+          onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+          placeholder="Keterangan tambahan" />
+      </Isian>
 
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>
-              <X className="w-4 h-4 mr-1" /> Batal
-            </Button>
-            <Button type="submit" disabled={saving} data-testid="allowance-save">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
-              Simpan
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+      <label className="flex items-center gap-3 text-sm">
+        <Switch checked={!!form.is_active} onCheckedChange={v => setForm(f => ({ ...f, is_active: v }))} />
+        <span>Aktif — ikut dihitung di proses gaji</span>
+      </label>
+    </FormPopup>
   );
 }
