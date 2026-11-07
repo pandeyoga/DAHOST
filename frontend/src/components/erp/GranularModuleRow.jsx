@@ -1,8 +1,9 @@
-// Baris matriks izin granular per modul: Lihat / Tambah / Ubah / Hapus / Approve / Export.
+// Baris matriks izin granular per modul: Lihat / Tambah / Ubah / Hapus / Setujui / Unduh.
+// Standar UI/UX v2 (8 Nov 2026): ukuran huruf 12 px (dulu 10–11 px), warna token, label Indonesia.
 import { Check } from 'lucide-react';
 
 const ACTION_ORDER = ['view', 'create', 'edit', 'delete', 'approve', 'export'];
-const ACTION_LABEL = { view: 'Lihat', create: 'Tambah', edit: 'Ubah', delete: 'Hapus', approve: 'Approve', export: 'Export' };
+const ACTION_LABEL = { view: 'Lihat', create: 'Tambah', edit: 'Ubah', delete: 'Hapus', approve: 'Setujui', export: 'Unduh' };
 
 export default function GranularModuleRow({ mod, permSet, canEdit, onToggle, levelControl }) {
   const byAction = Object.fromEntries(
@@ -10,12 +11,12 @@ export default function GranularModuleRow({ mod, permSet, canEdit, onToggle, lev
   );
   const extras = mod.permissions.filter((p) => !p.key.startsWith('mod.'));
   return (
-    <div className="rounded-lg border border-border/70 p-2.5" data-testid={`perm-module-${mod.id}`}>
+    <div className="rounded-lg border border-[var(--glass-border)] p-2.5" data-testid={`perm-module-${mod.id}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <span className="text-xs font-semibold text-foreground">{mod.label}</span>
+          <span className="text-sm font-medium text-foreground">{mod.label}</span>
           {mod.lookup && (
-            <span className="ml-2 text-[10px] text-muted-foreground" title="Data acuan: daftar tetap terbaca untuk dropdown lintas portal">
+            <span className="ml-2 text-xs text-muted-foreground" title="Data acuan: daftar tetap terbaca untuk dropdown lintas portal">
               · data acuan
             </span>
           )}
@@ -26,16 +27,16 @@ export default function GranularModuleRow({ mod, permSet, canEdit, onToggle, lev
         {ACTION_ORDER.map((a) => {
           const p = byAction[a];
           if (!p) {
-            return <span key={a} className="rounded-md border border-dashed border-border/50 px-2 py-1 text-center text-[11px] text-muted-foreground/40">—</span>;
+            return <span key={a} className="rounded-md border border-dashed border-[var(--glass-border)] px-2 py-1 text-center text-xs text-muted-foreground">—</span>;
           }
           const on = permSet.has(p.key);
           return (
             <button
               key={a} type="button" disabled={!canEdit} onClick={() => onToggle(p.key)}
-              title={`${p.key} — ${p.description}`} aria-pressed={on} data-testid={`perm-${p.key}`}
-              className={`inline-flex items-center justify-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 ${
+              title={p.description} aria-pressed={on} data-testid={`perm-${p.key}`}
+              className={`inline-flex items-center justify-center gap-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 ${
                 on ? 'border-primary bg-primary/15 text-primary'
-                  : 'border-border text-muted-foreground hover:border-primary/40 hover:text-foreground'
+                  : 'border-[var(--glass-border)] text-muted-foreground hover:border-[hsl(var(--primary)/0.4)] hover:text-foreground'
               }`}
             >
               {on && <Check className="h-3 w-3" />}
@@ -51,14 +52,14 @@ export default function GranularModuleRow({ mod, permSet, canEdit, onToggle, lev
             return (
               <button
                 key={p.key} type="button" disabled={!canEdit} onClick={() => onToggle(p.key)}
-                title={p.key} aria-pressed={on} data-testid={`perm-${p.key}`}
-                className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors disabled:opacity-60 ${
-                  on ? 'border-primary bg-primary/15 text-primary' : 'border-border text-muted-foreground hover:text-foreground'
+                title={p.description} aria-pressed={on} data-testid={`perm-${p.key}`}
+                className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors disabled:opacity-60 ${
+                  on ? 'border-primary bg-primary/15 text-primary' : 'border-[var(--glass-border)] text-muted-foreground hover:text-foreground'
                 }`}
               >
                 {on && <Check className="h-3 w-3" />}
                 {p.description}
-                <span className="opacity-50">· khusus</span>
+                <span className="opacity-60">· khusus</span>
               </button>
             );
           })}
