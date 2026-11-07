@@ -79,15 +79,16 @@ export function AssetsTab({
     { label: 'Departemen', nilai: (a) => a.department || '' },
   ];
 
+  // Alat dibungkus satu kelompok supaya Unduh & muat ulang tidak terpisah baris di HP.
   const alat = (
-    <>
+    <div className="flex items-center gap-2">
       <TombolUnduh namaBerkas="daftar-aset" namaLembar="Aset" baris={assets} kolom={kolomUnduh} testId="asset-unduh"
         ambilSemua={() => ambilSemuaHalaman(fetchAssetPage)} />
       <Button variant="outline" size="icon" onClick={() => loadAssets(halaman)} disabled={loading}
         title="Muat ulang" aria-label="Muat ulang" data-testid="asset-search-btn">
         <RefreshCw className={loading ? 'animate-spin' : ''} />
       </Button>
-    </>
+    </div>
   );
 
   return (

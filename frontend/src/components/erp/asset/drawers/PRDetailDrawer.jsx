@@ -57,7 +57,7 @@ export function PRDetailDrawer({ pr, token, open, onClose, onRefresh, currentUse
     if (ok) action('cancel');
   };
 
-  const items = pr.items || [];
+  const items = (pr.items || []).map((it, i) => ({ ...it, _baris: i }));
   const steps = pr.approval_steps || [];
 
   return (
@@ -108,7 +108,7 @@ export function PRDetailDrawer({ pr, token, open, onClose, onRefresh, currentUse
             { label: 'Satuan', nilai: (it) => it.unit || '' },
             { label: 'Perkiraan total', nilai: (it) => angka(it.total_price) },
           ]} />}>
-        <TabelData baris={items} kunci={(it) => `${it.name}-${it.specification || ''}-${it.qty}`} testId="pr-items-table"
+        <TabelData baris={items} kunci={(it) => it._baris} testId="pr-items-table"
           kosong={<p className="py-4 text-center text-sm text-muted-foreground">Tidak ada barang.</p>}
           kolom={[
             { kunci: 'nama', label: 'Barang', hp: 'judul', isi: (it) => <span className="font-medium">{it.name}</span> },

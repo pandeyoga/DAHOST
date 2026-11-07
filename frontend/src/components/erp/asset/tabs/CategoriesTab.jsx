@@ -37,7 +37,7 @@ export function CategoriesTab({ categories, loading, onMuatUlang, onEditCategory
         </Button>
       </>}
       summary={<p className="text-sm text-muted-foreground">
-        Umur manfaat, metode penyusutan, dan akun di Bagan Akun untuk tiap kategori. Klik baris (atau kartu di HP) untuk mengubah.
+        Umur manfaat, metode penyusutan, dan akun di Bagan Akun untuk tiap kategori. Klik kategori untuk mengubahnya.
       </p>}>
       <TabelData baris={categories} onKlikBaris={onEditCategory} testId="category-table"
         kosong={<EmptyState title="Belum ada kategori aset" description="Kategori bawaan dibuat otomatis saat ringkasan aset dibuka." />}

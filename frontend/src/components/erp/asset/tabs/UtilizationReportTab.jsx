@@ -80,8 +80,9 @@ export function UtilizationReportTab({ token, categories }) {
   const adaAset = (summary.total_assets || 0) > 0;
   const namaView = { top: 'semua-aset', underutilized: 'jarang-dipakai', idle: 'tidak-dipakai' }[view];
 
+  // Alat dibungkus satu kelompok supaya Unduh & muat ulang tidak terpisah baris di HP.
   const alat = (
-    <>
+    <div className="flex items-center gap-2">
       <TombolUnduh namaBerkas={`pemakaian-aset-${namaView}`} namaLembar="Pemakaian aset" baris={detailRows}
         ambilSemua={ambilSemua} testId="util-unduh"
         kolom={[
@@ -102,7 +103,7 @@ export function UtilizationReportTab({ token, categories }) {
         data-testid="util-apply-button">
         <RefreshCw className={loading ? 'animate-spin' : ''} />
       </Button>
-    </>
+    </div>
   );
 
   return (

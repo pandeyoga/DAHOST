@@ -106,8 +106,9 @@ export function PredictiveMaintenanceTab({ token }) {
   const kalimatBatas = `Batas: jatuh tempo ≤ ${config.upcoming_window_days} hari · tidak dirawat ≥ ${config.stale_months} bulan · `
     + `berulang ≥ ${config.high_frequency_threshold} kali dalam ${config.high_frequency_window_days} hari.`;
 
+  // Alat dibungkus satu kelompok supaya Unduh & muat ulang tidak terpisah baris di HP.
   const alat = (
-    <>
+    <div className="flex items-center gap-2">
       <Button variant="outline" onClick={() => setDraft({ ...config })} data-testid="pm-atur-batas">
         <SlidersHorizontal />Atur batas
       </Button>
@@ -126,7 +127,7 @@ export function PredictiveMaintenanceTab({ token }) {
         data-testid="pm-apply-button">
         <RefreshCw className={loading ? 'animate-spin' : ''} />
       </Button>
-    </>
+    </div>
   );
 
   return (

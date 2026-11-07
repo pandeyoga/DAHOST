@@ -65,8 +65,9 @@ export function LoansTab({ token }) {
   const adaAngka = summary && [summary.active_loans, summary.overdue_loans, summary.returned_this_month, summary.available_assets]
     .some((n) => Number(n) > 0);
 
+  // Alat dibungkus satu kelompok supaya Unduh & muat ulang tidak terpisah baris di HP.
   const alat = (
-    <>
+    <div className="flex items-center gap-2">
       <TombolUnduh namaBerkas="peminjaman-aset" namaLembar="Peminjaman" baris={filtered} testId="asset-loan-unduh"
         kolom={[
           { label: 'No. pinjam', nilai: (l) => l.loan_number },
@@ -86,7 +87,7 @@ export function LoansTab({ token }) {
         data-testid="asset-loan-refresh">
         <RefreshCw className={loading ? 'animate-spin' : ''} />
       </Button>
-    </>
+    </div>
   );
 
   return (

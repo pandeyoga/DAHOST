@@ -71,8 +71,9 @@ export function ProcurementTab({
       ? 'Tidak ada permintaan yang menunggu persetujuan.'
       : 'Tidak ada permintaan yang menunggu persetujuan Anda.';
 
+  // Alat dibungkus satu kelompok supaya Unduh & muat ulang tidak terpisah baris di HP.
   const alat = (
-    <>
+    <div className="flex items-center gap-2">
       {kotak ? (
         <TombolUnduh namaBerkas="pengadaan-menunggu-persetujuan" namaLembar="Menunggu persetujuan" baris={prInbox}
           kolom={[...KOLOM_UNDUH, { label: 'Bisa saya setujui', nilai: (p) => (p.can_approve === false ? 'Tidak' : 'Ya') }]}
@@ -85,7 +86,7 @@ export function ProcurementTab({
         data-testid={kotak ? 'inbox-refresh-btn' : 'pr-refresh-btn'}>
         <RefreshCw className={loading ? 'animate-spin' : ''} />
       </Button>
-    </>
+    </div>
   );
 
   return (

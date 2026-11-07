@@ -95,8 +95,9 @@ export function DisposalApprovalInbox({ token, userRole, onRefresh }) {
 
   const labelSaringan = SARINGAN.find((s) => s.key === filterStatus)?.label.toLowerCase();
 
+  // Alat dibungkus satu kelompok supaya Unduh & muat ulang tidak terpisah baris di HP.
   const alat = (
-    <>
+    <div className="flex items-center gap-2">
       <TombolUnduh namaBerkas="permintaan-pelepasan-aset" namaLembar="Pelepasan" baris={requests} testId="disposal-unduh"
         kolom={[
           { label: 'Aset', nilai: (r) => r.asset_name },
@@ -113,7 +114,7 @@ export function DisposalApprovalInbox({ token, userRole, onRefresh }) {
       <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
         <RefreshCw className={loading ? 'animate-spin' : ''} />
       </Button>
-    </>
+    </div>
   );
 
   return (
