@@ -15,10 +15,13 @@
  *   POST /api/rahaza/production-calendar/seed-national?year= · GET …/working-days
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CalendarDays, Calculator, ChevronLeft, ChevronRight, Pencil, Plus, RefreshCw, Search, Table2, Trash2 } from 'lucide-react';
+import { CalendarDays, Calculator, ChevronLeft, ChevronRight, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Table2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { GlassCard } from '@/components/ui/glass';
 import TabelData from '@/components/ui/tabel-data';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
@@ -243,10 +246,24 @@ export default function RahazaProductionCalendarModule() {
   return (
     <PageLayout testId="production-calendar-page" title="Kalender libur"
       subtitle="Hari libur untuk hitung cuti, gaji harian, dan absensi."
+      // Kepala hanya 2 tombol: di HP kepala tidak membungkus, jadi 3 tombol lebar menimpa judul (dulu "Entri baru"
+      // terdorong keluar layar). "Isi libur nasional" (setahun sekali) & "Hitung hari kerja" → menu "Lainnya".
       actions={<>
-        <Button variant="outline" onClick={seedNational} disabled={seeding} data-testid="seed-national-btn">
-          <RefreshCw className={seeding ? 'animate-spin' : ''} />{`Isi libur nasional ${year}`}
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" disabled={seeding} aria-label="Lainnya" title="Lainnya" data-testid="cal-more-btn">
+              {seeding ? <RefreshCw className="animate-spin" /> : <MoreHorizontal />}<span className="hidden sm:inline">Lainnya</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={seedNational} data-testid="seed-national-btn">
+              <RefreshCw className="mr-2 h-4 w-4" />{`Isi libur nasional ${year}`}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setPanel({ mode: 'calc' })} data-testid="calc-open-btn">
+              <Calculator className="mr-2 h-4 w-4" />Hitung hari kerja
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button onClick={() => setPanel({ mode: 'new', entry: null })} data-testid="new-entry-btn"><Plus />Entri baru</Button>
       </>}
       filters={<>
@@ -267,7 +284,6 @@ export default function RahazaProductionCalendarModule() {
         )}
         {/* Alat di ujung baris penyaring (bukan slot `tools`): di HP slot `tools` menyempitkan kotak cari. */}
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-          <Button variant="outline" onClick={() => setPanel({ mode: 'calc' })} data-testid="calc-open-btn"><Calculator />Hitung hari kerja</Button>
           <ImportExportToolbar collectionKey="holidays" label="Kalender libur" onImported={load} />
           <ViewToggle value={view} onChange={setView} options={VIEWS} testId="cal-view" />
         </div>
@@ -286,7 +302,11 @@ export default function RahazaProductionCalendarModule() {
         ) : (
           <TabelData kolom={kolom} baris={paged} testId="calendar-table"
             kosong={<EmptyState icon={CalendarDays} title={entries.length ? 'Tidak ada entri yang cocok' : `Belum ada entri kalender ${year}`}
-              description={entries.length ? 'Ubah kata pencarian atau penyaring jenis.' : `Klik "Isi libur nasional ${year}" atau tambahkan entri sendiri.`} />} />
+              description={entries.length ? 'Ubah kata pencarian atau penyaring jenis.' : 'Isi libur nasional & cuti bersama tahun ini, atau tambahkan entri sendiri.'}
+              action={!entries.length && (
+                <Button variant="outline" onClick={seedNational} disabled={seeding} data-testid="seed-national-empty">
+                  <RefreshCw className={seeding ? 'animate-spin' : ''} />{`Isi libur nasional ${year}`}
+                </Button>)} />} />
         )
       )}
     </PageLayout>

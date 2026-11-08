@@ -306,7 +306,7 @@ export default function HROrgChartModule({ token }) {
             <StatTile label="Unit" value={units.length} sub="Unit aktif di struktur" />
             <StatTile label="Jabatan" value={positions.length} sub="Terdaftar di semua unit" />
             <StatTile label="Karyawan di unit" value={sum.total_actual ?? '—'}
-              sub={totalAktif !== undefined ? `dari ${totalAktif} karyawan aktif; dicocokkan lewat nama departemen` : 'Dicocokkan lewat nama departemen'} />
+              sub={totalAktif !== undefined ? `dari ${totalAktif} aktif; dicocokkan lewat nama departemen` : 'Dicocokkan lewat nama departemen'} />
             <StatTile label="Kekurangan karyawan" value={headcount ? kekurangan : '—'} accent={kekurangan > 0 ? 'warning' : 'default'}
               sub={headcount ? `Target ${sum.total_target ?? 0}, terisi ${sum.total_actual ?? 0}` : 'Data target belum termuat'} />
           </div>

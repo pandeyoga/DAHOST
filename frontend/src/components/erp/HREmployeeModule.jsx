@@ -689,7 +689,7 @@ function EmployeeDialog({ initial, locations, employees = [], masters = {}, head
 
         {/* Tab 1: Data dasar */}
         <TabsContent value="dasar" className="mt-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2">
             <Isian label="Kode karyawan" wajib htmlFor="emp-code-input">
               <Input id="emp-code-input" value={form.employee_code} onChange={set('employee_code')} placeholder="EMP-001" data-testid="emp-code" />
             </Isian>
@@ -736,7 +736,7 @@ function EmployeeDialog({ initial, locations, employees = [], masters = {}, head
 
         {/* Tab 2: Kontrak & masa kerja (dulu satu tab dengan data dasar — terlalu panjang, tombol simpan jauh di bawah) */}
         <TabsContent value="kontrak" className="mt-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2">
             <Isian label="Tipe kontrak">
               <Sel value={form.contract_type || ''} onChange={set('contract_type')} options={CONTRACT_TYPES} testId="emp-contract-type" />
             </Isian>

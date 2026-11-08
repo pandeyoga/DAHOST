@@ -37,6 +37,10 @@ import { EmployeeSelect, useActiveEmployees, employeeLabel } from './hr/hrPicker
 const API = process.env.REACT_APP_BACKEND_URL;
 const DAYS_ID = { Mon: 'Sen', Tue: 'Sel', Wed: 'Rab', Thu: 'Kam', Fri: 'Jum', Sat: 'Sab', Sun: 'Min' };
 const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+// Baris shift cadangan dibuat server (id "default", tidak tersimpan di master) — namanya diterjemahkan di layar.
+const CADANGAN = 'default';
+const namaShift = (s) => (s.id === CADANGAN ? `Shift cadangan sistem (${s.start_time}–${s.end_time})` : s.shift_name);
+const kodeShift = (s) => (s.id === CADANGAN ? 'Cadangan' : s.shift_code);
 const STATUS_PENUGASAN = { active: { label: 'Aktif', tone: 'success' }, inactive: { label: 'Nonaktif', tone: 'muted' }, ended: { label: 'Berakhir', tone: 'muted' } };
 
 /** "Sen–Sab" bila berurutan, selain itu "Sen, Rab, Jum". */
@@ -310,10 +314,10 @@ export default function HRShiftManagementModule({ user, bagian }) {
 
   // ─── Tabel shift ─────────────────────────────────────────────────────────────
   const kolomShift = [
-    { kunci: 'kode', label: 'Kode', isi: (s) => <ShiftKode code={s.shift_code} color={s.color} /> },
+    { kunci: 'kode', label: 'Kode', isi: (s) => <ShiftKode code={kodeShift(s)} color={s.color} /> },
     { kunci: 'nama', label: 'Nama shift', hp: 'judul', isi: (s) => (
       <div className="min-w-0">
-        <p className="font-medium text-foreground">{s.shift_name}</p>
+        <p className="font-medium text-foreground">{namaShift(s)}</p>
         {s.description && <p className="hidden truncate text-xs text-muted-foreground md:block md:max-w-[18rem]">{s.description}</p>}
       </div>) },
     { kunci: 'jam', label: 'Jam', hp: 'keterangan', isi: (s) => (
@@ -340,8 +344,8 @@ export default function HRShiftManagementModule({ user, bagian }) {
       </div>)) },
   ];
   const unduhShift = [
-    { label: 'Kode', nilai: (s) => s.shift_code },
-    { label: 'Nama shift', nilai: (s) => s.shift_name },
+    { label: 'Kode', nilai: kodeShift },
+    { label: 'Nama shift', nilai: namaShift },
     { label: 'Jam mulai', nilai: (s) => s.start_time },
     { label: 'Jam selesai', nilai: (s) => s.end_time },
     { label: 'Istirahat (menit)', nilai: (s) => Number(s.break_duration_minutes ?? 0) },
@@ -376,10 +380,10 @@ export default function HRShiftManagementModule({ user, bagian }) {
   const ringkasan = summary && (
     <p className="text-sm text-muted-foreground" data-testid="shift-summary">
       <span className="font-medium text-foreground">{summary.total_shifts}</span> shift aktif tersimpan
-      {shifts.some(s => s.id === 'default') ? ' (ditambah 1 shift cadangan sistem 08:00–17:00)' : ''}
+      {shifts.some(s => s.id === CADANGAN) ? ' + 1 shift cadangan sistem' : ''}
       {' · '}<span className="font-medium text-foreground">{summary.total_assigned_employees}</span> penugasan aktif
       {summary.by_shift?.[0] ? <> · paling banyak dipakai: <span className="font-medium text-foreground">{summary.by_shift[0].shift_name}</span> ({summary.by_shift[0].count})</> : null}
-      . Karyawan tanpa penugasan memakai shift utamanya di Data Karyawan atau shift cadangan.
+.<span className="hidden sm:inline"> Karyawan tanpa penugasan memakai shift utamanya di Data Karyawan atau shift cadangan.</span>
     </p>
   );
 

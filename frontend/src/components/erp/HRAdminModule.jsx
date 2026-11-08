@@ -61,15 +61,17 @@ export default function HRAdminModule({ token }) {
     <Tabs value={tab} onValueChange={setTab}>
       <PageLayout testId="hr-admin-page" title="Pengaturan SDM"
         subtitle="Golongan gaji, pengunduran diri, lokasi kantor untuk absen, dan data contoh."
-        actions={<>{cur.alat}{cur.utama}</>}
-        filters={
+        actions={cur.utama}
+        filters={<>
           <TabsList className="h-auto max-w-full justify-start max-sm:flex-nowrap max-sm:overflow-x-auto">
             <TabsTrigger value="grades" className="shrink-0" data-testid="hr-admin-tab-grades">Golongan gaji</TabsTrigger>
             <TabsTrigger value="resignations" className="shrink-0" data-testid="hr-admin-tab-resign">Pengunduran diri</TabsTrigger>
             <TabsTrigger value="office" className="shrink-0" data-testid="hr-admin-tab-office">Lokasi kantor</TabsTrigger>
             <TabsTrigger value="seed" className="shrink-0" data-testid="hr-admin-tab-seed">Data contoh</TabsTrigger>
           </TabsList>
-        }>
+          {/* Alat tab aktif di ujung baris tab (bukan kepala): di HP kepala dengan 3 tombol menimpa judul. */}
+          {cur.alat && <div className="ml-auto flex items-center gap-2">{cur.alat}</div>}
+        </>}>
         <TabsContent value="grades" className="mt-0 space-y-4"><SalaryGradesTab token={token} pasang={pasang} /></TabsContent>
         <TabsContent value="resignations" className="mt-0 space-y-4"><ResignationsTab token={token} pasang={pasang} /></TabsContent>
         <TabsContent value="office" className="mt-0 space-y-4"><OfficeLocationTab token={token} pasang={pasang} /></TabsContent>
