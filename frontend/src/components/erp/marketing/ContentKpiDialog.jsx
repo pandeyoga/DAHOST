@@ -11,27 +11,27 @@
  *     ditampilkan sebagai hitungan hidup, yang tersimpan adalah hitungan SERVER.
  *   · Tanpa LINK TERBIT, KPI tidak boleh disimpan (backend menolak 400): angka yang
  *     tidak bisa dicek ulang ke platform tidak layak masuk laporan.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): FormPopup panjang (isian di `Isian`, galat di kaki form), label Indonesia.
  */
 import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { Loader2, Calculator, Link2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Calculator } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { formatDateID } from '@/lib/format';
 import { toast } from 'sonner';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
 const FIELDS = [
-  ['views', 'Views / tayangan'],
-  ['likes', 'Likes'],
+  ['views', 'Tayangan'],
+  ['likes', 'Suka'],
   ['comments', 'Komentar'],
   ['shares', 'Dibagikan'],
   ['saves', 'Disimpan'],
   ['watch_time_avg_sec', 'Rata-rata ditonton (detik)'],
-  ['ctr', 'CTR (%)'],
+  ['ctr', 'Rasio klik / CTR (%)'],
   ['orders', 'Pesanan dari konten'],
   ['gmv', 'GMV (Rp)'],
 ];
@@ -39,6 +39,7 @@ const FIELDS = [
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const fmtNum = (n) => new Intl.NumberFormat('id-ID').format(Math.round(n || 0));
 const rp = (n) => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
+const pct = (n, d) => `${Number(n || 0).toFixed(d).replace('.', ',')}%`;
 
 export default function ContentKpiDialog({ open, onClose, onSaved, token, content }) {
   const authH = useMemo(
@@ -46,12 +47,14 @@ export default function ContentKpiDialog({ open, onClose, onSaved, token, conten
   const [form, setForm] = useState({});
   const [url, setUrl] = useState('');
   const [saving, setSaving] = useState(false);
+  const [galat, setGalat] = useState('');
 
   useEffect(() => {
     if (!open || !content) return;
     const k = content.kpi || {};
     setForm(Object.fromEntries(FIELDS.map(([f]) => [f, k[f] ?? ''])));
     setUrl(content.published_url || '');
+    setGalat('');
   }, [open, content]);
 
   const set = (f, v) => setForm((p) => ({ ...p, [f]: v }));
@@ -72,9 +75,10 @@ export default function ContentKpiDialog({ open, onClose, onSaved, token, conten
 
   const save = async () => {
     if (!url.trim()) {
-      toast.error('Link terbit wajib diisi — KPI tanpa link tidak bisa dicek ulang ke platform.');
+      setGalat('Tautan terbit wajib diisi — KPI tanpa tautan tidak bisa dicek ulang ke platform.');
       return;
     }
+    setGalat('');
     setSaving(true);
     try {
       // Field yang dikosongkan dikirim `null` — server akan MEMPERTAHANKAN nilai
@@ -86,75 +90,43 @@ export default function ContentKpiDialog({ open, onClose, onSaved, token, conten
       }));
       await axios.post(`${API}/api/marketing/content-calendar/${content.id}/kpi`,
         { ...payload, published_url: url.trim(), source: 'manual' }, { headers: authH });
-      toast.success('KPI konten tersimpan');
+      toast.success('KPI konten tersimpan.');
       onSaved?.();
       onClose?.();
     } catch (e) {
-      toast.error(e?.response?.data?.detail || 'Gagal menyimpan KPI konten');
+      setGalat(e?.response?.data?.detail || 'Gagal menyimpan KPI konten.');
     } finally { setSaving(false); }
   };
 
   if (!content) return null;
-
+  const ket = [content.date ? formatDateID(content.date) : '', content.content_type_label, content.account_name, content.creator_name]
+    .filter(Boolean).join(' · ');
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose?.()}>
-      <DialogContent className="max-w-2xl" data-testid="content-kpi-dialog">
-        <DialogHeader>
-          <DialogTitle className="text-base">Isi KPI Konten</DialogTitle>
-        </DialogHeader>
-
-        <div className="text-xs text-muted-foreground -mt-2">
-          <span className="font-semibold text-foreground">{content.title}</span>
-          {' · '}{content.date}
-          {content.content_type_label ? ` · ${content.content_type_label}` : ''}
-          {content.account_name ? ` · ${content.account_name}` : ''}
-          {content.creator_name ? ` · ${content.creator_name}` : ''}
-        </div>
-
-        <div className="space-y-1">
-          <label className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1">
-            <Link2 size={11} /> Link terbit (wajib)
-          </label>
-          <Input value={url} onChange={(e) => setUrl(e.target.value)} className="h-8 text-xs"
-            placeholder="https://…" data-testid="kpi-published-url" />
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-          {FIELDS.map(([f, label]) => (
-            <div key={f} className="space-y-1">
-              <label className="text-[11px] text-muted-foreground">{label}</label>
-              <Input type="number" min="0" step="any" className="h-8 text-xs"
-                value={form[f] ?? ''} onChange={(e) => set(f, e.target.value)}
-                data-testid={`kpi-input-${f}`} />
-            </div>
-          ))}
-        </div>
-
-        <div className="rounded-lg border border-border bg-muted/40 p-3" data-testid="kpi-derived">
-          <p className="text-[11px] font-semibold mb-1.5 flex items-center gap-1 text-foreground">
-            <Calculator size={11} /> Dihitung sistem (tidak bisa diketik)
-          </p>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-[11px]">
-            <div><span className="text-muted-foreground block">Engagement</span>
-              {fmtNum(derived.engagement)}</div>
-            <div><span className="text-muted-foreground block">Eng. rate</span>
-              {derived.engagement_rate.toFixed(2)}%</div>
-            <div><span className="text-muted-foreground block">CVR</span>
-              {derived.cvr.toFixed(4)}%</div>
-            <div><span className="text-muted-foreground block">GMV / view</span>
-              {rp(derived.gmv_per_view.toFixed(0))}</div>
-            <div><span className="text-muted-foreground block">AOV</span>
-              {rp(derived.aov.toFixed(0))}</div>
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose} data-testid="kpi-cancel">Batal</Button>
-          <Button size="sm" onClick={save} disabled={saving} data-testid="kpi-save">
-            {saving ? <Loader2 size={13} className="animate-spin mr-1" /> : null} Simpan KPI
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open={open} onClose={onClose} ukuran="panjang" judul={`Isi KPI: ${content.title}`} keterangan={ket}
+      onSimpan={save} menyimpan={saving} galat={galat} labelSimpan="Simpan KPI" testId="content-kpi-dialog">
+      <Isian label="Tautan terbit" wajib htmlFor="kpi-url" petunjuk="Tautan unggahan di platform, untuk cek ulang angka.">
+        <Input id="kpi-url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" data-testid="kpi-published-url" />
+      </Isian>
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+        {FIELDS.map(([f, label]) => (
+          <Isian key={f} label={label} htmlFor={`kpi-${f}`}>
+            <Input id={`kpi-${f}`} type="number" min="0" step="any" value={form[f] ?? ''}
+              onChange={(e) => set(f, e.target.value)} data-testid={`kpi-input-${f}`} />
+          </Isian>
+        ))}
+      </div>
+      <div className="border-t border-[var(--glass-border)] pt-3" data-testid="kpi-derived">
+        <p className="mb-2 flex items-center gap-1 text-sm font-medium text-foreground">
+          <Calculator className="h-4 w-4" /> Dihitung sistem (tidak bisa diketik)
+        </p>
+        <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
+          <div><dt className="text-xs text-muted-foreground">Interaksi</dt><dd className="tabular-nums">{fmtNum(derived.engagement)}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Tingkat interaksi</dt><dd className="tabular-nums">{pct(derived.engagement_rate, 2)}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Konversi</dt><dd className="tabular-nums">{pct(derived.cvr, 4)}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">GMV per tayangan</dt><dd className="tabular-nums">{rp(derived.gmv_per_view.toFixed(0))}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Rata-rata per pesanan</dt><dd className="tabular-nums">{rp(derived.aov.toFixed(0))}</dd></div>
+        </dl>
+      </div>
+    </FormPopup>
   );
 }

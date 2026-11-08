@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { UserCheck, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import FormPopup from '@/components/ui/form-popup';
 import { toast } from 'sonner';
 import { API } from './utils';
 import { EmploymentTypeBadge } from './Badges';
@@ -21,7 +21,7 @@ export default function AssignTrainingModal({ training, authH, onClose, onSucces
           setHosts(data);
         }
       } catch (e) {
-        toast.error('Gagal memuat LiveHost');
+        toast.error('Gagal memuat host live');
       } finally {
         setLoading(false);
       }
@@ -30,9 +30,9 @@ export default function AssignTrainingModal({ training, authH, onClose, onSucces
   }, [authH]);
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     if (selectedHostIds.length === 0) {
-      toast.error('Pilih minimal 1 LiveHost');
+      toast.error('Pilih minimal 1 host live');
       return;
     }
 
@@ -51,29 +51,24 @@ export default function AssignTrainingModal({ training, authH, onClose, onSucces
         onSuccess();
       } else {
         const err = await res.json();
-        toast.error(err.detail || 'Gagal assign training');
+        toast.error(err.detail || 'Gagal menugaskan pelatihan');
       }
     } catch (e) {
-      toast.error('Gagal assign training');
+      toast.error('Gagal menugaskan pelatihan');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Assign Training: {training.title}</DialogTitle>
-        </DialogHeader>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
+    <FormPopup open onClose={onClose} ukuran="panjang" judul={`Tugaskan pelatihan: ${training.title}`} onSimpan={handleSubmit} menyimpan={saving}
+      testId="livehost-assigntraining">
           <p className="text-sm text-muted-foreground">
             Pilih LiveHost yang akan di-assign training ini:
           </p>
 
           {loading ? (
-            <div className="flex justify-center py-8">
+            <div className="flex justify-center py-6">
               <Loader2 size={24} className="animate-spin" />
             </div>
           ) : (
@@ -101,27 +96,6 @@ export default function AssignTrainingModal({ training, authH, onClose, onSucces
               ))}
             </div>
           )}
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={saving || loading}>
-              {saving ? (
-                <>
-                  <Loader2 size={14} className="mr-1.5 animate-spin" />
-                  Assigning...
-                </>
-              ) : (
-                <>
-                  <UserCheck size={14} className="mr-1.5" />
-                  Assign ({selectedHostIds.length})
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    </FormPopup>
   );
 }

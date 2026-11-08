@@ -13,10 +13,12 @@ export default function MarketingAIHub(props) {
   return (
     <HubTabs
       hubId="marketing-ai-hub"
+      title="AI Marketing"
+      subtitle="Wawasan AI dari data penjualan, analisis lanjutan, dan pembuat konten."
       tabs={[
-        { key: 'insights', label: 'AI Insights', Component: MarketingAIInsightsDashboard },
-        { key: 'advanced', label: 'Advanced AI', Component: AdvancedAIModule },
-        { key: 'content', label: 'Content Generator', Component: AIContentGeneratorModule },
+        { key: 'insights', label: 'Wawasan AI', Component: MarketingAIInsightsDashboard },
+        { key: 'advanced', label: 'AI lanjutan', Component: AdvancedAIModule },
+        { key: 'content', label: 'Pembuat konten', Component: AIContentGeneratorModule },
       ]}
       {...props}
     />

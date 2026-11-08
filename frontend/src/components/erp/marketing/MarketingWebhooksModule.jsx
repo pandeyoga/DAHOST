@@ -1,69 +1,55 @@
 /**
- * MarketingWebhooksModule — Phase 1/2: Webhook Events Monitor
+ * MarketingWebhooksModule — Monitor webhook (Portal Toko).
  *
  * Monitor dan kelola event webhook dari marketplace (Tokopedia, Shopee, TikTok).
- * Mendukung reprocess event yang gagal dan manual ingest untuk testing.
+ * Mendukung pengulangan event yang gagal dan kiriman uji manual.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, penyaring satu baris, daftar = tabel (kartu ringkas di HP),
+ * detail = popup, form uji = FormPopup, unduh Excel/CSV (semua baris hasil saringan), bahasa Indonesia.
+ * Tampilan "Kartu" lama diganti tabel. Panggilan API & data yang dikirim tidak berubah.
  */
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
-import {
-  Zap, RefreshCw, CheckCircle2, XCircle, Clock,
-  AlertTriangle, Send, ChevronRight, Eye, RotateCcw,
-  Filter, Search, Copy, ExternalLink, Table2, LayoutGrid,
-} from 'lucide-react';
-import { Badge } from '../../ui/badge';
+import { RefreshCw, RotateCcw, Search, Send, FileJson } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Input } from '../../ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '../../ui/card';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-} from '../../ui/dialog';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '../../ui/select';
 import { Textarea } from '../../ui/textarea';
+import SmartNativeSelect from '../../ui/smart-native-select';
+import TabelData from '../../ui/tabel-data';
+import TombolUnduh from '../../ui/tombol-unduh';
+import FormPopup, { Isian } from '../../ui/form-popup';
+import DetailPopup, { BarisDetail } from '../../ui/detail-popup';
+import PaginationLite from '../../ui/pagination-lite';
 import { useToast } from '../../../hooks/use-toast';
 import { daysAheadWIB } from '../../../lib/waktu';
+import { formatDateTimeID } from '../../../lib/format';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, StatTile, StatusBadge } from '../moduleAtoms';
 import WebhookSecurityPanel from './WebhookSecurityPanel';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
-const PLATFORM_COLORS = {
-  tokopedia: 'bg-green-100 dark:bg-green-500/15 text-green-700 dark:text-green-400 border-green-400 dark:border-green-500/30',
-  shopee:    'bg-orange-100 dark:bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-400 dark:border-orange-500/30',
-  tiktok:    'bg-muted dark:bg-zinc-500/15 text-foreground/80 border-border dark:border-zinc-500/30',
-  manual:    'bg-blue-100 dark:bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-400 dark:border-blue-500/30',
+const PLATFORM_LABELS = { tokopedia: 'Tokopedia', shopee: 'Shopee', tiktok: 'TikTok', manual: 'Manual' };
+const labelPlatform = (p) => PLATFORM_LABELS[p] || p || '—';
+const waktu = (v) => {
+  if (!v) return '—';
+  const s = String(v);
+  const d = new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(s) ? s : `${s}Z`);
+  return Number.isNaN(d.getTime()) ? '—' : formatDateTimeID(d);
 };
 
-const PLATFORM_LABELS = {
-  tokopedia: '🟢 Tokopedia',
-  shopee:    '🟠 Shopee',
-  tiktok:    '⚫ TikTok',
-  manual:    '🔵 Manual',
-};
-
-function StatusBadge({ processed, error }) {
-  if (error === 'duplicate') return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-muted dark:bg-zinc-500/20 text-muted-foreground">
-      <Copy className="w-3 h-3" /> Duplikat
-    </span>
-  );
-  if (error) return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-400">
-      <XCircle className="w-3 h-3" /> Error
-    </span>
-  );
-  if (processed) return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-emerald-100 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
-      <CheckCircle2 className="w-3 h-3" /> Processed
-    </span>
-  );
-  return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400">
-      <Clock className="w-3 h-3" /> Pending
-    </span>
-  );
+function keadaan(evt) {
+  if (evt.error === 'duplicate') return { label: 'Duplikat', tone: 'muted' };
+  if (evt.error) return { label: 'Galat', tone: 'danger' };
+  if (evt.processed) return { label: 'Diproses', tone: 'success' };
+  return { label: 'Menunggu', tone: 'warning' };
 }
+function StatusEvent({ evt }) {
+  const k = keadaan(evt);
+  return <StatusBadge status={k.label} label={k.label} tone={k.tone} />;
+}
+
+const LIMIT = 20;
 
 export default function MarketingWebhooksModule({ user, headers }) {
   const [events, setEvents] = useState([]);
@@ -78,25 +64,21 @@ export default function MarketingWebhooksModule({ user, headers }) {
   const [showManualIngest, setShowManualIngest] = useState(false);
   const [manualForm, setManualForm] = useState({ platform: 'tokopedia', payload: '' });
   const [manualSending, setManualSending] = useState(false);
-  // F10 (2026-08-13) — tabel sudah ada, yang belum: pengalih tampilan.
-  const [view, setView] = useState(() => {
-    try { return localStorage.getItem('marketing_webhooks_view') || 'table'; } catch { return 'table'; }
-  });
-  useEffect(() => {
-    try { localStorage.setItem('marketing_webhooks_view', view); } catch { /* diblokir */ }
-  }, [view]);
+  const [galatUji, setGalatUji] = useState('');
   const { toast } = useToast();
   const authH = useMemo(() => headers || {}, [headers]);
 
-  const LIMIT = 20;
+  const paramSaring = useCallback(() => {
+    const params = {};
+    if (filterPlatform) params.platform = filterPlatform;
+    if (filterProcessed !== '') params.processed = filterProcessed === 'true';
+    return params;
+  }, [filterPlatform, filterProcessed]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { skip, limit: LIMIT };
-      if (filterPlatform) params.platform = filterPlatform;
-      if (filterProcessed !== '') params.processed = filterProcessed === 'true';
-
+      const params = { skip, limit: LIMIT, ...paramSaring() };
       const [evtRes, statsRes] = await Promise.all([
         axios.get(`${API}/api/marketing/webhooks/events`, { headers: authH, params }),
         axios.get(`${API}/api/marketing/webhooks/stats`, { headers: authH }),
@@ -105,41 +87,43 @@ export default function MarketingWebhooksModule({ user, headers }) {
       setTotal(evtRes.data?.total || 0);
       setStats(statsRes.data?.data || []);
     } catch (e) {
-      toast({ title: 'Error', description: e.response?.data?.detail || 'Gagal load data', variant: 'destructive' });
+      toast({ title: 'Gagal memuat event webhook', description: e.response?.data?.detail || 'Coba muat ulang.', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
-  }, [skip, filterPlatform, filterProcessed, authH, toast]);
+  }, [skip, paramSaring, authH, toast]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const handleReprocess = async (eventId) => {
     try {
       await axios.post(`${API}/api/marketing/webhooks/events/${eventId}/reprocess`, {}, { headers: authH });
-      toast({ title: 'Berhasil', description: 'Event di-queue untuk reprocess.' });
+      toast({ title: 'Event diantrekan untuk diproses ulang.' });
+      setSelectedEvent(null);
       fetchData();
     } catch (e) {
-      toast({ title: 'Error', description: e.response?.data?.detail || 'Gagal reprocess', variant: 'destructive' });
+      toast({ title: 'Gagal memproses ulang', description: e.response?.data?.detail || 'Coba lagi.', variant: 'destructive' });
     }
   };
 
   const handleManualIngest = async () => {
     setManualSending(true);
+    setGalatUji('');
     try {
       let parsedPayload;
       try { parsedPayload = JSON.parse(manualForm.payload); }
-      catch { throw new Error('Payload bukan JSON valid.'); }
+      catch { throw new Error('Isi kiriman bukan JSON yang sah.'); }
       const res = await axios.post(
         `${API}/api/marketing/webhooks/manual`,
         { platform: manualForm.platform, event_type: 'order.new', payload: parsedPayload },
         { headers: authH },
       );
-      toast({ title: 'Berhasil', description: `Event diterima. ID: ${res.data.event_id}` });
+      toast({ title: 'Kiriman uji diterima', description: `Nomor event: ${res.data.event_id}` });
       setShowManualIngest(false);
       setManualForm({ platform: 'tokopedia', payload: '' });
       fetchData();
     } catch (e) {
-      toast({ title: 'Error', description: e.message || e.response?.data?.detail || 'Gagal ingest', variant: 'destructive' });
+      setGalatUji(e.response?.data?.detail || e.message || 'Gagal mengirim kiriman uji.');
     } finally {
       setManualSending(false);
     }
@@ -172,333 +156,158 @@ export default function MarketingWebhooksModule({ user, headers }) {
     },
   }, null, 2);
 
-  const filtered = search
-    ? events.filter(e =>
-        (e.platform || '').includes(search.toLowerCase()) ||
-        (e.event_type || '').includes(search.toLowerCase()) ||
-        (e.id || '').includes(search)
-      )
-    : events;
+  const cocok = (e, q) => !q
+    || (e.platform || '').includes(q.toLowerCase())
+    || (e.event_type || '').includes(q.toLowerCase())
+    || (e.id || '').includes(q);
+  const filtered = events.filter((e) => cocok(e, search));
+
+  /** Unduh: semua event hasil saringan (bukan hanya halaman ini) — memakai API yang sama, per 200 baris. */
+  const ambilSemua = async () => {
+    const semua = [];
+    for (let s = 0; s < 20000; s += 200) {
+      const res = await axios.get(`${API}/api/marketing/webhooks/events`, {
+        headers: authH, params: { skip: s, limit: 200, ...paramSaring() },
+      });
+      const d = res.data?.data || [];
+      semua.push(...d);
+      if (d.length < 200 || semua.length >= (res.data?.total || 0)) break;
+    }
+    return semua.filter((e) => cocok(e, search));
+  };
+
+  const tombolUlangi = (evt) => (evt.error && evt.error !== 'duplicate') && (
+    <Button variant="outline" size="sm" onClick={() => handleReprocess(evt.id)} data-testid={`btn-reprocess-${evt.id}`}>
+      <RotateCcw />Ulangi
+    </Button>
+  );
+
+  const kolom = [
+    { kunci: 'platform', label: 'Platform', hp: 'judul', isi: (e) => <span className="font-medium">{labelPlatform(e.platform)}</span> },
+    { kunci: 'jenis', label: 'Jenis event', hp: 'keterangan', isi: (e) => <code className="text-xs">{e.event_type || '—'}</code> },
+    { kunci: 'status', label: 'Status', isi: (e) => <StatusEvent evt={e} /> },
+    { kunci: 'pesanan', label: 'Nomor pesanan', isi: (e) => <span className="tabular-nums">{e.normalized_order?.platform_order_id || '—'}</span> },
+    { kunci: 'diterima', label: 'Diterima', isi: (e) => <span className="tabular-nums md:whitespace-nowrap">{waktu(e.received_at)}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (e) => tombolUlangi(e) || null },
+  ];
+
+  const halaman = Math.floor(skip / LIMIT) + 1;
+  const adaSaring = !!(filterPlatform || filterProcessed !== '' || search);
 
   return (
-    <div className="p-4 md:p-6 space-y-6 text-foreground">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold flex items-center gap-2">
-            <Zap className="text-amber-700 dark:text-amber-400" /> Webhook Events Monitor
-          </h2>
-          <p className="text-sm text-muted-foreground mt-1">Monitor inbound events dari Tokopedia, Shopee, TikTok Shop</p>
+    <PageLayout testId="marketing-webhooks" title="Monitor webhook"
+      subtitle="Event masuk dari Tokopedia, Shopee, dan TikTok Shop; event yang gagal bisa diulang."
+      actions={
+        <Button variant="outline" onClick={() => { setGalatUji(''); setShowManualIngest(true); }} data-testid="btn-manual-ingest">
+          <Send />Uji kirim event
+        </Button>
+      }
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Cari platform, jenis event, nomor" value={search} onChange={(e) => setSearch(e.target.value)}
+            className="pl-8" data-testid="input-webhook-search" />
         </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline" size="sm"
-            onClick={() => setShowManualIngest(true)}
-            className="border-border text-foreground/80 hover:bg-muted"
-            data-testid="btn-manual-ingest"
-          >
-            <Send className="w-4 h-4 mr-1" /> Test Ingest
-          </Button>
-          <Button
-            variant="outline" size="sm"
-            onClick={fetchData}
-            disabled={loading}
-            className="border-border text-foreground/80 hover:bg-muted"
-            data-testid="btn-refresh-webhooks"
-          >
-            <RefreshCw className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} /> Refresh
-          </Button>
-        </div>
-      </div>
-
-      {/* Keamanan HMAC (FASE 19 / AUDIT-2) — sebelumnya ketiga receiver menerima
-          tulisan TANPA auth apa pun; panel ini membuat statusnya terlihat di UI. */}
-      <WebhookSecurityPanel headers={authH} />
-
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {stats.length === 0 ? (
-          <div className="col-span-4 text-center text-muted-foreground/80 text-sm py-4">Belum ada webhook events</div>
-        ) : stats.map(s => (
-          <Card key={s.platform} className="bg-card border-border">
-            <CardContent className="pt-4 pb-3">
-              <div className="text-xs text-muted-foreground mb-1">{PLATFORM_LABELS[s.platform] || s.platform}</div>
-              <div className="text-2xl font-bold">{s.total}</div>
-              <div className="flex justify-between text-xs text-muted-foreground/80 mt-1">
-                <span className="text-emerald-600 dark:text-emerald-400">{s.processed} OK</span>
-                <span className={s.errors > 0 ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground/80'}>{s.errors} err</span>
-                <span>{s.success_rate}%</span>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3 items-center">
-        <div className="relative flex-1 min-w-[180px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/80" />
-          <Input
-            placeholder="Cari platform / event type / ID..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="pl-9 bg-card border-border text-sm"
-            data-testid="input-webhook-search"
-          />
-        </div>
-        <Select value={filterPlatform} onValueChange={v => { setFilterPlatform(v === 'all' ? '' : v); setSkip(0); }}>
-          <SelectTrigger className="w-36 bg-card border-border text-sm" data-testid="select-platform">
-            <SelectValue placeholder="Platform" />
-          </SelectTrigger>
-          <SelectContent className="bg-card border-border">
-            <SelectItem value="all">Semua Platform</SelectItem>
-            <SelectItem value="tokopedia">Tokopedia</SelectItem>
-            <SelectItem value="shopee">Shopee</SelectItem>
-            <SelectItem value="tiktok">TikTok</SelectItem>
-            <SelectItem value="manual">Manual</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={filterProcessed} onValueChange={v => { setFilterProcessed(v === 'all' ? '' : v); setSkip(0); }}>
-          <SelectTrigger className="w-32 bg-card border-border text-sm">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent className="bg-card border-border">
-            <SelectItem value="all">Semua Status</SelectItem>
-            <SelectItem value="true">Processed</SelectItem>
-            <SelectItem value="false">Pending/Error</SelectItem>
-          </SelectContent>
-        </Select>
-        <div className="text-xs text-muted-foreground/80">{total} total events</div>
-        <div className="flex rounded-md border border-border overflow-hidden ml-auto">
-          <button type="button" onClick={() => setView('table')} data-testid="webhooks-view-table"
-            className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'table'
-              ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-            <Table2 size={12} /> Tabel
-          </button>
-          <button type="button" onClick={() => setView('grid')} data-testid="webhooks-view-grid"
-            className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'grid'
-              ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-            <LayoutGrid size={12} /> Kartu
-          </button>
-        </div>
-      </div>
-
-      {/* Events Table */}
-      <Card className="bg-card border-border">
-        <CardContent className="p-0">
-          {loading ? (
-            <div className="text-center py-10 text-muted-foreground/80">Loading...</div>
-          ) : filtered.length === 0 ? (
-            <div className="text-center py-10 text-muted-foreground/80">
-              <Zap className="w-10 h-10 mx-auto mb-2 opacity-30" />
-              <p>Belum ada webhook events</p>
-              <p className="text-xs mt-1">Klik "Test Ingest" untuk kirim payload sample</p>
-            </div>
-          ) : view === 'grid' ? (
-            <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3" data-testid="webhooks-grid">
-              {filtered.map(evt => (
-                <div key={evt.id} className="rounded-lg border border-border p-3 space-y-1.5 bg-background">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className={`text-xs px-2 py-0.5 rounded border ${PLATFORM_COLORS[evt.platform] || 'bg-muted-foreground/30 text-foreground/80'}`}>
-                      {PLATFORM_LABELS[evt.platform] || evt.platform}
-                    </span>
-                    <StatusBadge processed={evt.processed} error={evt.error} />
-                  </div>
-                  <p className="text-[11px] font-mono text-foreground/80">{evt.event_type || '—'}</p>
-                  <p className="text-[11px] text-muted-foreground">
-                    Order: {evt.normalized_order?.platform_order_id || '—'}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground">
-                    {evt.received_at ? new Date(evt.received_at).toLocaleString('id-ID') : '—'}
-                  </p>
-                  <div className="flex gap-1 pt-1">
-                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs"
-                      onClick={() => setSelectedEvent(evt)}>
-                      <Eye className="w-3.5 h-3.5 mr-1" />Detail
-                    </Button>
-                    {(evt.error && evt.error !== 'duplicate') && (
-                      <Button variant="ghost" size="sm"
-                        className="h-7 px-2 text-xs text-amber-700 dark:text-amber-400"
-                        onClick={() => handleReprocess(evt.id)}>
-                        <RotateCcw className="w-3.5 h-3.5 mr-1" />Ulangi
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm" data-testid="webhooks-table">
-                <thead>
-                  <tr className="border-b border-border text-muted-foreground text-xs">
-                    <th className="text-left px-4 py-3">Platform</th>
-                    <th className="text-left px-4 py-3">Event Type</th>
-                    <th className="text-left px-4 py-3">Status</th>
-                    <th className="text-left px-4 py-3">Order ID</th>
-                    <th className="text-left px-4 py-3">Received</th>
-                    <th className="text-right px-4 py-3">Aksi</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map(evt => (
-                    <tr key={evt.id} className="border-b border-border/50 hover:bg-muted/30 transition-colors">
-                      <td className="px-4 py-3">
-                        <span className={`text-xs px-2 py-0.5 rounded border ${PLATFORM_COLORS[evt.platform] || 'bg-muted-foreground/30 text-foreground/80'}`}>
-                          {PLATFORM_LABELS[evt.platform] || evt.platform}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-foreground/80 font-mono text-xs">{evt.event_type || '—'}</td>
-                      <td className="px-4 py-3">
-                        <StatusBadge processed={evt.processed} error={evt.error} />
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground text-xs font-mono">
-                        {evt.normalized_order?.platform_order_id || '—'}
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground/80 text-xs">
-                        {evt.received_at ? new Date(evt.received_at).toLocaleString('id-ID') : '—'}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex gap-1 justify-end">
-                          <Button
-                            variant="ghost" size="sm"
-                            className="h-7 w-7 p-0 hover:bg-muted-foreground/30"
-                            onClick={() => setSelectedEvent(evt)}
-                            data-testid={`btn-view-event-${evt.id}`}
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                          </Button>
-                          {(evt.error && evt.error !== 'duplicate') && (
-                            <Button
-                              variant="ghost" size="sm"
-                              className="h-7 w-7 p-0 hover:bg-muted-foreground/30 text-amber-700 dark:text-amber-400"
-                              onClick={() => handleReprocess(evt.id)}
-                              data-testid={`btn-reprocess-${evt.id}`}
-                            >
-                              <RotateCcw className="w-3.5 h-3.5" />
-                            </Button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Pagination */}
-      <div className="flex items-center justify-between">
-        <Button
-          variant="outline" size="sm"
-          disabled={skip === 0}
-          onClick={() => setSkip(Math.max(0, skip - LIMIT))}
-          className="border-border text-foreground/80"
-        >Prev</Button>
-        <span className="text-xs text-muted-foreground/80">Halaman {Math.floor(skip / LIMIT) + 1}</span>
-        <Button
-          variant="outline" size="sm"
-          disabled={skip + LIMIT >= total}
-          onClick={() => setSkip(skip + LIMIT)}
-          className="border-border text-foreground/80"
-        >Next</Button>
-      </div>
-
-      {/* Event Detail Dialog */}
-      <Dialog open={!!selectedEvent} onOpenChange={o => !o && setSelectedEvent(null)}>
-        <DialogContent className="bg-card border-border max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-foreground">
-              Event Detail — {PLATFORM_LABELS[selectedEvent?.platform] || selectedEvent?.platform}
-            </DialogTitle>
-          </DialogHeader>
-          {selectedEvent && (
-            <div className="space-y-4 text-sm">
-              <div className="grid grid-cols-2 gap-3 text-xs">
-                <div><span className="text-muted-foreground/80">ID:</span> <span className="font-mono text-foreground/80">{selectedEvent.id}</span></div>
-                <div><span className="text-muted-foreground/80">Event:</span> <span className="text-foreground/80">{selectedEvent.event_type}</span></div>
-                <div><span className="text-muted-foreground/80">Status:</span> <StatusBadge processed={selectedEvent.processed} error={selectedEvent.error} /></div>
-                <div><span className="text-muted-foreground/80">Received:</span> <span className="text-foreground/80">{selectedEvent.received_at ? new Date(selectedEvent.received_at).toLocaleString('id-ID') : '—'}</span></div>
-              </div>
-              {selectedEvent.error && (
-                <div className="bg-red-100 dark:bg-red-500/10 border border-red-400 dark:border-red-500/30 rounded p-3">
-                  <p className="text-xs text-red-700 dark:text-red-400 font-medium">Error:</p>
-                  <p className="text-xs text-foreground/80 mt-1">{selectedEvent.error}</p>
-                </div>
-              )}
-              {selectedEvent.normalized_order && (
-                <div>
-                  <p className="text-xs text-muted-foreground/80 mb-2">Normalized Order:</p>
-                  <pre className="bg-card p-3 rounded text-xs text-foreground/80 overflow-x-auto">
-                    {JSON.stringify(selectedEvent.normalized_order, null, 2)}
-                  </pre>
-                </div>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Manual Ingest Dialog */}
-      <Dialog open={showManualIngest} onOpenChange={setShowManualIngest}>
-        <DialogContent className="bg-card border-border max-w-xl">
-          <DialogHeader>
-            <DialogTitle className="text-foreground">Test Ingest Webhook Payload</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Platform</label>
-              <Select
-                value={manualForm.platform}
-                onValueChange={v => setManualForm(f => ({ ...f, platform: v }))}
-              >
-                <SelectTrigger className="bg-muted border-border" data-testid="select-manual-platform">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-card border-border">
-                  <SelectItem value="tokopedia">Tokopedia</SelectItem>
-                  <SelectItem value="shopee">Shopee</SelectItem>
-                  <SelectItem value="tiktok">TikTok</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                <label className="text-xs text-muted-foreground">JSON Payload</label>
-                <button
-                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
-                  onClick={() => {
-                    const sample = manualForm.platform === 'shopee' ? SHOPEE_SAMPLE : TOKOPEDIA_SAMPLE;
-                    setManualForm(f => ({ ...f, payload: sample }));
-                  }}
-                >Load Sample</button>
-              </div>
-              <Textarea
-                value={manualForm.payload}
-                onChange={e => setManualForm(f => ({ ...f, payload: e.target.value }))}
-                placeholder='{"order": {...}}'
-                rows={8}
-                className="bg-muted border-border font-mono text-xs"
-                data-testid="textarea-webhook-payload"
-              />
-            </div>
-            <div className="flex gap-2 justify-end">
-              <Button variant="ghost" onClick={() => setShowManualIngest(false)}>Batal</Button>
-              <Button title="Muat ulang" aria-label="Muat ulang" size="icon"
-                onClick={handleManualIngest}
-                disabled={manualSending || !manualForm.payload}
-                className="bg-amber-600 hover:bg-amber-700 text-foreground"
-                data-testid="btn-submit-manual-ingest"
-              >
-                {manualSending ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4 mr-1" />}
-                Send
-              </Button>
-            </div>
+        <SmartNativeSelect value={filterPlatform} onChange={(e) => { setFilterPlatform(e.target.value); setSkip(0); }}
+          className="w-full" wrapperClassName="w-40 max-w-full" data-testid="select-platform" searchable={false}>
+          <option value="">Semua platform</option>
+          <option value="tokopedia">Tokopedia</option>
+          <option value="shopee">Shopee</option>
+          <option value="tiktok">TikTok</option>
+          <option value="manual">Manual</option>
+        </SmartNativeSelect>
+        <SmartNativeSelect value={filterProcessed} onChange={(e) => { setFilterProcessed(e.target.value); setSkip(0); }}
+          className="w-full" wrapperClassName="w-44 max-w-full" data-testid="select-processed" searchable={false}>
+          <option value="">Semua status</option>
+          <option value="true">Diproses</option>
+          <option value="false">Menunggu atau galat</option>
+        </SmartNativeSelect>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="event-webhook" namaLembar="Event" baris={filtered} ambilSemua={ambilSemua} testId="webhooks-unduh"
+          kolom={[
+            { label: 'Platform', nilai: (e) => labelPlatform(e.platform) },
+            { label: 'Jenis event', nilai: (e) => e.event_type || '' },
+            { label: 'Status', nilai: (e) => keadaan(e).label },
+            { label: 'Nomor pesanan', nilai: (e) => e.normalized_order?.platform_order_id || '' },
+            { label: 'Diterima', nilai: (e) => waktu(e.received_at) },
+            { label: 'Galat', nilai: (e) => (e.error && e.error !== 'duplicate' ? e.error : '') },
+            { label: 'Nomor event', nilai: (e) => e.id },
+          ]} />
+        <Button variant="outline" size="icon" onClick={fetchData} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="btn-refresh-webhooks">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={<>
+        <WebhookSecurityPanel headers={authH} />
+        {stats.length > 0 && (
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="webhooks-stats">
+            {stats.slice(0, 4).map((s) => (
+              <StatTile key={s.platform} label={labelPlatform(s.platform)} value={s.total}
+                sub={`${s.processed} diproses · ${s.errors} galat · ${String(s.success_rate).replace('.', ',')}% berhasil`}
+                subTone={s.errors > 0 ? 'danger' : undefined}
+                hint="Semua event yang pernah diterima dari platform ini (tidak ikut penyaring)." />
+            ))}
           </div>
-        </DialogContent>
-      </Dialog>
-    </div>
+        )}
+      </>}
+      footer={total > LIMIT && (
+        <PaginationLite page={halaman} totalPages={Math.ceil(total / LIMIT)} total={total} pageSize={LIMIT}
+          onPageChange={(p) => setSkip((p - 1) * LIMIT)} />
+      )}>
+      {loading && events.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat event…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={filtered} onKlikBaris={setSelectedEvent} testId="webhooks-table"
+          kosong={<EmptyState title={adaSaring ? 'Tidak ada event yang cocok' : 'Belum ada event webhook'}
+            description={adaSaring ? 'Ubah saringan atau kata pencarian.' : 'Event muncul saat platform mengirim webhook. Pakai "Uji kirim event" untuk mencoba.'} />} />
+      )}
+
+      {selectedEvent && (
+        <DetailPopup open onClose={() => setSelectedEvent(null)} testId="webhook-event-detail"
+          judul={`Event ${labelPlatform(selectedEvent.platform)}`} status={<StatusEvent evt={selectedEvent} />}
+          aksi={tombolUlangi(selectedEvent) || null}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Nomor event"><code className="text-xs">{selectedEvent.id}</code></BarisDetail>
+            <BarisDetail label="Jenis event"><code className="text-xs">{selectedEvent.event_type || '—'}</code></BarisDetail>
+            <BarisDetail label="Diterima">{waktu(selectedEvent.received_at)}</BarisDetail>
+            <BarisDetail label="Nomor pesanan">{selectedEvent.normalized_order?.platform_order_id || '—'}</BarisDetail>
+            {selectedEvent.error && <BarisDetail label="Galat"><span className="text-[hsl(var(--danger-text))]">{selectedEvent.error}</span></BarisDetail>}
+          </dl>
+          {selectedEvent.normalized_order && (
+            <div>
+              <p className="mb-2 text-sm font-medium text-foreground">Data pesanan yang dibaca</p>
+              <pre className="max-h-80 overflow-auto rounded-[var(--radius-md)] border border-[var(--glass-border)] p-3 text-xs text-foreground/80">
+                {JSON.stringify(selectedEvent.normalized_order, null, 2)}
+              </pre>
+            </div>
+          )}
+        </DetailPopup>
+      )}
+
+      <FormPopup open={showManualIngest} onClose={() => setShowManualIngest(false)} ukuran="panjang"
+        judul="Uji kirim event webhook" keterangan="Kirim contoh isi webhook untuk mencoba alur penerimaan pesanan."
+        onSimpan={handleManualIngest} menyimpan={manualSending} bisaSimpan={!!manualForm.payload} labelSimpan="Kirim"
+        galat={galatUji} testId="webhook-manual-form">
+        <Isian label="Platform" htmlFor="wh-platform">
+          <SmartNativeSelect id="wh-platform" value={manualForm.platform} searchable={false}
+            onChange={(e) => setManualForm((f) => ({ ...f, platform: e.target.value }))} data-testid="select-manual-platform">
+            <option value="tokopedia">Tokopedia</option>
+            <option value="shopee">Shopee</option>
+            <option value="tiktok">TikTok</option>
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Isi kiriman (JSON)" wajib htmlFor="wh-payload" petunjuk="Klik Isi contoh untuk memakai contoh pesanan.">
+          <Textarea id="wh-payload" value={manualForm.payload} rows={10} placeholder='{"order": {...}}'
+            onChange={(e) => setManualForm((f) => ({ ...f, payload: e.target.value }))}
+            className="text-xs tabular-nums" data-testid="textarea-webhook-payload" />
+        </Isian>
+        <Button type="button" variant="outline" size="sm" onClick={() => {
+          const sample = manualForm.platform === 'shopee' ? SHOPEE_SAMPLE : TOKOPEDIA_SAMPLE;
+          setManualForm((f) => ({ ...f, payload: sample }));
+        }} data-testid="btn-load-sample"><FileJson />Isi contoh</Button>
+      </FormPopup>
+    </PageLayout>
   );
 }

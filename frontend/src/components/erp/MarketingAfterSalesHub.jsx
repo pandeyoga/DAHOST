@@ -1,32 +1,48 @@
 /**
- * MarketingAfterSalesHub.jsx
- * Consolidation #9: Komplain + Returns & Refunds + Resolution Log
+ * MarketingAfterSalesHub.jsx — Komplain & Retur (Portal Toko).
+ * Consolidation #9: Komplain + Refund & nota kredit + Log penyelesaian.
  * Replaces: marketing-complaints + marketing-returns (2 sidebar entries → 1)
+ *
+ * Standar UI/UX v2 (8 Nov 2026): hub memakai HubTabs (dulu kepala & tab buatan sendiri → kepala ganda dengan modul
+ * di dalamnya). Log penyelesaian = tabel + unduh + detail popup (dulu kartu per baris).
+ * Deep-link tab `hub_tab_marketing-after-sales` (makeRedirect) dibaca HubTabs.
  */
 import React, { useState, useEffect, useCallback } from 'react';
-import { AlertTriangle, RotateCcw, CheckCircle2, RefreshCw, Loader2 } from 'lucide-react';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Badge } from '@/components/ui/badge';
+import axios from 'axios';
+import { RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { formatDateID } from '@/lib/format';
+import HubTabs from './hubs/HubTabs';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatusBadge } from './moduleAtoms';
 import ComplaintsManagementModule from './marketing/ComplaintsManagementModule';
 import ReturnsRefundsModule from './marketing/ReturnsRefundsModule';
-import axios from 'axios';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
-// ── Resolution Log Tab ──────────────────────────────────────────────────────
+// ── Log penyelesaian ────────────────────────────────────────────────────────
 const STATUS_LABEL = {
-  resolved: { label: 'Diselesaikan', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
-  closed:   { label: 'Ditutup',      color: 'bg-muted text-muted-foreground dark:bg-gray-800/50 dark:text-gray-400' },
-  completed:{ label: 'Selesai',      color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
-  rejected: { label: 'Ditolak',      color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
+  resolved: { label: 'Diselesaikan', tone: 'success' },
+  closed: { label: 'Ditutup', tone: 'muted' },
+  completed: { label: 'Selesai', tone: 'success' },
+  rejected: { label: 'Ditolak', tone: 'danger' },
 };
+const JENIS = {
+  complaint: { label: 'Komplain', tone: 'warning' },
+  return: { label: 'Refund', tone: 'primary' },
+  wh_return: { label: 'Retur fisik', tone: 'info' },
+};
+const tgl = (v) => (v ? formatDateID(v) : '—');
+const labelPlatform = (p) => (p ? String(p).replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()) : '—');
 
 function ResolutionLogTab({ token }) {
   const authH = { Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` };
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [detail, setDetail] = useState(null);
 
   const fetchLog = useCallback(async () => {
     setLoading(true);
@@ -75,8 +91,8 @@ function ResolutionLogTab({ token }) {
         .map(w => ({
           id: w.id,
           type: 'wh_return',
-          title: `${w.return_code || 'Retur Fisik'}`,
-          summary: `${w.product_name || '-'} • ${w.action_taken || 'Resolved'}${w.restock_qty ? ` • ${w.restock_qty} pcs restock` : ''}`,
+          title: `${w.return_code || 'Retur fisik'}`,
+          summary: `${w.product_name || '-'} • ${w.action_taken || 'Diselesaikan'}${w.restock_qty ? ` • ${w.restock_qty} pcs masuk stok lagi` : ''}`,
           status: 'resolved',
           date: w.resolved_at || w.updated_at || w.created_at,
           platform: w.channel || w.return_type,
@@ -94,105 +110,63 @@ function ResolutionLogTab({ token }) {
 
   useEffect(() => { fetchLog(); }, [fetchLog]);
 
-  if (loading) return (
-    <div className="flex items-center justify-center h-48">
-      <Loader2 className="animate-spin text-muted-foreground" size={24} />
-    </div>
-  );
-
-  if (items.length === 0) return (
-    <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
-      <CheckCircle2 size={32} className="opacity-30 mb-2" />
-      <p className="text-sm">Belum ada riwayat penyelesaian</p>
-    </div>
-  );
+  const st = (s) => STATUS_LABEL[s] || { label: s || '—', tone: 'muted' };
+  const kolom = [
+    { kunci: 'judul', label: 'Nomor', hp: 'judul', isi: (i) => <span className="font-medium text-foreground">{i.title}</span> },
+    { kunci: 'jenis', label: 'Jenis', isi: (i) => <StatusBadge status={i.type} label={JENIS[i.type]?.label} tone={JENIS[i.type]?.tone} /> },
+    { kunci: 'ringkas', label: 'Ringkasan', hp: 'keterangan', isi: (i) => <p className="truncate text-sm md:max-w-[26rem]" title={i.summary}>{i.summary}</p> },
+    { kunci: 'platform', label: 'Platform', isi: (i) => labelPlatform(i.platform) },
+    { kunci: 'status', label: 'Status', isi: (i) => <StatusBadge status={i.status} label={st(i.status).label} tone={st(i.status).tone} /> },
+    { kunci: 'tanggal', label: 'Tanggal', isi: (i) => <span className="tabular-nums md:whitespace-nowrap">{tgl(i.date)}</span> },
+  ];
 
   return (
-    <div className="p-4 space-y-2" data-testid="resolution-log">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-lg font-semibold">Log Penyelesaian</h2>
-          <p className="text-sm text-muted-foreground">Riwayat komplain & return yang sudah ditangani</p>
-        </div>
-        <Button variant="outline" size="sm" onClick={fetchLog}>
-          <RefreshCw size={13} className="mr-1" /> Refresh
+    <PageLayout testId="resolution-log" title="Log penyelesaian"
+      subtitle="Komplain, refund, dan retur fisik yang sudah ditangani — 30 terbaru."
+      tools={<>
+        <TombolUnduh namaBerkas="log-penyelesaian" namaLembar="Penyelesaian" baris={items} testId="resolution-log-unduh"
+          kolom={[
+            { label: 'Nomor', nilai: (i) => i.title },
+            { label: 'Jenis', nilai: (i) => JENIS[i.type]?.label || '' },
+            { label: 'Ringkasan', nilai: (i) => i.summary },
+            { label: 'Platform', nilai: (i) => labelPlatform(i.platform) },
+            { label: 'Status', nilai: (i) => st(i.status).label },
+            { label: 'Tanggal', nilai: (i) => tgl(i.date) },
+          ]} />
+        <Button variant="outline" size="icon" onClick={fetchLog} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
-      </div>
-      {items.map(item => (
-        <div
-          key={`${item.type}-${item.id}`}
-          className="flex items-center gap-3 p-3 rounded-lg border hover:bg-muted/30 transition-colors"
-          data-testid={`log-item-${item.type}-${item.id}`}
-        >
-          <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-            item.type === 'complaint' ? 'bg-amber-100 dark:bg-amber-900/30' :
-            item.type === 'wh_return' ? 'bg-emerald-100 dark:bg-emerald-900/30' :
-            'bg-blue-100 dark:bg-blue-900/30'
-          }`}>
-            {item.type === 'complaint'
-              ? <AlertTriangle size={14} className="text-amber-600" />
-              : item.type === 'wh_return'
-                ? <CheckCircle2 size={14} className="text-emerald-600" />
-                : <RotateCcw size={14} className="text-blue-600" />
-            }
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-medium">{item.title}</span>
-              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                STATUS_LABEL[item.status]?.color || 'bg-muted text-muted-foreground'
-              }`}>
-                {STATUS_LABEL[item.status]?.label || item.status}
-              </span>
-              <span className="text-xs text-muted-foreground capitalize">{item.platform || '-'}</span>
-            </div>
-            <p className="text-xs text-muted-foreground truncate mt-0.5">{item.summary}</p>
-          </div>
-          <div className="text-xs text-muted-foreground flex-shrink-0 text-right">
-            <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium mr-2 ${
-              item.type === 'complaint'
-                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
-                : item.type === 'wh_return'
-                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                  : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-            }`}>
-              {item.type === 'complaint' ? 'Komplain' : item.type === 'wh_return' ? 'Retur Fisik' : 'Refund'}
-            </span>
-            {item.date ? new Date(item.date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: '2-digit' }) : '-'}
-          </div>
-        </div>
-      ))}
-    </div>
+      </>}>
+      {loading && items.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat log penyelesaian…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={items} kunci={(i) => `${i.type}-${i.id}`} onKlikBaris={setDetail} testId="resolution-log-table"
+          kosong={<EmptyState title="Belum ada riwayat penyelesaian" description="Komplain dan retur yang selesai ditangani muncul di sini." />} />
+      )}
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} judul={detail.title} testId="resolution-log-detail"
+          status={<><StatusBadge status={detail.type} label={JENIS[detail.type]?.label} tone={JENIS[detail.type]?.tone} />
+            <StatusBadge status={detail.status} label={st(detail.status).label} tone={st(detail.status).tone} /></>}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Ringkasan">{detail.summary}</BarisDetail>
+            <BarisDetail label="Platform">{labelPlatform(detail.platform)}</BarisDetail>
+            <BarisDetail label="Tanggal">{tgl(detail.date)}</BarisDetail>
+          </dl>
+          <p className="text-sm text-muted-foreground">Rincian lengkap ada di tab {detail.type === 'complaint' ? 'Komplain' : 'Refund & nota kredit'}.</p>
+        </DetailPopup>
+      )}
+    </PageLayout>
   );
 }
 
-// ── Main Hub Component ──────────────────────────────────────────────────────
+// ── Hub ─────────────────────────────────────────────────────────────────────
 export default function MarketingAfterSalesHub({ token, onNavigate }) {
   const authH = { Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` };
   const [openComplaints, setOpenComplaints] = useState(0);
   const [pendingReturns, setPendingReturns] = useState(0);
 
-  // RC-FLOW-UX-11d: baca deep-link tab dari sessionStorage (dipakai `makeRedirect`
-  // untuk mengarahkan `marketing-complaints`/`marketing-returns`/`toko-cs`/`toko-returns`
-  // ke tab yang tepat).
-  // PENTING: `useState` initializer HARUS pure — jangan side-effect `removeItem` di sini
-  // (React 18 StrictMode invoke initializer 2x → invocation ke-2 dapat null → default salah).
-  // Cleanup dilakukan di useEffect setelah mount.
-  const [activeTab, setActiveTab] = useState(() => {
-    try {
-      const t = sessionStorage.getItem('hub_tab_marketing-after-sales');
-      if (t && ['complaints', 'returns', 'log'].includes(t)) return t;
-    } catch { /* ignore */ }
-    return 'complaints';
-  });
-
-  // Bersihkan sessionStorage hint setelah tab awal ditetapkan (idempoten).
   useEffect(() => {
-    try { sessionStorage.removeItem('hub_tab_marketing-after-sales'); } catch { /* ignore */ }
-  }, []);
-
-  useEffect(() => {
-    // Fetch summary counts for badge indicators
+    // Hitungan untuk label tab (dari ringkasan server, bukan halaman yang dimuat)
     axios.get(`${API}/api/marketing/complaints/summary`, { headers: authH })
       .then(r => setOpenComplaints((r.data?.by_status?.open || 0) + (r.data?.by_status?.in_progress || 0)))
       .catch(() => {});
@@ -202,60 +176,16 @@ export default function MarketingAfterSalesHub({ token, onNavigate }) {
   }, [token]); // eslint-disable-line
 
   return (
-    <div className="h-full" data-testid="after-sales-hub">
-      {/* Hub Header */}
-      <div className="px-4 md:px-6 py-4 border-b bg-background">
-        <h1 className="text-xl font-bold tracking-tight">Komplain & Retur/Refund</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Pengelolaan pasca-penjualan: komplain pelanggan, refund & nota kredit, riwayat penyelesaian
-        </p>
-      </div>
-
-      {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
-        <div className="px-4 md:px-6 pt-4 border-b bg-background">
-          <TabsList className="h-9">
-            <TabsTrigger value="complaints" className="gap-1.5" data-testid="tab-complaints">
-              <AlertTriangle size={13} />
-              Komplain
-              {openComplaints > 0 && (
-                <Badge variant="destructive" className="ml-1 h-4 min-w-4 px-1 text-[10px]">
-                  {openComplaints}
-                </Badge>
-              )}
-            </TabsTrigger>
-            <TabsTrigger value="returns" className="gap-1.5" data-testid="tab-returns">
-              <RotateCcw size={13} />
-              Refund & Nota Kredit
-              {pendingReturns > 0 && (
-                <Badge variant="secondary" className="ml-1 h-4 min-w-4 px-1 text-[10px]">
-                  {pendingReturns}
-                </Badge>
-              )}
-            </TabsTrigger>
-            <TabsTrigger value="log" className="gap-1.5" data-testid="tab-resolution-log">
-              <CheckCircle2 size={13} />
-              Log Penyelesaian
-            </TabsTrigger>
-          </TabsList>
-        </div>
-
-        <TabsContent value="complaints" className="flex-1 overflow-auto m-0 p-0">
-          <ComplaintsManagementModule token={token} onNavigate={onNavigate} />
-        </TabsContent>
-        <TabsContent value="returns" className="flex-1 overflow-auto m-0 p-0 pt-4">
-          <div className="px-4 md:px-6">
-            <ReturnsRefundsModule token={token} onNavigate={onNavigate} />
-          </div>
-        </TabsContent>
-        <TabsContent value="log" className="flex-1 overflow-auto m-0">
-          <Card className="m-4 md:m-6">
-            <CardContent className="p-0">
-              <ResolutionLogTab token={token} />
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+    <div data-testid="after-sales-hub">
+      <HubTabs hubId="marketing-after-sales" title="Komplain & retur"
+        subtitle="Komplain pelanggan, refund & nota kredit, dan riwayat penyelesaian."
+        tabs={[
+          { key: 'complaints', label: openComplaints > 0 ? `Komplain (${openComplaints})` : 'Komplain',
+            Component: ComplaintsManagementModule, props: { token, onNavigate } },
+          { key: 'returns', label: pendingReturns > 0 ? `Refund & nota kredit (${pendingReturns})` : 'Refund & nota kredit',
+            Component: ReturnsRefundsModule, props: { token, onNavigate } },
+          { key: 'log', label: 'Log penyelesaian', Component: ResolutionLogTab, props: { token } },
+        ]} />
     </div>
   );
 }

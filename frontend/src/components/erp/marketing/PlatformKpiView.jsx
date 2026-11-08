@@ -8,40 +8,55 @@
  * Dua aturan angka ditampilkan APA ADANYA di layar, bukan disembunyikan:
  *   1. angka di sini KPI platform (definisi Shopee), BUKAN omzet pesanan;
  *   2. kanal “Toko” sudah mencakup Live + Video — ketiganya tidak boleh dijumlah.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout (judul disembunyikan di hub), periode = PeriodPicker (dulu dua input
+ * tanggal bawaan), kanal = StatTile (klik → rincian popup), tabel harian 7 kolom + unduh semua kolom, rincian baris
+ * popup. Batas baris dinaikkan 400 → 2000 (maksimum server) + tanda bila terpotong.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Loader2, Info, Store, Video, Radio, Upload } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { GlassCard } from '@/components/ui/glass';
-import { Badge } from '@/components/ui/badge';
+import { RefreshCw, Info, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { formatRupiah } from '@/lib/format';
-import { todayWIB, monthStartWIB } from '@/lib/waktu';
+import { Button } from '@/components/ui/button';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { formatRupiah, formatDateID } from '@/lib/format';
+import PeriodPicker, { periodFromPreset } from '../finance/PeriodPicker';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import { MarketingAccountSelect } from './pickers/MarketingPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmtRp = formatRupiah;
 const fmtNum = (n) => new Intl.NumberFormat('id-ID').format(Math.round(n || 0));
-const CH_ICON = { shop: Store, live: Radio, video: Video };
+const pct = (n) => `${Number(n || 0).toFixed(2).replace('.', ',')}%`;
+const KANAL = { shop: 'Toko', live: 'Live', video: 'Video' };
 const SOURCE_LABEL = {
-  shopee_shop_stats: 'Statistik Toko',
+  shopee_shop_stats: 'Statistik toko',
   shopee_live_1d: 'Live harian',
   shopee_live_overview: 'Live ringkas',
   shopee_video_overview: 'Video ringkas',
 };
-const HEADS = ['Tanggal', 'Kanal', 'Sumber', 'GMV (dibuat)', 'GMV (siap kirim)', 'Pesanan',
-  'Pengunjung', 'Penonton', 'Ditonton', 'Suka', 'Komentar', 'Share', 'Follower baru',
-  'Sesi live', 'Menit live', 'AOV'];
+const BATAS = 2000; // batas maksimum server (dulu 400 → rentang 12 bulan terpotong tanpa tanda)
+const tgl = (v) => (v ? formatDateID(String(v).slice(0, 10)) : '—');
+const RINCIAN_HARIAN = [
+  ['GMV (pesanan dibuat)', 'gmv_created', fmtRp], ['GMV (siap kirim)', 'gmv_ready', fmtRp], ['Pesanan', 'orders_created', fmtNum],
+  ['Pengunjung', 'visitors', fmtNum], ['Penonton', 'viewers', fmtNum], ['Ditonton', 'views', fmtNum], ['Suka', 'likes', fmtNum],
+  ['Komentar', 'comments', fmtNum], ['Dibagikan', 'shares', fmtNum], ['Pengikut baru', 'new_followers', fmtNum],
+  ['Sesi live', 'live_sessions', fmtNum], ['Menit live', 'live_minutes', fmtNum], ['Rata-rata per pesanan', 'aov', fmtRp],
+];
 
 export default function PlatformKpiView({ token, onNavigate }) {
   const [accountId, setAccountId] = useState('');
-  // Awal bulan s/d hari ini menurut kalender WIB — `new Date(y, m, 1).toISOString()`
-  // di browser WIB mundur ke tanggal terakhir bulan lalu.
-  const [from, setFrom] = useState(() => monthStartWIB());
-  const [to, setTo] = useState(() => todayWIB());
+  // Bawaan: bulan ini menurut kalender WIB.
+  const [periode, setPeriode] = useState(() => periodFromPreset('month'));
+  const from = periode.from;
+  const to = periode.to;
   const [summary, setSummary] = useState(null);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [rincian, setRincian] = useState(null);
+  const [kanal, setKanal] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -51,7 +66,7 @@ export default function PlatformKpiView({ token, onNavigate }) {
       const h = { headers: { Authorization: `Bearer ${token}` } };
       const [s, r] = await Promise.all([
         fetch(`${API}/api/marketing/platform-kpi/summary?${qs}`, h),
-        fetch(`${API}/api/marketing/platform-kpi?${qs}&limit=400`, h),
+        fetch(`${API}/api/marketing/platform-kpi?${qs}&limit=${BATAS}`, h),
       ]);
       if (!s.ok) throw new Error(`HTTP ${s.status}`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -66,151 +81,99 @@ export default function PlatformKpiView({ token, onNavigate }) {
   useEffect(() => { load(); }, [load]);
 
   const channels = summary?.channels || [];
+  const keImpor = () => (onNavigate ? onNavigate('marketing-import')
+    : toast.info('Buka menu Impor Data untuk mengunggah ekspor Seller Center'));
+
+  const kolom = [
+    { kunci: 'tanggal', label: 'Tanggal', hp: 'judul', isi: (r) => <span className="tabular-nums md:whitespace-nowrap">{tgl(r.date)}</span> },
+    { kunci: 'kanal', label: 'Kanal', isi: (r) => <StatusBadge status={r.channel} label={KANAL[r.channel] || r.channel} tone="muted" /> },
+    { kunci: 'sumber', label: 'Sumber', hp: 'keterangan', isi: (r) => <span className="text-muted-foreground md:whitespace-nowrap">{SOURCE_LABEL[r.source] || 'Impor lain'}</span> },
+    { kunci: 'gmv', label: 'GMV (dibuat)', rata: 'kanan', isi: (r) => <span className="tabular-nums font-medium md:whitespace-nowrap">{fmtRp(r.gmv_created)}</span> },
+    { kunci: 'pesanan', label: 'Pesanan', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtNum(r.orders_created)}</span> },
+    { kunci: 'orang', label: 'Pengunjung / penonton', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtNum(r.channel === 'shop' ? r.visitors : r.viewers)}</span> },
+    { kunci: 'aov', label: 'Rata-rata per pesanan', rata: 'kanan', isi: (r) => <span className="tabular-nums md:whitespace-nowrap">{fmtRp(r.aov)}</span> },
+  ];
+  const rincianKanal = (c) => [
+    ['Hari ber-data', fmtNum(c.days)], ['GMV (pesanan dibuat)', fmtRp(c.gmv_created)], ['Pesanan', fmtNum(c.orders_created)],
+    ['Rata-rata per pesanan', fmtRp(c.aov)],
+    ...(c.channel === 'shop' ? [
+      ['Pengunjung', fmtNum(c.visitors)], ['Konversi', pct(c.conversion_rate)],
+      ['Dari live / video', `${fmtRp(c.gmv_live)} / ${fmtRp(c.gmv_video)}`], ['Dari iklan', fmtRp(c.gmv_ads)],
+    ] : [
+      ['Penonton / ditonton', `${fmtNum(c.viewers)} / ${fmtNum(c.views)}`],
+      ['Interaksi', `${fmtNum(c.engagement)} · ${pct(c.engagement_rate)}`], ['Pengikut baru', fmtNum(c.new_followers)],
+      ...(c.channel === 'live' ? [['Sesi · menit live', `${fmtNum(c.live_sessions)} · ${fmtNum(c.live_minutes)}`]] : []),
+    ]),
+  ];
 
   return (
-    <div className="space-y-4" data-testid="platform-kpi-view">
-      <div className="flex flex-wrap items-end gap-2">
+    <PageLayout testId="platform-kpi-view" title="KPI platform"
+      subtitle="KPI harian dari ekspor Seller Center (toko, live, video)."
+      actions={<Button onClick={keImpor} data-testid="kpi-goto-import"><Upload />Impor ekspor Shopee</Button>}
+      filters={<>
         <MarketingAccountSelect token={token} value={accountId} onChange={setAccountId}
-          includeAll allLabel="Semua Toko" required={false} label="Toko"
-          testId="kpi-account-select" className="min-w-[220px]" />
-        <div>
-          <label className="text-[11px] text-muted-foreground block">Dari</label>
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
-            data-testid="kpi-date-from"
-            className="h-9 rounded-md border border-border bg-background text-foreground px-2 text-xs" />
-        </div>
-        <div>
-          <label className="text-[11px] text-muted-foreground block">Sampai</label>
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
-            data-testid="kpi-date-to"
-            className="h-9 rounded-md border border-border bg-background text-foreground px-2 text-xs" />
-        </div>
-        <Button size="sm" variant="outline" className="h-9 ml-auto" onClick={load}
-          disabled={loading} data-testid="kpi-refresh">
-          <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+          includeAll allLabel="Semua toko" required={false} label="" testId="kpi-account-select" className="w-56" />
+        <PeriodPicker value={periode} onChange={setPeriode} testId="kpi-period" />
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="kpi-platform" namaLembar="KPI harian" baris={rows} testId="kpi-unduh"
+          kolom={[
+            { label: 'Tanggal', nilai: (r) => tgl(r.date) },
+            { label: 'Kanal', nilai: (r) => KANAL[r.channel] || r.channel },
+            { label: 'Sumber', nilai: (r) => SOURCE_LABEL[r.source] || 'Impor lain' },
+            ...RINCIAN_HARIAN.map(([label, k]) => ({ label, nilai: (r) => Number(r[k]) || 0 })),
+          ]} />
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid="kpi-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
-        <Button size="sm" className="h-9" data-testid="kpi-goto-import"
-          onClick={() => (onNavigate ? onNavigate('marketing-import')
-            : toast.info('Buka menu Impor Data untuk mengunggah ekspor Seller Center'))}>
-          <Upload size={13} className="mr-1.5" /> Impor Ekspor Shopee
-        </Button>
-      </div>
-
-      {loading ? (
-        <div className="py-10 text-center text-muted-foreground text-sm">
-          <Loader2 className="mx-auto animate-spin mb-2" size={18} /> Memuat KPI platform…
+      </>}
+      summary={channels.length > 0 && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3" data-testid="kpi-channels">
+          {channels.slice(0, 4).map((c) => (
+            <StatTile key={c.channel} testId={`kpi-channel-${c.channel}`} label={`${c.label} · GMV pesanan dibuat`}
+              value={fmtRp(c.gmv_created)} sub={`${fmtNum(c.orders_created)} pesanan · ${fmtNum(c.days)} hari ber-data`}
+              onClick={() => setKanal(c)} hint="Lihat rincian kanal" />
+          ))}
         </div>
+      )}>
+      {loading && !summary ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat KPI platform…</p>
       ) : !channels.length ? (
-        <div className="py-10 text-center" data-testid="kpi-empty">
-          <p className="text-sm font-semibold text-foreground">Belum ada KPI platform pada rentang ini.</p>
-          <p className="text-xs text-muted-foreground mt-1 max-w-xl mx-auto">
-            Unduh dari Seller Center lalu unggah di menu <b>Impor Data</b>:
-            <br />· <b>Statistik Toko</b> (.xlsx) → jenis “KPI Toko Shopee”
-            <br />· <b>Live / Video</b> (.csv) → jenis “KPI Konten Shopee”
-          </p>
-          <Button size="sm" className="mt-3" data-testid="kpi-empty-import"
-            onClick={() => onNavigate && onNavigate('marketing-import')}>
-            <Upload size={13} className="mr-1.5" /> Buka Impor Data
-          </Button>
-        </div>
+        <EmptyState testId="kpi-empty" title="Belum ada KPI platform pada periode ini"
+          description="Unduh dari Seller Center lalu unggah di menu Impor Data: Statistik toko (.xlsx) → KPI toko Shopee; Live/Video (.csv) → KPI konten Shopee."
+          action={<Button onClick={() => onNavigate && onNavigate('marketing-import')} data-testid="kpi-empty-import"><Upload />Buka impor data</Button>} />
       ) : (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" data-testid="kpi-channels">
-            {channels.map((c) => {
-              const Icon = CH_ICON[c.channel] || Store;
-              return (
-                <GlassCard key={c.channel} className="p-3" data-testid={`kpi-channel-${c.channel}`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs font-semibold flex items-center gap-1.5 text-foreground">
-                      <Icon size={13} className="text-primary" /> {c.label}
-                    </p>
-                    <Badge variant="outline" className="text-[9px]">{fmtNum(c.days)} hari</Badge>
-                  </div>
-                  <div className="space-y-1 text-[11px]">
-                    <div className="flex justify-between"><span className="text-muted-foreground">GMV (pesanan dibuat)</span>
-                      <span className="font-semibold">{fmtRp(c.gmv_created)}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Pesanan</span>
-                      <span>{fmtNum(c.orders_created)}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">AOV</span>
-                      <span>{fmtRp(c.aov)}</span></div>
-                    {c.channel === 'shop' ? (
-                      <>
-                        <div className="flex justify-between"><span className="text-muted-foreground">Pengunjung</span>
-                          <span>{fmtNum(c.visitors)}</span></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">Konversi</span>
-                          <span>{Number(c.conversion_rate || 0).toFixed(2)}%</span></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">Dari Live / Video</span>
-                          <span>{fmtRp(c.gmv_live)} / {fmtRp(c.gmv_video)}</span></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">Dari Iklan</span>
-                          <span>{fmtRp(c.gmv_ads)}</span></div>
-                      </>
-                    ) : (
-                      <>
-                        <div className="flex justify-between"><span className="text-muted-foreground">Penonton / ditonton</span>
-                          <span>{fmtNum(c.viewers)} / {fmtNum(c.views)}</span></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">Engagement</span>
-                          <span>{fmtNum(c.engagement)} · {Number(c.engagement_rate || 0).toFixed(2)}%</span></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">Follower baru</span>
-                          <span>{fmtNum(c.new_followers)}</span></div>
-                        {c.channel === 'live' && (
-                          <div className="flex justify-between"><span className="text-muted-foreground">Sesi · menit live</span>
-                            <span>{fmtNum(c.live_sessions)} · {fmtNum(c.live_minutes)}</span></div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </GlassCard>
-              );
-            })}
-          </div>
-
-          <div className="rounded-lg border border-border overflow-x-auto bg-background">
-            <table className="w-full text-xs" data-testid="kpi-table">
-              <thead className="bg-muted/60"><tr>{HEADS.map((h) => (
-                <th key={h} className="px-2.5 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
-              ))}</tr></thead>
-              <tbody className="divide-y">
-                {rows.map((r) => (
-                  <tr key={`${r.date}-${r.channel}`} className="hover:bg-muted/30"
-                    data-testid={`kpi-row-${r.date}-${r.channel}`}>
-                    <td className="px-2.5 py-2 whitespace-nowrap font-medium">{r.date}</td>
-                    <td className="px-2.5 py-2">
-                      <Badge variant="outline" className="text-[9px] capitalize">{r.channel}</Badge>
-                    </td>
-                    <td className="px-2.5 py-2 text-muted-foreground whitespace-nowrap">
-                      {SOURCE_LABEL[r.source] || r.source}
-                    </td>
-                    <td className="px-2.5 py-2 whitespace-nowrap font-semibold">{fmtRp(r.gmv_created)}</td>
-                    <td className="px-2.5 py-2 whitespace-nowrap">{fmtRp(r.gmv_ready)}</td>
-                    <td className="px-2.5 py-2">{fmtNum(r.orders_created)}</td>
-                    <td className="px-2.5 py-2">{fmtNum(r.visitors)}</td>
-                    <td className="px-2.5 py-2">{fmtNum(r.viewers)}</td>
-                    <td className="px-2.5 py-2">{fmtNum(r.views)}</td>
-                    <td className="px-2.5 py-2">{fmtNum(r.likes)}</td>
-                    <td className="px-2.5 py-2">{fmtNum(r.comments)}</td>
-                    <td className="px-2.5 py-2">{fmtNum(r.shares)}</td>
-                    <td className="px-2.5 py-2">{fmtNum(r.new_followers)}</td>
-                    <td className="px-2.5 py-2">{fmtNum(r.live_sessions)}</td>
-                    <td className="px-2.5 py-2">{fmtNum(r.live_minutes)}</td>
-                    <td className="px-2.5 py-2 whitespace-nowrap">{fmtRp(r.aov)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {rows.length >= BATAS && (
+            <Notice tone="warning" title="Daftar terpotong">
+              Hanya {fmtNum(BATAS)} baris terbaru yang dimuat{summary?.total_rows ? ` dari ${fmtNum(summary.total_rows)}` : ''}. Persempit periode.
+            </Notice>
+          )}
+          <TabelData kolom={kolom} baris={rows} kunci={(r) => `${r.date}-${r.channel}-${r.source}`} onKlikBaris={setRincian} testId="kpi-table" />
         </>
       )}
-
       {(summary?.data_notes || []).length > 0 && (
-        <div className="rounded-lg border border-border bg-muted/40 p-3" data-testid="kpi-notes">
-          <p className="text-xs font-semibold mb-1 flex items-center gap-1 text-foreground">
-            <Info size={12} /> Catatan kejujuran data
-          </p>
-          <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-muted-foreground">
+        <Notice tone="info" icon={Info} title="Catatan kejujuran data" testId="kpi-notes">
+          <ul className="list-disc space-y-0.5 pl-4">
             {(summary.data_notes || []).map((n, i) => <li key={i}>{n}</li>)}
           </ul>
-        </div>
+        </Notice>
       )}
-    </div>
+      {rincian && (
+        <DetailPopup open onClose={() => setRincian(null)} judul={`${KANAL[rincian.channel] || rincian.channel} · ${tgl(rincian.date)}`}
+          keterangan={SOURCE_LABEL[rincian.source] || 'Impor lain'} testId="kpi-row-detail">
+          <dl className="divide-y divide-[var(--glass-border)]">
+            {RINCIAN_HARIAN.map(([label, k, f]) => <BarisDetail key={k} label={label}><span className="tabular-nums">{f(rincian[k])}</span></BarisDetail>)}
+          </dl>
+        </DetailPopup>
+      )}
+      {kanal && (
+        <DetailPopup open onClose={() => setKanal(null)} judul={`Kanal ${kanal.label}`} keterangan={`${tgl(from)} – ${tgl(to)}`} testId="kpi-channel-detail">
+          <dl className="divide-y divide-[var(--glass-border)]">
+            {rincianKanal(kanal).map(([l, v]) => <BarisDetail key={l} label={l}><span className="tabular-nums">{v}</span></BarisDetail>)}
+          </dl>
+        </DetailPopup>
+      )}
+    </PageLayout>
   );
 }

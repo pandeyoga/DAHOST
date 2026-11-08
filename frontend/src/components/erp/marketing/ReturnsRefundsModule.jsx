@@ -1,61 +1,74 @@
+/**
+ * Refund & nota kredit (tab di Komplain & Retur, Portal Toko) — retur dari marketplace sisi Toko/Marketing.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (judul disembunyikan di hub), penyaring satu baris (akun aktif
+ * kini pilihan di baris penyaring), 4 StatTile berketerangan, tabel 8 kolom + unduh semua baris (kolom lain di popup
+ * detail & berkas unduhan), detail popup, form = FormPopup panjang, tanggal = DatePicker. Tampilan "Kartu" lama
+ * diganti tabel (di HP otomatis kartu ringkas). Handler simpan/setujui/tolak/selesaikan/gudang tidak berubah.
+ * Perbaikan ikut: penyaring "Semua …" dulu mengirim nilai spasi ke server.
+ */
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  RotateCcw, Plus, Pencil, Trash2, RefreshCw, CheckCircle2, Clock, XCircle,
-  AlertCircle, Filter, X, Loader2, ThumbsUp, ThumbsDown, Warehouse, PackageCheck, FileText,
-  Table2, LayoutGrid
+  Plus, Pencil, Trash2, RefreshCw, CheckCircle2, Loader2, ThumbsUp, ThumbsDown, Warehouse, FileText, AlertCircle, Search,
 } from 'lucide-react';
-import OnwardCTA from '../OnwardCTA';
+import axios from 'axios';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
-import { todayWIB, toWIBDate } from '@/lib/waktu';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import DatePicker from '@/components/ui/date-picker';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import PaginationLite from '@/components/ui/pagination-lite';
 import { useToast } from '@/hooks/use-toast';
-import { useMarketingAccounts, getPlatformIcon } from '@/hooks/useMarketingAccounts';
+import { useMarketingAccounts } from '@/hooks/useMarketingAccounts';
 import { useActiveMarketingAccount } from '@/hooks/useActiveMarketingAccount';
-import { ActiveAccountBar } from './ActiveAccountBar';
-import axios from 'axios';
+import { todayWIB, toWIBDate } from '@/lib/waktu';
+import { formatDateID } from '@/lib/format';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
+import { getPlatformConfig } from './AccountBadge';
 import { CatalogItemSelect } from './pickers/MarketingPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
-const PLATFORM_ICONS = { shopee: '🛍️', tiktok: '🎵', tokopedia: '🟢', instagram: '📷' };
-// F10 (2026-08-13) — layar retur dulu KARTU-SAJA. Retur adalah baris UANG (nilai
-// refund, alasan, hasil banding): tanpa tabel, staf tidak bisa membandingkan 20
-// baris untuk mencari pola alasan retur, dan itu justru satu-satunya gunanya
-// mencatat retur. Tampilan Kartu dipertahankan untuk layar sempit/HP.
-const RETURNS_VIEW_KEY = 'marketing_returns_view';
-const RETURN_HEADS = ['Tanggal', 'Platform', 'Order ID', 'Toko', 'Produk', 'Harga',
-  'Alasan', 'Rincian alasan', 'Refund', 'Status', 'Hasil banding', 'Catatan', 'Aksi'];
 // Tanggal kalender WIB: 'YYYY-MM-DD' dibiarkan, instan (created_at) dibaca dalam WIB.
-const fmtDate = (v) => (v ? (toWIBDate(v) || String(v).slice(0, 10)) : '—');
-const STATUS_CONFIG = {
-  pending:   { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: Clock },
-  approved:  { label: 'Disetujui', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300', icon: ThumbsUp },
-  completed: { label: 'Selesai', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', icon: CheckCircle2 },
-  rejected:  { label: 'Ditolak', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300', icon: ThumbsDown },
+const fmtDate = (v) => {
+  if (!v) return '—';
+  const ymd = toWIBDate(v) || String(v).slice(0, 10);
+  return formatDateID(ymd) || ymd;
 };
+const rp = (n) => `Rp ${(Number(n) || 0).toLocaleString('id-ID')}`;
+const STATUS_CONFIG = {
+  pending: { label: 'Menunggu', tone: 'warning' },
+  approved: { label: 'Disetujui', tone: 'info' },
+  completed: { label: 'Selesai', tone: 'success' },
+  rejected: { label: 'Ditolak', tone: 'danger' },
+};
+const REFUND_TYPE = { full_refund: 'Refund penuh', partial_refund: 'Refund sebagian', exchange: 'Tukar barang', no_refund: 'Tanpa refund' };
+const NAMA_PLATFORM = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', instagram: 'Instagram', lazada: 'Lazada' };
+// Label alasan dari server bergaya Judul ("Warna Berbeda dari Gambar") → huruf besar hanya di awal.
+const kalimat = (t) => String(t || '').split(' ').map((w, i) => (i === 0 || /^[A-Z0-9]{2,4}$/.test(w) ? w : w.toLowerCase())).join(' ');
+const labelPlatform = (p) => NAMA_PLATFORM[String(p || '').toLowerCase()] || ((getPlatformConfig(p).label !== 'Platform' ? getPlatformConfig(p).label
+  : (p ? String(p).replace(/^./, (x) => x.toUpperCase()) : '—')));
+const StatusRetur = ({ status }) => (status
+  ? <StatusBadge status={status} label={STATUS_CONFIG[status]?.label || status} tone={STATUS_CONFIG[status]?.tone} />
+  : <span className="text-muted-foreground">—</span>);
 
-function KPICard({ label, value, sub, color, bg, icon: Icon }) {
+/** Pilihan akun aktif di baris penyaring (pengganti bar akun selebar layar). Sumber & penyimpanan sama: hook akun aktif. */
+function PilihAkun({ accounts = [], activeAccount, onChange, testId = 'pilih-akun' }) {
+  const aktif = accounts.filter((a) => a.status === 'active' || !a.status);
+  const daftar = activeAccount && !aktif.some((a) => a.id === activeAccount.id) ? [activeAccount, ...aktif] : aktif;
   return (
-    <Card className={`${bg} border-0`}>
-      <CardContent className="p-4 flex items-center gap-3">
-        <div className={`p-2 rounded-lg bg-background/60 dark:bg-black/20`}>
-          <Icon size={20} className={color} />
-        </div>
-        <div>
-          <p className="text-xl font-bold leading-tight">{value}</p>
-          <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
-        </div>
-      </CardContent>
-    </Card>
+    <SmartNativeSelect value={activeAccount?.id || ''} className="w-full" wrapperClassName="w-36 max-w-full" data-testid={testId}
+      onChange={(e) => onChange(daftar.find((a) => a.id === e.target.value) || null)}>
+      <option value="">Semua toko</option>
+      {daftar.map((a) => <option key={a.id} value={a.id}>{`${a.account_name} · ${labelPlatform(a.platform)}`}</option>)}
+    </SmartNativeSelect>
   );
 }
 
@@ -102,9 +115,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
   const [formLoading, setFormLoading] = useState(false);
 
   const [showDetail, setShowDetail] = useState(null);
-  const [view, setView] = useState(() => {
-    try { return localStorage.getItem(RETURNS_VIEW_KEY) || 'table'; } catch { return 'table'; }
-  });
+  const [galatForm, setGalatForm] = useState('');
   const [actionLoading, setActionLoading] = useState('');
 
   const fetchReasons = useCallback(async () => {
@@ -155,9 +166,6 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
     fetchReturns(currentPage);
   }, [fetchReturns, currentPage]);
 
-  useEffect(() => {
-    try { localStorage.setItem(RETURNS_VIEW_KEY, view); } catch { /* penyimpanan diblokir */ }
-  }, [view]);
 
   const openForm = (ret = null) => {
     if (ret) {
@@ -186,6 +194,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
       setForm({ ...EMPTY_FORM, date: todayWIB() });
       setRefundTouched(false);
     }
+    setGalatForm('');
     setShowForm(true);
   };
 
@@ -215,13 +224,14 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
   };
 
   const handleSave = async () => {
+    setGalatForm('');
     if (!form.account_id) {
-      toast({ title: 'Error', description: 'Wajib pilih Akun / Toko', variant: 'destructive' });
+      setGalatForm('Pilih akun / toko marketplace.');
       return;
     }
     // 2026-11-02 — No.4(c): nomor pesanan TIDAK wajib (retur bebas).
     if (!(form.catalog_item_id || form.product) || !form.reason_detail) {
-      toast({ title: 'Error', description: 'Produk dan Alasan Detail wajib diisi', variant: 'destructive' });
+      setGalatForm('Produk dan rincian alasan wajib diisi.');
       return;
     }
     // 2026-11-02 (No.14a) — nominal refund aktual: wajib ≥ 0 untuk refund penuh/sebagian.
@@ -229,11 +239,11 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
     if (!refundNoMoney) {
       const raw = refundShown;
       if (raw === '' || raw === null || raw === undefined || Number.isNaN(Number(raw))) {
-        toast({ title: 'Error', description: 'Isi Nominal Refund Aktual (Rp) sesuai keputusan platform', variant: 'destructive' });
+        setGalatForm('Isi nominal refund aktual (Rp) sesuai keputusan platform.');
         return;
       }
       if (Number(raw) < 0) {
-        toast({ title: 'Error', description: 'Nominal refund tidak boleh negatif', variant: 'destructive' });
+        setGalatForm('Nominal refund tidak boleh negatif.');
         return;
       }
       refundAmount = Number(raw);
@@ -243,7 +253,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
       setFormLoading(true);
       if (editTarget) {
         await axios.put(`${API}/api/marketing/returns/${editTarget.id}`, payload, { headers: authH });
-        toast({ title: 'Berhasil', description: 'Return diperbarui' });
+        toast({ title: 'Berhasil', description: 'Retur disimpan.' });
       } else {
         const res = await axios.post(`${API}/api/marketing/returns`, payload, { headers: authH });
         // W4 — beri tahu APA YANG TERJADI PADA STOK, bukan cuma "tersimpan".
@@ -259,21 +269,22 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
       fetchReturns(currentPage);
       fetchSummary();
     } catch (e) {
-      toast({ title: 'Error', description: e.response?.data?.detail || e.message, variant: 'destructive' });
+      setGalatForm(e.response?.data?.detail || e.message);
     } finally {
       setFormLoading(false);
     }
   };
 
   const handleDelete = async (id) => {
-    if (!(await confirmDialog('Hapus return ini?'))) return;
+    if (!(await confirmDialog({ title: 'Hapus retur ini?', body: 'Catatan retur dihapus dari daftar.', confirmLabel: 'Hapus', danger: true }))) return;
+    setShowDetail(null);
     try {
       await axios.delete(`${API}/api/marketing/returns/${id}`, { headers: authH });
-      toast({ title: 'Berhasil', description: 'Return dihapus' });
+      toast({ title: 'Berhasil', description: 'Retur dihapus.' });
       fetchReturns(currentPage);
       fetchSummary();
     } catch (e) {
-      toast({ title: 'Error', description: e.response?.data?.detail || e.message, variant: 'destructive' });
+      toast({ title: 'Gagal', description: e.response?.data?.detail || e.message, variant: 'destructive' });
     }
   };
 
@@ -281,12 +292,12 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
     try {
       setActionLoading(id);
       await axios.post(`${API}/api/marketing/returns/${id}/approve`, {}, { headers: authH });
-      toast({ title: 'Berhasil', description: 'Return disetujui' });
+      toast({ title: 'Berhasil', description: 'Retur disetujui.' });
       fetchReturns(currentPage);
       fetchSummary();
       setShowDetail(null);
     } catch (e) {
-      toast({ title: 'Error', description: e.response?.data?.detail || e.message, variant: 'destructive' });
+      toast({ title: 'Gagal', description: e.response?.data?.detail || e.message, variant: 'destructive' });
     } finally {
       setActionLoading('');
     }
@@ -296,12 +307,12 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
     try {
       setActionLoading(id);
       await axios.post(`${API}/api/marketing/returns/${id}/reject`, { notes }, { headers: authH });
-      toast({ title: 'Berhasil', description: 'Return ditolak' });
+      toast({ title: 'Berhasil', description: 'Retur ditolak.' });
       fetchReturns(currentPage);
       fetchSummary();
       setShowDetail(null);
     } catch (e) {
-      toast({ title: 'Error', description: e.response?.data?.detail || e.message, variant: 'destructive' });
+      toast({ title: 'Gagal', description: e.response?.data?.detail || e.message, variant: 'destructive' });
     } finally {
       setActionLoading('');
     }
@@ -317,13 +328,13 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
       if (warning) {
         toast({ title: 'Diselesaikan (dengan peringatan)', description: [cnMsg, warning].filter(Boolean).join(' · '), variant: 'default' });
       } else {
-        toast({ title: 'Berhasil', description: cnMsg || 'Return diselesaikan' });
+        toast({ title: 'Berhasil', description: cnMsg || 'Retur diselesaikan.' });
       }
       fetchReturns(currentPage);
       fetchSummary();
       setShowDetail(null);
     } catch (e) {
-      toast({ title: 'Error', description: e.response?.data?.detail || e.message, variant: 'destructive' });
+      toast({ title: 'Gagal', description: e.response?.data?.detail || e.message, variant: 'destructive' });
     } finally {
       setActionLoading('');
     }
@@ -340,7 +351,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
       if (refreshed?.data?.data) setShowDetail(refreshed.data.data);
       fetchReturns(currentPage);
     } catch (e) {
-      toast({ title: 'Error', description: e.response?.data?.detail || e.message, variant: 'destructive' });
+      toast({ title: 'Gagal', description: e.response?.data?.detail || e.message, variant: 'destructive' });
     } finally {
       setActionLoading('');
     }
@@ -374,7 +385,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
       if (refreshed?.data?.data) setShowDetail(refreshed.data.data);
       fetchReturns(currentPage);
     } catch (e) {
-      toast({ title: 'Error', description: e.response?.data?.detail || e.message, variant: 'destructive' });
+      toast({ title: 'Gagal', description: e.response?.data?.detail || e.message, variant: 'destructive' });
     } finally {
       setActionLoading('');
     }
@@ -389,541 +400,326 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
   };
 
   const s = summary || {};
-  const activeFilters = [filterStatus, filterPlatform, filterReason, searchQuery].filter(Boolean).length;
+  const adaSaring = [filterStatus, filterPlatform, filterReason, searchQuery, activeAccount?.id].filter(Boolean).length > 0;
+
+  const paramSaring = () => {
+    const params = {};
+    if (filterStatus) params.status = filterStatus;
+    if (filterPlatform) params.platform = filterPlatform;
+    if (filterReason) params.reason = filterReason;
+    if (searchQuery) params.search = searchQuery;
+    if (activeAccount?.id) params.account_id = activeAccount.id;
+    return params;
+  };
+  /** Unduh semua retur hasil saringan (bukan hanya 20 baris halaman ini). */
+  const ambilSemua = async () => {
+    const semua = [];
+    for (let p = 1; p <= 200; p += 1) {
+      const res = await axios.get(`${API}/api/marketing/returns`, { headers: authH, params: { page: p, page_size: 100, ...paramSaring() } });
+      semua.push(...(res.data.data || []));
+      if (p >= (res.data.pagination?.total_pages || 1)) break;
+    }
+    return semua;
+  };
+
+  const kolom = [
+    { kunci: 'tanggal', label: 'Tanggal', hp: 'keterangan', isi: (r) => <span className="tabular-nums md:whitespace-nowrap">{fmtDate(r.date || r.created_at)}</span> },
+    { kunci: 'pesanan', label: 'Nomor pesanan', isi: (r) => <span className="tabular-nums">{r.order_id || '—'}</span> },
+    { kunci: 'toko', label: 'Toko', isi: (r) => (
+      <span className="md:whitespace-nowrap">{r.account_name || '—'}<span className="block text-xs text-muted-foreground">{labelPlatform(r.platform)}</span></span>) },
+    { kunci: 'produk', label: 'Produk', hp: 'judul', isi: (r) => <p className="truncate md:max-w-[14rem]" title={r.product}>{r.product || '—'}</p> },
+    { kunci: 'alasan', label: 'Alasan', isi: (r) => <p className="truncate md:max-w-[12rem]" title={r.reason_detail}>{kalimat(r.reason_label || r.reason) || '—'}</p> },
+    { kunci: 'refund', label: 'Refund (Rp)', rata: 'kanan', isi: (r) => <span className="tabular-nums font-medium">{(r.refund_amount || 0).toLocaleString('id-ID')}</span> },
+    { kunci: 'status', label: 'Status', isi: (r) => <StatusRetur status={r.status} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+      <div className="flex justify-end gap-1">
+        <Button onClick={() => openForm(r)} variant="ghost" size="icon-sm" title="Ubah retur" aria-label="Ubah retur"><Pencil /></Button>
+        <Button onClick={() => handleDelete(r.id)} variant="ghost" size="icon-sm" title="Hapus retur" aria-label="Hapus retur"
+          className="text-[hsl(var(--danger-text))]"><Trash2 /></Button>
+      </div>) },
+  ];
 
   return (
-    <div className="space-y-6" data-testid="returns-refunds-module">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Refund & Nota Kredit</h1>
-          <p className="text-sm text-muted-foreground mt-1">Kelola pengembalian dana dan nota kredit — sisi Toko/Marketing</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button onClick={() => fetchReturns(currentPage)} variant="outline" size="sm">
-            <RefreshCw size={14} className="mr-1" />Refresh
+    <PageLayout testId="returns-refunds-module" title="Refund & nota kredit"
+      subtitle="Pengembalian dana dan nota kredit dari retur marketplace — sisi Toko/Marketing."
+      actions={<>
+        {typeof onNavigate === 'function' && (
+          <Button variant="outline" onClick={() => onNavigate('wh-returns', {})} data-testid="returns-to-wh">
+            <Warehouse />Terima retur fisik di gudang
           </Button>
-          <Button onClick={() => openForm()} size="sm">
-            <Plus size={14} className="mr-1" />Buat Refund
-          </Button>
+        )}
+        <Button onClick={() => openForm()} data-testid="returns-create"><Plus />Buat refund</Button>
+      </>}
+      filters={<>
+        <div className="relative w-full sm:w-44">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Cari pesanan atau produk" value={searchQuery} className="pl-8"
+            onChange={e => { setSearchQuery(e.target.value); setCurrentPage(1); }} data-testid="returns-search" />
         </div>
-      </div>
+        <PilihAkun accounts={masterAccounts} activeAccount={activeAccount} testId="returns-account"
+          onChange={(acc) => { setActiveAccount(acc); setCurrentPage(1); }} />
+        <SmartNativeSelect value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setCurrentPage(1); }} className="w-full" wrapperClassName="w-36 max-w-full" searchable={false}>
+          <option value="">Semua status</option>
+          {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+        </SmartNativeSelect>
+        <SmartNativeSelect value={filterPlatform} onChange={(e) => { setFilterPlatform(e.target.value); setCurrentPage(1); }} className="w-full" wrapperClassName="w-40 max-w-full" searchable={false}>
+          <option value="">Semua platform</option>
+          <option value="shopee">Shopee</option>
+          <option value="tiktok">TikTok</option>
+          <option value="tokopedia">Tokopedia</option>
+        </SmartNativeSelect>
+        <SmartNativeSelect value={filterReason} onChange={(e) => { setFilterReason(e.target.value); setCurrentPage(1); }} className="w-full" wrapperClassName="w-44 max-w-full">
+          <option value="">Semua alasan</option>
+          {reasons.map(r => <option key={r.value} value={r.value}>{kalimat(r.label)}</option>)}
+        </SmartNativeSelect>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="refund-retur" namaLembar="Retur" baris={returns} ambilSemua={ambilSemua} testId="returns-unduh"
+          kolom={[
+            { label: 'Tanggal', nilai: (r) => fmtDate(r.date || r.created_at) },
+            { label: 'Platform', nilai: (r) => labelPlatform(r.platform) },
+            { label: 'Nomor pesanan', nilai: (r) => r.order_id || '' },
+            { label: 'Toko', nilai: (r) => r.account_name || '' },
+            { label: 'Produk', nilai: (r) => r.product || '' },
+            { label: 'Qty', nilai: (r) => r.qty ?? '' },
+            { label: 'Harga satuan', nilai: (r) => Number(r.price) || 0 },
+            { label: 'Alasan', nilai: (r) => kalimat(r.reason_label || r.reason) },
+            { label: 'Rincian alasan', nilai: (r) => r.reason_detail || '' },
+            { label: 'Jenis refund', nilai: (r) => REFUND_TYPE[r.refund_type] || '' },
+            { label: 'Refund', nilai: (r) => Number(r.refund_amount) || 0 },
+            { label: 'Status', nilai: (r) => STATUS_CONFIG[r.status]?.label || r.status || '' },
+            { label: 'Hasil banding', nilai: (r) => r.appeal_result || '' },
+            { label: 'Retur fisik gudang', nilai: (r) => r.wh_return_code || '' },
+            { label: 'Nota kredit', nilai: (r) => r.credit_note_number || '' },
+            { label: 'Catatan', nilai: (r) => r.notes || '' },
+          ]} />
+        <Button onClick={() => { fetchReturns(currentPage); fetchSummary(); }} variant="outline" size="icon" title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={(s.total || 0) > 0 && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="returns-kpi">
+          <StatTile label="Total retur" value={s.total || 0}
+            sub={`${s.approved || 0} disetujui · ${s.rejected || 0} ditolak`}
+            hint="Semua toko yang bisa Anda lihat; tidak ikut pilihan akun & penyaring." />
+          <StatTile label="Menunggu keputusan" value={s.pending || 0} accent="warning" hint="Retur berstatus menunggu." />
+          <StatTile label="Selesai" value={s.completed || 0} accent="success" hint="Retur yang sudah diselesaikan (nota kredit terbit bila ada refund)." />
+          <StatTile label="Nilai refund tercatat" value={rp(s.total_refund)}
+            sub="Semua status, termasuk yang belum selesai"
+            hint="Jumlah nominal refund semua retur (menunggu, disetujui, selesai, ditolak) — bukan uang yang sudah dikembalikan." />
+        </div>
+      )}
+      footer={pagination && pagination.total_pages > 1 && (
+        <PaginationLite page={currentPage} totalPages={pagination.total_pages} total={pagination.total} pageSize={20}
+          onPageChange={setCurrentPage} />
+      )}>
+      {loading && returns.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat retur…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={returns} onKlikBaris={setShowDetail} testId="returns-table"
+          kosong={<EmptyState title={adaSaring ? 'Tidak ada retur yang cocok' : 'Belum ada retur'}
+            description={adaSaring ? 'Ubah saringan, akun, atau kata pencarian.' : 'Catat retur dari marketplace dengan tombol Buat refund.'}
+            action={!adaSaring && <Button onClick={() => openForm()}><Plus />Buat refund</Button>} />} />
+      )}
 
-      {/* RC-FLOW-UX — onward CTA: retur/refund → terima barang retur fisik di Gudang (cross-portal, Alur 8) */}
-      <OnwardCTA
-        onNavigate={onNavigate}
-        title="Tindak Lanjut Retur"
-        actions={[
-          { module: 'wh-returns', label: 'Terima Retur Fisik di Gudang', icon: Warehouse, primary: true, hint: 'Barang retur masuk kembali ke Gudang' },
-        ]}
-      />
+      {/* Form retur (popup) */}
+      <FormPopup open={showForm} onClose={closeForm} ukuran="panjang" onSimpan={handleSave} menyimpan={formLoading}
+        judul={editTarget ? 'Ubah retur' : 'Tambah retur'} galat={galatForm} testId="return-form"
+        keterangan="Setelah disimpan, retur fisik di Gudang dibuat otomatis (menunggu paket); stok belum bergerak.">
+        <Isian label="Akun / toko marketplace" wajib htmlFor="return-account"
+          petunjuk={form.account_id ? `Platform: ${labelPlatform(form.platform)} (otomatis dari akun)` : undefined}>
+          <SmartNativeSelect id="return-account" value={form.account_id || ''} onChange={(e) => handleAccountChange(e.target.value)}
+            data-testid="return-account-select">
+            <option value="">{masterAccounts.length === 0 ? 'Belum ada akun aktif' : 'Pilih akun'}</option>
+            {masterAccounts.map(acc => <option key={acc.id} value={acc.id}>{`${acc.account_name} · ${labelPlatform(acc.platform)}`}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Tanggal">
+            <DatePicker value={form.date || ''} onChange={(v) => setForm({ ...form, date: v })} testId="return-date" />
+          </Isian>
+          {/* 2026-11-02 — No.4(c): retur bebas, nomor pesanan opsional. */}
+          <Isian label="Nomor pesanan" petunjuk="Opsional — kosongkan bila tidak diketahui." htmlFor="return-order">
+            <Input id="return-order" value={form.order_id} onChange={e => setForm({ ...form, order_id: e.target.value })}
+              data-testid="return-order-input" />
+          </Isian>
+          <Isian label="Harga satuan">
+            <MoneyInput value={form.price} onChange={e => setForm({ ...form, price: parseFloat(e.target.value) })} />
+          </Isian>
+          <Isian label="Jenis refund" htmlFor="return-refund-type">
+            <SmartNativeSelect id="return-refund-type" value={form.refund_type} searchable={false}
+              onChange={(e) => setForm({ ...form, refund_type: e.target.value })} data-testid="return-refund-type-select">
+              {Object.entries(REFUND_TYPE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+        </div>
+        {/* 2026-11-02 (No.14a) — NOMINAL REFUND AKTUAL (dulu refund sebagian dipatok 70% harga). */}
+        {!refundNoMoney && (
+          <Isian label="Nominal refund aktual (Rp)" wajib
+            petunjuk={form.refund_type === 'full_refund'
+              ? `Usulan awal = harga × qty (${rp(suggestedFullRefund(form))}). Ubah bila platform mengembalikan nominal lain.`
+              : 'Isi nominal yang benar-benar dikembalikan platform ke pembeli.'}>
+            <MoneyInput value={refundShown}
+              onChange={e => { setRefundTouched(true); setForm({ ...form, refund_amount: e.target.value }); }}
+              placeholder={form.refund_type === 'partial_refund' ? 'isi sesuai keputusan platform' : ''}
+              data-testid="return-refund-amount-input" />
+            {refundTouched && form.refund_type === 'full_refund' && (
+              <Button type="button" variant="link" size="sm" className="h-auto px-0"
+                onClick={() => { setRefundTouched(false); setForm({ ...form, refund_amount: '' }); }}>
+                Pakai harga × qty
+              </Button>
+            )}
+          </Isian>
+        )}
+        {/* F15 — produk DIPILIH dari katalog toko (dulu teks bebas → laporan per produk tidak bisa dijawab). */}
+        <Isian label="Produk" wajib>
+          <CatalogItemSelect
+            token={token} accountId={form.account_id} label=""
+            value={form.catalog_item_id || ''}
+            onChange={(item) => setForm({
+              ...form,
+              catalog_item_id: item?.id || '',
+              product: item?.name || '',
+              sku: item?.sku || '',
+            })}
+            testId="return-item-select" />
+        </Isian>
+        {/* 2026-11-02 (K1) — kondisi & qty hanya petunjuk untuk gudang; gudang mengisi qty aktual lalu memutuskan. */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Kondisi barang" wajib htmlFor="return-condition">
+            <SmartNativeSelect id="return-condition" value={form.item_condition || 'Baik'} searchable={false}
+              onChange={(e) => setForm({ ...form, item_condition: e.target.value })} data-testid="return-condition-select">
+              <option value="Baik">Baik (laporan pembeli)</option>
+              <option value="Rusak">Rusak (laporan pembeli)</option>
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Qty diajukan kembali" wajib htmlFor="return-qty">
+            <Input id="return-qty" type="number" min={1} value={form.qty || 1}
+              onChange={e => setForm({ ...form, qty: Math.max(1, parseInt(e.target.value || '1', 10)) })}
+              data-testid="return-qty-input" />
+          </Isian>
+        </div>
+        <Notice tone="info" icon={Warehouse}>
+          Gudang menerima paket &amp; mengisi qty aktual, memeriksa kondisinya, lalu memutuskan (terima → stok jual,
+          rusak → karantina, tolak → dikembalikan ke pembeli, dibuang). Omzet setelah retur baru berkurang setelah keputusan itu.
+        </Notice>
+        <Isian label="Alasan" htmlFor="return-reason">
+          <SmartNativeSelect id="return-reason" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })}>
+            {reasons.map(r => <option key={r.value} value={r.value}>{kalimat(r.label)}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Rincian alasan" wajib htmlFor="return-reason-detail">
+          <Textarea id="return-reason-detail" value={form.reason_detail} rows={2} placeholder="Rincian alasan retur"
+            onChange={e => setForm({ ...form, reason_detail: e.target.value })} />
+        </Isian>
+        <Isian label="Catatan" htmlFor="return-notes">
+          <Textarea id="return-notes" value={form.notes} rows={2} onChange={e => setForm({ ...form, notes: e.target.value })} />
+        </Isian>
+      </FormPopup>
 
-      {/* KPI Cards */}
-      <ActiveAccountBar accounts={masterAccounts} activeAccount={activeAccount} onAccountChange={acc => { setActiveAccount(acc); setCurrentPage(1); }} hint="Filter returns by akun:" />
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <KPICard label="Total Return" value={s.total || 0} color="text-blue-600" bg="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950/30 dark:to-blue-900/30" icon={RotateCcw} />
-        <KPICard label="Menunggu" value={s.pending || 0} color="text-orange-600" bg="bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-950/30 dark:to-orange-900/30" icon={Clock} />
-        <KPICard label="Disetujui" value={s.approved || 0} color="text-blue-600" bg="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950/30 dark:to-blue-900/30" icon={ThumbsUp} />
-        <KPICard label="Selesai" value={s.completed || 0} color="text-emerald-600" bg="bg-gradient-to-br from-emerald-50 to-emerald-100 dark:from-emerald-950/30 dark:to-emerald-900/30" icon={CheckCircle2} />
-        <KPICard label="Total Refund" value={`Rp ${(s.total_refund || 0).toLocaleString('id-ID')}`} color="text-purple-600" bg="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-950/30 dark:to-purple-900/30" icon={RotateCcw} />
-      </div>
+      {/* Detail retur (popup) */}
+      {showDetail && (
+        <DetailPopup open onClose={() => setShowDetail(null)} testId="return-detail"
+          judul={showDetail.order_id ? `Refund pesanan ${showDetail.order_id}` : 'Refund tanpa nomor pesanan'}
+          status={<StatusRetur status={showDetail.status} />}
+          keterangan={`${showDetail.account_name || '—'} · ${labelPlatform(showDetail.platform)} · ${fmtDate(showDetail.date || showDetail.created_at)}`}
+          aksi={<>
+            <Button size="sm" variant="outline" onClick={() => { const r = showDetail; setShowDetail(null); openForm(r); }}><Pencil />Ubah</Button>
+            <Button size="sm" variant="destructive" onClick={() => handleDelete(showDetail.id)}><Trash2 />Hapus</Button>
+          </>}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Produk">{showDetail.product || '—'}{showDetail.qty ? ` · ${showDetail.qty} pcs` : ''}</BarisDetail>
+            <BarisDetail label="Harga satuan">{rp(showDetail.price)}</BarisDetail>
+            <BarisDetail label="Alasan">{kalimat(showDetail.reason_label || showDetail.reason) || '—'}</BarisDetail>
+            <BarisDetail label="Rincian alasan">{showDetail.reason_detail || '—'}</BarisDetail>
+            <BarisDetail label="Jenis refund">{REFUND_TYPE[showDetail.refund_type] || '—'}</BarisDetail>
+            <BarisDetail label="Refund"><span className="font-medium tabular-nums">{rp(showDetail.refund_amount)}</span></BarisDetail>
+            {showDetail.appeal_result && <BarisDetail label="Hasil banding">{showDetail.appeal_result}</BarisDetail>}
+            {showDetail.notes && <BarisDetail label="Catatan">{showDetail.notes}</BarisDetail>}
+            {showDetail.wh_return_code && (
+              <BarisDetail label="Retur fisik (gudang)">{showDetail.wh_return_code} · {showDetail.wh_return_status || 'Menunggu'}</BarisDetail>
+            )}
+            {/* W4 — apa yang terjadi pada STOK, dinyatakan terang-terangan. */}
+            {showDetail.wh_return_id && (
+              <BarisDetail label="Efek stok">
+                <span data-testid="mkt-ret-stock-effect">
+                  {showDetail.wh_restocked ? (
+                    <StatusBadge status="stok" tone={showDetail.wh_stock_effect === 'sellable' ? 'success' : 'warning'}
+                      label={showDetail.wh_stock_effect === 'sellable'
+                        ? `+${showDetail.wh_restock_qty || 0} stok jual (${showDetail.wh_restock_location_code || 'ZNA-FG'})`
+                        : `+${showDetail.wh_restock_qty || 0} karantina (${showDetail.wh_restock_location_code || 'ZNA-KARANTINA'})`} />
+                  ) : (
+                    <StatusBadge status="stok" tone="muted"
+                      label={showDetail.wh_return_status === 'Resolved'
+                        ? `diputuskan: ${showDetail.wh_action_taken || '-'}`
+                        : `menunggu keputusan gudang (${showDetail.wh_return_status || 'Menunggu'})`} />
+                  )}
+                  {showDetail.wh_link_status && showDetail.wh_link_status !== 'linked' && (
+                    <span className="mt-1 block text-xs text-[hsl(var(--warning-text))]">{showDetail.wh_link_reason}</span>
+                  )}
+                </span>
+              </BarisDetail>
+            )}
+            {showDetail.credit_note_number && <BarisDetail label="Nota kredit">{showDetail.credit_note_number}</BarisDetail>}
+          </dl>
 
-      {/* Filters */}
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Filter size={16} />Filter
-              {activeFilters > 0 && (
-                <Badge variant="secondary" className="ml-1">{activeFilters}</Badge>
-              )}
-            </CardTitle>
-            {activeFilters > 0 && (
-              <Button onClick={clearFilters} variant="ghost" size="sm">
-                <X size={14} className="mr-1" />Clear
+          {/* RC-FLOW-UX-11c (opsi B, soft-warning): retur approved > 24 jam & belum ada wh_return_id */}
+          {showDetail.status === 'approved' && !showDetail.wh_return_id && (() => {
+            const upd = new Date(showDetail.updated_at || showDetail.date || 0).getTime();
+            const hours = (Date.now() - upd) / 36e5;
+            if (hours < 24) return null;
+            return (
+              <Notice tone="warning" icon={AlertCircle} title="Barang belum diterima gudang">
+                Retur disetujui {Math.floor(hours)} jam lalu, tetapi belum ada retur fisik di gudang. Stok baru bertambah setelah
+                gudang menerima &amp; memutuskan. Klik Kirim ke gudang untuk melanjutkan.
+              </Notice>
+            );
+          })()}
+          {showDetail.status === 'approved' && showDetail.wh_return_id && (
+            <Notice tone="success" icon={CheckCircle2} title={`Terhubung ke gudang: ${showDetail.wh_return_code || ''}`}
+              action={onNavigate && (
+                <Button size="sm" variant="outline" onClick={() => onNavigate('wh-returns', { return_id: showDetail.wh_return_id })}
+                  data-testid="btn-open-wh-return">Buka di gudang</Button>
+              )} />
+          )}
+
+          <div className="flex flex-wrap gap-2 border-t border-[var(--glass-border)] pt-3">
+            {/* W4 — retur LAMA (sebelum jembatan otomatis) bisa ditarik ke gudang, apa pun statusnya selain ditolak/dibatalkan. */}
+            {!showDetail.wh_return_id && !['rejected', 'cancelled'].includes(showDetail.status) && (
+              <Button onClick={() => handleCreateWhReturn(showDetail.id)} disabled={actionLoading === showDetail.id}
+                variant="outline" data-testid="btn-create-wh-return">
+                {actionLoading === showDetail.id ? <Loader2 className="animate-spin" /> : <Warehouse />}
+                Kirim ke gudang (menunggu paket)
+              </Button>
+            )}
+            {showDetail.status === 'pending' && <>
+              <Button variant="success" onClick={() => handleApprove(showDetail.id)} disabled={actionLoading === showDetail.id}>
+                {actionLoading === showDetail.id ? <Loader2 className="animate-spin" /> : <ThumbsUp />}Setujui
+              </Button>
+              <Button onClick={() => handleReject(showDetail.id, 'Tidak memenuhi syarat')} disabled={actionLoading === showDetail.id} variant="destructive">
+                {actionLoading === showDetail.id ? <Loader2 className="animate-spin" /> : <ThumbsDown />}Tolak
+              </Button>
+            </>}
+            {showDetail.status === 'approved' && (
+              <Button variant="success" onClick={() => handleComplete(showDetail.id)} disabled={actionLoading === showDetail.id}
+                data-testid="btn-complete-return">
+                {actionLoading === showDetail.id ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
+                {(showDetail.refund_amount || 0) > 0
+                  ? 'Selesaikan & terbitkan nota kredit'
+                  : 'Selesaikan (tanpa nota kredit — refund Rp 0)'}
+              </Button>
+            )}
+            {/* 2026-11-02 — retur selesai tanpa nota kredit (data lama) bisa diterbitkan susulan. */}
+            {showDetail.status === 'completed' && !showDetail.credit_note_id && (showDetail.refund_amount || 0) > 0 && (
+              <Button onClick={() => handleIssueCreditNote(showDetail.id)} disabled={actionLoading === showDetail.id}
+                variant="outline" data-testid="btn-issue-credit-note">
+                {actionLoading === showDetail.id ? <Loader2 className="animate-spin" /> : <FileText />}
+                Terbitkan nota kredit
               </Button>
             )}
           </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <Select value={filterStatus} onValueChange={setFilterStatus}>
-              <SelectTrigger>
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value=" ">Semua Status</SelectItem>
-                <SelectItem value="pending">Menunggu</SelectItem>
-                <SelectItem value="approved">Disetujui</SelectItem>
-                <SelectItem value="completed">Selesai</SelectItem>
-                <SelectItem value="rejected">Ditolak</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={filterPlatform} onValueChange={setFilterPlatform}>
-              <SelectTrigger>
-                <SelectValue placeholder="Platform" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value=" ">Semua Platform</SelectItem>
-                <SelectItem value="shopee">Shopee</SelectItem>
-                <SelectItem value="tiktok">TikTok</SelectItem>
-                <SelectItem value="tokopedia">Tokopedia</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={filterReason} onValueChange={setFilterReason}>
-              <SelectTrigger>
-                <SelectValue placeholder="Alasan" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value=" ">Semua Alasan</SelectItem>
-                {reasons.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Input
-              placeholder="Cari order/produk..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Table */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between gap-2">
-            <CardTitle>Daftar Return ({pagination?.total || 0})</CardTitle>
-            <div className="flex rounded-md border border-border overflow-hidden">
-              <button type="button" onClick={() => setView('table')} data-testid="returns-view-table"
-                className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'table'
-                  ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-                <Table2 size={12} /> Tabel
-              </button>
-              <button type="button" onClick={() => setView('grid')} data-testid="returns-view-grid"
-                className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'grid'
-                  ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-                <LayoutGrid size={12} /> Kartu
-              </button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="flex justify-center py-8"><Loader2 className="animate-spin" size={24} /></div>
-          ) : returns.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">Tidak ada return</div>
-          ) : view === 'table' ? (
-            <div className="rounded-lg border border-border overflow-x-auto">
-              <table className="w-full text-xs" data-testid="returns-table">
-                <thead className="bg-muted/60">
-                  <tr>{RETURN_HEADS.map((h) => (
-                    <th key={h} className="px-2.5 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
-                  ))}</tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {returns.map(r => (
-                    <tr key={r.id} className="hover:bg-muted/30" data-testid={`returns-row-${r.id}`}>
-                      <td className="px-2.5 py-2 whitespace-nowrap">{fmtDate(r.date || r.created_at)}</td>
-                      <td className="px-2.5 py-2 whitespace-nowrap">
-                        {PLATFORM_ICONS[r.platform]} {r.platform || '—'}
-                      </td>
-                      <td className="px-2.5 py-2 font-mono text-[11px]">{r.order_id || '—'}</td>
-                      <td className="px-2.5 py-2">{r.account_name || '—'}</td>
-                      <td className="px-2.5 py-2 max-w-[220px] truncate" title={r.product}>{r.product || '—'}</td>
-                      <td className="px-2.5 py-2 whitespace-nowrap">Rp {(r.price || 0).toLocaleString('id-ID')}</td>
-                      <td className="px-2.5 py-2">{r.reason_label || r.reason || '—'}</td>
-                      <td className="px-2.5 py-2 max-w-[200px] truncate" title={r.reason_detail}>
-                        {r.reason_detail || '—'}
-                      </td>
-                      <td className="px-2.5 py-2 whitespace-nowrap font-semibold">
-                        Rp {(r.refund_amount || 0).toLocaleString('id-ID')}
-                      </td>
-                      <td className="px-2.5 py-2">
-                        {r.status ? (
-                          <Badge className={STATUS_CONFIG[r.status]?.color}>
-                            {STATUS_CONFIG[r.status]?.label || r.status}
-                          </Badge>
-                        ) : '—'}
-                      </td>
-                      <td className="px-2.5 py-2">{r.appeal_result || '—'}</td>
-                      <td className="px-2.5 py-2 max-w-[160px] truncate" title={r.notes}>{r.notes || '—'}</td>
-                      <td className="px-2.5 py-2 whitespace-nowrap text-right">
-                        <Button onClick={() => setShowDetail(r)} variant="ghost" size="sm"
-                          data-testid={`returns-detail-${r.id}`}>Detail</Button>
-                        <Button onClick={() => openForm(r)} variant="ghost" size="sm"><Pencil size={14} /></Button>
-                        <Button onClick={() => handleDelete(r.id)} variant="ghost" size="sm"><Trash2 size={14} /></Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="space-y-3" data-testid="returns-grid">
-              {returns.map(r => (
-                <div key={r.id} className="border rounded-lg p-4 space-y-2 hover:bg-muted/30 transition-colors">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs text-muted-foreground">{PLATFORM_ICONS[r.platform]} {r.platform}</span>
-                        <Badge variant="outline" className="text-xs">{r.order_id}</Badge>
-                        <span className="text-xs font-medium">{r.product}</span>
-                        <span className="text-xs text-muted-foreground">Rp {(r.price || 0).toLocaleString('id-ID')}</span>
-                        {r.status && <Badge className={STATUS_CONFIG[r.status]?.color}>{STATUS_CONFIG[r.status]?.label}</Badge>}
-                      </div>
-                      <p className="text-sm"><strong>Alasan:</strong> {r.reason_label} - {r.reason_detail}</p>
-                      {r.notes && <p className="text-xs text-muted-foreground">Catatan: {r.notes}</p>}
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <span>Refund: Rp {(r.refund_amount || 0).toLocaleString('id-ID')}</span>
-                        <span>•</span>
-                        <span>{r.appeal_result}</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1 ml-2">
-                      <Button onClick={() => setShowDetail(r)} variant="ghost" size="sm">
-                        Detail
-                      </Button>
-                      <Button onClick={() => openForm(r)} variant="ghost" size="sm">
-                        <Pencil size={14} />
-                      </Button>
-                      <Button onClick={() => handleDelete(r.id)} variant="ghost" size="sm">
-                        <Trash2 size={14} />
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Pagination */}
-          {pagination && pagination.total_pages > 1 && (
-            <div className="flex items-center justify-between mt-4">
-              <p className="text-sm text-muted-foreground">
-                Halaman {pagination.page} dari {pagination.total_pages}
-              </p>
-              <div className="flex gap-1">
-                <Button
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
-                  variant="outline"
-                  size="sm"
-                >
-                  Prev
-                </Button>
-                <Button
-                  onClick={() => setCurrentPage(p => Math.min(pagination.total_pages, p + 1))}
-                  disabled={currentPage === pagination.total_pages}
-                  variant="outline"
-                  size="sm"
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Form Dialog */}
-      <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editTarget ? 'Edit Return' : 'Tambah Return'}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Akun / Toko Marketplace *</Label>
-              <Select value={form.account_id || ''} onValueChange={handleAccountChange}>
-                <SelectTrigger data-testid="return-account-select">
-                  <SelectValue placeholder={masterAccounts.length === 0 ? 'Belum ada akun — buat di Manage Accounts' : 'Pilih akun...'} />
-                </SelectTrigger>
-                <SelectContent>
-                  {masterAccounts.length === 0 && (
-                    <SelectItem value="empty" disabled>Belum ada akun aktif</SelectItem>
-                  )}
-                  {masterAccounts.map(acc => (
-                    <SelectItem key={acc.id} value={acc.id}>
-                      {getPlatformIcon(acc.platform)} {acc.account_name} <span className="text-xs text-muted-foreground ml-1">({acc.platform})</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {form.account_id && (
-                <p className="text-xs text-muted-foreground">
-                  Platform: <strong>{form.platform}</strong> (otomatis dari akun)
-                </p>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Tanggal</Label>
-                <Input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} />
-              </div>
-              <div className="space-y-2">
-                {/* 2026-11-02 — No.4(c): retur bebas, nomor pesanan opsional. */}
-                <Label>No. Pesanan (opsional)</Label>
-                <Input value={form.order_id} onChange={e => setForm({ ...form, order_id: e.target.value })}
-                  placeholder="kosongkan bila tidak diketahui" data-testid="return-order-input" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Harga Satuan</Label>
-                <MoneyInput value={form.price} onChange={e => setForm({ ...form, price: parseFloat(e.target.value) })} />
-              </div>
-              <div className="space-y-2">
-                <Label>Tipe Refund</Label>
-                <Select value={form.refund_type} onValueChange={v => setForm({ ...form, refund_type: v })}>
-                  <SelectTrigger data-testid="return-refund-type-select"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="full_refund">Refund Penuh</SelectItem>
-                    <SelectItem value="partial_refund">Refund Sebagian</SelectItem>
-                    <SelectItem value="exchange">Tukar Barang</SelectItem>
-                    <SelectItem value="no_refund">Tanpa Refund</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            {/* 2026-11-02 (No.14a) — NOMINAL REFUND AKTUAL. Dulu refund sebagian dipatok
-                70% harga dan refund penuh mengabaikan qty. Sekarang staf mengisi angka
-                yang benar-benar dikembalikan platform ("Total Pengembalian Dana"). */}
-            {!refundNoMoney && (
-              <div className="space-y-2">
-                <Label>Nominal Refund Aktual (Rp) *</Label>
-                <MoneyInput value={refundShown}
-                  onChange={e => { setRefundTouched(true); setForm({ ...form, refund_amount: e.target.value }); }}
-                  placeholder={form.refund_type === 'partial_refund' ? 'isi sesuai keputusan platform' : ''}
-                  data-testid="return-refund-amount-input" />
-                <p className="text-xs text-muted-foreground">
-                  {form.refund_type === 'full_refund'
-                    ? `Usulan awal = harga × qty (Rp ${suggestedFullRefund(form).toLocaleString('id-ID')}). Ubah bila platform mengembalikan nominal lain.`
-                    : 'Isi nominal yang benar-benar dikembalikan platform ke pembeli.'}
-                  {refundTouched && form.refund_type === 'full_refund' && (
-                    <button type="button" className="ml-1 underline"
-                      onClick={() => { setRefundTouched(false); setForm({ ...form, refund_amount: '' }); }}>
-                      pakai harga × qty
-                    </button>
-                  )}
-                </p>
-              </div>
-            )}
-            <div className="space-y-2">
-              <Label>Produk *</Label>
-              {/* F15 — produk DIPILIH dari katalog toko. Sebelum ini teks bebas:
-                  "Gamis Daluna Basic" dan "Gamis Daluna basic" jadi dua produk di
-                  laporan, sehingga "produk mana yang paling banyak diretur / paling
-                  buruk ulasannya" tidak bisa dijawab. */}
-              <CatalogItemSelect
-                token={token} accountId={form.account_id} label=""
-                value={form.catalog_item_id || ''}
-                onChange={(item) => setForm({
-                  ...form,
-                  catalog_item_id: item?.id || '',
-                  product: item?.name || '',
-                  sku: item?.sku || '',
-                })}
-                testId="return-item-select" />
-            </div>
-            {/* ── KONDISI & JUMLAH BARANG YANG DILAPORKAN KEMBALI ──────────────
-                2026-11-02 (K1) — retur di sini membuat pekerjaan Retur Fisik PENDING di
-                Gudang. Gudang mengisi qty AKTUAL & kondisi, lalu memutuskan:
-                Terima → stok jual · Rusak → karantina · Tolak → kembali ke pembeli · Dibuang. */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Kondisi Barang *</Label>
-                <Select value={form.item_condition || 'Baik'} onValueChange={v => setForm({ ...form, item_condition: v })}>
-                  <SelectTrigger data-testid="return-condition-select"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Baik">Baik (laporan pembeli)</SelectItem>
-                    <SelectItem value="Rusak">Rusak (laporan pembeli)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Qty Diajukan Kembali *</Label>
-                <Input type="number" min={1} value={form.qty || 1}
-                  onChange={e => setForm({ ...form, qty: Math.max(1, parseInt(e.target.value || '1', 10)) })}
-                  data-testid="return-qty-input" />
-              </div>
-            </div>
-            <div className="rounded-md border border-sky-300 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-800 px-3 py-2 text-xs text-sky-900 dark:text-sky-200 flex items-start gap-2">
-              <Warehouse size={14} className="mt-0.5 shrink-0" />
-              <span>
-                Setelah disimpan, <strong>Retur Fisik di Gudang dibuat otomatis (menunggu paket)</strong>.
-                Stok <strong>belum</strong> bergerak: Gudang menerima paket &amp; mengisi qty aktual, memeriksa
-                kondisinya, lalu memutuskan (Terima → stok jual, Rusak → karantina, Tolak → dikembalikan ke
-                pembeli, Dibuang). Omzet setelah retur di rekap juga baru berkurang setelah keputusan itu.
-              </span>
-            </div>
-            <div className="space-y-2">
-              <Label>Alasan</Label>
-              <Select value={form.reason} onValueChange={v => setForm({ ...form, reason: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {reasons.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Alasan Detail *</Label>
-              <Textarea value={form.reason_detail} onChange={e => setForm({ ...form, reason_detail: e.target.value })} rows={2} placeholder="Detail alasan return..." />
-            </div>
-            <div className="space-y-2">
-              <Label>Catatan</Label>
-              <Textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={2} placeholder="Catatan..." />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button onClick={closeForm} variant="outline" disabled={formLoading}>Batal</Button>
-            <Button onClick={handleSave} disabled={formLoading}>
-              {formLoading && <Loader2 className="animate-spin mr-1" size={14} />}
-              Simpan
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Detail Dialog */}
-      <Dialog open={!!showDetail} onOpenChange={() => setShowDetail(null)}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Detail Refund</DialogTitle>
-          </DialogHeader>
-          {showDetail && (
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <p className="text-sm"><strong>Order:</strong> {showDetail.order_id || '— (retur tanpa nomor pesanan)'}</p>
-                <p className="text-sm"><strong>Produk:</strong> {showDetail.product}</p>
-                <p className="text-sm"><strong>Harga:</strong> Rp {(showDetail.price || 0).toLocaleString('id-ID')}</p>
-                <p className="text-sm"><strong>Alasan:</strong> {showDetail.reason_label}</p>
-                <p className="text-sm"><strong>Detail:</strong> {showDetail.reason_detail}</p>
-                <p className="text-sm"><strong>Refund:</strong> Rp {(showDetail.refund_amount || 0).toLocaleString('id-ID')}</p>
-                <p className="text-sm"><strong>Status:</strong> <Badge className={STATUS_CONFIG[showDetail.status]?.color}>{STATUS_CONFIG[showDetail.status]?.label}</Badge></p>
-                {showDetail.wh_return_code && (
-                  <p className="text-sm"><strong>Retur Fisik (Gudang):</strong> <Badge variant="outline">{showDetail.wh_return_code}</Badge> <span className="text-xs text-muted-foreground ml-1">status: {showDetail.wh_return_status || 'Pending'}</span></p>
-                )}
-                {/* W4 — apa yang terjadi pada STOK, dinyatakan terang-terangan. */}
-                {showDetail.wh_return_id && (
-                  <div className="text-sm" data-testid="mkt-ret-stock-effect">
-                    <strong>Efek stok:</strong>{' '}
-                    {showDetail.wh_restocked ? (
-                      <Badge className={showDetail.wh_stock_effect === 'sellable'
-                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                        : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'}>
-                        {showDetail.wh_stock_effect === 'sellable'
-                          ? `+${showDetail.wh_restock_qty || 0} stok jual (${showDetail.wh_restock_location_code || 'ZNA-FG'})`
-                          : `+${showDetail.wh_restock_qty || 0} karantina (${showDetail.wh_restock_location_code || 'ZNA-KARANTINA'})`}
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline">
-                        {showDetail.wh_return_status === 'Resolved'
-                          ? `diputuskan: ${showDetail.wh_action_taken || '-'}`
-                          : `menunggu keputusan gudang (${showDetail.wh_return_status || 'Pending'})`}
-                      </Badge>
-                    )}
-                    {showDetail.wh_link_status && showDetail.wh_link_status !== 'linked' && (
-                      <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">{showDetail.wh_link_reason}</p>
-                    )}
-                  </div>
-                )}
-                {showDetail.credit_note_number && (
-                  <p className="text-sm"><strong>Credit Note:</strong> <Badge variant="outline">{showDetail.credit_note_number}</Badge></p>
-                )}
-              </div>
-
-              {/* RC-FLOW-UX-11c (opsi B, soft-warning): retur approved > 24 jam & belum ada wh_return_id */}
-              {showDetail.status === 'approved' && !showDetail.wh_return_id && (() => {
-                const upd = new Date(showDetail.updated_at || showDetail.date || 0).getTime();
-                const hours = (Date.now() - upd) / 36e5;
-                if (hours < 24) return null;
-                return (
-                  <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-3 py-2 text-sm">
-                    <AlertCircle size={16} className="text-amber-600 mt-0.5 shrink-0" />
-                    <div className="text-amber-900 dark:text-amber-200">
-                      <strong className="block mb-0.5">Barang belum diterima Gudang</strong>
-                      <span className="text-xs">
-                        Retur disetujui {Math.floor(hours)} jam lalu, tapi belum ada entry Retur Fisik di Gudang. Stok FG hanya bertambah setelah Gudang menerima &amp; memutuskan. Klik <em>Kirim ke Gudang</em> untuk melanjutkan.
-                      </span>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* W4 — retur LAMA (dibuat sebelum jembatan otomatis) bisa ditarik ke
-                  Gudang dari sini, apa pun statusnya selain ditolak/dibatalkan.
-                  Dulu tombol ini hanya muncul saat 'approved', sehingga retur
-                  'pending'/'completed' tidak punya jalan sama sekali ke gudang. */}
-              {!showDetail.wh_return_id && !['rejected', 'cancelled'].includes(showDetail.status) && (
-                <Button
-                  onClick={() => handleCreateWhReturn(showDetail.id)}
-                  disabled={actionLoading === showDetail.id}
-                  variant="outline"
-                  className="w-full"
-                  data-testid="btn-create-wh-return"
-                >
-                  {actionLoading === showDetail.id
-                    ? <Loader2 className="animate-spin mr-1" size={14} />
-                    : <Warehouse size={14} className="mr-1" />}
-                  Kirim ke Gudang (menunggu paket)
-                </Button>
-              )}
-
-              {showDetail.status === 'pending' && (
-                <div className="flex gap-2">
-                  <Button onClick={() => handleApprove(showDetail.id)} disabled={actionLoading === showDetail.id} className="flex-1">
-                    {actionLoading === showDetail.id && <Loader2 className="animate-spin mr-1" size={14} />}
-                    <ThumbsUp size={14} className="mr-1" />Setujui
-                  </Button>
-                  <Button onClick={() => handleReject(showDetail.id, 'Tidak memenuhi syarat')} disabled={actionLoading === showDetail.id} variant="destructive" className="flex-1">
-                    {actionLoading === showDetail.id && <Loader2 className="animate-spin mr-1" size={14} />}
-                    <ThumbsDown size={14} className="mr-1" />Tolak
-                  </Button>
-                </div>
-              )}
-              {showDetail.status === 'approved' && (
-                <div className="flex flex-col gap-2">
-                  {showDetail.wh_return_id && (
-                    <div className="rounded-md border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-800 px-3 py-2 text-sm text-emerald-900 dark:text-emerald-200 flex items-center gap-2">
-                      <CheckCircle2 size={14} className="text-emerald-600" />
-                      Terhubung ke Gudang: <strong>{showDetail.wh_return_code}</strong>
-                      {onNavigate && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="ml-auto h-7 px-2 text-xs"
-                          onClick={() => onNavigate('wh-returns', { return_id: showDetail.wh_return_id })}
-                          data-testid="btn-open-wh-return"
-                        >
-                          Buka di Gudang →
-                        </Button>
-                      )}
-                    </div>
-                  )}
-                  <Button onClick={() => handleComplete(showDetail.id)} disabled={actionLoading === showDetail.id} className="w-full"
-                    data-testid="btn-complete-return">
-                    {actionLoading === showDetail.id && <Loader2 className="animate-spin mr-1" size={14} />}
-                    <CheckCircle2 size={14} className="mr-1" />
-                    {(showDetail.refund_amount || 0) > 0
-                      ? 'Selesaikan & Terbitkan Nota Kredit'
-                      : 'Selesaikan (tanpa nota kredit — refund Rp 0)'}
-                  </Button>
-                </div>
-              )}
-              {/* 2026-11-02 — retur selesai tanpa nota kredit (data lama) bisa diterbitkan susulan. */}
-              {showDetail.status === 'completed' && !showDetail.credit_note_id && (showDetail.refund_amount || 0) > 0 && (
-                <Button onClick={() => handleIssueCreditNote(showDetail.id)} disabled={actionLoading === showDetail.id}
-                  variant="outline" className="w-full" data-testid="btn-issue-credit-note">
-                  {actionLoading === showDetail.id
-                    ? <Loader2 className="animate-spin mr-1" size={14} />
-                    : <FileText size={14} className="mr-1" />}
-                  Terbitkan Nota Kredit
-                </Button>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-    </div>
+        </DetailPopup>
+      )}
+    </PageLayout>
   );
 }

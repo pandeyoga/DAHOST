@@ -5,19 +5,23 @@
  * Terpisah dari dialog sesi supaya alur nyatanya terlayani: sesi biasanya dicatat
  * segera sesudah live (angka total dari dasbor platform), sedangkan rincian per
  * produk baru dimasukkan belakangan saat laporan produk keluar.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): FormPopup panjang (dulu Dialog buatan sendiri); "Samakan total sesi" di kaki
+ * kiri; tombol Simpan kini ber-testid lp-form-simpan (dulu lp-save). Simpan tidak menutup popup (sama seperti dulu).
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Package, Loader2, Scale } from 'lucide-react';
+import { Loader2, Scale } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
+import FormPopup from '@/components/ui/form-popup';
+import { formatDateID } from '@/lib/format';
 import { useToast } from '@/hooks/use-toast';
 import axios from 'axios';
 import LiveSessionProductsEditor from './LiveSessionProductsEditor';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const rp = (n) => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
+// Waktu dari server tanpa zona = UTC → tambah 'Z' supaya dibaca benar dalam WIB.
+const tgl = (v) => (v ? formatDateID(/T\d\d:\d\d(:\d\d(\.\d+)?)?$/.test(String(v)) ? `${v}Z` : v) : '—');
 
 export default function LiveSessionProductsDialog({
   open, onClose, onSaved, token, session,
@@ -103,47 +107,32 @@ export default function LiveSessionProductsDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose?.()}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Package className="w-4 h-4" /> Rincian Produk — {session?.title || 'Sesi Live'}
-          </DialogTitle>
-          <p className="text-xs text-muted-foreground">
-            {session?.account_name} · {String(session?.session_date || '').slice(0, 10)}
-            {' · '}omzet sesi <b>{rp(sessionRevenue)}</b>
-          </p>
-        </DialogHeader>
+    <FormPopup open={open} onClose={onClose} ukuran="panjang" testId="lp-form"
+      judul={`Rincian produk — ${session?.title || 'sesi live'}`}
+      keterangan={`${session?.account_name || '—'} · ${tgl(session?.session_date)} · omzet sesi ${rp(sessionRevenue)}`}
+      onSimpan={save} labelSimpan="Simpan rincian" menyimpan={saving}
+      aksiKiri={
+        <Button type="button" variant="outline" onClick={syncTotals} disabled={saving || !lines.length}
+          data-testid="lp-sync-totals" title="Tulis total rincian ke omzet/pesanan sesi">
+          <Scale /> Samakan total sesi
+        </Button>
+      }>
+      {loading ? (
+        <div className="flex h-40 items-center justify-center text-muted-foreground">
+          <Loader2 className="animate-spin" />
+        </div>
+      ) : (
+        <LiveSessionProductsEditor
+          token={token} accountId={session?.account_id} lines={lines}
+          onChange={setLines} sessionRevenue={sessionRevenue} disabled={saving}
+        />
+      )}
 
-        {loading ? (
-          <div className="flex items-center justify-center h-40 text-muted-foreground">
-            <Loader2 className="animate-spin" size={22} />
-          </div>
-        ) : (
-          <LiveSessionProductsEditor
-            token={token} accountId={session?.account_id} lines={lines}
-            onChange={setLines} sessionRevenue={sessionRevenue} disabled={saving}
-          />
-        )}
-
-        {recon?.message && (
-          <p className="text-xs text-muted-foreground" data-testid="lp-server-message">
-            {recon.message}
-          </p>
-        )}
-
-        <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={onClose} disabled={saving}>Tutup</Button>
-          <Button variant="outline" onClick={syncTotals} disabled={saving || !lines.length}
-            data-testid="lp-sync-totals" title="Tulis total rincian ke omzet/order sesi">
-            <Scale className="w-3.5 h-3.5 mr-1.5" /> Samakan total sesi
-          </Button>
-          <Button onClick={save} disabled={saving} data-testid="lp-save">
-            {saving && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
-            Simpan rincian
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      {recon?.message && (
+        <p className="text-sm text-muted-foreground" data-testid="lp-server-message">
+          {recon.message}
+        </p>
+      )}
+    </FormPopup>
   );
 }

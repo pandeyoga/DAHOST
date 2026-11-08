@@ -1,13 +1,27 @@
+/**
+ * Naskah live (Live Selling › Host live › Naskah).
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, daftar kartu → tabel + unduh, isi naskah lengkap di popup detail
+ * (Ubah/Hapus juga ada di sana), label Indonesia (dulu "Add Script", "All Categories", "Scope"). Permintaan ke server sama.
+ */
 import { useState, useEffect, useCallback } from 'react';
-import { Video, Plus, Edit, Trash2, RefreshCw, Loader2 } from 'lucide-react';
+import { Video, Plus, Edit, Trash2, RefreshCw } from 'lucide-react';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { toast } from 'sonner';
+import PageLayout from '../../layout/PageLayout';
+import { EmptyState } from '../../moduleAtoms';
 import { API } from './utils';
 import ScriptModal from './ScriptModal';
+
+export const KATEGORI_NASKAH = {
+  opening: 'Pembuka', demo: 'Demo produk', promo: 'Promo', closing: 'Penutup', faq: 'Tanya jawab', objection_handling: 'Menangani keberatan',
+};
+const BAHASA = { indonesia: 'Indonesia', english: 'Inggris', mandarin: 'Mandarin' };
 
 export default function ScriptsTab({ authH }) {
   const [scripts, setScripts] = useState([]);
@@ -16,6 +30,7 @@ export default function ScriptsTab({ authH }) {
   const [editingScript, setEditingScript] = useState(null);
   const [accounts, setAccounts] = useState([]);
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [detail, setDetail] = useState(null);
 
   const fetchScripts = useCallback(async () => {
     setLoading(true);
@@ -29,7 +44,7 @@ export default function ScriptsTab({ authH }) {
         setScripts(data);
       }
     } catch (e) {
-      toast.error('Gagal memuat scripts');
+      toast.error('Gagal memuat naskah');
     } finally {
       setLoading(false);
     }
@@ -51,136 +66,88 @@ export default function ScriptsTab({ authH }) {
   }, [fetchScripts, fetchAccounts]);
 
   const handleDelete = async (script) => {
-    if (!(await confirmDialog(`Yakin ingin menghapus script "${script.title}"?`))) return;
+    if (!(await confirmDialog({ title: `Hapus naskah "${script.title}"?`, confirmLabel: 'Hapus', danger: true }))) return;
     try {
       const res = await fetch(`${API}/api/marketing/livehost/scripts/${script.id}`, {
         method: 'DELETE',
         headers: authH,
       });
       if (res.ok) {
-        toast.success('Script berhasil dihapus');
+        toast.success('Naskah dihapus.');
+        setDetail(null);
         fetchScripts();
       }
     } catch (e) {
-      toast.error('Gagal menghapus script');
+      toast.error('Gagal menghapus naskah');
     }
   };
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex gap-2">
-          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-            <SelectTrigger className="w-[160px] h-9">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Categories</SelectItem>
-              <SelectItem value="opening">Opening</SelectItem>
-              <SelectItem value="demo">Demo/Product</SelectItem>
-              <SelectItem value="promo">Promo</SelectItem>
-              <SelectItem value="closing">Closing</SelectItem>
-              <SelectItem value="faq">FAQ</SelectItem>
-              <SelectItem value="objection_handling">Objection Handling</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button variant="outline" size="sm" onClick={fetchScripts} className="h-9">
-            <RefreshCw size={14} className="mr-1.5" />
-            Refresh
-          </Button>
-        </div>
-        <Button
-          size="sm"
-          onClick={() => {
-            setEditingScript(null);
-            setShowModal(true);
-          }}
-          className="h-9"
-        >
-          <Plus size={14} className="mr-1.5" />
-          Add Script
-        </Button>
-      </div>
+  const { page, setPage, totalPages, total, paged } = useClientPagination(scripts, 10);
+  const kategori = (s) => KATEGORI_NASKAH[s.category] || s.category || '—';
+  const bahasa = (s) => BAHASA[s.language] || s.language || '—';
+  const cakupan = (s) => s.account_name || 'Semua akun toko';
+  const bukaBaru = () => { setEditingScript(null); setShowModal(true); };
+  const ubah = (s) => { setDetail(null); setEditingScript(s); setShowModal(true); };
 
-      {loading ? (
-        <div className="flex justify-center py-12">
-          <Loader2 size={28} className="animate-spin text-muted-foreground" />
-        </div>
-      ) : scripts.length === 0 ? (
-        <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
-            <Video size={40} className="text-muted-foreground opacity-40" />
-            <p className="font-medium">Belum ada script</p>
-            <Button size="sm" onClick={() => setShowModal(true)}>
-              <Plus size={14} className="mr-1.5" />
-              Add Script
-            </Button>
-          </CardContent>
-        </Card>
+  const kolom = [
+    { kunci: 'judul', label: 'Judul', hp: 'judul', isi: (s) => (
+      <span><span className="font-medium">{s.title}</span>
+        <span className="block max-w-md truncate text-xs text-muted-foreground">{s.script_text}</span></span>) },
+    { kunci: 'kat', label: 'Kategori', hp: 'keterangan', isi: kategori },
+    { kunci: 'bahasa', label: 'Bahasa', isi: bahasa },
+    { kunci: 'cakupan', label: 'Berlaku untuk', isi: cakupan },
+    { kunci: 'produk', label: 'Produk', rata: 'kanan', isi: (s) => <span className="tabular-nums">{(s.products_applicable || []).length || '—'}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
+      <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+        <Button variant="ghost" size="icon-sm" onClick={() => ubah(s)} title="Ubah naskah" aria-label="Ubah naskah"><Edit /></Button>
+        <Button variant="ghost" size="icon-sm" className="text-[hsl(var(--danger-text))]" onClick={() => handleDelete(s)}
+          title="Hapus naskah" aria-label="Hapus naskah"><Trash2 /></Button>
+      </div>) },
+  ];
+
+  return (
+    <PageLayout testId="scripts-tab" title="Naskah live" subtitle="Naskah pembuka, demo, promo, dan penutup untuk host live."
+      actions={<Button onClick={bukaBaru} data-testid="add-script-btn"><Plus />Tambah naskah</Button>}
+      filters={
+        <SmartNativeSelect value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="w-full" wrapperClassName="w-48 max-w-full" searchable={false}
+          data-testid="filter-script-category">
+          <option value="all">Semua kategori</option>
+          {Object.entries(KATEGORI_NASKAH).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </SmartNativeSelect>
+      }
+      tools={<>
+        <TombolUnduh namaBerkas="naskah-live" namaLembar="Naskah" baris={scripts} testId="script-unduh"
+          kolom={[
+            { label: 'Judul', nilai: (s) => s.title || '' }, { label: 'Kategori', nilai: kategori }, { label: 'Bahasa', nilai: bahasa },
+            { label: 'Berlaku untuk', nilai: cakupan }, { label: 'Produk', nilai: (s) => (s.products_applicable || []).join(', ') },
+            { label: 'Isi naskah', nilai: (s) => s.script_text || '' },
+          ]} />
+        <Button variant="outline" size="icon" onClick={fetchScripts} title="Muat ulang" aria-label="Muat ulang" data-testid="refresh-scripts">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      footer={scripts.length > 10 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}>
+      {loading && scripts.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat naskah…</p>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {scripts.map((script) => (
-            <Card key={script.id} className="hover:shadow-md transition-shadow">
-              <CardHeader className="pb-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <CardTitle className="text-sm font-semibold line-clamp-2">{script.title}</CardTitle>
-                    <div className="flex items-center gap-2 mt-1.5">
-                      <Badge variant="outline" className="text-xs capitalize">
-                        {script.category.replace('_', ' ')}
-                      </Badge>
-                      <Badge variant="secondary" className="text-xs">
-                        {script.language}
-                      </Badge>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 w-7 p-0"
-                      onClick={() => {
-                        setEditingScript(script);
-                        setShowModal(true);
-                      }}
-                    >
-                      <Edit size={12} />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 w-7 p-0 text-red-600"
-                      onClick={() => handleDelete(script)}
-                    >
-                      <Trash2 size={12} />
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <p className="text-xs text-muted-foreground line-clamp-4 mb-2">{script.script_text}</p>
-                <div className="text-xs text-muted-foreground">
-                  <strong>Scope:</strong> {script.account_name || 'Global (All Accounts)'}
-                </div>
-                {script.products_applicable && script.products_applicable.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {script.products_applicable.slice(0, 3).map((prod) => (
-                      <Badge key={prod} variant="secondary" className="text-xs">
-                        {prod}
-                      </Badge>
-                    ))}
-                    {script.products_applicable.length > 3 && (
-                      <Badge variant="secondary" className="text-xs">
-                        +{script.products_applicable.length - 3}
-                      </Badge>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <TabelData kolom={kolom} baris={paged} testId="scripts-table" onKlikBaris={setDetail}
+          kosong={<EmptyState icon={Video} title={categoryFilter === 'all' ? 'Belum ada naskah' : 'Tidak ada naskah di kategori ini'}
+            description="Naskah membantu host live menjaga alur siaran."
+            action={<Button onClick={bukaBaru}><Plus />Tambah naskah</Button>} />} />
       )}
+
+      <DetailPopup open={!!detail} onClose={() => setDetail(null)} judul={detail?.title} keterangan={detail && `${kategori(detail)} · ${bahasa(detail)}`}
+        testId="script-detail"
+        aksi={detail && <>
+          <Button variant="outline" className="text-[hsl(var(--danger-text))]" onClick={() => handleDelete(detail)}><Trash2 />Hapus</Button>
+          <Button onClick={() => ubah(detail)}><Edit />Ubah</Button>
+        </>}>
+        {detail && <>
+          <BarisDetail label="Berlaku untuk">{cakupan(detail)}</BarisDetail>
+          <BarisDetail label="Produk">{(detail.products_applicable || []).join(', ') || '—'}</BarisDetail>
+          <div className="mt-3 whitespace-pre-wrap rounded-md border border-[hsl(var(--glass-border))] p-3 text-sm">{detail.script_text}</div>
+        </>}
+      </DetailPopup>
 
       {showModal && (
         <ScriptModal
@@ -198,6 +165,6 @@ export default function ScriptsTab({ authH }) {
           }}
         />
       )}
-    </div>
+    </PageLayout>
   );
 }

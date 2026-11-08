@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Clock, User, CheckCircle, AlertCircle, MoreVertical, ExternalLink, Zap } from 'lucide-react';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { GlassCard } from '@/components/ui/glass';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -10,22 +9,24 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { AccountBadge } from './marketing/AccountBadge';
+import { StatusBadge } from './moduleAtoms';
 import { toast } from 'sonner';
 
-const priorityColors = {
-  high: 'bg-red-500/10 text-red-400 border-red-500/30',
-  medium: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30',
-  low: 'bg-green-500/10 text-green-400 border-green-500/30',
-};
-
-const taskTypeLabels = {
-  data_entry: 'Input Data',
-  review: 'Review',
+/** Label bersama layar tugas (Standar UI/UX v2 — bahasa staf, bukan kode). */
+export const PRIORITAS = { high: ['Tinggi', 'danger'], medium: ['Sedang', 'warning'], low: ['Rendah', 'muted'] };
+export const JENIS_TUGAS = {
+  data_entry: 'Input data',
+  review: 'Tinjauan',
   analysis: 'Analisis',
-  reporting: 'Reporting',
+  reporting: 'Pelaporan',
   operational: 'Operasional',
 };
+export const STATUS_TUGAS = {
+  to_do: ['Akan dikerjakan', 'muted'], in_progress: ['Sedang dikerjakan', 'info'],
+  pending_approval: ['Menunggu persetujuan', 'warning'], done: ['Selesai', 'success'], cancelled: ['Dibatalkan', 'danger'],
+};
+export const STATUS_PERSETUJUAN = { pending: 'Menunggu', approved: 'Disetujui', rejected: 'Ditolak' };
+const taskTypeLabels = JENIS_TUGAS;
 
 export function TaskCard({ task, isDragging, onRefresh, token, accounts = [], onViewDetail }) {
   const [loading, setLoading] = useState(false);
@@ -39,7 +40,7 @@ export function TaskCard({ task, isDragging, onRefresh, token, accounts = [], on
   const actionExecuted = !!task.action_executed_at;
 
   const handleApprove = async () => {
-    if (!(await confirmDialog('Approve task ini?'))) return;
+    if (!(await confirmDialog({ title: 'Setujui tugas ini?', confirmLabel: 'Setujui' }))) return;
     setLoading(true);
     try {
       const res = await fetch(`/api/marketing/tasks/${task.id}/approve`, {
@@ -47,18 +48,18 @@ export function TaskCard({ task, isDragging, onRefresh, token, accounts = [], on
         headers
       });
       if (res.ok) {
-        toast.success('Task approved');
+        toast.success('Tugas disetujui.');
         if (onRefresh) onRefresh();
       }
     } catch (e) {
-      toast.error('Gagal approve task');
+      toast.error('Gagal menyetujui tugas');
     } finally {
       setLoading(false);
     }
   };
 
   const handleReject = async () => {
-    const reason = prompt('Alasan reject:');
+    const reason = await confirmDialog({ title: 'Tolak tugas ini?', confirmLabel: 'Tolak', danger: true, input: { label: 'Alasan penolakan' } });
     if (!reason) return;
     setLoading(true);
     try {
@@ -67,11 +68,11 @@ export function TaskCard({ task, isDragging, onRefresh, token, accounts = [], on
         headers
       });
       if (res.ok) {
-        toast.success('Task rejected');
+        toast.success('Tugas ditolak.');
         if (onRefresh) onRefresh();
       }
     } catch (e) {
-      toast.error('Gagal reject task');
+      toast.error('Gagal menolak tugas');
     } finally {
       setLoading(false);
     }
@@ -83,8 +84,8 @@ export function TaskCard({ task, isDragging, onRefresh, token, accounts = [], on
     <GlassCard
       className={`p-3 cursor-grab active:cursor-grabbing transition-all ${
         isDragging ? 'shadow-lg rotate-2 scale-105' : ''
-      } ${isOverdue ? 'border-red-500/50' : ''} ${
-        isActionable && !actionExecuted ? 'border-blue-500/40' : ''
+      } ${isOverdue ? 'border-[hsl(var(--destructive)/0.5)]' : ''} ${
+        isActionable && !actionExecuted ? 'border-[hsl(var(--primary)/0.4)]' : ''
       }`}
       data-testid={`task-card-${task.task_code}`}
     >
@@ -92,42 +93,43 @@ export function TaskCard({ task, isDragging, onRefresh, token, accounts = [], on
       <div className="flex items-start justify-between mb-2">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 mb-1 flex-wrap">
-            <span className="text-xs font-mono text-muted-foreground">{task.task_code}</span>
-            {isOverdue && <AlertCircle className="w-3 h-3 text-red-400 shrink-0" />}
+            <span className="text-xs tabular-nums text-muted-foreground">{task.task_code}</span>
+            {isOverdue && <AlertCircle className="w-3 h-3 text-[hsl(var(--danger-text))] shrink-0" />}
             {/* ⚡ Actionable indicator */}
             {isActionable && (
-              <span className={`inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+              <span className={`inline-flex items-center gap-0.5 text-xs font-medium px-1.5 py-0.5 rounded-full ${
                 actionExecuted
-                  ? 'bg-emerald-500/10 text-emerald-500'
-                  : 'bg-blue-500/15 text-blue-500 border border-blue-500/30'
+                  ? 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))]'
+                  : 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border border-[hsl(var(--primary)/0.3)]'
               }`}>
                 <Zap size={9} />
-                {actionExecuted ? 'Done' : 'Action'}
+                {actionExecuted ? 'Aksi selesai' : 'Ada aksi'}
               </span>
             )}
           </div>
-          <h4 className="text-sm font-semibold text-foreground line-clamp-2">{task.title}</h4>
+          <p className="text-sm font-semibold text-foreground line-clamp-2">{task.title}</p>
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 shrink-0">
-              <MoreVertical className="w-3 h-3" />
+            <Button variant="ghost" size="icon-sm" className="shrink-0" title="Lainnya" aria-label="Lainnya"
+              onClick={(e) => e.stopPropagation()}>
+              <MoreVertical className="w-3.5 h-3.5" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={() => onViewDetail?.(task.id)}>
               <ExternalLink className="w-3 h-3 mr-2" />
-              Detail
+              Rincian
             </DropdownMenuItem>
             {task.status === 'pending_approval' && (
               <>
                 <DropdownMenuItem onClick={handleApprove} disabled={loading}>
-                  <CheckCircle className="w-3 h-3 mr-2 text-emerald-400" />
-                  Approve
+                  <CheckCircle className="w-3 h-3 mr-2 text-[hsl(var(--success-text))]" />
+                  Setujui
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={handleReject} disabled={loading}>
-                  <AlertCircle className="w-3 h-3 mr-2 text-red-400" />
-                  Reject
+                  <AlertCircle className="w-3 h-3 mr-2 text-[hsl(var(--danger-text))]" />
+                  Tolak
                 </DropdownMenuItem>
               </>
             )}
@@ -143,25 +145,21 @@ export function TaskCard({ task, isDragging, onRefresh, token, accounts = [], on
       {/* Account Badge */}
       {account && (
         <div className="mb-2">
-          <AccountBadge account={account} size="xs" />
+          <span className="text-xs text-muted-foreground">Toko: <span className="text-foreground">{account.account_name}</span></span>
         </div>
       )}
 
       {/* Badges */}
       <div className="flex flex-wrap items-center gap-1 mb-2">
-        <Badge variant="outline" className={priorityColors[task.priority]}>
-          {task.priority}
-        </Badge>
-        <Badge variant="outline" className="text-xs">
-          {taskTypeLabels[task.task_type] || task.task_type}
-        </Badge>
+        <StatusBadge status={task.priority} label={(PRIORITAS[task.priority] || [task.priority || '—'])[0]} tone={(PRIORITAS[task.priority] || [])[1]} />
+        <StatusBadge status={task.task_type} label={taskTypeLabels[task.task_type] || 'Lainnya'} tone="muted" />
       </div>
 
       {/* Checklist Progress */}
       {task.checklist && task.checklist.length > 0 && (
         <div className="mb-2">
           <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-            <span>Checklist</span>
+            <span>Daftar periksa</span>
             <span>
               {task.checklist.filter(c => c.completed).length}/{task.checklist.length}
             </span>
@@ -181,7 +179,7 @@ export function TaskCard({ task, isDragging, onRefresh, token, accounts = [], on
       <div className="flex items-center justify-between text-xs text-muted-foreground pt-2 border-t border-[var(--glass-border)]">
         <div className="flex items-center gap-1">
           {task.due_date && (
-            <div className={`flex items-center gap-1 ${isOverdue ? 'text-red-400' : ''}`}>
+            <div className={`flex items-center gap-1 ${isOverdue ? 'text-[hsl(var(--danger-text))]' : ''}`}>
               <Clock className="w-3 h-3" />
               {new Date(task.due_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
             </div>
@@ -200,7 +198,7 @@ export function TaskCard({ task, isDragging, onRefresh, token, accounts = [], on
       {task.approval_status && (
         <div className="mt-2 pt-2 border-t border-[var(--glass-border)]">
           <span className="text-xs text-muted-foreground">
-            Status Approval: <span className="font-semibold">{task.approval_status}</span>
+            Persetujuan: <span className="font-semibold">{STATUS_PERSETUJUAN[task.approval_status] || task.approval_status}</span>
           </span>
         </div>
       )}

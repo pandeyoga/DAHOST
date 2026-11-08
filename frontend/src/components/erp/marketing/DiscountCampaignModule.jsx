@@ -1,69 +1,61 @@
+/**
+ * Kampanye diskon (Portal Toko) — kampanye promo multi-platform.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, penyaring satu baris, 4 StatTile berketerangan, tabel + unduh
+ * Excel/CSV semua baris (dulu CSV halaman ini saja), detail popup, form = FormPopup + DatePicker, label Indonesia
+ * (dulu kode mentah "semua_produk", "Upcoming", "Expired"). Panggilan API & isian tidak berubah.
+ */
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import {
-  Tag, Plus, Pencil, Trash2, RefreshCw, Loader2,
-  CheckCircle2, Clock, XCircle, AlertTriangle, Filter, X, TrendingDown
-} from 'lucide-react';
+import { Plus, Pencil, Trash2, RefreshCw, AlertTriangle, Search } from 'lucide-react';
+import axios from 'axios';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
-} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue
-} from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import DatePicker from '@/components/ui/date-picker';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import PaginationLite from '@/components/ui/pagination-lite';
 import { useToast } from '@/hooks/use-toast';
-import { useMarketingAccounts, getPlatformIcon } from '@/hooks/useMarketingAccounts';
-import axios from 'axios';
+import { useMarketingAccounts } from '@/hooks/useMarketingAccounts';
+import { formatRupiah, formatDateID } from '@/lib/format';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
+import { getPlatformConfig } from './AccountBadge';
 import { MarketingAccountSelect } from './pickers/MarketingPickers';
-// F10 (sesi #10) — kampanye diskon = biaya; daftarnya wajib bisa diunduh untuk rapat.
-import ExportCsvButton from '@/components/ui/export-csv-button';
-import { formatRupiah } from '@/lib/format';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
-const PLATFORM_ICONS = { shopee: '🛒', tiktok: '🎵', tokopedia: '🟢', instagram: '📷', semua_platform: '🌐' };
+const PLATFORM_LABEL = { shopee: 'Shopee', tiktok: 'TikTok', tokopedia: 'Tokopedia', instagram: 'Instagram', semua_platform: 'Semua platform' };
+const labelPlatform = (p) => PLATFORM_LABEL[p] || (getPlatformConfig(p).label !== 'Platform' ? getPlatformConfig(p).label : (p || '—'));
 const STATUS_CONFIG = {
-  active:   { label: 'Aktif',    color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', icon: CheckCircle2 },
-  upcoming: { label: 'Upcoming', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300', icon: Clock },
-  expired:  { label: 'Expired',  color: 'bg-muted text-muted-foreground dark:bg-gray-800 dark:text-gray-400', icon: XCircle },
-  draft:    { label: 'Draft',    color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: AlertTriangle },
+  active: { label: 'Aktif', tone: 'success' },
+  upcoming: { label: 'Akan datang', tone: 'info' },
+  expired: { label: 'Berakhir', tone: 'muted' },
+  draft: { label: 'Draf', tone: 'warning' },
 };
-
-function StatusBadge({ status }) {
+const StatusKampanye = ({ status }) => {
   const c = STATUS_CONFIG[status] || STATUS_CONFIG.draft;
-  const Icon = c.icon;
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${c.color}`}>
-      <Icon size={10} />{c.label}
-    </span>
-  );
-}
-
+  return <StatusBadge status={status} label={c.label} tone={c.tone} />;
+};
+const UNIT_LABEL = { persen: 'Persen (%)', nominal: 'Nominal (Rp)', unit: 'Unit' };
+const labelCakupan = (v) => (v ? String(v).replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()) : '—');
+const tgl = (v) => (v ? formatDateID(String(v).slice(0, 10)) : '—');
 const fmtRp = (n) => n ? formatRupiah(n) : '-';
 function fmt(n)   { return new Intl.NumberFormat('id-ID').format(n || 0); }
-
-function KPICard({ label, value, sub, color, bg, icon: Icon }) {
-  return (
-    <Card className={`${bg} border-0`}>
-      <CardContent className="p-4 flex items-center gap-3">
-        <div className="p-2 rounded-lg bg-background/60 dark:bg-black/20">
-          <Icon size={20} className={color} />
-        </div>
-        <div>
-          <p className="text-xl font-bold leading-tight">{value}</p>
-          <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+const nilaiDiskon = (item) => (item.discount_value > 0
+  ? (item.discount_unit === 'persen' ? `${String(item.discount_value).replace('.', ',')}%`
+    : item.discount_unit === 'nominal' ? fmtRp(item.discount_value) : `${item.discount_value} unit`)
+  : '—');
+const sisaHari = (item) => {
+  const d = item.days_remaining;
+  if (d === null || d === undefined) return '';
+  return d >= 0 ? `${d} hari lagi` : `berakhir ${Math.abs(d)} hari lalu`;
+};
 
 const EMPTY_FORM = {
   account_id: '', account_name: '', platform: 'shopee', name: '', discount_type: 'flash_sale',
@@ -72,8 +64,8 @@ const EMPTY_FORM = {
 };
 
 const DISCOUNT_TYPE_LABELS = {
-  flash_sale: 'Flash Sale', voucher: 'Voucher / Kupon', bundling: 'Bundling Produk',
-  buy_x_get_y: 'Buy X Get Y', free_shipping: 'Gratis Ongkir',
+  flash_sale: 'Flash sale', voucher: 'Voucher / kupon', bundling: 'Bundling produk',
+  buy_x_get_y: 'Beli X gratis Y', free_shipping: 'Gratis ongkir',
   diskon_persen: 'Diskon %', cashback: 'Cashback', giveaway: 'Giveaway',
 };
 
@@ -96,9 +88,11 @@ export default function DiscountCampaignModule({ token }) {
   const [page,          setPage]          = useState(1);
 
   const [showForm,    setShowForm]    = useState(false);
+  const [detail,      setDetail]      = useState(null);
   const [editTarget,  setEditTarget]  = useState(null);
   const [form,        setForm]        = useState(EMPTY_FORM);
   const [formLoading, setFormLoading] = useState(false);
+  const [galatForm, setGalatForm] = useState('');
 
   const fetchSummary = useCallback(async () => {
     try {
@@ -121,14 +115,14 @@ export default function DiscountCampaignModule({ token }) {
         setItems(res.data.data || []);
         setPagination(res.data.pagination);
       }
-    } catch { toast({ title: 'Gagal load kampanye', variant: 'destructive' }); }
+    } catch { toast({ title: 'Gagal memuat kampanye', variant: 'destructive' }); }
     finally { setLoading(false); }
   }, [page, filterStatus, filterPlatform, filterType, filterAccountId, search, authH, toast]);
 
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
   useEffect(() => { fetchItems(); },   [fetchItems]);
 
-  const openCreate = () => { setEditTarget(null); setForm(EMPTY_FORM); setShowForm(true); };
+  const openCreate = () => { setEditTarget(null); setForm(EMPTY_FORM); setGalatForm(''); setShowForm(true); };
   const openEdit   = (item) => {
     setEditTarget(item);
     setForm({
@@ -140,6 +134,7 @@ export default function DiscountCampaignModule({ token }) {
       start_date: item.start_date || '', end_date: item.end_date || '',
       description: item.description || '', product_scope: item.product_scope || 'semua_produk',
     });
+    setGalatForm('');
     setShowForm(true);
   };
 
@@ -156,8 +151,9 @@ export default function DiscountCampaignModule({ token }) {
 
   const handleSave = async () => {
     if (!form.account_id || !form.name || !form.start_date || !form.end_date) {
-      toast({ title: 'Wajib pilih Akun, isi Nama Kampanye, dan tanggal', variant: 'destructive' }); return;
+      setGalatForm('Pilih akun, isi nama kampanye, dan tanggal mulai & berakhir.'); return;
     }
+    setGalatForm('');
     setFormLoading(true);
     try {
       const payload = {
@@ -168,305 +164,222 @@ export default function DiscountCampaignModule({ token }) {
       };
       if (editTarget) {
         await axios.put(`${API}/api/marketing/discounts/${editTarget.id}`, payload, { headers: authH });
-        toast({ title: 'Kampanye diperbarui' });
+        toast({ title: 'Kampanye disimpan.' });
       } else {
         await axios.post(`${API}/api/marketing/discounts`, payload, { headers: authH });
-        toast({ title: 'Kampanye berhasil ditambahkan' });
+        toast({ title: 'Kampanye ditambahkan.' });
       }
       setShowForm(false);
       fetchSummary();
       fetchItems();
-    } catch { toast({ title: 'Gagal menyimpan', variant: 'destructive' }); }
+    } catch (e) { setGalatForm(e?.response?.data?.detail || 'Gagal menyimpan kampanye.'); }
     finally { setFormLoading(false); }
   };
 
   const handleDelete = async (id) => {
-    if (!(await confirmDialog('Hapus kampanye ini?'))) return;
+    if (!(await confirmDialog({ title: 'Hapus kampanye ini?', body: 'Kampanye dihapus dari daftar.', confirmLabel: 'Hapus', danger: true }))) return;
+    setDetail(null);
     try {
       await axios.delete(`${API}/api/marketing/discounts/${id}`, { headers: authH });
-      toast({ title: 'Kampanye dihapus' });
+      toast({ title: 'Kampanye dihapus.' });
       fetchSummary();
       fetchItems();
-    } catch { toast({ title: 'Gagal hapus', variant: 'destructive' }); }
+    } catch { toast({ title: 'Gagal menghapus kampanye', variant: 'destructive' }); }
   };
 
-  const kpis = [
-    { label: 'Total Kampanye', value: fmt(summary?.total),         sub: 'Semua kampanye',            color: 'text-indigo-600',  bg: 'bg-indigo-50 dark:bg-indigo-900/20',   icon: Tag },
-    { label: 'Aktif Sekarang', value: fmt(summary?.active),        sub: 'Sedang berjalan',           color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20', icon: CheckCircle2 },
-    { label: 'Akan Datang',    value: fmt(summary?.upcoming),       sub: 'Belum mulai',               color: 'text-blue-600',    bg: 'bg-blue-50 dark:bg-blue-900/20',       icon: Clock },
-    { label: 'Habis 3 Hari',   value: fmt(summary?.expiring_soon), sub: 'Segera berakhir',           color: 'text-amber-600',   bg: 'bg-amber-50 dark:bg-amber-900/20',    icon: AlertTriangle },
+  const jenis = (item) => DISCOUNT_TYPE_LABELS[item.discount_type] || item.discount_type_label || item.discount_type;
+  const paramSaring = () => {
+    const params = {};
+    if (filterStatus)   params.status = filterStatus;
+    if (filterPlatform) params.platform = filterPlatform;
+    if (filterAccountId) params.account_id = filterAccountId;
+    if (filterType)     params.discount_type = filterType;
+    if (search)         params.search = search;
+    return params;
+  };
+  /** Unduh semua kampanye hasil saringan (dulu hanya 20 baris halaman ini). */
+  const ambilSemua = async () => {
+    const semua = [];
+    for (let p = 1; p <= 200; p += 1) {
+      const res = await axios.get(`${API}/api/marketing/discounts`, { params: { page: p, page_size: 100, ...paramSaring() }, headers: authH });
+      semua.push(...(res.data.data || []));
+      if (p >= (res.data.pagination?.total_pages || 1)) break;
+    }
+    return semua;
+  };
+  const adaSaring = !!(filterStatus || filterPlatform || filterType || filterAccountId || search);
+
+  const kolom = [
+    { kunci: 'nama', label: 'Nama kampanye', hp: 'judul', isi: (item) => (
+      <div className="min-w-0 md:max-w-[16rem]"><p className="truncate font-medium" title={item.name}>{item.name}</p>
+        <p className="text-xs text-muted-foreground">{labelCakupan(item.product_scope)}</p></div>) },
+    { kunci: 'toko', label: 'Toko', isi: (item) => (
+      <span className="md:whitespace-nowrap">{item.account_name || '—'}<span className="block text-xs text-muted-foreground">{labelPlatform(item.platform)}</span></span>) },
+    { kunci: 'jenis', label: 'Jenis', isi: (item) => <span className="md:whitespace-nowrap">{jenis(item)}</span> },
+    { kunci: 'nilai', label: 'Nilai', rata: 'kanan', isi: (item) => (
+      <span className="tabular-nums md:whitespace-nowrap"><span className="font-medium">{nilaiDiskon(item)}</span>
+        {item.min_purchase > 0 && <span className="block text-xs text-muted-foreground">min. {fmtRp(item.min_purchase)}</span>}</span>) },
+    { kunci: 'periode', label: 'Periode', hp: 'keterangan', isi: (item) => (
+      <span className="tabular-nums md:whitespace-nowrap">{tgl(item.start_date)} – {tgl(item.end_date)}
+        {sisaHari(item) && <span className={`block text-xs ${item.days_remaining >= 0 && item.days_remaining <= 3 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>{sisaHari(item)}</span>}</span>) },
+    { kunci: 'status', label: 'Status', isi: (item) => <StatusKampanye status={item.status} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (item) => (
+      <div className="flex justify-end gap-1">
+        <Button size="icon-sm" variant="ghost" onClick={() => openEdit(item)} title="Ubah kampanye" aria-label="Ubah kampanye"><Pencil /></Button>
+        <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--danger-text))]" onClick={() => handleDelete(item.id)}
+          title="Hapus kampanye" aria-label="Hapus kampanye"><Trash2 /></Button>
+      </div>) },
   ];
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-6" data-testid="discount-campaign-dashboard">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Discount Campaign Manager</h1>
-          <p className="text-sm text-muted-foreground">Kelola semua kampanye promo multi-platform</p>
+    <PageLayout testId="discount-campaign-dashboard" title="Kampanye diskon"
+      subtitle="Kampanye promo semua platform: flash sale, voucher, bundling, gratis ongkir."
+      actions={<Button onClick={openCreate} data-testid="btn-add-discount"><Plus />Buat kampanye</Button>}
+      filters={<>
+        <div className="relative w-full sm:w-44">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input className="pl-8" placeholder="Cari nama kampanye" value={search}
+            onChange={e => { setSearch(e.target.value); setPage(1); }} data-testid="discount-search" />
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => { fetchSummary(); fetchItems(); }}>
-            <RefreshCw size={14} className="mr-1" />Refresh
-          </Button>
-          <Button size="sm" onClick={openCreate} data-testid="btn-add-discount">
-            <Plus size={14} className="mr-1" />Buat Kampanye
-          </Button>
-        </div>
-      </div>
-
-      {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-        {kpis.map(k => <KPICard key={k.label} {...k} />)}
-      </div>
-
-      {/* Expiring Soon Alert */}
-      {summary?.expiring_soon > 0 && (
-        <div className="mb-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 flex items-center gap-2 text-amber-700 dark:text-amber-300 text-sm">
-          <AlertTriangle size={16} />
-          <strong>{summary.expiring_soon} kampanye</strong> akan berakhir dalam 3 hari! Perlu tindakan.
-        </div>
+        <MarketingAccountSelect token={token} value={filterAccountId} className="w-44"
+          onChange={(v) => { setFilterAccountId(v); setPage(1); }} label=""
+          includeAll allLabel="Semua toko" required={false} testId="discount-filter-account" />
+        <SmartNativeSelect value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }} className="w-full" wrapperClassName="w-36 max-w-full" searchable={false}>
+          <option value="">Semua status</option>
+          {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+        </SmartNativeSelect>
+        <SmartNativeSelect value={filterPlatform} onChange={(e) => { setFilterPlatform(e.target.value); setPage(1); }} className="w-full" wrapperClassName="w-40 max-w-full" searchable={false}>
+          <option value="">Semua platform</option>
+          {Object.entries(PLATFORM_LABEL).filter(([k]) => k !== 'semua_platform').map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          <option value="semua_platform">Kampanye lintas platform</option>
+        </SmartNativeSelect>
+        <SmartNativeSelect value={filterType} onChange={(e) => { setFilterType(e.target.value); setPage(1); }} className="w-full" wrapperClassName="w-40 max-w-full" searchable={false}>
+          <option value="">Semua jenis</option>
+          {Object.entries(DISCOUNT_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </SmartNativeSelect>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="kampanye-diskon" namaLembar="Kampanye" baris={items} ambilSemua={ambilSemua} testId="discount-export-csv"
+          kolom={[
+            { label: 'Nama kampanye', nilai: (it) => it.name },
+            { label: 'Platform', nilai: (it) => labelPlatform(it.platform) },
+            { label: 'Toko', nilai: (it) => it.account_name || '' },
+            { label: 'Jenis', nilai: jenis },
+            { label: 'Nilai', nilai: (it) => Number(it.discount_value) || 0 },
+            { label: 'Satuan', nilai: (it) => UNIT_LABEL[it.discount_unit] || it.discount_unit || '' },
+            { label: 'Min. belanja', nilai: (it) => Number(it.min_purchase) || 0 },
+            { label: 'Maks. diskon', nilai: (it) => Number(it.max_discount) || 0 },
+            { label: 'Cakupan produk', nilai: (it) => labelCakupan(it.product_scope) },
+            { label: 'Mulai', nilai: (it) => tgl(it.start_date) },
+            { label: 'Selesai', nilai: (it) => tgl(it.end_date) },
+            { label: 'Sisa hari', nilai: (it) => (it.days_remaining ?? '') },
+            { label: 'Status', nilai: (it) => STATUS_CONFIG[it.status]?.label || it.status || '' },
+          ]} />
+        <Button variant="outline" size="icon" onClick={() => { fetchSummary(); fetchItems(); }} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={<>
+        {(summary?.total || 0) > 0 && (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="discount-kpi">
+            <StatTile label="Total kampanye" value={fmt(summary?.total)} sub={`${fmt(summary?.expired)} sudah berakhir`}
+              hint="Semua toko; tidak ikut penyaring." />
+            <StatTile label="Aktif sekarang" value={fmt(summary?.active)} accent="success" hint="Kampanye yang sedang berjalan hari ini." />
+            <StatTile label="Akan datang" value={fmt(summary?.upcoming)} accent="primary" hint="Kampanye yang belum mulai." />
+            <StatTile label="Berakhir ≤ 3 hari" value={fmt(summary?.expiring_soon)} accent="warning" hint="Kampanye aktif yang berakhir dalam 3 hari." />
+          </div>
+        )}
+        {summary?.expiring_soon > 0 && (
+          <Notice tone="warning" icon={AlertTriangle} title={`${summary.expiring_soon} kampanye berakhir dalam 3 hari`}>
+            Perpanjang atau siapkan kampanye pengganti.
+          </Notice>
+        )}
+      </>}
+      footer={pagination && pagination.total_pages > 1 && (
+        <PaginationLite page={page} totalPages={pagination.total_pages} total={pagination.total} pageSize={20} onPageChange={setPage} />
+      )}>
+      {loading && items.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat kampanye…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={items} onKlikBaris={setDetail} testId="discount-table"
+          kosong={<EmptyState title={adaSaring ? 'Tidak ada kampanye yang cocok' : 'Belum ada kampanye'}
+            description={adaSaring ? 'Ubah saringan atau kata pencarian.' : 'Buat kampanye diskon pertama untuk toko Anda.'}
+            action={!adaSaring && <Button onClick={openCreate}><Plus />Buat kampanye</Button>} />} />
       )}
 
-      {/* Filters */}
-      <Card className="mb-4">
-        <CardContent className="p-3 flex flex-wrap gap-2 items-center">
-          <Input
-            className="h-8 text-xs w-48" placeholder="🔍 Cari nama kampanye..."
-            value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}
-          />
-          <Select value={filterStatus || 'all'} onValueChange={v => { setFilterStatus(v === 'all' ? '' : v); setPage(1); }}>
-            <SelectTrigger className="w-32 h-8 text-xs"><SelectValue placeholder="Status" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Semua Status</SelectItem>
-              {Object.entries(STATUS_CONFIG).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <div className="w-52">
-            <MarketingAccountSelect token={token} value={filterAccountId}
-              onChange={(v) => { setFilterAccountId(v); setPage(1); }} label=""
-              includeAll allLabel="Semua Toko" required={false}
-              testId="discount-filter-account" />
-          </div>
-          <Select value={filterPlatform || 'all'} onValueChange={v => { setFilterPlatform(v === 'all' ? '' : v); setPage(1); }}>
-            <SelectTrigger className="w-36 h-8 text-xs"><SelectValue placeholder="Platform" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Semua Platform</SelectItem>
-              {Object.entries(PLATFORM_ICONS).map(([k, v]) => <SelectItem key={k} value={k}>{v} {k}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select value={filterType || 'all'} onValueChange={v => { setFilterType(v === 'all' ? '' : v); setPage(1); }}>
-            <SelectTrigger className="w-40 h-8 text-xs"><SelectValue placeholder="Jenis Diskon" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Semua Jenis</SelectItem>
-              {Object.entries(DISCOUNT_TYPE_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          {(filterStatus || filterPlatform || filterType || search) && (
-            <Button size="sm" variant="ghost" className="h-8 px-2" onClick={() => { setFilterStatus(''); setFilterPlatform(''); setFilterType(''); setFilterAccountId(''); setSearch(''); setPage(1); }}>
-              <X size={12} className="mr-1" />Reset
-            </Button>
-          )}
-          <ExportCsvButton
-            filename="kampanye-diskon"
-            testId="discount-export-csv"
-            head={['Nama kampanye', 'Platform', 'Toko', 'Jenis', 'Nilai', 'Satuan',
-              'Min. belanja', 'Cakupan produk', 'Mulai', 'Selesai', 'Sisa hari', 'Status']}
-            rows={(items || []).map((it) => [it.name, it.platform, it.account_name,
-              it.discount_type_label || it.discount_type, it.discount_value,
-              it.discount_unit, it.min_purchase, it.product_scope,
-              String(it.start_date || '').slice(0, 10), String(it.end_date || '').slice(0, 10),
-              it.days_remaining, it.status])}
-          />
-        </CardContent>
-      </Card>
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} judul={detail.name} testId="discount-detail"
+          status={<StatusKampanye status={detail.status} />}
+          keterangan={`${detail.account_name || '—'} · ${labelPlatform(detail.platform)}`}
+          aksi={<>
+            <Button size="sm" variant="outline" onClick={() => { const it = detail; setDetail(null); openEdit(it); }}><Pencil />Ubah</Button>
+            <Button size="sm" variant="destructive" onClick={() => handleDelete(detail.id)}><Trash2 />Hapus</Button>
+          </>}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Jenis">{jenis(detail)}</BarisDetail>
+            <BarisDetail label="Nilai diskon">{nilaiDiskon(detail)}</BarisDetail>
+            <BarisDetail label="Min. belanja">{fmtRp(detail.min_purchase)}</BarisDetail>
+            <BarisDetail label="Maks. diskon">{fmtRp(detail.max_discount)}</BarisDetail>
+            <BarisDetail label="Cakupan produk">{labelCakupan(detail.product_scope)}</BarisDetail>
+            <BarisDetail label="Periode">{tgl(detail.start_date)} – {tgl(detail.end_date)}{sisaHari(detail) ? ` · ${sisaHari(detail)}` : ''}</BarisDetail>
+            {detail.description && <BarisDetail label="Deskripsi">{detail.description}</BarisDetail>}
+          </dl>
+        </DetailPopup>
+      )}
 
-      {/* Table */}
-      <Card>
-        <CardContent className="p-0">
-          {loading ? (
-            <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-muted-foreground" /></div>
-          ) : items.length === 0 ? (
-            <div className="text-center py-16 text-muted-foreground">
-              <Tag size={40} className="mx-auto mb-3 opacity-30" />
-              <p className="font-medium">Belum ada kampanye</p>
-              <Button size="sm" className="mt-3" onClick={openCreate}><Plus size={12} className="mr-1" />Buat Kampanye</Button>
-            </div>
-          ) : (
-            <>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-muted/40">
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase">Nama Kampanye</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase">Platform / Akun</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase">Jenis</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase">Nilai</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase">Periode</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase">Status</th>
-                      <th className="px-4 py-3 text-right text-xs font-semibold text-muted-foreground uppercase">Aksi</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((item, i) => (
-                      <tr key={item.id} className={`border-b last:border-0 hover:bg-muted/30 transition-colors ${i%2===0?'':'bg-muted/10'}`}>
-                        <td className="px-4 py-3">
-                          <div className="font-medium">{item.name}</div>
-                          <div className="text-xs text-muted-foreground">{item.product_scope}</div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="font-medium">{PLATFORM_ICONS[item.platform] || '📌'} {item.platform}</div>
-                          <div className="text-xs text-muted-foreground">{item.account_name}</div>
-                        </td>
-                        <td className="px-4 py-3 text-xs">{item.discount_type_label || DISCOUNT_TYPE_LABELS[item.discount_type] || item.discount_type}</td>
-                        <td className="px-4 py-3">
-                          {item.discount_value > 0 ? (
-                            <span className="font-semibold text-emerald-600">
-                              {item.discount_unit === 'persen' ? `${item.discount_value}%` :
-                               item.discount_unit === 'nominal' ? fmtRp(item.discount_value) :
-                               `${item.discount_value} unit`}
-                            </span>
-                          ) : <span className="text-muted-foreground">—</span>}
-                          {item.min_purchase > 0 && <div className="text-xs text-muted-foreground">Min. {fmtRp(item.min_purchase)}</div>}
-                        </td>
-                        <td className="px-4 py-3 text-xs">
-                          <div className="font-mono">{item.start_date}</div>
-                          <div className="text-muted-foreground">s/d {item.end_date}</div>
-                          {item.days_remaining !== null && item.days_remaining !== undefined && (
-                            <div className={`text-xs font-medium mt-0.5 ${
-                              item.days_remaining <= 3 ? 'text-red-500' :
-                              item.days_remaining <= 7 ? 'text-amber-500' : 'text-emerald-500'
-                            }`}>
-                              {item.days_remaining >= 0 ? `${item.days_remaining} hari lagi` : `Berakhir ${Math.abs(item.days_remaining)} hari lalu`}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-4 py-3"><StatusBadge status={item.status} /></td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center justify-end gap-1">
-                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(item)}>
-                              <Pencil size={12} />
-                            </Button>
-                            <Button size="icon" variant="ghost" className="h-7 w-7 text-red-500 hover:text-red-600" onClick={() => handleDelete(item.id)}>
-                              <Trash2 size={12} />
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {pagination && pagination.total_pages > 1 && (
-                <div className="flex items-center justify-between px-4 py-3 border-t">
-                  <p className="text-xs text-muted-foreground">{pagination.total} kampanye</p>
-                  <div className="flex gap-1">
-                    <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>‹ Prev</Button>
-                    <span className="px-3 py-1.5 text-xs">{page} / {pagination.total_pages}</span>
-                    <Button size="sm" variant="outline" disabled={page >= pagination.total_pages} onClick={() => setPage(p => p + 1)}>Next ›</Button>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* FORM DIALOG */}
-      <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{editTarget ? 'Edit Kampanye' : 'Buat Kampanye Baru'}</DialogTitle>
-          </DialogHeader>
-          <div className="grid grid-cols-2 gap-3 max-h-[60vh] overflow-y-auto pr-1">
-            <div className="col-span-2">
-              <Label>Nama Kampanye *</Label>
-              <Input value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))}
-                placeholder="Contoh: Flash Sale Harbolnas 12.12" className="mt-1" />
-            </div>
-            <div className="col-span-2">
-              <Label>Akun / Toko Marketplace *</Label>
-              <Select value={form.account_id || ''} onValueChange={handleAccountChange}>
-                <SelectTrigger className="mt-1" data-testid="campaign-account-select">
-                  <SelectValue placeholder={accounts.length === 0 ? 'Belum ada akun — buat di Manage Accounts' : 'Pilih akun...'} />
-                </SelectTrigger>
-                <SelectContent>
-                  {accounts.length === 0 && (
-                    <SelectItem value="empty" disabled>Belum ada akun aktif</SelectItem>
-                  )}
-                  {accounts.map(acc => (
-                    <SelectItem key={acc.id} value={acc.id}>
-                      {getPlatformIcon(acc.platform)} {acc.account_name} <span className="text-xs text-muted-foreground ml-1">({acc.platform})</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {form.account_id && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  Platform: <strong>{form.platform}</strong> (otomatis dari akun terpilih)
-                </p>
-              )}
-            </div>
-            <div>
-              <Label>Jenis Diskon</Label>
-              <Select value={form.discount_type} onValueChange={v => setForm(f => ({...f, discount_type: v}))}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Object.entries(DISCOUNT_TYPE_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Satuan Nilai</Label>
-              <Select value={form.discount_unit} onValueChange={v => setForm(f => ({...f, discount_unit: v}))}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="persen">Persen (%)</SelectItem>
-                  <SelectItem value="nominal">Nominal (Rp)</SelectItem>
-                  <SelectItem value="unit">Unit</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Nilai Diskon</Label>
-              {/* Satuan "Nominal (Rp)" = uang → MoneyInput; persen/unit tetap angka biasa. */}
-              {form.discount_unit === 'nominal' ? (
-                <MoneyInput value={form.discount_value} onChange={e => setForm(f => ({...f, discount_value: e.target.value}))}
-                  placeholder="0" className="mt-1" />
-              ) : (
-                <Input type="number" min="0" value={form.discount_value} onChange={e => setForm(f => ({...f, discount_value: e.target.value}))}
-                  placeholder="0" className="mt-1" />
-              )}
-            </div>
-            <div>
-              <Label>Min. Pembelian (Rp)</Label>
-              <MoneyInput value={form.min_purchase} onChange={e => setForm(f => ({...f, min_purchase: e.target.value}))}
-                placeholder="0" className="mt-1" />
-            </div>
-            <div>
-              <Label>Tanggal Mulai *</Label>
-              <Input type="date" value={form.start_date} onChange={e => setForm(f => ({...f, start_date: e.target.value}))} className="mt-1" />
-            </div>
-            <div>
-              <Label>Tanggal Berakhir *</Label>
-              <Input type="date" value={form.end_date} onChange={e => setForm(f => ({...f, end_date: e.target.value}))} className="mt-1" />
-            </div>
-            <div className="col-span-2">
-              <Label>Deskripsi</Label>
-              <Textarea value={form.description} onChange={e => setForm(f => ({...f, description: e.target.value}))}
-                placeholder="Detail kampanye..." rows={2} className="mt-1" />
-            </div>
-          </div>
-          <DialogFooter className="mt-2">
-            <Button variant="outline" onClick={() => setShowForm(false)}>Batal</Button>
-            <Button onClick={handleSave} disabled={formLoading}>
-              {formLoading && <Loader2 size={14} className="mr-2 animate-spin" />}
-              {editTarget ? 'Simpan Perubahan' : 'Buat Kampanye'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+      <FormPopup open={showForm} onClose={() => setShowForm(false)} ukuran="panjang" onSimpan={handleSave} menyimpan={formLoading}
+        judul={editTarget ? 'Ubah kampanye' : 'Buat kampanye baru'} galat={galatForm} testId="discount-form"
+        labelSimpan={editTarget ? 'Simpan perubahan' : 'Buat kampanye'}>
+        <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Nama kampanye" wajib htmlFor="dsc-name">
+          <Input id="dsc-name" value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))}
+            placeholder="Contoh: Flash sale Harbolnas 12.12" />
+        </Isian>
+        <Isian label="Akun / toko marketplace" wajib htmlFor="dsc-account"
+          petunjuk={form.account_id ? `Platform: ${labelPlatform(form.platform)} (otomatis dari akun terpilih)` : undefined}>
+          <SmartNativeSelect id="dsc-account" value={form.account_id || ''} onChange={(e) => handleAccountChange(e.target.value)}
+            data-testid="campaign-account-select">
+            <option value="">{accounts.length === 0 ? 'Belum ada akun aktif' : 'Pilih akun'}</option>
+            {accounts.map(acc => <option key={acc.id} value={acc.id}>{`${acc.account_name} · ${labelPlatform(acc.platform)}`}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Jenis diskon" htmlFor="dsc-type">
+            <SmartNativeSelect id="dsc-type" value={form.discount_type} searchable={false} onChange={(e) => setForm(f => ({...f, discount_type: e.target.value}))}>
+              {Object.entries(DISCOUNT_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Satuan nilai" htmlFor="dsc-unit">
+            <SmartNativeSelect id="dsc-unit" value={form.discount_unit} searchable={false} onChange={(e) => setForm(f => ({...f, discount_unit: e.target.value}))}>
+              {Object.entries(UNIT_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Nilai diskon" htmlFor="dsc-value">
+            {/* Satuan "Nominal (Rp)" = uang → MoneyInput; persen/unit tetap angka biasa. */}
+            {form.discount_unit === 'nominal' ? (
+              <MoneyInput value={form.discount_value} onChange={e => setForm(f => ({...f, discount_value: e.target.value}))} placeholder="0" />
+            ) : (
+              <Input id="dsc-value" type="number" min="0" value={form.discount_value} placeholder="0"
+                onChange={e => setForm(f => ({...f, discount_value: e.target.value}))} />
+            )}
+          </Isian>
+          <Isian label="Min. pembelian (Rp)">
+            <MoneyInput value={form.min_purchase} onChange={e => setForm(f => ({...f, min_purchase: e.target.value}))} placeholder="0" />
+          </Isian>
+          <Isian label="Tanggal mulai" wajib>
+            <DatePicker value={form.start_date || ''} onChange={(v) => setForm(f => ({...f, start_date: v}))} testId="dsc-start" />
+          </Isian>
+          <Isian label="Tanggal berakhir" wajib>
+            <DatePicker value={form.end_date || ''} min={form.start_date || undefined}
+              onChange={(v) => setForm(f => ({...f, end_date: v}))} testId="dsc-end" />
+          </Isian>
+        </div>
+        <Isian label="Deskripsi" htmlFor="dsc-desc">
+          <Textarea id="dsc-desc" value={form.description} rows={2} placeholder="Rincian kampanye"
+            onChange={e => setForm(f => ({...f, description: e.target.value}))} />
+        </Isian>
+      </FormPopup>
+    </PageLayout>
   );
 }
-

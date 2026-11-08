@@ -3,8 +3,9 @@ import { Clock, Save, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FormPopup from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { getPlatformConfig } from '../AccountBadge';
@@ -40,9 +41,9 @@ export default function AddShiftModal({ hosts, accounts, authH, onClose, onSucce
   }, [form.host_id]);
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     if (!form.host_id || !form.account_id || !form.date) {
-      toast.error('LiveHost, account, dan tanggal wajib diisi');
+      toast.error('Host live, akun toko, dan tanggal wajib diisi');
       return;
     }
 
@@ -55,7 +56,7 @@ export default function AddShiftModal({ hosts, accounts, authH, onClose, onSucce
       });
 
       if (res.ok) {
-        toast.success('Shift berhasil dibuat');
+        toast.success('Shift dibuat.');
         onSuccess();
       } else {
         const err = await res.json();
@@ -69,51 +70,35 @@ export default function AddShiftModal({ hosts, accounts, authH, onClose, onSucce
   };
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Clock size={18} className="text-primary" />
-            Tambah Shift Baru
-          </DialogTitle>
-        </DialogHeader>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
+    <FormPopup open onClose={onClose} ukuran="panjang" judul="Tambah jadwal shift" onSimpan={handleSubmit} menyimpan={saving}
+      testId="livehost-addshift">
           <div>
-            <Label className="text-xs font-semibold">LiveHost *</Label>
-            <Select value={form.host_id} onValueChange={(v) => setForm((f) => ({ ...f, host_id: v }))}>
-              <SelectTrigger className="mt-1 h-9" data-testid="select-host">
-                <SelectValue placeholder="Pilih LiveHost" />
-              </SelectTrigger>
-              <SelectContent>
+            <Label className="text-sm font-medium">Host live *</Label>
+            <SmartNativeSelect className="mt-1" value={form.host_id} onChange={(e) => { const _v = e.target.value; setForm((f) => ({ ...f, host_id: _v })); }} data-testid="select-host">
+                <option value="">Pilih host live</option>
                 {hosts.map((h) => (
-                  <SelectItem key={h.id} value={h.id}>
+                  <option key={h.id} value={h.id}>
                     {h.name}
-                  </SelectItem>
+                  </option>
                 ))}
-              </SelectContent>
-            </Select>
+              </SmartNativeSelect>
           </div>
 
           <div>
-            <Label className="text-xs font-semibold">Platform Account *</Label>
-            <Select value={form.account_id} onValueChange={(v) => setForm((f) => ({ ...f, account_id: v }))}>
-              <SelectTrigger className="mt-1 h-9" data-testid="select-account">
-                <SelectValue placeholder="Pilih Account" />
-              </SelectTrigger>
-              <SelectContent>
+            <Label className="text-sm font-medium">Akun toko *</Label>
+            <SmartNativeSelect className="mt-1" value={form.account_id} onChange={(e) => { const _v = e.target.value; setForm((f) => ({ ...f, account_id: _v })); }} data-testid="select-account">
+                <option value="">Pilih akun toko</option>
                 {availableAccounts.map((a) => {
                   const cfg = getPlatformConfig(a.platform);
                   return (
-                    <SelectItem key={a.id} value={a.id}>
-                      {cfg.icon} {a.account_name} ({cfg.label})
-                    </SelectItem>
+                    <option key={a.id} value={a.id}>
+                      {a.account_name} · {a.platform === 'tiktok' ? 'TikTok' : cfg.label}
+                    </option>
                   );
                 })}
-              </SelectContent>
-            </Select>
+              </SmartNativeSelect>
             {form.host_id && hostAssignedIds.length === 0 && (
-              <p className="text-[10px] text-amber-500 mt-1">
+              <p className="text-xs text-[hsl(var(--warning-text))] mt-1">
                 Host belum di-assign ke akun manapun. Edit host untuk menambah assignment.
               </p>
             )}
@@ -124,7 +109,7 @@ export default function AddShiftModal({ hosts, accounts, authH, onClose, onSucce
                 const cfg = getPlatformConfig(acc.platform);
                 return (
                   <div
-                    className={`mt-1.5 flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-medium ${cfg.bg} ${cfg.border} ${cfg.text}`}
+                    className={`mt-1.5 flex items-center gap-1.5 px-2 py-1 rounded border text-xs font-medium ${cfg.bg} ${cfg.border} ${cfg.text}`}
                   >
                     {cfg.icon} Shift untuk: {acc.account_name}
                   </div>
@@ -134,35 +119,24 @@ export default function AddShiftModal({ hosts, accounts, authH, onClose, onSucce
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-xs font-semibold">Tanggal *</Label>
-              <Input
-                type="date"
-                value={form.date}
-                onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
-                className="mt-1 h-9"
-                data-testid="input-date"
-              />
+              <Label className="text-sm font-medium">Tanggal *</Label>
+              <div className="mt-1"><DatePicker value={form.date || ''} onChange={(v) => setForm((f) => ({ ...f, date: v }))} testId="input-date" /></div>
             </div>
             <div>
-              <Label className="text-xs font-semibold">Shift Type</Label>
-              <Select value={form.shift_type} onValueChange={(v) => setForm((f) => ({ ...f, shift_type: v }))}>
-                <SelectTrigger className="mt-1 h-9" data-testid="select-shift-type">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="morning">Morning</SelectItem>
-                  <SelectItem value="afternoon">Afternoon</SelectItem>
-                  <SelectItem value="evening">Evening</SelectItem>
-                  <SelectItem value="night">Night</SelectItem>
-                  <SelectItem value="custom">Custom</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label className="text-sm font-medium">Jenis shift</Label>
+              <SmartNativeSelect className="mt-1" value={form.shift_type} onChange={(e) => { const _v = e.target.value; setForm((f) => ({ ...f, shift_type: _v })); }} data-testid="select-shift-type" searchable={false}>
+                  <option value="morning">Pagi</option>
+                  <option value="afternoon">Siang</option>
+                  <option value="evening">Sore</option>
+                  <option value="night">Malam</option>
+                  <option value="custom">Atur sendiri</option>
+                </SmartNativeSelect>
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-xs font-semibold">Start Time</Label>
+              <Label className="text-sm font-medium">Jam mulai</Label>
               <Input
                 type="time"
                 value={form.shift_start_time}
@@ -172,7 +146,7 @@ export default function AddShiftModal({ hosts, accounts, authH, onClose, onSucce
               />
             </div>
             <div>
-              <Label className="text-xs font-semibold">End Time</Label>
+              <Label className="text-sm font-medium">Jam selesai</Label>
               <Input
                 type="time"
                 value={form.shift_end_time}
@@ -184,7 +158,7 @@ export default function AddShiftModal({ hosts, accounts, authH, onClose, onSucce
           </div>
 
           <div>
-            <Label className="text-xs font-semibold">Notes</Label>
+            <Label className="text-sm font-medium">Catatan</Label>
             <Textarea
               value={form.notes}
               onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
@@ -194,27 +168,6 @@ export default function AddShiftModal({ hosts, accounts, authH, onClose, onSucce
               data-testid="input-shift-notes"
             />
           </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={saving} data-testid="submit-shift">
-              {saving ? (
-                <>
-                  <Loader2 size={14} className="mr-1.5 animate-spin" />
-                  Menyimpan...
-                </>
-              ) : (
-                <>
-                  <Save size={14} className="mr-1.5" />
-                  Simpan
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    </FormPopup>
   );
 }
