@@ -79,6 +79,7 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
   const unvaluedCount = filtered.filter((r) => statusNilai(r) === 'unvalued').length;
   const standardCount = filtered.filter((r) => statusNilai(r) === 'standard').length;
   const disaring = !!q.trim();
+  const memuatAwal = loading && rows.length === 0;   // kartu "—" selama data pertama dimuat (dulu tampil 0)
 
   const orphans = useMemo(() => (health?.items || []).filter((r) => r.orphan), [health]);
   const cleanable = orphans.filter((r) => r.cleanable);
@@ -164,12 +165,12 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
       summary={<>
         {err && <Notice tone="danger" icon={AlertTriangle}>{err}</Notice>}
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatTile label="Jenis potongan" value={fmtNum(filtered.length)}
+          <StatTile label="Jenis potongan" value={memuatAwal ? '—' : fmtNum(filtered.length)}
             sub={disaring ? `Sesuai pencarian · dari ${fmtNum(rows.length)}` : 'Semua master potongan aktif'} />
-          <StatTile label="Total stok potongan" value={`${fmtNum(totalStock)} pcs`} sub={disaring ? 'Sesuai pencarian' : 'Semua gudang'} />
-          <StatTile label="Nilai persediaan" value={fmtRp(totalValue)} testId="cutting-panels-total-value"
+          <StatTile label="Total stok potongan" value={memuatAwal ? '—' : `${fmtNum(totalStock)} pcs`} sub={disaring ? 'Sesuai pencarian' : 'Semua gudang'} />
+          <StatTile label="Nilai persediaan" value={memuatAwal ? '—' : fmtRp(totalValue)} testId="cutting-panels-total-value"
             sub="Stok × HPP hasil potong" />
-          <StatTile label="Belum bernilai" value={fmtNum(unvaluedCount)} accent={unvaluedCount ? 'warning' : 'default'}
+          <StatTile label="Belum bernilai" value={memuatAwal ? '—' : fmtNum(unvaluedCount)} accent={unvaluedCount ? 'warning' : 'default'}
             testId="cutting-panels-unvalued-count"
             sub={standardCount ? `${fmtNum(standardCount)} lain memakai biaya standar BOM` : 'Harga kain asalnya belum ada'} />
         </div>

@@ -76,7 +76,12 @@ export default function CollaborationPortal({ user, token, onLogout, onBack }) {
       <aside className="hidden w-64 shrink-0 flex-col border-r bg-card md:flex">
         <div className="border-b p-4">
           <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <MessageSquare className="h-4 w-4 text-primary" />Portal Kolaborasi
+            {/* Layar lebar: tombol kembali di sini (baris atas hanya untuk HP — dulu kepala halaman jadi 2 baris) */}
+            <Button variant="ghost" size="icon-sm" className="-ml-1.5 shrink-0" onClick={onBack}
+              title="Kembali ke pilihan portal" aria-label="Kembali ke pilihan portal" data-testid="back-to-portals-btn">
+              <ArrowLeft />
+            </Button>
+            Portal Kolaborasi
           </p>
           <p className="mt-1 text-xs text-muted-foreground">Komunikasi, spreadsheet, dan pembelajaran</p>
         </div>
@@ -93,7 +98,7 @@ export default function CollaborationPortal({ user, token, onLogout, onBack }) {
                   <Icon className="mt-0.5 shrink-0" />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{item.label}</span>
-                    <span className={cn('block truncate text-xs font-normal', isActive ? 'text-primary-foreground/80' : 'text-muted-foreground')}>
+                    <span className={cn('block truncate text-xs font-normal', isActive ? 'text-primary-foreground' : 'text-muted-foreground')}>
                       {item.description}
                     </span>
                   </span>
@@ -116,21 +121,20 @@ export default function CollaborationPortal({ user, token, onLogout, onBack }) {
 
       {/* Isi */}
       <div className="flex flex-1 flex-col overflow-hidden bg-background">
-        <div className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-3 sm:px-4">
-          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={onBack}
-            title="Kembali ke pilihan portal" aria-label="Kembali ke pilihan portal" data-testid="back-to-portals-btn">
+        {/* Baris atas hanya di HP: kembali · pilihan menu · keluar (layar lebar memakai menu samping). */}
+        <div className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-3 md:hidden">
+          <Button variant="ghost" size="icon-sm" className="shrink-0" onClick={onBack}
+            title="Kembali ke pilihan portal" aria-label="Kembali ke pilihan portal" data-testid="back-to-portals-btn-hp">
             <ArrowLeft />
           </Button>
-          {/* Layar lebar: judul halaman sudah ada di isi (PageLayout) — baris ini hanya menunjukkan letak. */}
-          <p className="hidden truncate text-sm text-muted-foreground md:block">Portal Kolaborasi · {judul}</p>
-          <div className="min-w-0 flex-1 md:hidden">
+          <div className="min-w-0 flex-1">
             <SmartNativeSelect value={menuHp} onChange={(e) => e.target.value && handleNavigate(e.target.value)} searchable={false}
               className="h-9 w-full" aria-label="Menu Portal Kolaborasi" data-testid="collab-menu-hp">
               {!menuHp && <option value="">{judul}</option>}
               {MENU_ITEMS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
             </SmartNativeSelect>
           </div>
-          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 md:hidden" onClick={onLogout} title="Keluar" aria-label="Keluar">
+          <Button variant="ghost" size="icon-sm" className="shrink-0" onClick={onLogout} title="Keluar" aria-label="Keluar">
             <LogOut />
           </Button>
         </div>

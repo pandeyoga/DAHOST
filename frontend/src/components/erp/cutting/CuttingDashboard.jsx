@@ -54,19 +54,7 @@ export default function CuttingDashboard({ token, onNavigate }) {
   return (
     <PageLayout testId="cutting-dashboard" title="Dashboard Cutting"
       subtitle="Roll kain dipotong menjadi kain pola (potongan) yang siap jadi BOM produksi."
-      actions={<Button variant="outline" onClick={() => onNavigate?.('cutting-orders')} data-testid="cutting-dash-goto-orders">
-        Lihat semua order
-      </Button>}
       tools={<>
-        <TombolUnduh namaBerkas="cutting-terbaru" namaLembar="Cutting terbaru" baris={recent} testId="cutting-dash-unduh"
-          kolom={[
-            { label: 'Nomor', nilai: (r) => r.number }, { label: 'Style', nilai: (r) => r.style_name || '' },
-            { label: 'Kain', nilai: (r) => r.input_material_name || '' },
-            { label: 'Potongan jadi (pcs)', nilai: (r) => Number(r.produced_qty || 0) },
-            { label: 'Rencana (pcs)', nilai: (r) => Number(r.planned_output_qty || 0) },
-            { label: 'Status', nilai: (r) => (STATUS_META[r.status] || STATUS_META.draft).label },
-            { label: 'Dibuat', nilai: (r) => fmtDateTime(r.created_at) },
-          ]} />
         <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
           data-testid="cutting-dash-refresh">
           <RefreshCw className={loading ? 'animate-spin' : ''} />
@@ -90,7 +78,23 @@ export default function CuttingDashboard({ token, onNavigate }) {
         )}
       </>}>
       <div className="space-y-2">
-        <p className="text-base font-semibold text-foreground">Cutting terbaru</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-base font-semibold text-foreground">Cutting terbaru</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <TombolUnduh namaBerkas="cutting-terbaru" namaLembar="Cutting terbaru" baris={recent} testId="cutting-dash-unduh"
+          kolom={[
+            { label: 'Nomor', nilai: (r) => r.number }, { label: 'Style', nilai: (r) => r.style_name || '' },
+            { label: 'Kain', nilai: (r) => r.input_material_name || '' },
+            { label: 'Potongan jadi (pcs)', nilai: (r) => Number(r.produced_qty || 0) },
+            { label: 'Rencana (pcs)', nilai: (r) => Number(r.planned_output_qty || 0) },
+            { label: 'Status', nilai: (r) => (STATUS_META[r.status] || STATUS_META.draft).label },
+            { label: 'Dibuat', nilai: (r) => fmtDateTime(r.created_at) },
+          ]} />
+            <Button variant="outline" onClick={() => onNavigate?.('cutting-orders')} data-testid="cutting-dash-goto-orders">
+              Lihat semua order
+            </Button>
+          </div>
+        </div>
         {loading && !d ? (
           <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
         ) : (

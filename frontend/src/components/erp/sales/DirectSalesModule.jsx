@@ -12,7 +12,6 @@ import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Button } from '@/components/ui/button';
 import DatePicker from '@/components/ui/date-picker';
-import FilterChips from '@/components/ui/filter-chips';
 import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
@@ -110,9 +109,11 @@ export default function DirectSalesModule() {
     <PageLayout testId="direct-sales-page" title="Nota Penjualan"
       subtitle="Draf lalu konfirmasi: stok barang jadi keluar (FIFO), HPP dibukukan, piutang terbit; tunai langsung lunas."
       actions={<Button onClick={() => setCreating(true)} data-testid="sales-new"><Plus />Nota baru</Button>}
-      filters={<FilterChips value={filter} onChange={setFilter} hideWhenEmpty={false} testId="sales-filter" ariaLabel="Status nota"
-        options={[{ key: '', label: 'Semua' }, { key: 'draft', label: 'Draf' }, { key: 'confirmed', label: 'Belum lunas' },
-          { key: 'paid', label: 'Lunas' }, { key: 'cancelled', label: 'Batal' }]} />}
+      filters={<SmartNativeSelect className="h-9 w-44" wrapperClassName="w-44" searchable={false} value={filter} onChange={(e) => setFilter(e.target.value)}
+        aria-label="Status" data-testid="sales-filter">
+        <option value="">Semua status</option><option value="draft">Draf</option><option value="confirmed">Belum lunas</option>
+        <option value="paid">Lunas</option><option value="cancelled">Batal</option>
+      </SmartNativeSelect>}
       tools={<>
         <TombolUnduh namaBerkas="nota-penjualan" namaLembar="Nota penjualan" baris={rows} testId="sales-unduh"
           kolom={[

@@ -14,7 +14,11 @@
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
-import { ArrowLeft, FileSpreadsheet, Package, Plus, RefreshCw, Search, Share2, Trash2, Upload } from 'lucide-react';
+import { ArrowLeft, ChevronDown, FileSpreadsheet, Package, Plus, RefreshCw, Search, Share2, Trash2, Upload } from 'lucide-react';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -156,11 +160,22 @@ export default function WorkspacePortal({ token, onBack, moduleId }) {
   return (
     <div className="h-full overflow-y-auto" data-testid="workspace-portal">
       <div className="p-4 sm:px-6">
-        <PageLayout title="Spreadsheet" subtitle="Dokumen spreadsheet bersama: buat baru, impor dari Excel atau dari modul, lalu bagikan."
+        <PageLayout title="Spreadsheet" subtitle="Spreadsheet bersama: buat baru atau impor, lalu bagikan."
           actions={<>
-            <Button variant="outline" onClick={() => setShowImportExcel(true)} data-testid="quick-import-excel"><Upload />Impor Excel</Button>
-            <Button variant="outline" onClick={() => setShowImportModule(true)} data-testid="quick-import-module"><Package />Impor dari modul</Button>
-            <Button onClick={() => setShowNewDoc(true)} data-testid="new-doc-btn"><Plus />Spreadsheet baru</Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" data-testid="workspace-import-menu"><Upload />Impor<ChevronDown /></Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setShowImportExcel(true)} data-testid="quick-import-excel">
+                  <Upload className="mr-2 h-4 w-4" />Dari berkas Excel
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setShowImportModule(true)} data-testid="quick-import-module">
+                  <Package className="mr-2 h-4 w-4" />Dari modul (aset, pengadaan)
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button onClick={() => setShowNewDoc(true)} data-testid="new-doc-btn"><Plus /><span className="sm:hidden">Baru</span><span className="hidden sm:inline">Spreadsheet baru</span></Button>
           </>}
           filters={<div className="relative w-full sm:w-64">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

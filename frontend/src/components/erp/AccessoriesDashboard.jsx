@@ -9,6 +9,7 @@
  *    (stok > 0) dan paling banyak 5, sehingga layar menulis "Semua item stok aman" walau 324 item habis.
  *    Panel itu diganti saringan "Habis" / "Menipis" di tabel yang membaca daftar stok lengkap.
  *  • Panel "Ringkasan pengadaan" mengulang angka kartu — angkanya kini di keterangan kartu.
+ *  • Spanduk "n item belum punya HPP" → kartu "Belum dinilai" yang membuka saringannya (konten utama naik ke atas).
  *
  * Endpoint: GET /api/acc/dashboard (kartu) · GET /api/acc/stock (daftar).
  */
@@ -148,7 +149,6 @@ export default function AccessoriesDashboard({ token }) {
   }, [filtered, sort]);
   const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 25);
   const toggleSort = (key) => setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' }));
-  const nilaiTampil = rows.reduce((s, i) => s + Number(i.stock_value || 0), 0);
 
   const H = (kunci, label) => <KepalaUrut kunci={kunci} urut={sort} onUrut={toggleSort}>{label}</KepalaUrut>;
   const kolom = [
@@ -221,26 +221,21 @@ export default function AccessoriesDashboard({ token }) {
         ) : dash ? (
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="acc-kpi">
             <StatTile label="Item aktif" value={fmtNum(dash.total_items)} testId="acc-kpi-total-item"
-              sub={`Nilai stok ${fmtRp(dash.total_stock_value)} · ${fmtNum(dash.unvalued_items)} belum punya HPP`} />
+              sub={`Nilai stok ${fmtRp(dash.total_stock_value)}`} />
             <StatTile label="Stok habis" value={fmtNum(dash.out_of_stock)} accent={dash.out_of_stock ? 'danger' : 'default'}
               testId="acc-kpi-stok-habis" onClick={() => setSaring('habis')}
               hint={`Menipis: ${fmtNum(dash.low_stock)} item`} />
+            {/* Dulu spanduk kuning terpisah; kini kartu yang bisa diklik (saringan Belum dinilai) */}
+            <StatTile label="Belum dinilai (HPP kosong)" value={fmtNum(dash.unvalued_items)} testId="acc-kpi-belum-dinilai"
+              accent={dash.unvalued_items ? 'warning' : 'default'} onClick={() => setSaring('belum')}
+              hint="Nilai stok jadi lebih rendah" />
             <StatTile label="Permintaan menunggu" value={fmtNum(dash.pending_requests)} testId="acc-kpi-request-pending"
-              sub="Menunggu persetujuan di Inbox Approval" />
-            <StatTile label="Perlu diserahkan" value={fmtNum(dash.ready_to_deliver)} testId="acc-kpi-perlu-diserahkan"
-              sub={`Sudah disetujui, barang belum keluar · PR pengadaan berjalan ${fmtNum(dash.pending_pr)}`} />
+              sub={`Perlu diserahkan ${fmtNum(dash.ready_to_deliver)} · PR berjalan ${fmtNum(dash.pending_pr)}`} />
           </div>
         ) : null}
         {dash?.active_opname && (
           <Notice tone="info" icon={ClipboardCheck} title="Sesi stok opname sedang berjalan" testId="acc-active-opname">
             Nomor sesi {dash.active_opname}. Angka stok bisa berubah setelah opname ditutup.
-          </Notice>
-        )}
-        {hitung.belum > 0 && (
-          <Notice tone="warning" icon={AlertTriangle} testId="acc-unvalued-banner"
-            title={`${fmtNum(hitung.belum)} item belum punya nilai (HPP)`}>
-            Selama HPP-nya kosong, total nilai stok lebih rendah dari kenyataan dan angka itu ikut ke laporan keuangan.
-            Pilih saringan Belum dinilai untuk melihat itemnya.
           </Notice>
         )}
       </>}
@@ -253,11 +248,6 @@ export default function AccessoriesDashboard({ token }) {
         <div className="space-y-2">{[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
       ) : (
         <>
-          {rows.length > 0 && (
-            <p className="text-sm text-muted-foreground" data-testid="acc-stock-ringkas">
-              {fmtNum(rows.length)} item{saring || search ? ' sesuai saringan' : ''} · nilai stok {fmtRp(nilaiTampil)}
-            </p>
-          )}
           {view === 'grid' && rows.length > 0 ? (
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4" data-testid="acc-stock-grid">
               {paged.map((it) => {

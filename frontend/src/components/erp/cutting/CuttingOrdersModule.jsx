@@ -836,6 +836,8 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
         judul="Buat order cutting" onSimpan={submitCreate} menyimpan={saving} labelSimpan="Simpan draf"
         keterangan="Kain diambil dari master material Gudang. Item potongan (satuan pcs) dibuat otomatis saat cutting dimulai."
         testId="cutting-create-form">
+        {/* Kain & gudang berdampingan (dulu satu pilihan selebar popup) */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="Material kain (input)" required
           hint={selectedMaterial
             ? `Total stok ${fmtNum(selectedMaterial.stock_qty, 2)} ${selectedMaterial.unit} · ${selectedMaterial.roll_count} roll aktif`
@@ -881,6 +883,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
             </SmartNativeSelect>
           </Field>
         )}
+        </div>
 
         {selectedMaterial && Number(selectedMaterial.stock_qty || 0) <= 0 && (
           <Notice tone="warning" icon={AlertCircle}>

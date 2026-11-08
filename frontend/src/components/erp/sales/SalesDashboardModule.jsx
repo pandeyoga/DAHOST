@@ -10,7 +10,11 @@
  * Piutang, SKU terlaris, dan jumlah draf tetap dari /api/sales/dashboard.
  */
 import { useEffect, useState } from 'react';
-import { Contact, ReceiptText, RefreshCw, TrendingUp, Wallet } from 'lucide-react';
+import { ChevronDown, Contact, ReceiptText, RefreshCw, TrendingUp, Wallet } from 'lucide-react';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+
 import { Button } from '@/components/ui/button';
 import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
@@ -57,18 +61,21 @@ export default function SalesDashboardModule({ onNavigate }) {
 
   return (
     <PageLayout testId="sales-dashboard" title="Dashboard Penjualan"
-      subtitle="Penjualan langsung dari stok barang jadi: hasil hari ini dan bulan ini, piutang, dan SKU terlaris."
+      subtitle="Hasil penjualan langsung hari ini dan bulan ini, piutang, dan SKU terlaris."
       actions={onNavigate && <>
-        <Button variant="outline" onClick={() => ke('sales-customers')} data-testid="onward-sales-customers"><Contact />Master pelanggan</Button>
-        <Button variant="outline" onClick={() => ke('fin-ar-360')} data-testid="onward-fin-ar-360"><Wallet />Umur piutang</Button>
-        <Button onClick={() => ke('sales-direct')} data-testid="onward-sales-direct"><ReceiptText />Buat nota penjualan</Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" data-testid="sales-dash-lainnya">Lainnya<ChevronDown /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => ke('sales-customers')} data-testid="onward-sales-customers"><Contact className="mr-2 h-4 w-4" />Master pelanggan</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => ke('fin-ar-360')} data-testid="onward-fin-ar-360"><Wallet className="mr-2 h-4 w-4" />Umur piutang (Keuangan)</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Button onClick={() => ke('sales-direct')} data-testid="onward-sales-direct"><ReceiptText />Nota baru</Button>
       </>}
       tools={<>
-        <TombolUnduh namaBerkas="sku-terlaris-bulan-ini" namaLembar="SKU terlaris" baris={top} testId="sales-top-unduh"
-          kolom={[
-            { label: 'SKU', nilai: (s) => s.sku }, { label: 'Nama', nilai: (s) => s.name || '' },
-            { label: 'Qty', nilai: (s) => Number(s.qty || 0) }, { label: 'Nilai', nilai: (s) => Number(s.amount || 0) },
-          ]} />
+
         <Button variant="outline" size="icon" onClick={load} disabled={memuat} title="Muat ulang" aria-label="Muat ulang"
           data-testid="sales-dash-refresh">
           <RefreshCw className={memuat ? 'animate-spin' : ''} />
@@ -89,14 +96,20 @@ export default function SalesDashboardModule({ onNavigate }) {
             sub={`${angka(d?.open_ar_count)} invoice · lewat jatuh tempo ${fmt(d?.overdue_ar)}`} />
         </div>
         <p className="text-sm text-muted-foreground" data-testid="sales-draft-info">
-          {angka(d?.draft_count)} nota masih draf (belum mengurangi stok). Saat nota dikonfirmasi: piutang atau kas dan
-          penjualan (+PPN) dicatat, HPP dibukukan, dan persediaan barang jadi berkurang (FIFO).
+          {angka(d?.draft_count)} nota masih draf — belum mengurangi stok. Saat dikonfirmasi, penjualan, HPP, dan stok barang jadi (FIFO) tercatat otomatis.
         </p>
       </>}>
       <div className="space-y-2">
-        <p className="inline-flex items-center gap-2 text-base font-semibold text-foreground">
-          <TrendingUp className="h-4 w-4 text-muted-foreground" />SKU terlaris bulan ini
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="inline-flex items-center gap-2 text-base font-semibold text-foreground">
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />SKU terlaris bulan ini
+          </p>
+          <TombolUnduh namaBerkas="sku-terlaris-bulan-ini" namaLembar="SKU terlaris" baris={top} testId="sales-top-unduh"
+          kolom={[
+            { label: 'SKU', nilai: (s) => s.sku }, { label: 'Nama', nilai: (s) => s.name || '' },
+            { label: 'Qty', nilai: (s) => Number(s.qty || 0) }, { label: 'Nilai', nilai: (s) => Number(s.amount || 0) },
+          ]} />
+        </div>
         <TabelData kolom={kolom} baris={top} kunci={(s) => s.sku} testId="sales-top-table"
           kosong={<EmptyState icon={TrendingUp} testId="sales-top-empty" className="py-10" title="Belum ada penjualan bulan ini"
             description="SKU terlaris tampil setelah ada nota yang dikonfirmasi bulan ini." />} />

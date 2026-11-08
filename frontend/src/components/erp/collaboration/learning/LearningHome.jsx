@@ -7,7 +7,11 @@
  * Kini: kursus diikuti (total_courses_enrolled) dan sertifikat — keduanya dari /lms/student/certificates.
  */
 import { useState, useEffect } from 'react';
-import { ArrowRight, Award, BookOpen, Library, RefreshCw } from 'lucide-react';
+import { ArrowRight, Award, BookOpen, ChevronDown, Library, RefreshCw } from 'lucide-react';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -65,15 +69,17 @@ export default function LearningHome({ onNavigate }) {
       <div className="p-4 sm:px-6">
         <PageLayout title="Beranda belajar" subtitle="Ringkasan kursus yang sedang Anda ikuti, sertifikat, dan aktivitas terbaru."
           actions={<>
-            <Button variant="outline" onClick={() => ke('certificates')}><Award />Sertifikat</Button>
-            <Button variant="outline" onClick={() => ke('my-courses')}><BookOpen />Kursus saya</Button>
-            <Button onClick={() => ke('course-catalog')}><Library />Katalog kursus</Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild><Button variant="outline">Buka<ChevronDown /></Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => ke('course-catalog')}><Library className="mr-2 h-4 w-4" />Katalog kursus</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => ke('my-courses')}><BookOpen className="mr-2 h-4 w-4" />Kursus saya</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => ke('certificates')}><Award className="mr-2 h-4 w-4" />Sertifikat</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </>}
           tools={<>
-            <TombolUnduh namaBerkas="kursus-berjalan" namaLembar="Kursus berjalan" baris={activeCourses} testId="learning-home-unduh"
-              kolom={[{ label: 'Kursus', nilai: (c) => c.title }, { label: 'Kategori', nilai: (c) => c.category || '' },
-                { label: 'Progres %', nilai: (c) => Number(c.progress_percent || 0) },
-                { label: 'Materi selesai', nilai: (c) => Number(c.completed_items || 0) }, { label: 'Total materi', nilai: (c) => Number(c.total_items || 0) }]} />
+
             <Button variant="outline" size="icon" onClick={fetchDashboardData} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
               <RefreshCw className={loading ? 'animate-spin' : ''} />
             </Button>
@@ -89,9 +95,15 @@ export default function LearningHome({ onNavigate }) {
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <p className="text-base font-semibold text-foreground">Kursus berjalan</p>
-              {activeCourses.length > 3 && (
-                <Button variant="ghost" size="sm" onClick={() => ke('my-courses')}>Lihat semua<ArrowRight /></Button>
-              )}
+              <div className="flex items-center gap-2">
+                <TombolUnduh namaBerkas="kursus-berjalan" namaLembar="Kursus berjalan" baris={activeCourses} testId="learning-home-unduh"
+              kolom={[{ label: 'Kursus', nilai: (c) => c.title }, { label: 'Kategori', nilai: (c) => c.category || '' },
+                { label: 'Progres %', nilai: (c) => Number(c.progress_percent || 0) },
+                { label: 'Materi selesai', nilai: (c) => Number(c.completed_items || 0) }, { label: 'Total materi', nilai: (c) => Number(c.total_items || 0) }]} />
+                {activeCourses.length > 3 && (
+                  <Button variant="ghost" size="sm" onClick={() => ke('my-courses')}>Lihat semua<ArrowRight /></Button>
+                )}
+              </div>
             </div>
             <TabelData kolom={kolom} baris={activeCourses.slice(0, 3)} kunci={(c) => c.course_id}
               onKlikBaris={(c) => ke('course-detail', { courseId: c.course_id })} testId="learning-home-courses"

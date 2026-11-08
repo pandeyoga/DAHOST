@@ -93,7 +93,7 @@ export default function SalesCustomersModule() {
 
   return (
     <PageLayout testId="sales-customers" title="Master Pelanggan"
-      subtitle="Pelanggan penjualan langsung. Termin menentukan jatuh tempo nota tempo; tiap pelanggan punya sub-akun piutang."
+      subtitle="Pelanggan penjualan langsung beserta termin bayar dan limit kreditnya."
       actions={<Button onClick={() => setForm({ ...EMPTY })} data-testid="cust-add"><Plus />Pelanggan baru</Button>}
       filters={<div className="relative w-full sm:w-64">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
