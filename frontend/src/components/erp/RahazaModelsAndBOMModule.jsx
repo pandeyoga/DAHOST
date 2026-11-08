@@ -31,7 +31,7 @@ const ALL_TABS = [
   { key: 'bom', label: 'BOM', icon: ListTree, count: null,
     hint: 'Resep per model + ukuran + warna: 1 pcs potongan (biaya dari kain roll yang benar-benar dipotong) + aksesoris. Dasar HPP produk.' },
   { key: 'fill', label: 'Isi massal (Excel)', icon: FileSpreadsheet, count: null,
-    hint: 'Satu template Excel: harga & satuan beli material, aksesoris/bahan BOM per model, berat model, rekening bank & rekening pencairan toko — unggah, HPP standar dihitung otomatis.' },
+    hint: 'Satu templat Excel: harga & satuan beli material, aksesoris/bahan BOM per model, berat model, rekening bank & rekening pencairan toko — unggah, HPP standar dihitung otomatis.' },
   { key: 'sizes', label: 'Ukuran', icon: Ruler, count: 'sizes',
     hint: 'Master ukuran (S · M · L · ALLSIZE …) beserta urutannya.' },
   { key: 'colors', label: 'Warna', icon: Palette, count: 'colors',

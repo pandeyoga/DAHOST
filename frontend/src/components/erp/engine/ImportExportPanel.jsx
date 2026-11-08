@@ -16,6 +16,7 @@ export default function ImportExportPanel({ token, importType, exportType, expor
   const [importResult, setImportResult] = useState(null);
   const [exporting, setExporting] = useState(false);
   const fileRef = useRef(null);
+  const [namaBerkas, setNamaBerkas] = useState('');
 
   const downloadTemplate = async () => {
     if (!importType) return;
@@ -89,7 +90,7 @@ export default function ImportExportPanel({ token, importType, exportType, expor
     <>
       <div className="flex gap-2">
         {importType && (
-          <Button type="button" variant="outline" onClick={() => { setShowImportModal(true); setImportResult(null); }}>
+          <Button type="button" variant="outline" onClick={() => { setShowImportModal(true); setImportResult(null); setNamaBerkas(''); }}>
             <Upload className="w-4 h-4" />
             Impor
           </Button>
@@ -111,18 +112,26 @@ export default function ImportExportPanel({ token, importType, exportType, expor
                 <div>
                   <Button type="button" variant="outline" size="sm" onClick={downloadTemplate}>
                     <Download className="w-4 h-4" />
-                    Unduh template
+                    Unduh templat
                   </Button>
                 </div>
               </Isian>
               <Isian label="Langkah 2 · berkas yang sudah diisi" htmlFor="import-panel-file">
+                {/* Standar UI/UX v2: tombol baku "Pilih berkas" (teks bawaan peramban berbahasa Inggris); input tetap sama. */}
                 <input
                   id="import-panel-file"
                   type="file"
                   ref={fileRef}
                   accept=".xlsx,.xls"
-                  className="block w-full text-sm text-foreground file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-[hsl(var(--primary)/0.1)] file:text-[hsl(var(--primary))]"
+                  className="sr-only"
+                  onChange={(e) => setNamaBerkas(e.target.files?.[0]?.name || '')}
                 />
+                <div className="flex min-w-0 items-center gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
+                    <Upload className="w-4 h-4" />Pilih berkas
+                  </Button>
+                  <span className="min-w-0 truncate text-xs text-muted-foreground">{namaBerkas || 'Belum ada berkas (.xlsx/.xls)'}</span>
+                </div>
               </Isian>
 
               {/* Import Result */}
