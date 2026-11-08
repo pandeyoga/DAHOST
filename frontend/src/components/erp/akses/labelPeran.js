@@ -35,6 +35,18 @@ export function labelPeran(kode, deskripsi) {
   return d || labelKodePeran(kode);
 }
 
+/**
+ * Peran yang TIDAK ditawarkan di pilihan peran saat menambah/mengubah pengguna (keputusan owner 8 Nov 2026):
+ * belum diatur sama sekali (tanpa portal, tanpa izin) DAN tidak dipakai siapa pun. Ini peran bawaan sistem
+ * (`accounting`, `hr`, `admin_gudang`, …) yang dibuat ulang otomatis dan mudah tertukar dengan peran yang diatur
+ * owner ("Accounting & Finance", "HR Generalist", …). Peran tetap ada dan tetap bisa diatur di Kontrol Akses —
+ * begitu portal/izinnya diisi, peran itu muncul lagi di pilihan. `r` = baris dari GET /api/roles.
+ */
+export function peranTidakDitawarkan(r) {
+  if (!r) return false;
+  return !(r.portals || []).length && !(r.permission_keys || []).length && !Number(r.user_count || 0);
+}
+
 /** Peta kode → label dari daftar peran API (`[{name, description}]`). */
 export function petaLabelPeran(daftar) {
   const peta = {};

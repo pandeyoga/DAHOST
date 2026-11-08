@@ -50,7 +50,7 @@ import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import { PORTAL_NAV, PORTAL_LABEL } from './portal-shell/portalNav';
 import GranularModuleRow from './GranularModuleRow';
-import { labelPeran } from './akses/labelPeran';
+import { labelPeran, peranTidakDitawarkan } from './akses/labelPeran';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const instan = (ts) => (typeof ts === 'string' && /T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(ts) ? `${ts}Z` : ts);
@@ -429,6 +429,11 @@ export default function RoleManagementModule({ token, userRole }) {
       <div className="min-w-0" data-testid={`role-item-${r.name}`}>
         <p className="font-medium text-foreground">{namaPeran(r)}</p>
         {r.is_system && <p className="text-xs text-muted-foreground">Peran sistem</p>}
+        {peranTidakDitawarkan(r) && (
+          <p className="text-xs text-muted-foreground" data-testid={`role-tersembunyi-${r.name}`}>
+            Belum diatur · tidak muncul di pilihan peran pengguna
+          </p>
+        )}
       </div>) },
     { kunci: 'pengguna', label: 'Pengguna', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.user_count || 0}</span> },
     { kunci: 'portal', label: 'Portal', isi: (r) => <span className="text-sm">{jumlahPortal(r)}</span> },
@@ -478,6 +483,8 @@ export default function RoleManagementModule({ token, userRole }) {
       <Notice tone="info" testId="role-access-notice">
         Selama daftar izin sebuah peran <b>masih kosong</b>, sistem memakai aturan bawaan (tidak ada fitur yang mati).
         Begitu minimal satu izin dicentang, peran itu mengikuti daftar izinnya.
+        Peran yang belum diatur (tanpa portal dan izin) dan tidak dipakai siapa pun tidak ditawarkan saat menambah
+        pengguna; peran itu muncul lagi begitu portal atau izinnya diisi.
       </Notice>
 
 

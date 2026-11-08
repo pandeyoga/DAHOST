@@ -25,7 +25,7 @@ import { formatDateID } from '@/lib/format';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import ImportExportToolbar from './ImportExportToolbar';
-import { labelKodePeran, labelPeran } from './akses/labelPeran';
+import { labelKodePeran, labelPeran, peranTidakDitawarkan } from './akses/labelPeran';
 
 // Peran bawaan berizin tetap (backend `auth.FIXED_ROLE_PERMS`) — tidak ada di master Peran.
 // 2026-11-07 (Tahap 5): `cmt_vendor` dulu tidak ada di daftar, sehingga 12 akun vendor CMT
@@ -125,6 +125,9 @@ export default function UserManagementModule({ token }) {
   const masterRoles = customRoles
     .filter(r => r && r.name && !SYSTEM_ROLES.includes(r.name))
     .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  // Pilihan di formulir: tanpa peran bawaan yang belum diatur & tidak dipakai (keputusan owner 8 Nov 2026),
+  // kecuali peran yang sedang terpasang pada akun yang diubah.
+  const pilihanPeran = masterRoles.filter(r => !peranTidakDitawarkan(r) || r.name === form.role);
   const knownRole = (name) => SYSTEM_ROLES.includes(name) || masterRoles.some(r => r.name === name);
   const roleLabel = (r) => (r.display_name || r.label || labelPeran(r.name, r.description));
   const namaPeran = (kode) => {
@@ -329,9 +332,9 @@ export default function UserManagementModule({ token }) {
               <optgroup label="Peran bawaan">
                 {SYSTEM_ROLES.map(r => <option key={r} value={r}>{SYSTEM_ROLE_LABEL[r] || r}</option>)}
               </optgroup>
-              {masterRoles.length > 0 && (
+              {pilihanPeran.length > 0 && (
                 <optgroup label="Master Peran">
-                  {masterRoles.map(r => <option key={r.name} value={r.name}>{roleLabel(r)}</option>)}
+                  {pilihanPeran.map(r => <option key={r.name} value={r.name}>{roleLabel(r)}</option>)}
                 </optgroup>
               )}
             </SmartNativeSelect>
