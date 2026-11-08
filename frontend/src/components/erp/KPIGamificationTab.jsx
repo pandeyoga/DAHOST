@@ -12,7 +12,7 @@ import axios from 'axios';
 import { RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import FilterChips from '@/components/ui/filter-chips';
 import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import { formatDateID } from '@/lib/format';
@@ -210,13 +210,15 @@ export default function KPIGamificationTab({ token, periods = [], isHR = true })
   };
 
   return (
-    <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-3">
+    // Modul ini tampil sebagai tab di dalam hub → pilihan tampilan memakai pil (FilterChips), bukan tab kedua.
+    <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <TabsList>
-          <TabsTrigger value="leaderboard">Peringkat</TabsTrigger>
-          {isHR && <TabsTrigger value="summary">Ringkasan</TabsTrigger>}
-          <TabsTrigger value="badges">Katalog lencana</TabsTrigger>
-        </TabsList>
+        <FilterChips value={activeTab} onChange={setActiveTab} hideWhenEmpty={false} ariaLabel="Tampilan" testId="kpi-gamifikasi-tampilan"
+          options={[
+            { key: 'leaderboard', label: 'Peringkat' },
+            ...(isHR ? [{ key: 'summary', label: 'Ringkasan' }] : []),
+            { key: 'badges', label: 'Katalog lencana' },
+          ]} />
         {isHR && (
           <Button variant="outline" size="sm" onClick={seedDemo} disabled={seeding} title="Buat periode contoh, hasil KPI, dan lencana">
             {seeding ? 'Menyiapkan data…' : 'Muat contoh data KPI'}
@@ -224,7 +226,7 @@ export default function KPIGamificationTab({ token, periods = [], isHR = true })
         )}
       </div>
 
-      <TabsContent value="leaderboard" className="mt-0 space-y-3">
+      {activeTab === 'leaderboard' && (<div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <SmartNativeSelect value={selectedPeriodId} onChange={e => setSelectedPeriodId(e.target.value)} className="w-56" aria-label="Periode">
@@ -248,20 +250,18 @@ export default function KPIGamificationTab({ token, periods = [], isHR = true })
             <EmptyState title="Belum ada data peringkat"
               description={isHR ? 'Peringkat muncul setelah hasil KPI dihitung. Bisa juga coba dengan "Muat contoh data KPI".' : 'Peringkat muncul setelah hasil KPI diterbitkan.'} />
           ) : <LeaderboardTable entries={leaderboard} />}
-      </TabsContent>
+      </div>)}
 
-      {isHR && (
-        <TabsContent value="summary" className="mt-0"><GamificationSummaryPanel token={token} /></TabsContent>
-      )}
+      {isHR && activeTab === 'summary' && <GamificationSummaryPanel token={token} />}
 
-      <TabsContent value="badges" className="mt-0">
+      {activeTab === 'badges' && (
         <TabelData baris={KATALOG} kunci={(b) => b.key} testId="kpi-badge-catalog"
           kolom={[
             { kunci: 'lencana', label: 'Lencana', hp: 'judul', isi: (b) => <BadgeChip badge={{ badge_emoji: b.emoji, badge_label: b.label, badge_desc: b.desc }} /> },
             { kunci: 'syarat', label: 'Cara meraih', isi: (b) => <span className="text-sm text-muted-foreground">{b.desc}</span> },
           ]} />
-      </TabsContent>
-    </Tabs>
+      )}
+    </div>
   );
 }
 
