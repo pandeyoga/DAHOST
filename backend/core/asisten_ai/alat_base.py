@@ -107,6 +107,10 @@ PESAN_BACA_SAJA = ("Alat ini hanya boleh membaca data. Perubahan data hanya lewa
 # Peran yang boleh melihat gaji per orang (keputusan owner no. 1).
 PERAN_GAJI = frozenset({"owner", "superadmin", "hr", "hr_manager", "manager_hr", "staff_hr"})
 
+# Peran yang melihat NAMA ASLI vendor/pelanggan/karyawan di jawaban & berkas Asisten AI (keputusan owner 9 Nov 2026,
+# "Owner lihat asli"). Peran lain tetap memakai kode samaran (K27). Kontak (telepon/email) tetap disamarkan.
+PERAN_NAMA_ASLI = frozenset({"owner", "superadmin"})
+
 # Server tools resmi. Keputusan owner no. 2: ≤5 pencarian + ≤3 pengambilan halaman per pertanyaan.
 # Tahap E (9 Nov 2026, keputusan owner "hitung dengan kode"): ruang hitung `code_execution_20260120` (Python di
 # kontainer Claude, tanpa internet; gratis karena web_search/web_fetch 20260209 selalu ikut dikirim). Versi ini
@@ -541,11 +545,12 @@ class AlatContext:
 
     @property
     def samaran(self):
-        """Satu Pseudonymizer bersama untuk semua alat dalam satu giliran (kode samaran konsisten)."""
+        """Satu Pseudonymizer bersama untuk semua alat dalam satu giliran (kode samaran konsisten).
+        Owner/superadmin (`PERAN_NAMA_ASLI`): `TanpaSamaran` — nama asli diteruskan apa adanya."""
         ps = self._bersama.get("samaran")
         if ps is None:
-            from services.ai.privacy import Pseudonymizer
-            ps = self._bersama["samaran"] = Pseudonymizer()
+            from services.ai.privacy import Pseudonymizer, TanpaSamaran
+            ps = self._bersama["samaran"] = TanpaSamaran() if self.peran in PERAN_NAMA_ASLI else Pseudonymizer()
         return ps
 
     @property

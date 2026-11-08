@@ -126,6 +126,19 @@ _SALARY_KEY_RE = re.compile(
 )
 
 
+class TanpaSamaran(Pseudonymizer):
+    """Antarmuka sama dengan :class:`Pseudonymizer`, tetapi nama TIDAK disamarkan: `code()` mengembalikan nama asli.
+
+    Dipakai Asisten AI untuk owner/superadmin (keputusan owner 9 Nov 2026: owner melihat nama asli vendor/pelanggan di
+    jawaban dan berkas unduhan). Kontak (telepon/email) di teks bebas tetap disamarkan oleh `scrub()`.
+    """
+
+    def code(self, name: Optional[str], kind: str = "pelanggan", *, parts: bool = False) -> Optional[str]:
+        if name is None or not str(name).strip():
+            return None
+        return str(name).strip()
+
+
 def is_sensitive_key(key: str) -> bool:
     return bool(_SALARY_KEY_RE.search(str(key or "").lower().replace("-", "_")))
 
