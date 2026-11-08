@@ -6,11 +6,22 @@
  *
  * 2026-11-02 (K31) — retensi notifikasi (`retention_days`, bawaan 90) diatur di
  * layar & dokumen pengaturan yang SAMA (notif_category_config), bukan layar baru.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, nama peran manusiawi (dulu kode `admin_gudang`), masa simpan diubah
+ * lewat FormPopup (dulu isian di halaman), matriks bisa diunduh Excel/CSV. Data yang disimpan tetap sama.
  */
-import { useCallback, useEffect, useState } from 'react';
-import { Bell, Save, RefreshCw, Loader2, AlertCircle, ShieldCheck, Clock } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Pencil, RefreshCw, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { GlassCard } from '@/components/ui/glass';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import PageLayout from './layout/PageLayout';
+import { Notice } from './moduleAtoms';
+import { petaLabelPeran } from './akses/labelPeran';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const RETENTION_MIN = 7;
@@ -23,6 +34,8 @@ export default function NotificationSettingsModule({ token }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
+  const [daftarPeran, setDaftarPeran] = useState([]);
+  const [formSimpan, setFormSimpan] = useState(false);
 
   const h = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -30,15 +43,23 @@ export default function NotificationSettingsModule({ token }) {
     setLoading(true); setErr('');
     try {
       const r = await fetch(`${API}/api/notifications/category-config`, { headers: h });
-      if (!r.ok) throw new Error((await r.json()).detail || `HTTP ${r.status}`);
+      if (!r.ok) throw new Error((await r.json()).detail || `Kode ${r.status}`);
       const d = await r.json();
       setData(d); setMatrix(d.matrix || {});
       setRetention(String(d.retention_days || d.retention_default_days || 90));
     } catch (e) { setErr(e.message); } finally { setLoading(false); }
-     
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   useEffect(() => { load(); }, [load]);
+  // Nama peran untuk tampilan saja (keterangan peran dari data).
+  useEffect(() => {
+    fetch(`${API}/api/roles`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => setDaftarPeran(Array.isArray(d) ? d : []))
+      .catch(() => {});
+  }, [token]);
+  const namaPeran = useMemo(() => petaLabelPeran(daftarPeran), [daftarPeran]);
 
   const toggle = (role, cat) => {
     setMatrix((m) => {
@@ -54,140 +75,128 @@ export default function NotificationSettingsModule({ token }) {
   const save = async () => {
     if (!retentionValid) {
       toast.error(`Masa simpan harus ${RETENTION_MIN}–${RETENTION_MAX} hari.`);
-      return;
+      return false;
     }
     setSaving(true);
     try {
       const r = await fetch(`${API}/api/notifications/category-config`, {
         method: 'PUT', headers: h, body: JSON.stringify({ matrix, retention_days: retentionNum }),
       });
-      if (!r.ok) throw new Error((await r.json()).detail || `HTTP ${r.status}`);
+      if (!r.ok) throw new Error((await r.json()).detail || `Kode ${r.status}`);
       toast.success('Konfigurasi notifikasi tersimpan.');
       load();
-    } catch (e) { toast.error(e.message); } finally { setSaving(false); }
+      return true;
+    } catch (e) { toast.error(e.message); return false; } finally { setSaving(false); }
   };
 
   const cats = data?.categories || [];
   const locked = data?.locked_categories || ['personal'];
   const roles = (data?.roles || []).filter((r) => !['superadmin', 'admin', 'owner'].includes(r));
+  const tersimpan = String(data?.retention_days || data?.retention_default_days || 90);
+  const berubah = !!data && (JSON.stringify(data.matrix || {}) !== JSON.stringify(matrix));
+  const menerima = (role, key) => locked.includes(key) || (matrix[role] || []).includes(key);
 
   return (
-    <div className="space-y-5" data-testid="notification-settings-module">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-[hsl(var(--primary)/0.12)] border border-[hsl(var(--primary)/0.25)] grid place-items-center">
-            <Bell className="w-5 h-5 text-[hsl(var(--primary))]" />
-          </div>
-          <div>
-            <h2 className="text-2xl font-bold text-foreground">Pengaturan Notifikasi</h2>
-            <p className="text-sm text-muted-foreground">
-              Tentukan kategori notifikasi (per portal sumber) yang boleh diterima tiap peran.
-            </p>
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={load}
-            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] text-sm text-foreground hover:bg-[var(--nav-pill-active)]"
-            data-testid="notif-cfg-reload">
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Muat Ulang
-          </button>
-          <button onClick={save} disabled={saving}
-            className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-[hsl(var(--primary))] text-white text-sm font-medium disabled:opacity-60"
-            data-testid="notif-cfg-save">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Simpan
-          </button>
-        </div>
-      </div>
+    <PageLayout testId="notification-settings-module" title="Aturan notifikasi"
+      subtitle="Tentukan kategori notifikasi (per portal sumber) yang boleh diterima tiap peran."
+      actions={(
+        <Button variant="success" onClick={save} disabled={saving || loading} data-testid="notif-cfg-save">
+          <Save />{saving ? 'Menyimpan…' : 'Simpan'}
+        </Button>
+      )}
+      tools={<>
+        <TombolUnduh namaBerkas="aturan-notifikasi" namaLembar="Peran x kategori" baris={roles.map((r) => ({ role: r }))}
+          testId="notif-cfg-unduh"
+          kolom={[
+            { label: 'Peran', nilai: (x) => namaPeran(x.role) },
+            ...cats.map((c) => ({ label: c.label, nilai: (x) => (menerima(x.role, c.key) ? 'Ya' : 'Tidak') })),
+          ]} />
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="notif-cfg-reload">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}>
+      <Notice tone="info" title="Yang tidak bisa dibatasi">
+        Superadmin, admin, dan owner selalu menerima semua kategori; kategori <b>Untuk Saya</b> selalu aktif. Pengguna
+        bisa membisukan kategori lain untuk dirinya (gerigi di lonceng), tetapi tidak bisa membuka kategori yang ditutup di sini.
+      </Notice>
 
-      <GlassCard className="p-3 flex items-start gap-2">
-        <ShieldCheck className="w-4 h-4 mt-0.5 text-[hsl(var(--primary))] shrink-0" />
-        <p className="text-xs text-muted-foreground">
-          Peran <b className="text-foreground">super_admin / admin / owner</b> selalu menerima semua kategori
-          dan tidak bisa dibatasi. Kategori <b className="text-foreground">Untuk Saya</b> juga selalu aktif —
-          isinya notifikasi yang dialamatkan langsung ke orang tersebut (tugas, cuti, approval miliknya),
-          jadi tidak boleh ditutup. Setiap pengguna dapat membisukan kategori lain untuk dirinya sendiri
-          (ikon gerigi di bel) — tetapi tidak bisa membuka kategori yang sudah ditutup di sini.
+      <GlassCard className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3" data-testid="notif-retention-card">
+        <p className="min-w-0 flex-1 text-sm text-foreground">
+          Masa simpan notifikasi: <span className="font-medium tabular-nums" data-testid="notif-retention-value">{data ? `${tersimpan} hari` : '—'}</span>
+          <span className="hidden text-muted-foreground sm:inline"> · yang sudah dibaca/selesai dihapus otomatis setelah masa ini.</span>
         </p>
+        <Button variant="outline" size="sm" onClick={() => { setRetention(tersimpan); setFormSimpan(true); }}
+          disabled={!data} data-testid="notif-retention-edit">
+          <Pencil />Ubah masa simpan
+        </Button>
       </GlassCard>
 
-      <GlassCard className="p-4 flex flex-wrap items-end gap-4" data-testid="notif-retention-card">
-        <div className="flex items-start gap-2 min-w-[240px] flex-1">
-          <Clock className="w-4 h-4 mt-0.5 text-[hsl(var(--primary))] shrink-0" />
-          <div>
-            <p className="text-sm font-semibold text-foreground">Masa simpan notifikasi</p>
-            <p className="text-xs text-muted-foreground">
-              Pemberitahuan yang <b className="text-foreground">sudah dibaca</b> dan tindakan yang
-              <b className="text-foreground"> sudah selesai</b> dihapus otomatis setelah jumlah hari ini
-              (dicek tiap hari pukul 02:30). Notifikasi <b className="text-foreground">Perlu Tindakan</b> yang
-              masih terbuka tidak pernah dihapus.
-            </p>
-          </div>
-        </div>
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          Hari
-          <input
-            type="number" inputMode="numeric" min={RETENTION_MIN} max={RETENTION_MAX} step={1}
-            value={retention}
-            onChange={(e) => setRetention(e.target.value)}
-            className={`w-28 h-9 px-2 rounded-lg border bg-[var(--card-surface)] text-sm text-foreground tabular-nums ${retentionValid ? 'border-[var(--glass-border)]' : 'border-red-400'}`}
-            aria-invalid={!retentionValid}
-            data-testid="notif-retention-days"
-          />
-        </label>
-        {!retentionValid && (
-          <p className="text-xs text-red-600 w-full">Isi {RETENTION_MIN}–{RETENTION_MAX} hari.</p>
-        )}
-      </GlassCard>
-
-      {err && (
-        <div className="flex items-center gap-2 p-3 rounded-lg border border-red-300 bg-red-50 text-sm text-red-700">
-          <AlertCircle className="w-4 h-4" /> {err}
-        </div>
+      {err && <Notice tone="danger" title="Pengaturan tidak bisa dimuat">{err}</Notice>}
+      {berubah && (
+        <Notice tone="warning" testId="notif-cfg-unsaved">Ada perubahan centang yang belum disimpan. Tekan Simpan agar berlaku.</Notice>
       )}
 
-      <GlassCard className="p-0 overflow-hidden">
+      <GlassCard className="overflow-hidden p-0">
         {loading && !data ? (
-          <div className="p-8 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" /></div>
+          <p className="py-6 text-center text-sm text-muted-foreground">Memuat pengaturan…</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm" data-testid="notif-matrix-table">
-              <thead>
-                <tr className="border-b border-[var(--glass-border)] bg-[var(--nav-pill-bg)]">
-                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-foreground sticky left-0 bg-[var(--nav-pill-bg)]">Peran</th>
+            <Table data-testid="notif-matrix-table">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="sticky left-0 z-[1] bg-[var(--card-surface)]">Peran</TableHead>
                   {cats.map((c) => (
-                    <th key={c.key} className="px-2 py-2.5 text-center text-[11px] font-medium text-muted-foreground whitespace-nowrap">
-                      {c.label}
-                    </th>
+                    <TableHead key={c.key} className="whitespace-nowrap text-center">{c.label}</TableHead>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {roles.map((role) => (
-                  <tr key={role} className="border-b border-[var(--glass-border)] last:border-0 hover:bg-[var(--nav-pill-active)]/30">
-                    <td className="px-3 py-2 font-mono text-xs text-foreground sticky left-0 bg-[var(--card-surface)]">{role}</td>
+                  <TableRow key={role}>
+                    <TableCell className="sticky left-0 z-[1] whitespace-nowrap bg-[var(--card-surface)] text-sm font-medium" title={role}>
+                      {namaPeran(role)}
+                    </TableCell>
                     {cats.map((c) => (
-                      <td key={c.key} className="px-2 py-2 text-center">
+                      <TableCell key={c.key} className="text-center">
                         <input
                           type="checkbox"
-                          checked={locked.includes(c.key) || (matrix[role] || []).includes(c.key)}
+                          checked={menerima(role, c.key)}
                           disabled={locked.includes(c.key)}
                           onChange={() => toggle(role, c.key)}
-                          className={`w-4 h-4 accent-[hsl(var(--primary))] ${locked.includes(c.key) ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}`}
+                          className={`h-4 w-4 accent-[hsl(var(--primary))] ${locked.includes(c.key) ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}`}
                           data-testid={`notif-cell-${role}-${c.key}`}
                           title={locked.includes(c.key)
                             ? 'Selalu aktif — notifikasi yang dialamatkan langsung ke orang tersebut'
-                            : `${role} menerima ${c.label}`}
-                          aria-label={`${role} menerima ${c.label}`}
+                            : `${namaPeran(role)} menerima ${c.label}`}
+                          aria-label={`${namaPeran(role)} menerima ${c.label}`}
                         />
-                      </td>
+                      </TableCell>
                     ))}
-                  </tr>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         )}
       </GlassCard>
-    </div>
+
+      <FormPopup open={formSimpan} onClose={() => setFormSimpan(false)} ukuran="pendek" testId="notif-retention-form"
+        judul="Masa simpan notifikasi" menyimpan={saving} bisaSimpan={retentionValid}
+        keterangan="Centang peran yang belum disimpan ikut tersimpan bersama masa simpan ini."
+        galat={!retentionValid ? `Isi ${RETENTION_MIN}–${RETENTION_MAX} hari.` : null}
+        onSimpan={async () => { if (await save()) setFormSimpan(false); }}>
+        <p className="text-sm text-muted-foreground">
+          Pemberitahuan yang sudah dibaca dan tindakan yang sudah selesai dihapus otomatis setelah jumlah hari ini (dicek
+          tiap hari pukul 02.30). Notifikasi Perlu Tindakan yang masih terbuka tidak pernah dihapus.
+        </p>
+        <Isian label="Jumlah hari" wajib htmlFor="notif-retention-days"
+          petunjuk={`${RETENTION_MIN}–${RETENTION_MAX} hari. Bawaan 90 hari.`}>
+          <Input id="notif-retention-days" type="number" inputMode="numeric" min={RETENTION_MIN} max={RETENTION_MAX} step={1}
+            value={retention} onChange={(e) => setRetention(e.target.value)} className="w-32 tabular-nums"
+            aria-invalid={!retentionValid} data-testid="notif-retention-days" />
+        </Isian>
+      </FormPopup>
+    </PageLayout>
   );
 }

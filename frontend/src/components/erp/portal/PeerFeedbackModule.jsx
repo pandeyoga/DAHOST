@@ -1,31 +1,45 @@
+/**
+ * Portal Saya › Peer Feedback — beri dan terima masukan dari rekan kerja.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout (dulu kepala berikon gradien + `p-6`), 3 kartu angka StatTile (dulu
+ * kotak berwarna hex), tab buatan → pil penyaring berangka, daftar masukan = TabelData + unduh Excel/CSV (dulu kartu
+ * besar per masukan), isi lengkap di popup, form kirim = FormPopup. Endpoint & isi yang dikirim tidak berubah.
+ */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import { toast } from 'sonner';
-import { MessageSquare, Send, Users, Star, Loader2, ThumbsUp, Eye, EyeOff } from 'lucide-react';
-import { IconButton } from '../IconButton';
+import { Send, Star } from 'lucide-react';
+import { formatDateID } from '@/lib/format';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, StatTile, StatusBadge } from '../moduleAtoms';
 
 const CATEGORY_LABEL = {
-  teamwork: 'Teamwork',
+  teamwork: 'Kerja sama tim',
   communication: 'Komunikasi',
-  quality: 'Kualitas Kerja',
+  quality: 'Kualitas kerja',
   leadership: 'Kepemimpinan',
   general: 'Umum',
 };
+const kategori = (k) => CATEGORY_LABEL[k] || CATEGORY_LABEL.general;
+const tgl = (v) => (v ? formatDateID(v) : '—');
 
-const CATEGORY_COLOR = {
-  teamwork: '#10b981',
-  communication: '#3b82f6',
-  quality: '#f59e0b',
-  leadership: '#ef4444',
-  general: '#64748b',
-};
+function Bintang({ rating, besar = false }) {
+  return (
+    <span className="inline-flex items-center gap-0.5" aria-label={`${rating} dari 5`}>
+      {Array.from({ length: 5 }).map((_, i) => (
+        <Star key={i} className={`${besar ? 'h-6 w-6' : 'h-3.5 w-3.5'} ${i < rating ? 'fill-[hsl(var(--warning))] text-[hsl(var(--warning))]' : 'text-muted-foreground/50'}`} />
+      ))}
+    </span>
+  );
+}
 
 export default function PeerFeedbackModule({ token }) {
   const [activeTab, setActiveTab] = useState('received');
@@ -37,6 +51,7 @@ export default function PeerFeedbackModule({ token }) {
   const [showSendDialog, setShowSendDialog] = useState(false);
   const [formData, setFormData] = useState({ to_employee_id: '', rating: 5, category: 'general', message: '', is_anonymous: false });
   const [avgRating, setAvgRating] = useState(0);
+  const [detail, setDetail] = useState(null);
 
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
 
@@ -44,12 +59,12 @@ export default function PeerFeedbackModule({ token }) {
     setLoading(true);
     try {
       const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/portal-saya/peer-feedback/received`, { headers });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) throw new Error(`kode ${r.status}`);
       const data = await r.json();
       setReceivedFeedback(data?.data || []);
       setAvgRating(data?.metadata?.avg_rating || 0);
     } catch (e) {
-      toast.error(`Gagal memuat feedback: ${e.message}`);
+      toast.error(`Gagal memuat masukan: ${e.message}`);
     } finally {
       setLoading(false);
     }
@@ -59,11 +74,11 @@ export default function PeerFeedbackModule({ token }) {
     setLoading(true);
     try {
       const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/portal-saya/peer-feedback/given`, { headers });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) throw new Error(`kode ${r.status}`);
       const data = await r.json();
       setGivenFeedback(data?.data || []);
     } catch (e) {
-      toast.error(`Gagal memuat feedback: ${e.message}`);
+      toast.error(`Gagal memuat masukan: ${e.message}`);
     } finally {
       setLoading(false);
     }
@@ -72,7 +87,7 @@ export default function PeerFeedbackModule({ token }) {
   const fetchPeers = useCallback(async () => {
     try {
       const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/portal-saya/peers`, { headers });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) throw new Error(`kode ${r.status}`);
       const data = await r.json();
       setPeers(data?.data || []);
     } catch (e) {
@@ -98,239 +113,118 @@ export default function PeerFeedbackModule({ token }) {
         headers,
         body: JSON.stringify(formData),
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      toast.success('Feedback berhasil dikirim!');
+      if (!r.ok) throw new Error(`kode ${r.status}`);
+      toast.success('Masukan berhasil dikirim.');
       setShowSendDialog(false);
       setFormData({ to_employee_id: '', rating: 5, category: 'general', message: '', is_anonymous: false });
       fetchGiven();
       fetchReceived();
     } catch (e) {
-      toast.error(`Gagal mengirim feedback: ${e.message}`);
+      toast.error(`Gagal mengirim masukan: ${e.message}`);
     } finally {
       setSending(false);
     }
   };
 
-  const renderStars = (rating) => {
-    return Array.from({ length: 5 }).map((_, i) => (
-      <Star key={i} className={`w-4 h-4 ${i < rating ? 'fill-amber-500 text-amber-500' : 'text-foreground/80'}`} />
-    ));
-  };
+  const diterima = activeTab === 'received';
+  const baris = diterima ? receivedFeedback : givenFeedback;
+  const siapa = (fb) => (diterima ? (fb.from_employee_name || (fb.is_anonymous ? 'Anonim' : '—')) : fb.to_employee_name);
+
+  const kolom = [
+    { kunci: 'siapa', label: diterima ? 'Dari' : 'Untuk', hp: 'judul', isi: (fb) => (
+      <span className="font-medium">{siapa(fb)}{!diterima && fb.is_anonymous && <span className="text-muted-foreground"> · anonim</span>}</span>) },
+    { kunci: 'kategori', label: 'Kategori', isi: (fb) => <StatusBadge status={fb.category} label={kategori(fb.category)} tone="default" /> },
+    { kunci: 'rating', label: 'Nilai', isi: (fb) => <Bintang rating={fb.rating} /> },
+    { kunci: 'pesan', label: 'Pesan', isi: (fb) => <p className="line-clamp-2 text-sm text-muted-foreground md:max-w-[26rem]">{fb.message}</p> },
+    { kunci: 'tanggal', label: 'Tanggal', isi: (fb) => <span className="whitespace-nowrap text-sm">{tgl(fb.created_at)}</span> },
+  ];
 
   return (
-    <div className="space-y-6 p-6" data-testid="peer-feedback-module">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center">
-            <MessageSquare className="w-5 h-5 text-foreground" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Peer Feedback</h1>
-            <p className="text-sm text-muted-foreground">Berikan dan terima feedback dari rekan kerja</p>
-          </div>
+    <PageLayout testId="peer-feedback-module" title="Peer feedback"
+      subtitle="Beri dan terima masukan dari rekan kerja."
+      actions={<Button onClick={() => setShowSendDialog(true)} data-testid="peer-send-btn"><Send />Kirim masukan</Button>}
+      filters={(
+        <FilterChips className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" value={activeTab} onChange={(k) => setActiveTab(k || 'received')} hideWhenEmpty={false} testId="peer-tab"
+          options={[
+            { key: 'received', label: 'Diterima', count: receivedFeedback.length },
+            { key: 'given', label: 'Diberikan', count: givenFeedback.length },
+          ]} />
+      )}
+      tools={(
+        <TombolUnduh namaBerkas={diterima ? 'masukan-diterima' : 'masukan-diberikan'} namaLembar="Masukan" baris={baris} testId="peer-unduh" kolom={[
+          { label: diterima ? 'Dari' : 'Untuk', nilai: (fb) => siapa(fb) || '' }, { label: 'Kategori', nilai: (fb) => kategori(fb.category) },
+          { label: 'Nilai (1–5)', nilai: (fb) => fb.rating }, { label: 'Pesan', nilai: (fb) => fb.message || '' },
+          { label: 'Anonim', nilai: (fb) => (fb.is_anonymous ? 'Ya' : 'Tidak') }, { label: 'Tanggal', nilai: (fb) => tgl(fb.created_at) },
+        ]} />
+      )}
+      summary={(
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <StatTile label="Masukan diterima" value={receivedFeedback.length} testId="peer-stat-received" />
+          <StatTile label="Rata-rata nilai" value={receivedFeedback.length ? Number(avgRating).toFixed(1).replace('.', ',') : '—'}
+            sub={receivedFeedback.length ? 'Dari masukan yang diterima (skala 1–5)' : 'Belum ada masukan'} testId="peer-stat-avg" />
+          <StatTile label="Masukan diberikan" value={givenFeedback.length} testId="peer-stat-given" />
         </div>
-        <Button onClick={() => setShowSendDialog(true)}>
-          <Send className="w-4 h-4 mr-2" /> Kirim Feedback
-        </Button>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <GlassCard className="p-5 flex items-start gap-4">
-          <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0" style={{ background: '#8b5cf620', border: '1px solid #8b5cf635' }}>
-            <ThumbsUp className="w-6 h-6 text-purple-500" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs text-muted-foreground mb-0.5">Feedback Diterima</p>
-            <p className="text-2xl font-bold text-foreground leading-none">{receivedFeedback.length}</p>
-          </div>
-        </GlassCard>
-        <GlassCard className="p-5 flex items-start gap-4">
-          <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0" style={{ background: '#f59e0b20', border: '1px solid #f59e0b35' }}>
-            <Star className="w-6 h-6 text-amber-500" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs text-muted-foreground mb-0.5">Rata-rata Rating</p>
-            <p className="text-2xl font-bold text-foreground leading-none">{avgRating.toFixed(1)}</p>
-          </div>
-        </GlassCard>
-        <GlassCard className="p-5 flex items-start gap-4">
-          <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0" style={{ background: '#3b82f620', border: '1px solid #3b82f635' }}>
-            <Send className="w-6 h-6 text-blue-500" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs text-muted-foreground mb-0.5">Feedback Diberikan</p>
-            <p className="text-2xl font-bold text-foreground leading-none">{givenFeedback.length}</p>
-          </div>
-        </GlassCard>
-      </div>
-
-      {/* Tabs */}
-      <GlassCard className="p-1">
-        <div className="flex gap-1">
-          <button
-            onClick={() => setActiveTab('received')}
-            className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              activeTab === 'received' ? 'bg-[var(--glass-hover)] text-foreground' : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Feedback Diterima
-          </button>
-          <button
-            onClick={() => setActiveTab('given')}
-            className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              activeTab === 'given' ? 'bg-[var(--glass-hover)] text-foreground' : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Feedback Diberikan
-          </button>
-        </div>
-      </GlassCard>
-
-      {/* Content */}
-      {loading ? (
-        <div className="flex items-center justify-center h-32">
-          <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-        </div>
-      ) : activeTab === 'received' ? (
-        <GlassCard className="p-6">
-          {receivedFeedback.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-32 text-center">
-              <MessageSquare className="w-12 h-12 text-muted-foreground/40 mb-2" />
-              <p className="text-sm text-muted-foreground">Belum ada feedback yang diterima</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {receivedFeedback.map(fb => {
-                const catColor = CATEGORY_COLOR[fb.category] || CATEGORY_COLOR.general;
-                return (
-                  <div key={fb.id} className="p-4 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)]">
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        {fb.is_anonymous ? <EyeOff className="w-4 h-4 text-muted-foreground" /> : <Users className="w-4 h-4 text-blue-500" />}
-                        <span className="text-sm font-semibold text-foreground">{fb.from_employee_name}</span>
-                      </div>
-                      <Badge variant="outline" style={{ borderColor: catColor, color: catColor }}>
-                        {CATEGORY_LABEL[fb.category]}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-1 mb-2">{renderStars(fb.rating)}</div>
-                    <p className="text-sm text-muted-foreground leading-relaxed mb-2">{fb.message}</p>
-                    <p className="text-xs text-muted-foreground">{new Date(fb.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </GlassCard>
+      )}>
+      {loading && baris.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat masukan…</p>
       ) : (
-        <GlassCard className="p-6">
-          {givenFeedback.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-32 text-center">
-              <Send className="w-12 h-12 text-muted-foreground/40 mb-2" />
-              <p className="text-sm text-muted-foreground">Belum ada feedback yang diberikan</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {givenFeedback.map(fb => {
-                const catColor = CATEGORY_COLOR[fb.category] || CATEGORY_COLOR.general;
-                return (
-                  <div key={fb.id} className="p-4 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)]">
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <Send className="w-4 h-4 text-green-500" />
-                        <span className="text-sm font-semibold text-foreground">Untuk: {fb.to_employee_name}</span>
-                      </div>
-                      <Badge variant="outline" style={{ borderColor: catColor, color: catColor }}>
-                        {CATEGORY_LABEL[fb.category]}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-1 mb-2">{renderStars(fb.rating)}</div>
-                    <p className="text-sm text-muted-foreground leading-relaxed mb-2">{fb.message}</p>
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span>{new Date(fb.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
-                      {fb.is_anonymous && <Badge variant="secondary" className="text-xs">Anonim</Badge>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </GlassCard>
+        <TabelData kolom={kolom} baris={baris} onKlikBaris={setDetail} testId="peer-table"
+          kosong={<EmptyState title={diterima ? 'Belum ada masukan yang diterima' : 'Belum ada masukan yang diberikan'}
+            description={diterima ? 'Masukan dari rekan akan muncul di sini.' : 'Tekan Kirim masukan untuk memberi masukan ke rekan.'} />} />
       )}
 
-      {/* Send Dialog */}
-      <Dialog open={showSendDialog} onOpenChange={setShowSendDialog}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Kirim Peer Feedback</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label>Kepada *</Label>
-              <Select value={formData.to_employee_id} onValueChange={v => setFormData({ ...formData, to_employee_id: v })}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Pilih rekan kerja..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {peers.map(p => (
-                    <SelectItem key={p.id || p.employee_code} value={p.id || p.employee_code}>
-                      {p.name} - {p.department} ({p.job_title})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Rating *</Label>
-              <div className="flex items-center gap-2">
-                {[1, 2, 3, 4, 5].map(r => (
-                  <button
-                    key={r}
-                    onClick={() => setFormData({ ...formData, rating: r })}
-                    className="focus:outline-none"
-                  >
-                    <Star className={`w-8 h-8 transition-colors ${r <= formData.rating ? 'fill-amber-500 text-amber-500' : 'text-foreground/80 hover:text-amber-600 dark:text-amber-300'}`} />
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <Label>Kategori</Label>
-              <Select value={formData.category} onValueChange={v => setFormData({ ...formData, category: v })}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(CATEGORY_LABEL).map(([k, v]) => (
-                    <SelectItem key={k} value={k}>{v}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Pesan Feedback *</Label>
-              <Textarea
-                placeholder="Tulis feedback yang konstruktif dan membangun..."
-                value={formData.message}
-                onChange={e => setFormData({ ...formData, message: e.target.value })}
-                rows={4}
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch checked={formData.is_anonymous} onCheckedChange={v => setFormData({ ...formData, is_anonymous: v })} />
-              <Label className="cursor-pointer">Kirim sebagai anonim</Label>
-            </div>
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} testId="peer-detail"
+          judul={diterima ? `Masukan dari ${siapa(detail)}` : `Masukan untuk ${siapa(detail)}`}
+          keterangan={tgl(detail.created_at)}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Kategori">{kategori(detail.category)}</BarisDetail>
+            <BarisDetail label="Nilai"><Bintang rating={detail.rating} /></BarisDetail>
+            <BarisDetail label="Anonim">{detail.is_anonymous ? 'Ya' : 'Tidak'}</BarisDetail>
+            <BarisDetail label="Pesan"><span className="whitespace-pre-line">{detail.message}</span></BarisDetail>
+          </dl>
+        </DetailPopup>
+      )}
+
+      <FormPopup open={showSendDialog} onClose={() => setShowSendDialog(false)} ukuran="pendek" testId="peer-send-form"
+        judul="Kirim masukan" keterangan="Masukan yang membangun membantu rekan berkembang."
+        onSimpan={handleSend} menyimpan={sending} labelSimpan="Kirim">
+        <Isian label="Kepada" wajib>
+          <SmartNativeSelect value={formData.to_employee_id} onChange={(e) => setFormData({ ...formData, to_employee_id: e.target.value })}
+            className="w-full" data-testid="peer-to">
+            <option value="">— Pilih rekan kerja —</option>
+            {peers.map(p => (
+              <option key={p.id || p.employee_code} value={p.id || p.employee_code}>
+                {`${p.name}${p.department ? ` - ${p.department}` : ''}${p.job_title ? ` (${p.job_title})` : ''}`}
+              </option>
+            ))}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Nilai" wajib>
+          <div className="flex items-center gap-1" role="radiogroup" aria-label="Nilai">
+            {[1, 2, 3, 4, 5].map(r => (
+              <Button key={r} type="button" variant="ghost" size="icon" role="radio" aria-checked={formData.rating === r}
+                title={`${r} bintang`} aria-label={`${r} bintang`} onClick={() => setFormData({ ...formData, rating: r })}>
+                <Star className={`!h-6 !w-6 ${r <= formData.rating ? 'fill-[hsl(var(--warning))] text-[hsl(var(--warning))]' : 'text-muted-foreground/50'}`} />
+              </Button>
+            ))}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowSendDialog(false)}>Batal</Button>
-            <Button onClick={handleSend} disabled={sending}>
-              {sending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Mengirim...</> : <><Send className="w-4 h-4 mr-2" /> Kirim</>}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+        </Isian>
+        <Isian label="Kategori">
+          <SmartNativeSelect value={formData.category} onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+            searchable={false} className="w-full">
+            {Object.entries(CATEGORY_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Pesan" wajib htmlFor="peer-message">
+          <Textarea id="peer-message" placeholder="Tulis masukan yang konstruktif dan membangun…" rows={4}
+            value={formData.message} onChange={e => setFormData({ ...formData, message: e.target.value })} />
+        </Isian>
+        <label className="flex items-center gap-3 text-sm">
+          <Switch checked={formData.is_anonymous} onCheckedChange={v => setFormData({ ...formData, is_anonymous: v })} />
+          Kirim sebagai anonim
+        </label>
+      </FormPopup>
+    </PageLayout>
   );
 }

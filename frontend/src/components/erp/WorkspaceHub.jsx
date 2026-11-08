@@ -1,3 +1,10 @@
+/**
+ * Portal Saya › Ruang Kerja — catatan, tugas, pengingat, kalender, dan tautan cepat pribadi.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout (dulu kepala berikon gradien + `p-6 max-w-5xl`), label tab Indonesia,
+ * form tambah tugas/pengingat/acara = FormPopup (dulu kotak form terbuka di halaman), tanggal pakai DatePicker
+ * (dulu input tanggal/datetime bawaan; nilai yang dikirim tetap "YYYY-MM-DD" / "YYYY-MM-DDTHH:mm"), warna token.
+ */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import axios from 'axios';
@@ -10,11 +17,18 @@ import TipTapEditor from '@/components/ui/TipTapEditor';
 import PaginationBar from '@/components/ui/PaginationBar';
 import PushNotificationToggle from '@/components/erp/PushNotificationToggle';
 import {
-  Loader2, Plus, Trash2, Edit3, Save, X, CheckSquare, Square, Bell,
+  Loader2, Plus, Trash2, Save, X, CheckSquare, Square, Bell,
   Calendar, Link as LinkIcon, StickyNote, ChevronLeft, ChevronRight,
-  Pin, PinOff, Star, Clock, AlertTriangle, Repeat, LayoutGrid, GripVertical
+  Pin, PinOff, Clock, AlertTriangle, Repeat, LayoutGrid, GripVertical
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import FilterChips from '@/components/ui/filter-chips';
+import PageLayout from './layout/PageLayout';
 import { todayWIB, thisMonthWIB, monthEndISO, nowWIBLocalInput } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -40,9 +54,9 @@ const MODULE_CATALOG = [
 ];
 
 const PRIORITY_CFG = {
-  high:   { label: 'Tinggi', color: 'bg-red-100 text-red-700 border-red-200' },
-  medium: { label: 'Sedang', color: 'bg-amber-100 text-amber-700 border-amber-200' },
-  low:    { label: 'Rendah', color: 'bg-green-100 text-green-700 border-green-200' },
+  high:   { label: 'Tinggi', color: 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--danger-text))] border-[hsl(var(--destructive)/0.3)]' },
+  medium: { label: 'Sedang', color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] border-[hsl(var(--warning)/0.35)]' },
+  low:    { label: 'Rendah', color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.3)]' },
 };
 
 const NOTE_COLORS = ['#ffffff', '#fef9c3', '#dcfce7', '#dbeafe', '#fce7f3', '#ede9fe', '#ffedd5'];
@@ -113,7 +127,7 @@ function WorkspaceNotepad({ headers }) {
   }, [editTitle, editContent, editColor]); // eslint-disable-line
 
   const deleteNote = async (id) => {
-    if (!window.confirm('Hapus catatan ini?')) return;
+    if (!(await confirmDialog({ title: 'Hapus catatan ini?', confirmLabel: 'Hapus', danger: true }))) return;
     try {
       await axios.delete(`${API}/api/portal/notes/${id}`, { headers });
       setNotes(prev => prev.filter(n => n.id !== id));
@@ -138,22 +152,22 @@ function WorkspaceNotepad({ headers }) {
   if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin" /></div>;
 
   return (
-    <div className="flex gap-4 h-[580px]">
+    <div className="flex flex-col gap-4 md:h-[580px] md:flex-row">
       {/* Sidebar */}
-      <div className="w-56 flex-shrink-0 flex flex-col gap-2">
+      <div className="flex w-full flex-shrink-0 flex-col gap-2 md:w-56">
         <Button data-testid="btn-new-note" size="sm" className="w-full" onClick={newNote}>
-          <Plus className="w-4 h-4 mr-1" /> Catatan Baru
+          <Plus className="w-4 h-4 mr-1" /> Catatan baru
         </Button>
         <div className="flex-1 overflow-y-auto space-y-1 pr-1">
           {pinned.length > 0 && (
-            <p className="text-xs text-muted-foreground px-1 pt-1">PINNED</p>
+            <p className="text-xs text-muted-foreground px-1 pt-1">Disematkan</p>
           )}
           {pinned.map(n => (
             <NoteItem key={n.id} note={n} active={activeNote?.id === n.id}
               onOpen={() => openNote(n)} onDelete={deleteNote} onPin={togglePin} />
           ))}
           {unpinned.length > 0 && pinned.length > 0 && (
-            <p className="text-xs text-muted-foreground px-1 pt-1">CATATAN</p>
+            <p className="text-xs text-muted-foreground px-1 pt-1">Catatan lain</p>
           )}
           {unpinned.map(n => (
             <NoteItem key={n.id} note={n} active={activeNote?.id === n.id}
@@ -166,7 +180,7 @@ function WorkspaceNotepad({ headers }) {
       </div>
 
       {/* Editor */}
-      <div className="flex-1 flex flex-col gap-2 min-w-0">
+      <div className={`flex min-w-0 flex-1 flex-col gap-2 md:min-h-0 ${activeNote ? 'min-h-[420px]' : ''}`}>
         {activeNote ? (
           <>
             <div className="flex items-center gap-2">
@@ -192,13 +206,13 @@ function WorkspaceNotepad({ headers }) {
             <div style={{ backgroundColor: editColor }} className="flex-1 rounded-lg overflow-hidden">
               <TipTapEditor value={editContent} onChange={setEditContent} minHeight={240} />
             </div>
-            <p className="text-xs text-muted-foreground text-right">Auto-save aktif · Terakhir disimpan: {activeNote.updated_at?.slice(0, 16).replace('T', ' ')}</p>
+            <p className="text-xs text-muted-foreground text-right">Simpan otomatis aktif · terakhir disimpan {activeNote.updated_at?.slice(0, 16).replace('T', ' ')}</p>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground flex-col gap-3">
+          <div className="hidden flex-1 flex-col items-center justify-center gap-3 text-muted-foreground md:flex">
             <StickyNote className="w-12 h-12 opacity-30" />
             <p className="text-sm">Pilih catatan atau buat catatan baru</p>
-            <Button size="sm" onClick={newNote}><Plus className="w-4 h-4 mr-1" /> Catatan Baru</Button>
+            <Button size="sm" onClick={newNote}><Plus className="w-4 h-4 mr-1" /> Catatan baru</Button>
           </div>
         )}
       </div>
@@ -229,7 +243,7 @@ function NoteItem({ note, active, onOpen, onDelete, onPin }) {
           {note.is_pinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
         </button>
         <button onClick={e => { e.stopPropagation(); onDelete(note.id); }}
-          className="p-0.5 rounded hover:bg-red-100 text-red-700 dark:text-red-500">
+          className="p-0.5 rounded hover:bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))]">
           <Trash2 className="w-3 h-3" />
         </button>
       </div>
@@ -296,51 +310,40 @@ function WorkspaceTodo({ headers }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <div className="flex gap-1">
-          {['active', 'done', 'all'].map(f => (
-            <button key={f} onClick={() => { setFilter(f); setSkip(0); }}
-              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors
-                ${filter === f ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}>
-              {f === 'active' ? 'Aktif' : f === 'done' ? 'Selesai' : 'Semua'}
-            </button>
-          ))}
-        </div>
-        <Button data-testid="btn-add-todo" size="sm" onClick={() => setShowForm(v => !v)}>
-          <Plus className="w-4 h-4 mr-1" /> Tambah
+        <FilterChips value={filter} hideWhenEmpty={false} testId="todo-filter" ariaLabel="Saring tugas"
+          onChange={(f) => { setFilter(f || 'active'); setSkip(0); }}
+          options={[{ key: 'active', label: 'Aktif' }, { key: 'done', label: 'Selesai' }, { key: 'all', label: 'Semua' }]} />
+        <Button data-testid="btn-add-todo" size="sm" onClick={() => setShowForm(true)}>
+          <Plus /> Tambah tugas
         </Button>
       </div>
 
-      {showForm && (
-        <Card className="border-primary/30 bg-primary/5">
-          <CardContent className="pt-4 space-y-3">
-            <input data-testid="todo-title-input"
-              className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-              placeholder="Apa yang perlu dikerjakan?" autoFocus
-              value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
-              onKeyDown={e => e.key === 'Enter' && addTodo()}
-            />
-            <div className="flex gap-2 items-center flex-wrap">
-              <SmartNativeSelect data-testid="todo-priority-select"
-                className="w-40 border rounded-lg px-2 py-1.5 text-xs outline-none"
-                value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}>
-                <option value="high">Tinggi</option>
-                <option value="medium">Sedang</option>
-                <option value="low">Rendah</option>
-              </SmartNativeSelect>
-              <input type="date" data-testid="todo-due-date"
-                className="border rounded-lg px-2 py-1.5 text-xs outline-none"
-                value={form.due_date} onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} />
-              <Button data-testid="btn-save-todo" size="sm" onClick={addTodo}>Simpan</Button>
-              <Button size="sm" variant="ghost" onClick={() => setShowForm(false)}><X className="w-4 h-4" /></Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      <FormPopup open={showForm} onClose={() => setShowForm(false)} ukuran="pendek" testId="todo-form" judul="Tambah tugas"
+        onSimpan={addTodo} labelSimpan="Simpan">
+        <Isian label="Tugas" wajib htmlFor="todo-title">
+          <Input id="todo-title" data-testid="todo-title-input" placeholder="Apa yang perlu dikerjakan?" autoFocus
+            value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
+        </Isian>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Prioritas">
+            <SmartNativeSelect data-testid="todo-priority-select" className="w-full" searchable={false}
+              value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}>
+              <option value="high">Tinggi</option>
+              <option value="medium">Sedang</option>
+              <option value="low">Rendah</option>
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Tenggat (opsional)">
+            <DatePicker value={form.due_date} onChange={(v) => setForm(f => ({ ...f, due_date: v || '' }))}
+              bolehKosong placeholder="Tanpa tenggat" testId="todo-due-date" />
+          </Isian>
+        </div>
+      </FormPopup>
 
       {loading ? <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin" /></div> : (
         <div className="space-y-1.5 max-h-[420px] overflow-y-auto pr-1">
           {todos.length === 0 && (
-            <div className="text-center py-10 text-muted-foreground">
+            <div className="text-center py-6 text-muted-foreground">
               <CheckSquare className="w-10 h-10 mx-auto mb-2 opacity-30" />
               <p className="text-sm">Tidak ada tugas {filter === 'done' ? 'selesai' : filter === 'active' ? 'aktif' : ''}.</p>
             </div>
@@ -351,7 +354,7 @@ function WorkspaceTodo({ headers }) {
             return (
               <div key={todo.id} data-testid={`todo-item-${todo.id}`}
                 className={`flex items-center gap-3 p-3 rounded-lg border hover:shadow-sm transition-all
-                  ${todo.done ? 'bg-muted/30 opacity-60' : overdue ? 'border-red-200 bg-red-50' : 'bg-background'}`}>
+                  ${todo.done ? 'bg-muted/30 opacity-60' : overdue ? 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.12)]' : 'bg-background'}`}>
                 <button onClick={() => toggleDone(todo)} className="flex-shrink-0">
                   {todo.done
                     ? <CheckSquare className="w-5 h-5 text-primary" />
@@ -365,14 +368,14 @@ function WorkspaceTodo({ headers }) {
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className={`text-xs px-1.5 py-0.5 rounded border ${cfg.color}`}>{cfg.label}</span>
                     {todo.due_date && (
-                      <span className={`text-xs flex items-center gap-1 ${overdue ? 'text-red-600' : 'text-muted-foreground'}`}>
+                      <span className={`text-xs flex items-center gap-1 ${overdue ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>
                         {overdue && <AlertTriangle className="w-3 h-3" />}
                         <Clock className="w-3 h-3" /> {todo.due_date}
                       </span>
                     )}
                   </div>
                 </div>
-                <button onClick={() => deleteTodo(todo.id)} className="p-1 rounded hover:bg-red-100 text-muted-foreground hover:text-red-600 flex-shrink-0">
+                <button onClick={() => deleteTodo(todo.id)} className="p-1 rounded hover:bg-[hsl(var(--destructive)/0.12)] text-muted-foreground hover:text-[hsl(var(--danger-text))] flex-shrink-0">
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
@@ -419,7 +422,7 @@ function WorkspaceReminder({ headers }) {
       setReminders(prev => [data, ...prev]);
       setForm({ title: '', description: '', remind_at: '', recurrence: 'once', whatsapp_enabled: false, whatsapp_number: '' });
       setShowForm(false);
-      toast({ title: 'Reminder ditambahkan.' });
+      toast({ title: 'Pengingat ditambahkan.' });
     } catch (e) {
       toast({ title: 'Gagal.', variant: 'destructive' });
     }
@@ -451,75 +454,68 @@ function WorkspaceReminder({ headers }) {
           <input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} className="rounded" />
           Tampilkan selesai
         </label>
-        <Button data-testid="btn-add-reminder" size="sm" onClick={() => setShowForm(v => !v)}>
-          <Plus className="w-4 h-4 mr-1" /> Tambah Reminder
+        <Button data-testid="btn-add-reminder" size="sm" onClick={() => setShowForm(true)}>
+          <Plus /> Tambah pengingat
         </Button>
       </div>
 
-      {showForm && (
-        <Card className="border-amber-200 bg-amber-50">
-          <CardContent className="pt-4 space-y-3">
-            <input data-testid="reminder-title-input"
-              className="w-full border rounded-lg px-3 py-2 text-sm outline-none"
-              placeholder="Judul reminder..." autoFocus
-              value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-xs font-medium mb-1 block">Waktu Pengingat</label>
-                <input type="datetime-local" data-testid="reminder-datetime"
-                  className="w-full border rounded-lg px-2 py-1.5 text-xs outline-none"
-                  value={form.remind_at} onChange={e => setForm(f => ({ ...f, remind_at: e.target.value }))} />
-              </div>
-              <div>
-                <label className="text-xs font-medium mb-1 block">Pengulangan</label>
-                <SmartNativeSelect data-testid="reminder-recurrence"
-                  className="w-full border rounded-lg px-2 py-1.5 text-xs outline-none"
-                  value={form.recurrence} onChange={e => setForm(f => ({ ...f, recurrence: e.target.value }))}>
-                  <option value="once">Sekali</option>
-                  <option value="daily">Harian</option>
-                  <option value="weekly">Mingguan</option>
-                </SmartNativeSelect>
-              </div>
-            </div>
-            <textarea className="w-full border rounded-lg px-3 py-2 text-xs outline-none resize-none"
-              rows={2} placeholder="Deskripsi (opsional)..."
-              value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
-            <div className="bg-white rounded-lg p-3 border">
-              <label className="flex items-center gap-2 text-xs cursor-pointer">
-                <input type="checkbox" checked={form.whatsapp_enabled}
-                  onChange={e => setForm(f => ({ ...f, whatsapp_enabled: e.target.checked }))} />
-                <span className="font-medium">Kirim via WhatsApp</span>
-                <Badge variant="outline" className="text-xs">Segera Hadir</Badge>
-              </label>
-              {form.whatsapp_enabled && (
-                <input className="mt-2 w-full border rounded px-2 py-1 text-xs outline-none"
-                  placeholder="08xx-xxxx-xxxx" value={form.whatsapp_number}
-                  onChange={e => setForm(f => ({ ...f, whatsapp_number: e.target.value }))} />
-              )}
-            </div>
-            <div className="flex gap-2">
-              <Button data-testid="btn-save-reminder" size="sm" onClick={addReminder}>Simpan</Button>
-              <Button size="sm" variant="ghost" onClick={() => setShowForm(false)}><X className="w-4 h-4" /></Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      <FormPopup open={showForm} onClose={() => setShowForm(false)} ukuran="pendek" testId="reminder-form" judul="Tambah pengingat"
+        onSimpan={addReminder} labelSimpan="Simpan">
+        <Isian label="Judul" wajib htmlFor="reminder-title">
+          <Input id="reminder-title" data-testid="reminder-title-input" placeholder="Judul pengingat…" autoFocus
+            value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
+        </Isian>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Tanggal pengingat">
+            <DatePicker value={(form.remind_at || '').slice(0, 10)} bolehKosong placeholder="Pilih tanggal" testId="reminder-date"
+              onChange={(v) => setForm(f => ({ ...f, remind_at: v ? `${v}T${(f.remind_at || '').slice(11, 16) || '08:00'}` : '' }))} />
+          </Isian>
+          <Isian label="Jam (WIB)" htmlFor="reminder-time">
+            <Input id="reminder-time" type="time" data-testid="reminder-datetime" disabled={!form.remind_at}
+              value={(form.remind_at || '').slice(11, 16)}
+              onChange={e => setForm(f => ({ ...f, remind_at: f.remind_at ? `${f.remind_at.slice(0, 10)}T${e.target.value || '00:00'}` : '' }))} />
+          </Isian>
+          <Isian label="Pengulangan">
+            <SmartNativeSelect data-testid="reminder-recurrence" className="w-full" searchable={false}
+              value={form.recurrence} onChange={e => setForm(f => ({ ...f, recurrence: e.target.value }))}>
+              <option value="once">Sekali</option>
+              <option value="daily">Harian</option>
+              <option value="weekly">Mingguan</option>
+            </SmartNativeSelect>
+          </Isian>
+        </div>
+        <Isian label="Keterangan (opsional)" htmlFor="reminder-desc">
+          <Textarea id="reminder-desc" rows={2} placeholder="Keterangan…"
+            value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+        </Isian>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={form.whatsapp_enabled} className="h-4 w-4 accent-[hsl(var(--primary))]"
+            onChange={e => setForm(f => ({ ...f, whatsapp_enabled: e.target.checked }))} />
+          Kirim lewat WhatsApp <span className="text-xs text-muted-foreground">(segera hadir)</span>
+        </label>
+        {form.whatsapp_enabled && (
+          <Isian label="Nomor WhatsApp" htmlFor="reminder-wa">
+            <Input id="reminder-wa" placeholder="08xx-xxxx-xxxx" value={form.whatsapp_number}
+              onChange={e => setForm(f => ({ ...f, whatsapp_number: e.target.value }))} />
+          </Isian>
+        )}
+      </FormPopup>
 
       {loading ? <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin" /></div> : (
         <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
           {reminders.length === 0 && (
-            <div className="text-center py-10 text-muted-foreground">
+            <div className="text-center py-6 text-muted-foreground">
               <Bell className="w-10 h-10 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">Belum ada reminder.</p>
+              <p className="text-sm">Belum ada pengingat.</p>
             </div>
           )}
           {reminders.map(r => (
             <div key={r.id} data-testid={`reminder-item-${r.id}`}
               className={`flex items-start gap-3 p-3 rounded-lg border transition-all
-                ${r.is_done ? 'opacity-50 bg-muted/30' : isPast(r) ? 'border-amber-300 bg-amber-50' : 'bg-background'}`}>
+                ${r.is_done ? 'opacity-50 bg-muted/30' : isPast(r) ? 'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.12)]' : 'bg-background'}`}>
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0
-                ${isPast(r) && !r.is_done ? 'bg-amber-100' : 'bg-primary/10'}`}>
-                <Bell className={`w-4 h-4 ${isPast(r) && !r.is_done ? 'text-amber-600' : 'text-primary'}`} />
+                ${isPast(r) && !r.is_done ? 'bg-[hsl(var(--warning)/0.12)]' : 'bg-primary/10'}`}>
+                <Bell className={`w-4 h-4 ${isPast(r) && !r.is_done ? 'text-[hsl(var(--warning-text))]' : 'text-primary'}`} />
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium">{r.title}</p>
@@ -531,7 +527,7 @@ function WorkspaceReminder({ headers }) {
                     </span>
                   )}
                   {r.recurrence !== 'once' && (
-                    <span className="text-xs px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded flex items-center gap-1">
+                    <span className="text-xs px-1.5 py-0.5 bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] rounded flex items-center gap-1">
                       <Repeat className="w-3 h-3" /> {RECUR_LABEL[r.recurrence]}
                     </span>
                   )}
@@ -539,15 +535,15 @@ function WorkspaceReminder({ headers }) {
               </div>
               <div className="flex gap-1">
                 {!r.is_done && (
-                  <button onClick={() => markDone(r.id)}
-                    className="p-1 rounded hover:bg-green-100 text-muted-foreground hover:text-green-600">
-                    <CheckSquare className="w-4 h-4" />
-                  </button>
+                  <Button type="button" variant="ghost" size="icon-sm" onClick={() => markDone(r.id)} title="Tandai selesai" aria-label="Tandai selesai"
+                    className="text-muted-foreground hover:text-[hsl(var(--success-text))]">
+                    <CheckSquare />
+                  </Button>
                 )}
-                <button onClick={() => deleteReminder(r.id)}
-                  className="p-1 rounded hover:bg-red-100 text-muted-foreground hover:text-red-600">
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <Button type="button" variant="ghost" size="icon-sm" onClick={() => deleteReminder(r.id)} title="Hapus pengingat" aria-label="Hapus pengingat"
+                  className="text-muted-foreground hover:text-[hsl(var(--danger-text))]">
+                  <Trash2 />
+                </Button>
               </div>
             </div>
           ))}
@@ -558,7 +554,7 @@ function WorkspaceReminder({ headers }) {
       {/* Browser Push Notification opt-in */}
       <div className="pt-4 border-t">
         <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
-          <Bell className="w-3.5 h-3.5" /> Notifikasi Push Browser
+          <Bell className="w-3.5 h-3.5" /> Notifikasi dorong di browser
         </p>
         <PushNotificationToggle headers={headers} />
       </div>
@@ -662,14 +658,14 @@ function WorkspaceCalendar({ headers }) {
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">{MONTHS[month]} {year}</h3>
         <div className="flex gap-1">
-          <Button variant="outline" size="icon" className="h-7 w-7" onClick={prevMonth}><ChevronLeft className="w-4 h-4" /></Button>
-          <Button variant="outline" size="icon" className="h-7 w-7" onClick={nextMonth}><ChevronRight className="w-4 h-4" /></Button>
+          <Button variant="outline" size="icon-sm" onClick={prevMonth} title="Bulan sebelumnya" aria-label="Bulan sebelumnya"><ChevronLeft /></Button>
+          <Button variant="outline" size="icon-sm" onClick={nextMonth} title="Bulan berikutnya" aria-label="Bulan berikutnya"><ChevronRight /></Button>
         </div>
       </div>
 
       {/* Legend */}
       <div className="flex gap-3 flex-wrap text-xs">
-        {Object.entries({ personal: 'Event', leave: 'Cuti', overtime: 'Lembur', reminder: 'Reminder' }).map(([k, v]) => (
+        {Object.entries({ personal: 'Acara', leave: 'Cuti', overtime: 'Lembur', reminder: 'Pengingat' }).map(([k, v]) => (
           <span key={k} className="flex items-center gap-1">
             <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: EVENT_COLORS[k] }} />
             {v}
@@ -694,9 +690,9 @@ function WorkspaceCalendar({ headers }) {
                 data-testid={`cal-day-${ds}`}
                 onClick={() => { setSelectedDate(ds); setShowForm(false); }}
                 className={`h-16 border-r border-b border-border/40 p-1 cursor-pointer transition-colors
-                  ${isSelected ? 'bg-primary/10' : isToday ? 'bg-blue-50' : 'hover:bg-muted/40'}`}>
+                  ${isSelected ? 'bg-primary/10' : isToday ? 'bg-[hsl(var(--primary)/0.12)]' : 'hover:bg-muted/40'}`}>
                 <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium mb-0.5
-                  ${isToday ? 'bg-primary text-foreground' : ''}`}>
+                  ${isToday ? 'bg-primary text-primary-foreground' : ''}`}>
                   {d}
                 </div>
                 <div className="flex flex-col gap-0.5 overflow-hidden">
@@ -721,28 +717,12 @@ function WorkspaceCalendar({ headers }) {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center justify-between">
               <span>{selectedDate}</span>
-              <Button data-testid="btn-add-event" size="sm" variant="outline" onClick={() => setShowForm(v => !v)}>
-                <Plus className="w-3.5 h-3.5 mr-1" /> Tambah Event
+              <Button data-testid="btn-add-event" size="sm" variant="outline" onClick={() => setShowForm(true)}>
+                <Plus /> Tambah acara
               </Button>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {showForm && (
-              <div className="space-y-2 p-3 bg-primary/5 rounded-lg">
-                <input data-testid="event-title-input"
-                  className="w-full border rounded px-3 py-1.5 text-sm outline-none"
-                  placeholder="Judul event..." autoFocus
-                  value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
-                <div className="flex gap-2">
-                  <input type="time" className="border rounded px-2 py-1.5 text-sm outline-none"
-                    value={form.time} onChange={e => setForm(f => ({ ...f, time: e.target.value }))} />
-                  <input type="color" className="border rounded px-1 py-1 h-9 w-10 cursor-pointer"
-                    value={form.color} onChange={e => setForm(f => ({ ...f, color: e.target.value }))} />
-                  <Button data-testid="btn-save-event" size="sm" onClick={addEvent}>Simpan</Button>
-                  <Button size="sm" variant="ghost" onClick={() => setShowForm(false)}><X className="w-4 h-4" /></Button>
-                </div>
-              </div>
-            )}
             {selectedEvents.length === 0 && !showForm && (
               <p className="text-sm text-muted-foreground text-center py-3">Tidak ada event hari ini.</p>
             )}
@@ -756,7 +736,7 @@ function WorkspaceCalendar({ headers }) {
                 </div>
                 {ev.type === 'personal' && (
                   <button onClick={() => deleteEvent(ev.id)}
-                    className="p-1 rounded hover:bg-red-100 text-muted-foreground hover:text-red-600">
+                    className="p-1 rounded hover:bg-[hsl(var(--destructive)/0.12)] text-muted-foreground hover:text-[hsl(var(--danger-text))]">
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 )}
@@ -768,6 +748,22 @@ function WorkspaceCalendar({ headers }) {
           </CardContent>
         </Card>
       )}
+          <FormPopup open={showForm} onClose={() => setShowForm(false)} ukuran="pendek" testId="event-form"
+        judul={`Tambah acara · ${selectedDate}`} onSimpan={addEvent} labelSimpan="Simpan">
+        <Isian label="Judul acara" wajib htmlFor="event-title">
+          <Input id="event-title" data-testid="event-title-input" placeholder="Judul acara…" autoFocus
+            value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
+        </Isian>
+        <div className="grid grid-cols-2 gap-4">
+          <Isian label="Jam" htmlFor="event-time">
+            <Input id="event-time" type="time" value={form.time} onChange={e => setForm(f => ({ ...f, time: e.target.value }))} />
+          </Isian>
+          <Isian label="Warna penanda" htmlFor="event-color">
+            <input id="event-color" type="color" className="h-9 w-14 cursor-pointer rounded-md border border-[var(--glass-border)] bg-[var(--card-surface)] p-1"
+              value={form.color} onChange={e => setForm(f => ({ ...f, color: e.target.value }))} />
+          </Isian>
+        </div>
+      </FormPopup>
     </div>
   );
 }
@@ -848,7 +844,7 @@ function WorkspaceQuickLinks({ headers, onNavigate }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <p className="text-sm text-muted-foreground">Pin shortcut modul favorit Anda.</p>
+          <p className="text-sm text-muted-foreground">Pintasan ke modul favorit Anda.</p>
           {links.length > 1 && (
             <span className="text-xs text-muted-foreground flex items-center gap-1">
               <GripVertical className="w-3 h-3" /> Seret untuk mengubah urutan
@@ -857,48 +853,37 @@ function WorkspaceQuickLinks({ headers, onNavigate }) {
         </div>
         <div className="flex items-center gap-2">
           {saving && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
-          <Button data-testid="btn-add-quicklink" size="sm" onClick={() => setShowAdd(v => !v)}>
-            <Plus className="w-4 h-4 mr-1" /> Tambah Pin
+          <Button data-testid="btn-add-quicklink" size="sm" onClick={() => setShowAdd(true)}>
+            <Plus /> Tambah tautan
           </Button>
         </div>
       </div>
 
-      {showAdd && (
-        <Card className="border-primary/30 bg-primary/5">
-          <CardContent className="pt-4 space-y-3">
-            <div>
-              <label className="text-xs font-medium mb-1 block">Pilih Modul</label>
-              <SmartNativeSelect data-testid="quicklink-module-select"
-                className="w-full border rounded-lg px-3 py-2 text-sm outline-none"
-                value={form.module_id}
-                onChange={e => {
-                  const mod = MODULE_CATALOG.find(m => m.id === e.target.value);
-                  setForm(f => ({ ...f, module_id: e.target.value, label: mod?.label || '' }));
-                }}>
-                <option value="">-- Pilih --</option>
-                {MODULE_CATALOG.map(m => (
-                  <option key={m.id} value={m.id}>{m.label} ({m.portal})</option>
-                ))}
-              </SmartNativeSelect>
-            </div>
-            <div>
-              <label className="text-xs font-medium mb-1 block">Label (opsional)</label>
-              <input className="w-full border rounded-lg px-3 py-2 text-sm outline-none"
-                placeholder="Nama tampilan..."
-                value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} />
-            </div>
-            <div className="flex gap-2">
-              <Button data-testid="btn-save-quicklink" size="sm" onClick={addLink}>Tambah</Button>
-              <Button size="sm" variant="ghost" onClick={() => setShowAdd(false)}><X className="w-4 h-4" /></Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      <FormPopup open={showAdd} onClose={() => setShowAdd(false)} ukuran="pendek" testId="quicklink-form" judul="Tambah tautan cepat"
+        onSimpan={addLink} labelSimpan="Tambah">
+        <Isian label="Modul" wajib>
+          <SmartNativeSelect data-testid="quicklink-module-select" className="w-full"
+            value={form.module_id}
+            onChange={e => {
+              const mod = MODULE_CATALOG.find(m => m.id === e.target.value);
+              setForm(f => ({ ...f, module_id: e.target.value, label: mod?.label || '' }));
+            }}>
+            <option value="">— Pilih modul —</option>
+            {MODULE_CATALOG.map(m => (
+              <option key={m.id} value={m.id}>{`${m.label} (${m.portal})`}</option>
+            ))}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Label (opsional)" htmlFor="quicklink-label">
+          <Input id="quicklink-label" placeholder="Nama tampilan…" value={form.label}
+            onChange={e => setForm(f => ({ ...f, label: e.target.value }))} />
+        </Isian>
+      </FormPopup>
 
       {links.length === 0 && (
-        <div className="text-center py-10 text-muted-foreground">
+        <div className="text-center py-6 text-muted-foreground">
           <LinkIcon className="w-10 h-10 mx-auto mb-2 opacity-30" />
-          <p className="text-sm">Belum ada quick link. Tambah shortcut modul favorit!</p>
+          <p className="text-sm">Belum ada tautan cepat. Tambahkan pintasan ke modul favorit Anda.</p>
         </div>
       )}
 
@@ -940,7 +925,7 @@ function WorkspaceQuickLinks({ headers, onNavigate }) {
                       {/* Remove button */}
                       <button
                         onClick={e => { e.stopPropagation(); removeLink(l.id); }}
-                        className="absolute top-2 right-2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-100 text-muted-foreground hover:text-red-600 transition-opacity">
+                        className="absolute top-2 right-2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-[hsl(var(--destructive)/0.12)] text-muted-foreground hover:text-[hsl(var(--danger-text))] transition-opacity">
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
@@ -963,33 +948,24 @@ export default function WorkspaceHub({ user, headers, onNavigate }) {
   const [wsTab, setWsTab] = useState('notepad');
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-4">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-purple-500 flex items-center justify-center">
-          <Star className="w-5 h-5 text-foreground" />
-        </div>
-        <div>
-          <h2 className="text-lg font-bold">Ruang Kerja Saya</h2>
-          <p className="text-xs text-muted-foreground">Catatan, tugas, pengingat, kalender & tautan cepat — pribadi</p>
-        </div>
-      </div>
-
+    <PageLayout testId="workspace-hub" title="Ruang kerja"
+      subtitle="Catatan, tugas, pengingat, kalender, dan tautan cepat pribadi Anda.">
       <Tabs value={wsTab} onValueChange={setWsTab}>
         <TabsList className="flex-wrap h-auto gap-1">
           <TabsTrigger value="notepad" data-testid="ws-tab-notepad" className="flex items-center gap-1.5">
-            <StickyNote className="w-4 h-4" /> Notepad
+            <StickyNote className="w-4 h-4" /> Catatan
           </TabsTrigger>
           <TabsTrigger value="todo" data-testid="ws-tab-todo" className="flex items-center gap-1.5">
-            <CheckSquare className="w-4 h-4" /> Todo
+            <CheckSquare className="w-4 h-4" /> Tugas
           </TabsTrigger>
           <TabsTrigger value="reminder" data-testid="ws-tab-reminder" className="flex items-center gap-1.5">
-            <Bell className="w-4 h-4" /> Reminder
+            <Bell className="w-4 h-4" /> Pengingat
           </TabsTrigger>
           <TabsTrigger value="calendar" data-testid="ws-tab-calendar" className="flex items-center gap-1.5">
             <Calendar className="w-4 h-4" /> Kalender
           </TabsTrigger>
           <TabsTrigger value="quicklinks" data-testid="ws-tab-quicklinks" className="flex items-center gap-1.5">
-            <LinkIcon className="w-4 h-4" /> Quick Links
+            <LinkIcon className="w-4 h-4" /> Tautan cepat
           </TabsTrigger>
         </TabsList>
 
@@ -1009,6 +985,6 @@ export default function WorkspaceHub({ user, headers, onNavigate }) {
           <WorkspaceQuickLinks headers={headers} onNavigate={onNavigate} />
         </TabsContent>
       </Tabs>
-    </div>
+    </PageLayout>
   );
 }

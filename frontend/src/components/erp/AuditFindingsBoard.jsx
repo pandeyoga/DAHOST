@@ -1,84 +1,150 @@
+/**
+ * Papan Temuan Audit 2026-09-23 — status 30 temuan (Finance · Produksi/Maklon · R&D).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, kartu angka StatTile (dihitung dari daftar yang sama), penyaring satu
+ * baris, tabel (kartu ringkas di HP) + unduh Excel/CSV, rincian perbaikan di popup (dulu kolom panjang di tabel),
+ * jalur berkas sumber dipindah ke popup "Sumber".
+ */
 import { useEffect, useMemo, useState } from 'react';
+import { FileText, Search } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { ClipboardCheck, CircleCheck, CircleDashed, Clock3 } from 'lucide-react';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 
-// Papan Temuan Audit 2026-09-23 — status 30 temuan (Finance · Produksi/Maklon · R&D)
 const STATUS_META = {
-  selesai: { label: 'Selesai', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300', Icon: CircleCheck },
-  diterima: { label: 'Diterima (mitigasi)', cls: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300', Icon: Clock3 },
-  terbuka: { label: 'Terbuka', cls: 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300', Icon: CircleDashed },
+  selesai: { label: 'Selesai', tone: 'success' },
+  diterima: { label: 'Diterima (mitigasi)', tone: 'info' },
+  terbuka: { label: 'Terbuka', tone: 'warning' },
 };
-const TINGKAT_CLS = { Kritis: 'text-red-600 dark:text-red-300 font-semibold', Tinggi: 'text-orange-600 dark:text-orange-300', Sedang: 'text-yellow-700 dark:text-yellow-300', Rendah: 'text-muted-foreground' };
+const TINGKAT_TONE = { Kritis: 'danger', Tinggi: 'warning', Sedang: 'info', Rendah: 'muted' };
+const NAMA_PORTAL = { Finance: 'Keuangan' };
+const namaPortal = (p) => NAMA_PORTAL[p] || p;
+const metaStatus = (s) => STATUS_META[s] || STATUS_META.terbuka;
 
 export default function AuditFindingsBoard() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [portal, setPortal] = useState('Semua');
-  const [status, setStatus] = useState('Semua');
+  const [status, setStatus] = useState('');
+  const [cari, setCari] = useState('');
+  const [detail, setDetail] = useState(null);
+  const [lihatSumber, setLihatSumber] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
         const r = await fetch('/api/rahaza/admin/audit-findings', { headers: { Authorization: `Bearer ${localStorage.getItem('erp_token')}` } });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        if (!r.ok) throw new Error(`kode ${r.status}`);
         setData(await r.json());
       } catch (e) { setErr(e.message || 'Gagal memuat'); }
     })();
   }, []);
 
-  const rows = useMemo(() => (data?.items || []).filter(f => (portal === 'Semua' || f.portal === portal) && (status === 'Semua' || f.status === status)), [data, portal, status]);
-  if (err) return <div className="p-4 text-red-600" data-testid="audit-board-error">Papan temuan gagal dimuat: {err}</div>;
-  if (!data) return <div className="p-4 text-muted-foreground" data-testid="audit-board-loading">Memuat papan temuan…</div>;
+  const items = useMemo(() => data?.items || [], [data]);
+  const diPortal = useMemo(() => items.filter((f) => portal === 'Semua' || f.portal === portal), [items, portal]);
+  const q = cari.trim().toLowerCase();
+  const rows = useMemo(() => diPortal
+    .filter((f) => !status || (STATUS_META[f.status] ? f.status : 'terbuka') === status)
+    .filter((f) => !q || `${f.id} ${f.judul} ${f.perbaikan}`.toLowerCase().includes(q)), [diPortal, status, q]);
 
-  const done = data.by_status?.selesai || 0;
-  const pct = Math.round((done / data.total) * 100);
+  // Kartu dihitung dari daftar temuan yang sama (mengikuti pilihan portal), bukan dari angka ringkasan terpisah.
+  const hitung = (s) => diPortal.filter((f) => (STATUS_META[f.status] ? f.status : 'terbuka') === s).length;
+  const total = diPortal.length;
+  const done = hitung('selesai');
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  const portals = Object.keys(data?.by_portal || {});
+  const ketPortal = portal === 'Semua' ? 'semua portal' : namaPortal(portal);
+
+  const kolom = [
+    { kunci: 'id', label: 'ID', hp: 'keterangan', isi: (f) => <span className="whitespace-nowrap font-mono text-xs">{f.id}</span> },
+    { kunci: 'judul', label: 'Temuan', hp: 'judul', isi: (f) => <span className="md:max-w-[28rem] md:block">{f.judul}</span> },
+    { kunci: 'portal', label: 'Portal', isi: (f) => <span className="whitespace-nowrap text-sm">{namaPortal(f.portal)}</span> },
+    { kunci: 'tingkat', label: 'Tingkat', isi: (f) => <StatusBadge status={f.tingkat} label={f.tingkat} tone={TINGKAT_TONE[f.tingkat] || 'default'} /> },
+    { kunci: 'status', label: 'Status', isi: (f) => <StatusBadge status={f.status} label={metaStatus(f.status).label} tone={metaStatus(f.status).tone} /> },
+    { kunci: 'uji', label: 'Diuji', isi: (f) => <span className="whitespace-nowrap text-sm text-muted-foreground">{f.iterasi ? `Iterasi ${f.iterasi}` : '—'}</span> },
+  ];
+
   return (
-    <div className="space-y-4 p-2" data-testid="audit-findings-board">
-      <div className="flex items-center gap-3">
-        <ClipboardCheck className="w-6 h-6 text-emerald-600" />
-        <div>
-          <h1 className="text-lg font-semibold">Papan Temuan Audit — 23 Sep 2026</h1>
-          <p className="text-xs text-muted-foreground">Sumber: {data.sumber?.join(' · ')}</p>
+    <PageLayout testId="audit-findings-board" title="Papan temuan audit"
+      subtitle="Status temuan audit 23 Sep 2026 untuk Keuangan, Produksi/Maklon, dan R&D beserta perbaikannya."
+      filters={data && <>
+        <FilterChips value={status} onChange={setStatus} hideWhenEmpty={false} testId="audit-filter-status" className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" options={[
+          { key: '', label: 'Semua', count: total },
+          { key: 'selesai', label: 'Selesai', count: hitung('selesai') },
+          { key: 'diterima', label: 'Diterima', count: hitung('diterima') },
+          { key: 'terbuka', label: 'Terbuka', count: hitung('terbuka') },
+        ]} />
+        <SmartNativeSelect value={portal} onChange={(e) => setPortal(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-44" aria-label="Portal"
+          data-testid="audit-filter-portal">
+          {['Semua', ...portals].map((p) => (
+            <option key={p} value={p}>{p === 'Semua' ? 'Semua portal' : `${namaPortal(p)} (${data.by_portal[p]})`}</option>
+          ))}
+        </SmartNativeSelect>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={cari} onChange={(e) => setCari(e.target.value)} placeholder="Cari ID, temuan, perbaikan" className="pl-8"
+            data-testid="audit-search" />
         </div>
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="rounded-xl border border-[var(--glass-border)] p-3" data-testid="audit-total"><div className="text-xs text-muted-foreground">Total temuan</div><div className="text-2xl font-bold">{data.total}</div></div>
-        <div className="rounded-xl border border-[var(--glass-border)] p-3" data-testid="audit-done"><div className="text-xs text-muted-foreground">Selesai</div><div className="text-2xl font-bold text-emerald-600">{done} <span className="text-sm font-normal">({pct}%)</span></div></div>
-        <div className="rounded-xl border border-[var(--glass-border)] p-3" data-testid="audit-accepted"><div className="text-xs text-muted-foreground">Diterima (mitigasi)</div><div className="text-2xl font-bold text-sky-600">{data.by_status?.diterima || 0}</div></div>
-        <div className="rounded-xl border border-[var(--glass-border)] p-3" data-testid="audit-open"><div className="text-xs text-muted-foreground">Terbuka</div><div className="text-2xl font-bold text-amber-600">{data.by_status?.terbuka || 0}</div></div>
-      </div>
-      <div className="h-2 rounded bg-muted overflow-hidden"><div className="h-2 bg-emerald-500 transition-all" style={{ width: `${pct}%` }} /></div>
-      <div className="flex flex-wrap gap-2 text-sm">
-        <SmartNativeSelect value={portal} onChange={e => setPortal(e.target.value)} className="w-40 border rounded px-2 py-1 bg-background" data-testid="audit-filter-portal">
-          {['Semua', ...Object.keys(data.by_portal || {})].map(p => <option key={p} value={p}>{p}{p !== 'Semua' ? ` (${data.by_portal[p]})` : ''}</option>)}
-        </SmartNativeSelect>
-        <SmartNativeSelect value={status} onChange={e => setStatus(e.target.value)} className="w-40 border rounded px-2 py-1 bg-background" data-testid="audit-filter-status">
-          {['Semua', 'selesai', 'diterima', 'terbuka'].map(s => <option key={s} value={s}>{s === 'Semua' ? 'Semua status' : STATUS_META[s].label}</option>)}
-        </SmartNativeSelect>
-      </div>
-      <div className="overflow-x-auto rounded-xl border border-[var(--glass-border)]">
-        <table className="w-full text-sm" data-testid="audit-findings-table">
-          <thead className="bg-muted/50 text-left text-xs uppercase tracking-wide">
-            <tr><th className="p-2">ID</th><th className="p-2">Portal</th><th className="p-2">Temuan</th><th className="p-2">Tingkat</th><th className="p-2">Status</th><th className="p-2">Perbaikan</th><th className="p-2">Uji</th></tr>
-          </thead>
-          <tbody>
-            {rows.map(f => {
-              const m = STATUS_META[f.status] || STATUS_META.terbuka;
-              return (
-                <tr key={f.id} className="border-t border-[var(--glass-border)] align-top" data-testid={`audit-row-${f.id}`}>
-                  <td className="p-2 font-mono text-xs whitespace-nowrap">{f.id}</td>
-                  <td className="p-2 whitespace-nowrap">{f.portal}</td>
-                  <td className="p-2 min-w-[220px]">{f.judul}<div className="text-[11px] text-muted-foreground">{f.berkas}</div></td>
-                  <td className={`p-2 whitespace-nowrap ${TINGKAT_CLS[f.tingkat] || ''}`}>{f.tingkat}</td>
-                  <td className="p-2 whitespace-nowrap"><span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${m.cls}`}><m.Icon className="w-3 h-3" />{m.label}</span></td>
-                  <td className="p-2 min-w-[280px] text-xs">{f.perbaikan}</td>
-                  <td className="p-2 text-xs whitespace-nowrap">{f.iterasi ? `iter ${f.iterasi}` : '—'}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
+      </>}
+      tools={data && <>
+        <TombolUnduh namaBerkas="papan-temuan-audit" namaLembar="Temuan" baris={rows} testId="audit-unduh" kolom={[
+          { label: 'ID', nilai: (f) => f.id }, { label: 'Portal', nilai: (f) => namaPortal(f.portal) },
+          { label: 'Temuan', nilai: (f) => f.judul }, { label: 'Tingkat', nilai: (f) => f.tingkat },
+          { label: 'Status', nilai: (f) => metaStatus(f.status).label }, { label: 'Perbaikan', nilai: (f) => f.perbaikan },
+          { label: 'Berkas', nilai: (f) => f.berkas }, { label: 'Iterasi uji', nilai: (f) => f.iterasi || '' },
+        ]} />
+      </>}
+      summary={data && total > 0 && (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <StatTile label="Total temuan" value={total} sub={`Untuk ${ketPortal}`} testId="audit-total" />
+          <StatTile label="Selesai" value={done} suffix={`(${pct}%)`} accent={done ? 'success' : 'default'}
+            sub="Sudah diperbaiki dan diuji" testId="audit-done" />
+          <StatTile label="Diterima (mitigasi)" value={hitung('diterima')} sub="Risiko diterima dengan pengaman" testId="audit-accepted" />
+          <StatTile label="Terbuka" value={hitung('terbuka')} accent={hitung('terbuka') ? 'warning' : 'default'}
+            sub="Belum ditangani" testId="audit-open" />
+        </div>
+      )}>
+      {err ? (
+        <Notice tone="danger" title="Papan temuan gagal dimuat" testId="audit-board-error">{err}</Notice>
+      ) : !data ? (
+        <p className="py-6 text-center text-sm text-muted-foreground" data-testid="audit-board-loading">Memuat papan temuan…</p>
+      ) : (<>
+        <TabelData kolom={kolom} baris={rows} onKlikBaris={setDetail} testId="audit-findings-table"
+          kosong={<EmptyState title="Tidak ada temuan yang cocok" description="Ubah saringan atau kata pencarian." />} />
+        <p className="text-xs text-muted-foreground">
+          Sumber: {(data.sumber || []).length} dokumen temuan & rencana perbaikan.{' '}
+          <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setLihatSumber(true)} data-testid="audit-sumber">
+            <FileText />Lihat sumber
+          </Button>
+        </p>
+      </>)}
+
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} judul={`${detail.id} · ${detail.judul}`} testId="audit-detail"
+          status={<><StatusBadge status={detail.status} label={metaStatus(detail.status).label} tone={metaStatus(detail.status).tone} />
+            <StatusBadge status={detail.tingkat} label={detail.tingkat} tone={TINGKAT_TONE[detail.tingkat] || 'default'} /></>}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Portal">{namaPortal(detail.portal)}</BarisDetail>
+            <BarisDetail label="Perbaikan">{detail.perbaikan || '—'}</BarisDetail>
+            <BarisDetail label="Berkas diubah"><span className="break-words font-mono text-xs">{detail.berkas || '—'}</span></BarisDetail>
+            <BarisDetail label="Diuji">{detail.iterasi ? `Iterasi ${detail.iterasi}` : '—'}</BarisDetail>
+          </dl>
+        </DetailPopup>
+      )}
+      {lihatSumber && (
+        <DetailPopup open onClose={() => setLihatSumber(false)} judul="Sumber papan temuan" testId="audit-sumber-popup"
+          keterangan="Dokumen temuan dan rencana perbaikan yang menjadi dasar papan ini.">
+          <ul className="list-disc space-y-1 pl-5 text-sm">
+            {(data?.sumber || []).map((s) => <li key={s} className="break-all font-mono text-xs">{s}</li>)}
+          </ul>
+        </DetailPopup>
+      )}
+    </PageLayout>
   );
 }

@@ -19,7 +19,7 @@ function PortalChip({ portalKey, withIcon = true }) {
   if (!m) return null;
   const Icon = m.icon;
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold border ${m.classes.bg} ${m.classes.border} ${m.classes.text}`}>
+    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold border ${m.classes.bg} ${m.classes.border} ${m.classes.text}`}>
       {withIcon && <Icon className="w-3 h-3" strokeWidth={2.5} />}
       {m.name}
     </span>
@@ -29,7 +29,7 @@ function PortalChip({ portalKey, withIcon = true }) {
 function DifficultyBadge({ level }) {
   const d = DIFFICULTY[level] || DIFFICULTY.pemula;
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border ${d.classes}`}>
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border ${d.classes}`}>
       <Target className="w-3 h-3" strokeWidth={2.5} />
       {d.label}
     </span>
@@ -38,8 +38,8 @@ function DifficultyBadge({ level }) {
 
 function CalloutTip({ children }) {
   return (
-    <div className="flex gap-2 p-3 rounded-lg bg-amber-100 dark:bg-amber-500/10 border border-amber-400 dark:border-amber-500/30 text-xs text-amber-700 dark:text-amber-300">
-      <Lightbulb className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" strokeWidth={2.5} />
+    <div className="flex gap-2 p-3 rounded-lg bg-[hsl(var(--warning)/0.12)] border border-[hsl(var(--warning)/0.35)] text-xs text-[hsl(var(--warning-text))]">
+      <Lightbulb className="w-4 h-4 shrink-0 mt-0.5 text-[hsl(var(--warning-text))]" strokeWidth={2.5} />
       <span><strong className="font-semibold">Tips:</strong> {children}</span>
     </div>
   );
@@ -47,8 +47,8 @@ function CalloutTip({ children }) {
 
 function CalloutWarn({ children }) {
   return (
-    <div className="flex gap-2 p-3 rounded-lg bg-red-100 dark:bg-red-500/10 border border-red-400 dark:border-red-500/30 text-xs text-red-700 dark:text-red-300">
-      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-red-500" strokeWidth={2.5} />
+    <div className="flex gap-2 p-3 rounded-lg bg-[hsl(var(--destructive)/0.12)] border border-[hsl(var(--destructive)/0.35)] text-xs text-[hsl(var(--danger-text))]">
+      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-[hsl(var(--danger-text))]" strokeWidth={2.5} />
       <span><strong className="font-semibold">Penting:</strong> {children}</span>
     </div>
   );
@@ -63,15 +63,15 @@ const LOGIN_ICONS = {
 function OverviewView() {
   return (
     <div className="space-y-6" data-testid="guide-overview">
-      <div className="rounded-2xl border border-[var(--glass-border)] bg-gradient-to-br from-sky-500/10 via-emerald-500/5 to-violet-500/10 p-6">
+      <div className="rounded-2xl border border-[var(--glass-border)] bg-[var(--card-surface)] p-6">
         <div className="flex items-start gap-4">
           <div className="w-14 h-14 rounded-2xl bg-background/70 border border-border grid place-items-center shrink-0">
-            <Sparkles className="w-7 h-7 text-amber-700 dark:text-amber-400" strokeWidth={2} />
+            <Sparkles className="w-7 h-7 text-[hsl(var(--warning-text))]" strokeWidth={2} />
           </div>
           <div>
-            <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
+            <h3 className="text-lg font-semibold text-foreground">
               {OVERVIEW.title}
-            </h2>
+            </h3>
             <p className="text-sm text-foreground/70 mt-2 leading-relaxed">{OVERVIEW.intro}</p>
           </div>
         </div>
@@ -95,25 +95,25 @@ function OverviewView() {
 
       {/* 5 Portal cards */}
       <div>
-        <h3 className="text-sm font-semibold text-foreground mb-3">5 Portal Utama</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <h3 className="text-sm font-semibold text-foreground mb-3">Portal utama</h3>
+        <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {Object.entries(PORTAL_META).filter(([k]) => !['qc', 'shift'].includes(k)).map(([key, m]) => {
             const Icon = m.icon;
             return (
-              <div key={key} className={`rounded-xl border p-4 ${m.classes.bg} ${m.classes.border}`}>
+              <li key={key} className={`rounded-xl border p-4 ${m.classes.bg} ${m.classes.border}`}>
                 <div className="flex items-start gap-3">
-                  <div className={`w-10 h-10 rounded-xl bg-background/70 dark:bg-foreground/10 grid place-items-center shrink-0 ${m.classes.text}`}>
+                  <div className="w-10 h-10 rounded-xl bg-[hsl(var(--primary)/0.1)] grid place-items-center shrink-0 text-[hsl(var(--primary))]">
                     <Icon className="w-5 h-5" strokeWidth={2} />
                   </div>
                   <div>
                     <p className={`text-sm font-semibold ${m.classes.text}`}>{m.name}</p>
-                    <p className="text-xs text-foreground/60 mt-0.5">{m.role}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{m.role}</p>
                   </div>
                 </div>
-              </div>
+              </li>
             );
           })}
-        </div>
+        </ul>
       </div>
 
       {/* Login & Navigation */}
@@ -125,7 +125,7 @@ function OverviewView() {
               const Icon = LOGIN_ICONS[s.icon] || HelpCircle;
               return (
                 <li key={i} className="flex items-start gap-3">
-                  <div className="w-7 h-7 rounded-full bg-[hsl(var(--primary)/0.12)] border border-[hsl(var(--primary)/0.30)] grid place-items-center shrink-0 text-[11px] font-bold text-[hsl(var(--primary))]">
+                  <div className="w-7 h-7 rounded-full bg-[hsl(var(--primary)/0.12)] border border-[hsl(var(--primary)/0.30)] grid place-items-center shrink-0 text-xs font-bold text-[hsl(var(--primary))]">
                     {i + 1}
                   </div>
                   <div className="flex-1 flex items-center gap-2 pt-0.5">
@@ -185,7 +185,7 @@ function PortalView({ portal }) {
             <Icon className="w-6 h-6" strokeWidth={2} />
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className={`text-xl font-bold ${meta.classes.text}`}>{portal.title}</h2>
+            <h3 className={`text-lg font-semibold ${meta.classes.text}`}>{portal.title}</h3>
             <p className="text-sm text-foreground/70 mt-1">{portal.summary}</p>
             <div className="mt-2 flex items-center gap-1.5 text-xs text-foreground/55">
               <UsersIcon className="w-3 h-3" />
@@ -221,7 +221,7 @@ function PortalView({ portal }) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-foreground">{menu.title}</p>
-                  <p className="text-[11px] text-foreground/45 mt-0.5 font-mono break-words">{menu.path}</p>
+                  <p className="text-xs text-foreground/45 mt-0.5 font-mono break-words">{menu.path}</p>
                 </div>
               </div>
               <p className="text-xs text-foreground/70 leading-relaxed mb-2">{menu.description}</p>
@@ -261,17 +261,17 @@ function ScenarioView({ scenario, onBack }) {
         </button>
       )}
       {/* Header card */}
-      <div className="rounded-2xl border border-[var(--glass-border)] bg-gradient-to-br from-cyan-500/10 to-indigo-500/10 p-5">
+      <div className="rounded-2xl border border-[var(--glass-border)] bg-[var(--card-surface)] p-5">
         <div className="flex items-start gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-cyan-100 dark:bg-cyan-500/20 border border-cyan-500/40 grid place-items-center shrink-0">
-            <span className="text-lg font-black text-cyan-600 dark:text-cyan-300">{scenario.code}</span>
+          <div className="w-14 h-14 rounded-2xl bg-[hsl(var(--primary)/0.12)] border border-[hsl(var(--primary)/0.35)] grid place-items-center shrink-0">
+            <span className="text-lg font-black text-[hsl(var(--primary))]">{scenario.code}</span>
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-lg sm:text-xl font-bold tracking-tight text-foreground">{scenario.title}</h2>
+            <h3 className="text-lg font-semibold text-foreground">{scenario.title}</h3>
             <p className="text-sm text-foreground/70 mt-1">{scenario.description}</p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <DifficultyBadge level={scenario.difficulty} />
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border border-foreground/15 bg-foreground/5 text-foreground/70">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border border-foreground/15 bg-foreground/5 text-foreground/70">
                 <Clock className="w-3 h-3" strokeWidth={2.5} />
                 {scenario.estimatedTime}
               </span>
@@ -284,21 +284,21 @@ function ScenarioView({ scenario, onBack }) {
       </div>
 
       {/* Pre-requisites — ALWAYS VISIBLE, very prominent */}
-      <div className="rounded-2xl border-2 border-amber-400 dark:border-amber-500/30 bg-amber-100 dark:bg-amber-500/5 p-5" data-testid={`scenario-prereq-${scenario.id}`}>
+      <div className="rounded-2xl border-2 border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.12)] p-5" data-testid={`scenario-prereq-${scenario.id}`}>
         <div className="flex items-center gap-2 mb-3">
-          <div className="w-9 h-9 rounded-xl bg-amber-100 dark:bg-amber-500/20 border border-amber-500/40 grid place-items-center">
-            <ShieldCheck className="w-5 h-5 text-amber-600 dark:text-amber-400" strokeWidth={2.2} />
+          <div className="w-9 h-9 rounded-xl bg-[hsl(var(--warning)/0.12)] border border-[hsl(var(--warning)/0.35)] grid place-items-center">
+            <ShieldCheck className="w-5 h-5 text-[hsl(var(--warning-text))]" strokeWidth={2.2} />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-amber-700 dark:text-amber-300">Pre-Requisite</h3>
-            <p className="text-[11px] text-amber-700/70 dark:text-amber-400/70">Pastikan ini sudah siap sebelum mulai skenario</p>
+            <h3 className="text-sm font-bold text-[hsl(var(--warning-text))]">Prasyarat</h3>
+            <p className="text-xs text-[hsl(var(--warning-text))]">Pastikan ini sudah siap sebelum mulai skenario</p>
           </div>
         </div>
         <ul className="space-y-2 ml-1">
           {scenario.prerequisites.map((p, i) => (
             <li key={i} className="flex items-start gap-2 text-sm text-foreground/85">
-              <span className="w-5 h-5 rounded-full border-2 border-amber-500/60 bg-amber-100 dark:bg-amber-500/10 grid place-items-center shrink-0 mt-0.5">
-                <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400">{i + 1}</span>
+              <span className="w-5 h-5 rounded-full border-2 border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.12)] grid place-items-center shrink-0 mt-0.5">
+                <span className="text-xs font-bold text-[hsl(var(--warning-text))]">{i + 1}</span>
               </span>
               <span>{p}</span>
             </li>
@@ -335,7 +335,7 @@ function ScenarioView({ scenario, onBack }) {
                     <span className="text-sm font-semibold text-foreground">{step.title}</span>
                   </div>
                   {step.menu && step.menu !== '—' && (
-                    <p className="text-[11px] text-foreground/50 font-mono mb-1.5">📍 {step.menu}</p>
+                    <p className="text-xs text-foreground/50 font-mono mb-1.5">Menu: {step.menu}</p>
                   )}
                   {step.detail && (
                     <p className="text-xs text-foreground/75 leading-relaxed">{step.detail}</p>
@@ -348,17 +348,17 @@ function ScenarioView({ scenario, onBack }) {
       </div>
 
       {/* Expected results */}
-      <div className="rounded-2xl border border-emerald-400 dark:border-emerald-500/30 bg-emerald-100 dark:bg-emerald-500/5 p-5">
+      <div className="rounded-2xl border border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.12)] p-5">
         <div className="flex items-center gap-2 mb-3">
-          <div className="w-9 h-9 rounded-xl bg-emerald-100 dark:bg-emerald-500/20 border border-emerald-500/40 grid place-items-center">
-            <Target className="w-5 h-5 text-emerald-600 dark:text-emerald-400" strokeWidth={2.2} />
+          <div className="w-9 h-9 rounded-xl bg-[hsl(var(--success)/0.12)] border border-[hsl(var(--success)/0.35)] grid place-items-center">
+            <Target className="w-5 h-5 text-[hsl(var(--success-text))]" strokeWidth={2.2} />
           </div>
-          <h3 className="text-sm font-bold text-emerald-700 dark:text-emerald-300">Hasil yang Diharapkan</h3>
+          <h3 className="text-sm font-bold text-[hsl(var(--success-text))]">Hasil yang Diharapkan</h3>
         </div>
         <ul className="space-y-2">
           {scenario.expectedResults.map((r, i) => (
             <li key={i} className="flex items-start gap-2 text-sm text-foreground/85">
-              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-500" strokeWidth={2.5} />
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-[hsl(var(--success-text))]" strokeWidth={2.5} />
               <span>{r}</span>
             </li>
           ))}
@@ -384,13 +384,13 @@ function ScenariosList({ onSelect, search }) {
 
   return (
     <div className="space-y-4" data-testid="scenarios-list">
-      <div className="rounded-2xl border border-[var(--glass-border)] bg-gradient-to-br from-cyan-500/10 to-indigo-500/10 p-5">
+      <div className="rounded-2xl border border-[var(--glass-border)] bg-[var(--card-surface)] p-5">
         <div className="flex items-start gap-3">
-          <PlayCircle className="w-6 h-6 text-cyan-500 shrink-0 mt-0.5" strokeWidth={2} />
+          <PlayCircle className="w-6 h-6 text-[hsl(var(--primary))] shrink-0 mt-0.5" strokeWidth={2} />
           <div>
-            <h2 className="text-lg font-bold text-foreground">Skenario Penggunaan</h2>
+            <h3 className="text-lg font-semibold text-foreground">Skenario Penggunaan</h3>
             <p className="text-sm text-foreground/70 mt-1">
-              8 skenario lengkap dengan <strong>pre-requisite</strong>, langkah, & hasil yang diharapkan.
+              8 skenario lengkap dengan <strong>prasyarat</strong>, langkah, & hasil yang diharapkan.
               Cocok untuk training karyawan baru atau testing fitur.
             </p>
           </div>
@@ -401,21 +401,21 @@ function ScenariosList({ onSelect, search }) {
           <button
             key={s.id}
             onClick={() => onSelect(s)}
-            className="text-left rounded-xl border border-[var(--glass-border)] bg-[var(--glass-bg)] p-4 hover:border-cyan-500/40 hover:bg-cyan-100 dark:bg-cyan-500/5 transition-colors group"
+            className="text-left rounded-xl border border-[var(--glass-border)] bg-[var(--glass-bg)] p-4 hover:border-[hsl(var(--primary)/0.35)] hover:bg-[hsl(var(--primary)/0.12)] transition-colors group"
             data-testid={`scenario-card-${s.id}`}
           >
             <div className="flex items-start gap-3">
-              <div className="w-11 h-11 rounded-xl bg-cyan-100 dark:bg-cyan-500/15 border border-cyan-400 dark:border-cyan-500/30 grid place-items-center shrink-0">
-                <span className="text-sm font-black text-cyan-600 dark:text-cyan-300">{s.code}</span>
+              <div className="w-11 h-11 rounded-xl bg-[hsl(var(--primary)/0.12)] border border-[hsl(var(--primary)/0.35)] grid place-items-center shrink-0">
+                <span className="text-sm font-black text-[hsl(var(--primary))]">{s.code}</span>
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-foreground group-hover:text-cyan-600 dark:group-hover:text-cyan-600 dark:text-cyan-300 transition-colors">
+                <p className="text-sm font-semibold text-foreground group-hover:text-[hsl(var(--primary))] dark:group-hover:text-[hsl(var(--primary))] transition-colors">
                   {s.title}
                 </p>
                 <p className="text-xs text-foreground/55 mt-1 line-clamp-2">{s.description}</p>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <DifficultyBadge level={s.difficulty} />
-                  <span className="inline-flex items-center gap-1 text-[11px] text-foreground/50">
+                  <span className="inline-flex items-center gap-1 text-xs text-foreground/50">
                     <Clock className="w-3 h-3" />
                     {s.estimatedTime.split(';')[0]}
                   </span>
@@ -426,7 +426,7 @@ function ScenariosList({ onSelect, search }) {
                   ))}
                 </div>
               </div>
-              <ChevronRight className="w-4 h-4 text-foreground/30 group-hover:text-cyan-500 group-hover:translate-x-0.5 transition-all shrink-0" />
+              <ChevronRight className="w-4 h-4 text-foreground/30 group-hover:text-[hsl(var(--primary))] group-hover:translate-x-0.5 transition-all shrink-0" />
             </div>
           </button>
         ))}
@@ -448,11 +448,11 @@ const TIP_ICONS = { production: Wrench, warehouse: ListChecks, finance: CheckCir
 function TipsView() {
   return (
     <div className="space-y-5" data-testid="guide-tips">
-      <div className="rounded-2xl border border-[var(--glass-border)] bg-gradient-to-br from-orange-500/10 to-yellow-500/10 p-5">
+      <div className="rounded-2xl border border-[var(--glass-border)] bg-[var(--card-surface)] p-5">
         <div className="flex items-start gap-3">
-          <Lightbulb className="w-6 h-6 text-orange-500 shrink-0 mt-0.5" strokeWidth={2} />
+          <Lightbulb className="w-6 h-6 text-[hsl(var(--warning-text))] shrink-0 mt-0.5" strokeWidth={2} />
           <div>
-            <h2 className="text-lg font-bold text-foreground">Tips, FAQ & Troubleshooting</h2>
+            <h3 className="text-lg font-semibold text-foreground">Tips, FAQ & Troubleshooting</h3>
             <p className="text-sm text-foreground/70 mt-1">Best practice harian, pertanyaan umum, dan solusi cepat.</p>
           </div>
         </div>
@@ -460,7 +460,7 @@ function TipsView() {
 
       <div>
         <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-amber-500" /> Tips Sehari-hari
+          <Sparkles className="w-4 h-4 text-[hsl(var(--warning-text))]" /> Tips Sehari-hari
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {TIPS.daily.map((cat) => {
@@ -474,7 +474,7 @@ function TipsView() {
                 <ul className="space-y-1.5">
                   {cat.items.map((it, i) => (
                     <li key={i} className="flex items-start gap-1.5 text-xs text-foreground/70">
-                      <CheckCircle2 className="w-3 h-3 shrink-0 mt-0.5 text-emerald-500" strokeWidth={2.5} />
+                      <CheckCircle2 className="w-3 h-3 shrink-0 mt-0.5 text-[hsl(var(--success-text))]" strokeWidth={2.5} />
                       <span>{it}</span>
                     </li>
                   ))}
@@ -487,7 +487,7 @@ function TipsView() {
 
       <div>
         <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-          <MessageCircle className="w-4 h-4 text-indigo-500" /> FAQ
+          <MessageCircle className="w-4 h-4 text-[hsl(var(--primary))]" /> FAQ
         </h3>
         <div className="space-y-2">
           {TIPS.faq.map((f, i) => (
@@ -501,13 +501,13 @@ function TipsView() {
 
       <div>
         <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-          <Wrench className="w-4 h-4 text-rose-500" /> Troubleshooting
+          <Wrench className="w-4 h-4 text-[hsl(var(--danger-text))]" /> Troubleshooting
         </h3>
         <div className="space-y-2">
           {TIPS.troubleshoot.map((t, i) => (
-            <div key={i} className="rounded-xl border border-rose-300 dark:border-rose-500/20 bg-rose-100 dark:bg-rose-500/5 p-4">
+            <div key={i} className="rounded-xl border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.12)] p-4">
               <div className="flex items-start gap-2 mb-1">
-                <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" strokeWidth={2.5} />
+                <AlertTriangle className="w-4 h-4 text-[hsl(var(--danger-text))] shrink-0 mt-0.5" strokeWidth={2.5} />
                 <p className="text-sm font-semibold text-foreground">{t.issue}</p>
               </div>
               <p className="text-xs text-foreground/75 leading-relaxed pl-6">→ {t.sol}</p>
@@ -539,8 +539,8 @@ export default function UserGuideContent({ embedded = false }) {
       const m = PORTAL_META[p.portalKey];
       return { id: p.id, label: p.title.replace('Portal ', ''), icon: m.icon, color: m.classes.text };
     }),
-    { id: 'scenarios', label: 'Skenario', icon: PlayCircle, color: 'text-cyan-500' },
-    { id: 'tips', label: 'Tips & FAQ', icon: Lightbulb, color: 'text-amber-500' },
+    { id: 'scenarios', label: 'Skenario', icon: PlayCircle, color: 'text-[hsl(var(--primary))]' },
+    { id: 'tips', label: 'Tips & FAQ', icon: Lightbulb, color: 'text-[hsl(var(--warning-text))]' },
   ];
 
   // Filter for sidebar matches when search active
@@ -613,7 +613,7 @@ export default function UserGuideContent({ embedded = false }) {
                   isActive
                     ? 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] font-semibold border border-[hsl(var(--primary)/0.25)]'
                     : 'text-foreground/70 hover:bg-foreground/5 border border-transparent'
-                } ${isHit && !isActive ? 'ring-1 ring-amber-500/40' : ''}`}
+                } ${isHit && !isActive ? 'ring-1 ring-[hsl(var(--warning)/0.35)]' : ''}`}
                 data-testid={`guide-tab-${tab.id}`}
               >
                 <Icon className={`w-4 h-4 shrink-0 ${isActive ? '' : tab.color || 'text-foreground/45'}`} strokeWidth={2.2} />

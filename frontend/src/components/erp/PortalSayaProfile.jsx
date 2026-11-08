@@ -10,18 +10,20 @@
  *    ditarik. Hasil terakhir (ditolak + alasan / disetujui) tampil di sini;
  *  · nama panggilan dan foto tetap langsung tersimpan di akun (bukan data karyawan).
  * Cetakan PageLayout (PANDUAN_UI G1); hubungan kontak darurat dipilih dari daftar yang sama dengan Data Karyawan.
+ * Standar UI/UX v2 (8 Nov 2026): data tampil sebagai ringkasan baca; mengubah lewat FormPopup "Ubah profil"
+ * (dulu form di halaman). Jalur simpan & aturan persetujuan HR tidak berubah.
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import {
-  Loader2, User, Save, AlertCircle, Phone, MapPin, Camera, Upload, X, Hourglass, CheckCircle2, XCircle, Info,
-  ChevronRight,
+  Loader2, User, AlertCircle, Upload, X, Hourglass, CheckCircle2, XCircle, Info, ChevronRight, Pencil,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Skeleton } from '@/components/ui/skeleton';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { BarisDetail } from '@/components/ui/detail-popup';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from 'sonner';
@@ -66,6 +68,7 @@ export default function PortalSayaProfile({ user, headers }) {
   const [uploading, setUploading] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [form, setForm] = useState({ nama_panggilan: '', no_hp: '', alamat: '', foto_url: '', kontak_darurat: EMPTY_KD });
+  const [formOpen, setFormOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -101,8 +104,10 @@ export default function PortalSayaProfile({ user, headers }) {
       const { data } = await axios.put(`${API}/api/portal/profile`, body, { headers });
       toast.success(data?.message || 'Profil tersimpan.');
       load();
+      return true;
     } catch (e) {
       toast.error('Gagal menyimpan', { description: e.response?.data?.detail || e.message });
+      return false;
     } finally {
       setSaving(false);
     }
@@ -166,9 +171,8 @@ export default function PortalSayaProfile({ user, headers }) {
 
   if (loading) {
     return (
-      <PageLayout title="Profil saya" subtitle="Data akun dan kontak Anda.">
-        <Skeleton className="h-40 rounded-[var(--radius-lg)]" />
-        <Skeleton className="h-56 rounded-[var(--radius-lg)]" />
+      <PageLayout title="Profil" subtitle="Data akun dan kontak Anda.">
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat profil…</p>
       </PageLayout>
     );
   }
@@ -181,26 +185,34 @@ export default function PortalSayaProfile({ user, headers }) {
   const photoSrc = previewUrl
     ? (previewUrl.startsWith('blob:') ? previewUrl : withFileAuth(previewUrl.startsWith('/api') ? `${API}${previewUrl}` : previewUrl))
     : null;
+  const tersimpan = profile || {};
+  const kd = tersimpan.kontak_darurat || {};
+  const kosong = (v) => v || <span className="text-muted-foreground">—</span>;
+  const tutupForm = () => {
+    setForm(f => ({
+      ...f,
+      nama_panggilan: tersimpan.nama_panggilan || '', no_hp: tersimpan.no_hp || '', alamat: tersimpan.alamat || '',
+      kontak_darurat: { ...EMPTY_KD, ...(tersimpan.kontak_darurat || {}) },
+    }));
+    setFormOpen(false);
+  };
 
   return (
     <PageLayout
-      title="Profil saya"
+      title="Profil"
       subtitle={linked ? 'Perubahan No. HP, alamat, dan kontak darurat disetujui HR dulu.' : 'Data akun dan kontak Anda.'}
       testId="portal-profile-page"
       actions={(
-        <Button onClick={handleSave} disabled={saving || uploading} data-testid="btn-save-profile">
-          {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-          {saving ? 'Menyimpan…' : 'Simpan profil'}
+        <Button onClick={() => setFormOpen(true)} disabled={uploading} data-testid="btn-edit-profile">
+          <Pencil />Ubah profil
         </Button>
       )}
     >
       {pending && (
-        <Notice tone="warning" icon={Hourglass} title="Perubahan data menunggu persetujuan HR" testId="profile-change-pending">
+        <Notice tone="warning" icon={Hourglass} title="Perubahan data menunggu persetujuan HR" testId="profile-change-pending"
+          action={<Button variant="outline" size="sm" onClick={cancelChange} data-testid="btn-cancel-change">Tarik pengajuan</Button>}>
           Diajukan {fmtDate(change.created_at)}. Isian kontak dikunci sampai HR memutuskan.
           <ChangeList changes={change.changes} />
-          <Button variant="outline" size="sm" className="mt-2" onClick={cancelChange} data-testid="btn-cancel-change">
-            Tarik pengajuan
-          </Button>
         </Notice>
       )}
       {!pending && change?.status === 'rejected' && recent && (
@@ -217,30 +229,30 @@ export default function PortalSayaProfile({ user, headers }) {
       {fromAccount.length > 0 && (
         <Notice tone="info" icon={Info} testId="profile-from-account">
           {fromAccount.map(k => FROM_ACCOUNT_LABEL[k]).join(', ')} berasal dari akun Anda dan belum tercatat di data
-          karyawan. Tekan Simpan profil untuk mengajukannya ke HR.
+          karyawan. Buka Ubah profil lalu Simpan untuk mengajukannya ke HR.
         </Notice>
       )}
 
-      <GlassCard className="p-4 space-y-3" data-testid="profile-account-card">
-        <div className="flex items-start gap-4">
+      <GlassCard className="space-y-3 p-4" data-testid="profile-account-card">
+        <div className="flex flex-wrap items-start gap-4">
           <div className="relative shrink-0">
             <button type="button" aria-label="Ganti foto profil" title="Ganti foto profil"
-              className="w-20 h-20 rounded-full bg-[hsl(var(--primary)/0.1)] flex items-center justify-center overflow-hidden border-2 border-[hsl(var(--primary)/0.2)]"
+              className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border-2 border-[hsl(var(--primary)/0.2)] bg-[hsl(var(--primary)/0.1)]"
               onClick={() => fileInputRef.current?.click()}>
-              {uploading ? <Loader2 className="w-7 h-7 animate-spin text-primary" />
-                : photoSrc ? <img src={photoSrc} alt="foto profil" className="w-full h-full object-cover" onError={() => setPreviewUrl(null)} />
-                  : <User className="w-10 h-10 text-primary/50" />}
+              {uploading ? <Loader2 className="h-7 w-7 animate-spin text-primary" />
+                : photoSrc ? <img src={photoSrc} alt="foto profil" className="h-full w-full object-cover" onError={() => setPreviewUrl(null)} />
+                  : <User className="h-10 w-10 text-primary/50" />}
             </button>
             {previewUrl && !uploading && (
               <Button variant="outline" size="icon" onClick={removePhoto} title="Hapus foto" aria-label="Hapus foto"
-                className="absolute -top-1 -right-1 h-6 w-6 rounded-full" data-testid="btn-remove-photo">
-                <X className="w-3 h-3" />
+                className="absolute -right-1 -top-1 h-6 w-6 rounded-full" data-testid="btn-remove-photo">
+                <X className="h-3 w-3" />
               </Button>
             )}
           </div>
-          <div className="flex-1 min-w-0 space-y-1">
-            <p className="font-semibold text-base truncate">{profile?.name || user?.name}</p>
-            <p className="text-sm text-muted-foreground truncate">{profile?.email}</p>
+          <div className="min-w-0 flex-1 space-y-1">
+            <p className="break-words text-base font-semibold">{profile?.name || user?.name}</p>
+            <p className="break-all text-sm text-muted-foreground">{profile?.email}</p>
             {emp && (
               <p className="text-sm text-muted-foreground" data-testid="profile-employee-line">
                 {[emp.employee_code, emp.department, emp.job_title || emp.position].filter(Boolean).join(' · ')}
@@ -249,7 +261,7 @@ export default function PortalSayaProfile({ user, headers }) {
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploading}
                 data-testid="btn-upload-photo">
-                {uploading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Upload className="w-3.5 h-3.5 mr-1" />}
+                {uploading ? <Loader2 className="animate-spin" /> : <Upload />}
                 {uploading ? 'Mengunggah…' : 'Unggah foto'}
               </Button>
               <StatusBadge tone={linked ? 'success' : 'warning'} label={linked ? 'Terhubung ke data karyawan' : 'Belum terhubung'}
@@ -267,47 +279,62 @@ export default function PortalSayaProfile({ user, headers }) {
         )}
       </GlassCard>
 
-      <GlassCard className="p-4 space-y-3" data-testid="profile-personal-card">
-        <div className="space-y-1.5">
-          <Label htmlFor="pf-nick">Nama panggilan</Label>
-          <GlassInput id="pf-nick" data-testid="input-nama-panggilan" value={form.nama_panggilan}
-            onChange={e => set('nama_panggilan', e.target.value)} placeholder="Nama yang sering dipanggil" />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="pf-hp" className="flex items-center gap-1"><Phone className="w-3.5 h-3.5" /> No. HP</Label>
-          <GlassInput id="pf-hp" data-testid="input-no-hp" inputMode="tel" value={form.no_hp} disabled={contactLocked}
-            onChange={e => set('no_hp', e.target.value)} placeholder="08xx-xxxx-xxxx" />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="pf-addr" className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" /> Alamat tinggal</Label>
-          <Textarea id="pf-addr" data-testid="input-alamat" rows={2} value={form.alamat} disabled={contactLocked}
-            onChange={e => set('alamat', e.target.value)} placeholder="Alamat tinggal saat ini" className="resize-none" />
-        </div>
+      <GlassCard className="space-y-2 p-4" data-testid="profile-personal-card">
+        <h3 className="text-lg font-semibold text-foreground">Data pribadi & kontak</h3>
+        <dl className="divide-y divide-[var(--glass-border)]">
+          <BarisDetail label="Nama panggilan">{kosong(tersimpan.nama_panggilan)}</BarisDetail>
+          <BarisDetail label="No. HP">{kosong(tersimpan.no_hp)}</BarisDetail>
+          <BarisDetail label="Alamat tinggal"><span className="whitespace-pre-line">{kosong(tersimpan.alamat)}</span></BarisDetail>
+        </dl>
       </GlassCard>
 
-      <GlassCard className="p-4 space-y-3" data-testid="profile-emergency-card">
-        <p className="text-sm font-semibold">Kontak darurat</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="pf-kd-name">Nama</Label>
-            <GlassInput id="pf-kd-name" data-testid="input-kd-nama" value={form.kontak_darurat?.nama || ''}
+      <GlassCard className="space-y-2 p-4" data-testid="profile-emergency-card">
+        <h3 className="text-lg font-semibold text-foreground">Kontak darurat</h3>
+        <dl className="divide-y divide-[var(--glass-border)]">
+          <BarisDetail label="Nama">{kosong(kd.nama)}</BarisDetail>
+          <BarisDetail label="Hubungan">{kosong(kd.hubungan)}</BarisDetail>
+          <BarisDetail label="No. HP kontak">{kosong(kd.no_hp)}</BarisDetail>
+        </dl>
+      </GlassCard>
+
+      <FormPopup open={formOpen} onClose={tutupForm} ukuran="panjang" testId="profile-form"
+        judul="Ubah profil"
+        keterangan={linked ? 'Nama panggilan langsung tersimpan. No. HP, alamat, dan kontak darurat dikirim ke HR untuk disetujui.' : 'Data akun dan kontak Anda.'}
+        onSimpan={async () => { if (await handleSave()) setFormOpen(false); }} menyimpan={saving} labelSimpan="Simpan profil">
+        {contactLocked && (
+          <Notice tone="warning">Isian kontak dikunci karena masih ada pengajuan yang menunggu HR.</Notice>
+        )}
+        <Isian label="Nama panggilan" htmlFor="pf-nick">
+          <Input id="pf-nick" data-testid="input-nama-panggilan" value={form.nama_panggilan}
+            onChange={e => set('nama_panggilan', e.target.value)} placeholder="Nama yang sering dipanggil" />
+        </Isian>
+        <Isian label="No. HP" htmlFor="pf-hp">
+          <Input id="pf-hp" data-testid="input-no-hp" inputMode="tel" value={form.no_hp} disabled={contactLocked}
+            onChange={e => set('no_hp', e.target.value)} placeholder="08xx-xxxx-xxxx" />
+        </Isian>
+        <Isian label="Alamat tinggal" htmlFor="pf-addr">
+          <Textarea id="pf-addr" data-testid="input-alamat" rows={2} value={form.alamat} disabled={contactLocked}
+            onChange={e => set('alamat', e.target.value)} placeholder="Alamat tinggal saat ini" className="resize-none" />
+        </Isian>
+        <p className="pt-1 text-sm font-medium text-foreground">Kontak darurat</p>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Isian label="Nama" htmlFor="pf-kd-name">
+            <Input id="pf-kd-name" data-testid="input-kd-nama" value={form.kontak_darurat?.nama || ''}
               disabled={contactLocked} onChange={e => setKD('nama', e.target.value)} placeholder="Nama kontak" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Hubungan</Label>
+          </Isian>
+          <Isian label="Hubungan">
             <SmartNativeSelect value={relation} onChange={e => setKD('hubungan', e.target.value)} disabled={contactLocked}
               searchable={false} data-testid="input-kd-hubungan" className="w-full">
               <option value="">— Pilih hubungan —</option>
               {relationOptions.map(r => <option key={r} value={r}>{r}</option>)}
             </SmartNativeSelect>
-          </div>
+          </Isian>
         </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="pf-kd-hp">No. HP kontak</Label>
-          <GlassInput id="pf-kd-hp" data-testid="input-kd-hp" inputMode="tel" value={form.kontak_darurat?.no_hp || ''}
+        <Isian label="No. HP kontak" htmlFor="pf-kd-hp">
+          <Input id="pf-kd-hp" data-testid="input-kd-hp" inputMode="tel" value={form.kontak_darurat?.no_hp || ''}
             disabled={contactLocked} onChange={e => setKD('no_hp', e.target.value)} placeholder="08xx-xxxx-xxxx" />
-        </div>
-      </GlassCard>
+        </Isian>
+      </FormPopup>
     </PageLayout>
   );
 }

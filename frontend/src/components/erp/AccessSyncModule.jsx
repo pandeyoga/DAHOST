@@ -1,15 +1,43 @@
 // Cek Sinkron Akun — audit akun <-> peran <-> hak akses efektif (superadmin).
-import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, RefreshCw, Wrench, Eye } from 'lucide-react';
+//
+// Standar UI/UX v2 (8 Nov 2026): PageLayout (di hub judul disembunyikan), jumlah per status di pil penyaring (dari
+// daftar yang sama), tabel (kartu ringkas di HP) + unduh Excel/CSV, nama peran & portal manusiawi (dulu kode `finance`,
+// `admin_gudang`), pesan masalah tanpa istilah program (`role_id`), detail akses = DetailPopup, sinkronkan lewat
+// konfirmasi. Logika audit & perbaikan di server tidak berubah.
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Eye, RefreshCw, Search, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../ui/button';
-import { Badge } from '../ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
+import { Input } from '../ui/input';
+import FilterChips from '../ui/filter-chips';
+import TabelData from '../ui/tabel-data';
+import TombolUnduh from '../ui/tombol-unduh';
+import DetailPopup, { BarisDetail } from '../ui/detail-popup';
+import { confirmDialog } from '../ui/confirm-dialog';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatusBadge } from './moduleAtoms';
+import { NAMA_PORTAL } from './portalAccess';
+import { petaLabelPeran } from './akses/labelPeran';
 
 const API = process.env.REACT_APP_BACKEND_URL;
-const ACT = { view: 'Lihat', create: 'Tambah', edit: 'Ubah', delete: 'Hapus', approve: 'Approve', export: 'Export' };
+const ACT = { view: 'Lihat', create: 'Tambah', edit: 'Ubah', delete: 'Hapus', approve: 'Setujui', export: 'Unduh' };
+const PORTAL = Object.fromEntries(NAMA_PORTAL.map((p) => [p.id, p.nama]));
+const namaPortal = (p) => PORTAL[p] || p;
+const PESAN = {
+  role_id_dangling: 'Tautan peran menunjuk peran yang sudah dihapus',
+  role_mismatch: 'Tautan peran masih menunjuk peran lama',
+  role_case: 'Nama peran beda huruf besar/kecil dengan data peran',
+  role_unknown: 'Peran tidak terdaftar — akun tidak punya hak akses apa pun',
+  role_unlinked: 'Belum tertaut ke data peran (dicocokkan lewat nama)',
+};
+const pesan = (i) => PESAN[i.code] || i.message;
+const masalah = (u) => (u.issues || []).filter((i) => i.severity !== 'info');
+const catatan = (u) => (u.issues || []).filter((i) => i.severity === 'info');
+const bisaDirapikan = (u) => (u.issues || []).some((i) => i.fixable);
+const portalTampil = (u) => (u.is_super ? 'Semua portal'
+  : u.portals.filter((p) => !['self', 'collaboration'].includes(p)).map(namaPortal).join(', ') || '—');
 
-function UserDetail({ uid, token, onClose }) {
+function UserDetail({ uid, token, onClose, namaPeran }) {
   const [d, setD] = useState(null);
   useEffect(() => {
     if (!uid) return;
@@ -19,44 +47,45 @@ function UserDetail({ uid, token, onClose }) {
   }, [uid, token]);
   const byModule = {};
   (d?.granular || []).forEach((g) => { (byModule[g.module] ||= { ...g, acts: [] }).acts.push(g.action); });
+  const modul = Object.values(byModule);
+  if (!uid) return null;
   return (
-    <Dialog open={!!uid} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="access-sync-detail">
-        <DialogHeader><DialogTitle>Akses efektif {d?.email || ''}</DialogTitle></DialogHeader>
-        {!d ? <p className="text-sm text-muted-foreground">Memuat…</p> : (
-          <div className="space-y-4 text-sm">
-            <p>Peran: <b data-testid="access-sync-detail-role">{d.role}</b>{d.is_super && ' (akses penuh)'}</p>
-            <div>
-              <p className="mb-1 text-xs font-semibold uppercase text-muted-foreground">Portal yang bisa dibuka</p>
+    <DetailPopup open onClose={onClose} testId="access-sync-detail"
+      judul={`Akses efektif ${d?.email || ''}`} keterangan="Portal dan izin yang benar-benar berlaku untuk akun ini.">
+      {!d ? <p className="text-sm text-muted-foreground">Memuat…</p> : d.error ? (
+        <p className="text-sm text-[hsl(var(--danger-text))]">Akses akun ini tidak bisa dimuat.</p>
+      ) : (
+        <>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Peran">
+              <span data-testid="access-sync-detail-role">{namaPeran(d.role)}</span>{d.is_super && ' (akses penuh)'}
+            </BarisDetail>
+            <BarisDetail label="Portal yang bisa dibuka">
               <div className="flex flex-wrap gap-1.5" data-testid="access-sync-detail-portals">
-                {(d.portals || []).map((p) => <Badge key={p} variant="outline">{p}</Badge>)}
+                {(d.portals || []).map((p) => <StatusBadge key={p} status={p} label={namaPortal(p)} tone="default" />)}
               </div>
-            </div>
-            <div>
-              <p className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
-                Izin per modul ({Object.keys(byModule).length} modul)
-              </p>
-              {Object.keys(byModule).length === 0 ? (
-                <p className="text-xs text-muted-foreground">Belum ada izin per modul — aturan bawaan peran yang berlaku.</p>
-              ) : (
-                <ul className="space-y-1" data-testid="access-sync-detail-modules">
-                  {Object.values(byModule).map((m) => (
-                    <li key={m.module} className="flex flex-wrap items-center gap-1.5 text-xs">
-                      <span className="font-medium">{m.label}</span>
-                      <span className="text-muted-foreground">({m.portal})</span>
-                      {m.acts.map((a) => <Badge key={a} className="text-[10px]">{ACT[a] || a}</Badge>)}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Menu disembunyikan: {d.hidden_count} · Total izin: {d.perm_count}
-            </p>
+            </BarisDetail>
+            <BarisDetail label="Menu disembunyikan">{d.hidden_count}</BarisDetail>
+            <BarisDetail label="Total izin">{d.perm_count}</BarisDetail>
+          </dl>
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Izin per modul ({modul.length} modul)</p>
+            {modul.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Belum ada izin per modul — aturan bawaan peran yang berlaku.</p>
+            ) : (
+              <TabelData baris={modul} kunci={(m) => m.module} testId="access-sync-detail-modules" kolom={[
+                { kunci: 'label', label: 'Modul', hp: 'judul', isi: (m) => <span className="font-medium">{m.label}</span> },
+                { kunci: 'portal', label: 'Portal', isi: (m) => namaPortal(m.portal) },
+                { kunci: 'acts', label: 'Izin', isi: (m) => (
+                  <div className="flex flex-wrap gap-1">
+                    {m.acts.map((a) => <StatusBadge key={a} status={a} label={ACT[a] || a} tone="primary" />)}
+                  </div>) },
+              ]} />
+            )}
           </div>
-        )}
-      </DialogContent>
-    </Dialog>
+        </>
+      )}
+    </DetailPopup>
   );
 }
 
@@ -64,6 +93,9 @@ export default function AccessSyncModule({ token }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [detail, setDetail] = useState(null);
+  const [peran, setPeran] = useState([]);
+  const [saring, setSaring] = useState('');
+  const [cari, setCari] = useState('');
   const headers = { Authorization: `Bearer ${token}` };
 
   const load = useCallback(async () => {
@@ -76,8 +108,24 @@ export default function AccessSyncModule({ token }) {
   }, [token]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    fetch(`${API}/api/roles`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : [])).then((d) => setPeran(Array.isArray(d) ? d : [])).catch(() => {});
+  }, [token]);
+  const namaPeran = useMemo(() => petaLabelPeran(peran), [peran]);
+
+  const users = useMemo(() => data?.users || [], [data]);
+  const nOk = users.filter((u) => u.status === 'ok').length;
+  const nError = users.filter((u) => u.status === 'error').length;
+  const nRapikan = users.filter(bisaDirapikan).length;
 
   const fixAll = async () => {
+    const ok = await confirmDialog({
+      title: `Sinkronkan ${nRapikan} akun?`,
+      body: 'Tautan peran tiap akun dirapikan sesuai data peran. Hak akses yang sudah diatur tidak berubah.',
+      confirmLabel: 'Sinkronkan',
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       const r = await fetch(`${API}/api/admin/access-sync/fix`, { method: 'POST', headers });
@@ -89,68 +137,84 @@ export default function AccessSyncModule({ token }) {
     } catch (e) { toast.error(typeof e.message === 'string' && e.message ? e.message : 'Gagal menyinkronkan'); setBusy(false); }
   };
 
-  const s = data?.summary;
+  const q = cari.trim().toLowerCase();
+  const tampil = users
+    .filter((u) => !saring || (saring === 'rapikan' ? bisaDirapikan(u) : u.status === saring))
+    .filter((u) => !q || `${u.name} ${u.email} ${u.role} ${namaPeran(u.role)}`.toLowerCase().includes(q));
+
+  const kolom = [
+    { kunci: 'akun', label: 'Akun', hp: 'judul', isi: (u) => (
+      <div className="min-w-0" data-testid={`access-sync-row-${u.email}`}>
+        <p className="font-medium">{u.name}</p>
+        <p className="truncate text-xs text-muted-foreground">{u.email}</p>
+      </div>) },
+    { kunci: 'peran', label: 'Peran', isi: (u) => (
+      <span className="text-sm">{namaPeran(u.role)}{!u.active && <StatusBadge status="inactive" label="Nonaktif" tone="muted" className="ml-1" />}</span>) },
+    { kunci: 'portal', label: 'Portal', isi: (u) => <p className="line-clamp-2 text-sm md:max-w-[16rem]" title={portalTampil(u)}>{portalTampil(u)}</p> },
+    { kunci: 'izin', label: 'Izin', isi: (u) => (
+      <span className="text-sm">{u.is_super ? 'Penuh' : u.perm_count}
+        {u.granular_portals.length > 0 && <span className="text-muted-foreground"> · per modul: {u.granular_portals.map(namaPortal).join(', ')}</span>}
+      </span>) },
+    { kunci: 'status', label: 'Status', isi: (u) => (u.status === 'ok' ? (
+      <div className="space-y-0.5">
+        <StatusBadge status="ok" label="Sinkron" tone="success" />
+        {catatan(u).map((i) => <p key={i.code} className="text-xs text-muted-foreground">{pesan(i)}</p>)}
+      </div>
+    ) : (
+      <div className="space-y-0.5">
+        <StatusBadge status="error" label="Bermasalah" tone="danger" />
+        {masalah(u).map((i) => <p key={i.code} className="text-xs text-[hsl(var(--danger-text))]">{pesan(i)}</p>)}
+      </div>
+    )) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (u) => (
+      <Button variant="outline" size="sm" onClick={() => setDetail(u.id)} data-testid={`access-sync-view-${u.email}`}>
+        <Eye />Lihat akses
+      </Button>) },
+  ];
+
   return (
-    <div className="space-y-4" data-testid="access-sync-module">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h3 className="text-base font-semibold">Cek Sinkron Akun</h3>
-          <p className="text-xs text-muted-foreground">
-            Memastikan setiap akun memakai peran & hak akses yang sama dengan yang diatur. Perubahan peran berlaku
-            langsung (tanpa login ulang) — layar pengguna menyegarkan akses otomatis.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={load} disabled={busy} data-testid="access-sync-refresh">
-            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${busy ? 'animate-spin' : ''}`} /> Cek ulang
-          </Button>
-          <Button size="sm" onClick={fixAll} disabled={busy || !s?.fixable} data-testid="access-sync-fix">
-            <Wrench className="mr-1.5 h-3.5 w-3.5" /> Sinkronkan ({s?.fixable || 0})
-          </Button>
-        </div>
-      </div>
-      {s && (
-        <div className="flex flex-wrap gap-2 text-xs" data-testid="access-sync-summary">
-          <Badge variant="outline">Total {s.total}</Badge>
-          <Badge className="bg-emerald-600/15 text-emerald-600" data-testid="access-sync-ok">Sinkron {s.ok}</Badge>
-          <Badge className="bg-red-600/15 text-red-600" data-testid="access-sync-error">Bermasalah {s.error}</Badge>
-        </div>
+    <PageLayout testId="access-sync-module" title="Cek sinkron akun"
+      subtitle="Memastikan setiap akun memakai peran dan hak akses yang sama dengan yang diatur; perubahan peran berlaku tanpa masuk ulang."
+      actions={(
+        <Button onClick={fixAll} disabled={busy || !data?.summary?.fixable} data-testid="access-sync-fix"
+          title="Rapikan tautan peran akun yang bisa diperbaiki otomatis">
+          <Wrench />Sinkronkan ({data?.summary?.fixable || 0})
+        </Button>
       )}
-      <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full text-xs">
-          <thead className="bg-muted/40 text-left text-muted-foreground">
-            <tr><th className="p-2">Akun</th><th className="p-2">Peran</th><th className="p-2">Portal</th>
-              <th className="p-2">Izin</th><th className="p-2">Status</th><th className="p-2" /></tr>
-          </thead>
-          <tbody>
-            {(data?.users || []).map((u) => (
-              <tr key={u.id} className="border-t border-border/60" data-testid={`access-sync-row-${u.email}`}>
-                <td className="p-2"><div className="font-medium">{u.name}</div><div className="text-muted-foreground">{u.email}</div></td>
-                <td className="p-2">{u.role}{!u.active && <Badge variant="outline" className="ml-1 text-[10px]">nonaktif</Badge>}</td>
-                <td className="p-2 max-w-[260px]">{u.is_super ? 'Semua' : u.portals.filter((p) => !['self', 'collaboration'].includes(p)).join(', ') || '—'}</td>
-                <td className="p-2">{u.is_super ? 'Penuh' : u.perm_count}{u.granular_portals.length > 0 && <span className="text-muted-foreground"> · per modul: {u.granular_portals.join(', ')}</span>}</td>
-                <td className="p-2">
-                  {u.status === 'ok' ? (
-                    <span className="inline-flex items-center gap-1 text-emerald-600"><CheckCircle2 className="h-3.5 w-3.5" /> Sinkron</span>
-                  ) : (
-                    <span className="inline-flex flex-col gap-0.5 text-red-600">
-                      {u.issues.filter((i) => i.severity !== 'info').map((i) => (
-                        <span key={i.code} className="inline-flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" />{i.message}</span>
-                      ))}
-                    </span>
-                  )}
-                </td>
-                <td className="p-2 text-right">
-                  <Button variant="ghost" size="sm" onClick={() => setDetail(u.id)} data-testid={`access-sync-view-${u.email}`}>
-                    <Eye className="mr-1 h-3.5 w-3.5" /> Lihat akses
-                  </Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <UserDetail uid={detail} token={token} onClose={() => setDetail(null)} />
-    </div>
+      filters={data && <>
+        <FilterChips className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" value={saring} onChange={setSaring} hideWhenEmpty={false} testId="access-sync-filter" options={[
+          { key: '', label: 'Semua', count: users.length },
+          { key: 'ok', label: 'Sinkron', count: nOk },
+          { key: 'error', label: 'Bermasalah', count: nError },
+          { key: 'rapikan', label: 'Bisa dirapikan', count: nRapikan },
+        ]} />
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={cari} onChange={(e) => setCari(e.target.value)} placeholder="Cari nama, email, peran" className="pl-8"
+            data-testid="access-sync-search" />
+        </div>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="cek-sinkron-akun" namaLembar="Akun" baris={tampil} testId="access-sync-unduh" kolom={[
+          { label: 'Nama', nilai: (u) => u.name }, { label: 'Email', nilai: (u) => u.email },
+          { label: 'Peran', nilai: (u) => namaPeran(u.role) }, { label: 'Aktif', nilai: (u) => (u.active ? 'Ya' : 'Tidak') },
+          { label: 'Portal', nilai: (u) => portalTampil(u) }, { label: 'Jumlah izin', nilai: (u) => (u.is_super ? 'Penuh' : u.perm_count) },
+          { label: 'Status', nilai: (u) => (u.status === 'ok' ? 'Sinkron' : 'Bermasalah') },
+          { label: 'Catatan', nilai: (u) => (u.issues || []).map(pesan).join('; ') },
+        ]} />
+        <Button variant="outline" size="icon" onClick={load} disabled={busy} title="Cek ulang" aria-label="Cek ulang"
+          data-testid="access-sync-refresh">
+          <RefreshCw className={busy ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      >
+      {!data ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">{busy ? 'Memeriksa akun…' : 'Data akun belum bisa dimuat.'}</p>
+      ) : (
+        <TabelData kolom={kolom} baris={tampil} onKlikBaris={(u) => setDetail(u.id)} testId="access-sync-table"
+          kosong={<EmptyState title="Tidak ada akun yang cocok" description="Ubah saringan atau kata pencarian." />} />
+      )}
+      <UserDetail uid={detail} token={token} onClose={() => setDetail(null)} namaPeran={namaPeran} />
+    </PageLayout>
   );
 }
