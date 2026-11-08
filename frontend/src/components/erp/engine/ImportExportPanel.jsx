@@ -126,11 +126,11 @@ export default function ImportExportPanel({ token, importType, exportType, expor
                   className="sr-only"
                   onChange={(e) => setNamaBerkas(e.target.files?.[0]?.name || '')}
                 />
-                <div className="flex min-w-0 items-center gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <Button type="button" variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
                     <Upload className="w-4 h-4" />Pilih berkas
                   </Button>
-                  <span className="min-w-0 truncate text-xs text-muted-foreground">{namaBerkas || 'Belum ada berkas (.xlsx/.xls)'}</span>
+                  <span className="min-w-0 break-all text-xs text-muted-foreground">{namaBerkas || 'Belum ada berkas (.xlsx/.xls)'}</span>
                 </div>
               </Isian>
 
