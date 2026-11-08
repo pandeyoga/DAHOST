@@ -1,9 +1,12 @@
 """Migrasi 2026-11-08 (keputusan pemilik, audit peran & akses) — pindahkan pengguna dari peran bawaan yang KOSONG
 ke peran yang sudah diatur pemilik.
 
-KENAPA: audit data produksi menemukan akun aktif berperan `operator_cuting` — peran bawaan sistem tanpa portal dan
-tanpa izin (dibuat ulang otomatis oleh `auth._seed_default_roles`), sehingga orangnya tidak bisa membuka apa pun.
-Peran yang memang diatur pemilik untuk pekerjaan yang sama adalah "Operator Cuting" (portal Cutting/Gudang, 23 izin).
+KENAPA: audit data produksi menemukan akun aktif berperan `operator_cuting` — peran bawaan sistem yang belum diatur
+pemilik (tanpa portal & izin di Kontrol Akses; dibuat ulang otomatis oleh `auth._seed_default_roles`). Akun seperti itu
+TIDAK mengikuti pengaturan pemilik: ia memakai aturan bawaan kode (`routes/shared.PORTAL_ACCESS` — untuk
+`operator_cuting`: Portal Produksi + Cutting dengan semua menunya). Peran yang diatur pemilik untuk pekerjaan yang
+sama adalah "Operator Cuting" (portal Cutting/Gudang, 23 izin) — sesudah dipindah, akun mengikuti peran itu.
+(Koreksi 8 Nov 2026: keterangan awal skrip ini keliru menyebut akunnya "tidak bisa membuka apa pun".)
 
 Yang dilakukan (per pasangan di PINDAH):
   * akun yang perannya (tanpa beda huruf) sama dengan peran asal → `role` = nama peran tujuan, `role_id` = id-nya;
