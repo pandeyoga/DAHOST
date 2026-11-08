@@ -1,6 +1,7 @@
 /**
  * ImageLightbox — fullscreen image preview overlay with Download button.
  */
+import { Button } from '@/components/ui/button';
 import { Download, X } from 'lucide-react';
 
 export default function ImageLightbox({ image, onClose }) {
@@ -25,17 +26,17 @@ export default function ImageLightbox({ image, onClose }) {
             rel="noreferrer"
             className="bg-foreground/40 hover:bg-foreground/60 text-foreground rounded-full p-1.5 transition-colors"
             onClick={(e) => e.stopPropagation()}
-            title="Download"
+            title="Unduh" aria-label="Unduh"
           >
             <Download size={16} />
           </a>
-          <button
-            className="bg-foreground/40 hover:bg-foreground/60 text-foreground rounded-full p-1.5 transition-colors"
+          <Button variant="ghost" size="sm" type="button"
+            className="h-auto px-0 py-0 gap-0 justify-start whitespace-normal font-normal bg-foreground/40 hover:bg-foreground/60 text-foreground rounded-full p-1.5 transition-colors"
             onClick={onClose}
-            title="Tutup"
+            title="Tutup" aria-label="Tutup"
           >
             <X size={16} />
-          </button>
+          </Button>
         </div>
         {image.name && (
           <p className="absolute bottom-2 left-0 right-0 text-center text-foreground/70 text-xs px-4 truncate">

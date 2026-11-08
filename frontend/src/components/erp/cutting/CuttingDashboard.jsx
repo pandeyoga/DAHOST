@@ -1,39 +1,21 @@
 /**
  * CuttingDashboard — ringkasan Portal Cutting.
  * Menjawab 3 pertanyaan operasional: berapa yang jalan, berapa hasilnya,
- * dan seberapa efisien kain dipakai (yield pcs per satuan kain).
+ * dan seberapa efisien kain dipakai (hasil pcs per satuan kain).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, 4 kartu StatTile (7 angka lama tetap ada — sebagian di keterangan
+ * kartu), cutting terbaru = tabel standar yang bisa diunduh. Sumber: GET /api/cutting/dashboard.
  */
 import { useCallback, useEffect, useState } from 'react';
-import {
-  Scissors, Layers, PackageCheck, RefreshCw, TrendingUp,
-  Trash2, PlayCircle, FileStack, AlertCircle,
-} from 'lucide-react';
+import { AlertCircle, Plus, RefreshCw, Scissors } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { GlassCard } from '@/components/ui/glass';
-import { cuttingApi, StatusPill, fmtNum, fmtPerUnit, fmtDateTime } from './cuttingApi';
-
-function KPI({ label, value, sub, icon: Icon, tone = 'primary', testid }) {
-  const tones = {
-    primary: 'text-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.12)] border-[hsl(var(--primary)/0.25)]',
-    amber: 'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.25)]',
-    emerald: 'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.25)]',
-    sky: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.1)] border-[hsl(var(--primary)/0.25)]',
-    rose: 'text-[hsl(var(--destructive))]  bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.25)]',
-  };
-  return (
-    <GlassCard className="p-4" data-testid={testid}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs text-muted-foreground truncate">{label}</p>
-          <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">{value}</p>
-          {sub && <p className="text-[11px] text-muted-foreground mt-1">{sub}</p>}
-        </div>
-        <div className={`w-9 h-9 rounded-xl border grid place-items-center shrink-0 ${tones[tone]}`}>
-          <Icon className="w-4 h-4" />
-        </div>
-      </div>
-    </GlassCard>
-  );
-}
+import { Skeleton } from '@/components/ui/skeleton';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice, StatTile } from '../moduleAtoms';
+import { cuttingApi, StatusPill, STATUS_META, fmtNum, fmtPerUnit, fmtDateTime } from './cuttingApi';
 
 export default function CuttingDashboard({ token, onNavigate }) {
   const [d, setD] = useState(null);
@@ -56,125 +38,83 @@ export default function CuttingDashboard({ token, onNavigate }) {
   useEffect(() => { load(); }, [load]);
 
   const by = d?.by_status || {};
+  const recent = d?.recent || [];
+  const adaKain = (d?.by_unit || []).length > 0;
+
+  const kolom = [
+    { kunci: 'number', label: 'Nomor', hp: 'judul', isi: (r) => <span className="font-medium tabular-nums">{r.number}</span> },
+    { kunci: 'style', label: 'Style', hp: 'keterangan', isi: (r) => r.style_name || '—' },
+    { kunci: 'kain', label: 'Kain', isi: (r) => <span className="text-muted-foreground">{r.input_material_name}</span> },
+    { kunci: 'hasil', label: 'Hasil', rata: 'kanan', isi: (r) => (
+      <span className="tabular-nums whitespace-nowrap">{fmtNum(r.produced_qty)} / {fmtNum(r.planned_output_qty)} pcs</span>) },
+    { kunci: 'status', label: 'Status', isi: (r) => <StatusPill status={r.status} /> },
+    { kunci: 'dibuat', label: 'Dibuat', hp: false, isi: (r) => <span className="whitespace-nowrap text-muted-foreground">{fmtDateTime(r.created_at)}</span> },
+  ];
 
   return (
-    <div className="space-y-5" data-testid="cutting-dashboard">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-[hsl(var(--warning)/0.12)] border border-[hsl(var(--warning)/0.25)] grid place-items-center">
-            <Scissors className="w-5 h-5 text-[hsl(var(--warning))] " />
-          </div>
-          <div>
-            <h2 className="text-2xl font-bold text-foreground">Dashboard Cutting</h2>
-            <p className="text-sm text-muted-foreground">
-              Roll kain dipotong menjadi kain pola (potongan) — material siap jadi BOM produksi.
-            </p>
-          </div>
-        </div>
-        <button
-          onClick={load}
-          className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] text-sm text-foreground hover:bg-[var(--nav-pill-active)] transition-colors"
-          data-testid="cutting-dash-refresh"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Muat Ulang
-        </button>
-      </div>
-
-      {err && (
-        <div className="flex items-center gap-2 p-3 rounded-lg border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-sm text-[hsl(var(--destructive))] ">
-          <AlertCircle className="w-4 h-4 shrink-0" /> {err}
-        </div>
-      )}
-
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <KPI label="Total Order Cutting" value={fmtNum(d?.total_orders)} icon={FileStack}
-             sub={`${by.draft || 0} draft · ${by.cancelled || 0} batal`} testid="cutting-kpi-total" />
-        <KPI label="Sedang Berjalan" value={fmtNum(by.in_progress)} icon={PlayCircle} tone="amber"
-             sub="Menunggu input progres" testid="cutting-kpi-running" />
-        <KPI label="Potongan Dihasilkan" value={`${fmtNum(d?.produced_qty)} pcs`} icon={PackageCheck} tone="emerald"
-             sub={`dari rencana ${fmtNum(d?.planned_output_qty)} pcs`} testid="cutting-kpi-produced" />
-        <KPI label="Rata-rata Yield" value={fmtPerUnit(d?.by_unit, 'yield')} icon={TrendingUp} tone="sky"
-             sub="pcs potongan per satuan kain" testid="cutting-kpi-yield" />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-        <KPI label="Kain Terpakai" value={fmtPerUnit(d?.by_unit, 'consumed')} icon={Layers}
-             sub="per satuan kain, tanpa order batal" testid="cutting-kpi-consumed" />
-        <KPI label="Limbah" value={fmtPerUnit(d?.by_unit, 'waste')} icon={Trash2} tone="rose"
-             sub="tercatat saat input progres" testid="cutting-kpi-waste" />
-        <KPI label="Master Potongan" value={fmtNum(d?.output_material_count)} icon={Scissors} tone="emerald"
-             sub="item material hasil cutting" testid="cutting-kpi-panels" />
-      </div>
-
-      <GlassCard className="p-0 overflow-hidden">
-        <div className="px-4 py-3 border-b border-[var(--glass-border)] flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-foreground">Cutting Terbaru</h3>
-          <button
-            onClick={() => onNavigate?.('cutting-orders')}
-            className="text-xs text-[hsl(var(--primary))] hover:underline"
-            data-testid="cutting-dash-goto-orders"
-          >
-            Lihat semua →
-          </button>
-        </div>
+    <PageLayout testId="cutting-dashboard" title="Dashboard Cutting"
+      subtitle="Roll kain dipotong menjadi kain pola (potongan) yang siap jadi BOM produksi."
+      tools={<>
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="cutting-dash-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={<>
+        {err && <Notice tone="danger" icon={AlertCircle}>{err}</Notice>}
         {loading && !d ? (
-          <div className="p-6 space-y-2">
-            {[0, 1, 2].map((i) => <div key={i} className="h-8 rounded-lg bg-foreground/5 animate-pulse" />)}
-          </div>
-        ) : (d?.recent || []).length === 0 ? (
-          <div className="p-10 text-center">
-            <Scissors className="w-8 h-8 mx-auto text-muted-foreground/40" />
-            <p className="mt-2 text-sm text-muted-foreground">Belum ada order cutting.</p>
-            <button
-              onClick={() => onNavigate?.('cutting-orders')}
-              className="mt-3 inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-[hsl(var(--primary))] text-white text-sm"
-              data-testid="cutting-dash-create-first"
-            >
-              Buat Cutting Pertama
-            </button>
-          </div>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-20 rounded-lg" />)}</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-muted-foreground border-b border-[var(--glass-border)]">
-                  <th className="px-4 py-2 font-medium">Nomor</th>
-                  <th className="px-4 py-2 font-medium">Style</th>
-                  <th className="px-4 py-2 font-medium">Kain</th>
-                  <th className="px-4 py-2 font-medium text-right">Hasil</th>
-                  <th className="px-4 py-2 font-medium">Status</th>
-                  <th className="px-4 py-2 font-medium">Dibuat</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(d?.recent || []).map((r) => (
-                  <tr key={r.id} className="border-b border-[var(--glass-border)] last:border-0 hover:bg-[var(--nav-pill-active)]/40">
-                    <td className="px-4 py-2 tabular-nums text-xs text-foreground">{r.number}</td>
-                    <td className="px-4 py-2 text-foreground">{r.style_name || '-'}</td>
-                    <td className="px-4 py-2 text-muted-foreground text-xs">{r.input_material_name}</td>
-                    <td className="px-4 py-2 text-right tabular-nums text-foreground">
-                      {fmtNum(r.produced_qty)} / {fmtNum(r.planned_output_qty)} pcs
-                    </td>
-                    <td className="px-4 py-2"><StatusPill status={r.status} /></td>
-                    <td className="px-4 py-2 text-xs text-muted-foreground">{fmtDateTime(r.created_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <StatTile label="Sedang berjalan" value={fmtNum(by.in_progress)} testId="cutting-kpi-running"
+              sub={`Dari ${fmtNum(d?.total_orders)} order · ${fmtNum(by.draft)} draf · ${fmtNum(by.cancelled)} batal`} />
+            <StatTile label="Potongan dihasilkan" value={`${fmtNum(d?.produced_qty)} pcs`} testId="cutting-kpi-produced"
+              sub={`Dari rencana ${fmtNum(d?.planned_output_qty)} pcs · ${fmtNum(d?.output_material_count)} jenis di Master Potongan`} />
+            <StatTile label="Rata-rata hasil" value={fmtPerUnit(d?.by_unit, 'yield')} testId="cutting-kpi-yield"
+              sub={adaKain ? 'Pcs potongan per satuan kain' : 'Belum ada progres potong yang tercatat'} />
+            <StatTile label="Kain terpakai" value={fmtPerUnit(d?.by_unit, 'consumed')} testId="cutting-kpi-consumed"
+              sub={adaKain ? `Tanpa order batal · limbah ${fmtPerUnit(d?.by_unit, 'waste')}` : 'Belum ada progres potong yang tercatat'} />
           </div>
         )}
-      </GlassCard>
+      </>}>
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-base font-semibold text-foreground">Cutting terbaru</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <TombolUnduh namaBerkas="cutting-terbaru" namaLembar="Cutting terbaru" baris={recent} testId="cutting-dash-unduh"
+          kolom={[
+            { label: 'Nomor', nilai: (r) => r.number }, { label: 'Style', nilai: (r) => r.style_name || '' },
+            { label: 'Kain', nilai: (r) => r.input_material_name || '' },
+            { label: 'Potongan jadi (pcs)', nilai: (r) => Number(r.produced_qty || 0) },
+            { label: 'Rencana (pcs)', nilai: (r) => Number(r.planned_output_qty || 0) },
+            { label: 'Status', nilai: (r) => (STATUS_META[r.status] || STATUS_META.draft).label },
+            { label: 'Dibuat', nilai: (r) => fmtDateTime(r.created_at) },
+          ]} />
+            <Button variant="outline" onClick={() => onNavigate?.('cutting-orders')} data-testid="cutting-dash-goto-orders">
+              Lihat semua order
+            </Button>
+          </div>
+        </div>
+        {loading && !d ? (
+          <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
+        ) : (
+          <TabelData kolom={kolom} baris={recent} testId="cutting-dash-recent"
+            kosong={<EmptyState icon={Scissors} title="Belum ada order cutting"
+              description="Order cutting pertama dibuat di menu Order Cutting."
+              action={<Button onClick={() => onNavigate?.('cutting-orders')} data-testid="cutting-dash-create-first"><Plus />Buat cutting pertama</Button>} />} />
+        )}
+      </div>
 
       <GlassCard className="p-4">
-        <h3 className="text-sm font-semibold text-foreground mb-2">Alur Cutting</h3>
-        <ol className="text-xs text-muted-foreground space-y-1.5 list-decimal list-inside">
-          <li><b className="text-foreground">Buat Cutting</b> — pilih kain dari master material Gudang + rencana pemakaian & target potongan.</li>
-          <li><b className="text-foreground">Mulai</b> — sistem membuat item master <i>Potongan</i> baru (satuan pcs) untuk style/warna/size ini.</li>
-          <li><b className="text-foreground">Input Progres</b> — tiap kali memotong: stok kain berkurang, stok potongan bertambah (tercatat di ledger gudang).</li>
+        <p className="mb-2 text-sm font-semibold text-foreground">Alur cutting</p>
+        <ol className="list-inside list-decimal space-y-1.5 text-sm text-muted-foreground">
+          <li><b className="text-foreground">Buat cutting</b> — pilih kain dari master material Gudang, rencana pemakaian, dan target potongan.</li>
+          <li><b className="text-foreground">Mulai</b> — sistem membuat item master potongan baru (satuan pcs) untuk style, warna, dan ukuran ini.</li>
+          <li><b className="text-foreground">Catat progres</b> — tiap kali memotong: stok kain berkurang, stok potongan bertambah (tercatat di kartu stok gudang).</li>
           <li><b className="text-foreground">Selesai</b> — HPP potongan dihitung otomatis dari biaya kain terpakai.</li>
-          <li>Potongan siap dipakai sebagai <b className="text-foreground">BOM produksi</b> dan dikeluarkan lewat <b className="text-foreground">Pengeluaran Material</b> / Kirim Material CMT.</li>
+          <li>Potongan siap dipakai sebagai <b className="text-foreground">BOM produksi</b> dan dikeluarkan lewat <b className="text-foreground">Pengeluaran Material</b> atau Kirim Material CMT.</li>
         </ol>
       </GlassCard>
-    </div>
+    </PageLayout>
   );
 }

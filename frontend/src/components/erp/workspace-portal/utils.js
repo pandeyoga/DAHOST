@@ -41,30 +41,31 @@ export const fmtIso = (iso) => {
   });
 };
 
+// Standar UI/UX v2: nada warna token (StatusBadge) — dulu kelas violet/blue/emerald/amber buatan sendiri.
 export const ACCESS_CONFIG = {
-  owner: { label: 'Milik Saya', icon: Crown,  cls: 'bg-violet-100 text-violet-700 border-violet-200' },
-  admin: { label: 'Admin',      icon: Crown,  cls: 'bg-blue-100 text-blue-700 border-blue-200' },
-  edit:  { label: 'Bisa Edit',  icon: Pencil, cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
-  view:  { label: 'Lihat Saja', icon: Eye,    cls: 'bg-amber-100 text-amber-700 border-amber-200' },
+  owner: { label: 'Milik saya', icon: Crown,  tone: 'primary' },
+  admin: { label: 'Admin',      icon: Crown,  tone: 'info' },
+  edit:  { label: 'Bisa ubah',  icon: Pencil, tone: 'success' },
+  view:  { label: 'Lihat saja', icon: Eye,    tone: 'warning' },
 };
 
 export const canEdit = (lv) => ['owner', 'admin', 'edit'].includes(lv);
 export const canShare = (lv) => ['owner', 'admin'].includes(lv);
 
-/** Cell text colors used by FormattingToolbar. */
+/** Warna teks sel yang bisa dipilih pengguna di FormattingToolbar (isi data spreadsheet, bukan warna tampilan aplikasi). */
 export const COLORS = [
   { label: 'Merah',   val: '#ef4444' }, { label: 'Oranye',  val: '#f97316' },
   { label: 'Kuning',  val: '#eab308' }, { label: 'Hijau',   val: '#22c55e' },
   { label: 'Biru',    val: '#3b82f6' }, { label: 'Ungu',    val: '#a855f7' },
-  { label: 'Default', val: '' },
+  { label: 'Bawaan', val: '' },
 ];
 
-/** Cell background colors used by FormattingToolbar. */
+/** Warna latar sel pilihan pengguna di FormattingToolbar (isi data spreadsheet, bukan warna tampilan aplikasi). */
 export const BG_COLORS = [
   { label: 'Merah Muda',  val: '#fecaca' }, { label: 'Oranye Muda', val: '#fed7aa' },
   { label: 'Kuning Muda', val: '#fef08a' }, { label: 'Hijau Muda',  val: '#bbf7d0' },
   { label: 'Biru Muda',   val: '#bfdbfe' }, { label: 'Ungu Muda',   val: '#e9d5ff' },
-  { label: 'Default',     val: '' },
+  { label: 'Bawaan',      val: '' },
 ];
 
 /**

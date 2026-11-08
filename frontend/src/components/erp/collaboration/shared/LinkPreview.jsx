@@ -7,6 +7,7 @@
  *   [[channel:{id}:{name}]]   → Channel link
  * Also detects plain URLs and shows a minimal preview.
  */
+import { Button } from '@/components/ui/button';
 import { useState, useEffect } from 'react';
 import { ExternalLink, BookOpen, FileText, Hash } from 'lucide-react';
 
@@ -52,18 +53,18 @@ export function renderContentWithLinks(content, onNavigate) {
 function InlineLinkTag({ link, onNavigate }) {
   const icons = { course: '📚', doc: '📄', channel: '#' };
   const colors = {
-    course: 'bg-green-100 text-green-700 hover:bg-green-200',
-    doc:    'bg-amber-100 text-amber-700 hover:bg-amber-200',
-    channel:'bg-blue-100 text-blue-700 hover:bg-blue-200',
+    course: 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))] hover:bg-[hsl(var(--success)/0.2)]',
+    doc:    'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning-text))] hover:bg-[hsl(var(--warning)/0.2)]',
+    channel:'bg-[hsl(var(--info)/0.1)] text-[hsl(var(--info-text))] hover:bg-[hsl(var(--info)/0.2)]',
   };
   return (
-    <button
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium mx-1 transition-colors ${colors[link.type] || 'bg-muted text-foreground'}`}
+    <Button type="button" variant="ghost" size="sm"
+      className={`mx-1 h-auto gap-1 rounded px-2 py-0.5 text-xs font-medium ${colors[link.type] || 'bg-muted text-foreground'}`}
       onClick={() => onNavigate && onNavigate(link.type, link.id)}
     >
-      <span>{icons[link.type] || '🔗'}</span>
+      <span aria-hidden="true">{icons[link.type] || '#'}</span>
       <span>{link.title}</span>
-    </button>
+    </Button>
   );
 }
 
@@ -91,9 +92,9 @@ export default function LinkPreviewCard({ link, onNavigate, token }) {
   if (!data) return null;
 
   const iconMap = {
-    course:  { icon: '📚', bg: 'bg-green-50 border-green-200',  text: 'text-green-700' },
-    doc:     { icon: '📄', bg: 'bg-amber-50 border-amber-200',  text: 'text-amber-700' },
-    channel: { icon: '#',    bg: 'bg-blue-50 border-blue-200',    text: 'text-blue-700' },
+    course:  { icon: '📚', bg: 'bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.3)]',  text: 'text-[hsl(var(--success-text))]' },
+    doc:     { icon: '📄', bg: 'bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.4)]',  text: 'text-[hsl(var(--warning-text))]' },
+    channel: { icon: '#',    bg: 'bg-[hsl(var(--info)/0.1)] border-[hsl(var(--info)/0.3)]',    text: 'text-[hsl(var(--info-text))]' },
   };
   const cfg = iconMap[link.type] || iconMap.doc;
 
@@ -106,7 +107,7 @@ export default function LinkPreviewCard({ link, onNavigate, token }) {
       <div className={`text-xl flex-shrink-0`}>{cfg.icon}</div>
       <div className="flex-1 min-w-0">
         <p className={`text-xs font-semibold truncate ${cfg.text}`}>{data.title || link.title}</p>
-        {data.subtitle && <p className="text-[10px] text-muted-foreground truncate">{data.subtitle}</p>}
+        {data.subtitle && <p className="text-xs text-muted-foreground truncate">{data.subtitle}</p>}
       </div>
       <span className="text-xs text-muted-foreground flex-shrink-0">→</span>
     </div>

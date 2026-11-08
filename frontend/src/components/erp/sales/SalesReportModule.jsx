@@ -1,73 +1,131 @@
+/**
+ * Laporan Penjualan (Portal Penjualan).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout · penyaring satu baris (kelompok + PeriodPicker standar, dulu kotak
+ * tanggal bawaan peramban) · 4 kartu StatTile · tabel standar + baris total · unduh Excel/CSV (kolom & baris total
+ * sama dengan CSV server yang dulu dipakai tombol "Export CSV").
+ * Penjualan bersih = bruto − diskon − retur (tanpa PPN). Sumber: GET /api/sales/report.
+ */
 import { useEffect, useState } from 'react';
-import { FileSpreadsheet, Download, RefreshCw } from 'lucide-react';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
-import { Button } from '@/components/ui/button';
+import { RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
-import { PageHeader, StatTile } from '../moduleAtoms';
-import { apiGet, apiFetch } from '../../../lib/api';
-import { todayWIB, monthStartWIB } from '@/lib/waktu';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import PeriodPicker, { periodFromPreset } from '../finance/PeriodPicker';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, StatTile } from '../moduleAtoms';
+import { apiGet } from '../../../lib/api';
 
 const fmt = (n) => `Rp ${Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 })}`;
-const GROUPS = [['customer', 'Per Pelanggan'], ['sku', 'Per SKU'], ['day', 'Per Hari'], ['month', 'Per Bulan']];
+const angka = (n) => Number(n || 0).toLocaleString('id-ID');
+const GROUPS = [['customer', 'Per pelanggan'], ['sku', 'Per SKU'], ['day', 'Per hari'], ['month', 'Per bulan']];
+const HEAD = { customer: 'Pelanggan', sku: 'SKU', day: 'Tanggal', month: 'Bulan' };
 
 export default function SalesReportModule() {
   const [group, setGroup] = useState('customer');
-  const [from, setFrom] = useState(() => monthStartWIB());
-  const [to, setTo] = useState(() => todayWIB());
+  const [period, setPeriod] = useState(() => periodFromPreset('month'));
   const [d, setD] = useState(null);
   const [busy, setBusy] = useState(false);
+  const from = period.from;
+  const to = period.to;
   const qs = `group_by=${group}&date_from=${from}&date_to=${to}`;
   const load = async () => { setBusy(true); try { setD(await apiGet(`/sales/report?${qs}`)); } catch (e) { toast.error(e.message); } finally { setBusy(false); } };
   useEffect(() => { load(); }, [group, from, to]); // eslint-disable-line react-hooks/exhaustive-deps
-  const exportCsv = async () => {
-    const r = await apiFetch(`/sales/report?${qs}&format=csv`);
-    if (!r.ok) return toast.error('Gagal export CSV');
-    const url = URL.createObjectURL(await r.blob());
-    const a = document.createElement('a'); a.href = url; a.download = `laporan_penjualan_${group}_${from}_${to}.csv`; a.click();
-  };
   const t = d?.totals;
-  const head = { customer: 'Pelanggan', sku: 'SKU', day: 'Tanggal', month: 'Bulan' }[group];
+  const rows = d?.rows || [];
+  const head = HEAD[group];
+  // Baris unduhan = baris tabel + baris TOTAL (sama dengan CSV server).
+  const barisUnduh = rows.length && t ? [...rows, { ...t, label: 'TOTAL', key: '__total' }] : rows;
 
   return (
-    <div className="space-y-5" data-testid="sales-report">
-      <PageHeader icon={FileSpreadsheet} eyebrow="Portal Penjualan" title="Laporan Penjualan Langsung" subtitle="Penjualan bersih = bruto − diskon − retur (tanpa PPN). HPP dari lapisan FIFO / perkiraan HPP master, sudah dikurangi HPP barang retur."
-        actions={<>
-          <Button variant="ghost" onClick={load} className="h-9 border border-[var(--glass-border)]" data-testid="report-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>
-          <Button onClick={exportCsv} className="h-9" data-testid="report-export-csv"><Download className="w-3.5 h-3.5 mr-1.5" />Export CSV</Button>
-        </>} />
-      <GlassCard className="p-3 flex flex-wrap items-center gap-3 text-xs">
-        <div className="flex gap-1" data-testid="report-group-tabs">{GROUPS.map(([v, l]) => (
-          <button key={v} onClick={() => setGroup(v)} data-testid={`report-group-${v}`} className={`px-3 py-1.5 rounded-md border transition-colors ${group === v ? 'bg-primary text-primary-foreground border-primary' : 'border-[var(--glass-border)] hover:bg-foreground/5'}`}>{l}</button>
-        ))}</div>
-        <label className="flex items-center gap-1.5 ml-auto">Dari <GlassInput type="date" value={from} onChange={e => setFrom(e.target.value)} className="h-8 w-36" data-testid="report-from" /></label>
-        <label className="flex items-center gap-1.5">Sampai <GlassInput type="date" value={to} onChange={e => setTo(e.target.value)} className="h-8 w-36" data-testid="report-to" /></label>
-      </GlassCard>
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <StatTile label="Nota" value={t?.notes ?? '-'} hint={`${t?.qty || 0} pcs · retur ${t?.return_qty || 0} pcs`} testId="report-kpi-notes" />
-        <StatTile label="Penjualan Bersih" value={fmt(t?.net_sales)} hint={`bruto ${fmt(t?.gross)}`} accent="primary" testId="report-kpi-net" />
-        <StatTile label="Diskon + Retur" value={fmt((t?.discount || 0) + (t?.returns || 0))} hint={`PPN ${fmt(t?.tax)}`} testId="report-kpi-deductions" />
-        <StatTile label="HPP" value={fmt(t?.cogs)} testId="report-kpi-cogs" />
-        <StatTile label="Laba Kotor" value={fmt(t?.margin)} hint={`${t?.margin_pct || 0}% margin`} accent={(t?.margin || 0) >= 0 ? 'success' : 'danger'} testId="report-kpi-margin" />
-      </div>
-      <GlassCard className="p-0 overflow-x-auto">
-        {busy && !d ? <div className="py-10 text-center text-sm text-muted-foreground">Memuat…</div> : !d?.rows?.length ? <div className="py-14 text-center text-sm text-muted-foreground" data-testid="report-empty">Tidak ada penjualan pada rentang ini.</div> : (
-          <table className="w-full text-xs" data-testid="report-table">
-            <thead className="bg-foreground/5 text-muted-foreground"><tr>
-              <th className="text-left px-3 py-2">{head}</th><th className="text-right px-3 py-2">Nota</th><th className="text-right px-3 py-2">Qty</th><th className="text-right px-3 py-2">Bruto</th><th className="text-right px-3 py-2">Diskon</th><th className="text-right px-3 py-2">Retur</th><th className="text-right px-3 py-2">Bersih</th><th className="text-right px-3 py-2">HPP</th><th className="text-right px-3 py-2">Laba Kotor</th><th className="text-right px-3 py-2">Margin</th>
-            </tr></thead>
-            <tbody>{d.rows.map(r => (
-              <tr key={r.key} className="border-t border-foreground/5" data-testid={`report-row-${r.key}`}>
-                <td className="px-3 py-2 font-medium">{r.label}</td><td className="px-3 py-2 text-right">{r.notes}</td><td className="px-3 py-2 text-right">{r.qty}{r.return_qty ? <span className="text-amber-300"> (−{r.return_qty})</span> : ''}</td>
-                <td className="px-3 py-2 text-right">{fmt(r.gross)}</td><td className="px-3 py-2 text-right">{fmt(r.discount)}</td><td className="px-3 py-2 text-right">{fmt(r.returns)}</td>
-                <td className="px-3 py-2 text-right font-semibold">{fmt(r.net_sales)}</td><td className="px-3 py-2 text-right">{fmt(r.cogs)}</td><td className="px-3 py-2 text-right font-semibold">{fmt(r.margin)}</td><td className="px-3 py-2 text-right">{r.margin_pct}%</td>
-              </tr>
-            ))}</tbody>
-            <tfoot><tr className="border-t border-foreground/10 font-semibold bg-foreground/5" data-testid="report-total-row">
-              <td className="px-3 py-2">TOTAL</td><td className="px-3 py-2 text-right">{t.notes}</td><td className="px-3 py-2 text-right">{t.qty}</td><td className="px-3 py-2 text-right">{fmt(t.gross)}</td><td className="px-3 py-2 text-right">{fmt(t.discount)}</td><td className="px-3 py-2 text-right">{fmt(t.returns)}</td><td className="px-3 py-2 text-right">{fmt(t.net_sales)}</td><td className="px-3 py-2 text-right">{fmt(t.cogs)}</td><td className="px-3 py-2 text-right">{fmt(t.margin)}</td><td className="px-3 py-2 text-right">{t.margin_pct}%</td>
-            </tr></tfoot>
-          </table>
-        )}
-      </GlassCard>
-    </div>
+    <PageLayout testId="sales-report" title="Laporan Penjualan"
+      subtitle="Penjualan bersih = bruto − diskon − retur (tanpa PPN); HPP sudah dikurangi HPP barang retur."
+      filters={<>
+        <SmartNativeSelect value={group} onChange={(e) => setGroup(e.target.value)} searchable={false}
+          className="h-9 w-44" wrapperClassName="w-44" aria-label="Kelompokkan" data-testid="report-group-tabs">
+          {GROUPS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </SmartNativeSelect>
+        <PeriodPicker value={period} onChange={setPeriod} testId="report-period" />
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas={`laporan-penjualan-${group}-${from}-${to}`} namaLembar="Laporan penjualan" baris={barisUnduh}
+          testId="report-export"
+          kolom={[
+            { label: head, nilai: (r) => r.label }, { label: 'Nota', nilai: (r) => Number(r.notes || 0) },
+            { label: 'Qty', nilai: (r) => Number(r.qty || 0) }, { label: 'Bruto', nilai: (r) => Number(r.gross || 0) },
+            { label: 'Diskon', nilai: (r) => Number(r.discount || 0) }, { label: 'PPN', nilai: (r) => Number(r.tax || 0) },
+            { label: 'Retur', nilai: (r) => Number(r.returns || 0) }, { label: 'Penjualan bersih', nilai: (r) => Number(r.net_sales || 0) },
+            { label: 'HPP', nilai: (r) => Number(r.cogs || 0) }, { label: 'Laba kotor', nilai: (r) => Number(r.margin || 0) },
+            { label: 'Margin %', nilai: (r) => Number(r.margin_pct || 0) }, { label: 'Qty retur', nilai: (r) => Number(r.return_qty || 0) },
+          ]} />
+        <Button variant="outline" size="icon" onClick={load} disabled={busy} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="report-refresh">
+          <RefreshCw className={busy ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile label="Nota" value={t ? angka(t.notes) : '—'} testId="report-kpi-notes"
+            sub={`${angka(t?.qty)} pcs · retur ${angka(t?.return_qty)} pcs`} />
+          <StatTile label="Penjualan bersih" value={fmt(t?.net_sales)} accent="primary" testId="report-kpi-net"
+            sub={`Bruto ${fmt(t?.gross)} · PPN ${fmt(t?.tax)} (tidak termasuk)`} />
+          <StatTile label="Diskon + retur" value={fmt((t?.discount || 0) + (t?.returns || 0))} testId="report-kpi-deductions"
+            sub={`Diskon ${fmt(t?.discount)} · retur ${fmt(t?.returns)}`} />
+          <StatTile label="Laba kotor" value={fmt(t?.margin)} accent={(t?.margin || 0) >= 0 ? 'success' : 'danger'} testId="report-kpi-margin"
+            sub={`HPP ${fmt(t?.cogs)} · margin ${t?.margin_pct || 0}%`} />
+        </div>
+      }>
+      {busy && !d ? (
+        <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
+      ) : !rows.length ? (
+        <EmptyState testId="report-empty" title="Tidak ada penjualan pada rentang ini" description="Ubah periode atau kelompok laporan." />
+      ) : (
+        <div className="overflow-x-auto">
+          <Table data-testid="report-table">
+            <TableHeader><TableRow>
+              <TableHead>{head}</TableHead><TableHead className="text-right">Nota</TableHead><TableHead className="text-right">Qty</TableHead>
+              <TableHead className="text-right">Bruto</TableHead><TableHead className="text-right">Diskon</TableHead>
+              <TableHead className="text-right">Retur</TableHead><TableHead className="text-right">Bersih</TableHead>
+              <TableHead className="text-right">HPP</TableHead><TableHead className="text-right">Laba kotor</TableHead>
+              <TableHead className="text-right">Margin</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>
+              {rows.map((r) => (
+                <TableRow key={r.key} data-testid={`report-row-${r.key}`}>
+                  <TableCell className="font-medium">{r.label}</TableCell>
+                  <TableCell className="text-right tabular-nums">{angka(r.notes)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{angka(r.qty)}{r.return_qty
+                    ? <span className="text-[hsl(var(--warning-text))]"> (−{angka(r.return_qty)})</span> : ''}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(r.gross)}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(r.discount)}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(r.returns)}</TableCell>
+                  <TableCell className="text-right font-semibold tabular-nums whitespace-nowrap">{fmt(r.net_sales)}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(r.cogs)}</TableCell>
+                  <TableCell className="text-right font-semibold tabular-nums whitespace-nowrap">{fmt(r.margin)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{r.margin_pct}%</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+            <TableFooter>
+              <TableRow data-testid="report-total-row">
+                <TableCell>Total</TableCell>
+                <TableCell className="text-right tabular-nums">{angka(t.notes)}</TableCell>
+                <TableCell className="text-right tabular-nums">{angka(t.qty)}</TableCell>
+                <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(t.gross)}</TableCell>
+                <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(t.discount)}</TableCell>
+                <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(t.returns)}</TableCell>
+                <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(t.net_sales)}</TableCell>
+                <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(t.cogs)}</TableCell>
+                <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(t.margin)}</TableCell>
+                <TableCell className="text-right tabular-nums">{t.margin_pct}%</TableCell>
+              </TableRow>
+            </TableFooter>
+          </Table>
+        </div>
+      )}
+    </PageLayout>
   );
 }

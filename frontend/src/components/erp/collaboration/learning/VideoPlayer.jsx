@@ -8,9 +8,9 @@ import { PlayCircle } from 'lucide-react';
 export default function VideoPlayer({ url, title }) {
   if (!url) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+      <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
         <PlayCircle size={48} className="mb-2 opacity-30" />
-        <p>Video URL belum tersedia</p>
+        <p>Alamat video belum tersedia</p>
       </div>
     );
   }
@@ -50,9 +50,9 @@ export default function VideoPlayer({ url, title }) {
 
   // Fallback: external link
   return (
-    <div className="text-center py-12" data-testid="video-player-link">
+    <div className="text-center py-10" data-testid="video-player-link">
       <PlayCircle size={48} className="mx-auto mb-2 text-muted-foreground" />
-      <p className="text-sm text-muted-foreground mb-2">URL tidak dapat di-embed</p>
+      <p className="text-sm text-muted-foreground mb-2">Alamat ini tidak bisa diputar di sini</p>
       <a
         href={url}
         target="_blank"

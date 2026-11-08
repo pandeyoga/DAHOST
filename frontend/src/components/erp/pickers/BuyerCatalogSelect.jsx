@@ -76,7 +76,7 @@ export default function BuyerCatalogSelect({
     <div className={className} data-testid={`${testId}-wrap`}>
       <Label className="flex items-center gap-1.5 text-xs font-medium">
         <BookMarked className="w-3.5 h-3.5 text-muted-foreground" />
-        {label}<span className="text-[hsl(var(--destructive))]">*</span>
+        {label}<span className="text-[hsl(var(--danger-text))]">*</span>
       </Label>
 
       <Select
@@ -101,7 +101,7 @@ export default function BuyerCatalogSelect({
           </SelectItem>
           {items.map((i) => (
             <SelectItem key={i.id} value={i.id}>
-              <span className="tabular-nums text-[11px] text-muted-foreground mr-1.5">
+              <span className="tabular-nums text-xs text-muted-foreground mr-1.5">
                 {i.artikel_code}
               </span>
               {i.product_name}
@@ -114,7 +114,7 @@ export default function BuyerCatalogSelect({
       </Select>
 
       {loading && (
-        <p className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+        <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
           <Loader2 className="w-3 h-3 animate-spin" />Memuat katalog buyer…
         </p>
       )}
@@ -128,7 +128,7 @@ export default function BuyerCatalogSelect({
             onChange={(e) => onNewName?.(e.target.value)}
             data-testid={`${testId}-new-name`}
           />
-          <p className="mt-1 text-[11px] text-[hsl(var(--warning))] ">
+          <p className="mt-1 text-xs text-[hsl(var(--warning-text))]">
             Ditandai <b>artikel baru</b>. Kalau penawaran ini jadi order,
             daftarkan artikelnya ke <b>Katalog Buyer</b> supaya penawaran
             berikutnya tidak mengetik ulang nama yang sama dengan ejaan berbeda.

@@ -1,21 +1,16 @@
 /**
- * ImportFromModuleDialog — import data from another system module
- * (Asset Management or Procurement Requests) into a new spreadsheet.
+ * ImportFromModuleDialog — impor data modul sistem (Manajemen Aset atau Pengadaan) ke spreadsheet baru.
+ * Pengguna memilih modul sumber, nama dokumen, saringan status/departemen (opsional), dan kolom yang ikut.
  *
- * User picks: source module, target doc name, optional status/department filters,
- * and which fields to include.
+ * Standar UI/UX v2 (8 Nov 2026): FormPopup pendek (dulu Dialog buatan sendiri); isian & panggilan server sama.
  */
 import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
-import { Package, Download, Loader2 } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
 
 import {
   apicall, ASSET_FIELDS, PROCUREMENT_FIELDS, DEF_ASSET_FIELDS, DEF_PR_FIELDS,
@@ -47,83 +42,53 @@ export default function ImportFromModuleDialog({ open, onClose, token, onImporte
       const data = await apicall('POST', '/api/workspace/documents/import-from-module', token, {
         module, name: docName || undefined, filters, fields: selFields,
       });
-      toast.success(`${data.imported_count} data berhasil diimport ke "${data.name}"`);
+      toast.success(`${data.imported_count} data berhasil diimpor ke "${data.name}"`);
       onImported(data);
       onClose();
     } catch (e) {
-      toast.error(e.message || 'Import gagal');
+      toast.error(e.message || 'Impor gagal');
     } finally {
       setImporting(false);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-md" data-testid="import-module-dialog">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Package size={16} />Import dari Modul Sistem
-          </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1 block">Modul Sumber</label>
-            <Select value={module} onValueChange={setModule}>
-              <SelectTrigger data-testid="import-module-select"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="assets">Manajemen Aset</SelectItem>
-                <SelectItem value="procurement">Pengadaan (PR)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1 block">Nama Dokumen (opsional)</label>
-            <Input placeholder="Biarkan kosong untuk nama otomatis..."
-              value={docName} onChange={(e) => setDocName(e.target.value)}
-              data-testid="import-doc-name" />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Filter Status</label>
-              <Input placeholder="Semua status" value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)} className="text-sm h-8" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Filter Departemen</label>
-              <Input placeholder="Semua dept." value={deptFilter}
-                onChange={(e) => setDeptFilter(e.target.value)} className="text-sm h-8" />
-            </div>
-          </div>
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-xs font-medium text-muted-foreground">Pilih Kolom</label>
-              <button className="text-xs text-primary"
-                onClick={() => setSelFields(allFields.map((f) => f.key))}>Pilih semua</button>
-            </div>
-            <div className="grid grid-cols-2 gap-1 max-h-40 overflow-y-auto border rounded-md p-2">
-              {allFields.map((f) => (
-                <label key={f.key} className="flex items-center gap-1.5 text-xs cursor-pointer hover:bg-muted/30 rounded px-1 py-0.5">
-                  <input type="checkbox" checked={selFields.includes(f.key)}
-                    onChange={() => setSelFields((prev) =>
-                      prev.includes(f.key) ? prev.filter((k) => k !== f.key) : [...prev, f.key]
-                    )}
-                    className="rounded" />
-                  {f.label}
-                </label>
-              ))}
-            </div>
-          </div>
+    <FormPopup open={open} onClose={onClose} ukuran="pendek" testId="import-module-dialog"
+      judul="Impor dari modul sistem" keterangan="Data modul disalin ke spreadsheet baru."
+      onSimpan={handleImport} menyimpan={importing} bisaSimpan={selFields.length > 0}
+      labelSimpan={`Impor ${module === 'assets' ? 'aset' : 'pengadaan'}`}>
+      <Isian label="Modul sumber">
+        <SmartNativeSelect value={module} onChange={(e) => setModule(e.target.value)} searchable={false}
+          className="h-9 w-full" aria-label="Modul sumber" data-testid="import-module-select">
+          <option value="assets">Manajemen Aset</option>
+          <option value="procurement">Pengadaan (PR)</option>
+        </SmartNativeSelect>
+      </Isian>
+      <Isian label="Nama dokumen" petunjuk="Kosongkan untuk nama otomatis." htmlFor="import-doc-name">
+        <Input id="import-doc-name" value={docName} onChange={(e) => setDocName(e.target.value)} data-testid="import-doc-name" />
+      </Isian>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Isian label="Saring status" htmlFor="import-status">
+          <Input id="import-status" placeholder="Semua status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} />
+        </Isian>
+        <Isian label="Saring departemen" htmlFor="import-dept">
+          <Input id="import-dept" placeholder="Semua departemen" value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)} />
+        </Isian>
+      </div>
+      <Isian label="Kolom yang diimpor">
+        <div className="mb-1 flex justify-end">
+          <Button type="button" variant="ghost" size="sm" onClick={() => setSelFields(allFields.map((f) => f.key))}>Pilih semua</Button>
         </div>
-        <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={onClose} disabled={importing}>Batal</Button>
-          <Button onClick={handleImport}
-            disabled={importing || selFields.length === 0}
-            data-testid="import-module-submit">
-            {importing ? <Loader2 size={14} className="animate-spin mr-1" /> : <Download size={14} className="mr-1" />}
-            {importing ? 'Mengimport...' : `Import ${module === 'assets' ? 'Aset' : 'Pengadaan'}`}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        <div className="grid max-h-48 grid-cols-1 gap-1 overflow-y-auto rounded-md border border-[var(--glass-border)] p-2 sm:grid-cols-2">
+          {allFields.map((f) => (
+            <label key={f.key} className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-sm hover:bg-foreground/5">
+              <Checkbox checked={selFields.includes(f.key)}
+                onCheckedChange={() => setSelFields((prev) => (prev.includes(f.key) ? prev.filter((k) => k !== f.key) : [...prev, f.key]))} />
+              {f.label}
+            </label>
+          ))}
+        </div>
+      </Isian>
+    </FormPopup>
   );
 }

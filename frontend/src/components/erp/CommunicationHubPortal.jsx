@@ -14,6 +14,7 @@
  * External API (props) UNCHANGED: { token, user, isEmbedded, initialChannelId }
  * Default export name UNCHANGED: CommunicationHubPortal
  */
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -256,7 +257,7 @@ export default function CommunicationHubPortal({ token, user, isEmbedded = false
   }, [token]);
 
   const handleDeleteMessage = useCallback(async (msg) => {
-    if (!window.confirm('Hapus pesan ini secara permanen?')) return;
+    if (!(await confirmDialog({ title: 'Hapus pesan ini?', body: 'Pesan dihapus permanen untuk semua anggota.', confirmLabel: 'Hapus', danger: true }))) return;
     try {
       const data = await apicall('DELETE', `/api/comm/messages/${msg.id}`, token);
       if (data?.ok) {
@@ -281,11 +282,11 @@ export default function CommunicationHubPortal({ token, user, isEmbedded = false
             .then((d) => { if (Array.isArray(d)) setPinnedMessages(d); })
             .catch(() => {});
         }
-        toast.success('📌 Pesan di-pin');
+        toast.success('Pesan disematkan');
       } else {
-        toast.error(data?.detail || 'Gagal pin pesan');
+        toast.error(data?.detail || 'Gagal menyematkan pesan');
       }
-    } catch { toast.error('Gagal pin pesan'); }
+    } catch { toast.error('Gagal menyematkan pesan'); }
   }, [token, activeView]);
 
   const handleUnpinMessage = useCallback(async (msgId) => {
@@ -294,15 +295,15 @@ export default function CommunicationHubPortal({ token, user, isEmbedded = false
       if (data?.ok) {
         setPinnedMessages((prev) => prev.filter((m) => m.id !== msgId));
         setMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, pinned: false } : m));
-        toast.success('Pesan di-unpin');
+        toast.success('Sematan pesan dilepas');
       } else {
-        toast.error(data?.detail || 'Gagal unpin pesan');
+        toast.error(data?.detail || 'Gagal melepas sematan');
       }
-    } catch { toast.error('Gagal unpin pesan'); }
+    } catch { toast.error('Gagal melepas sematan'); }
   }, [token]);
 
   const handleArchiveChannel = useCallback(async (channelId) => {
-    if (!window.confirm('Arsipkan channel ini? Channel tidak akan muncul di daftar utama.')) return;
+    if (!(await confirmDialog({ title: 'Arsipkan kanal ini?', body: 'Kanal tidak muncul lagi di daftar utama; bisa dipulihkan dari bagian Arsip.', confirmLabel: 'Arsipkan' }))) return;
     try {
       const data = await apicall('PATCH', `/api/comm/channels/${channelId}/archive`, token);
       if (data?.ok) {
@@ -456,7 +457,7 @@ export default function CommunicationHubPortal({ token, user, isEmbedded = false
               <MessageSquare size={28} className="text-primary" />
             </div>
             <div>
-              <h3 className="font-semibold text-lg mb-1">Communication Hub</h3>
+              <p className="mb-1 text-lg font-semibold">Pusat komunikasi</p>
               <p className="text-sm text-muted-foreground max-w-xs">
                 {isEmbedded
                   ? 'Pilih channel atau kontak dari sidebar "Communication" untuk mulai diskusi.'

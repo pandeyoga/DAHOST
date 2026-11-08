@@ -1,67 +1,95 @@
+/**
+ * AccessoryRequestInbox — Portal Aksesoris › Inbox persetujuan (juga Portal R&D › Request Aksesoris, mode pantau).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout · penyaring satu baris · daftar = tabel (kartu ringkas di HP) yang
+ * bisa diunduh · klik baris = rincian (popup) · Siapkan / Tandai kirim = form popup · Tolak = konfirmasi dengan
+ * alasan (tombol merah) · Hapus = konfirmasi. Alur, isian, dan panggilan server tidak berubah.
+ *
+ * RC-IA T-2: RnD (rnd-accessory-requests) = PANTAU sampel (lihat saja); Gudang/Aksesoris = inbox penuh.
+ */
 import { useState, useEffect, useMemo } from 'react';
-import { GlassCard } from '@/components/ui/glass';
+import { AlertTriangle, CheckCircle2, Inbox, Package, RefreshCw, Search, Trash2, Truck, XCircle } from 'lucide-react';
+import { toast } from '../ui/sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Package, Inbox, CheckCircle2, Truck, XCircle, Clock,
-  AlertTriangle, Search, Eye, Trash2, FileText
-} from 'lucide-react';
-import { toast } from '../ui/sonner';
-import SmartNativeSelect from '@/components/ui/smart-native-select';
-import Modal from './Modal';
-import ConfirmDialog from './ConfirmDialog';
-import { EmptyState } from './EmptyState';
+import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
 const STATUS_CONF = {
-  draft:     { label: 'Draft',     cls: 'bg-muted dark:bg-zinc-500/15 text-muted-foreground dark:text-zinc-400 border-border dark:border-zinc-500/30',     Icon: Clock },
-  submitted: { label: 'Menunggu',  cls: 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)] ',  Icon: Inbox },
-  allocated: { label: 'Disiapkan', cls: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)] ',        Icon: Package },
-  delivered: { label: 'Terkirim',  cls: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)] ', Icon: CheckCircle2 },
-  rejected:  { label: 'Ditolak',   cls: 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.35)] ',        Icon: XCircle },
-  cancelled: { label: 'Batal',     cls: 'bg-muted dark:bg-zinc-500/15 text-muted-foreground dark:text-zinc-400 border-border dark:border-zinc-500/30',     Icon: XCircle },
+  draft:     { label: 'Draf',      tone: 'muted' },
+  submitted: { label: 'Menunggu',  tone: 'warning' },
+  allocated: { label: 'Disiapkan', tone: 'info' },
+  delivered: { label: 'Terkirim',  tone: 'success' },
+  rejected:  { label: 'Ditolak',   tone: 'danger' },
+  cancelled: { label: 'Batal',     tone: 'muted' },
 };
 
-// P3 TD-009 (Session #11.10): request_type discriminator labels
+// P3 TD-009: jenis permintaan (request_type) dalam bahasa staf
 const TYPE_CONF = {
-  rnd_sample:         { label: 'RnD Sample',      cls: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' },
-  internal_issuance:  { label: 'Internal',        cls: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' },
-  vendor_additional:  { label: 'Vendor Add',      cls: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' },
-  vendor_replacement: { label: 'Vendor Replace',  cls: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' },
+  rnd_sample:         { label: 'Sampel R&D' },
+  internal_issuance:  { label: 'Pemakaian divisi' },
+  vendor_additional:  { label: 'Tambahan vendor' },
+  vendor_replacement: { label: 'Pengganti vendor' },
 };
+const typeLabel = (t) => (TYPE_CONF[t] || TYPE_CONF.rnd_sample).label;
+const statusConf = (s) => STATUS_CONF[s] || STATUS_CONF.draft;
+
+const formatDate = (iso) => {
+  if (!iso) return '—';
+  try { return new Date(iso).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }); }
+  catch { return iso; }
+};
+
+/** Konteks permintaan per jenis: divisi/tujuan · PO/vendor · style. */
+function konteks(r) {
+  if (r.request_type === 'internal_issuance') return { utama: r.divisi || '—', kedua: r.purpose || '' };
+  if (r.request_type === 'vendor_additional' || r.request_type === 'vendor_replacement') {
+    return { utama: r.po_number || '—', kedua: `Vendor: ${r.vendor_name || '—'}` };
+  }
+  return { utama: r.style_code || '—', kedua: r.style_name || '' };
+}
 
 export default function AccessoryRequestInbox({ token, moduleId }) {
-  // RC-IA T-2: scope per portal. RnD (rnd-accessory-requests) = PANTAU request sample (read-only monitor);
-  // Gudang/Aksesoris = inbox fulfillment penuh (allocate/deliver/reject).
   const isRndMonitor = moduleId === 'rnd-accessory-requests';
   const h = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   const [requests, setRequests] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [filterStatus, setFilterStatus] = useState(isRndMonitor ? '' : 'submitted'); // RnD: semua status sample; lainnya: inbox
-  const [filterType, setFilterType] = useState(isRndMonitor ? 'rnd_sample' : ''); // RnD: fokus rnd_sample; lainnya: semua tipe
+  const [filterStatus, setFilterStatus] = useState(isRndMonitor ? '' : 'submitted'); // RnD: semua status sampel
+  const [filterType, setFilterType] = useState(isRndMonitor ? 'rnd_sample' : '');   // RnD: terkunci ke sampel
   const [search, setSearch] = useState('');
   const [urgentOnly, setUrgentOnly] = useState(false);
   const [detail, setDetail] = useState(null);
-  const [actionModal, setActionModal] = useState(null); // { id, type, notes }
-  const [delId, setDelId] = useState(null);
+  const [actionModal, setActionModal] = useState(null); // { id, type: 'allocate'|'deliver', notes, ... }
+  const [saving, setSaving] = useState(false);
 
   const fetchRequests = async () => {
     setLoading(true);
     try {
-      const qs = new URLSearchParams();
+      // limit 1000 (batas server): dulu memakai bawaan 200 sehingga permintaan lama hilang dari daftar tanpa tanda.
+      const qs = new URLSearchParams({ limit: '1000' });
       if (filterStatus) qs.set('status', filterStatus);
-      if (filterType)   qs.set('request_type', filterType);
+      if (filterType) qs.set('request_type', filterType);
       if (urgentOnly) qs.set('urgent_only', 'true');
       if (search) qs.set('search', search);
       const res = await fetch(`${API}/api/dewi/accessory-requests?${qs}`, { headers: h });
       const data = await res.json();
       setRequests(Array.isArray(data) ? data : []);
-    } catch { toast.error('Gagal memuat data request'); }
+    } catch { toast.error('Gagal memuat daftar permintaan.'); }
     finally { setLoading(false); }
   };
 
@@ -69,15 +97,14 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
     try {
       const res = await fetch(`${API}/api/dewi/accessory-requests/stats/summary`, { headers: h });
       if (res.ok) setStats(await res.json());
-    } catch { /* ignore */ }
+    } catch { /* ringkasan opsional */ }
   };
 
   useEffect(() => { fetchRequests(); }, [filterStatus, filterType, urgentOnly]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { fetchStats(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const muatUlang = () => { fetchRequests(); fetchStats(); };
 
-  // 2026-11-06 (Tahap 1): aksi dianggap berhasil HANYA bila server menjawab ok. Dulu `res.ok`
-  // tidak diperiksa, jadi pesan "berhasil" muncul walau server menolak (stok kurang, tidak
-  // berhak, status sudah berubah). Bila ditolak: pesan server ditampilkan, baris tidak diubah.
+  // 2026-11-06 (Tahap 1): aksi berhasil HANYA bila server menjawab ok; pesan server ditampilkan bila ditolak.
   const sendAction = async (path, method, body) => {
     const res = await fetch(`${API}/api/dewi/accessory-requests/${path}`, {
       method, headers: h, ...(body ? { body: JSON.stringify(body) } : {}),
@@ -92,33 +119,35 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
     return data;
   };
 
-  // 2026-11-06 (Tahap 2): baris permintaan tanpa master (sampel R&D diketik bebas) dipilihkan
-  // master aksesorisnya saat diserahkan, karena penyerahan kini memotong stok + menjurnal.
+  // 2026-11-06 (Tahap 2): baris tanpa master (sampel R&D diketik bebas) dipilihkan master saat diserahkan.
   const [accItems, setAccItems] = useState([]);
   const openDeliver = async (r) => {
-    setActionModal({ id: r.id, type: 'deliver', notes: '', items: r.items || [], links: {}, reason: '', overIssue: null,
-                     poNumber: r.po_number || '' });
-    if ((r.items || []).some(it => !it.material_id) && accItems.length === 0) {
+    setActionModal({ id: r.id, code: r.request_code, type: 'deliver', notes: '', items: r.items || [], links: {}, reason: '',
+      overIssue: null, poNumber: r.po_number || '' });
+    if ((r.items || []).some((it) => !it.material_id) && accItems.length === 0) {
       try {
         const res = await fetch(`${API}/api/acc/items`, { headers: h });
         if (res.ok) setAccItems(await res.json());
       } catch { /* daftar master opsional — server tetap menolak baris tanpa master */ }
     }
   };
+  const openAllocate = (r) => setActionModal({ id: r.id, code: r.request_code, type: 'allocate', notes: '' });
 
   const handleAllocate = async () => {
     if (!actionModal) return;
+    setSaving(true);
     try {
       await sendAction(`${actionModal.id}/allocate`, 'POST', { notes: actionModal.notes || '' });
-      toast.success('Request dialokasikan');
+      toast.success('Permintaan disiapkan.');
       setActionModal(null);
-      fetchRequests();
-      fetchStats();
-    } catch (e) { toast.error(e.message || 'Gagal mengalokasikan'); }
+      muatUlang();
+    } catch (e) { toast.error(e.message || 'Gagal menyiapkan.'); }
+    finally { setSaving(false); }
   };
 
   const handleDeliver = async () => {
     if (!actionModal) return;
+    setSaving(true);
     try {
       const res = await sendAction(`${actionModal.id}/deliver`, 'POST', {
         notes: actionModal.notes || '',
@@ -127,46 +156,48 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
         over_issue_reason: (actionModal.reason || '').trim(),
       });
       const n = (res.issued_items || []).length;
-      toast.success(n ? `Diserahkan · ${n} aksesoris keluar dari stok dan dijurnal` : 'Request ditandai sudah diterima');
+      toast.success(n ? `Diserahkan · ${n} aksesoris keluar dari stok dan dijurnal.` : 'Permintaan ditandai sudah diterima.');
       setActionModal(null);
-      fetchRequests();
-      fetchStats();
+      muatUlang();
     } catch (e) {
       if (e.detail?.code === 'over_issue') {
-        setActionModal(p => ({ ...p, overIssue: e.detail }));
+        setActionModal((p) => ({ ...p, overIssue: e.detail }));
         toast.error('Melebihi kebutuhan PO — isi alasan kelebihan lalu tandai kirim lagi.');
         return;
       }
-      toast.error(e.message || 'Gagal update status');
-    }
+      toast.error(e.message || 'Gagal menyimpan status.');
+    } finally { setSaving(false); }
   };
 
-  const handleReject = async () => {
-    if (!actionModal) return;
-    if (!actionModal.notes?.trim()) {
-      toast.error('Alasan reject wajib diisi');
-      return;
-    }
+  // Tolak = konfirmasi bertombol merah yang meminta alasan (dulu popup biasa; alasan tetap wajib).
+  const handleReject = async (r) => {
+    const reason = await confirmDialog({
+      title: `Tolak permintaan ${r.request_code}?`,
+      body: 'Peminta melihat alasan ini. Permintaan yang ditolak tidak bisa disiapkan lagi.',
+      confirmLabel: 'Tolak', danger: true,
+      input: { label: 'Alasan penolakan', placeholder: 'Stok kosong / di luar standar…', minLength: 1 },
+    });
+    if (!reason) return;
     try {
-      await sendAction(`${actionModal.id}/reject`, 'POST', { reason: actionModal.notes });
-      toast.success('Request ditolak');
-      setActionModal(null);
-      fetchRequests();
-      fetchStats();
-    } catch (e) { toast.error(e.message || 'Gagal menolak'); }
+      await sendAction(`${r.id}/reject`, 'POST', { reason });
+      toast.success('Permintaan ditolak.');
+      setDetail(null);
+      muatUlang();
+    } catch (e) { toast.error(e.message || 'Gagal menolak.'); }
   };
 
-  const handleDelete = async () => {
+  const handleDelete = async (r) => {
+    if (!(await confirmDialog({ title: `Hapus permintaan ${r.request_code}?`, body: 'Permintaan aksesoris dihapus permanen.',
+      confirmLabel: 'Hapus', danger: true }))) return;
     try {
-      await sendAction(delId, 'DELETE');
-      toast.success('Request dihapus');
-      setDelId(null);
-      fetchRequests();
-      fetchStats();
-    } catch (e) { toast.error(e.message || 'Gagal menghapus'); }
+      await sendAction(r.id, 'DELETE');
+      toast.success('Permintaan dihapus.');
+      setDetail(null);
+      muatUlang();
+    } catch (e) { toast.error(e.message || 'Gagal menghapus.'); }
   };
 
-  const filtered = useMemo(() => requests.filter(r => {
+  const filtered = useMemo(() => requests.filter((r) => {
     if (!search) return true;
     const q = search.toLowerCase();
     return (r.request_code || '').toLowerCase().includes(q)
@@ -174,464 +205,277 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
       || (r.style_name || '').toLowerCase().includes(q)
       || (r.requester_name || '').toLowerCase().includes(q);
   }), [requests, search]);
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(filtered, 25);
 
-  const formatDate = (iso) => {
-    if (!iso) return '—';
-    try { return new Date(iso).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }); }
-    catch { return iso; }
+  // Aksi baris (paling banyak 2 tampil); rincian = klik baris.
+  const aksiBaris = (r) => {
+    if (isRndMonitor) return null;
+    if (r.status === 'submitted') return (
+      <div className="flex justify-end gap-1.5">
+        <Button size="sm" variant="success" onClick={() => openAllocate(r)} data-testid={`acc-req-allocate-${r.id}`}>
+          <Package />Siapkan
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => handleReject(r)} data-testid={`acc-req-reject-${r.id}`}>
+          <XCircle />Tolak
+        </Button>
+      </div>
+    );
+    if (r.status === 'allocated') return (
+      <Button size="sm" variant="success" onClick={() => openDeliver(r)} data-testid={`acc-req-deliver-${r.id}`}>
+        <Truck />Tandai kirim
+      </Button>
+    );
+    if (['draft', 'rejected', 'cancelled'].includes(r.status)) return (
+      <Button size="icon-sm" variant="ghost" onClick={() => handleDelete(r)} title="Hapus permintaan" aria-label="Hapus permintaan"
+        data-testid={`acc-req-delete-${r.id}`}>
+        <Trash2 />
+      </Button>
+    );
+    return null;
   };
 
-  const { page, setPage, totalPages, total, paged } = useClientPagination(filtered, 10);
+  const kolom = [
+    { kunci: 'kode', label: 'Kode', hp: 'judul', isi: (r) => (
+      <span className="inline-flex flex-wrap items-center gap-1.5">
+        <span className="font-medium tabular-nums text-foreground">{r.request_code}</span>
+        {r.urgent && <StatusBadge status="mendesak" label="Mendesak" tone="danger" />}
+      </span>) },
+    { kunci: 'jenis', label: 'Jenis', hp: 'keterangan', isi: (r) => <span data-testid={`acc-req-type-badge-${r.id}`}>{typeLabel(r.request_type)}</span> },
+    { kunci: 'konteks', label: 'Style / konteks', isi: (r) => {
+      const k = konteks(r);
+      return (
+        <div className="min-w-0 md:max-w-[14rem]">
+          <p className="truncate text-sm text-foreground">{k.utama}</p>
+          {k.kedua && <p className="truncate text-xs text-muted-foreground" title={k.kedua}>{k.kedua}</p>}
+        </div>
+      );
+    } },
+    { kunci: 'item', label: 'Item', rata: 'kanan', isi: (r) => <span className="tabular-nums">{(r.items || []).length}</span> },
+    { kunci: 'butuh', label: 'Butuh tanggal', isi: (r) => <span className="whitespace-nowrap">{formatDate(r.needed_by_date)}</span> },
+    { kunci: 'status', label: 'Status', isi: (r) => <StatusBadge status={r.status} label={statusConf(r.status).label} tone={statusConf(r.status).tone} /> },
+    { kunci: 'peminta', label: 'Peminta', hp: false, isi: (r) => r.requester_name || '—' },
+    { kunci: 'dibuat', label: 'Dibuat', hp: false, isi: (r) => <span className="whitespace-nowrap text-muted-foreground">{formatDate(r.created_at)}</span> },
+    ...(isRndMonitor ? [] : [{ kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: aksiBaris }]),
+  ];
+
+  const opsiStatus = [
+    { key: '', label: 'Semua' }, { key: 'submitted', label: 'Menunggu' }, { key: 'allocated', label: 'Disiapkan' },
+    { key: 'delivered', label: 'Terkirim' }, { key: 'rejected', label: 'Ditolak' },
+  ];
+  const jumlahJenis = (k) => (stats?.by_request_type ? ` (${stats.by_request_type[k] || 0})` : '');
+
   return (
-    <div className="p-6 space-y-5" data-testid="accessory-request-inbox">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-            <Inbox className="w-5 h-5 text-[hsl(var(--warning))] " /> {isRndMonitor ? 'Pantau Request Sample (RnD)' : 'Inbox Request Aksesoris'}
-          </h1>
-          {/* 2026-11-06 (Tahap 2): tanpa istilah program (nama koleksi / "SSOT") di layar */}
-          <p className="text-sm text-foreground/50 mt-0.5">
-            {isRndMonitor
-              ? 'Pantau status permintaan sample RnD (read-only). Alokasi & pengiriman dilakukan oleh Gudang/Portal Aksesoris.'
-              : 'Semua permintaan aksesoris: sampel R&D, pemakaian divisi, tambahan dan pengganti untuk vendor. Saat ditandai kirim, stok dipotong dan dijurnal.'}
-          </p>
+    <PageLayout testId="accessory-request-inbox"
+      title={isRndMonitor ? 'Request aksesoris' : 'Inbox persetujuan'}
+      subtitle={isRndMonitor
+        ? 'Pantau status permintaan sampel R&D. Penyiapan dan pengiriman dilakukan Portal Aksesoris.'
+        : 'Semua permintaan aksesoris. Saat ditandai kirim, stok dipotong dan dijurnal.'}
+      filters={<>
+        <FilterChips options={opsiStatus} value={filterStatus} onChange={setFilterStatus} hideWhenEmpty={false}
+          testId="acc-req-filter" ariaLabel="Status permintaan" />
+        {!isRndMonitor && (
+          <SmartNativeSelect value={filterType} onChange={(e) => setFilterType(e.target.value)} searchable={false}
+            className="h-9 w-48" wrapperClassName="w-48" aria-label="Jenis permintaan" data-testid="acc-req-type-filter">
+            <option value="">Semua jenis</option>
+            {Object.entries(TYPE_CONF).map(([k, t]) => <option key={k} value={k}>{`${t.label}${jumlahJenis(k)}`}</option>)}
+          </SmartNativeSelect>
+        )}
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && fetchRequests()}
+            placeholder="Cari kode, style, peminta" className="pl-8" data-testid="acc-req-search-input" />
         </div>
-      </div>
-
-      {isRndMonitor && (
-        <div className="flex items-start gap-2 rounded-lg border border-[hsl(var(--primary)/0.4)] bg-[hsl(var(--primary)/0.1)] px-3 py-2 text-xs text-[hsl(var(--primary))] " data-testid="acc-req-rnd-monitor-banner">
-          <Eye className="w-4 h-4 mt-0.5 flex-shrink-0" />
-          <span>Mode <b>pantau (read-only)</b> — halaman yang sama dengan inbox Gudang/Aksesoris, difilter ke request <b>RnD Sample</b>. Aksi alokasi/kirim/tolak hanya tersedia di Portal Gudang/Aksesoris.</span>
-        </div>
-      )}
-
-      {/* Stats Cards */}
-      {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3" data-testid="acc-req-stats">
-          <GlassCard className="p-3">
-            <div className="text-xs text-foreground/50">Total</div>
-            <div className="text-2xl font-bold text-foreground mt-1">{stats.total}</div>
-          </GlassCard>
-          <GlassCard className="p-3">
-            <div className="text-xs text-foreground/50 flex items-center gap-1"><Inbox className="w-3 h-3" /> Menunggu</div>
-            <div className="text-2xl font-bold text-[hsl(var(--warning))] mt-1" data-testid="acc-req-stats-submitted">{stats.submitted}</div>
-          </GlassCard>
-          <GlassCard className="p-3">
-            <div className="text-xs text-foreground/50 flex items-center gap-1"><Package className="w-3 h-3" /> Disiapkan</div>
-            <div className="text-2xl font-bold text-[hsl(var(--primary))] mt-1">{stats.allocated}</div>
-          </GlassCard>
-          <GlassCard className="p-3">
-            <div className="text-xs text-foreground/50 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Terkirim</div>
-            <div className="text-2xl font-bold text-[hsl(var(--success))] mt-1">{stats.delivered}</div>
-          </GlassCard>
-          <GlassCard className="p-3 border-[hsl(var(--destructive)/0.35)] ">
-            <div className="text-xs text-foreground/50 flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-[hsl(var(--destructive))] " /> Urgent</div>
-            <div className="text-2xl font-bold text-[hsl(var(--destructive))] mt-1" data-testid="acc-req-stats-urgent">{stats.urgent_pending}</div>
-          </GlassCard>
-        </div>
-      )}
-
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3 items-center">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground/40" />
-          <Input value={search} onChange={e => setSearch(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && fetchRequests()}
-            placeholder="Cari kode / style / requester / divisi..." className="pl-9"
-            data-testid="acc-req-search-input" />
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          {[
-            { v: '', label: 'Semua' },
-            { v: 'submitted', label: 'Menunggu' },
-            { v: 'allocated', label: 'Disiapkan' },
-            { v: 'delivered', label: 'Terkirim' },
-            { v: 'rejected', label: 'Ditolak' },
-          ].map(opt => (
-            <button key={opt.v} onClick={() => setFilterStatus(opt.v)}
-              data-testid={`acc-req-filter-${opt.v || 'all'}`}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
-                filterStatus === opt.v
-                  ? 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.4)]'
-                  : 'bg-foreground/5 text-foreground/50 border-foreground/10 hover:border-foreground/20'
-              }`}>
-              {opt.label}
-            </button>
-          ))}
-        </div>
-        <label className="flex items-center gap-2 text-xs cursor-pointer" data-testid="acc-req-urgent-only-label">
-          <input type="checkbox" checked={urgentOnly} onChange={e => setUrgentOnly(e.target.checked)}
-            className="w-4 h-4 accent-red-500" data-testid="acc-req-urgent-only-checkbox" />
-          <span className="text-foreground/70">Urgent saja</span>
+        <label className="flex items-center gap-2 text-sm" htmlFor="acc-req-urgent" data-testid="acc-req-urgent-only-label">
+          <Checkbox id="acc-req-urgent" checked={urgentOnly} onCheckedChange={(v) => setUrgentOnly(!!v)}
+            data-testid="acc-req-urgent-only-checkbox" />
+          Mendesak saja
         </label>
-      </div>
-
-      {/* P3 TD-009 — Request Type Filter (disembunyikan di mode pantau RnD yang terkunci ke rnd_sample) */}
-      {!isRndMonitor && (
-      <div className="flex flex-wrap gap-2 items-center" data-testid="acc-req-type-filter-row">
-        <span className="text-xs text-foreground/40 uppercase tracking-wider">Tipe:</span>
-        {[
-          { v: '',                   label: 'Semua' },
-          { v: 'rnd_sample',         label: 'RnD Sample' },
-          { v: 'internal_issuance',  label: 'Internal' },
-          { v: 'vendor_additional',  label: 'Vendor Add' },
-          { v: 'vendor_replacement', label: 'Vendor Replace' },
-        ].map(opt => (
-          <button key={opt.v} onClick={() => setFilterType(opt.v)}
-            data-testid={`acc-req-type-${opt.v || 'all'}`}
-            className={`px-2.5 py-1 rounded-md text-[11px] font-medium border transition-all ${
-              filterType === opt.v
-                ? 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.4)]'
-                : 'bg-foreground/5 text-foreground/50 border-foreground/10 hover:border-foreground/20'
-            }`}>
-            {opt.label}
-            {stats?.by_request_type && opt.v && (
-              <span className="ml-1.5 opacity-60">({stats.by_request_type[opt.v] || 0})</span>
-            )}
-          </button>
-        ))}
-      </div>
-      )}
-
-      {/* Table */}
-      {loading ? (
-        <div className="overflow-x-auto rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-          <table className="w-full text-sm">
-            <tbody className="divide-y divide-white/5">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <tr key={i}>
-                  {[...Array(9)].map((__, j) => (
-                    <td key={j} className="px-4 py-3"><Skeleton className="h-4" /></td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={Inbox}
-          title="Tidak ada request aksesoris"
-          description="Request yang masuk akan muncul di sini. Ubah filter untuk melihat request dengan status berbeda."
-          data-testid="inbox-empty"
-        />
-      ) : (
-        <div className="overflow-x-auto rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-          <table className="w-full text-sm">
-            <thead className="bg-foreground/5 border-b border-foreground/10">
-              <tr>
-                {['Kode', 'Tipe', 'Style / Konteks', 'Items', 'Butuh Tgl', 'Status', 'Requester', 'Tgl Buat', 'Aksi'].map(h => (
-                  <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-foreground/50 uppercase tracking-wider">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {paged.map(r => {
-                const sc = STATUS_CONF[r.status] || STATUS_CONF.draft;
-                const tc = TYPE_CONF[r.request_type] || TYPE_CONF.rnd_sample;
-                const Icon = sc.Icon;
-                return (
-                  <tr key={r.id} className="border-b border-foreground/5 hover:bg-foreground/[0.03] last:border-0">
-                    <td className="px-4 py-3">
-                      <div className="tabular-nums text-xs font-semibold text-foreground">{r.request_code}</div>
-                      {r.urgent && (
-                        <span className="inline-flex items-center gap-1 text-[10px] mt-0.5 px-1.5 py-0.5 rounded-full bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]  border border-[hsl(var(--destructive)/0.35)] ">
-                          <AlertTriangle className="w-2.5 h-2.5" /> URGENT
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex items-center text-[11px] px-2 py-0.5 rounded-md border ${tc.cls}`}
-                            data-testid={`acc-req-type-badge-${r.id}`}>
-                        {tc.label}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      {/* Conditional context per request_type */}
-                      {r.request_type === 'internal_issuance' ? (
-                        <>
-                          <div className="font-medium text-foreground text-sm">{r.divisi || '—'}</div>
-                          <div className="text-xs text-foreground/40 truncate max-w-[180px]">{r.purpose || ''}</div>
-                        </>
-                      ) : r.request_type === 'vendor_additional' || r.request_type === 'vendor_replacement' ? (
-                        <>
-                          <div className="font-medium text-foreground text-sm tabular-nums">{r.po_number || '—'}</div>
-                          <div className="text-xs text-foreground/40 truncate max-w-[180px]">Vendor: {r.vendor_name || '—'}</div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="font-medium text-foreground text-sm">{r.style_code || '—'}</div>
-                          <div className="text-xs text-foreground/40">{r.style_name || ''}</div>
-                        </>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-foreground/70 text-xs">{(r.items || []).length} item</td>
-                    <td className="px-4 py-3 text-foreground/60 text-xs">{r.needed_by_date ? formatDate(r.needed_by_date) : '—'}</td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border ${sc.cls}`}>
-                        <Icon className="w-3 h-3" /> {sc.label}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-foreground/60 text-xs">{r.requester_name || '—'}</td>
-                    <td className="px-4 py-3 text-foreground/50 text-xs">{formatDate(r.created_at)}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => setDetail(r)}
-                          className="h-7 w-7 p-0 text-foreground/60 hover:text-foreground"
-                          data-testid={`acc-req-detail-${r.id}`}>
-                          <Eye className="w-3.5 h-3.5" />
-                        </Button>
-                        {/* RC-IA T-2: fulfillment actions hidden in RnD read-only monitor scope */}
-                        {!isRndMonitor && (
-                        <>
-                        {r.status === 'submitted' && (
-                          <>
-                            <Button variant="ghost" size="sm"
-                              onClick={() => setActionModal({ id: r.id, type: 'allocate', notes: '' })}
-                              className="h-7 px-2 text-xs text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.15)] "
-                              data-testid={`acc-req-allocate-${r.id}`}>
-                              <Package className="w-3.5 h-3.5 mr-1" /> Siapkan
-                            </Button>
-                            <Button variant="ghost" size="sm"
-                              onClick={() => setActionModal({ id: r.id, type: 'reject', notes: '' })}
-                              className="h-7 px-2 text-xs text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.15)] "
-                              data-testid={`acc-req-reject-${r.id}`}>
-                              <XCircle className="w-3.5 h-3.5 mr-1" /> Tolak
-                            </Button>
-                          </>
-                        )}
-                        {r.status === 'allocated' && (
-                          <Button variant="ghost" size="sm"
-                            onClick={() => openDeliver(r)}
-                            className="h-7 px-2 text-xs text-[hsl(var(--success))] hover:bg-[hsl(var(--success)/0.15)] "
-                            data-testid={`acc-req-deliver-${r.id}`}>
-                            <Truck className="w-3.5 h-3.5 mr-1" /> Tandai Kirim
-                          </Button>
-                        )}
-                        {(r.status === 'draft' || r.status === 'rejected' || r.status === 'cancelled') && (
-                          <Button variant="ghost" size="sm" onClick={() => setDelId(r.id)}
-                            className="h-7 w-7 p-0 text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.15)] "
-                            data-testid={`acc-req-delete-${r.id}`}>
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
-                        )}
-                        </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
-        </div>
-      )}
-
-      {/* Detail Modal */}
-      {detail && (
-        <Modal onClose={() => setDetail(null)} title={`Detail: ${detail.request_code}`} size="lg">
-          <div className="space-y-4">
-            {/* Type badge + context info */}
-            <div className="flex items-center gap-2">
-              <span className={`inline-flex items-center text-xs px-2.5 py-1 rounded-md border ${(TYPE_CONF[detail.request_type] || TYPE_CONF.rnd_sample).cls}`}>
-                {(TYPE_CONF[detail.request_type] || TYPE_CONF.rnd_sample).label}
-              </span>
-              <span className={`inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border ${(STATUS_CONF[detail.status] || STATUS_CONF.draft).cls}`}>
-                {(STATUS_CONF[detail.status] || STATUS_CONF.draft).label}
-              </span>
-              {detail.urgent && (
-                <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]  border border-[hsl(var(--destructive)/0.35)] ">
-                  <AlertTriangle className="w-3 h-3" /> URGENT
-                </span>
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              {/* Type-specific fields */}
-              {detail.request_type === 'internal_issuance' ? (
-                <>
-                  <div>
-                    <div className="text-xs text-foreground/50">Divisi</div>
-                    <div className="font-medium">{detail.divisi || '—'}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-foreground/50">Tujuan / Purpose</div>
-                    <div className="text-sm">{detail.purpose || '—'}</div>
-                  </div>
-                </>
-              ) : detail.request_type === 'vendor_additional' || detail.request_type === 'vendor_replacement' ? (
-                <>
-                  {/* 2026-11-06 (Tahap 2): nama vendor & nomor surat jalan — dulu ID mentah */}
-                  <div>
-                    <div className="text-xs text-foreground/50">Vendor</div>
-                    <div className="text-xs">{detail.vendor_name || '—'}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-foreground/50">Nomor PO</div>
-                    <div className="tabular-nums text-xs">{detail.po_number || '—'}</div>
-                  </div>
-                  {detail.original_shipment_id && (
-                    <div>
-                      <div className="text-xs text-foreground/50">Surat jalan asal</div>
-                      <div className="tabular-nums text-xs">{detail.original_shipment_number || '—'}</div>
-                    </div>
-                  )}
-                  {detail.child_shipment_number && (
-                    <div>
-                      <div className="text-xs text-foreground/50">Surat jalan susulan</div>
-                      <div className="tabular-nums text-xs text-[hsl(var(--success))] ">{detail.child_shipment_number}</div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <>
-                  <div>
-                    <div className="text-xs text-foreground/50">Style</div>
-                    <div className="font-medium">{detail.style_code} — {detail.style_name}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-foreground/50">Kode sampel</div>
-                    <div className="tabular-nums text-xs">{detail.sample_code || '—'}</div>
-                  </div>
-                </>
-              )}
-              <div>
-                <div className="text-xs text-foreground/50">Requester</div>
-                <div>{detail.requester_name || '—'}</div>
-              </div>
-              <div>
-                <div className="text-xs text-foreground/50">Butuh Tanggal</div>
-                <div>{detail.needed_by_date ? formatDate(detail.needed_by_date) : '—'}</div>
-              </div>
-            </div>
-            <div>
-              <Label>Item Aksesoris</Label>
-              <div className="mt-2 overflow-x-auto rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-                <table className="w-full text-xs">
-                  <thead className="bg-foreground/5">
-                    <tr>
-                      {['Kode', 'Nama', 'Qty', 'Unit', 'Catatan'].map(h => (
-                        <th key={h} className="text-left px-3 py-2 text-foreground/50">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(detail.items || []).map((it, idx) => (
-                      <tr key={idx} className="border-t border-foreground/5">
-                        <td className="px-3 py-2 tabular-nums">{it.material_code || '—'}</td>
-                        <td className="px-3 py-2">{it.material_name}</td>
-                        <td className="px-3 py-2">{it.qty}</td>
-                        <td className="px-3 py-2">{it.unit}</td>
-                        <td className="px-3 py-2 text-foreground/60">{it.notes || '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            {detail.notes && (
-              <div>
-                <Label>Catatan</Label>
-                <div className="mt-1 px-3 py-2 rounded-lg bg-foreground/5 text-sm text-foreground/80">{detail.notes}</div>
-              </div>
-            )}
-            {detail.allocated_by && (
-              <div className="text-xs text-foreground/50">
-                Disiapkan oleh <strong>{detail.allocated_by}</strong> pada {formatDate(detail.allocated_at)}
-              </div>
-            )}
-            {detail.delivered_by && (
-              <div className="text-xs text-foreground/50">
-                Dikirim oleh <strong>{detail.delivered_by}</strong> pada {formatDate(detail.delivered_at)}
-              </div>
-            )}
-            {detail.rejection_reason && (
-              <div className="px-3 py-2 rounded-lg bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  text-sm text-[hsl(var(--destructive))] ">
-                Alasan reject: {detail.rejection_reason}
-              </div>
-            )}
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas={isRndMonitor ? 'permintaan-sampel-rnd' : 'inbox-permintaan-aksesoris'} namaLembar="Permintaan"
+          baris={filtered} testId="acc-req-unduh"
+          kolom={[
+            { label: 'Kode', nilai: (r) => r.request_code },
+            { label: 'Jenis', nilai: (r) => typeLabel(r.request_type) },
+            { label: 'Style / konteks', nilai: (r) => konteks(r).utama },
+            { label: 'Keterangan', nilai: (r) => konteks(r).kedua },
+            { label: 'Jumlah item', nilai: (r) => (r.items || []).length },
+            { label: 'Butuh tanggal', nilai: (r) => (r.needed_by_date ? formatDate(r.needed_by_date) : '') },
+            { label: 'Status', nilai: (r) => statusConf(r.status).label },
+            { label: 'Mendesak', nilai: (r) => (r.urgent ? 'Ya' : 'Tidak') },
+            { label: 'Peminta', nilai: (r) => r.requester_name || '' },
+            { label: 'Dibuat', nilai: (r) => formatDate(r.created_at) },
+          ]} />
+        <Button variant="outline" size="icon" onClick={muatUlang} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={<>
+        {isRndMonitor && (
+          <Notice tone="info" testId="acc-req-rnd-monitor-banner">
+            Mode pantau: daftar disaring ke sampel R&D. Tombol siapkan, kirim, dan tolak hanya ada di Portal Aksesoris.
+          </Notice>
+        )}
+        {stats && (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="acc-req-stats">
+            <StatTile label="Menunggu persetujuan" value={stats.submitted ?? 0} testId="acc-req-stats-submitted"
+              sub="Semua jenis permintaan" />
+            <StatTile label="Disiapkan, belum dikirim" value={stats.allocated ?? 0} sub="Semua jenis permintaan" />
+            <StatTile label="Mendesak" value={stats.urgent_pending ?? 0} accent={stats.urgent_pending ? 'danger' : 'default'}
+              testId="acc-req-stats-urgent" sub="Menunggu atau disiapkan" />
+            <StatTile label="Terkirim" value={stats.delivered ?? 0} sub={`Dari ${stats.total ?? 0} permintaan tercatat`} />
           </div>
-        </Modal>
+        )}
+      </>}
+      footer={filtered.length > pageSize && (
+        <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
+      )}>
+      {loading && requests.length === 0 ? (
+        <div className="space-y-2">{[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
+      ) : (
+        <TabelData kolom={kolom} baris={paged} onKlikBaris={setDetail} testId="acc-req-table"
+          kosong={<EmptyState icon={Inbox} testId="inbox-empty" title="Tidak ada permintaan aksesoris"
+            description="Permintaan yang masuk tampil di sini. Ubah saringan untuk melihat status lain." />} />
       )}
 
-      {/* Action Modal */}
+      {detail && (
+        <RincianPermintaan r={detail} onClose={() => setDetail(null)} isRndMonitor={isRndMonitor}
+          onAllocate={() => { openAllocate(detail); setDetail(null); }}
+          onDeliver={() => { openDeliver(detail); setDetail(null); }}
+          onReject={() => handleReject(detail)} onDelete={() => handleDelete(detail)} />
+      )}
+
       {actionModal && (
-        <Modal onClose={() => setActionModal(null)}
-          title={
-            actionModal.type === 'allocate' ? 'Siapkan Aksesoris' :
-            actionModal.type === 'deliver' ? 'Tandai Sudah Diterima' :
-            'Tolak Request'
-          }>
+        <FormPopup open onClose={() => setActionModal(null)} menyimpan={saving}
+          ukuran={actionModal.type === 'deliver' && (actionModal.items || []).length > 4 ? 'panjang' : 'pendek'}
+          judul={actionModal.type === 'allocate' ? `Siapkan aksesoris · ${actionModal.code || ''}` : `Tandai sudah diterima · ${actionModal.code || ''}`}
+          keterangan={actionModal.type === 'deliver' ? 'Stok aksesoris berikut dipotong dan dijurnal saat ditandai kirim.' : 'Barang disiapkan untuk diserahkan ke peminta.'}
+          labelSimpan={actionModal.type === 'allocate' ? 'Siapkan' : 'Tandai kirim'}
+          onSimpan={actionModal.type === 'allocate' ? handleAllocate : handleDeliver}
+          testId="acc-req-action-form">
           {actionModal.type === 'deliver' && (
-            <div className="space-y-2 mb-3" data-testid="acc-req-deliver-lines">
-              <p className="text-sm text-foreground/60">
-                Stok aksesoris berikut dipotong dan dijurnal saat ditandai kirim.
-              </p>
+            <div className="space-y-3" data-testid="acc-req-deliver-lines">
               {(actionModal.items || []).map((it, idx) => (
-                <div key={idx} className="text-sm">
+                <div key={idx} className="space-y-1.5 text-sm">
                   <div className="flex justify-between gap-2">
                     <span>{it.material_name || it.material_code || '—'}</span>
                     <span className="tabular-nums">{it.qty} {it.unit}</span>
                   </div>
                   {!it.material_id && (
                     <SmartNativeSelect value={actionModal.links?.[idx] || ''}
-                      onChange={e => setActionModal(p => ({ ...p, links: { ...(p.links || {}), [idx]: e.target.value } }))}
-                      className="w-full border border-input bg-background rounded-md px-2 py-1.5 text-xs mt-1"
-                      data-testid={`acc-req-link-${idx}`}>
-                      <option value="">Pilih aksesoris di master (wajib, barang ini belum tertaut)...</option>
-                      {accItems.map(a => <option key={a.id} value={a.id}>{a.code} · {a.name} (stok {a.stock_qty} {a.unit})</option>)}
+                      onChange={(e) => setActionModal((p) => ({ ...p, links: { ...(p.links || {}), [idx]: e.target.value } }))}
+                      className="h-9 w-full" aria-label="Aksesoris di master" data-testid={`acc-req-link-${idx}`}>
+                      <option value="">Pilih aksesoris di master (wajib, barang ini belum tertaut)…</option>
+                      {accItems.map((a) => <option key={a.id} value={a.id}>{`${a.code} · ${a.name} (stok ${a.stock_qty} ${a.unit})`}</option>)}
                     </SmartNativeSelect>
                   )}
                 </div>
               ))}
               {actionModal.overIssue && (
-                <div className="space-y-1" data-testid="acc-req-over-issue">
-                  <p className="text-xs text-[hsl(var(--warning))]">
-                    Melebihi kebutuhan PO {actionModal.overIssue.po_number || actionModal.poNumber}:{' '}
-                    {(actionModal.overIssue.lines || []).map(l => `${l.code || l.name} kebutuhan ${l.need}, sudah keluar ${l.issued}, diminta ${l.qty}`).join('; ')}.
-                  </p>
-                  <Label>Alasan kelebihan *</Label>
-                  <Input value={actionModal.reason || ''}
-                    onChange={e => setActionModal(p => ({ ...p, reason: e.target.value }))}
-                    placeholder="Mis. pengganti kancing cacat dari vendor"
-                    data-testid="acc-req-over-issue-reason" />
-                </div>
+                <Isian label="Alasan kelebihan" wajib htmlFor="acc-req-over"
+                  petunjuk={`Melebihi kebutuhan PO ${actionModal.overIssue.po_number || actionModal.poNumber}: ${(actionModal.overIssue.lines || [])
+                    .map((l) => `${l.code || l.name} kebutuhan ${l.need}, sudah keluar ${l.issued}, diminta ${l.qty}`).join('; ')}.`}>
+                  <div data-testid="acc-req-over-issue">
+                    <Input id="acc-req-over" value={actionModal.reason || ''}
+                      onChange={(e) => setActionModal((p) => ({ ...p, reason: e.target.value }))}
+                      placeholder="Mis. pengganti kancing cacat dari vendor" data-testid="acc-req-over-issue-reason" />
+                  </div>
+                </Isian>
               )}
             </div>
           )}
-          <p className="text-sm text-foreground/60 mb-3">
-            {actionModal.type === 'reject'
-              ? 'Tuliskan alasan penolakan:'
-              : 'Catatan tambahan (opsional):'}
-          </p>
-          <textarea value={actionModal.notes}
-            onChange={e => setActionModal(p => ({ ...p, notes: e.target.value }))}
-            className="w-full border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground h-24 resize-none"
-            placeholder={actionModal.type === 'reject' ? 'Stok kosong / di luar standar...' : 'Sudah disiapkan di rak A-3...'}
-            data-testid="acc-req-action-notes" />
-          <div className="flex justify-end gap-3 mt-5">
-            <Button variant="outline" onClick={() => setActionModal(null)}>Batal</Button>
-            <Button
-              onClick={actionModal.type === 'allocate' ? handleAllocate
-                : actionModal.type === 'deliver' ? handleDeliver
-                : handleReject}
-              className={actionModal.type === 'reject' ? 'bg-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.9)] text-foreground' : ''}
-              data-testid="acc-req-confirm-action-btn">
-              {actionModal.type === 'allocate' ? 'Siapkan'
-                : actionModal.type === 'deliver' ? 'Tandai Kirim'
-                : 'Tolak'}
-            </Button>
-          </div>
-        </Modal>
+          <Isian label="Catatan" petunjuk="Opsional." htmlFor="acc-req-notes">
+            <Textarea id="acc-req-notes" rows={3} value={actionModal.notes}
+              onChange={(e) => setActionModal((p) => ({ ...p, notes: e.target.value }))}
+              placeholder={actionModal.type === 'allocate' ? 'Sudah disiapkan di rak A-3…' : 'Diterima oleh…'}
+              data-testid="acc-req-action-notes" />
+          </Isian>
+        </FormPopup>
       )}
+    </PageLayout>
+  );
+}
 
-      {!!delId && (
-        <ConfirmDialog title="Hapus Request?"
-          message="Request aksesoris akan dihapus permanen."
-          onConfirm={handleDelete} onCancel={() => setDelId(null)} />
+function RincianPermintaan({ r, onClose, isRndMonitor, onAllocate, onDeliver, onReject, onDelete }) {
+  const st = statusConf(r.status);
+  const isVendor = r.request_type === 'vendor_additional' || r.request_type === 'vendor_replacement';
+  const items = r.items || [];
+  return (
+    <DetailPopup open onClose={onClose} judul={`Permintaan ${r.request_code}`} testId="acc-req-detail"
+      keterangan={`${typeLabel(r.request_type)} · dibuat ${formatDate(r.created_at)}`}
+      status={<>
+        <StatusBadge status={r.status} label={st.label} tone={st.tone} />
+        {r.urgent && <StatusBadge status="mendesak" label="Mendesak" tone="danger" />}
+      </>}
+      aksi={!isRndMonitor && <>
+        {r.status === 'submitted' && <>
+          <Button size="sm" variant="success" onClick={onAllocate}><Package />Siapkan</Button>
+          <Button size="sm" variant="destructive" onClick={onReject}><XCircle />Tolak</Button>
+        </>}
+        {r.status === 'allocated' && <Button size="sm" variant="success" onClick={onDeliver}><Truck />Tandai kirim</Button>}
+        {['draft', 'rejected', 'cancelled'].includes(r.status) && (
+          <Button size="sm" variant="destructive" onClick={onDelete}><Trash2 />Hapus</Button>
+        )}
+      </>}>
+      <dl className="divide-y divide-[var(--glass-border)]">
+        {r.request_type === 'internal_issuance' ? <>
+          <BarisDetail label="Divisi">{r.divisi || '—'}</BarisDetail>
+          <BarisDetail label="Tujuan pemakaian">{r.purpose || '—'}</BarisDetail>
+        </> : isVendor ? <>
+          {/* 2026-11-06 (Tahap 2): nama vendor & nomor surat jalan — dulu ID mentah */}
+          <BarisDetail label="Vendor">{r.vendor_name || '—'}</BarisDetail>
+          <BarisDetail label="Nomor PO"><span className="tabular-nums">{r.po_number || '—'}</span></BarisDetail>
+          {r.original_shipment_id && <BarisDetail label="Surat jalan asal">{r.original_shipment_number || '—'}</BarisDetail>}
+          {r.child_shipment_number && <BarisDetail label="Surat jalan susulan">{r.child_shipment_number}</BarisDetail>}
+        </> : <>
+          <BarisDetail label="Style">{r.style_code} — {r.style_name}</BarisDetail>
+          <BarisDetail label="Kode sampel"><span className="tabular-nums">{r.sample_code || '—'}</span></BarisDetail>
+        </>}
+        <BarisDetail label="Peminta">{r.requester_name || '—'}</BarisDetail>
+        <BarisDetail label="Butuh tanggal">{formatDate(r.needed_by_date)}</BarisDetail>
+        {r.notes && <BarisDetail label="Catatan">{r.notes}</BarisDetail>}
+        {r.allocated_by && <BarisDetail label="Disiapkan">{r.allocated_by} · {formatDate(r.allocated_at)}</BarisDetail>}
+        {r.delivered_by && <BarisDetail label="Dikirim">{r.delivered_by} · {formatDate(r.delivered_at)}</BarisDetail>}
+        {r.rejection_reason && <BarisDetail label="Alasan ditolak"><span className="text-[hsl(var(--danger-text))]">{r.rejection_reason}</span></BarisDetail>}
+      </dl>
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-medium text-foreground">Item aksesoris ({items.length})</p>
+          <TombolUnduh namaBerkas={`permintaan-${r.request_code}`} namaLembar="Item" baris={items} testId="acc-req-detail-unduh"
+            kolom={[
+              { label: 'Kode', nilai: (it) => it.material_code || '' }, { label: 'Nama', nilai: (it) => it.material_name || '' },
+              { label: 'Qty', nilai: (it) => Number(it.qty || 0) }, { label: 'Satuan', nilai: (it) => it.unit || '' },
+              { label: 'Catatan', nilai: (it) => it.notes || '' },
+            ]} />
+        </div>
+        {items.length === 0 ? <p className="text-sm text-muted-foreground">Tidak ada item.</p> : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader><TableRow>
+                <TableHead>Kode</TableHead><TableHead>Nama</TableHead><TableHead className="text-right">Qty</TableHead>
+                <TableHead>Satuan</TableHead><TableHead>Catatan</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {items.map((it, idx) => (
+                  <TableRow key={idx}>
+                    <TableCell className="tabular-nums">{it.material_code || '—'}</TableCell>
+                    <TableCell>{it.material_name}</TableCell>
+                    <TableCell className="text-right tabular-nums">{it.qty}</TableCell>
+                    <TableCell>{it.unit}</TableCell>
+                    <TableCell className="text-muted-foreground">{it.notes || '—'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </div>
+      {r.status === 'delivered' && (
+        <p className="flex items-center gap-1.5 text-sm text-[hsl(var(--success-text))]"><CheckCircle2 className="h-4 w-4" />Barang sudah diserahkan.</p>
       )}
-    </div>
+      {r.urgent && r.status === 'submitted' && (
+        <p className="flex items-center gap-1.5 text-sm text-[hsl(var(--danger-text))]"><AlertTriangle className="h-4 w-4" />Ditandai mendesak oleh peminta.</p>
+      )}
+    </DetailPopup>
   );
 }

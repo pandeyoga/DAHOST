@@ -1,48 +1,43 @@
 /**
- * CourseCatalog.jsx
- * Browse and enroll in courses
- * FIXED: Using apiFetch utility for authentication
+ * CourseCatalog.jsx — Katalog kursus: telusuri dan daftar kursus.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout · penyaring satu baris (SmartNativeSelect, dulu kartu penyaring 2 baris)
+ * · daftar kursus = tabel standar (kartu ringkas di HP; dulu kartu besar berulang) yang bisa diunduh · bahasa
+ * Indonesia. Nilai penyaring yang dikirim ke server tetap sama.
  */
-
 import { useState, useEffect } from 'react';
-import { Card, CardContent } from '@/components/ui/card';
+import { ArrowRight, BookOpen, RefreshCw, Search } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { 
-  Search, Filter, BookOpen, Clock, BarChart, Users,
-  CheckCircle2, ArrowRight 
-} from 'lucide-react';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { toast } from 'sonner';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import apiFetch from '@/lib/apiFetch';
+import PageLayout from '../../layout/PageLayout';
+import { EmptyState, StatusBadge } from '../../moduleAtoms';
 
+// value = nilai yang dikirim ke server (tidak diubah); label = bahasa staf
 const CATEGORIES = [
-  { value: 'all', label: 'All Categories' },
-  { value: 'Compliance', label: 'Compliance' },
-  { value: 'Technical Skills', label: 'Technical Skills' },
-  { value: 'Soft Skills', label: 'Soft Skills' },
-  { value: 'Product Knowledge', label: 'Product Knowledge' },
+  { value: 'all', label: 'Semua kategori' },
+  { value: 'Compliance', label: 'Kepatuhan' },
+  { value: 'Technical Skills', label: 'Keterampilan teknis' },
+  { value: 'Soft Skills', label: 'Keterampilan kerja' },
+  { value: 'Product Knowledge', label: 'Pengetahuan produk' },
 ];
-
 const LEVELS = [
-  { value: 'all', label: 'All Levels' },
-  { value: 'Beginner', label: 'Beginner' },
-  { value: 'Intermediate', label: 'Intermediate' },
-  { value: 'Advanced', label: 'Advanced' },
+  { value: 'all', label: 'Semua tingkat' },
+  { value: 'Beginner', label: 'Pemula' },
+  { value: 'Intermediate', label: 'Menengah' },
+  { value: 'Advanced', label: 'Mahir' },
 ];
-
 const SORT_OPTIONS = [
-  { value: 'newest', label: 'Newest' },
-  { value: 'popular', label: 'Most Popular' },
-  { value: 'rating', label: 'Highest Rated' },
+  { value: 'newest', label: 'Terbaru' },
+  { value: 'popular', label: 'Paling diminati' },
+  { value: 'rating', label: 'Nilai tertinggi' },
 ];
+export const labelKategori = (v) => (CATEGORIES.find((c) => c.value === v) || { label: v || '—' }).label;
+export const labelTingkat = (v) => (LEVELS.find((c) => c.value === v) || { label: v || '—' }).label;
 
 export default function CourseCatalog({ onNavigate }) {
   const [loading, setLoading] = useState(true);
@@ -52,197 +47,94 @@ export default function CourseCatalog({ onNavigate }) {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState('newest');
 
-  useEffect(() => {
-    fetchCourses();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [category, level, search, sort]);
-
   const fetchCourses = async () => {
     try {
       setLoading(true);
-      
       const params = new URLSearchParams();
       if (category !== 'all') params.append('category', category);
       if (level !== 'all') params.append('level', level);
       if (search) params.append('search', search);
       params.append('sort', sort);
       params.append('limit', '50');
-
       const data = await apiFetch(`/lms/student/catalog?${params.toString()}`);
       setCourses(data?.courses || []);
     } catch (error) {
-      console.error('Error fetching courses:', error);
-      toast.error('Gagal memuat course catalog');
+      toast.error('Gagal memuat katalog kursus');
     } finally {
       setLoading(false);
     }
   };
+  useEffect(() => { fetchCourses(); }, [category, level, search, sort]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleEnroll = async (courseId, e) => {
-    e.stopPropagation();
-    
+  const handleEnroll = async (courseId) => {
     try {
       await apiFetch(`/lms/student/courses/${courseId}/enroll`, { method: 'POST' });
-      toast.success('Berhasil enroll ke course!');
-      fetchCourses(); // Refresh to update enrollment status
+      toast.success('Berhasil mendaftar kursus');
+      fetchCourses();
     } catch (error) {
-      console.error('Error enrolling:', error);
-      toast.error('Gagal enroll ke course');
+      toast.error('Gagal mendaftar kursus');
     }
   };
+  const buka = (c) => onNavigate && onNavigate('course-detail', { courseId: c.course_id });
+
+  const kolom = [
+    { kunci: 'judul', label: 'Kursus', hp: 'judul', isi: (c) => (
+      <div className="min-w-0 md:max-w-[26rem]">
+        <p className="font-medium text-foreground">{c.title}</p>
+        <p className="line-clamp-2 text-xs text-muted-foreground">{c.description}</p>
+      </div>) },
+    { kunci: 'kategori', label: 'Kategori', hp: 'keterangan', isi: (c) => labelKategori(c.category) },
+    { kunci: 'tingkat', label: 'Tingkat', isi: (c) => labelTingkat(c.level) },
+    { kunci: 'durasi', label: 'Durasi', rata: 'kanan', isi: (c) => <span className="tabular-nums">{c.duration_hours} jam</span> },
+    { kunci: 'peserta', label: 'Peserta', rata: 'kanan', isi: (c) => <span className="tabular-nums">{c.enrollment_count || 0}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (c) => (c.is_enrolled ? (
+      <span className="inline-flex items-center gap-2">
+        <StatusBadge status="terdaftar" label="Terdaftar" tone="success" />
+        <Button size="sm" variant="outline" onClick={() => buka(c)}>Lanjutkan<ArrowRight /></Button>
+      </span>
+    ) : (
+      <Button size="sm" onClick={() => handleEnroll(c.course_id)}>Daftar</Button>
+    )) },
+  ];
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="p-6 space-y-6 max-w-7xl mx-auto">
-        {/* Header */}
-        <div>
-          <h1 className="text-3xl font-bold mb-2">📚 Course Catalog</h1>
-          <p className="text-muted-foreground">
-            Browse dan enroll di berbagai pelatihan untuk meningkatkan skill Anda
-          </p>
-        </div>
-
-        {/* Filters */}
-        <Card>
-          <CardContent className="pt-6">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              {/* Search */}
-              <div className="md:col-span-2">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
-                  <Input
-                    placeholder="Search courses..."
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    className="pl-9"
-                  />
-                </div>
-              </div>
-
-              {/* Category Filter */}
-              <Select value={category} onValueChange={setCategory}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {CATEGORIES.map((cat) => (
-                    <SelectItem key={cat.value} value={cat.value}>
-                      {cat.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {/* Level Filter */}
-              <Select value={level} onValueChange={setLevel}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {LEVELS.map((lv) => (
-                    <SelectItem key={lv.value} value={lv.value}>
-                      {lv.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+      <div className="p-4 sm:px-6">
+        <PageLayout title="Katalog kursus" subtitle="Telusuri pelatihan yang tersedia dan daftar untuk meningkatkan keterampilan."
+          filters={<>
+            <div className="relative w-full sm:w-64">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input placeholder="Cari kursus" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8" />
             </div>
-
-            {/* Sort */}
-            <div className="flex items-center gap-2 mt-4">
-              <span className="text-sm text-muted-foreground">Sort by:</span>
-              <Select value={sort} onValueChange={setSort}>
-                <SelectTrigger className="w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {SORT_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Results */}
-        {loading ? (
-          <div className="text-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-            <p className="text-sm text-muted-foreground mt-2">Loading courses...</p>
-          </div>
-        ) : courses.length === 0 ? (
-          <Card>
-            <CardContent className="py-12 text-center">
-              <BookOpen size={48} className="mx-auto mb-3 text-muted-foreground opacity-20" />
-              <p className="text-muted-foreground">No courses found</p>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {courses.map((course) => (
-              <Card 
-                key={course.course_id}
-                className="cursor-pointer hover:shadow-lg transition-shadow"
-                onClick={() => onNavigate && onNavigate('course-detail', course.course_id)}
-              >
-                <CardContent className="pt-6 space-y-4">
-                  {/* Category Badge */}
-                  <div className="flex items-center justify-between">
-                    <Badge variant="secondary">{course.category}</Badge>
-                    {course.is_enrolled && (
-                      <Badge variant="default" className="bg-green-500">
-                        <CheckCircle2 size={12} className="mr-1" />
-                        Enrolled
-                      </Badge>
-                    )}
-                  </div>
-
-                  {/* Title & Description */}
-                  <div>
-                    <h3 className="font-semibold text-lg mb-2">{course.title}</h3>
-                    <p className="text-sm text-muted-foreground line-clamp-2">
-                      {course.description}
-                    </p>
-                  </div>
-
-                  {/* Meta Info */}
-                  <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                    <div className="flex items-center gap-1">
-                      <Clock size={14} />
-                      {course.duration_hours}h
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <BarChart size={14} />
-                      {course.level}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Users size={14} />
-                      {course.enrollment_count || 0}
-                    </div>
-                  </div>
-
-                  {/* Action Button */}
-                  {course.is_enrolled ? (
-                    <Button className="w-full" variant="outline">
-                      Continue Learning
-                      <ArrowRight size={16} className="ml-2" />
-                    </Button>
-                  ) : (
-                    <Button 
-                      className="w-full"
-                      onClick={(e) => handleEnroll(course.course_id, e)}
-                    >
-                      Enroll Now
-                    </Button>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
+            <SmartNativeSelect value={category} onChange={(e) => setCategory(e.target.value)} searchable={false}
+              className="h-9 w-48" wrapperClassName="w-48" aria-label="Kategori">
+              {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </SmartNativeSelect>
+            <SmartNativeSelect value={level} onChange={(e) => setLevel(e.target.value)} searchable={false}
+              className="h-9 w-40" wrapperClassName="w-40" aria-label="Tingkat">
+              {LEVELS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </SmartNativeSelect>
+            <SmartNativeSelect value={sort} onChange={(e) => setSort(e.target.value)} searchable={false}
+              className="h-9 w-40" wrapperClassName="w-40" aria-label="Urutkan">
+              {SORT_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </SmartNativeSelect>
+          </>}
+          tools={<>
+            <TombolUnduh namaBerkas="katalog-kursus" namaLembar="Kursus" baris={courses} testId="catalog-unduh"
+              kolom={[{ label: 'Kursus', nilai: (c) => c.title }, { label: 'Kategori', nilai: (c) => labelKategori(c.category) },
+                { label: 'Tingkat', nilai: (c) => labelTingkat(c.level) }, { label: 'Durasi (jam)', nilai: (c) => Number(c.duration_hours || 0) },
+                { label: 'Peserta', nilai: (c) => Number(c.enrollment_count || 0) }, { label: 'Terdaftar', nilai: (c) => (c.is_enrolled ? 'Ya' : 'Tidak') }]} />
+            <Button variant="outline" size="icon" onClick={fetchCourses} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+              <RefreshCw className={loading ? 'animate-spin' : ''} />
+            </Button>
+          </>}>
+          {loading && !courses.length ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">Memuat kursus…</p>
+          ) : (
+            <TabelData kolom={kolom} baris={courses} kunci={(c) => c.course_id} onKlikBaris={buka} testId="catalog-table"
+              kosong={<EmptyState icon={BookOpen} title="Tidak ada kursus" description="Ubah kata pencarian atau penyaring." />} />
+          )}
+        </PageLayout>
       </div>
     </div>
   );

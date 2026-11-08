@@ -192,9 +192,9 @@ export default function Composer({
             <span className="text-xs font-medium">{replyTo.sender_name}</span>
             <p className="text-xs text-muted-foreground truncate">{replyTo.content}</p>
           </div>
-          <button onClick={onClearReply} className="text-muted-foreground hover:text-foreground">
+          <Button variant="ghost" size="sm" type="button" onClick={onClearReply} className="h-auto px-0 py-0 gap-0 justify-start whitespace-normal font-normal text-muted-foreground hover:text-foreground">
             <X size={14} />
-          </button>
+          </Button>
         </div>
       )}
 
@@ -213,7 +213,7 @@ export default function Composer({
             className="h-8 w-8 shrink-0"
             onClick={() => fileInputRef.current?.click()}
             disabled={uploadingFile || activeView.type !== 'channel'}
-            title="Upload file (channel only)"
+            title="Unggah berkas (hanya di kanal)"
             data-testid="upload-file-btn"
           >
             <Paperclip size={16} className={uploadingFile ? 'animate-pulse' : ''} />
@@ -222,16 +222,16 @@ export default function Composer({
           {/* Format toolbar */}
           <div className="flex items-center gap-0.5 border-r pr-2 mr-1">
             {FORMAT_BUTTONS.map((btn) => (
-              <button
+              <Button variant="ghost" size="sm" type="button"
                 key={btn.type}
-                className="w-6 h-6 flex items-center justify-center text-xs text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors"
+                className="h-auto px-0 py-0 gap-0 justify-start whitespace-normal font-normal w-6 h-6 flex items-center justify-center text-xs text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors"
                 title={btn.title}
                 onMouseDown={(e) => { e.preventDefault(); applyFormat(btn.type); }}
               >
                 <span className={`font-${btn.type === 'bold' ? 'bold' : 'normal'} ${btn.italic ? 'italic' : ''} ${btn.strike ? 'line-through' : ''}`}>
                   {btn.label}
                 </span>
-              </button>
+              </Button>
             ))}
           </div>
 
@@ -270,7 +270,7 @@ export default function Composer({
                     </div>
                     <div>
                       <p className="text-xs font-medium">{m.name}</p>
-                      <p className="text-[10px] text-muted-foreground">{m.position || m.role || ''}</p>
+                      <p className="text-xs text-muted-foreground">{m.position || m.role || ''}</p>
                     </div>
                   </div>
                 ))}
@@ -288,7 +288,7 @@ export default function Composer({
             <Send size={14} />
           </Button>
         </div>
-        <p className="text-[10px] text-muted-foreground mt-1 ml-1">
+        <p className="text-xs text-muted-foreground mt-1 ml-1">
           {uploadingFile ? '⏳ Uploading file...' : 'Enter kirim · Shift+Enter baris baru · 📎 Max 10MB'}
         </p>
       </div>

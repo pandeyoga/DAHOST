@@ -77,8 +77,8 @@ export default function MessageItem({
           <span className="text-xs font-semibold">
             {isMine ? 'Saya' : (isSystem ? 'System' : msg.sender_name)}
           </span>
-          <span className="text-[10px] text-muted-foreground">{formatTime(msg.created_at)}</span>
-          {msg.edited && <span className="text-[10px] text-muted-foreground italic">(diedit)</span>}
+          <span className="text-xs text-muted-foreground">{formatTime(msg.created_at)}</span>
+          {msg.edited && <span className="text-xs text-muted-foreground italic">(diedit)</span>}
         </div>
 
         {/* Reply preview */}
@@ -91,7 +91,7 @@ export default function MessageItem({
         {/* Bubble */}
         <div className={`relative rounded-2xl px-3 py-2 text-sm max-w-[75%] break-words ${
           isSystem
-            ? 'bg-amber-100 dark:bg-amber-500/10 border border-amber-400 dark:border-amber-500/30 text-foreground'
+            ? 'bg-[hsl(var(--warning)/0.1)]  border border-[hsl(var(--warning)/0.5)]  text-foreground'
             : isMine
               ? 'bg-[hsl(var(--primary)/0.15)] text-foreground rounded-tr-sm'
               : 'bg-muted/60 text-foreground rounded-tl-sm'
@@ -122,8 +122,8 @@ export default function MessageItem({
                 return (
                   <div key={idx}>
                     {isImage ? (
-                      <button
-                        className="block text-left"
+                      <Button variant="ghost" size="sm" type="button"
+                        className="h-auto px-0 py-0 gap-0 justify-start whitespace-normal font-normal block text-left"
                         onClick={() => onLightbox({ url: `${API}${att.file_url}`, name: att.file_name })}
                       >
                         <img
@@ -132,7 +132,7 @@ export default function MessageItem({
                           className="rounded-lg max-w-full max-h-64 object-cover border cursor-zoom-in hover:opacity-90 transition-opacity"
                         />
                         <span className="text-xs text-muted-foreground mt-1 block">{att.file_name}</span>
-                      </button>
+                      </Button>
                     ) : (
                       <a href={`${API}${att.file_url}`} target="_blank" rel="noreferrer"
                         className="flex items-center gap-2 text-primary hover:underline">
@@ -177,35 +177,35 @@ export default function MessageItem({
           {!editing && !isSystem && (
             <div className={`absolute -top-8 ${isMine ? 'right-0' : 'left-0'} hidden group-hover:flex bg-card border rounded-full shadow-lg px-2 py-1 gap-1 z-10`}>
               {EMOJI_LIST.slice(0, 5).map((e) => (
-                <button key={e} className="text-base hover:scale-125 transition-transform"
-                  onClick={() => onReact(msg.id, e)}>{e}</button>
+                <Button variant="ghost" size="sm" type="button" key={e} className="h-auto px-0 py-0 gap-0 justify-start whitespace-normal font-normal text-base hover:scale-125 transition-transform"
+                  onClick={() => onReact(msg.id, e)}>{e}</Button>
               ))}
-              <button className="text-muted-foreground hover:text-foreground ml-1"
+              <Button variant="ghost" size="sm" type="button" className="h-auto px-0 py-0 gap-0 justify-start whitespace-normal font-normal text-muted-foreground hover:text-foreground ml-1"
                 onClick={() => onReply(msg)} data-testid="message-reply-btn">
                 <Reply size={14} />
-              </button>
+              </Button>
 
               {!isInThread && onOpenThread && (
-                <button
-                  className="text-muted-foreground hover:text-foreground"
+                <Button variant="ghost" size="sm" type="button"
+                  className="h-auto px-0 py-0 gap-0 justify-start whitespace-normal font-normal text-muted-foreground hover:text-foreground"
                   onClick={() => onOpenThread(msg)}
                   data-testid="message-thread-btn"
-                  title="Buka thread"
+                  title="Buka utas" aria-label="Buka utas"
                 >
                   <MessagesSquare size={14} />
-                </button>
+                </Button>
               )}
 
               {(editable || deletable || pinnable || unpinnable) && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <button
-                      className="text-muted-foreground hover:text-foreground"
+                    <Button variant="ghost" size="sm" type="button"
+                      className="h-auto px-0 py-0 gap-0 justify-start whitespace-normal font-normal text-muted-foreground hover:text-foreground"
                       data-testid="message-more-btn"
                       aria-label="More actions"
                     >
                       <MoreVertical size={14} />
-                    </button>
+                    </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align={isMine ? 'end' : 'start'} className="w-44">
                     {editable && (
@@ -247,9 +247,9 @@ export default function MessageItem({
         {msg.reactions && Object.keys(msg.reactions).length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1">
             {Object.entries(msg.reactions).map(([emoji, users]) => (
-              <button
+              <Button variant="ghost" size="sm" type="button"
                 key={emoji}
-                className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                className={`h-auto px-0 py-0 gap-0 justify-start whitespace-normal font-normal text-xs px-2 py-0.5 rounded-full border transition-colors ${
                   users.includes(currentUserId)
                     ? 'bg-primary/15 border-primary/40 text-primary'
                     : 'bg-muted/50 border-border hover:bg-muted'
@@ -257,14 +257,14 @@ export default function MessageItem({
                 onClick={() => onReact(msg.id, emoji)}
               >
                 {emoji} {users.length}
-              </button>
+              </Button>
             ))}
           </div>
         )}
 
         {/* Thread reply count badge */}
         {!isInThread && (msg.thread_reply_count || 0) > 0 && onOpenThread && (
-          <button
+          <Button variant="ghost" size="sm" type="button" className="h-auto px-0 py-0 gap-0 justify-start whitespace-normal font-normal"
             onClick={() => onOpenThread(msg)}
             data-testid={`message-thread-badge-${msg.id}`}
             className="mt-1.5 inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-primary/30 bg-primary/5 text-primary hover:bg-primary/10 transition-colors group/thread"
@@ -280,7 +280,7 @@ export default function MessageItem({
               </span>
             )}
             <ChevronRight size={11} className="text-muted-foreground group-hover/thread:translate-x-0.5 transition-transform" />
-          </button>
+          </Button>
         )}
       </div>
     </div>
