@@ -1,5 +1,5 @@
 /**
- * Portal Saya › Peer Feedback — beri dan terima masukan dari rekan kerja.
+ * Portal Saya › Umpan Balik Rekan — beri dan terima masukan dari rekan kerja.
  *
  * Standar UI/UX v2 (8 Nov 2026): PageLayout (dulu kepala berikon gradien + `p-6`), 3 kartu angka StatTile (dulu
  * kotak berwarna hex), tab buatan → pil penyaring berangka, daftar masukan = TabelData + unduh Excel/CSV (dulu kartu
@@ -140,7 +140,7 @@ export default function PeerFeedbackModule({ token }) {
   ];
 
   return (
-    <PageLayout testId="peer-feedback-module" title="Peer feedback"
+    <PageLayout testId="peer-feedback-module" title="Umpan balik rekan"
       subtitle="Beri dan terima masukan dari rekan kerja."
       actions={<Button onClick={() => setShowSendDialog(true)} data-testid="peer-send-btn"><Send />Kirim masukan</Button>}
       filters={(

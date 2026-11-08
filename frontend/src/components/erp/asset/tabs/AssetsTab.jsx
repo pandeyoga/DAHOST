@@ -18,15 +18,17 @@ import {
 } from '@/components/ui/dropdown-menu';
 import PageLayout from '../../layout/PageLayout';
 import { EmptyState } from '../../moduleAtoms';
-import { STATUS_CONFIG, STATUS_FILTER_OPTIONS } from '../constants';
+import { KALIMAT_PENYUSUTAN, STATUS_CONFIG, STATUS_FILTER_OPTIONS } from '../constants';
 import { angka, ambilSemuaHalaman, fmtCurrency, useHP } from '../utils';
 import { StatusBadge } from '../components/StatusBadge';
 
 /**
  * Tombol halaman aset: 1 tombol utama "Tambah aset" + menu "Lainnya" (pindai, impor, permintaan pengadaan,
- * penyusutan massal). Dulu enam tombol berderet di kepala halaman.
+ * tautan penyusutan). Dulu enam tombol berderet di kepala halaman.
+ * 2026-11-08 (keputusan owner): "Posting penyusutan massal" selalu ditolak server sejak K18 → diganti tautan ke
+ * Keuangan › Aset Tetap. `onBukaPenyusutan` kosong (pengguna tanpa akses Portal Keuangan) = hanya keterangan.
  */
-export function AksiAset({ onTambahAset, onScan, onImpor, onBuatPR, onDepresiasiMassal }) {
+export function AksiAset({ onTambahAset, onScan, onImpor, onBuatPR, onBukaPenyusutan }) {
   return (
     <>
       <DropdownMenu modal={false}>
@@ -45,8 +47,13 @@ export function AksiAset({ onTambahAset, onScan, onImpor, onBuatPR, onDepresiasi
               <ShoppingCart className="mr-2 h-4 w-4" />Buat permintaan pengadaan
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem onSelect={onDepresiasiMassal} data-testid="batch-depr-btn">
-            <TrendingDown className="mr-2 h-4 w-4" />Posting penyusutan massal
+          <DropdownMenuItem onSelect={onBukaPenyusutan || undefined} disabled={!onBukaPenyusutan}
+            className="items-start" data-testid="asset-depr-keuangan-btn">
+            <TrendingDown className="mr-2 mt-0.5 h-4 w-4" />
+            <span className="flex flex-col">
+              <span>{onBukaPenyusutan ? 'Buka penyusutan di Keuangan' : 'Penyusutan diposting oleh Keuangan'}</span>
+              <span className="text-xs text-muted-foreground">{KALIMAT_PENYUSUTAN}</span>
+            </span>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -62,7 +69,7 @@ export function AssetsTab({
   assetStatus, setAssetStatus,
   assets, loading, assetPagination,
   loadAssets, fetchAssetPage, onAssetClick,
-  onTambahAset, onScan, onImpor, onDepresiasiMassal,
+  onTambahAset, onScan, onImpor, onBukaPenyusutan,
 }) {
   const halaman = assetPagination?.page || 1;
   const hp = useHP();
@@ -93,7 +100,7 @@ export function AssetsTab({
 
   return (
     <PageLayout testId="asset-list" title="Aset" subtitle="Daftar aset perusahaan."
-      actions={<AksiAset onTambahAset={onTambahAset} onScan={onScan} onImpor={onImpor} onDepresiasiMassal={onDepresiasiMassal} />}
+      actions={<AksiAset onTambahAset={onTambahAset} onScan={onScan} onImpor={onImpor} onBukaPenyusutan={onBukaPenyusutan} />}
       filters={<>
         <div className="relative w-full sm:w-64">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

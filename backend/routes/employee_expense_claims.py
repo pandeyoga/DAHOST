@@ -543,7 +543,7 @@ async def _disburse_claim_locked(db, claim_id: str, payload, user: dict):
     je_date = parse_ymd(payload.payment_date, field='tanggal pencairan klaim')
 
     # RC-05: posting WAJIB lewat engine rahaza_posting (idempoten, validasi COA/saldo/periode).
-    # Default akun: Dr 6-3500 (Biaya Reimbursement Karyawan) / Cr bank default profil 'expense'.
+    # Default akun: Dr 6-3500 (Biaya Penggantian Klaim Karyawan) / Cr bank default profil 'expense'.
     # ('6-1001' lama TIDAK ADA di rahaza_coa_accounts; 'rahaza_bank_accounts' = phantom →
     #  bank asli = rahaza_cash_accounts.)
     from routes.rahaza_posting import _create_posted_je

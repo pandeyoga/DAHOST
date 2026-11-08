@@ -26,7 +26,7 @@ koleksi baru per-fitur.
   key "overtime"      ditambah tingkatan hari istirahat/libur (PP 35/2021).
   key "attendance_bonus" aturan hangus per jenis (alpa, izin tanpa surat, terlambat hari/menit) kini
                       DITERAPKAN mesin hitung ke tunjangan bonus kehadiran.
-Layar: tab "Pengaturan Payroll" di hub Penggajian (RahazaPayrollSettingsModule.jsx).
+Layar: tab "Pengaturan gaji" di hub Penggajian (RahazaPayrollSettingsModule.jsx).
 """
 from __future__ import annotations
 
@@ -476,7 +476,7 @@ async def set_pph21(request: Request):
 
 @router.get("/payroll-settings")
 async def list_settings(request: Request, key: Optional[str] = None):
-    """Semua pengaturan payroll (untuk panel HR — tab "Pengaturan Payroll")."""
+    """Semua pengaturan payroll (untuk panel HR — tab "Pengaturan gaji")."""
     user = await _require_hr(request)
     db = get_db()
     loaders = {

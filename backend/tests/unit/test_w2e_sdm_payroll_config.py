@@ -632,7 +632,9 @@ class TestProfilPosting:
 class TestFrontend:
     def test_tab_pengaturan_payroll_satu_layar(self):
         hub = _src("frontend", "src", "components", "erp", "hubs", "HRPayrollHub.jsx")
-        assert "Pengaturan Payroll" in hub and "RahazaPayrollSettingsModule" in hub
+        # 2026-11-08 (keputusan owner): label tab "Pengaturan Payroll" → "Pengaturan gaji"
+        assert "'Pengaturan gaji'" in hub and "'Pengaturan Payroll'" not in hub
+        assert "RahazaPayrollSettingsModule" in hub
         s = _src("frontend", "src", "components", "erp", "RahazaPayrollSettingsModule.jsx")
         for k in ("late-penalty", "attendance-bonus", "payroll-settings/bpjs", "payroll-settings/overtime",
                   "payroll-settings/kasbon"):

@@ -107,7 +107,7 @@ function WorkdayCalculator({ onClose }) {
   };
   return (
     <DetailPanel testId="calendar-workdays" onClose={onClose} title="Hitung hari kerja"
-      description="Hari kerja = hari kalender dikurangi libur mingguan (Pengaturan Payroll) dan hari libur di kalender ini.">
+      description="Hari kerja = hari kalender dikurangi libur mingguan (Penggajian › Pengaturan gaji) dan hari libur di kalender ini.">
       <div className="flex flex-wrap items-end gap-3">
         <Isian label="Dari" className="w-full sm:w-48"><DatePicker value={from} onChange={setFrom} bolehKosong={false} testId="wd-from" /></Isian>
         <Isian label="Sampai" className="w-full sm:w-48"><DatePicker value={to} onChange={setTo} min={from || undefined} bolehKosong={false} testId="wd-to" /></Isian>

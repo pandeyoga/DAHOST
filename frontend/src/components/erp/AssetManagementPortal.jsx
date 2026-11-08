@@ -6,18 +6,20 @@
  * tombol tiap tab pindah ke baris tab (dulu 6 tombol menumpuk di kepala, di HP memakan 200 px);
  * nama tab berbahasa Indonesia tanpa emoji; detail = popup, form = popup standar.
  * Fitur, panggilan API, dan aturan tidak berubah — hanya tampilan.
+ * 2026-11-08 (keputusan owner): "Posting penyusutan" (satu aset / massal) selalu ditolak server sejak K18 →
+ * diganti tautan ke Keuangan › Aset Tetap, tab Penyusutan (hanya bila pengguna boleh membuka Portal Keuangan).
  *
  * File ini = pengatur (state + pemuat data + susunan). Isi tiap tab di ./asset/tabs/*.
  */
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
-import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PageLayout from './layout/PageLayout';
 import HubTabs from './hubs/HubTabs';
 import AssetScannerModal from './AssetScannerModal';
 
 import { apicall } from './asset/utils';
-import { thisMonthWIB } from '@/lib/waktu';
+import { MENU_PENYUSUTAN } from './asset/constants';
+import { canAccessPortal } from './portalAccess';
 import { EditCategoryDialog } from './asset/dialogs/EditCategoryDialog';
 import { TransferAssetDialog } from './asset/dialogs/TransferAssetDialog';
 import { DisposalRequestDialog } from './asset/dialogs/DisposalRequestDialog';
@@ -39,10 +41,7 @@ import { LoansTab } from './asset/tabs/LoansTab';
 
 const PR_PER_HALAMAN = 50;
 
-const namaBulan = (ym) => new Date(`${ym}-01T00:00:00+07:00`)
-  .toLocaleDateString('id-ID', { month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' });
-
-export default function AssetManagementPortal({ token, user, defaultTab }) {
+export default function AssetManagementPortal({ token, user, defaultTab, onNavigate }) {
   // Fix menu-duplikat: menu lama (dashboard/daftar/pengadaan/peminjaman) membuka tab berbeda
   const [mainTab, setMainTab] = useState(defaultTab || 'dashboard');
   const [dashData, setDashData] = useState(null);
@@ -169,27 +168,16 @@ export default function AssetManagementPortal({ token, user, defaultTab }) {
       .filter(Boolean)
   )).sort();
 
-  // K18: endpoint menolak (410) dengan pesan arahan ke Keuangan › Aset Tetap — pesan server ditampilkan apa adanya.
-  const depresiasiMassal = async () => {
-    const period = thisMonthWIB();
-    const ok = await confirmDialog({
-      title: 'Posting penyusutan massal?',
-      body: `Penyusutan semua aset untuk ${namaBulan(period)} akan diposting.`,
-      confirmLabel: 'Posting',
-    });
-    if (!ok) return;
-    try {
-      const d = await apicall('POST', `/api/assets/batch-depreciate/${period}`, token, {});
-      toast.success(`Penyusutan massal: ${d.total_posted} aset diposting, ${d.total_skipped} dilewati`);
-      loadDashboard();
-    } catch (e) { toast.error(e.message || 'Gagal posting penyusutan massal'); }
-  };
+  // K18: penyusutan hanya dari registri Keuangan. Tanpa akses Portal Keuangan → null (layar hanya memberi keterangan).
+  const bukaPenyusutan = onNavigate && canAccessPortal(user?.role, 'finance')
+    ? () => onNavigate(MENU_PENYUSUTAN.modul, { tab: MENU_PENYUSUTAN.tab })
+    : null;
 
   const aksiAset = {
     onTambahAset: () => setShowCreateAsset(true),
     onScan: () => setShowAssetScanner(true),
     onImpor: () => setShowBulkImport(true),
-    onDepresiasiMassal: depresiasiMassal,
+    onBukaPenyusutan: bukaPenyusutan,
   };
   const bukaAset = (a) => setSelectedAsset(a);
 
@@ -271,6 +259,7 @@ export default function AssetManagementPortal({ token, user, defaultTab }) {
         onRefresh={() => { loadAssets(); loadDashboard(); }}
         onTransferClick={(asset) => { setAssetToTransfer(asset); setShowTransferAsset(true); }}
         onRequestDisposalClick={(asset) => { setAssetForDisposal(asset); setShowDisposalRequest(true); }}
+        onBukaPenyusutan={bukaPenyusutan}
       />
       <CreatePRDialog
         open={showCreatePR}

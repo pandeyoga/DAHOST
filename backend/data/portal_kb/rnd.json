@@ -38,7 +38,7 @@
     {"modul": "rnd-materials", "nama": "Riset Material", "deskripsi": "Kandidat bahan dan hasil ujinya."},
     {"modul": "rnd-costing-hub", "nama": "Costing & HPP", "deskripsi": "Perhitungan biaya produk baru."},
     {"modul": "rnd-analytics", "nama": "RnD Analytics", "deskripsi": "Kinerja pengembangan produk."},
-    {"modul": "rnd-kreator-requests", "nama": "Approval Kreator", "deskripsi": "Permintaan produk dari kreator/KOL."}
+    {"modul": "rnd-kreator-requests", "nama": "Persetujuan Kreator", "deskripsi": "Permintaan produk dari kreator/KOL."}
   ],
   "faq": [
     {

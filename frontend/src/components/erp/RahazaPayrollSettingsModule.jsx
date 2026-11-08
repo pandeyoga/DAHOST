@@ -1,5 +1,5 @@
 /**
- * RahazaPayrollSettingsModule — tab "Pengaturan Payroll" di hub Penggajian.
+ * RahazaPayrollSettingsModule — tab "Pengaturan gaji" di hub Penggajian.
  *
  * 2026-11-02 (keputusan owner K22/K23/K24/K25): SATU layar untuk SELURUH koleksi `rahaza_payroll_settings`
  * (API `GET/PUT /api/rahaza/payroll-settings/*`). Tidak membuat koleksi/layar pengaturan baru:

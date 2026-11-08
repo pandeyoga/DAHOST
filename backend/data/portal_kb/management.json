@@ -13,7 +13,7 @@
       "kata_kunci": ["approval", "persetujuan", "setujui", "pusat approval", "menunggu approval"],
       "modul": ["unified-approval-hub"],
       "langkah": [
-        "Buka 'Pusat Approval' untuk melihat seluruh pengajuan yang menunggu keputusan Anda.",
+        "Buka 'Pusat Persetujuan' untuk melihat seluruh pengajuan yang menunggu keputusan Anda.",
         "Isinya mencakup permintaan pengadaan, invoice supplier, cuti, dan pengajuan lain sesuai peran.",
         "Lonceng di bilah atas juga menampilkan jumlah item yang perlu tindakan."
       ]
@@ -37,7 +37,7 @@
     {"modul": "mgmt-reports", "nama": "Laporan Umum", "deskripsi": "Laporan operasional umum."},
     {"modul": "mgmt-rahaza-customers", "nama": "Data Pelanggan", "deskripsi": "Daftar pelanggan dan riwayat transaksinya."},
     {"modul": "rnd-dashboard", "nama": "Ringkasan RnD", "deskripsi": "Progres pengembangan produk."},
-    {"modul": "unified-approval-hub", "nama": "Pusat Approval", "deskripsi": "Semua pengajuan yang menunggu keputusan."},
+    {"modul": "unified-approval-hub", "nama": "Pusat Persetujuan", "deskripsi": "Semua pengajuan yang menunggu keputusan."},
     {"modul": "mgmt-okr", "nama": "OKR Tracker", "deskripsi": "Sasaran dan capaian tim."},
     {"modul": "mgmt-tools", "nama": "Digest Mingguan", "deskripsi": "Ringkasan mingguan otomatis."},
     {"modul": "ai-usage-monitor", "nama": "Monitor AI", "deskripsi": "Pemakaian dan biaya fitur AI."}
