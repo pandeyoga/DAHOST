@@ -27,7 +27,7 @@ import { Progress } from '../../ui/progress';
 import PaginationLite, { useClientPagination } from '../../ui/pagination-lite';
 import { useToast } from '../../../hooks/use-toast';
 import { useMarketingAccounts } from '../../../hooks/useMarketingAccounts';
-import { formatDateID } from '../../../lib/format';
+import { formatDateID, formatRupiahShort } from '../../../lib/format';
 import PageLayout from '../layout/PageLayout';
 import { EmptyState, StatTile, StatusBadge } from '../moduleAtoms';
 
@@ -214,11 +214,11 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
       summary={
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="live-analytics-kpi">
           <StatTile label="Jumlah sesi" value={loading ? '…' : FMT_NUM(kpi.total_sessions)} sub={`${days} hari terakhir`} />
-          <StatTile label="Omzet live" value={loading ? '…' : FMT_IDR(kpi.total_revenue_rp)}
+          <StatTile label="Omzet live" value={loading ? '…' : formatRupiahShort(kpi.total_revenue_rp)}
             sub={kpi.revenue_delta_vs_prev_period_pct != null
               ? <span className="inline-flex items-center gap-1"><DeltaBadge pct={kpi.revenue_delta_vs_prev_period_pct} /> dari {days} hari sebelumnya</span>
               : 'Tidak ada pembanding'}
-            hint={`Dibanding ${days} hari tepat sebelum periode ini.`} />
+            hint={`${FMT_IDR(kpi.total_revenue_rp)}. Dibanding ${days} hari tepat sebelum periode ini.`} />
           <StatTile label="Pesanan" value={loading ? '…' : FMT_NUM(kpi.total_orders)} sub={`Rata-rata ${FMT_IDR(kpi.avg_revenue_per_session)} per sesi`} />
           <StatTile label="Rata-rata penonton puncak" value={loading ? '…' : FMT_NUM(kpi.avg_viewers)}
             sub={`Konversi rata-rata ${FMT_PCT(kpi.avg_conversion_rate)}`} hint="Rata-rata jumlah penonton tertinggi per sesi. Konversi = pesanan ÷ penonton." />

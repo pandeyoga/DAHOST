@@ -16,7 +16,7 @@ import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import { useToast } from '@/hooks/use-toast';
 import { useActiveMarketingAccount } from '@/hooks/useActiveMarketingAccount';
 import { useMarketingAccounts } from '@/hooks/useMarketingAccounts';
-import { formatDateID } from '@/lib/format';
+import { formatDateID, formatRupiahShort } from '@/lib/format';
 import axios from 'axios';
 import PageLayout from '../layout/PageLayout';
 import { EmptyState, StatTile } from '../moduleAtoms';
@@ -153,11 +153,10 @@ export default function LiveSessionModule({ token }) {
   const kolom = [
     { kunci: 'judul', label: 'Sesi', hp: 'judul', isi: (s) => (
       <span className="block max-w-[220px]"><span className="block truncate font-medium" title={s.title}>{s.title}</span>
-        <span className="block truncate text-xs text-muted-foreground" title={s.account_name}>{s.account_name || '—'}</span></span>) },
-    { kunci: 'tgl', label: 'Tanggal', hp: 'keterangan', isi: (s) => <span className="tabular-nums md:whitespace-nowrap">{tgl(s)}</span> },
-    { kunci: 'platform', label: 'Platform', isi: (s) => labelPlatform(s.platform) },
+        <span className="block truncate text-xs text-muted-foreground" title={s.account_name}>{s.account_name || '—'} · {labelPlatform(s.platform)}</span></span>) },
+    { kunci: 'tgl', label: 'Tanggal', hp: 'keterangan', isi: (s) => (
+      <span className="tabular-nums md:whitespace-nowrap">{tgl(s)}<span className="block text-xs text-muted-foreground">{fmt(s.duration_minutes)} menit</span></span>) },
     { kunci: 'host', label: 'Host', isi: (s) => s.host_name || '—' },
-    { kunci: 'durasi', label: 'Durasi', rata: 'kanan', isi: (s) => <span className="tabular-nums md:whitespace-nowrap">{fmt(s.duration_minutes)} menit</span> },
     { kunci: 'penonton', label: 'Penonton', rata: 'kanan', isi: (s) => (
       <span className="tabular-nums">{fmt(s.total_viewers)}<span className="block text-xs text-muted-foreground">puncak {fmt(s.peak_viewers)}</span></span>) },
     { kunci: 'pesanan', label: 'Pesanan', rata: 'kanan', isi: (s) => <span className="tabular-nums">{fmt(s.orders)}</span> },
@@ -213,8 +212,8 @@ export default function LiveSessionModule({ token }) {
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="live-kpi">
           <StatTile label="Jumlah sesi" value={summaryLoading ? '…' : fmt(summary?.total_sessions)}
             sub={summaryLoading ? '' : `${fmt(summary?.total_viewers)} penonton`} hint="Semua sesi yang tercatat untuk akun toko terpilih." />
-          <StatTile label="Omzet live" value={summaryLoading ? '…' : fmtRp(summary?.total_revenue)}
-            sub={summaryLoading ? '' : `${fmt(summary?.total_orders)} pesanan`} hint="Jumlah omzet yang dicatat per sesi." />
+          <StatTile label="Omzet live" value={summaryLoading ? '…' : formatRupiahShort(summary?.total_revenue)}
+            sub={summaryLoading ? '' : `${fmt(summary?.total_orders)} pesanan`} hint={`Jumlah omzet yang dicatat per sesi: ${fmtRp(summary?.total_revenue)}.`} />
           <StatTile label="Rata-rata interaksi" value={summaryLoading ? '…' : persen(summary?.avg_engagement_rate)} sub="Rata-rata per sesi"
             hint="(Suka + komentar + dibagikan) ÷ penonton × 100, dirata-rata per sesi. Bisa lebih dari 100%." />
           <StatTile label="Rata-rata konversi" value={summaryLoading ? '…' : persen(summary?.avg_conversion_rate)} sub="Rata-rata per sesi"
