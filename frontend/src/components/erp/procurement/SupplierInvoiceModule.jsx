@@ -651,7 +651,7 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
             </SmartNativeSelect>
           )}
           <SmartNativeSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
-            className="h-9 w-48"
+            className="h-9 w-44"
             data-testid="ap-filter-status">
             <option value="">Semua status</option>
             {Object.entries(AP_STATUS_META).map(([v, m]) => <option key={v} value={v}>{m.label}</option>)}
