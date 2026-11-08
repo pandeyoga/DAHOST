@@ -301,3 +301,17 @@ def test_pola_omzet_kreator_memakai_definisi_baku(db):
          "_seed_origin": True}]
     out = run(cw._order_revenue(db, ["K1"], {"start": "2026-08-01", "end": "2026-08-07"}))
     assert out["K1"] == {"orders": 1, "revenue": 100.0}
+
+
+def test_q3_tren_iklan_harian_dibagi_rata(db, monkeypatch):
+    import routes.marketing_ads_routes as ma
+    import utils.waktu as wk
+    from datetime import date
+    patch_route(monkeypatch, ma, db)
+    monkeypatch.setattr(wk, "today_wib", lambda: date(2026, 8, 31))
+    db.marketing_ads_data.docs.append({
+        "id": "cpc1", "account_id": SHP, "campaign_name": "Iklan A", "source_report": "shopee_ads_cpc",
+        "date": "2026-08-01", "period_start": "2026-08-01", "period_end": "2026-08-31",
+        "spend": 310_000, "revenue": 620_000})
+    trend = run(ma.performance_trend(Req(), days=30))["data"]["trend"]
+    assert len(trend) == 30 and {t["spend"] for t in trend} == {10_000.0}   # dulu 310.000 di 1 Agt

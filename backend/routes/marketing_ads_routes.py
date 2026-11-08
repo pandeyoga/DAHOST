@@ -281,15 +281,20 @@ async def performance_trend(
     from core import ukuran_penjualan as _ukuran
     from utils.waktu import today_wib
     today = today_wib()
-    d0, d1 = (today - timedelta(days=days)).isoformat(), today.isoformat()
+    d0, d1 = (today - timedelta(days=days - 1)).isoformat(), today.isoformat()   # M-26: N hari
     accounts = await _ukuran.toko_terlihat(db, user)
     rows = await _ukuran.baca_iklan(db, [a["id"] for a in accounts], d0, d1)
     by_day: dict = {}
     for r in rows:
-        b = by_day.setdefault(r["_tanggal"], {"spend": 0.0, "revenue": 0.0, "conversions": 0})
-        b["spend"] += float(r.get("spend") or 0)
-        b["revenue"] += float(r.get("revenue") or 0)
-        b["conversions"] += int(r.get("conversions") or 0)
+        # Q-3 — laporan berperiode dibagi rata per hari (dulu seluruh biaya di hari pertama)
+        for day, frac in _ukuran.pecah_harian_iklan(r, d0, d1):
+            b = by_day.setdefault(day, {"spend": 0.0, "revenue": 0.0, "conversions": 0.0})
+            b["spend"] += float(r.get("spend") or 0) * frac
+            b["revenue"] += float(r.get("revenue") or 0) * frac
+            b["conversions"] += float(r.get("conversions") or 0) * frac
+    for b in by_day.values():
+        b["spend"], b["revenue"] = round(b["spend"], 2), round(b["revenue"], 2)
+        b["conversions"] = int(round(b["conversions"]))
 
     trend = []
     for day in sorted(by_day):
