@@ -21,6 +21,7 @@ export default function FormPopup({
 }) {
   const kirim = (e) => {
     e.preventDefault();
+    e.stopPropagation(); // popup di portal: submit tidak merambat ke <form> induk di halaman
     if (!menyimpan && bisaSimpan && onSimpan) onSimpan();
   };
   return (

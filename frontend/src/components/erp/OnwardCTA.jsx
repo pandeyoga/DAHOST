@@ -47,7 +47,7 @@ export function OnwardCTA({
         <div className="grid place-items-center w-7 h-7 rounded-[9px] bg-[hsl(var(--primary)/0.12)] border border-[hsl(var(--primary)/0.22)] shrink-0">
           <Route className="w-3.5 h-3.5 text-[hsl(var(--primary))]" strokeWidth={2} />
         </div>
-        <span className="text-[10px] uppercase tracking-[0.16em] text-foreground/50 font-semibold">
+        <span className="text-xs font-medium text-muted-foreground">
           {title}
         </span>
       </div>

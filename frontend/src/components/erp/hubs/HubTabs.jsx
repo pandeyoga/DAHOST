@@ -60,7 +60,7 @@ export default function HubTabs({ hubId, title, subtitle, tabs, compactHeaders =
         <div className="flex flex-wrap items-center gap-3">
           <TabsList className="h-auto max-w-full justify-start gap-1 max-sm:flex-nowrap max-sm:overflow-x-auto sm:flex-wrap">
             {tabs.map((t) => (
-              <TabsTrigger key={t.key} value={t.key} data-testid={`hub-tab-${t.key}`} className="shrink-0">
+              <TabsTrigger key={t.key} value={t.key} data-testid={t.testId || `hub-tab-${t.key}`} className="shrink-0">
                 {t.label}
               </TabsTrigger>
             ))}

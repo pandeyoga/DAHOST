@@ -228,7 +228,7 @@ def main():
     th = FE_TH.read_text(encoding="utf-8")
     kurang8 = []
     for probe_s, where, nama in (
-            ('data-testid="tab-thresholds"', hub, "tab Ambang Stok di Master Item"),
+            ("key: 'thresholds'", hub, "tab Ambang Stok di Master Item (HubTabs → hub-tab-thresholds)"),
             ("StockThresholdsModule", hub, "modul ambang dipasang di hub"),
             ("threshold-min-", th, "kolom isi min stok"),
             ("threshold-rp-", th, "kolom isi titik pesan ulang"),

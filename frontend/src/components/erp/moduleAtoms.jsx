@@ -73,7 +73,7 @@ export function StatTile({ label, value, accent = 'default', className, testId, 
       data-testid={testId}
       onClick={onClick}
       type={isClickable ? 'button' : undefined}
-      title={isClickable ? (hint || 'Klik untuk lihat detail') : undefined}
+      title={hint || (isClickable ? 'Klik untuk lihat detail' : undefined)}
       className={cn(
         'rounded-[var(--radius-md)] border px-4 py-3 text-left w-full',
         'bg-[var(--card-surface)] border-[var(--glass-border)]',
@@ -88,8 +88,9 @@ export function StatTile({ label, value, accent = 'default', className, testId, 
       </p>
       {/* 2026-11-04: baris keterangan kecil di bawah angka (mis. "Rp 2 jt lewat jatuh tempo") — tanpa kartu buatan */}
       {sub && <p className={cn('text-xs mt-1 line-clamp-2', subTone ? colors[subTone] : 'text-muted-foreground')}>{sub}</p>}
-      {isClickable && hint && (
-        <p className="mt-1 truncate text-xs text-muted-foreground">{hint} →</p>
+      {/* v2 (keputusan 9): keterangan arti angka selalu tampil — dulu hanya bila kartu bisa diklik */}
+      {hint && !sub && (
+        <p className="mt-1 truncate text-xs text-muted-foreground">{hint}{isClickable ? ' →' : ''}</p>
       )}
     </Tag>
   );

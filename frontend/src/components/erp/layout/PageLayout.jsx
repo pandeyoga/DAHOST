@@ -83,7 +83,8 @@ export function Toolbar({ filters, tools, className, testId = 'page-toolbar' }) 
   return (
     <div role="toolbar" aria-label="Penyaring dan alat" data-testid={testId} data-page-toolbar=""
       className={cn('flex flex-wrap items-center gap-2 min-h-9', className)}>
-      <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1">{filters}</div>
+      {/* v2: di HP penyaring selebar baris (dulu menyusut ±80 px saat ada alat → kotak cari jadi ikon) */}
+      <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1 max-sm:basis-full">{filters}</div>
       {hasTools && <div className="flex items-center gap-2 shrink-0 ml-auto">{tools}</div>}
     </div>
   );
