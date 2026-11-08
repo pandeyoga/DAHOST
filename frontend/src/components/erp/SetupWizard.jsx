@@ -74,7 +74,7 @@ const STEP_META = [
     icon: Factory,
     headline: 'Line Produksi',
     description:
-      'Satu line = satu kelompok mesin/meja untuk proses tertentu. Contoh: LN-RAJUT-01 untuk proses Rajut. Minimal butuh 1 line per proses aktif.',
+      'Opsional — hanya bila ada lini jahit/produksi sendiri di pabrik. Satu line = satu kelompok mesin/meja untuk proses tertentu. Produksi lewat vendor CMT tidak membutuhkan line.',
     module: 'prod-lines',
   },
   {
