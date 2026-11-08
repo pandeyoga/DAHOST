@@ -131,7 +131,8 @@ export default function ProcurementDashboardModule({ token, onNavigate }) {
         </div>
       ) : (
         <div className="space-y-3">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* Di dashboard, kartu angka inilah isi utama layar (penanda untuk alat ukur tata letak). */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-konten-utama="">
             <StatTile label="Permintaan menunggu" value={k.pr_pending ?? 0} accent={k.pr_pending ? 'warning' : 'default'}
               sub={`dari ${k.pr_total ?? 0} permintaan seluruhnya`}
               hint="Buka permintaan" onClick={go('proc-requests')} testId="proc-kpi-pr-pending" />
@@ -148,26 +149,26 @@ export default function ProcurementDashboardModule({ token, onNavigate }) {
           {/* Angka pendukung dalam satu kalimat (dulu 4 kartu tambahan → 8 kartu berjejer). */}
           <p className="flex flex-wrap items-center gap-x-1 gap-y-1 text-sm text-muted-foreground" data-testid="proc-dashboard-sekunder">
             {poPerhatian.length === 0 && (<>
-              <span className="text-[hsl(var(--success-text))]" data-testid="proc-alert-po">Tidak ada PO terlambat atau tiba ≤ 7 hari</span>
+              <span className="text-[hsl(var(--success-text))]" data-testid="proc-alert-po">Tidak ada PO terlambat</span>
               <span aria-hidden="true">·</span>
             </>)}
             <span data-testid="proc-kpi-gr">Penerimaan barang <b className="tabular-nums text-foreground">{k.gr_received ?? 0}</b>
-              {' '}({k.gr_draft ?? 0} draf, {k.qc_pending ?? 0} belum diperiksa QC)</span>
+              {' '}({k.gr_draft ?? 0} draf, {k.qc_pending ?? 0} belum QC)</span>
             <span aria-hidden="true">·</span>
             <Button variant="link" size="sm" className="h-auto p-0" onClick={go('proc-suppliers')} disabled={!onNavigate}
               data-testid="proc-kpi-suppliers">
-              Pemasok aktif <b className="tabular-nums">{k.suppliers_active ?? 0}</b> dari {k.suppliers_total ?? 0}
+              Pemasok aktif <b className="tabular-nums">{k.suppliers_active ?? 0}</b>/{k.suppliers_total ?? 0}
             </Button>
             <span aria-hidden="true">·</span>
             <Button variant="link" size="sm" className="h-auto p-0" onClick={go('proc-suppliers')} disabled={!onNavigate}
               data-testid="proc-kpi-price-rows">
-              Baris daftar harga aktif <b className="tabular-nums">{k.price_list_rows ?? 0}</b>
+              Daftar harga aktif <b className="tabular-nums">{k.price_list_rows ?? 0}</b>
             </Button>
             <span aria-hidden="true">·</span>
             <Button variant="link" size="sm" className="h-auto p-0" onClick={go('proc-accessory-pr')} disabled={!onNavigate}
               data-testid="proc-kpi-acc-pr">
               Request aksesoris <b className="tabular-nums">{k.accessory_pr_total ?? 0}</b>
-              {' '}({k.accessory_pr_awaiting_approval ?? 0} menunggu persetujuan, {k.accessory_pr_pending ?? 0} berjalan)
+              {' '}({k.accessory_pr_awaiting_approval ?? 0} menunggu, {k.accessory_pr_pending ?? 0} berjalan)
             </Button>
           </p>
         </div>

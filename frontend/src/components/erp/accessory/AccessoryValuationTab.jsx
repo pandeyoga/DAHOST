@@ -274,7 +274,7 @@ export default function AccessoryValuationTab({ token, onRefreshDash }) {
           <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
       </>}
-      summary={<>
+      summary={<div className="space-y-1">
         {/* Ringkasan valuasi = satu kalimat (dulu 4 kartu + kotak peringatan besar di bawah ringkasan modul →
             tabel baru mulai di tengah layar). Angka sama: `/api/acc/valuation` totals. */}
         <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted-foreground" data-testid="acc-val-summary">
@@ -302,7 +302,7 @@ export default function AccessoryValuationTab({ token, onRefreshDash }) {
             )}
           </p>
         )}
-      </>}
+      </div>}
       footer={<PaginationLite page={pg.page} totalPages={pg.totalPages} total={pg.total}
         pageSize={pg.pageSize} onPageChange={pg.setPage} />}>
       {err && <Notice tone="danger" testId="acc-val-error">{err}</Notice>}
