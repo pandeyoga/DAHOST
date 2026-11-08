@@ -198,15 +198,43 @@ async def create_run(request: Request):
     return serialize_doc(out)
 
 
+async def _payroll_view_mode(request: Request) -> tuple[dict, str]:
+    """(user, 'detail' | 'transfer'). 2026-11-09 (Q8): rincian slip per orang hanya peran penggajian;
+    Keuangan hanya total & nilai transfer; selain itu 403 (dulu cukup lolos gerbang portal SDM/Keuangan)."""
+    from routes.rahaza_payroll_shared import can_view_payroll_detail, can_view_payroll_transfer
+    user = await require_auth(request)
+    if can_view_payroll_detail(user):
+        return user, "detail"
+    if can_view_payroll_transfer(user):
+        return user, "transfer"
+    raise HTTPException(403, "Rincian gaji per karyawan hanya untuk peran penggajian (owner, admin, HR); "
+                             "Keuangan melihat total dan nilai transfer.")
+
+
+async def _transfer_rows(db, payslips: list) -> list:
+    from routes.rahaza_payroll_shared import transfer_row
+    ids = list({s.get("employee_id") for s in payslips if s.get("employee_id")})
+    emps = {e["id"]: e for e in await db.rahaza_employees.find(
+        {"id": {"$in": ids}}, {"_id": 0, "id": 1, "name": 1, "employee_code": 1, "department": 1, "bank_name": 1,
+                               "bank_account_number": 1, "bank_account": 1}).to_list(len(ids) or 1)} if ids else {}
+    return [transfer_row(s, emps.get(s.get("employee_id"))) for s in payslips]
+
+
 @router.get("/payroll-runs/{run_id}")
 async def get_run(run_id: str, request: Request):
-    await require_auth(request)
+    _, mode = await _payroll_view_mode(request)
     db = get_db()
     run = await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0})
     if not run:
         raise HTTPException(404, "Payroll run tidak ditemukan.")
     payslips = await db.rahaza_payslips.find({"run_id": run_id}, {"_id": 0}).sort("employee_code", 1).to_list(500)
-    return serialize_doc({"run": run, "payslips": payslips})
+    if mode == "transfer":
+        # Keuangan: total run + nilai transfer per karyawan, tanpa komponen slip / peringatan per orang.
+        safe_run = {k: v for k, v in run.items() if k not in ("warnings", "excluded_employees")}
+        return serialize_doc({"run": safe_run, "payslips": [], "transfers": await _transfer_rows(db, payslips),
+                              "detail_hidden": True})
+    return serialize_doc({"run": run, "payslips": payslips, "transfers": await _transfer_rows(db, payslips),
+                          "detail_hidden": False})
 
 
 async def _json_body(request: Request) -> dict:
@@ -245,6 +273,12 @@ async def recalculate_run(run_id: str, request: Request):
             continue
         fresh = await _compute_payslip_for_employee(db, prof, run["period_from"], run["period_to"], emp, run_id=run_id)
         slip = carry_manual_adjustments(old, fresh)
+        if round(float(slip.get("manual_addition") or 0)) or any(d.get("adjusted") for d in slip.get("deductions") or []):
+            # 2026-11-09 (H3): penyesuaian yang dibawa ikut bruto kena pajak (rumus sama dengan tombol Adj).
+            from routes.rahaza_payroll_shared import _payslip_totals, recompute_slip_pph21
+            slip = await recompute_slip_pph21(db, slip, emp, run_id=run_id)
+            slip["deductions_total"], _net = _payslip_totals(slip)
+            slip["net_pay"] = float(slip["gross_pay"]) - slip["deductions_total"]
         slip.update(run_id=run_id, run_number=run.get("run_number"), updated_at=now, recalculated_at=now)
         await db.rahaza_payslips.update_one({"id": old["id"]}, {"$set": slip})
         new_slips.append(slip)
@@ -276,8 +310,9 @@ async def _apply_run_kasbon(db, run: dict, payslips: list, user: dict):
         return None
     try:
         from routes.dewi_kasbon import apply_payroll_deductions_core
+        from routes.rahaza_payroll_rules import payroll_month   # 2026-11-09 (M2)
         res = await apply_payroll_deductions_core(
-            db, (run.get("period_from") or "")[:7], kasbon_deds, user,
+            db, payroll_month(run.get("period_from"), run.get("period_to")), kasbon_deds, user,
             run_id=run_id, run_number=run.get("run_number") or "", je_date=run.get("period_to"))
         await db.rahaza_payroll_runs.update_one({"id": run_id}, {"$set": {
             "kasbon_applied_at": _now(), "kasbon_applied": res.get("results"),
@@ -322,7 +357,7 @@ async def finalize_run(run_id: str, request: Request):
     if dup_kasbon:
         rows = "; ".join(f"{d['request_number']} sudah dipotong di {d['run_number']}" for d in dup_kasbon)
         raise HTTPException(409, (
-            f"Finalisasi ditolak: potongan kasbon bulan {(run.get('period_from') or '')[:7]} akan terpotong dua kali "
+            f"Finalisasi ditolak: potongan kasbon bulan {(run.get('period_to') or run.get('period_from') or '')[:7]} akan terpotong dua kali "
             f"({rows}). Hapus run draft ini lalu buat ulang — run baru tidak memotong kasbon yang sama lagi."))
     total_gross = sum(s.get("gross_pay", 0) for s in payslips)
     total_ded = sum(s.get("deductions_total", 0) for s in payslips)
@@ -393,6 +428,9 @@ async def finalize_run(run_id: str, request: Request):
             {"run_id": run_id}, {"_id": 0, "id": 1, "employee_id": 1, "net_pay": 1}
         ).to_list(500)
         emp_ids_in_run = [s["employee_id"] for s in payslip_emps]
+        from routes.rahaza_payroll_rules import payroll_month
+        from utils.waktu import periode_label
+        _periode_gaji = periode_label(payroll_month(out.get("period_from"), out.get("period_to")))
         if emp_ids_in_run:
             # Tahap 1: proyeksi WAJIB memuat `id` — dulu tanpa `id`, slip tidak pernah cocok sehingga
             # kabar selalu berbunyi "Rp 0", dan tautannya ke layar Kehadiran (bukan Slip Gaji).
@@ -410,7 +448,8 @@ async def finalize_run(run_id: str, request: Request):
                     severity="info",
                     title="Slip gaji tersedia",
                     message=(
-                        f"Slip gaji periode {out.get('period_from','')[:7]} sudah tersedia. "
+                        # 2026-11-09 (M2): bulan gaji = bulan tanggal akhir periode ("November 2026")
+                        f"Slip gaji {_periode_gaji} sudah tersedia. "
                         f"Gaji bersih diterima: Rp {net}."
                     ),
                     link_module="portal-payslip",
@@ -977,8 +1016,10 @@ async def cancel_run(run_id: str, request: Request):
 
 @router.get("/payroll-runs/{run_id}/export-excel")
 async def export_run_excel(run_id: str, request: Request):
-    """Export payroll run ke Excel — 1 sheet rekapitulasi + 1 sheet per karyawan."""
-    await require_auth(request)
+    """Export payroll run ke Excel — 1 sheet rekapitulasi + 1 sheet per karyawan + data transfer bank.
+
+    2026-11-09 (Q8): Keuangan (tanpa hak rincian gaji) hanya menerima lembar "Data Transfer Bank"."""
+    _, mode = await _payroll_view_mode(request)
     db = get_db()
     run = await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0})
     if not run:
@@ -1324,7 +1365,9 @@ async def export_run_excel(run_id: str, request: Request):
         fill = BG_ALTROW if idx % 2 == 1 else None
         vals = [
             nik, slip.get("employee_name",""),
-            emp.get("bank_name",""), emp.get("bank_account",""),
+            # 2026-11-09: master karyawan menyimpan `bank_account_number` (dulu dibaca `bank_account` → kolom
+            # No. Rekening selalu kosong di lembar transfer).
+            emp.get("bank_name",""), emp.get("bank_account_number") or emp.get("bank_account", ""),
             net, f"Gaji {period_lbl}",
         ]
         for ci, val in enumerate(vals, 1):
@@ -1341,6 +1384,11 @@ async def export_run_excel(run_id: str, request: Request):
     total_net = sum(s.get("net_pay", s.get("net_salary", 0)) for s in payslips)
     _cell(ws3, tr3, 5, total_net, font=FG_DARK_B, fill=BG_TOTAL, align=RIGHT, border=BORDER_MED, num_fmt=IDR_FMT)
     ws3.row_dimensions[tr3].height = 20
+
+    if mode == "transfer":   # Q8: Keuangan — tanpa rekap komponen & slip per karyawan
+        for title in ("Rekapitulasi", "Slip Individual"):
+            if title in wb.sheetnames:
+                wb.remove(wb[title])
 
     # ── Stream ke response ────────────────────────────────────────────────────
     buf = io.BytesIO()
@@ -1371,8 +1419,8 @@ async def export_run_excel(run_id: str, request: Request):
 # Sentinel baru: scripts/probe_unreachable_after_return.py (terdaftar di gate.sh)
 @router.get("/payroll-runs/{run_id}/export")
 async def export_run_csv(run_id: str, request: Request):
-    """Export payroll run ke CSV (1 baris per karyawan)."""
-    await require_auth(request)
+    """Export payroll run ke CSV (1 baris per karyawan). 2026-11-09 (Q8): Keuangan = kolom transfer saja."""
+    _, mode = await _payroll_view_mode(request)
     db = get_db()
     run = await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0})
     if not run:
@@ -1381,6 +1429,16 @@ async def export_run_csv(run_id: str, request: Request):
 
     buf = io.StringIO()
     w = csv.writer(buf)
+    if mode == "transfer":
+        w.writerow(["run_number", "period_from", "period_to", "employee_code", "employee_name", "bank_name",
+                    "bank_account_number", "net_pay"])
+        for t in await _transfer_rows(db, payslips):
+            w.writerow([run.get("run_number"), run.get("period_from"), run.get("period_to"), t["employee_code"],
+                        t["employee_name"], t["bank_name"], t["bank_account_number"], t["net_pay"]])
+        buf.seek(0)
+        safe_num = str(run.get("run_number") or run_id).replace("/", "-")
+        return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
+                                 headers={"Content-Disposition": f'attachment; filename="transfer_{safe_num}.csv"'})
     w.writerow([
         "run_number", "period_from", "period_to",
         "employee_code", "employee_name", "pay_scheme",
