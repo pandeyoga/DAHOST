@@ -182,18 +182,19 @@ export default function RahazaProductCategoriesModule({ token }) {
       filters={<label className="flex items-center gap-2 text-sm text-foreground cursor-pointer select-none">
         <Checkbox checked={showInactive} onCheckedChange={(v) => setShowInactive(!!v)} data-testid="cat-show-inactive" />
         Tampilkan nonaktif
-      </label>}
-      summary={<p className="text-sm text-muted-foreground" data-testid="cat-explainer">
-        <b className="text-foreground">Prefix SKU</b> tampil di kode barang: kategori Vest berprefix <span className="tabular-nums">VST</span> ⇒ produk baru
-        berkode <span className="tabular-nums">VST-0001</span>, SKU variannya <span className="tabular-nums">VST-0001-NVY-M</span>. Kategori yang masih
-        dipakai produk, barang jadi, atau item katalog tidak bisa dinonaktifkan.
-      </p>}>
+      </label>}>
       <GlassCard>
         <DataTable tableId="rahaza-product-categories" columns={columns} rows={rows} loading={loading}
           emptyTitle="Belum ada kategori"
-          emptyDescription="Klik Tambah Kategori untuk membuat kategori produk pertama."
+          emptyDescription="Klik Tambah kategori untuk membuat kategori produk pertama."
           rowKey="id" />
       </GlassCard>
+      {/* Penjelasan prefix di bawah tabel supaya tabel tidak turun terlalu jauh. */}
+      <p className="text-sm text-muted-foreground" data-testid="cat-explainer">
+        <b className="text-foreground">Prefix SKU</b> tampil di kode barang: kategori Vest berprefix <span className="tabular-nums">VST</span> ⇒ produk baru
+        berkode <span className="tabular-nums">VST-0001</span>, SKU variannya <span className="tabular-nums">VST-0001-NVY-M</span>. Kategori yang masih
+        dipakai produk, barang jadi, atau item katalog tidak bisa dinonaktifkan.
+      </p>
 
       {modalOpen && (
         <FormPopup open onClose={() => setModalOpen(false)} ukuran="pendek" testId="cat-form-popup" onSimpan={handleSave} menyimpan={saving}
