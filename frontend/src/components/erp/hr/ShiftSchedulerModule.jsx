@@ -1,37 +1,55 @@
+/**
+ * ShiftSchedulerModule — Portal SDM › Shift › Jadwal otomatis & Pola jadwal.
+ *
+ * Standar UI/UX v2 (keputusan owner 8 Nov 2026): cetakan PageLayout (dulu kepala sendiri dengan ikon gradien +
+ * tab buatan di dalam tab hub). Di hub Shift tiap bagian jadi tab hub sendiri (`bagian`); tanpa `bagian`
+ * (menu lama "hr-shift-scheduler") → pil penyaring. Kartu berulang → TabelData + unduh Excel/CSV,
+ * detail jadwal = popup, form = FormPopup, tanggal = DatePicker, istilah Inggris → Indonesia.
+ * Data yang dikirim ke server tidak berubah. Daftar jadwal memuat sampai 500 (dulu batas bawaan API 20).
+ */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { GlassCard } from '@/components/ui/glass';
+import { Plus, Trash2, Eye, Send, RefreshCw } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { useHrMasters, useActiveEmployees, useDepartmentFilterOptions } from './hrPickers';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
-import { toast } from 'sonner';
-import { Calendar, Clock, Users, Sparkles, Loader2, Plus, Trash2, CalendarCheck, Eye, Send } from 'lucide-react';
-import { IconButton } from '../IconButton';
+import { Checkbox } from '@/components/ui/checkbox';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker, { formatTanggalID } from '@/components/ui/date-picker';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, StatusBadge } from '../moduleAtoms';
+import { useHrMasters, useActiveEmployees, useDepartmentFilterOptions } from './hrPickers';
 
-export default function ShiftSchedulerModule({ token }) {
-  const [activeTab, setActiveTab] = useState('schedules'); // schedules, templates, generate
+const BE = process.env.REACT_APP_BACKEND_URL;
+const STATUS_JADWAL = { draft: { label: 'Draf', tone: 'muted' }, published: { label: 'Terbit', tone: 'success' } };
+const statusJadwal = (s) => STATUS_JADWAL[s] || { label: 'Lainnya', tone: 'default' };
+const tgl = (v) => (v ? formatTanggalID(String(v).slice(0, 10)) : '');
+const periode = (s) => `${tgl(s.start_date) || '…'} – ${tgl(s.end_date) || '…'}`;
+const TEMPLATE_KOSONG = { name: '', start_time: '08:00', end_time: '16:00', required_skills: [], min_employees: 1, max_employees: 5 };
+
+/**
+ * @param bagian  'schedules' | 'templates' — dipakai hub Shift (satu tab hub per bagian).
+ */
+export default function ShiftSchedulerModule({ token, bagian }) {
+  const [tabSendiri, setTabSendiri] = useState('schedules');
+  const activeTab = bagian || tabSendiri;
   const [schedules, setSchedules] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [selectedSchedule, setSelectedSchedule] = useState(null);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
-  
+  const [galat, setGalat] = useState('');
+
   // Template dialog
   const [showTemplateDialog, setShowTemplateDialog] = useState(false);
-  const [templateForm, setTemplateForm] = useState({
-    name: '',
-    start_time: '08:00',
-    end_time: '16:00',
-    required_skills: [],
-    min_employees: 1,
-    max_employees: 5
-  });
-  
+  const [templateForm, setTemplateForm] = useState(TEMPLATE_KOSONG);
+
   // Generate dialog
   const [showGenerateDialog, setShowGenerateDialog] = useState(false);
   const [generateForm, setGenerateForm] = useState({
@@ -46,6 +64,7 @@ export default function ShiftSchedulerModule({ token }) {
       balance_workload: true
     }
   });
+  const setConstraint = (k, v) => setGenerateForm((f) => ({ ...f, constraints: { ...f.constraints, [k]: v } }));
 
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
   // Tahap 5 (2026-11-07): departemen dari master Struktur Organisasi + departemen karyawan. Dulu daftar tetap
@@ -57,7 +76,7 @@ export default function ShiftSchedulerModule({ token }) {
   const fetchSchedules = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/hr/shift-scheduler/schedules`, { headers });
+      const r = await fetch(`${BE}/api/hr/shift-scheduler/schedules?limit=500`, { headers });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       setSchedules(data?.data || []);
@@ -70,12 +89,12 @@ export default function ShiftSchedulerModule({ token }) {
 
   const fetchTemplates = useCallback(async () => {
     try {
-      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/hr/shift-scheduler/templates`, { headers });
+      const r = await fetch(`${BE}/api/hr/shift-scheduler/templates`, { headers });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       setTemplates(data?.data || []);
     } catch (e) {
-      toast.error(`Gagal memuat template: ${e.message}`);
+      toast.error(`Gagal memuat pola jadwal: ${e.message}`);
     }
   }, [headers]);
 
@@ -84,482 +103,302 @@ export default function ShiftSchedulerModule({ token }) {
     fetchTemplates();
   }, [fetchSchedules, fetchTemplates]);
 
+  const bukaTemplate = () => { setGalat(''); setTemplateForm(TEMPLATE_KOSONG); setShowTemplateDialog(true); };
+  const bukaGenerate = () => { setGalat(''); setShowGenerateDialog(true); };
+
   const handleCreateTemplate = async () => {
     if (!templateForm.name || !templateForm.start_time || !templateForm.end_time) {
-      toast.error('Lengkapi form template');
+      setGalat('Nama, jam mulai, dan jam selesai wajib diisi.');
       return;
     }
-
     try {
-      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/hr/shift-scheduler/templates`, {
+      const r = await fetch(`${BE}/api/hr/shift-scheduler/templates`, {
         method: 'POST',
         headers,
         body: JSON.stringify(templateForm)
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      toast.success('Template shift berhasil dibuat!');
+      toast.success('Pola jadwal dibuat');
       setShowTemplateDialog(false);
-      setTemplateForm({ name: '', start_time: '08:00', end_time: '16:00', required_skills: [], min_employees: 1, max_employees: 5 });
+      setTemplateForm(TEMPLATE_KOSONG);
       fetchTemplates();
     } catch (e) {
-      toast.error(`Gagal membuat template: ${e.message}`);
+      setGalat(`Gagal membuat pola jadwal: ${e.message}`);
     }
   };
 
-  const handleDeleteTemplate = async (templateId) => {
-    if (!(await confirmDialog({ title: 'Hapus template ini?', danger: true }))) return;
-    
+  const handleDeleteTemplate = async (t) => {
+    if (!(await confirmDialog({ title: `Hapus pola ${t.name}?`, body: 'Pola tidak bisa dipilih lagi saat membuat jadwal otomatis.', confirmLabel: 'Hapus', danger: true }))) return;
     try {
-      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/hr/shift-scheduler/templates/${templateId}`, {
+      const r = await fetch(`${BE}/api/hr/shift-scheduler/templates/${t.id}`, {
         method: 'DELETE',
         headers
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      toast.success('Template dihapus');
+      toast.success('Pola jadwal dihapus');
       fetchTemplates();
     } catch (e) {
-      toast.error(`Gagal hapus template: ${e.message}`);
+      toast.error(`Gagal menghapus pola jadwal: ${e.message}`);
     }
   };
 
   const handleGenerateSchedule = async () => {
     if (!generateForm.start_date || !generateForm.end_date || generateForm.shift_templates.length === 0) {
-      toast.error('Lengkapi form generate');
+      setGalat('Isi tanggal mulai, tanggal selesai, dan pilih minimal 1 pola shift.');
       return;
     }
-
-    setGenerating(true);
+    setGenerating(true); setGalat('');
     try {
-      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/hr/shift-scheduler/generate`, {
+      const r = await fetch(`${BE}/api/hr/shift-scheduler/generate`, {
         method: 'POST',
         headers,
         body: JSON.stringify(generateForm)
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const data = await r.json();
-      toast.success('Jadwal berhasil digenerate!', { icon: <Sparkles className="w-4 h-4" /> });
+      await r.json();
+      toast.success('Jadwal dibuat sebagai draf');
       setShowGenerateDialog(false);
       fetchSchedules();
-      setActiveTab('schedules');
+      setTabSendiri('schedules');
     } catch (e) {
-      toast.error(`Generate gagal: ${e.message}`);
+      setGalat(`Gagal membuat jadwal: ${e.message}`);
     } finally {
       setGenerating(false);
     }
   };
 
   const handlePublishSchedule = async (scheduleId) => {
-    if (!(await confirmDialog({ title: 'Terbitkan jadwal ini?', body: 'Karyawan akan bisa melihat jadwal mereka.' }))) return;
-    
+    if (!(await confirmDialog({ title: 'Terbitkan jadwal ini?', body: 'Karyawan akan bisa melihat jadwal mereka.', confirmLabel: 'Terbitkan' }))) return;
     try {
-      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/hr/shift-scheduler/schedules/${scheduleId}/publish`, {
+      const r = await fetch(`${BE}/api/hr/shift-scheduler/schedules/${scheduleId}/publish`, {
         method: 'PATCH',
         headers
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      toast.success('Jadwal dipublish!');
+      toast.success('Jadwal diterbitkan');
+      setSelectedSchedule(null);
       fetchSchedules();
     } catch (e) {
-      toast.error(`Publish gagal: ${e.message}`);
+      toast.error(`Gagal menerbitkan: ${e.message}`);
     }
   };
 
   const handleViewSchedule = async (scheduleId) => {
     try {
-      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/hr/shift-scheduler/schedules/${scheduleId}`, { headers });
+      const r = await fetch(`${BE}/api/hr/shift-scheduler/schedules/${scheduleId}`, { headers });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       setSelectedSchedule(data?.data);
     } catch (e) {
-      toast.error(`Gagal load detail: ${e.message}`);
+      toast.error(`Gagal memuat rincian: ${e.message}`);
     }
   };
 
+  // ─── Tabel ──────────────────────────────────────────────────────────────────
+  const kolomJadwal = [
+    { kunci: 'periode', label: 'Periode', hp: 'judul', isi: (s) => <span className="font-medium text-foreground">{periode(s)}</span> },
+    { kunci: 'dept', label: 'Departemen', hp: 'keterangan', isi: (s) => s.department || 'Semua departemen' },
+    { kunci: 'shift', label: 'Jumlah shift', rata: 'kanan', isi: (s) => <span className="tabular-nums">{s.metadata?.total_shifts ?? '—'}</span> },
+    { kunci: 'jam', label: 'Rata-rata jam/karyawan', rata: 'kanan', isi: (s) => <span className="tabular-nums">{s.metadata?.average_hours_per_employee ?? '—'}</span> },
+    { kunci: 'status', label: 'Status', isi: (s) => { const t = statusJadwal(s.status); return <StatusBadge status={s.status} label={t.label} tone={t.tone} />; } },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
+      <div className="flex items-center justify-end gap-1">
+        <Button size="sm" variant="outline" onClick={() => handleViewSchedule(s.id)}><Eye />Lihat</Button>
+        {s.status === 'draft' && (
+          <Button size="sm" variant="outline" onClick={() => handlePublishSchedule(s.id)}><Send />Terbitkan</Button>
+        )}
+      </div>) },
+  ];
+  const unduhJadwal = [
+    { label: 'Mulai', nilai: (s) => tgl(s.start_date) },
+    { label: 'Selesai', nilai: (s) => tgl(s.end_date) },
+    { label: 'Departemen', nilai: (s) => s.department || 'Semua departemen' },
+    { label: 'Jumlah shift', nilai: (s) => s.metadata?.total_shifts ?? '' },
+    { label: 'Rata-rata jam per karyawan', nilai: (s) => s.metadata?.average_hours_per_employee ?? '' },
+    { label: 'Status', nilai: (s) => statusJadwal(s.status).label },
+  ];
+
+  const kolomPola = [
+    { kunci: 'nama', label: 'Nama pola', hp: 'judul', isi: (t) => <span className="font-medium text-foreground">{t.name}</span> },
+    { kunci: 'jam', label: 'Jam', hp: 'keterangan', isi: (t) => <span className="tabular-nums">{t.start_time}–{t.end_time}</span> },
+    { kunci: 'orang', label: 'Karyawan per shift', rata: 'kanan', isi: (t) => <span className="tabular-nums">{t.min_employees}–{t.max_employees}</span> },
+    { kunci: 'keahlian', label: 'Keahlian wajib', isi: (t) => (t.required_skills?.length ? t.required_skills.join(', ') : '—') },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (t) => (
+      <Button size="icon-sm" variant="ghost" onClick={() => handleDeleteTemplate(t)} aria-label="Hapus pola" title="Hapus pola">
+        <Trash2 />
+      </Button>) },
+  ];
+  const unduhPola = [
+    { label: 'Nama pola', nilai: (t) => t.name },
+    { label: 'Jam mulai', nilai: (t) => t.start_time },
+    { label: 'Jam selesai', nilai: (t) => t.end_time },
+    { label: 'Karyawan minimal', nilai: (t) => Number(t.min_employees ?? 0) },
+    { label: 'Karyawan maksimal', nilai: (t) => Number(t.max_employees ?? 0) },
+    { label: 'Keahlian wajib', nilai: (t) => (t.required_skills || []).join(', ') },
+  ];
+
+  const kolomRincian = [
+    { kunci: 'karyawan', label: 'Karyawan', hp: 'judul', isi: (x) => <span className="font-medium text-foreground">{x.employee_name}</span> },
+    { kunci: 'dept', label: 'Departemen', isi: (x) => x.department || '—' },
+    { kunci: 'tanggal', label: 'Tanggal', isi: (x) => tgl(x.date) || '—' },
+    { kunci: 'shift', label: 'Shift', isi: (x) => x.shift_name || '—' },
+    { kunci: 'jam', label: 'Jam', isi: (x) => <span className="tabular-nums">{x.start_time}–{x.end_time}</span> },
+  ];
+
+  const pil = !bagian && (
+    <FilterChips value={tabSendiri} onChange={setTabSendiri} hideWhenEmpty={false} testId="scheduler-bagian"
+      options={[{ key: 'schedules', label: 'Jadwal', count: schedules.length }, { key: 'templates', label: 'Pola jadwal', count: templates.length }]} />
+  );
+
   return (
-    <div className="space-y-6 p-6" data-testid="shift-scheduler-module">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
-            <Calendar className="w-5 h-5 text-foreground" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Auto Shift Scheduler</h1>
-            <p className="text-sm text-muted-foreground">Generate jadwal shift otomatis dengan AI</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button onClick={() => setShowGenerateDialog(true)} variant="default">
-            <Sparkles className="w-4 h-4 mr-2" /> Generate Schedule
-          </Button>
-        </div>
-      </div>
+    <PageLayout testId="shift-scheduler-module" title="Jadwal shift otomatis"
+      subtitle="Buat jadwal shift beberapa hari sekaligus dari pola shift, lalu terbitkan ke karyawan."
+      actions={activeTab === 'schedules'
+        ? <Button onClick={bukaGenerate} data-testid="scheduler-generate"><Plus />Buat jadwal otomatis</Button>
+        : <Button onClick={bukaTemplate} data-testid="scheduler-template-add"><Plus />Pola baru</Button>}
+      filters={pil}
+      tools={<>
+        {activeTab === 'schedules'
+          ? <TombolUnduh namaBerkas="jadwal-shift" namaLembar="Jadwal" baris={schedules} kolom={unduhJadwal} testId="scheduler-unduh" />
+          : <TombolUnduh namaBerkas="pola-jadwal-shift" namaLembar="Pola jadwal" baris={templates} kolom={unduhPola} testId="scheduler-template-unduh" />}
+        <Button variant="outline" size="icon" onClick={() => { fetchSchedules(); fetchTemplates(); }} disabled={loading}
+          title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}>
 
-      {/* Tabs */}
-      <GlassCard className="p-1">
-        <div className="flex gap-1">
-          <button
-            onClick={() => setActiveTab('schedules')}
-            className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              activeTab === 'schedules' ? 'bg-[var(--glass-hover)] text-foreground' : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <Calendar className="w-4 h-4 inline-block mr-2" />
-            Jadwal
-          </button>
-          <button
-            onClick={() => setActiveTab('templates')}
-            className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              activeTab === 'templates' ? 'bg-[var(--glass-hover)] text-foreground' : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <Clock className="w-4 h-4 inline-block mr-2" />
-            Template Shift
-          </button>
-        </div>
-      </GlassCard>
+      {activeTab === 'schedules' && (loading && schedules.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat jadwal…</p>
+      ) : (
+        <TabelData kolom={kolomJadwal} baris={schedules} testId="scheduler-table" onKlikBaris={(s) => handleViewSchedule(s.id)}
+          kosong={<EmptyState title="Belum ada jadwal"
+            description={templates.length ? 'Klik Buat jadwal otomatis untuk menyusun jadwal dari pola shift.' : 'Buat pola jadwal dulu di tab Pola jadwal, lalu buat jadwal otomatis.'} />} />
+      ))}
 
-      {/* Schedules Tab */}
-      {activeTab === 'schedules' && (
-        <div className="space-y-4">
-          {loading ? (
-            <div className="flex items-center justify-center h-32">
-              <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : schedules.length === 0 ? (
-            <GlassCard className="p-12">
-              <div className="flex flex-col items-center justify-center text-center">
-                <Calendar className="w-16 h-16 text-muted-foreground/40 mb-4" />
-                <p className="text-sm text-muted-foreground">Belum ada jadwal. Klik "Generate Schedule" untuk membuat jadwal baru.</p>
-              </div>
-            </GlassCard>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {schedules.map(schedule => (
-                <GlassCard key={schedule.id} className="p-5">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <CalendarCheck className="w-4 h-4 text-indigo-500" />
-                        <h3 className="text-sm font-semibold text-foreground truncate">
-                          {new Date(schedule.start_date).toLocaleDateString('id-ID')} - {new Date(schedule.end_date).toLocaleDateString('id-ID')}
-                        </h3>
-                      </div>
-                      {schedule.department && (
-                        <p className="text-xs text-muted-foreground">{schedule.department}</p>
-                      )}
-                    </div>
-                    <Badge variant={schedule.status === 'published' ? 'default' : 'secondary'}>
-                      {schedule.status === 'published' ? 'Published' : 'Draft'}
-                    </Badge>
-                  </div>
-
-                  {schedule.metadata && (
-                    <div className="grid grid-cols-2 gap-2 mb-3">
-                      <div className="text-xs">
-                        <span className="text-muted-foreground">Total Shift:</span>
-                        <span className="font-semibold text-foreground ml-1">{schedule.metadata.total_shifts}</span>
-                      </div>
-                      <div className="text-xs">
-                        <span className="text-muted-foreground">Avg Hours:</span>
-                        <span className="font-semibold text-foreground ml-1">{schedule.metadata.average_hours_per_employee}</span>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="outline" className="flex-1" onClick={() => handleViewSchedule(schedule.id)}>
-                      <Eye className="w-3 h-3 mr-1" /> View
-                    </Button>
-                    {schedule.status === 'draft' && (
-                      <Button size="sm" className="flex-1" onClick={() => handlePublishSchedule(schedule.id)}>
-                        <Send className="w-3 h-3 mr-1" /> Publish
-                      </Button>
-                    )}
-                  </div>
-                </GlassCard>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Templates Tab */}
       {activeTab === 'templates' && (
-        <div className="space-y-4">
-          <div className="flex justify-end">
-            <Button onClick={() => setShowTemplateDialog(true)}>
-              <Plus className="w-4 h-4 mr-2" /> Template Baru
-            </Button>
-          </div>
+        <TabelData kolom={kolomPola} baris={templates} testId="scheduler-template-table"
+          kosong={<EmptyState title="Belum ada pola jadwal"
+            description="Pola berisi jam shift dan jumlah karyawan per shift, dipakai saat membuat jadwal otomatis."
+            action={<Button onClick={bukaTemplate}><Plus />Pola baru</Button>} />} />
+      )}
 
-          {templates.length === 0 ? (
-            <GlassCard className="p-12">
-              <div className="flex flex-col items-center justify-center text-center">
-                <Clock className="w-16 h-16 text-muted-foreground/40 mb-4" />
-                <p className="text-sm text-muted-foreground">Belum ada template shift. Buat template pertama Anda.</p>
-              </div>
-            </GlassCard>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {templates.map(template => (
-                <GlassCard key={template.id} className="p-5">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-sm font-semibold text-foreground mb-1">{template.name}</h3>
-                      <p className="text-xs text-muted-foreground">{template.start_time} - {template.end_time}</p>
-                    </div>
-                    <IconButton icon={Trash2} variant="ghost" size="sm" onClick={() => handleDeleteTemplate(template.id)} tooltip="Hapus" />
-                  </div>
-
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-muted-foreground">Min/Max Employees:</span>
-                      <span className="font-medium text-foreground">{template.min_employees} - {template.max_employees}</span>
-                    </div>
-                    {template.required_skills && template.required_skills.length > 0 && (
-                      <div>
-                        <p className="text-xs text-muted-foreground mb-1">Required Skills:</p>
-                        <div className="flex flex-wrap gap-1">
-                          {template.required_skills.map((skill, i) => (
-                            <Badge key={i} variant="outline" className="text-xs">{skill}</Badge>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </GlassCard>
-              ))}
-            </div>
-          )}
+      {/* Form pola jadwal */}
+      <FormPopup open={showTemplateDialog} onClose={() => setShowTemplateDialog(false)} ukuran="pendek" testId="scheduler-template-form"
+        judul="Pola jadwal baru" keterangan="Dipakai saat membuat jadwal otomatis."
+        onSimpan={handleCreateTemplate} galat={galat} labelSimpan="Buat pola">
+        <Isian label="Nama pola" wajib htmlFor="tpl-name">
+          <Input id="tpl-name" placeholder="Contoh: Shift pagi, Shift malam" value={templateForm.name}
+            onChange={e => setTemplateForm({ ...templateForm, name: e.target.value })} />
+        </Isian>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Isian label="Jam mulai" wajib htmlFor="tpl-start">
+            <Input id="tpl-start" type="time" value={templateForm.start_time}
+              onChange={e => setTemplateForm({ ...templateForm, start_time: e.target.value })} />
+          </Isian>
+          <Isian label="Jam selesai" wajib htmlFor="tpl-end">
+            <Input id="tpl-end" type="time" value={templateForm.end_time}
+              onChange={e => setTemplateForm({ ...templateForm, end_time: e.target.value })} />
+          </Isian>
+          <Isian label="Karyawan minimal" htmlFor="tpl-min">
+            <Input id="tpl-min" type="number" min="1" value={templateForm.min_employees}
+              onChange={e => setTemplateForm({ ...templateForm, min_employees: parseInt(e.target.value) })} />
+          </Isian>
+          <Isian label="Karyawan maksimal" htmlFor="tpl-max">
+            <Input id="tpl-max" type="number" min="1" value={templateForm.max_employees}
+              onChange={e => setTemplateForm({ ...templateForm, max_employees: parseInt(e.target.value) })} />
+          </Isian>
         </div>
-      )}
+      </FormPopup>
 
-      {/* Create Template Dialog */}
-      <Dialog open={showTemplateDialog} onOpenChange={setShowTemplateDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Buat Template Shift Baru</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label>Nama Template *</Label>
-              <Input 
-                placeholder="Misal: Morning Shift, Night Shift" 
-                value={templateForm.name}
-                onChange={e => setTemplateForm({ ...templateForm, name: e.target.value })}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Start Time *</Label>
-                <Input 
-                  type="time" 
-                  value={templateForm.start_time}
-                  onChange={e => setTemplateForm({ ...templateForm, start_time: e.target.value })}
-                />
-              </div>
-              <div>
-                <Label>End Time *</Label>
-                <Input 
-                  type="time" 
-                  value={templateForm.end_time}
-                  onChange={e => setTemplateForm({ ...templateForm, end_time: e.target.value })}
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Min Employees</Label>
-                <Input 
-                  type="number" 
-                  min="1"
-                  value={templateForm.min_employees}
-                  onChange={e => setTemplateForm({ ...templateForm, min_employees: parseInt(e.target.value) })}
-                />
-              </div>
-              <div>
-                <Label>Max Employees</Label>
-                <Input 
-                  type="number" 
-                  min="1"
-                  value={templateForm.max_employees}
-                  onChange={e => setTemplateForm({ ...templateForm, max_employees: parseInt(e.target.value) })}
-                />
-              </div>
-            </div>
+      {/* Form buat jadwal otomatis */}
+      <FormPopup open={showGenerateDialog} onClose={() => setShowGenerateDialog(false)} ukuran="panjang" testId="scheduler-generate-form"
+        judul="Buat jadwal shift otomatis" keterangan="Jadwal disimpan sebagai draf; terbitkan setelah diperiksa."
+        onSimpan={handleGenerateSchedule} menyimpan={generating} galat={galat} labelSimpan="Buat jadwal">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Isian label="Tanggal mulai" wajib>
+            <DatePicker value={generateForm.start_date} onChange={v => setGenerateForm({ ...generateForm, start_date: v })} testId="sched-gen-start" />
+          </Isian>
+          <Isian label="Tanggal selesai" wajib>
+            <DatePicker value={generateForm.end_date} min={generateForm.start_date || undefined}
+              onChange={v => setGenerateForm({ ...generateForm, end_date: v })} testId="sched-gen-end" />
+          </Isian>
+        </div>
+        <Isian label="Departemen" petunjuk="Kosong = semua departemen.">
+          <SmartNativeSelect value={generateForm.department || ''} onChange={e => setGenerateForm({ ...generateForm, department: e.target.value })}
+            data-testid="sched-gen-department" className="w-full">
+            <option value="">Semua departemen</option>
+            {deptOptions.map(d => <option key={d.value} value={d.value}>{d.legacy ? d.value : d.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Pola shift" wajib petunjuk={templates.length ? 'Pilih minimal 1.' : 'Belum ada pola — buat di tab Pola jadwal.'}>
+          <div className="max-h-40 space-y-2 overflow-y-auto rounded-md border border-[var(--glass-border)] p-3">
+            {templates.map(template => (
+              <label key={template.id} className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+                <Checkbox checked={generateForm.shift_templates.includes(template.id)}
+                  onCheckedChange={(v) => {
+                    const newTemplates = v
+                      ? [...generateForm.shift_templates, template.id]
+                      : generateForm.shift_templates.filter(t => t !== template.id);
+                    setGenerateForm({ ...generateForm, shift_templates: newTemplates });
+                  }} />
+                {template.name} ({template.start_time}–{template.end_time})
+              </label>
+            ))}
+            {templates.length === 0 && <p className="text-sm text-muted-foreground">Belum ada pola jadwal.</p>}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowTemplateDialog(false)}>Batal</Button>
-            <Button onClick={handleCreateTemplate}>
-              <Plus className="w-4 h-4 mr-2" /> Buat Template
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </Isian>
+        <p className="text-base font-semibold text-foreground">Batasan</p>
+        <label className="flex items-center justify-between gap-3 text-sm text-foreground">
+          Seimbangkan beban kerja antarkaryawan
+          <Switch checked={generateForm.constraints.balance_workload} onCheckedChange={v => setConstraint('balance_workload', v)} />
+        </label>
+        <label className="flex items-center justify-between gap-3 text-sm text-foreground">
+          Utamakan hari kerja berurutan
+          <Switch checked={generateForm.constraints.prefer_consecutive_days} onCheckedChange={v => setConstraint('prefer_consecutive_days', v)} />
+        </label>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Isian label="Maksimal jam per minggu" htmlFor="gen-max-hours">
+            <Input id="gen-max-hours" type="number" value={generateForm.constraints.max_hours_per_week}
+              onChange={e => setConstraint('max_hours_per_week', parseInt(e.target.value))} />
+          </Isian>
+          <Isian label="Minimal jam istirahat antarshift" htmlFor="gen-min-rest">
+            <Input id="gen-min-rest" type="number" value={generateForm.constraints.min_rest_hours}
+              onChange={e => setConstraint('min_rest_hours', parseInt(e.target.value))} />
+          </Isian>
+        </div>
+      </FormPopup>
 
-      {/* Generate Schedule Dialog */}
-      <Dialog open={showGenerateDialog} onOpenChange={setShowGenerateDialog}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Generate Jadwal Shift Otomatis</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Tanggal mulai *</Label>
-                <Input 
-                  type="date"
-                  value={generateForm.start_date}
-                  onChange={e => setGenerateForm({ ...generateForm, start_date: e.target.value })}
-                />
-              </div>
-              <div>
-                <Label>Tanggal selesai *</Label>
-                <Input 
-                  type="date"
-                  value={generateForm.end_date}
-                  onChange={e => setGenerateForm({ ...generateForm, end_date: e.target.value })}
-                />
-              </div>
-            </div>
-            <div>
-              <Label>Departemen (opsional)</Label>
-              <SmartNativeSelect value={generateForm.department || ''} onChange={e => setGenerateForm({ ...generateForm, department: e.target.value })}
-                data-testid="sched-gen-department" className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm text-foreground">
-                <option value="">Semua departemen</option>
-                {deptOptions.map(d => <option key={d.value} value={d.value}>{d.legacy ? d.value : d.label}</option>)}
-              </SmartNativeSelect>
-            </div>
-            <div>
-              <Label>Shift Templates * (Pilih minimal 1)</Label>
-              <div className="border border-input rounded-lg p-3 space-y-2 max-h-32 overflow-y-auto">
-                {templates.map(template => (
-                  <div key={template.id} className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      id={`template-${template.id}`}
-                      checked={generateForm.shift_templates.includes(template.id)}
-                      onChange={e => {
-                        const newTemplates = e.target.checked
-                          ? [...generateForm.shift_templates, template.id]
-                          : generateForm.shift_templates.filter(t => t !== template.id);
-                        setGenerateForm({ ...generateForm, shift_templates: newTemplates });
-                      }}
-                      className="rounded"
-                    />
-                    <label htmlFor={`template-${template.id}`} className="text-sm cursor-pointer">
-                      {template.name} ({template.start_time} - {template.end_time})
-                    </label>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="border-t pt-4">
-              <h4 className="text-sm font-semibold mb-3">Constraints</h4>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <Label>Balance Workload</Label>
-                  <Switch 
-                    checked={generateForm.constraints.balance_workload}
-                    onCheckedChange={v => setGenerateForm({ 
-                      ...generateForm, 
-                      constraints: { ...generateForm.constraints, balance_workload: v }
-                    })}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <Label>Prefer Consecutive Days</Label>
-                  <Switch 
-                    checked={generateForm.constraints.prefer_consecutive_days}
-                    onCheckedChange={v => setGenerateForm({ 
-                      ...generateForm, 
-                      constraints: { ...generateForm.constraints, prefer_consecutive_days: v }
-                    })}
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label>Max Hours/Week</Label>
-                    <Input 
-                      type="number"
-                      value={generateForm.constraints.max_hours_per_week}
-                      onChange={e => setGenerateForm({ 
-                        ...generateForm, 
-                        constraints: { ...generateForm.constraints, max_hours_per_week: parseInt(e.target.value) }
-                      })}
-                    />
-                  </div>
-                  <div>
-                    <Label>Min Rest Hours</Label>
-                    <Input 
-                      type="number"
-                      value={generateForm.constraints.min_rest_hours}
-                      onChange={e => setGenerateForm({ 
-                        ...generateForm, 
-                        constraints: { ...generateForm.constraints, min_rest_hours: parseInt(e.target.value) }
-                      })}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowGenerateDialog(false)}>Batal</Button>
-            <Button onClick={handleGenerateSchedule} disabled={generating}>
-              {generating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generating...</> : <><Sparkles className="w-4 h-4 mr-2" /> Generate</>}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* View Schedule Detail Dialog */}
+      {/* Rincian jadwal (popup) */}
       {selectedSchedule && (
-        <Dialog open={!!selectedSchedule} onOpenChange={() => setSelectedSchedule(null)}>
-          <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Detail Jadwal Shift</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <p className="text-xs text-muted-foreground">Periode</p>
-                  <p className="text-sm font-medium">{new Date(selectedSchedule.start_date).toLocaleDateString('id-ID')} - {new Date(selectedSchedule.end_date).toLocaleDateString('id-ID')}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Department</p>
-                  <p className="text-sm font-medium">{selectedSchedule.department || 'Semua'}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Status</p>
-                  <Badge>{selectedSchedule.status}</Badge>
-                </div>
-              </div>
-
-              {selectedSchedule.shifts && selectedSchedule.shifts.length > 0 && (
-                <div>
-                  <h4 className="text-sm font-semibold mb-2">Shift Assignments ({selectedSchedule.shifts.length})</h4>
-                  <div className="max-h-96 overflow-y-auto space-y-2">
-                    {selectedSchedule.shifts.map(shift => (
-                      <div key={shift.id} className="flex items-center justify-between p-3 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)]">
-                        <div className="flex-1">
-                          <p className="text-sm font-medium">{shift.employee_name}</p>
-                          <p className="text-xs text-muted-foreground">{shift.department}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-sm font-medium">{shift.shift_name}</p>
-                          <p className="text-xs text-muted-foreground">{shift.date} • {shift.start_time} - {shift.end_time}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </DialogContent>
-        </Dialog>
+        <DetailPopup open onClose={() => setSelectedSchedule(null)} testId="scheduler-detail"
+          judul={`Jadwal ${periode(selectedSchedule)}`}
+          status={(() => { const t = statusJadwal(selectedSchedule.status); return <StatusBadge status={selectedSchedule.status} label={t.label} tone={t.tone} />; })()}
+          aksi={<>
+            {selectedSchedule.shifts?.length > 0 && (
+              <TombolUnduh namaBerkas={`jadwal-shift-${String(selectedSchedule.start_date || '').slice(0, 10)}`} namaLembar="Jadwal"
+                baris={selectedSchedule.shifts} testId="scheduler-detail-unduh"
+                kolom={[
+                  { label: 'Karyawan', nilai: (x) => x.employee_name },
+                  { label: 'Departemen', nilai: (x) => x.department || '' },
+                  { label: 'Tanggal', nilai: (x) => tgl(x.date) },
+                  { label: 'Shift', nilai: (x) => x.shift_name || '' },
+                  { label: 'Jam mulai', nilai: (x) => x.start_time },
+                  { label: 'Jam selesai', nilai: (x) => x.end_time },
+                ]} />
+            )}
+            {selectedSchedule.status === 'draft' && (
+              <Button size="sm" variant="success" onClick={() => handlePublishSchedule(selectedSchedule.id)}><Send />Terbitkan</Button>
+            )}
+          </>}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Periode">{periode(selectedSchedule)}</BarisDetail>
+            <BarisDetail label="Departemen">{selectedSchedule.department || 'Semua departemen'}</BarisDetail>
+            <BarisDetail label="Jumlah shift">{selectedSchedule.shifts?.length ?? 0}</BarisDetail>
+          </dl>
+          <TabelData kolom={kolomRincian} baris={selectedSchedule.shifts || []} kunci={(x) => x.id} testId="scheduler-detail-table"
+            kosong={<p className="text-sm text-muted-foreground">Jadwal ini belum berisi shift.</p>} />
+        </DetailPopup>
       )}
-    </div>
+    </PageLayout>
   );
 }
