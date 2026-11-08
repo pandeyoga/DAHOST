@@ -43,6 +43,13 @@ Tahap B (8 Nov 2026) — alat TINDAKAN (Kontrak D), didaftarkan dengan dekorator
     + `X-Asisten-Tindakan: <id>`;
   * alat tindakan hanya dikirim ke model bila saklar "Tindakan AI aktif" menyala (`tools_untuk_api(tindakan=True)`);
     deskripsinya diberi awalan baku `[Tindakan]` supaya model tahu alat itu hanya menyiapkan kartu.
+
+Tahap E (9 Nov 2026) — hitung dengan kode:
+  * server tool `code_execution_20260120` ikut dikirim (ALAT_SERVER);
+  * alat baca `@alat(..., kode=True)` diberi `allowed_callers` sehingga juga bisa dipanggil dari kode Python di ruang
+    hitung (programmatic tool calling). Panggilan seperti itu dijalankan dengan salinan konteks ber-`pemanggil="kode"`
+    dan hasilnya dibatasi `BATAS_HASIL_KODE` (hasil untuk kode tidak masuk konteks model); alat lain (ui/tindakan)
+    yang dipanggil dari kode ditolak dengan galat ramah.
 """
 from __future__ import annotations
 
@@ -70,11 +77,18 @@ KINDS_TAHAP_A = (KIND_BACA, KIND_UI)
 DOMAINS = ("penjualan", "iklan", "live", "setoran", "keuangan", "stok", "produksi", "sdm",
            "umum", "laporan", "ui")
 
-BATAS_HASIL = 15_000          # karakter JSON hasil alat yang dikirim ke model
+BATAS_HASIL = 15_000          # karakter JSON hasil alat yang dikirim ke model (panggilan langsung)
+# Tahap E: hasil untuk KODE di ruang hitung tidak masuk konteks model (hanya keluaran akhir kode yang masuk),
+# jadi batasnya jauh lebih longgar — cukup sebagai pengaman memori/ukuran permintaan.
+BATAS_HASIL_KODE = 2_000_000
 BATAS_DETIK_ALAT = 45.0       # satu alat
 BATAS_DETIK_API = 30.0        # satu panggilan ctx.api
 _NAMA_RX = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
-NAMA_ALAT_SERVER = ("web_search", "web_fetch")
+# Alat server: pencarian web + ruang hitung (code execution; nama sub-alatnya ikut dicadangkan).
+NAMA_ALAT_KODE = ("code_execution", "bash_code_execution", "text_editor_code_execution")
+NAMA_ALAT_SERVER = ("web_search", "web_fetch") + NAMA_ALAT_KODE
+PEMANGGIL_KODE = "code_execution_20260120"   # nilai `allowed_callers` / `caller.type` programmatic tool calling
+PEMANGGIL = ("langsung", "kode")
 
 # Event yang boleh dipancarkan alat lewat ctx.emit / `_ui_events` (event lain milik inti).
 # Tahap D (proaktif): `ingatan` = chip "Diingat: …" / "Dilupakan: …" dari alat simpan/lupakan ingatan.
@@ -93,12 +107,15 @@ PESAN_BACA_SAJA = ("Alat ini hanya boleh membaca data. Perubahan data hanya lewa
 # Peran yang boleh melihat gaji per orang (keputusan owner no. 1).
 PERAN_GAJI = frozenset({"owner", "superadmin", "hr", "hr_manager", "manager_hr", "staff_hr"})
 
-# Server tools resmi (skill claude-api: versi 20260209 = penyaringan dinamis; JANGAN tambah
-# code_execution). Keputusan owner no. 2: ≤5 pencarian + ≤3 pengambilan halaman per pertanyaan.
+# Server tools resmi. Keputusan owner no. 2: ≤5 pencarian + ≤3 pengambilan halaman per pertanyaan.
+# Tahap E (9 Nov 2026, keputusan owner "hitung dengan kode"): ruang hitung `code_execution_20260120` (Python di
+# kontainer Claude, tanpa internet; gratis karena web_search/web_fetch 20260209 selalu ikut dikirim). Versi ini
+# yang mendukung programmatic tool calling (alat `kode=True` dipanggil dari kode, lihat tools_untuk_api).
 ALAT_SERVER = (
     {"type": "web_search_20260209", "name": "web_search", "max_uses": 5,
      "user_location": {"type": "approximate", "country": "ID", "timezone": "Asia/Jakarta"}},
     {"type": "web_fetch_20260209", "name": "web_fetch", "max_uses": 3, "max_content_tokens": 20000},
+    {"type": "code_execution_20260120", "name": "code_execution"},
 )
 
 
@@ -134,6 +151,10 @@ class Alat:
     risiko: Optional[str] = None
     menu: Optional[str] = None
     kelas: Optional[type] = None
+    # Tahap E (9 Nov 2026) — alat BACA yang boleh dipanggil dari kode di ruang hitung Claude (programmatic tool
+    # calling). Pemancaran `allowed_callers` ke API diatur inti (lihat tools_untuk_api); handler membaca
+    # `ctx.pemanggil` ("langsung" | "kode") untuk batas baris yang berbeda.
+    kode: bool = False
 
     @property
     def adalah_tindakan(self) -> bool:
@@ -188,11 +209,14 @@ def _periksa_dasar(name: str, label: str, description: str, input_schema: dict) 
 
 
 def alat(*, name: str, kind: str, label: str, description: str, input_schema: dict,
-         domain: str = "umum"):
-    """Dekorator pendaftaran alat (Kontrak A). Lihat docstring modul."""
+         domain: str = "umum", kode: bool = False):
+    """Dekorator pendaftaran alat (Kontrak A). Lihat docstring modul.
+    `kode=True` (Tahap E): alat baca ini juga boleh dipanggil dari kode di ruang hitung Claude."""
     _periksa_dasar(name, label, description, input_schema)
     if kind not in KINDS:
         raise ValueError(f"Jenis alat {name}: {kind!r} bukan salah satu dari {KINDS}")
+    if kode and kind != KIND_BACA:
+        raise ValueError(f"Alat {name}: hanya alat baca yang boleh dipanggil dari kode (kode=True)")
     if domain not in DOMAINS:
         raise ValueError(f"Domain alat {name}: {domain!r} bukan salah satu dari {DOMAINS}")
 
@@ -204,7 +228,7 @@ def alat(*, name: str, kind: str, label: str, description: str, input_schema: di
         if lama is not None and lama.asal != asal:
             raise ValueError(f"Nama alat '{name}' sudah dipakai oleh {lama.asal}")
         _DAFTAR[name] = Alat(name=name, kind=kind, label=label.strip(), description=description.strip(),
-                             input_schema=input_schema, domain=domain, handler=fn, asal=asal)
+                             input_schema=input_schema, domain=domain, handler=fn, asal=asal, kode=bool(kode))
         return fn
 
     return _daftar
@@ -297,22 +321,29 @@ def cari_tindakan(name: str) -> Optional[Alat]:
 
 
 def tools_untuk_api(kinds=KINDS_TAHAP_A, *, eager: bool = True, server: bool = True,
-                    tindakan: bool = False, kecuali=()) -> list[dict]:
+                    tindakan: bool = False, kecuali=(), kode: bool = True) -> list[dict]:
     """Daftar `tools` untuk Messages API: alat klien urut nama, lalu web_search & web_fetch.
 
     `eager_input_streaming` dipasang untuk alat klien (skill: aturan bawaan permintaan streaming);
     karena server tidak lagi memvalidasi isian, inti memvalidasi sendiri (`periksa_skema`).
     `tindakan=True` (saklar "Tindakan AI aktif" menyala) ikut mengirim alat tindakan.
     `kecuali` = nama alat yang tidak dikirim (Tahap D: alat ingatan).
+    Tahap E: alat baca `kode=True` diberi `allowed_callers: ["direct", "code_execution_20260120"]` (boleh dipanggil
+    langsung ATAU dari kode di ruang hitung); nilainya tetap → prefix cache tidak berubah antar permintaan.
+    `kode=False` (jalur darurat: ruang hitung dimatikan / ditolak API): tanpa `code_execution`, tanpa
+    `allowed_callers`, dan alat `kode=True` juga tanpa `eager_input_streaming` (bentuk alat Tahap D yang sudah teruji).
     """
     out = []
     for a in daftar_alat(kinds, tindakan=tindakan, kecuali=kecuali):
         d = a.untuk_api()
-        if eager:
+        alat_kode = a.kode and a.kind == KIND_BACA
+        if eager and (kode or not alat_kode):
             d["eager_input_streaming"] = True
+        if kode and alat_kode:
+            d["allowed_callers"] = ["direct", PEMANGGIL_KODE]
         out.append(d)
     if server:
-        out += [kanonik(s) for s in ALAT_SERVER]
+        out += [kanonik(s) for s in ALAT_SERVER if kode or not str(s.get("type", "")).startswith("code_execution")]
     return out
 
 
@@ -321,6 +352,10 @@ def label_alat(name: str) -> str:
         return "Mencari di web"
     if name == "web_fetch":
         return "Membuka halaman web"
+    if name in ("code_execution", "bash_code_execution"):
+        return "Menghitung dengan kode"
+    if name == "text_editor_code_execution":
+        return "Menyiapkan kode"
     a = _DAFTAR.get(name)
     return a.label if a else f"Menjalankan {name.replace('_', ' ')}"
 
@@ -490,6 +525,9 @@ class AlatContext:
         self.alat_id = alat_id
         self.baca_saja = bool(baca_saja)
         self.tindakan_id = tindakan_id
+        # Tahap E: "langsung" (model memanggil) | "kode" (dipanggil dari kode di ruang hitung Claude). Diisi inti
+        # per panggilan; handler alat `kode=True` boleh memberi batas baris lebih besar untuk "kode".
+        self.pemanggil = "langsung"
         self._token = token
         self._app = app
         self._emit_fn = emit
@@ -514,12 +552,15 @@ class AlatContext:
     def boleh_gaji(self) -> bool:
         return self.peran in PERAN_GAJI
 
-    def untuk_alat(self, alat_id: Optional[str]) -> "AlatContext":
-        """Salinan untuk satu panggilan alat (klien HTTP dipakai bersama; sifat baca-saja ikut)."""
+    def untuk_alat(self, alat_id: Optional[str], pemanggil: Optional[str] = None) -> "AlatContext":
+        """Salinan untuk satu panggilan alat (klien HTTP dipakai bersama; sifat baca-saja ikut).
+        Tahap E: `pemanggil` per panggilan ("langsung" | "kode"); salinan per panggilan karena panggilan dari kode
+        berjalan bersamaan dengan konteks induk yang sama."""
         c = AlatContext(user=self.user, cv=self.cv, today=self.today, token=self._token, app=self._app,
                         emit=self._emit_fn, klien_api=self._klien_api, alat_id=alat_id,
                         sesi_id=self.sesi_id, db=self.db, baca_saja=self.baca_saja,
                         tindakan_id=self.tindakan_id, pesan_id=self.pesan_id)
+        c.pemanggil = pemanggil if pemanggil in PEMANGGIL else self.pemanggil
         c._bersama = self._bersama
         return c
 
@@ -702,8 +743,13 @@ def _sumber_dari(v: Any) -> list[dict]:
     return out
 
 
+def batas_hasil(pemanggil: Optional[str]) -> int:
+    """Batas karakter hasil: 15.000 untuk panggilan langsung (masuk konteks model), 2 juta untuk kode."""
+    return BATAS_HASIL_KODE if pemanggil == "kode" else BATAS_HASIL
+
+
 def olah_hasil(tool_use_id: str, nama: str, hasil: Any, ctx: AlatContext) -> HasilAlat:
-    """Buang `_sumber`/`_ui_events`, pancarkan event-nya, serialisasi + potong hasil."""
+    """Buang `_sumber`/`_ui_events`, pancarkan event-nya, serialisasi + potong hasil (batas menurut `ctx.pemanggil`)."""
     sumber: list = []
     if isinstance(hasil, dict):
         hasil = dict(hasil)
@@ -720,7 +766,15 @@ def olah_hasil(tool_use_id: str, nama: str, hasil: Any, ctx: AlatContext) -> Has
         hasil = {"hasil": hasil}
     if sumber:
         ctx.emit("sumber", {"item": sumber})
-    return HasilAlat(tool_use_id=tool_use_id, nama=nama, isi=potong(serialisasi(hasil)), sumber=sumber)
+    teks = serialisasi(hasil)
+    if getattr(ctx, "pemanggil", "langsung") == "kode" and len(teks) > BATAS_HASIL_KODE:
+        # JSON yang dipotong tidak bisa di-`json.loads` oleh kode → galat jelas, bukan data rusak.
+        return _gagal(tool_use_id, nama,
+                      f"Hasil alat ini terlalu besar untuk dikirim ke kode ({len(teks):,} karakter; batas "
+                      f"{BATAS_HASIL_KODE:,}). Persempit permintaan (periode, kelompok, agregasi, atau batas baris).",
+                      "Hasil data terlalu besar")
+    return HasilAlat(tool_use_id=tool_use_id, nama=nama,
+                     isi=potong(teks, batas_hasil(getattr(ctx, "pemanggil", "langsung"))), sumber=sumber)
 
 
 def _gagal(tool_use_id: str, nama: str, pesan: str, pesan_layar: Optional[str] = None) -> HasilAlat:
@@ -728,15 +782,23 @@ def _gagal(tool_use_id: str, nama: str, pesan: str, pesan_layar: Optional[str] =
                      pesan=pesan_layar or pesan)
 
 
+PESAN_BUKAN_KODE = ("Alat ini tidak bisa dipanggil dari kode di ruang hitung. Panggil langsung (bukan dari kode), "
+                    "atau pakai alat yang memang boleh dipanggil dari kode.")
+
+
 async def jalankan_satu(tool_use_id: str, nama: str, args: Any, ctx: AlatContext, *,
-                        batas_detik: float = BATAS_DETIK_ALAT) -> HasilAlat:
-    """Jalankan SATU alat klien dengan validasi isian dan galat yang ramah."""
+                        batas_detik: float = BATAS_DETIK_ALAT, pemanggil: str = "langsung") -> HasilAlat:
+    """Jalankan SATU alat klien dengan validasi isian dan galat yang ramah.
+    Tahap E: `pemanggil="kode"` = dipanggil dari kode di ruang hitung — hanya alat baca `kode=True`; konteksnya
+    salinan sendiri dengan `ctx.pemanggil = "kode"` dan hasilnya memakai batas `BATAS_HASIL_KODE`."""
     a = cari_alat(nama)
     if a is None:
         return _gagal(tool_use_id, nama,
                       f"Alat '{nama}' belum tersedia di sistem ini. Jawab tanpa alat ini dan beri tahu "
                       "pengguna bahwa data tersebut belum bisa dibaca Asisten AI.",
                       "Alat ini belum tersedia")
+    if pemanggil == "kode" and not (a.kode and a.kind == KIND_BACA):
+        return _gagal(tool_use_id, nama, PESAN_BUKAN_KODE, "Alat ini tidak bisa dipanggil dari kode")
     if not isinstance(args, dict):
         return _gagal(tool_use_id, nama, json.dumps({"INVALID_JSON": serialisasi(args)}, ensure_ascii=False),
                       "Isian alat tidak sah")
@@ -744,7 +806,7 @@ async def jalankan_satu(tool_use_id: str, nama: str, args: Any, ctx: AlatContext
     if errs:
         return _gagal(tool_use_id, nama, "Isian alat tidak sah: " + "; ".join(errs) + ". Perbaiki lalu coba lagi.",
                       "Isian alat tidak sah")
-    c = ctx.untuk_alat(tool_use_id)
+    c = ctx.untuk_alat(tool_use_id, pemanggil="kode" if pemanggil == "kode" else "langsung")
     try:
         hasil = await asyncio.wait_for(a.handler(c, args), timeout=batas_detik)
     except AlatError as e:
@@ -764,7 +826,7 @@ async def jalankan_satu(tool_use_id: str, nama: str, args: Any, ctx: AlatContext
         return _gagal(tool_use_id, nama, "Hasil alat ini tidak bisa dibaca sistem.")
 
 
-async def jalankan_banyak(panggilan: list[tuple[str, str, Any]], ctx: AlatContext, *,
+async def jalankan_banyak(panggilan: list[tuple], ctx: AlatContext, *,
                           saat_mulai: Optional[Callable[[str, str], None]] = None,
                           saat_selesai: Optional[Callable[[HasilAlat], None]] = None,
                           penangan_tindakan: Optional[Callable[[str, str, Any], Awaitable[HasilAlat]]] = None
@@ -772,26 +834,32 @@ async def jalankan_banyak(panggilan: list[tuple[str, str, Any]], ctx: AlatContex
     """Jalankan panggilan alat satu giliran: alat `read` BERSAMAAN, alat `ui` dan tindakan berurutan
     sesudahnya (urutan grafik/tabel/kartu di layar = urutan panggilan model). Hasil sesuai urutan input.
 
+    `panggilan` = [(tool_use_id, nama, isian)] atau [(tool_use_id, nama, isian, pemanggil)] (Tahap E: pemanggil
+    "kode" untuk panggilan dari kode di ruang hitung; bawaan "langsung").
     Alat tindakan tidak pernah dijalankan di sini: panggilannya diserahkan ke `penangan_tindakan`
-    (inti: `siapkan` → kartu konfirmasi). Tanpa penangan → galat "belum tersedia"."""
+    (inti: `siapkan` → kartu konfirmasi). Tanpa penangan → galat "belum tersedia". Alat tindakan dari kode → galat."""
     hasil: dict[int, HasilAlat] = {}
 
-    async def _satu(i, tid, nama, args):
+    async def _satu(i, tid, nama, args, pemanggil):
         if saat_mulai:
             saat_mulai(tid, nama)
         a = _DAFTAR.get(nama)
-        if penangan_tindakan is not None and a is not None and a.adalah_tindakan:
+        if pemanggil == "kode" and a is not None and a.adalah_tindakan:
+            h = _gagal(tid, nama, PESAN_BUKAN_KODE, "Alat ini tidak bisa dipanggil dari kode")
+        elif penangan_tindakan is not None and a is not None and a.adalah_tindakan:
             h = await penangan_tindakan(tid, nama, args)
         else:
-            h = await jalankan_satu(tid, nama, args, ctx)
+            h = await jalankan_satu(tid, nama, args, ctx, pemanggil=pemanggil)
         hasil[i] = h
         if saat_selesai:
             saat_selesai(h)
 
     baca, lain = [], []
-    for i, (tid, nama, args) in enumerate(panggilan):
+    for i, p in enumerate(panggilan):
+        tid, nama, args = p[0], p[1], p[2]
+        pemanggil = p[3] if len(p) > 3 and p[3] in PEMANGGIL else "langsung"
         a = cari_alat(nama)
-        (baca if a is not None and a.kind == KIND_BACA else lain).append((i, tid, nama, args))
+        (baca if a is not None and a.kind == KIND_BACA else lain).append((i, tid, nama, args, pemanggil))
     if baca:
         await asyncio.gather(*(_satu(*p) for p in baca))
     for p in lain:

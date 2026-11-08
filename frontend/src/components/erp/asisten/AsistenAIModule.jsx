@@ -10,6 +10,8 @@
  * Tahap D (8 Nov 2026): "Ingatan AI" = halaman sendiri (`asisten-ai-ingatan`); chip "Diingat: …" di jawaban; lencana
  * Briefing/Laporan mingguan di riwayat; TAUTAN LANGSUNG `?portal=management&module=asisten-ai&sesi=<id>` (dan klik
  * notifikasi → `deepLinkParams`) membuka percakapan itu, juga saat halaman ini sudah terbuka.
+ * Tahap E (9 Nov 2026): lampiran berkas di kotak tanya (Excel/CSV/PDF/gambar/teks, dikirim sebagai id `lampiran`) dan
+ * kartu unduh berkas buatan AI (hasil hitung dengan kode) — lihat KomposerAsisten & BerkasAsisten.
  *
  * Tata letak (Standar UI/UX v2): cetakan PageLayout — kepala tipis, isi = jendela chat selebar layar; pilihan CV & periode di
  * kepala percakapan (bukan baris penyaring sendiri); sambutan + saran di tengah utas:
@@ -244,13 +246,16 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
     requestAnimationFrame(() => komposerRef.current?.fokus());
   }, []);
 
-  const kirim = useCallback(async (teks) => {
+  const kirim = useCallback(async (teks, { lampiran } = {}) => {
     if (mengalirRef.current || !siap) return;
     mengalirRef.current = true;
     setMengalir(true);
     const kA = kunciBaru('a');
+    // Tahap E: lampiran yang sudah diunggah dari kotak tanya ({id, nama, jenis, ukuran_kb}); server hanya menerima id.
+    const lamp = Array.isArray(lampiran) ? lampiran.filter((l) => l?.id) : [];
+    const pengguna = { kunci: kunciBaru('u'), peran: 'user', teks, ...(lamp.length ? { lampiran: lamp } : {}) };
     // Kartu yang masih menunggu menjadi kedaluwarsa begitu ada pertanyaan baru (Kontrak D; server melakukan hal yang sama).
-    setPesan((prev) => [...kedaluwarsakanMenunggu(prev), { kunci: kunciBaru('u'), peran: 'user', teks }, { ...pesanAsistenBaru(kA), kunci: kA }]);
+    setPesan((prev) => [...kedaluwarsakanMenunggu(prev), pengguna, { ...pesanAsistenBaru(kA), kunci: kA }]);
     const ubah = (fn) => setPesan((prev) => prev.map((p) => (p.kunci === kA ? fn(p) : p)));
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -268,7 +273,7 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
         setSesi((rows) => [{ judul: judulDariTeks(teks), created_at: kini, updated_at: kini, jumlah_pesan: 0, ada_tindakan_menunggu: false, ...s },
           ...rows.filter((r) => r.id !== sid)]);
       }
-      const hasil = await asistenApi.kirimPesan(sid, { teks, cv, periode }, {
+      const hasil = await asistenApi.kirimPesan(sid, { teks, cv, periode, lampiran: lamp.map((l) => l.id) }, {
         signal: ctrl.signal,
         onEvent: ({ event, data }) => {
           if (aktifRef.current !== sid) return;
@@ -390,6 +395,7 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
   }, [deepLinkParams, pilih, segarkan, muatDaftar]);
 
   // "Coba lagi" = kirim ulang pertanyaan sebelum jawaban yang gagal, sebagai giliran baru (riwayat server append-only).
+  // Lampirannya tidak dikirim ulang: berkas itu sudah tercatat pada pertanyaan sebelumnya di percakapan yang sama.
   const pesanRef = useRef(pesan);
   pesanRef.current = pesan;
   const cobaLagi = useCallback((pesanGagal) => {
@@ -472,7 +478,8 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
         <div className="grid w-full max-w-2xl gap-2 sm:grid-cols-2" data-testid="asisten-saran">
           {saran.slice(0, 6).map((s) => (
             <Button key={s} variant="outline" className="h-auto min-h-9 justify-start whitespace-normal py-2 text-left font-normal"
-              disabled={mengalir} onClick={() => kirim(s)} data-testid="asisten-saran-item">
+              disabled={mengalir} onClick={() => (komposerRef.current?.kirim ? komposerRef.current.kirim(s) : kirim(s))}
+              data-testid="asisten-saran-item">
               <Sparkles className="text-primary" />{s}
             </Button>
           ))}
@@ -543,7 +550,7 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
             <UtasPesan pesan={pesan} memuat={memuatPesan} kosong={sambutan} onCobaLagi={cobaLagi}
               onPutuskan={putuskan} onNavigate={onNavigate} mengalir={mengalir} tindakanAktif={tindakanAktif} />
             <KomposerAsisten ref={komposerRef} saran={pesan.length ? saran.slice(0, 4) : []} saranRingkas={pesan.length > 0}
-              onKirim={kirim} onHentikan={hentikan} mengalir={mengalir} nonaktif={!siap} catatan={catatanKomposer}
+              onKirim={kirim} onHentikan={hentikan} mengalir={mengalir} nonaktif={!siap} catatan={catatanKomposer} lampiranAktif
               placeholder={!siap ? (PLACEHOLDER_BELUM_SIAP[status.data?.alasan] || 'Asisten AI belum siap')
                 : (sempit ? 'Tanya soal penjualan, stok…' : undefined)} />
           </section>

@@ -32,9 +32,23 @@ Tahap D (8 Nov 2026, agen proaktif):
   "ingat …" / "lupakan …" → `simpan_ingatan` (isi = kalimat sesudah kata "ingat") / `lupakan_ingatan` (id dari
                 daftar ingatan di blok konteks) bila alatnya ditawarkan. "pengingat"/"ingatkan" TIDAK memicu skrip ini.
 
+Tahap E (9 Nov 2026) — hitung dengan kode + lampiran:
+  "dengan kode" / "pakai kode" / "hitung kode" → skrip "kode": `server_tool_use` code_execution + DUA panggilan alat
+                `kode=True` (prioritas `cari_data`) ber-`caller` code_execution_20260120 (stop tool_use, `container`
+                baru) → sesudah tool_result: `code_execution_tool_result` + `bash_code_execution` dengan berkas keluaran
+                (`bash_code_execution_output.file_id`, bisa diunduh lewat `files`) → teks. Tanpa alat kode: langsung
+                ke bagian bash + berkas.
+  giliran pertanyaan berisi blok document/image/container_upload → skrip "lampiran": teks yang menyebut lampiran.
+  `klien.files` (dan `klien.beta.files`) = Files API tiruan: upload / retrieve_metadata / download / delete.
+  Kontainer: id baru bila respons memakai ruang hitung; `container` di permintaan harus dikenal & belum kedaluwarsa
+  (`kedaluwarsakan_kontainer`) → selain itu 400 yang menyebut "container".
+
 Tiruan ini juga memeriksa aturan API yang penting bagi loop: tool_choice paksa ditolak, thinking
 harus adaptive, tidak boleh prefill asisten, setiap tool_use wajib dibalas tool_result pada pesan
 berikutnya, dan tanda tangan blok thinking yang diputar ulang harus utuh (riwayat append-only).
+Tahap E: balasan untuk panggilan dari kode berisi HANYA tool_result (isi teks), wajib membawa `container` yang
+sama, tanpa `tool_choice: none`; file_id lampiran harus ada di Files API tiruan; `container_upload` butuh alat
+code_execution; `allowed_callers` hanya nilai yang sah.
 """
 from __future__ import annotations
 
@@ -45,7 +59,7 @@ import json
 import os
 import re
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 MODEL_TIRUAN = "claude-opus-5-5"
@@ -153,7 +167,7 @@ def _teks_pertanyaan(msg: dict) -> Optional[str]:
     if isinstance(c, str):
         return c
     teks = [b.get("text", "") for b in (c or []) if isinstance(b, dict) and b.get("type") == "text"
-            and not str(b.get("text", "")).lstrip().startswith("<konteks_sistem>")]
+            and not str(b.get("text", "")).lstrip().startswith(("<konteks_sistem>", "<lampiran>"))]
     return " ".join(teks) if teks else None
 
 
@@ -163,6 +177,10 @@ class Keadaan:
         self.kw = kw
         self.tools = {t["name"]: t.get("input_schema") or {} for t in (kw.get("tools") or [])
                       if "input_schema" in t}
+        # Tahap E: alat klien yang boleh dipanggil dari kode + induk tiruan (Files API untuk berkas keluaran).
+        self.alat_kode = [t["name"] for t in (kw.get("tools") or []) if "input_schema" in t
+                          and CALLER_KODE in (t.get("allowed_callers") or [])]
+        self.induk: Optional["FakeAsyncAnthropic"] = None
         self.tool_choice = (kw.get("tool_choice") or {}).get("type")
         self.idx = 0
         self.pertanyaan = ""
@@ -174,6 +192,9 @@ class Keadaan:
                     break
         sesudah = msgs[self.idx + 1:]
         self.giliran_asisten = sum(1 for m in sesudah if m.get("role") == "assistant")
+        isi_q = msgs[self.idx].get("content") if msgs else None
+        self.lampiran = [b for b in (isi_q if isinstance(isi_q, list) else [])
+                         if isinstance(b, dict) and b.get("type") in ("document", "image", "container_upload")]
         self.peran_terakhir = msgs[-1].get("role") if msgs else None
         self.periode = "2026-11"
         self.hari_ini: Optional[date] = None
@@ -590,6 +611,99 @@ def _skrip_ingatan(k: "Keadaan") -> tuple[list[dict], str, dict]:
              _alat("simpan_ingatan", {"isi": isi, "kategori": kat})], "tool_use", {})
 
 
+# ── Tahap E: hitung dengan kode (programmatic tool calling) + lampiran ──────
+CALLER_KODE = "code_execution_20260120"
+_RX_KODE = re.compile(r"\b(dengan|pakai|lewat)\s+kode\b|\bhitung\s+kode\b", re.IGNORECASE)
+NAMA_BERKAS_CONTOH = "Rekap_hitung_mode_uji.xlsx"
+MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _xlsx_contoh() -> bytes:
+    try:
+        import io
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Rekap"
+        ws.append(["Kelompok", "Nilai"])
+        for i, v in enumerate((120, 85, 64), 1):
+            ws.append([f"Contoh {i}", v])
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+    except Exception:  # noqa: BLE001 — openpyxl tidak terpasang
+        return b"PK\x03\x04 berkas contoh mode uji"
+
+
+def _hasil_kode_selesai(k: "Keadaan") -> tuple[Optional[str], bool]:
+    """(id server_tool_use code_execution yang masih terbuka, ada hasil kode yang sudah selesai)."""
+    srv, tutup = [], set()
+    for m in k.kw.get("messages", [])[k.idx + 1:]:
+        if m.get("role") != "assistant" or not isinstance(m.get("content"), list):
+            continue
+        for b in m["content"]:
+            if b.get("type") == "server_tool_use" and b.get("name") == "code_execution":
+                srv.append(b.get("id"))
+            elif b.get("type") == "code_execution_tool_result":
+                tutup.add(b.get("tool_use_id"))
+    terbuka = [x for x in srv if x not in tutup]
+    return (terbuka[-1] if terbuka else None), bool(tutup)
+
+
+def _akhir_kode(k: "Keadaan", srv_id: Optional[str]) -> tuple[list[dict], str, dict]:
+    blok: list[dict] = []
+    n = sum(1 for d in k.dipanggil if d[0] in k.alat_kode and not d[3])
+    if srv_id:
+        blok.append({"type": "code_execution_tool_result", "tool_use_id": srv_id,
+                     "content": {"type": "code_execution_result", "stdout": f"Panggilan data berhasil: {n}\n",
+                                 "stderr": "", "return_code": 0, "content": []}})
+    fid = k.induk.files.tambah_keluaran(NAMA_BERKAS_CONTOH, _xlsx_contoh(), MIME_XLSX) if k.induk else "file_tiruan"
+    bid = _bid("srvtoolu")
+    blok += [{"type": "server_tool_use", "id": bid, "name": "bash_code_execution",
+              "input": {"command": 'python buat_rekap.py && ls "$OUTPUT_DIR"'}, "caller": {"type": "direct"}},
+             {"type": "bash_code_execution_tool_result", "tool_use_id": bid,
+              "content": {"type": "bash_code_execution_result", "stdout": NAMA_BERKAS_CONTOH + "\n", "stderr": "",
+                          "return_code": 0, "content": [{"type": "bash_code_execution_output", "file_id": fid}]}},
+             _teks(f"Perhitungan selesai ({n} panggilan data dari kode). Berkas **{NAMA_BERKAS_CONTOH}** siap "
+                   "diunduh *(mode uji)*.")]
+    return blok, "end_turn", {"kontainer": True}
+
+
+def _skrip_kode(k: "Keadaan") -> tuple[list[dict], str, dict]:
+    if not any(str(t.get("type", "")).startswith("code_execution") for t in k.kw.get("tools") or []):
+        return ([_teks("*(Mode uji: ruang hitung sedang tidak tersedia, jadi perhitungan dengan kode dilewati.)*")],
+                "end_turn", {})
+    terbuka, selesai = _hasil_kode_selesai(k)
+    if terbuka:
+        return _akhir_kode(k, terbuka)
+    if selesai or k.giliran_asisten:
+        return [_teks("Perhitungan dengan kode sudah selesai *(mode uji)*.")], "end_turn", {}
+    nama = "cari_data" if "cari_data" in k.alat_kode else (k.alat_kode[0] if k.alat_kode else None)
+    if not nama:
+        return _akhir_kode(k, None)
+    sid = _bid("srvtoolu")
+    caller = {"type": CALLER_KODE, "tool_id": sid}
+    args = _isi_contoh(k.tools[nama], k.periode)
+    kode = (f"import json, asyncio\nhasil = await asyncio.gather({nama}({json.dumps(args)}), "
+            f"{nama}({json.dumps(args)}))\nprint('Panggilan data berhasil:', len(hasil))")
+    return ([_pikir("Hitung dengan kode di ruang hitung; ambil data dari kode."),
+             _teks("Saya hitung dengan kode di ruang hitung."),
+             {"type": "server_tool_use", "id": sid, "name": "code_execution", "input": {"code": kode},
+              "caller": {"type": "direct"}},
+             {**_alat(nama, args), "caller": dict(caller)}, {**_alat(nama, copy.deepcopy(args)), "caller": dict(caller)}],
+            "tool_use", {"kontainer": True})
+
+
+def _skrip_lampiran(k: "Keadaan") -> tuple[list[dict], str, dict]:
+    jenis = {"document": 0, "image": 0, "container_upload": 0}
+    for b in k.lampiran:
+        jenis[b["type"]] += 1
+    bagian = [f"{jenis['document']} dokumen", f"{jenis['image']} gambar", f"{jenis['container_upload']} berkas data"]
+    return ([_pikir("Baca lampiran pengguna."),
+             _teks(f"Lampiran sudah saya terima: {', '.join(bagian)} *(mode uji)*.")], "end_turn",
+            {"kontainer": bool(jenis["container_upload"])})
+
+
 def _pikir(teks: str) -> dict:
     return {"type": "thinking", "thinking": teks, "signature": tanda_tangan(teks)}
 
@@ -612,6 +726,11 @@ def skrip_bawaan(k: Keadaan) -> tuple[list[dict], str, dict]:
         return _skrip_briefing(k)
     if "pengingat" not in q and (_RX_LUPA.search(q) or _RX_INGAT.search(q)):
         return _skrip_ingatan(k)
+    # Tahap E
+    if _RX_KODE.search(q):
+        return _skrip_kode(k)
+    if k.lampiran:
+        return _skrip_lampiran(k)
     if "putaran" in q:
         return [_pikir("Cek tanggal lagi."), _alat("tanggal_dan_periode", {})], "tool_use", {}
     if "tolak" in q:
@@ -743,6 +862,8 @@ class _Aliran:
             self._snap.stop_reason = ev.delta.stop_reason
             self._snap.stop_details = ev.delta.stop_details
             self._snap.usage = ev.usage
+            if getattr(ev.delta, "container", None) is not None:
+                self._snap.container = ev.delta.container
 
     def __aiter__(self):
         return self
@@ -793,16 +914,149 @@ class _Messages:
         return _Manajer(self._induk, kw)
 
 
-class FakeAsyncAnthropic:
-    """Pengganti `anthropic.AsyncAnthropic` untuk loop Asisten AI (hanya `.beta.messages.stream`)."""
+class _FakeBiner:
+    """Pengganti `AsyncBinaryAPIResponse` (hanya `await .read()`)."""
 
-    def __init__(self, skrip: Optional[Callable[[Keadaan], tuple]] = None, jeda: Optional[float] = None):
+    def __init__(self, data: bytes):
+        self._data = data
+
+    async def read(self) -> bytes:
+        return self._data
+
+
+class FakeFiles:
+    """Files API tiruan (`upload`, `retrieve_metadata`, `download`, `delete`) — tanda tangan sama dengan SDK 2.3.0."""
+
+    def __init__(self):
+        self.berkas: dict[str, dict] = {}
+        self.diunggah: list[str] = []
+        self.dihapus: list[str] = []
+        self.gagal_unggah = False
+        self.gagal_hapus = False
+
+    def _meta(self, fid: str) -> "_O":
+        b = self.berkas[fid]
+        return _O(id=fid, type="file", filename=b["filename"], mime_type=b["mime_type"], size_bytes=len(b["data"]),
+                  downloadable=b["downloadable"], created_at=b["created_at"])
+
+    async def upload(self, *, file, **_kw):
+        if self.gagal_unggah:
+            raise FakeAPIError(500, "upload failed (fake)")
+        nama, data, mime = file
+        data = data.read() if hasattr(data, "read") else bytes(data)
+        fid = _bid("file")
+        self.berkas[fid] = {"filename": nama, "data": data, "mime_type": mime, "downloadable": False,
+                            "created_at": datetime.now(timezone.utc).isoformat()}
+        self.diunggah.append(fid)
+        return self._meta(fid)
+
+    def tambah_keluaran(self, nama: str, data: bytes, mime: str) -> str:
+        """Berkas yang 'dibuat kode' di ruang hitung (bisa diunduh)."""
+        fid = _bid("file")
+        self.berkas[fid] = {"filename": nama, "data": data, "mime_type": mime, "downloadable": True,
+                            "created_at": datetime.now(timezone.utc).isoformat()}
+        return fid
+
+    async def retrieve_metadata(self, file_id: str, **_kw):
+        if file_id not in self.berkas:
+            raise FakeAPIError(404, f"File not found: {file_id}")
+        return self._meta(file_id)
+
+    async def download(self, file_id: str, **_kw):
+        if file_id not in self.berkas:
+            raise FakeAPIError(404, f"File not found: {file_id}")
+        if not self.berkas[file_id]["downloadable"]:
+            raise FakeAPIError(400, "This file is not downloadable.")
+        return _FakeBiner(self.berkas[file_id]["data"])
+
+    async def delete(self, file_id: str, **_kw):
+        if self.gagal_hapus:
+            raise FakeAPIError(500, "delete failed (fake)")
+        if file_id not in self.berkas:
+            raise FakeAPIError(404, f"File not found: {file_id}")
+        del self.berkas[file_id]
+        self.dihapus.append(file_id)
+        return _O(id=file_id, type="file_deleted")
+
+
+class FakeAsyncAnthropic:
+    """Pengganti `anthropic.AsyncAnthropic` untuk loop Asisten AI (`.beta.messages.stream` + Files API tiruan)."""
+
+    def __init__(self, skrip: Optional[Callable[[Keadaan], tuple]] = None, jeda: Optional[float] = None,
+                 tolak_kode: bool = False):
         self.skrip = skrip or skrip_bawaan
+        # Uji jalur darurat: tiruan API yang MENOLAK semua bentuk ruang hitung (alat, allowed_callers, container,
+        # container_upload, blok code execution, caller kode) dengan galat 400 yang menyebut istilahnya.
+        self.tolak_kode = bool(tolak_kode)
         self.jeda = float(os.environ.get("ASISTEN_AI_FAKE_JEDA", "0.01")) if jeda is None else jeda
         self.panggilan: list[dict] = []
         self._prefix_dilihat: set[str] = set()
         self.messages = _Messages(self)
-        self.beta = _O(messages=self.messages)
+        self.files = FakeFiles()
+        self.beta = _O(messages=self.messages, files=self.files)
+        # Tahap E: kontainer ruang hitung {id: kedaluwarsa?}
+        self.kontainer: dict[str, bool] = {}
+
+    def kedaluwarsakan_kontainer(self, cid: str) -> None:
+        self.kontainer[cid] = True
+
+    def _periksa_tahap_e(self, kw: dict) -> None:
+        """Aturan programmatic tool calling, kontainer, dan Files API (meniru 400 API)."""
+        if self.tolak_kode:
+            teks = json.dumps({"tools": kw.get("tools"), "messages": kw.get("messages")}, ensure_ascii=False)
+            for kata in ("allowed_callers", "container_upload", "code_execution"):
+                if kata in teks:
+                    raise FakeAPIError(400, f"{kata}: Extra inputs are not permitted (fake)")
+            if kw.get("container"):
+                raise FakeAPIError(400, "container: Extra inputs are not permitted (fake)")
+        tools = kw.get("tools") or []
+        ada_kode = any(t.get("type", "").startswith("code_execution") for t in tools)
+        for t in tools:
+            for c in t.get("allowed_callers") or []:
+                if c not in ("direct", "code_execution_20250825", CALLER_KODE, "code_execution_20260521"):
+                    raise FakeAPIError(400, f"tools.{t.get('name')}.allowed_callers: invalid value {c!r}")
+            if t.get("allowed_callers") and not ada_kode:
+                raise FakeAPIError(400, "allowed_callers requires a code execution tool")
+        cid = kw.get("container")
+        if cid is not None and (not isinstance(cid, str) or cid not in self.kontainer or self.kontainer[cid]):
+            raise FakeAPIError(400, f"container '{cid}' has expired or does not exist; send the request without "
+                                    "the container parameter to get a new container")
+        msgs = kw.get("messages") or []
+        for i, m in enumerate(msgs):
+            c = m.get("content")
+            if m.get("role") != "user" or not isinstance(c, list):
+                continue
+            for b in c:
+                t = b.get("type") if isinstance(b, dict) else None
+                fid = None
+                if t in ("document", "image") and (b.get("source") or {}).get("type") == "file":
+                    fid = b["source"].get("file_id")
+                elif t == "container_upload":
+                    fid = b.get("file_id")
+                    if not ada_kode:
+                        raise FakeAPIError(400, "container_upload requires the code execution tool")
+                if t in ("document", "image", "container_upload") and fid not in self.files.berkas:
+                    raise FakeAPIError(400, f"messages.{i}: file {fid} not found")
+        # Panggilan dari kode yang tertunda: giliran terakhir asisten berisi tool_use ber-caller code execution.
+        if len(msgs) >= 2 and msgs[-2].get("role") == "assistant" and isinstance(msgs[-2].get("content"), list):
+            tertunda = [b for b in msgs[-2]["content"] if b.get("type") == "tool_use"
+                        and str((b.get("caller") or {}).get("type", "")).startswith("code_execution")]
+            if tertunda:
+                last = msgs[-1].get("content") if isinstance(msgs[-1].get("content"), list) else []
+                if any(not isinstance(b, dict) or b.get("type") != "tool_result" for b in last):
+                    raise FakeAPIError(400, "When responding to programmatic tool calls, the user message must "
+                                            "contain only tool_result blocks.")
+                for b in last:
+                    isi = b.get("content")
+                    if not (isinstance(isi, str) or (isinstance(isi, list) and all(
+                            isinstance(x, dict) and x.get("type") == "text" for x in isi))):
+                        raise FakeAPIError(400, "tool_result content for programmatic tool calls must be text")
+                if not cid:
+                    raise FakeAPIError(400, "container is required when responding to pending programmatic tool "
+                                            "calls")
+                if (kw.get("tool_choice") or {}).get("type") == "none":
+                    raise FakeAPIError(400, "tool_choice none is not allowed while programmatic tool calls are "
+                                            "pending (fake)")
 
     def _pemakaian(self, kw: dict, blok: list, ekstra: dict) -> dict:
         prefix = json.dumps([kw.get("tools"), kw.get("system")], sort_keys=True, ensure_ascii=False)
@@ -822,8 +1076,21 @@ class FakeAsyncAnthropic:
 
     def _buat_aliran(self, kw: dict) -> _Aliran:
         _periksa_permintaan(kw)
-        blok, stop, ekstra = self.skrip(Keadaan(kw))
+        self._periksa_tahap_e(kw)
+        k = Keadaan(kw)
+        k.induk = self
+        blok, stop, ekstra = self.skrip(k)
         blok = [copy.deepcopy(b) for b in blok]
+        # Kontainer: dipakai ulang bila dikirim; dibuat baru bila respons memakai ruang hitung.
+        cid = kw.get("container")
+        if not cid and (ekstra.get("kontainer") or any(
+                b.get("type") == "container_upload" for m in kw.get("messages") or []
+                if isinstance(m.get("content"), list) for b in m["content"] if isinstance(b, dict))):
+            cid = _bid("container")
+            self.kontainer[cid] = False
+        kontainer = None
+        if cid:
+            kontainer = {"id": cid, "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()}
         u = self._pemakaian(kw, blok, ekstra)
         mid = _bid("msg")
         mulai_usage = {"input_tokens": u["input_tokens"], "cache_creation_input_tokens": u["cache_creation_input_tokens"],
@@ -861,11 +1128,11 @@ class FakeAsyncAnthropic:
         usage = _ke_obj(u)
         events.append(_O(type="message_delta",
                          delta=_ke_obj({"stop_reason": stop, "stop_sequence": None,
-                                        "stop_details": ekstra.get("stop_details")}),
+                                        "stop_details": ekstra.get("stop_details"), "container": kontainer}),
                          usage=usage))
         final = _ke_obj({"id": mid, "type": "message", "role": "assistant", "model": MODEL_TIRUAN,
                          "content": blok, "stop_reason": stop, "stop_sequence": None,
-                         "stop_details": ekstra.get("stop_details"), "usage": u})
+                         "stop_details": ekstra.get("stop_details"), "usage": u, "container": kontainer})
         events.append(_O(type="message_stop", message=final))
         jeda = ekstra.get("jeda", self.jeda)
         return _Aliran(events, final, jeda)

@@ -26,6 +26,12 @@ yang diawali tool_result kartu kedaluwarsa). Yang berubah pada pesan lama hanya 
 Tahap D (8 Nov 2026, agen proaktif): sesi punya `jenis` = "chat" (bawaan) | "briefing" | "laporan_mingguan"
 (dibuat otomatis oleh `core/asisten_ai/proaktif.py`); pesan pengguna buatan sistem (permintaan briefing
 otomatis) bertanda `otomatis: true`.
+
+Tahap E (9 Nov 2026):
+  * sesi menyimpan ruang hitung (kontainer code execution) yang dipakai percakapan: `container_id`,
+    `container_kedaluwarsa` (nilai `expires_at` terakhir dari API — nilai bergulir), `container_dibuat` (pertama kali
+    id itu terlihat; kontainer hidup ≤ 30 hari sejak dibuat). Dikirim balik selama umurnya < `UMUR_KONTAINER`;
+  * pesan pengguna membawa `lampiran: [{id, nama, jenis, ukuran_kb}]` (Kontrak K2) bila ada berkas terlampir.
 """
 from __future__ import annotations
 
@@ -42,6 +48,8 @@ MAKS_SESI_DAFTAR = 200
 MAKS_PESAN_SESI = 2000
 # Pesan "berjalan" yang lebih tua dari ini dianggap terhenti (proses mati di tengah jawaban).
 BATAS_BERJALAN = timedelta(minutes=15)
+# Tahap E: kontainer code execution kedaluwarsa 30 hari sesudah dibuat (dok resmi); sisakan satu hari pengaman.
+UMUR_KONTAINER = timedelta(days=29)
 
 
 def _sekarang() -> str:
@@ -151,6 +159,8 @@ async def ambil_pesan(db, user_id: str, sesi_id: str) -> list[dict]:
             item["periode"] = r["periode"]
         if r.get("otomatis"):
             item["otomatis"] = True
+        if r.get("peran") == "user" and r.get("lampiran"):
+            item["lampiran"] = [dict(x) for x in r["lampiran"] if isinstance(x, dict)]
         out.append(item)
     return out
 
@@ -173,9 +183,11 @@ async def _urutan_berikut(db, sesi: dict, n: int) -> int:
 
 
 async def mulai_giliran(db, sesi: dict, user_id: str, *, teks: str, api_user: dict, cv: str,
-                        periode: str, otomatis: bool = False) -> tuple[dict, dict]:
+                        periode: str, otomatis: bool = False,
+                        lampiran: Optional[list] = None) -> tuple[dict, dict]:
     """Simpan pesan pengguna + pesan asisten berstatus `berjalan`. Return (pesan_user, pesan_asisten).
-    `otomatis=True` (Tahap D): pesan pengguna ditulis sistem (permintaan briefing/laporan otomatis)."""
+    `otomatis=True` (Tahap D): pesan pengguna ditulis sistem (permintaan briefing/laporan otomatis).
+    `lampiran` (Tahap E): [{id, nama, jenis, ukuran_kb}] berkas yang dilampirkan pada pesan ini."""
     now = _sekarang()
     nomor = await _urutan_berikut(db, sesi, 2)
     p_user = {"id": _id(), "sesi_id": sesi["id"], "user_id": user_id, "urutan": nomor, "peran": "user",
@@ -183,6 +195,8 @@ async def mulai_giliran(db, sesi: dict, user_id: str, *, teks: str, api_user: di
               "api": [api_user], "cv": cv, "periode": periode}
     if otomatis:
         p_user["otomatis"] = True
+    if lampiran:
+        p_user["lampiran"] = [dict(x) for x in lampiran]
     p_asisten = {"id": _id(), "sesi_id": sesi["id"], "user_id": user_id, "urutan": nomor + 1,
                  "peran": "asisten", "dibuat": now, "diperbarui": now, "status": "berjalan", "blok": [],
                  "api": [], "cv": cv, "periode": periode}
@@ -243,3 +257,41 @@ async def tutup_tunda(db, user_id: str, pesan_id: str, cara: str) -> bool:
         {"$set": {"tunda.keadaan": "selesai", "tunda.ditutup": cara, "tunda.ditutup_pada": now,
                   "status": "selesai", "diperbarui": now}})
     return bool(getattr(res, "matched_count", 0))
+
+
+# ── Tahap E: ruang hitung (kontainer code execution) per percakapan ─────────
+def _waktu(v) -> Optional[datetime]:
+    try:
+        t = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def kontainer_sah(sesi: Optional[dict], sekarang: Optional[datetime] = None) -> Optional[str]:
+    """Id kontainer sesi yang masih boleh dikirim balik (umur < UMUR_KONTAINER sejak pertama terlihat)."""
+    cid = (sesi or {}).get("container_id")
+    if not cid or not isinstance(cid, str):
+        return None
+    dibuat = _waktu((sesi or {}).get("container_dibuat"))
+    if dibuat is None:
+        return None
+    if (sekarang or datetime.now(timezone.utc)) - dibuat >= UMUR_KONTAINER:
+        return None
+    return cid
+
+
+async def simpan_kontainer(db, user_id: str, sesi_id: str, container_id: str, kedaluwarsa: Optional[str], *,
+                           baru: bool) -> None:
+    """Catat kontainer terakhir percakapan (`baru=True` = id berbeda dari sebelumnya → umur dihitung ulang)."""
+    upd = {"container_id": str(container_id), "container_kedaluwarsa": kedaluwarsa}
+    if baru:
+        upd["container_dibuat"] = _sekarang()
+    await db.ai_chat_sessions.update_one({"id": sesi_id, "user_id": user_id}, {"$set": upd})
+
+
+async def lupakan_kontainer(db, user_id: str, sesi_id: str) -> None:
+    """Kontainer ditolak API (kedaluwarsa) → percakapan memakai kontainer baru pada permintaan berikutnya."""
+    await db.ai_chat_sessions.update_one(
+        {"id": sesi_id, "user_id": user_id},
+        {"$unset": {"container_id": "", "container_kedaluwarsa": "", "container_dibuat": ""}})

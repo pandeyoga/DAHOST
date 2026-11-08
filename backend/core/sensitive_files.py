@@ -27,6 +27,10 @@ SENSITIVE_UPLOAD_PREFIXES: tuple = (
     # Asisten AI (laporan): PDF/Excel buatan Asisten AI (angka keuangan/SDM). Unduhan resminya lewat
     # GET /api/asisten-ai/laporan/{id} (cek pembuat); di sini minimal wajib login — core/laporan_ai.py.
     "ai_reports/",
+    # Asisten AI Tahap E (9 Nov 2026): lampiran pengguna di percakapan + berkas keluaran "hitung dengan kode".
+    # Unduhan resmi berkas keluaran lewat GET /api/asisten-ai/berkas/{id} (cek pembuat); lampiran tidak diunduh balik.
+    "ai_lampiran/",
+    "ai_berkas/",
 )
 
 # `entity_type` lampiran (`db.attachments`) yang memuat data pribadi/HR.

@@ -5,14 +5,23 @@
  * (`mengalir`) tombol kartu ditahan supaya tidak ada dua aliran sekaligus.
  * Tahap D: permintaan yang ditulis sistem (`otomatis`, mis. briefing pagi) tampil sebagai gelembung redup
  * "Permintaan otomatis", bukan seolah-olah diketik pengguna.
+ * Tahap E: berkas yang dilampirkan pada pertanyaan tampil sebagai chip di atas gelembungnya.
  */
 import { memo, useEffect, useLayoutEffect, useRef } from 'react';
 import { Bot } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ChipLampiran } from './BerkasAsisten';
 import PesanAsisten from './PesanAsisten';
 
-const GelembungPengguna = memo(({ teks, otomatis }) => (
-  <div className="flex justify-end" data-testid="asisten-pesan-pengguna" data-otomatis={otomatis ? '1' : undefined}>
+const GelembungPengguna = memo(({ teks, otomatis, lampiran }) => (
+  <div className="flex flex-col items-end gap-1.5" data-testid="asisten-pesan-pengguna" data-otomatis={otomatis ? '1' : undefined}>
+    {lampiran?.length > 0 && (
+      <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5" data-testid="asisten-pesan-lampiran">
+        {lampiran.map((l, i) => (
+          <ChipLampiran key={l.id || i} nama={l.nama} jenis={l.jenis} ukuranKb={l.ukuran_kb} testId="asisten-pesan-lampiran-chip" />
+        ))}
+      </div>
+    )}
     {otomatis ? (
       <div className="max-w-[85%] rounded-2xl rounded-br-md border border-dashed border-[var(--glass-border)] px-4 py-2 text-xs text-muted-foreground"
         title={teks} data-testid="asisten-pesan-otomatis">
@@ -66,7 +75,7 @@ export default function UtasPesan({
       ) : (
         <div className="space-y-5 px-3 py-4 sm:px-5">
           {pesan.map((p) => (p.peran === 'user'
-            ? <GelembungPengguna key={p.kunci} teks={p.teks} otomatis={p.otomatis} />
+            ? <GelembungPengguna key={p.kunci} teks={p.teks} otomatis={p.otomatis} lampiran={p.lampiran} />
             : <PesanAsisten key={p.kunci} pesan={p} onCobaLagi={p.keadaan === 'galat' ? onCobaLagi : undefined}
               onPutuskan={onPutuskan} onNavigate={onNavigate} sibukUtas={mengalir} tindakanAktif={tindakanAktif} />))}
         </div>
