@@ -98,7 +98,9 @@ def _by_order(built):
 def test_kamus_kolom_harga_satuan_dan_subtotal_benar():
     m = {x["column"]: x["field"] for x in eng.auto_map(ORDER_HEADERS, MO)}
     assert m["Harga Setelah Diskon"] == "sku_unit_deal_price"
-    assert m["Subtotal Pesanan"] == "sku_subtotal_after_discount"
+    # 2026-11-09 (riset G5) — "Subtotal Pesanan" = subtotal PLATFORM (sesudah semua diskon);
+    # dasar omzet (`sku_subtotal_after_discount`) diturunkan mesin: sebelum − diskon penjual.
+    assert m["Subtotal Pesanan"] == "sku_subtotal_after_all_discount"
     assert m["Harga Awal"] == "sku_unit_original_price"
     assert m["Total Diskon"] == "total_discount"
     assert "total_discount" in MO.item_fields and "total_discount" not in MO.per_order_money
@@ -189,7 +191,7 @@ def test_pilihan_arti_di_luar_daftar_diabaikan_mesin():
 def test_pemetaan_lama_yang_salah_ditandai_pensiun():
     assert is_retired_mapping("marketplace_orders", "harga setelah diskon", "sku_subtotal_after_discount")
     assert is_retired_mapping("marketplace_orders", "subtotal pesanan", "sku_subtotal_before_discount")
-    assert not is_retired_mapping("marketplace_orders", "subtotal pesanan", "sku_subtotal_after_discount")
+    assert not is_retired_mapping("marketplace_orders", "subtotal pesanan", "sku_subtotal_after_all_discount")
 
 
 # ── upload / update_mapping lewat route (fake DB, penyimpanan berkas palsu) ──
@@ -247,7 +249,7 @@ def test_ingatan_pemetaan_yang_salah_tidak_dipasang_lagi(monkeypatch):
     res = _upload(md, req, _csv(ORDER_HEADERS, ORDER_ROWS), "Order.all.csv", "marketplace_orders")
     got = {m["column"]: m["field"] for m in res["session"]["mapping"]}
     assert got["Harga Setelah Diskon"] == "sku_unit_deal_price"
-    assert got["Subtotal Pesanan"] == "sku_subtotal_after_discount"
+    assert got["Subtotal Pesanan"] == "sku_subtotal_after_all_discount"     # riset G5 (9 Nov)
     dropped = res["session"]["format_memory"]["dropped"]
     assert {d["column"] for d in dropped} == {"Harga Setelah Diskon", "Subtotal Pesanan"}
     assert all("kamus kolom diperbaiki" in d["reason"] for d in dropped)
@@ -602,7 +604,7 @@ def test_migrasi_membetulkan_pemetaan_murni():
     got = {m["column"]: m["field"] for m in new}
     assert set(changed) == {"Harga Setelah Diskon", "Subtotal Pesanan"}
     assert got["Harga Setelah Diskon"] == "sku_unit_deal_price"
-    assert got["Subtotal Pesanan"] == "sku_subtotal_after_discount"
+    assert got["Subtotal Pesanan"] == "sku_subtotal_after_all_discount"   # riset G5 (9 Nov)
     assert not mig.has_retired("marketplace_orders", new)
 
 
