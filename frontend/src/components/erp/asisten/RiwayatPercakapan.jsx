@@ -88,7 +88,9 @@ export default function RiwayatPercakapan({
           ))
         )}
       </nav>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-[var(--glass-border)] px-3 py-2">
+      {/* Audit HR Tahap D: di Portal SDM / Portal Saya tautan halaman Tindakan & Ingatan AI (menu Portal Manajemen)
+          tidak ditampilkan — tanpa `onTampilan`. */}
+      {onTampilan && <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-[var(--glass-border)] px-3 py-2">
         <Button variant="link" size="sm" className={cn('px-0', tampilan === 'tindakan' ? 'text-primary' : 'text-foreground/70')}
           onClick={() => onTampilan('tindakan')} aria-current={tampilan === 'tindakan' ? 'page' : undefined} data-testid="asisten-tautan-tindakan">
           <ListChecks className="h-4 w-4" /> Tindakan AI
@@ -97,7 +99,7 @@ export default function RiwayatPercakapan({
           onClick={() => onTampilan('ingatan')} aria-current={tampilan === 'ingatan' ? 'page' : undefined} data-testid="asisten-tautan-ingatan">
           <Brain className="h-4 w-4" /> Ingatan AI
         </Button>
-      </div>
+      </div>}
     </div>
   );
 }

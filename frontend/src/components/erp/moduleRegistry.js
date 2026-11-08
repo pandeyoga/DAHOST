@@ -248,9 +248,8 @@ const RahazaDowntimeModule        = lazyRetry(() => import('./RahazaDowntimeModu
 
 // Phase 20C — AI Layer
 // FASE IA-1: RahazaAIModule (= "HR AI Insights") tidak lagi dipetakan dari registry.
-// Modulnya tetap hidup & dipakai sebagai tab di `hubs/HRAIHub.jsx` (yang meng-import
-// sendiri secara lazy). Deep-link 'hr-ai-insights' → makeRedirect('hr-ai-hub','insights').
-// const RahazaAIModule              = lazyRetry(() => import('./RahazaAIModule'));
+// Audit HR Tahap D (9 Nov 2026): modul itu (isinya AI PRODUKSI) DIHAPUS dari hub AI SDM dan berkasnya dihapus;
+// deep-link 'hr-ai-insights' / 'ai-actions' kini mendarat di tab pertama hub (Asisten AI SDM).
 const AssetManagementPortalLazy   = lazyRetry(() => import('./AssetManagementPortal'));
 // BACKLOG-A — Hub konsolidasi (T3.3/T3.4/T3.5/T3.6/T3.9)
 const FinanceJournalHub  = lazyRetry(() => import('./hubs/FinanceJournalHub'));
@@ -571,6 +570,8 @@ const PeerFeedbackModule = lazyRetry(() => import('./portal/PeerFeedbackModule')
 // Pola rotasi di hub Shift; id lama 'hr-shift-scheduler' diarahkan ke tab Roster.
 // Portal Saya › Jadwal Shift: jadwal sendiri + ganti/tukar shift (rekan → atasan → SDM).
 const PortalShiftSayaModule = lazyRetry(() => import('./portal/PortalShiftSayaModule'));
+// Audit HR Tahap D: Portal Saya › Tanya Asisten (Asisten AI ruang `saya`, data milik sendiri).
+const TanyaAsistenSaya = lazyRetry(() => import('./portal/TanyaAsistenSaya'));
 const JobBoardModule = lazyRetry(() => import('./hr/JobBoardModule'));
 const CareerCoachModule = lazyRetry(() => import('./portal/CareerCoachModule'));
 
@@ -1075,6 +1076,7 @@ export const MODULE_REGISTRY = {
   'portal-cuti':           PortalSayaCuti,
   'portal-absen':          PortalSayaAbsen,
   'portal-shift':          PortalShiftSayaModule,     // Tahap C audit HR (9 Nov 2026)
+  'portal-asisten':        TanyaAsistenSaya,          // Tahap D audit HR (9 Nov 2026)
   'portal-payslip':        PortalSayaPayslip,
   'portal-training':       PortalSayaTraining,
   'portal-notifikasi':     PortalSayaNotifikasi,

@@ -58,6 +58,7 @@
     {"modul": "portal-shift", "nama": "Jadwal Shift", "deskripsi": "Shift Anda 2 minggu ke depan; ajukan ganti shift atau tukar dengan rekan (rekan → atasan → SDM)."},
     {"modul": "portal-cuti", "nama": "Cuti & Lembur", "deskripsi": "Pengajuan dan sisa kuota."},
     {"modul": "portal-notifikasi", "nama": "Notifikasi", "deskripsi": "Pemberitahuan yang ditujukan kepada Anda."},
+    {"modul": "portal-asisten", "nama": "Tanya Asisten", "deskripsi": "Tanya absen, sisa cuti, slip gaji, dan shift Anda sendiri; asisten hanya membaca data milik Anda."},
     {"modul": "portal-payslip", "nama": "Slip Gaji", "deskripsi": "Rincian gaji per periode."},
     {"modul": "portal-kasbon", "nama": "Kasbon", "deskripsi": "Pinjaman dan cicilannya."},
     {"modul": "kpi-portal", "nama": "KPI", "deskripsi": "Target dan capaian pribadi."},

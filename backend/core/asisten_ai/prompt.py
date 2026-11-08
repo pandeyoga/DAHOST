@@ -152,7 +152,20 @@ def bersihkan_teks_pengguna(teks: str) -> str:
     return _TAG_RX.sub("", str(teks or "")).strip()
 
 
-def konteks_giliran(*, today, cv: str, periode: str, peran: str) -> str:
+# Audit HR Tahap D (9 Nov 2026): ruang percakapan selain Portal Manajemen — di GILIRAN pengguna (prefix tetap).
+TEKS_RUANG = {
+    "sdm": ("- Ruang: Portal SDM. Fokus pada data SDM (absensi, cuti, lembur, shift, penggajian). Untuk pengecualian "
+            "absensi pakai `rekap_absensi_pengecualian`; koreksi absen hanya lewat kartu `terapkan_koreksi_absen`; "
+            "jadwal shift hanya sebagai DRAF lewat kartu `susun_draf_shift` (bukan terbit); sebelum finalisasi gaji "
+            "pakai `cek_payroll_sebelum_finalisasi`. Gaji per orang hanya bila alat mengembalikannya."),
+    "saya": ("- Ruang: Portal Saya. Pengguna adalah karyawan yang bertanya tentang DATA DIRINYA SENDIRI (absen, cuti, "
+             "slip gaji, shift). Hanya alat data milik sendiri yang tersedia; jangan menjawab data karyawan lain, data "
+             "bisnis, atau rahasia perusahaan. Untuk mengajukan cuti, koreksi absen, atau tukar shift, arahkan ke "
+             "menu Cuti & Lembur, Absen Saya, atau Jadwal Shift."),
+}
+
+
+def konteks_giliran(*, today, cv: str, periode: str, peran: str, ruang: str = "umum") -> str:
     """Blok konteks yang BERUBAH per pesan → masuk giliran pengguna saat itu, bukan `system`."""
     try:
         y, m = (int(x) for x in str(periode).split("-")[:2])
@@ -166,5 +179,6 @@ def konteks_giliran(*, today, cv: str, periode: str, peran: str) -> str:
         f"- CV yang dipilih: {label_cv(cv)}.\n"
         f"- Periode bawaan layar: {label_periode}.\n"
         f"- Peran pengguna: {peran or '-'}.\n"
-        "</konteks_sistem>"
+        + (TEKS_RUANG[ruang] + "\n" if ruang in TEKS_RUANG else "")
+        + "</konteks_sistem>"
     )

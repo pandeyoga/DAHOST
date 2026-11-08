@@ -656,6 +656,8 @@ export const PORTAL_NAV = {
           { id: 'portal-shift',      label: 'Jadwal Shift', icon: CalendarRange },
           { id: 'portal-cuti',       label: 'Cuti & Lembur', icon: Calendar },
           { id: 'portal-notifikasi', label: 'Notifikasi',   icon: Bell },
+          // Tahap D audit HR (9 Nov 2026): Asisten AI ruang "saya" — tanya absen/cuti/slip/shift milik sendiri
+          { id: 'portal-asisten',    label: 'Tanya Asisten', icon: Sparkles },
         ],
       },
       {

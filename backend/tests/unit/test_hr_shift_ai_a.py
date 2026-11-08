@@ -13,7 +13,6 @@ import os
 import sys
 
 import pytest
-from fastapi import HTTPException
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.dirname(os.path.dirname(HERE))

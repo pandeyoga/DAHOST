@@ -328,6 +328,8 @@ async def _jadwal(db, schedule_id: str) -> dict:
 
 
 async def _bentrok_jadwal(db, doc: dict) -> dict:
+    if not (doc.get("start_date") and doc.get("end_date")):     # jadwal lama tanpa rentang
+        return {"bentrok": [], "jumlah": sr.hitung_bentrok([])}
     tanggal = sr.rentang(doc["start_date"], doc["end_date"], maks=sr.MAKS_HARI * 2)
     ids = doc.get("employee_ids") or sorted({e.get("employee_id") for e in doc.get("shifts") or []})
     emps = await sr.karyawan_lingkup(db, employee_ids=ids)

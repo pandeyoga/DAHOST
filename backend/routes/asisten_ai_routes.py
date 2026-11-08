@@ -65,8 +65,47 @@ from utils.waktu import today_wib
 
 log = logging.getLogger(__name__)
 
+# Audit HR Tahap D (9 Nov 2026): Asisten AI juga dibuka di Portal SDM (ruang `sdm`) dan Portal Saya (ruang `saya`,
+# data milik sendiri). Gerbang router = salah satu portal itu (Portal Saya terbuka untuk semua staf internal);
+# RUANG yang boleh dipakai diperiksa per percakapan (`ruang_diizinkan`): umum = Portal Manajemen, sdm = Portal
+# SDM atau Manajemen, saya = semua. Alat di luar ruang tidak ditawarkan ke model (core.asisten_ai.alat_base.RUANG).
 router = APIRouter(prefix="/api/asisten-ai", tags=["asisten-ai"],
-                   dependencies=[Depends(require_portal_dep("management"))])
+                   dependencies=[Depends(require_portal_dep("management", "hr", "self"))])
+
+PESAN_RUANG = {"umum": "Asisten AI Portal Manajemen hanya untuk akun yang punya akses Portal Manajemen.",
+               "sdm": "Asisten AI Portal SDM hanya untuk akun yang punya akses Portal SDM.",
+               "saya": "Ruang Asisten AI tidak dikenal."}
+
+
+def _punya_portal(user: dict, portal: str) -> bool:
+    """Sama dengan `routes.shared.require_portal` tetapi tanpa melempar galat."""
+    from data.module_catalog import granular_portals
+    from routes.shared import check_portal_access
+    if check_portal_access(user, portal):
+        return True
+    perms = set(user.get("_permissions") or [])
+    return "*" in perms or portal in granular_portals(perms) or bool({f"{portal}.manage", f"{portal}.view"} & perms)
+
+
+def ruang_diizinkan(user: dict) -> list:
+    out = []
+    if _punya_portal(user, "management"):
+        out.append("umum")
+    if "umum" in out or _punya_portal(user, "hr"):
+        out.append("sdm")
+    out.append("saya")
+    return out
+
+
+def _ruang_dari(user: dict, nilai) -> str:
+    """Ruang yang diminta (kosong = ruang paling luas yang diizinkan). 403 bila tidak diizinkan."""
+    boleh = ruang_diizinkan(user)
+    r = str(nilai or "").strip().lower() or boleh[0]
+    if r not in ("umum", "sdm", "saya"):
+        raise HTTPException(400, "Ruang Asisten AI harus umum, sdm, atau saya.")
+    if r not in boleh:
+        raise HTTPException(403, PESAN_RUANG[r])
+    return r
 
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"}
 _PERIODE_RX = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
@@ -95,6 +134,7 @@ def _galat_http(e: "tdk.GalatTindakan") -> HTTPException:
 async def status(request: Request):
     user = await require_auth(request)
     out = await mesin.status_siap()
+    out["ruang"] = ruang_diizinkan(user)
     try:
         out["tindakan_hari_ini"] = await tdk.jumlah_hari_ini(get_db(), user["id"])
     except Exception:  # noqa: BLE001 — status tetap tampil walau hitungan gagal
@@ -103,16 +143,19 @@ async def status(request: Request):
 
 
 @router.get("/saran")
-async def daftar_saran(request: Request, peran: Optional[str] = None):
+async def daftar_saran(request: Request, peran: Optional[str] = None, ruang: Optional[str] = None):
     user = await require_auth(request)
-    return saran.saran_untuk(peran or user.get("role"))
+    return saran.saran_untuk(peran or user.get("role"), _ruang_dari(user, ruang) if ruang else None)
 
 
 @router.get("/sessions")
-async def daftar_sesi(request: Request):
+async def daftar_sesi(request: Request, ruang: Optional[str] = None):
     user = await require_auth(request)
     db = get_db()
     rows = await simpan.daftar_sesi(db, user["id"])
+    # Audit HR Tahap D: riwayat per ruang (Portal SDM / Portal Saya hanya menampilkan percakapannya sendiri)
+    r = _ruang_dari(user, ruang)
+    rows = [x for x in rows if (x.get("ruang") or "umum") == r]
     menunggu = await tdk.sesi_menunggu(db, user["id"])
     for r in rows:
         r["ada_tindakan_menunggu"] = r["id"] in menunggu
@@ -123,7 +166,7 @@ async def daftar_sesi(request: Request):
 async def buat_sesi(request: Request):
     user = await require_auth(request)
     body = await _body(request)
-    return await simpan.buat_sesi(get_db(), user["id"], body.get("judul"))
+    return await simpan.buat_sesi(get_db(), user["id"], body.get("judul"), ruang=_ruang_dari(user, body.get("ruang")))
 
 
 @router.get("/sessions/{sesi_id}")
@@ -193,6 +236,7 @@ async def kirim_pesan(sesi_id: str, request: Request):
     sesi = await simpan.ambil_sesi(db, user["id"], sesi_id)
     if not sesi:
         raise HTTPException(404, "Percakapan tidak ditemukan.")
+    _ruang_dari(user, sesi.get("ruang") or "umum")   # akses portal dicabut sesudah percakapan dibuat → 403
     try:
         lampiran = await lmp.periksa_untuk_pesan(db, user["id"], body.get("lampiran"))
     except lmp.GalatLampiran as e:

@@ -260,6 +260,37 @@ async def get_screening_history(request: Request, limit: int = Query(20, ge=1, l
 #  P2-9: PREDICTIVE ATTRITION
 # ═══════════════════════════════════════════════════════════════════════
 
+KESIAPAN_ABSEN_PER_KARYAWAN = 10   # rata-rata ≥ 10 catatan absen per karyawan aktif dalam 90 hari
+
+
+@router.get("/kesiapan")
+async def kesiapan_ai_sdm(request: Request):
+    """Audit HR Tahap D (9 Nov 2026): fitur AI SDM lama hanya ditampilkan bila datanya cukup. Dulu ketiganya tampil
+    walau KPI/LMS/skill = 0 dokumen dan absensi 2 catatan, sehingga hasilnya tebakan LLM atau kosong.
+      attrition — catatan absensi 90 hari ≥ 10 × jumlah karyawan aktif (dan ≥ 5 karyawan aktif);
+      skill-gap — ada syarat keahlian (`rahaza_skill_requirements`) DAN karyawan yang sudah diisi keahliannya;
+      coaching  — ada penilaian kinerja (`dewi_perf_reviews`) atau peserta pelatihan (`dewi_lms_enrollments`).
+    Hanya hitungan (tanpa data pribadi)."""
+    await require_auth(request)
+    db = get_db()
+    aktif = await db.rahaza_employees.count_documents({"active": True})
+    since90 = (_now() - timedelta(days=90)).strftime("%Y-%m-%d")
+    absen = await db.rahaza_attendance_events.count_documents({"date": {"$gte": since90}})
+    syarat = await db["rahaza_skill_requirements"].count_documents({})   # ditulis routes/dewi_skill_gap.py
+    berkeahlian = await db.rahaza_employees.count_documents({"active": True, "skills.0": {"$exists": True}})
+    nilai = await db.dewi_perf_reviews.count_documents({})
+    lms = await db.dewi_lms_enrollments.count_documents({})
+    perlu = KESIAPAN_ABSEN_PER_KARYAWAN * max(aktif, 1)
+    return {
+        "attrition": {"siap": aktif >= 5 and absen >= perlu,
+                      "alasan": f"{absen} catatan absensi 90 hari terakhir (perlu ≥ {perlu}) untuk {aktif} karyawan aktif."},
+        "skill-gap": {"siap": syarat > 0 and berkeahlian > 0,
+                      "alasan": f"{syarat} syarat keahlian, {berkeahlian} karyawan sudah diisi keahliannya."},
+        "coaching": {"siap": nilai > 0 or lms > 0,
+                     "alasan": f"{nilai} penilaian kinerja, {lms} peserta pelatihan."},
+    }
+
+
 @router.post("/attrition/predict")
 async def predict_attrition(
     request: Request,
