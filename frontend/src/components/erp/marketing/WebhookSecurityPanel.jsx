@@ -69,7 +69,7 @@ export default function WebhookSecurityPanel({ headers }) {
   return (
     <div data-testid="webhook-security-panel">
       <Notice tone={error ? 'danger' : allOk ? 'success' : 'warning'} icon={allOk ? ShieldCheck : ShieldAlert}
-        title="Keamanan webhook (tanda tangan HMAC-SHA256)"
+        title="Keamanan webhook (tanda tangan digital)"
         action={
           <div className="flex items-center gap-2">
             <Button size="icon" variant="outline" onClick={load} disabled={loading} title="Muat ulang status keamanan"
