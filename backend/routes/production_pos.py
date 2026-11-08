@@ -136,12 +136,11 @@ async def _resolve_rahaza_variant(db, item: dict):
 
 
 # ─── PRODUCTION POs ──────────────────────────────────────────────────────────
-@router.get("/production-pos")
-async def get_pos(request: Request):
-    user = await require_auth(request)
-    deny_klien(user)
-    db = get_db()
-    sp = request.query_params
+def po_list_query(sp) -> dict:
+    """Saringan daftar PO produksi dari parameter `search`, `status`, `vendor_id`, `business_type`.
+
+    SATU aturan untuk daftar PO (`GET /production-pos`) dan unduhan Excel server
+    (`/export-excel?type=production-pos`) — 8 Nov 2026: unduhan dulu mengabaikan saringan layar."""
     query = {}
     search = sp.get('search'); status = sp.get('status'); vendor_id = sp.get('vendor_id')
     if search: query['$or'] = [{'po_number': {'$regex': search, '$options': 'i'}}, {'customer_name': {'$regex': search, '$options': 'i'}}]
@@ -153,6 +152,16 @@ async def get_pos(request: Request):
         query['business_type'] = 'internal'
     elif business_type == 'maklon':
         query['business_type'] = {'$ne': 'internal'}
+    return query
+
+
+@router.get("/production-pos")
+async def get_pos(request: Request):
+    user = await require_auth(request)
+    deny_klien(user)
+    db = get_db()
+    sp = request.query_params
+    query = po_list_query(sp)
 
     # Paginate the parent PO query (Phase 10A)
     page, per_page, skip, wants = _paginate_params(sp)
