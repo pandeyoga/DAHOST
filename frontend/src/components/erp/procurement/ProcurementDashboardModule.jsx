@@ -133,20 +133,24 @@ export default function ProcurementDashboardModule({ token, onNavigate }) {
         <div className="space-y-3">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <StatTile label="Permintaan menunggu" value={k.pr_pending ?? 0} accent={k.pr_pending ? 'warning' : 'default'}
-              sub={`dari ${k.pr_total ?? 0} permintaan · menunggu persetujuan dept, keuangan, atau final`}
+              sub={`dari ${k.pr_total ?? 0} permintaan seluruhnya`}
               hint="Buka permintaan" onClick={go('proc-requests')} testId="proc-kpi-pr-pending" />
             <StatTile label="PO berjalan" value={k.po_open ?? 0}
-              sub={`Nilai ${fmtRp(k.open_po_value)} · disetujui, barang belum diterima penuh · ${k.po_pending_approval ?? 0} menunggu persetujuan`}
+              sub={`Nilai ${fmtRp(k.open_po_value)} · ${k.po_pending_approval ?? 0} menunggu persetujuan`}
               hint="Buka PO" onClick={go('proc-purchase-orders')} testId="proc-kpi-po-open" />
             <StatTile label="Hutang pemasok" value={fmtRp(k.ap_outstanding)} accent={k.ap_outstanding ? 'danger' : 'default'}
-              sub={`Sisa tagihan ${k.ap_unpaid ?? 0} faktur belum lunas (sama dengan Keuangan › Hutang, tanpa CMT)`}
+              sub={`${k.ap_unpaid ?? 0} faktur belum lunas (tanpa CMT)`}
               hint="Buka faktur" onClick={go('proc-ap-invoices')} testId="proc-kpi-ap" />
             <StatTile label="Belanja bulan ini" value={fmtRp(k.po_value_this_month)}
-              sub="Nilai PO bertanggal bulan ini, tanpa draf, ditolak, atau batal"
+              sub="PO bulan ini, tanpa draf/ditolak/batal"
               hint="Buka analisis" onClick={go('proc-analytics')} testId="proc-kpi-spend-month" />
           </div>
           {/* Angka pendukung dalam satu kalimat (dulu 4 kartu tambahan → 8 kartu berjejer). */}
           <p className="flex flex-wrap items-center gap-x-1 gap-y-1 text-sm text-muted-foreground" data-testid="proc-dashboard-sekunder">
+            {poPerhatian.length === 0 && (<>
+              <span className="text-[hsl(var(--success-text))]" data-testid="proc-alert-po">Tidak ada PO terlambat atau tiba ≤ 7 hari</span>
+              <span aria-hidden="true">·</span>
+            </>)}
             <span data-testid="proc-kpi-gr">Penerimaan barang <b className="tabular-nums text-foreground">{k.gr_received ?? 0}</b>
               {' '}({k.gr_draft ?? 0} draf, {k.qc_pending ?? 0} belum diperiksa QC)</span>
             <span aria-hidden="true">·</span>
@@ -184,9 +188,7 @@ export default function ProcurementDashboardModule({ token, onNavigate }) {
         </Notice>
       )}
 
-      {poPerhatian.length === 0 ? (
-        <Notice tone="success" testId="proc-alert-po">Tidak ada PO berjalan yang terlambat atau dijadwalkan tiba 7 hari ke depan.</Notice>
-      ) : (
+      {poPerhatian.length > 0 && (
         <Bagian judul="PO perlu perhatian" testId="proc-alert-po"
           keterangan="PO berjalan yang lewat tanggal terima atau dijadwalkan tiba 7 hari ke depan."
           alat={(
@@ -210,10 +212,8 @@ export default function ProcurementDashboardModule({ token, onNavigate }) {
                   : <StatusBadge status="pending" label="Tiba ≤ 7 hari" tone="warning" />) },
               ]} />
         </Bagian>
-
       )}
         <Bagian judul="Dokumen per tahap" testId="proc-pipeline"
-          keterangan="Jumlah dokumen tiap tahap dan rincian statusnya."
           alat={
             <TombolUnduh namaBerkas="dokumen-pengadaan-per-tahap" namaLembar="Per tahap" baris={tahapBaris}
               testId="proc-pipeline-unduh"

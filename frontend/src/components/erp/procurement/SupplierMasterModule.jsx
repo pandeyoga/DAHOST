@@ -877,7 +877,7 @@ export default function SupplierMasterModule({ token }) {
 
   return (
     <PageLayout testId="supplier-master-page" title="Master Supplier"
-      subtitle="Kontak, NPWP, termin bayar, rekening, dan daftar harga pemasok."
+      subtitle="Kontak, termin bayar, rekening, dan harga pemasok."
       actions={
         // Banyak tombol data → dibungkus supaya tetap berbaris di HP (tidak keluar layar). "Tarik data lama"
         // (jarang dipakai) masuk menu Lainnya supaya kepala tidak setinggi tiga baris.

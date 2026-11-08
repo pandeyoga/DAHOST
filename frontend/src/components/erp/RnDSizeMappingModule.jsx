@@ -156,7 +156,9 @@ export default function RnDSizeMappingModule({ token }) {
           <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
       )}
-      summary={(
+      // Saat semua beres, empat kartu (dua bernilai 0) diganti satu kalimat hijau di isi halaman supaya tabel
+      // "sudah terhubung" langsung terlihat; kartu tampil lagi begitu ada ukuran yang perlu dipadankan.
+      summary={!allClear && (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <StatTile testId="rnd-size-stat-unmatched_labels" label="Belum dipadankan" value={angka('unmatched_labels')}
             accent={items.length > 0 ? 'warning' : 'default'}
@@ -175,7 +177,9 @@ export default function RnDSizeMappingModule({ token }) {
       ) : allClear ? (
         <Notice tone="success" icon={CheckCircle2} testId="rnd-size-mapping-allclear"
           title="Semua ukuran sudah dipadankan ke master produksi">
-          Tidak ada style yang tertahan karena ukuran.
+          <span data-testid="rnd-size-stat-matched_labels">{angka('matched_labels')} label ukuran terhubung</span>
+          {' · '}<span data-testid="rnd-size-stat-variants_scanned">{angka('variants_scanned')} varian diperiksa</span>
+          {' · '}<span data-testid="rnd-size-stat-blocked_styles">{angka('blocked_styles')} style tertahan</span>.
         </Notice>
       ) : (
         <div className="space-y-3">

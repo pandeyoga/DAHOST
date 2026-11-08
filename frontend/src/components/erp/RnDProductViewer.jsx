@@ -311,6 +311,14 @@ export default function RnDProductViewer() {
           status={baris.gaps.length
             ? <StatusBadge status="kurang" tone="warning" label={`${baris.gaps.length} kekurangan`} />
             : <StatusBadge status="lengkap" tone="success" label="Lengkap" />}>
+          {baris.gaps.length > 0 ? (
+            <Notice tone="warning" title="Yang belum lengkap">
+              <ul className="list-disc space-y-0.5 pl-4">{baris.gaps.map((g) => <li key={g}>{g}</li>)}</ul>
+            </Notice>
+          ) : (
+            <Notice tone="success" title="Lengkap: BOM, HPP batch, katalog, dan produksi" />
+          )}
+
           <div className="flex flex-col gap-4 sm:flex-row">
             {baris.images?.[0] && <Gambar src={baris.images[0]} alt={baris.name} besar />}
             <dl className="min-w-0 flex-1 divide-y divide-[var(--glass-border)]">
@@ -326,14 +334,6 @@ export default function RnDProductViewer() {
               <BarisDetail label="Stok">{baris.stock_qty}</BarisDetail>
             </dl>
           </div>
-
-          {baris.gaps.length > 0 ? (
-            <Notice tone="warning" title="Yang belum lengkap">
-              <ul className="list-disc space-y-0.5 pl-4">{baris.gaps.map((g) => <li key={g}>{g}</li>)}</ul>
-            </Notice>
-          ) : (
-            <Notice tone="success" title="Lengkap: BOM, HPP batch, katalog, dan produksi" />
-          )}
 
           {detail?.loading ? (
             <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-8" />)}</div>

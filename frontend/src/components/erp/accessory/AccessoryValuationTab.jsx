@@ -33,7 +33,7 @@ import DetailPopup from '@/components/ui/detail-popup';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { thisMonthWIB } from '@/lib/waktu';
 import PageLayout from '../layout/PageLayout';
-import { EmptyState, Notice, StatTile } from '../moduleAtoms';
+import { EmptyState, Notice } from '../moduleAtoms';
 import AccessoryValuationLedger from './AccessoryValuationLedger';
 // FASE 10: otomasi — ringkasan harian item belum dinilai + rapor bulanan via email
 import AccessoryValuationAutomation from './AccessoryValuationAutomation';
@@ -275,32 +275,32 @@ export default function AccessoryValuationTab({ token, onRefreshDash }) {
         </Button>
       </>}
       summary={<>
-        {/* Nilai persediaan total sudah tampil di kartu atas modul Aksesoris — di sini rinciannya. */}
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatTile label="Item bernilai" value={fmtNum(totals.valued_items)}
-            sub={`dari ${fmtNum(totals.total_items)} item · punya HPP`} />
-          <StatTile label="Belum dinilai" value={fmtNum(totals.unvalued_items)}
-            accent={totals.unvalued_items ? 'warning' : 'default'}
-            sub={totals.unvalued_items ? `${fmtNum(totals.unvalued_qty)} unit stok tanpa nilai` : 'Semua item sudah dinilai'} />
-          <StatTile label="Jumlah stok" value={fmtNum(totals.total_qty)}
-            sub={`Bernilai ${fmtRp(totals.total_value)}`} />
-          <StatTile label="HPP rata-rata" value={adaStok ? fmtRp(totals.avg_unit_cost) : '—'}
-            sub={adaStok ? (METHOD_LABEL[data?.cost_method] || data?.cost_method) : 'Belum ada stok untuk dirata-rata'}
-            hint="Nilai persediaan ÷ jumlah stok." />
-        </div>
-        {/* Peringatan item belum dinilai */}
+        {/* Ringkasan valuasi = satu kalimat (dulu 4 kartu + kotak peringatan besar di bawah ringkasan modul →
+            tabel baru mulai di tengah layar). Angka sama: `/api/acc/valuation` totals. */}
+        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted-foreground" data-testid="acc-val-summary">
+          <span>Item bernilai <b className="tabular-nums text-foreground">{fmtNum(totals.valued_items)}</b> dari {fmtNum(totals.total_items)}</span>
+          <span aria-hidden="true">·</span>
+          <span>Belum dinilai <b className={totals.unvalued_items ? 'tabular-nums text-[hsl(var(--warning-text))]' : 'tabular-nums text-foreground'}>{fmtNum(totals.unvalued_items)}</b>
+            {totals.unvalued_items ? ` (${fmtNum(totals.unvalued_qty)} unit stok tanpa nilai)` : ''}</span>
+          <span aria-hidden="true">·</span>
+          <span>Jumlah stok <b className="tabular-nums text-foreground">{fmtNum(totals.total_qty)}</b> bernilai {fmtRp(totals.total_value)}</span>
+          <span aria-hidden="true">·</span>
+          <span title="Nilai persediaan ÷ jumlah stok.">HPP rata-rata <b className="tabular-nums text-foreground">{adaStok ? fmtRp(totals.avg_unit_cost) : '—'}</b>
+            {' '}({adaStok ? (METHOD_LABEL[data?.cost_method] || data?.cost_method) : 'belum ada stok untuk dirata-rata'})</span>
+        </p>
+        {/* Peringatan item belum dinilai — satu baris, tombolnya menyaring tabel. */}
         {totals.unvalued_items > 0 && (
-          <Notice tone="warning" icon={AlertTriangle} testId="acc-val-unvalued-banner"
-            title={`${totals.unvalued_items} item belum punya harga satuan`}
-            action={filter !== 'unvalued' && (
-              <Button size="sm" variant="outline" onClick={() => { setFilter('unvalued'); pg.setPage(1); }}
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[hsl(var(--warning-text))]" data-testid="acc-val-unvalued-banner">
+            <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>{totals.unvalued_items} item belum punya harga satuan: penerimaan, pengeluaran, dan selisih opname-nya tidak
+              berjurnal sampai HPP diisi lewat Set HPP.</span>
+            {filter !== 'unvalued' && (
+              <Button size="sm" variant="link" className="h-auto p-0" onClick={() => { setFilter('unvalued'); pg.setPage(1); }}
                 data-testid="acc-val-filter-unvalued">
                 Tampilkan item belum dinilai
               </Button>
-            )}>
-            Selama HPP masih 0, penerimaan, pengeluaran, dan selisih opname item itu tidak menghasilkan jurnal keuangan.
-            Isi lewat tombol Set HPP di tabel.
-          </Notice>
+            )}
+          </p>
         )}
       </>}
       footer={<PaginationLite page={pg.page} totalPages={pg.totalPages} total={pg.total}
