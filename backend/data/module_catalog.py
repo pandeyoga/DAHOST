@@ -59,7 +59,7 @@ MODULES: list[dict] = [
     _m("management", "mgmt_reports", "Pusat Laporan", ["reports-hub", "phase7-reports", "mgmt-reports", "rnd-dashboard"],
        ["/api/dewi/reports", "/api/rahaza/reports-hub", "/api/rahaza/reports"], _VE,
        {"view": ["report.view"], "export": ["report.export"]}),
-    _m("management", "mgmt_approval", "Pusat Approval & Approval Bertingkat",
+    _m("management", "mgmt_approval", "Pusat Persetujuan & Persetujuan Bertingkat",
        ["unified-approval-hub", "approval-multilevel"], ["/api/approvals", "/api/approval-inbox"], _ALL,
        {"view": ["management.view"], "manage": ["management.manage"], "approve": ["hr.approve"]}),
     _m("management", "mgmt_okr", "OKR Tracker", ["mgmt-okr"], ["/api/management/okr"], _CRUD,
@@ -256,7 +256,7 @@ MODULES: list[dict] = [
        {"view": ["accessories.view"], "manage": ["wh.accessory.manage"], "approve": ["accessories.approve"]}),
     _m("accessories", "acc_opname", "Stok Opname Aksesoris", ["accessories-opname"], ["/api/acc/opname"], _ALL,
        {"view": ["accessories.view"], "manage": ["wh.accessory.manage"], "approve": ["accessories.approve"]}),
-    _m("accessories", "acc_requests", "Request Internal & Inbox Approval",
+    _m("accessories", "acc_requests", "Request Internal & Inbox Persetujuan",
        ["accessories-internal-request", "accessories-inbox", "rnd-accessory-requests"],
        ["/api/acc/internal-requests", "/api/acc/loans", "/api/dewi/accessory-requests", "/api/accessory-requests"],
        _ALL, {"view": ["accessories.view"], "manage": ["wh.accessory.manage"], "approve": ["accessories.approve"]}),
@@ -461,7 +461,7 @@ MODULES: list[dict] = [
     _m("rnd", "rnd_costing", "Costing & HPP Sample", ["rnd-costing-hub"],
        ["/api/dewi/rnd/hpp", "/api/dewi/rnd/hpp-calculator", "/api/dewi/rnd/sample-costing"], _ALL,
        {"view": ["rnd.view", "hpp.view"], "manage": ["rnd.manage", "hpp.manage"], "approve": ["rnd.approve"]}),
-    _m("rnd", "rnd_kreator", "Approval Kreator", ["rnd-kreator-requests"], ["/api/dewi/kreator-requests"], _VAE,
+    _m("rnd", "rnd_kreator", "Persetujuan Kreator", ["rnd-kreator-requests"], ["/api/dewi/kreator-requests"], _VAE,
        {"view": ["rnd.view"], "approve": ["rnd.approve"]}),
 
     # ── ASET ────────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 /**
- * Portal Saya › Career Coach — arahan karier dari asisten AI: ringkasan profil, obrolan, dan laporan karier.
+ * Portal Saya › Pendamping Karier — arahan karier dari asisten AI: ringkasan profil, obrolan, dan laporan karier.
  *
  * Standar UI/UX v2 (8 Nov 2026): PageLayout (dulu kepala berikon gradien + `p-6`), tab buatan → pil penyaring (FilterChips),
  * angka profil = StatTile, "Buat laporan karier" = FormPopup (dulu form di halaman), daftar laporan = TabelData +
@@ -182,11 +182,11 @@ export default function CareerCoachModule({ token }) {
   const jam = (ts) => { const d = ts ? new Date(ts) : null; return d && !Number.isNaN(d.getTime()) ? d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }) : ''; };
 
   return (
-    <PageLayout testId="career-coach-module" title="Career coach"
+    <PageLayout testId="career-coach-module" title="Pendamping karier"
       subtitle="Arahan karier pribadi dari asisten AI berdasarkan profil, training, dan kinerja Anda."
       actions={<Button onClick={() => setFormOpen(true)} disabled={!profile} data-testid="career-generate-btn"><Sparkles />Buat laporan karier</Button>}>
       <FilterChips value={activeTab} onChange={(k) => setActiveTab(k || 'dashboard')} hideWhenEmpty={false} testId="career-tab"
-        ariaLabel="Bagian career coach" className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" options={[
+        ariaLabel="Bagian pendamping karier" className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" options={[
           { key: 'dashboard', label: 'Ringkasan' },
           { key: 'chat', label: 'Obrolan' },
           { key: 'reports', label: 'Laporan', count: reports.length },

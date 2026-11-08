@@ -24,8 +24,8 @@ export default function HRPayrollHub(props) {
         { key: 'allowances', label: 'Tunjangan', Component: RahazaPayrollAllowancesModule },
         { key: 'adjustments', label: 'Penyesuaian gaji', Component: RahazaSalaryAdjustmentModule },
         { key: 'run', label: 'Proses gaji', Component: RahazaPayrollRunModule },
-        // Label dikunci uji test_w2e_sdm_payroll_config (literal "Pengaturan Payroll") — lihat laporan sdm-a.
-        { key: 'settings', label: 'Pengaturan Payroll', Component: RahazaPayrollSettingsModule },
+        // 2026-11-08 (keputusan owner): dulu "Pengaturan Payroll"; dikunci uji test_w2e_sdm_payroll_config.
+        { key: 'settings', label: 'Pengaturan gaji', Component: RahazaPayrollSettingsModule },
       ]}
       {...props}
     />

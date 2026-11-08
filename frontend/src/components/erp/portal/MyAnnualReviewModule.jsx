@@ -1,5 +1,5 @@
 /**
- * Portal Saya › Annual Review — penilaian kinerja tahunan: periode aktif, tugas review, riwayat nilai, KPI.
+ * Portal Saya › Tinjauan Tahunan — penilaian kinerja tahunan: periode aktif, tugas review, riwayat nilai, KPI.
  *
  * Standar UI/UX v2 (8 Nov 2026): PageLayout (dulu kepala buatan berikon gradien + `p-6`), tiap daftar = TabelData
  * (kartu ringkas di HP) + unduh Excel/CSV, rincian kriteria nilai di popup, status pakai StatusBadge (dulu warna hex),
@@ -70,7 +70,7 @@ export default function MyAnnualReviewModule({ token }) {
   const isReviewer = (a) => a.reviewer_id === (employee.id || employee.employee_code);
 
   return (
-    <PageLayout testId="my-annual-review-module" title="Annual review"
+    <PageLayout testId="my-annual-review-module" title="Tinjauan tahunan"
       subtitle={employee.name
         ? `${employee.name}${employee.job_title ? ` · ${employee.job_title}` : ''}${employee.department ? ` · ${employee.department}` : ''} — penilaian kinerja tahunan dan tugas review.`
         : 'Penilaian kinerja tahunan dan tugas review Anda.'}

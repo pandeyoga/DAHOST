@@ -681,7 +681,7 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
         else:
             overtime_warning = (f"Ada {paid_hours:g} jam lembur disetujui tetapi tarif lembur Profil Gaji = 0 dan aturan "
                                 "cadangan tidak berlaku (bukan skema bulanan / basis 'manual') — lembur TIDAK dibayar. "
-                                "Isi tarif lembur di Profil Gaji atau Pengaturan Payroll.")
+                                "Isi tarif lembur di Profil Gaji atau Pengaturan gaji.")
         overtime_amount = round(overtime_base_hourly * paid_factor)
         source_refs["overtime_factor"] = paid_factor
     if overtime_warning:

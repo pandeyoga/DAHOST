@@ -14,7 +14,7 @@
       "modul": ["accessories-internal-request", "accessories-inbox", "warehouse-accessory-requests"],
       "langkah": [
         "Bagian pemohon membuat permintaan di 'Request Internal'.",
-        "Permintaan masuk 'Inbox Approval' untuk disetujui/dialokasikan.",
+        "Permintaan masuk 'Inbox Persetujuan' untuk disetujui/dialokasikan.",
         "Gudang menyerahkan barang (deliver) → stok berkurang + jurnal terbentuk.",
         "Bila stok tidak cukup, seluruh baris ditolak lebih dulu (tidak ada penyerahan setengah jalan diam-diam)."
       ]
@@ -56,7 +56,7 @@
     {"modul": "accessories-master-stock", "nama": "Master Aksesoris", "deskripsi": "Daftar aksesoris, stok, HPP, valuasi, dan riwayat mutasi bernilai."},
     {"modul": "accessories-opname", "nama": "Stok Opname", "deskripsi": "Perhitungan fisik dan penyesuaian stok aksesoris."},
     {"modul": "accessories-internal-request", "nama": "Request Internal", "deskripsi": "Permintaan aksesoris dari bagian lain."},
-    {"modul": "accessories-inbox", "nama": "Inbox Approval", "deskripsi": "Antrean persetujuan permintaan."},
+    {"modul": "accessories-inbox", "nama": "Inbox Persetujuan", "deskripsi": "Antrean persetujuan permintaan."},
     {"modul": "accessories-purchase", "nama": "Purchase Request", "deskripsi": "Usulan pembelian aksesoris."},
     {"modul": "accessories-reports", "nama": "Laporan", "deskripsi": "Laporan pemakaian, valuasi, dan mutasi."}
   ],
@@ -74,7 +74,7 @@
     {
       "q": "Menu Peminjaman aksesoris hilang.",
       "kata_kunci": ["peminjaman", "loans", "pinjam aksesoris"],
-      "a": "Peminjaman aksesoris memang dihapus. Aksesoris habis pakai memakai jalur Request Internal → Approval → Serahkan. Peminjaman BARANG (alat/aset) ada di Portal Manajemen Aset."
+      "a": "Peminjaman aksesoris memang dihapus. Aksesoris habis pakai memakai jalur Request Internal → Persetujuan → Serahkan. Peminjaman BARANG (alat/aset) ada di Portal Manajemen Aset."
     }
   ],
   "saran": [

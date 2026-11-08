@@ -1,5 +1,5 @@
 /**
- * Pusat Approval — ringkasan semua persetujuan yang menunggu (Phase 3.3B):
+ * Pusat Persetujuan — ringkasan semua persetujuan yang menunggu (Phase 3.3B):
  *  - Kotak masuk SDM (cuti, lembur, gaji, resignasi, absensi, koreksi absen, perubahan data karyawan)
  *  - Persetujuan bertingkat (multi-level)
  *  - Tugas marketing yang menunggu persetujuan
@@ -94,7 +94,7 @@ export default function UnifiedApprovalHub({ token, onNavigate }) {
   return (
     <PageLayout
       testId="unified-approval-hub"
-      title="Pusat Approval"
+      title="Pusat persetujuan"
       subtitle="Persetujuan yang menunggu dari SDM, alur bertingkat, marketing, dan keuangan."
       tools={(
         <Button variant="outline" size="icon" onClick={fetchCounts} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
