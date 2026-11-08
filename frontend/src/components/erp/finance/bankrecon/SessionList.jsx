@@ -1,18 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
-import { EmptyState, StatusBadge } from '../../moduleAtoms';
+import { EmptyState, Notice, StatusBadge } from '../../moduleAtoms';
 import FilterChips from '@/components/ui/filter-chips';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import PaginationBar from '@/components/ui/PaginationBar';
-import { Loader2, Plus, AlertCircle, Trash2, Scale } from 'lucide-react';
+import { Loader2, Plus, AlertCircle, Trash2, Scale, RefreshCw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { formatRupiah as fmt } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
 import { thisMonthWIB } from '@/lib/waktu';
-import Modal from '../../Modal';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { monthOptions } from '../PeriodPicker';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -35,7 +36,7 @@ export function fmtPeriod(ym) {
   return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('id-ID', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 }
 
-// Formulir isian pendek — popup (G13). Dulu kartu bergaris ungu di tengah halaman dengan <select>/<input type="month">.
+// Formulir isian pendek — popup. Dulu kartu bergaris ungu di tengah halaman dengan pilihan polos & pemilih bulan bawaan.
 function CreateForm({ headers, accounts, onCreated, onCancel }) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
@@ -56,49 +57,41 @@ function CreateForm({ headers, accounts, onCreated, onCancel }) {
     } finally { setSaving(false); }
   };
 
+  // 2026-11-08 (Standar UI/UX v2): popup form standar (FormPopup pendek, Isian, Simpan hijau).
   return (
-    <Modal title="Sesi rekonsiliasi baru" onClose={onCancel} size="md" data-testid="recon-create-form"
-      description="Satu sesi = satu rekening untuk satu bulan">
-      <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Periode *</label>
-            <SmartNativeSelect data-testid="recon-input-period" className="h-9 w-full" searchable={false}
-              value={form.period} onChange={set('period')} aria-label="Periode">
-              {monthOptions(24).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </SmartNativeSelect>
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Rekening kas/bank *</label>
-            <SmartNativeSelect data-testid="recon-select-cash-account" className="h-9 w-full"
-              value={form.cash_account_id} onChange={set('cash_account_id')} aria-label="Rekening kas/bank">
-              <option value="">— pilih rekening —</option>
-              {accounts.map(a => (
-                <option key={a.id} value={a.id}>{a.name} · {a.code} · akun {a.gl_account_code || 'belum ada'}</option>
-              ))}
-            </SmartNativeSelect>
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Saldo awal rekening koran</label>
-            <MoneyInput glass decimals={2} allowNegative data-testid="recon-input-opening"
-              value={form.opening_balance} onChange={set('opening_balance')} />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Saldo akhir rekening koran</label>
-            <MoneyInput glass decimals={2} allowNegative data-testid="recon-input-closing"
-              value={form.closing_balance} onChange={set('closing_balance')} />
-          </div>
-        </div>
-        <GlassInput data-testid="recon-input-notes" placeholder="Catatan (opsional)"
-          value={form.notes} onChange={set('notes')} />
-        <div className="flex gap-2 justify-end">
-          <Button variant="outline" onClick={onCancel}>Batal</Button>
-          <Button data-testid="recon-create-submit" onClick={submit} disabled={saving}>
-            {saving && <Loader2 className="w-4 h-4 animate-spin" />} Simpan sesi
-          </Button>
-        </div>
+    <FormPopup open onClose={onCancel} ukuran="pendek" testId="recon-create-form"
+      judul="Sesi rekonsiliasi baru" keterangan="Satu sesi = satu rekening untuk satu bulan."
+      onSimpan={submit} menyimpan={saving} labelSimpan="Simpan sesi" bisaSimpan={!!form.cash_account_id}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Isian label="Periode" wajib>
+          <SmartNativeSelect data-testid="recon-input-period" className="h-9 w-full" searchable={false}
+            value={form.period} onChange={set('period')} aria-label="Periode">
+            {monthOptions(24).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Rekening kas/bank" wajib>
+          <SmartNativeSelect data-testid="recon-select-cash-account" className="h-9 w-full"
+            value={form.cash_account_id} onChange={set('cash_account_id')} aria-label="Rekening kas/bank">
+            <option value="">— pilih rekening —</option>
+            {accounts.map(a => (
+              <option key={a.id} value={a.id}>{a.name} · {a.code} · akun {a.gl_account_code || 'belum ada'}</option>
+            ))}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Saldo awal rekening koran">
+          <MoneyInput glass decimals={2} allowNegative data-testid="recon-input-opening"
+            value={form.opening_balance} onChange={set('opening_balance')} />
+        </Isian>
+        <Isian label="Saldo akhir rekening koran">
+          <MoneyInput glass decimals={2} allowNegative data-testid="recon-input-closing"
+            value={form.closing_balance} onChange={set('closing_balance')} />
+        </Isian>
       </div>
-    </Modal>
+      <Isian label="Catatan" htmlFor="recon-notes">
+        <GlassInput id="recon-notes" data-testid="recon-input-notes" placeholder="Opsional"
+          value={form.notes} onChange={set('notes')} />
+      </Isian>
+    </FormPopup>
   );
 }
 
@@ -159,16 +152,35 @@ export function SessionList({ Page, headers, onOpen, activeId, detail, reloadKey
         { key: 'in_progress', label: 'Diproses', count: summary.in_progress || 0 }, { key: 'approved', label: 'Disetujui', count: summary.approved || 0 }]} />
   );
   const alert = summary?.total_unmatched > 0 && (
-    <div className="flex items-center gap-2 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.3)] rounded-lg px-4 py-2 text-sm text-[hsl(var(--warning))]" data-testid="recon-unmatched-alert">
-      <AlertCircle className="w-4 h-4 shrink-0" />
-      <span>Ada <strong>{summary.total_unmatched}</strong> mutasi bank yang belum dicocokkan di sesi aktif.</span>
-    </div>
+    <Notice tone="warning" icon={AlertCircle} testId="recon-unmatched-alert">
+      Ada <strong>{summary.total_unmatched}</strong> mutasi bank yang belum dicocokkan di sesi aktif.
+    </Notice>
   );
+  // Unduh: semua sesi sesuai pil status (bukan hanya 15 di halaman ini).
+  const ambilSemua = async () => {
+    const { data } = await axios.get(`${API}/api/finance/bank-recon/sessions`, { headers, params: { skip: 0, limit: 5000, ...(status ? { status } : {}) } });
+    return data.items || [];
+  };
+  const tools = <>
+    <TombolUnduh namaBerkas="sesi-rekonsiliasi-bank" namaLembar="Sesi" baris={items} ambilSemua={ambilSemua} testId="recon-unduh"
+      kolom={[
+        { label: 'Periode', nilai: (s) => fmtPeriod(s.period) },
+        { label: 'Rekening', nilai: (s) => s.account_name },
+        { label: 'Akun buku besar', nilai: (s) => s.gl_account_code || '' },
+        { label: 'Status', nilai: (s) => (STATUS_CFG[s.status] || STATUS_CFG.draft).label },
+        { label: 'Mutasi', nilai: (s) => Number(s.total_bank_txns) || 0 },
+        { label: 'Cocok', nilai: (s) => Number(s.matched_count) || 0 },
+        { label: 'Belum cocok', nilai: (s) => Number(s.unmatched_count) || 0 },
+        { label: 'Saldo akhir', nilai: (s) => Number(s.closing_balance) || 0 },
+      ]} />
+    <Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="recon-list-refresh"><RefreshCw className="w-4 h-4" /></Button>
+  </>;
 
   return (
     <Page
       actions={actions}
       filters={filters}
+      tools={tools}
       summary={alert}
       detail={detail}
       footer={items.length > 0 && <PaginationBar total={total} skip={skip} limit={LIMIT} onPageChange={setSkip} />}
@@ -192,7 +204,7 @@ export function SessionList({ Page, headers, onOpen, activeId, detail, reloadKey
                   <th className="px-3 py-2">Status</th>
                   <th className="px-3 py-2 text-right">Mutasi</th>
                   <th className="px-3 py-2 text-right">Cocok</th>
-                  <th className="px-3 py-2 text-right">Belum</th>
+                  <th className="px-3 py-2 text-right">Belum cocok</th>
                   <th className="px-3 py-2 text-right">Saldo akhir</th>
                   <th className="px-4 py-2 text-right"><span className="sr-only">Aksi</span></th>
                 </tr>
@@ -214,7 +226,7 @@ export function SessionList({ Page, headers, onOpen, activeId, detail, reloadKey
                       <td className="px-3 py-2.5"><SessionStatusBadge status={s.status} /></td>
                       <td className="px-3 py-2.5 text-right tabular-nums">{s.total_bank_txns || 0}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums">{s.matched_count || 0}</td>
-                      <td className={`px-3 py-2.5 text-right tabular-nums ${s.unmatched_count ? 'text-[hsl(var(--warning))] font-medium' : ''}`}>{s.unmatched_count || 0}</td>
+                      <td className={`px-3 py-2.5 text-right tabular-nums ${s.unmatched_count ? 'text-[hsl(var(--warning-text))] font-medium' : ''}`}>{s.unmatched_count || 0}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap">{fmt(s.closing_balance || 0)}</td>
                       <td className="px-4 py-2.5 text-right">
                         {s.status !== 'approved' && (

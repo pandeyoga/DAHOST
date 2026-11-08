@@ -23,7 +23,10 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { MoneyInput } from '@/components/ui/money-input';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import Modal from '../Modal';
+import FormPopup from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { EP, apiGet, apiPost, fmtDate, fmtNum, fmtRp } from './procApi';
 import { PaymentHistoryList } from '../PaymentHistoryModal';
@@ -32,32 +35,29 @@ import { currentRole } from '../portalAccess';
 import { isFinanceRole } from '../../../lib/financeRoles';
 import { useTaxProfile } from '../../../lib/taxProfile';
 import { todayWIB } from '../../../lib/waktu';
-import { EmptyState, Notice } from '../moduleAtoms';
+import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
 import PageLayout, { DetailPanel } from '../layout/PageLayout';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 
 const AP_STATUS_META = {
-  draft: { label: 'Draft', cls: 'bg-muted text-muted-foreground border-border' },
-  sent: { label: 'Terkirim', cls: 'bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-400/15 dark:text-blue-300 dark:border-blue-400/30' },
+  draft: { label: 'Draf', tone: 'muted' },
+  sent: { label: 'Terkirim', tone: 'info' },
   // 2026-11-03: kunci status server = partial_paid (dulu `partially_paid` → badge jatuh ke "Draft")
-  partial_paid: { label: 'Dibayar Sebagian', cls: 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-400/15 dark:text-amber-300 dark:border-amber-400/30' },
-  paid: { label: 'Lunas', cls: 'bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-400/15 dark:text-emerald-300 dark:border-emerald-400/30' },
-  cancelled: { label: 'Dibatalkan', cls: 'bg-muted text-muted-foreground border-border' },
+  partial_paid: { label: 'Dibayar sebagian', tone: 'warning' },
+  paid: { label: 'Lunas', tone: 'success' },
+  cancelled: { label: 'Dibatalkan', tone: 'muted' },
   // status tagihan CMT (dewi_cmt_payments) — 2026-11-04 satu daftar dengan tagihan pemasok
-  submitted: { label: 'Diajukan', cls: 'bg-muted text-muted-foreground border-border' },
-  pending: { label: 'Menunggu', cls: 'bg-muted text-muted-foreground border-border' },
-  unposted: { label: 'Belum dijurnal', cls: 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-400/15 dark:text-amber-300 dark:border-amber-400/30' },
-  approved: { label: 'Disetujui · belum dijurnal', cls: 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-400/15 dark:text-amber-300 dark:border-amber-400/30' },
-  posted: { label: 'Terjurnal', cls: 'bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-400/15 dark:text-blue-300 dark:border-blue-400/30' },
+  submitted: { label: 'Diajukan', tone: 'muted' },
+  pending: { label: 'Menunggu', tone: 'muted' },
+  unposted: { label: 'Belum dijurnal', tone: 'warning' },
+  approved: { label: 'Disetujui · belum dijurnal', tone: 'warning' },
+  posted: { label: 'Terjurnal', tone: 'info' },
 };
 
+// 2026-11-08 (Standar UI/UX v2): status = StatusBadge bersama (dulu pil warna palet langsung, huruf 10 px).
 function ApBadge({ status }) {
-  const m = AP_STATUS_META[status] || { label: status || '—', cls: 'bg-muted text-muted-foreground border-border' };
-  return (
-    <span className={`inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full border ${m.cls}`}>
-      {m.label}
-    </span>
-  );
+  const m = AP_STATUS_META[status] || { label: status || '—', tone: 'muted' };
+  return <StatusBadge status={status} label={m.label} tone={m.tone} />;
 }
 
 /**
@@ -124,22 +124,19 @@ function CreateInvoicePanel({ token, gr, onClose, onCreated }) {
   };
 
   return (
-    <DetailPanel title={`Buat faktur dari ${gr.receipt_number}`} description={gr.supplier_name} onClose={onClose}
-      testId="ap-create-panel"
-      actions={<Button onClick={submit} disabled={saving || !!problem} data-testid="ap-form-submit">
-        {saving ? 'Menyimpan...' : 'Buat faktur'}
-      </Button>}>
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="ap-create-panel"
+      judul={`Buat faktur dari ${gr.receipt_number}`} keterangan={gr.supplier_name}
+      onSimpan={submit} menyimpan={saving} bisaSimpan={!problem} galat={err} labelSimpan="Buat faktur">
       <div className="space-y-4" data-testid="ap-create-modal">
-        {err && <Notice tone="danger" icon={AlertTriangle}>{err}</Notice>}
         <div className="grid grid-cols-2 gap-3 text-sm">
           <div>
             <div className="text-xs text-muted-foreground">Supplier</div>
             <div className="font-medium">{gr.supplier_name}</div>
-            {gr.supplier_code && <div className="text-xs font-mono text-muted-foreground">{gr.supplier_code}</div>}
+            {gr.supplier_code && <div className="text-xs text-muted-foreground">{gr.supplier_code}</div>}
           </div>
           <div>
             <div className="text-xs text-muted-foreground">Referensi PO</div>
-            <div className="font-mono text-xs">{gr.po_number || '—'}</div>
+            <div>{gr.po_number || '—'}</div>
           </div>
         </div>
 
@@ -150,7 +147,7 @@ function CreateInvoicePanel({ token, gr, onClose, onCreated }) {
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Qty ditolak (tidak difakturkan)</span>
-            <span className="tabular-nums text-[hsl(var(--destructive))]">−{fmtNum(gr.total_rejected)}</span>
+            <span className="tabular-nums text-[hsl(var(--danger-text))]">−{fmtNum(gr.total_rejected)}</span>
           </div>
           <div className="flex justify-between font-medium border-t border-[var(--glass-border)] pt-1">
             <span>Qty bersih difakturkan</span>
@@ -173,7 +170,7 @@ function CreateInvoicePanel({ token, gr, onClose, onCreated }) {
             <tbody>
               {lines.map((l) => (
                 <tr key={l.key} className="border-b border-[var(--glass-border)]">
-                  <td className="py-1.5 text-xs">{l.name}<div className="text-[11px] text-muted-foreground">sisa ditagih {fmtNum(l.maxQty)} {l.unit}</div></td>
+                  <td className="py-1.5">{l.name}<div className="text-xs text-muted-foreground">sisa ditagih {fmtNum(l.maxQty)} {l.unit}</div></td>
                   <td className="py-1.5 text-right text-xs tabular-nums">{fmtRp(l.grPrice)}</td>
                   <td className="py-1.5 text-right">
                     <GlassInput type="number" min="0" step="any" value={l.qty} className="h-8 w-24 ml-auto text-right text-xs"
@@ -192,12 +189,12 @@ function CreateInvoicePanel({ token, gr, onClose, onCreated }) {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs font-medium mb-1" htmlFor="ap-form-freight">Ongkos kirim di faktur</label>
+            <label className="block text-sm font-medium mb-1.5" htmlFor="ap-form-freight">Ongkos kirim di faktur</label>
             <MoneyInput glass id="ap-form-freight" value={freight} onChange={(e) => setFreight(e.target.value)}
                         placeholder="0" className="text-right" data-testid="ap-form-freight" />
           </div>
           <div>
-            <label className="block text-xs font-medium mb-1" htmlFor="ap-form-discount">Potongan di faktur</label>
+            <label className="block text-sm font-medium mb-1.5" htmlFor="ap-form-discount">Potongan di faktur</label>
             <MoneyInput glass id="ap-form-discount" value={discount} onChange={(e) => setDiscount(e.target.value)}
                         placeholder="0" className="text-right" data-testid="ap-form-discount" />
           </div>
@@ -205,29 +202,26 @@ function CreateInvoicePanel({ token, gr, onClose, onCreated }) {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div>
-            <label className="block text-xs font-medium mb-1">No. Faktur Supplier</label>
+            <label className="block text-sm font-medium mb-1.5">No. faktur pemasok</label>
             <GlassInput value={invNo} onChange={(e) => setInvNo(e.target.value)}
                         placeholder="opsional" data-testid="ap-form-supplier-invno" />
           </div>
           <div>
-            <label className="block text-xs font-medium mb-1">PPN dari supplier (%)</label>
+            <label className="block text-sm font-medium mb-1.5">PPN dari supplier (%)</label>
             <GlassInput type="number" min="0" max="100" value={taxPct}
                         onChange={(e) => setTaxPct(e.target.value)} className="text-right"
                         data-testid="ap-form-tax" />
-            <p className="text-[11px] text-muted-foreground mt-1" data-testid="ap-form-tax-note">{taxProfile.pkp ? 'PKP: PPN ini dikreditkan sebagai PPN Masukan — isi No. Faktur supplier.' : 'Non-PKP: PPN dari supplier tidak dapat dikreditkan, dicatat sebagai bagian harga beli.'}</p>
+            <p className="text-xs text-muted-foreground mt-1" data-testid="ap-form-tax-note">{taxProfile.pkp ? 'PKP: PPN ini dikreditkan sebagai PPN Masukan — isi No. Faktur supplier.' : 'Non-PKP: PPN dari supplier tidak dapat dikreditkan, dicatat sebagai bagian harga beli.'}</p>
           </div>
           <div>
-            <label className="block text-xs font-medium mb-1">Jatuh Tempo</label>
-            <GlassInput type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)}
-                        data-testid="ap-form-duedate" />
+            <label className="block text-sm font-medium mb-1.5">Jatuh tempo</label>
+            <DatePicker value={dueDate} onChange={setDueDate} testId="ap-form-duedate" />
           </div>
         </div>
 
         <div>
-          <label className="block text-xs font-medium mb-1">Catatan</label>
-          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows="2"
-            className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-foreground text-sm"
-            data-testid="ap-form-notes" />
+          <label className="block text-sm font-medium mb-1.5">Catatan</label>
+          <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} data-testid="ap-form-notes" />
         </div>
 
         <div className="border-y border-[var(--glass-border)] py-2 text-sm space-y-1">
@@ -257,7 +251,7 @@ function CreateInvoicePanel({ token, gr, onClose, onCreated }) {
           </div>
         </div>
         {Math.abs(diff) >= 1 && (
-          <p className="text-[11px] text-muted-foreground" data-testid="ap-form-diff-note">
+          <p className="text-xs text-muted-foreground" data-testid="ap-form-diff-note">
             Selisih dengan nilai penerimaan {diff > 0 ? '+' : '−'}{fmtRp(Math.abs(diff))}
             {taxProfile.pkp ? '' : ' (termasuk PPN yang tidak dapat dikreditkan)'} — masuk HPP bahan untuk barang yang
             masih ada di gudang; bagian barang yang sudah terpakai dicatat sebagai selisih harga beli.
@@ -265,7 +259,7 @@ function CreateInvoicePanel({ token, gr, onClose, onCreated }) {
         )}
         {problem && <Notice tone="warning" icon={AlertTriangle}>{problem}</Notice>}
       </div>
-    </DetailPanel>
+    </FormPopup>
   );
 }
 
@@ -342,7 +336,10 @@ function PayInvoiceModal({ token, inv, onClose, onPaid }) {
   };
 
   return (
-    <Modal onClose={onClose} title={`Bayar ${inv.invoice_number}`} size="md">
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="ap-pay-form"
+      judul={`Bayar ${inv.invoice_number}`} keterangan={inv.vendor_name}
+      onSimpan={submit} menyimpan={saving} bisaSimpan={!problem} labelSimpan="Bayar & catat ke buku besar"
+      galat={err || (problem && (accountId || (isCmtBill && balance <= 0)) ? problem : undefined)}>
       <div className="space-y-4" data-testid="ap-pay-modal">
         <div className="grid grid-cols-2 gap-3 text-sm">
           <div><div className="text-xs text-muted-foreground">Supplier</div><div className="font-medium">{inv.vendor_name}</div></div>
@@ -356,43 +353,42 @@ function PayInvoiceModal({ token, inv, onClose, onPaid }) {
         )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs font-medium mb-1">Bayar dari rekening</label>
+            <label className="block text-sm font-medium mb-1.5">Bayar dari rekening</label>
             <CashAccountSelect accounts={accounts} loaded={loaded} value={accountId} onChange={setAccountId}
                                testId="ap-pay-account" />
           </div>
           {isIc && (
             <div data-testid="ap-pay-counter">
-              <label className="block text-xs font-medium mb-1">Diterima di rekening {otherCv === 'SMU' ? 'CV Sukma' : 'CV Dewi Aditya'} (antar CV)</label>
+              <label className="block text-sm font-medium mb-1.5">Diterima di rekening {otherCv === 'SMU' ? 'CV Sukma' : 'CV Dewi Aditya'} (antar CV)</label>
               <CashAccountSelect accounts={counterAccounts} loaded={counterLoaded} value={counterId} onChange={setCounterId}
                                  testId="ap-pay-counter-account" />
             </div>
           )}
           <div>
-            <label className="block text-xs font-medium mb-1" htmlFor="ap-pay-date">Tanggal bayar</label>
-            <GlassInput id="ap-pay-date" type="date" value={date} onChange={(e) => setDate(e.target.value)}
-                        data-testid="ap-pay-date" />
+            <label className="block text-sm font-medium mb-1.5" htmlFor="ap-pay-date">Tanggal bayar</label>
+            <DatePicker id="ap-pay-date" value={date} onChange={(v) => setDate(v || todayWIB())} bolehKosong={false} testId="ap-pay-date" />
           </div>
           <div>
-            <label className="block text-xs font-medium mb-1" htmlFor="ap-pay-amount">Jumlah dibayar (keluar dari bank)</label>
+            <label className="block text-sm font-medium mb-1.5" htmlFor="ap-pay-amount">Jumlah dibayar (keluar dari bank)</label>
             <MoneyInput glass id="ap-pay-amount" value={amount} onChange={(e) => setAmount(e.target.value)}
                         className="text-right" data-testid="ap-pay-amount" />
           </div>
           {inv.kind !== 'cmt' && (
             <div>
-              <label className="block text-xs font-medium mb-1" htmlFor="ap-pay-discount">Potongan dari pemasok (opsional)</label>
+              <label className="block text-sm font-medium mb-1.5" htmlFor="ap-pay-discount">Potongan dari pemasok (opsional)</label>
               <MoneyInput glass id="ap-pay-discount" value={discount} onChange={(e) => setDiscount(e.target.value)}
                           placeholder="0" className="text-right" data-testid="ap-pay-discount" />
             </div>
           )}
         </div>
         {inv.kind !== 'cmt' && (
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Isi potongan hanya bila pemasok memberi potongan tertulis (mis. bayar lebih cepat). Potongan mengurangi hutang
             tanpa uang keluar dan dicatat sebagai Potongan Pembelian.
           </p>
         )}
         <div>
-          <label className="block text-xs font-medium mb-1" htmlFor="ap-pay-notes">Catatan</label>
+          <label className="block text-sm font-medium mb-1.5" htmlFor="ap-pay-notes">Catatan</label>
           <GlassInput id="ap-pay-notes" value={notes} onChange={(e) => setNotes(e.target.value)}
                       placeholder="opsional, mis. no. referensi transfer" data-testid="ap-pay-notes" />
         </div>
@@ -402,18 +398,8 @@ function PayInvoiceModal({ token, inv, onClose, onPaid }) {
           <div className="flex justify-between font-medium border-t border-[var(--glass-border)] pt-1"><span>Sisa setelah dibayar</span>
             <span className="tabular-nums" data-testid="ap-pay-left">{fmtRp(Math.max(left, 0))}</span></div>
         </div>
-        {(err || (problem && (accountId || (isCmtBill && balance <= 0)))) && (
-          <Notice tone="danger" icon={AlertTriangle} testId="ap-pay-error">{err || problem}</Notice>
-        )}
-        <div className="flex justify-end gap-2 pt-2 border-t border-[var(--glass-border)]">
-          <Button variant="secondary" onClick={onClose}>Batal</Button>
-          <Button onClick={submit} disabled={saving || !!problem} data-testid="ap-pay-submit">
-            <HandCoins className="w-4 h-4 mr-1.5" />
-            {saving ? 'Menyimpan...' : 'Bayar & Catat ke Buku Besar'}
-          </Button>
-        </div>
       </div>
-    </Modal>
+    </FormPopup>
   );
 }
 
@@ -423,12 +409,12 @@ function InvoiceDetail({ inv, onClose, onSend, sending, token, onPay }) {
     <DetailPanel title={`Faktur ${inv.invoice_number}`} description={inv.vendor_name} onClose={onClose} testId="ap-detail-panel"
       actions={<>
         {onPay && canPay(inv) && (
-          <Button variant="outline" onClick={() => onPay(inv)} data-testid="ap-detail-pay">
+          <Button variant="success" onClick={() => onPay(inv)} data-testid="ap-detail-pay">
             <HandCoins className="w-4 h-4" /> Bayar
           </Button>
         )}
         {inv.status === 'draft' && (
-          <Button onClick={() => onSend(inv)} disabled={sending} data-testid="ap-detail-approve">
+          <Button variant="success" onClick={() => onSend(inv)} disabled={sending} data-testid="ap-detail-approve">
             <Send className="w-4 h-4" />
             {sending ? 'Memproses…' : 'Setujui & catat ke buku besar'}
           </Button>
@@ -438,7 +424,7 @@ function InvoiceDetail({ inv, onClose, onSend, sending, token, onPay }) {
         <div className="flex items-center gap-2 flex-wrap">
           <ApBadge status={inv.status} />
           {inv.supplier_code && (
-            <span className="text-xs font-mono px-2 py-0.5 rounded-full border border-[var(--glass-border)] bg-[var(--input-surface)]">
+            <span className="text-xs px-2 py-0.5 rounded-full border border-[var(--glass-border)] bg-[var(--input-surface)]">
               {inv.supplier_code}
             </span>
           )}
@@ -457,14 +443,14 @@ function InvoiceDetail({ inv, onClose, onSend, sending, token, onPay }) {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
           <div><div className="text-xs text-muted-foreground">Supplier</div><div className="font-medium">{inv.vendor_name}</div></div>
           <div><div className="text-xs text-muted-foreground">Tanggal</div><div>{fmtDate(inv.issue_date)}</div></div>
-          <div><div className="text-xs text-muted-foreground">Jatuh Tempo</div><div>{fmtDate(inv.due_date)}</div></div>
+          <div><div className="text-xs text-muted-foreground">Jatuh tempo</div><div>{fmtDate(inv.due_date)}</div></div>
           <div><div className="text-xs text-muted-foreground">Sisa</div><div className="font-semibold tabular-nums">{fmtRp(inv.balance)}</div></div>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="border-b border-[var(--glass-border)]">
-              <tr className="text-left text-muted-foreground text-xs uppercase tracking-wide">
+              <tr className="text-left text-muted-foreground text-xs">
                 <th className="pb-2">Item</th>
                 <th className="pb-2 text-right">Qty (dasar)</th>
                 <th className="pb-2 text-right">Qty (satuan beli)</th>
@@ -476,23 +462,23 @@ function InvoiceDetail({ inv, onClose, onSend, sending, token, onPay }) {
               {(inv.items || []).map((it) => (
                 <tr key={it.id} className="border-b border-[var(--glass-border)]">
                   <td className="py-2">
-                    <div className="text-xs font-medium">{it.description || it.material_name}</div>
-                    <div className="text-[11px] text-muted-foreground">GR {it.gr_number}</div>
+                    <div className="font-medium">{it.description || it.material_name}</div>
+                    <div className="text-xs text-muted-foreground">GR {it.gr_number}</div>
                   </td>
-                  <td className="py-2 text-right font-mono text-xs">{fmtNum(it.qty)} {it.unit}</td>
-                  <td className="py-2 text-right font-mono text-xs">
+                  <td className="py-2 text-right tabular-nums whitespace-nowrap">{fmtNum(it.qty)} {it.unit}</td>
+                  <td className="py-2 text-right tabular-nums whitespace-nowrap">
                     {it.po_uom && it.po_uom !== it.unit
                       ? `${fmtNum(it.qty_input)} ${it.po_uom}`
                       : '—'}
                   </td>
-                  <td className="py-2 text-right font-mono text-xs">{fmtRp(it.price)}</td>
-                  <td className="py-2 text-right font-mono text-xs">{fmtRp(it.amount)}</td>
+                  <td className="py-2 text-right tabular-nums whitespace-nowrap">{fmtRp(it.price)}</td>
+                  <td className="py-2 text-right tabular-nums whitespace-nowrap">{fmtRp(it.amount)}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot className="font-semibold">
               <tr><td colSpan="4" className="py-1 text-right text-xs text-muted-foreground">Subtotal</td>
-                  <td className="py-1 text-right font-mono text-xs">{fmtRp(inv.subtotal)}</td></tr>
+                  <td className="py-1 text-right tabular-nums whitespace-nowrap">{fmtRp(inv.subtotal)}</td></tr>
               {Number(inv.invoice_discount || 0) > 0 && (
                 <tr><td colSpan="4" className="py-1 text-right text-xs text-muted-foreground">Potongan</td>
                     <td className="py-1 text-right text-xs tabular-nums">−{fmtRp(inv.invoice_discount)}</td></tr>
@@ -502,10 +488,10 @@ function InvoiceDetail({ inv, onClose, onSend, sending, token, onPay }) {
                     <td className="py-1 text-right text-xs tabular-nums">{fmtRp(inv.freight_amount)}</td></tr>
               )}
               <tr><td colSpan="4" className="py-1 text-right text-xs text-muted-foreground">PPN {inv.tax_pct || 0}%</td>
-                  <td className="py-1 text-right font-mono text-xs">{fmtRp(inv.tax_amount)}</td></tr>
+                  <td className="py-1 text-right tabular-nums whitespace-nowrap">{fmtRp(inv.tax_amount)}</td></tr>
               <tr className="border-t-2 border-[var(--glass-border)]">
                 <td colSpan="4" className="py-2 text-right text-xs">Total</td>
-                <td className="py-2 text-right font-mono">{fmtRp(inv.total)}</td></tr>
+                <td className="py-2 text-right tabular-nums whitespace-nowrap">{fmtRp(inv.total)}</td></tr>
             </tfoot>
           </table>
         </div>
@@ -523,9 +509,9 @@ function InvoiceDetail({ inv, onClose, onSend, sending, token, onPay }) {
 
         {inv.status !== 'draft' && (
           <div className="pt-2 border-t border-[var(--glass-border)]" data-testid="ap-payment-history">
-            <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-              Riwayat Pembayaran · Dibayar {fmtRp(inv.paid_amount || 0)}
-              {inv.gl_je_number && <span className="ml-2 normal-case font-mono text-emerald-400">JE faktur: {inv.gl_je_number}</span>}
+            <div className="text-sm font-medium text-foreground mb-2">
+              Riwayat pembayaran · dibayar {fmtRp(inv.paid_amount || 0)}
+              {inv.gl_je_number && <span className="ml-2 font-normal text-muted-foreground">jurnal faktur: {inv.gl_je_number}</span>}
             </div>
             <PaymentHistoryList token={token} kind="ap" invoiceId={inv.id} />
           </div>
@@ -649,7 +635,7 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
           : [{ key: 'pending', label: 'Siap difakturkan', count: grs.length }, { key: 'invoices', label: 'Faktur', count: invoices.length }]} />
       {tab === 'invoices' && (
         <>
-          <div className="relative w-72 max-w-full">
+          <div className="relative w-full sm:w-64">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <GlassInput className="pl-9 h-9" placeholder="Cari no. faktur, pemasok, PO…"
                         value={search} onChange={(e) => setSearch(e.target.value)}
@@ -665,7 +651,7 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
             </SmartNativeSelect>
           )}
           <SmartNativeSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
-            className="h-9 w-48"
+            className="h-9 w-44"
             data-testid="ap-filter-status">
             <option value="">Semua status</option>
             {Object.entries(AP_STATUS_META).map(([v, m]) => <option key={v} value={v}>{m.label}</option>)}
@@ -684,7 +670,33 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
       title="Faktur Supplier"
       subtitle="Faktur hutang dari penerimaan barang. Qty yang ditolak QC tidak ikut difakturkan."
       filters={filters}
-      tools={<Button size="icon" variant="outline" onClick={load} data-testid="ap-refresh" title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>}
+      tools={<>
+        {tab === 'pending' ? (
+          <TombolUnduh namaBerkas="penerimaan-belum-difakturkan" namaLembar="Penerimaan" baris={grs} testId="ap-unduh"
+            kolom={[
+              { label: 'No. GR', nilai: (g) => g.receipt_number },
+              { label: 'Pemasok', nilai: (g) => g.supplier_name },
+              { label: 'Kode pemasok', nilai: (g) => g.supplier_code || '' },
+              { label: 'PO', nilai: (g) => g.po_number || '' },
+              { label: 'Qty bersih', nilai: (g) => Number(g.total_net) || 0 },
+              { label: 'Nilai', nilai: (g) => Number(g.receivable_amount) || 0 },
+            ]} />
+        ) : (
+          <TombolUnduh namaBerkas={financeMode ? 'tagihan-pemasok-cmt' : 'faktur-pemasok'} namaLembar="Tagihan" baris={filteredInv} testId="ap-unduh"
+            kolom={[
+              { label: 'No. faktur', nilai: (i) => i.invoice_number },
+              ...(financeMode ? [{ label: 'Jenis', nilai: (i) => KIND_LABEL[i.kind] || i.kind }] : []),
+              { label: 'Pemasok', nilai: (i) => i.vendor_name },
+              { label: 'Referensi', nilai: (i) => (i.po_numbers || []).join(', ') || (i.gr_numbers || []).join(', ') },
+              { label: 'Tanggal', nilai: (i) => fmtDate(i.issue_date) },
+              { label: 'Jatuh tempo', nilai: (i) => (i.due_date ? fmtDate(i.due_date) : '') },
+              { label: 'Total', nilai: (i) => Number(i.total) || 0 },
+              { label: 'Sisa', nilai: (i) => Number(i.balance ?? i.total) || 0 },
+              { label: 'Status', nilai: (i) => (AP_STATUS_META[i.status] || { label: i.status }).label },
+            ]} />
+        )}
+        <Button size="icon" variant="outline" onClick={load} data-testid="ap-refresh" title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>
+      </>}
       summary={err && <Notice tone="danger" icon={AlertTriangle}>{err}</Notice>}
       detail={createGr ? (
         <CreateInvoicePanel key={createGr.id} token={token} gr={createGr}
@@ -700,40 +712,40 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--primary))]" />
         </div>
       ) : tab === 'pending' ? (
-        <GlassCard>
+        <GlassCard className="p-0 overflow-hidden">
           {grs.length === 0 ? (
             <EmptyState icon={CheckCircle2} title="Tidak ada penerimaan yang menunggu faktur" description="Penerimaan barang yang belum difakturkan akan muncul di sini." />
           ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="border-b border-[var(--glass-border)]">
-                <tr className="text-left text-muted-foreground text-xs uppercase tracking-wide">
-                  <th className="pb-3 pl-4">No. GR</th>
-                  <th className="pb-3">Pemasok</th>
-                  <th className="pb-3">PO</th>
-                  <th className="pb-3 text-right">Qty Bersih</th>
-                  <th className="pb-3 text-right">Nilai</th>
-                  <th className="pb-3 pr-4 text-right">Aksi</th>
+                <tr className="text-left">
+                  <th>No. GR</th>
+                  <th>Pemasok</th>
+                  <th>PO</th>
+                  <th className="text-right">Qty bersih</th>
+                  <th className="text-right">Nilai</th>
+                  <th className="text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody data-testid="ap-pending-body">
                 {grs.map((g, idx) => (
-                  <tr key={g.id} className={`border-b border-[var(--glass-border)] ${idx % 2 === 0 ? 'bg-[var(--glass-bg)]/30' : ''}`}
+                  <tr key={g.id} className="border-b border-[var(--glass-border)]"
                       data-testid={`ap-pending-row-${g.id}`}>
-                    <td className="py-3 pl-4 text-xs whitespace-nowrap">{g.receipt_number}</td>
-                    <td className="py-3">
-                      <div className="font-medium text-xs">{g.supplier_name}</div>
-                      {g.supplier_code && <div className="text-[11px] font-mono text-muted-foreground">{g.supplier_code}</div>}
+                    <td className="whitespace-nowrap">{g.receipt_number}</td>
+                    <td>
+                      <div className="font-medium">{g.supplier_name}</div>
+                      {g.supplier_code && <div className="text-xs text-muted-foreground">{g.supplier_code}</div>}
                       {!g.supplier_id && (
-                        <div className="text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                        <div className="text-xs text-[hsl(var(--warning-text))] flex items-center gap-1">
                           <AlertTriangle className="w-3 h-3" /> belum tertaut master
                         </div>
                       )}
                     </td>
-                    <td className="py-3 font-mono text-xs">{g.po_number || '—'}</td>
-                    <td className="py-3 text-right font-mono text-xs">{fmtNum(g.total_net)}</td>
-                    <td className="py-3 text-right font-mono text-xs">{fmtRp(g.receivable_amount)}</td>
-                    <td className="py-3 pr-4 text-right">
+                    <td className="whitespace-nowrap">{g.po_number || '—'}</td>
+                    <td className="text-right tabular-nums">{fmtNum(g.total_net)}</td>
+                    <td className="text-right tabular-nums">{fmtRp(g.receivable_amount)}</td>
+                    <td className="text-right">
                       <Button size="sm" variant="outline" onClick={() => { setDetail(null); setCreateGr(g); }} data-testid={`ap-create-${g.id}`}>
                         Buat faktur
                       </Button>
@@ -746,7 +758,7 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
           )}
         </GlassCard>
       ) : (
-          <GlassCard>
+          <GlassCard className="p-0 overflow-hidden">
             {filteredInv.length === 0 ? (
               <EmptyState icon={FileText} title={invoices.length ? 'Tidak ada tagihan yang cocok' : 'Belum ada tagihan'}
                 description={invoices.length ? 'Ubah pencarian atau penyaring.' : 'Tagihan muncul setelah faktur pemasok atau tagihan CMT dibuat.'} />
@@ -754,37 +766,37 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="border-b border-[var(--glass-border)]">
-                  <tr className="text-left text-muted-foreground text-xs uppercase tracking-wide">
-                    <th className="pb-3 pl-4">No. Faktur</th>
-                    {financeMode && <th className="pb-3">Jenis</th>}
-                    <th className="pb-3">Pemasok</th>
-                    <th className="pb-3">Referensi</th>
-                    <th className="pb-3">Tanggal</th>
-                    <th className="pb-3 text-right">Total</th>
-                    <th className="pb-3 text-right">Sisa</th>
-                    <th className="pb-3">Status</th>
-                    <th className="pb-3 pr-4 text-right">Aksi</th>
+                  <tr className="text-left">
+                    <th>No. faktur</th>
+                    {financeMode && <th>Jenis</th>}
+                    <th>Pemasok</th>
+                    <th>Referensi</th>
+                    <th>Tanggal</th>
+                    <th className="text-right">Total</th>
+                    <th className="text-right">Sisa</th>
+                    <th>Status</th>
+                    <th className="text-right">Aksi</th>
                   </tr>
                 </thead>
                 <tbody data-testid="ap-invoice-body">
                   {paged.map((i, idx) => (
-                    <tr key={`${i.kind}-${i.id}`} className={`border-b border-[var(--glass-border)] ${idx % 2 === 0 ? 'bg-[var(--glass-bg)]/30' : ''} ${detail?.id === i.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}
+                    <tr key={`${i.kind}-${i.id}`} className={`border-b border-[var(--glass-border)] ${detail?.id === i.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}
                         data-testid={`ap-invoice-row-${i.id}`}>
-                      <td className="py-3 pl-4 text-xs whitespace-nowrap">
+                      <td className="whitespace-nowrap">
                         {i.kind !== 'cmt'
-                          ? <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => { setCreateGr(null); setDetail(detail?.id === i.id ? null : i); }} data-testid={`ap-view-${i.id}`}>{i.invoice_number}</Button>
+                          ? <Button variant="link" size="sm" className="h-auto p-0" onClick={() => { setCreateGr(null); setDetail(detail?.id === i.id ? null : i); }} data-testid={`ap-view-${i.id}`}>{i.invoice_number}</Button>
                           : i.invoice_number}
                       </td>
-                      {financeMode && <td className="py-3 text-xs whitespace-nowrap">{KIND_LABEL[i.kind] || i.kind}</td>}
-                      <td className="py-3 text-xs">{i.vendor_name}{i.intercompany && <span className="block text-[11px] text-[hsl(var(--primary))]" data-testid={`ap-ic-${i.invoice_number}`}>Antar CV</span>}</td>
-                      <td className="py-3 text-[11px] text-muted-foreground">
+                      {financeMode && <td className="whitespace-nowrap">{KIND_LABEL[i.kind] || i.kind}</td>}
+                      <td>{i.vendor_name}{i.intercompany && <span className="block text-xs text-[hsl(var(--primary))]" data-testid={`ap-ic-${i.invoice_number}`}>Antar CV</span>}</td>
+                      <td className="text-xs text-muted-foreground">
                         {(i.po_numbers || []).join(', ') || (i.gr_numbers || []).join(', ') || '—'}
                       </td>
-                      <td className="py-3 text-xs whitespace-nowrap">{fmtDate(i.issue_date)}</td>
-                      <td className="py-3 text-right tabular-nums text-xs">{fmtRp(i.total)}</td>
-                      <td className="py-3 text-right tabular-nums text-xs">{fmtRp(i.balance ?? i.total)}</td>
-                      <td className="py-3"><ApBadge status={i.status} /></td>
-                      <td className="py-3 pr-4 text-right whitespace-nowrap">
+                      <td className="whitespace-nowrap">{fmtDate(i.issue_date)}</td>
+                      <td className="text-right tabular-nums">{fmtRp(i.total)}</td>
+                      <td className="text-right tabular-nums">{fmtRp(i.balance ?? i.total)}</td>
+                      <td><ApBadge status={i.status} /></td>
+                      <td className="text-right whitespace-nowrap">
                         {finance && i.kind === 'cmt' && !i.gl_posted && !['paid', 'cancelled', 'void'].includes(i.status) && (
                           <Button size="sm" variant="outline" onClick={() => postCmt(i)} className="mr-1"
                                   data-testid={`ap-post-cmt-${i.id}`} title="Catat tagihan CMT ini ke buku besar">
@@ -792,7 +804,7 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
                           </Button>
                         )}
                         {finance && canPayRow(i) && (
-                          <Button size="sm" variant="outline" onClick={() => setPaying(i)}
+                          <Button size="sm" variant="success" onClick={() => setPaying(i)}
                                   data-testid={`ap-pay-${i.id}`}>
                             Bayar
                           </Button>

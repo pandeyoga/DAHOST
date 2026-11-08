@@ -1,15 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Download, FileBarChart } from 'lucide-react';
+import { RefreshCw, FileBarChart } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { toast } from 'sonner';
-import { StatTile, EmptyState } from '../moduleAtoms';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { EmptyState } from '../moduleAtoms';
 import PageLayout from '../layout/PageLayout';
 import IntercompanyNotes from './IntercompanyNotes';
-import StatementTable from './StatementTable';
-import { fmt, authHeaders, downloadXlsx, yearOptions } from './reportShared';
+import StatementTable, { unduhanLaporan } from './StatementTable';
+import { fmt, authHeaders, yearOptions } from './reportShared';
 
 const GROUPS = ['revenue', 'cogs', 'expense', 'other_income', 'other_expense'];
 // Sama dengan tab "Total periode": HPP & beban ditulis minus supaya alurnya terbaca.
@@ -24,6 +25,8 @@ const STICKY_LABEL = '[&_tr>:first-child]:sticky [&_tr>:first-child]:left-0 [&_t
  * 2026-11-05 (PANDUAN_UI G1/G7): cetakan PageLayout dan tabel laporan yang sama dengan tab "Total periode"
  * (StatementTable). Dulu tabel sendiri berhuruf mesin ketik, judul baris KAPITAL, warna palet langsung, dan
  * wadah bergulir setinggi 70% layar sehingga baris terakhir tertutup tombol chat.
+ * 2026-11-08 (Standar UI/UX v2): unduh Excel & CSV (TombolUnduh, isi = tabel ini); 4 kartu yang mengulang kolom
+ * Total diganti satu kalimat (angka sama); pilihan tahun dilebarkan (dulu "Tahun 2026" terpotong).
  */
 export default function RahazaPnLMonthlyModule({ token }) {
   const [year, setYear] = useState(new Date().getFullYear());
@@ -39,8 +42,6 @@ export default function RahazaPnLMonthlyModule({ token }) {
   }, [token, year]);
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const exportXlsx = () => downloadXlsx(`/api/rahaza/finance/reports/export-xlsx?report=profit-loss-monthly&year=${year}`, token, `laba-rugi-12-bulan-${year}.xlsx`)
-    .catch((e) => toast.error(`Unduhan gagal: ${e.message}`));
 
   const L = data?.lines || {};
   const labels = data?.meta?.month_labels || [];
@@ -80,22 +81,26 @@ export default function RahazaPnLMonthlyModule({ token }) {
       subtitle="Pendapatan, HPP, beban, dan laba bersih tiap bulan dari buku besar; jurnal penutup tidak ikut."
       filters={
         <SmartNativeSelect value={String(year)} onChange={(e) => setYear(Number(e.target.value))} searchable={false}
-          className="h-9 w-28" aria-label="Tahun" data-testid="pnl12-year">
+          className="h-9 w-36" aria-label="Tahun" data-testid="pnl12-year">
           {yearOptions().map((y) => <option key={y} value={y}>{`Tahun ${y}`}</option>)}
         </SmartNativeSelect>
       }
       tools={<>
         <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="pnl12-refresh"><RefreshCw className="w-4 h-4" /></Button>
-        <Button variant="outline" onClick={exportXlsx} disabled={!data} data-testid="pnl12-export"><Download className="w-4 h-4" />Unduh Excel</Button>
+        <TombolUnduh namaBerkas={`laba-rugi-12-bulan-${year}`} namaLembar={`Laba rugi ${year}`} testId="pnl12-export"
+          baris={unduhanLaporan(columns, rows).baris} kolom={unduhanLaporan(columns, rows).kolom} />
       </>}
       summary={hasData && (<>
         <IntercompanyNotes data={data} testId="pnl12-ic-notes" />
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatTile label={`Pendapatan ${year}`} value={fmt(data?.groups?.revenue?.total)} testId="pnl12-kpi-rev" />
-          <StatTile label="Laba kotor" value={fmt(L.gross_profit?.total)} accent={Number(L.gross_profit?.total) < 0 ? 'danger' : 'default'} testId="pnl12-kpi-gross" />
-          <StatTile label="Beban operasional" value={fmt(data?.groups?.expense?.total)} testId="pnl12-kpi-exp" />
-          <StatTile label={net >= 0 ? 'Laba bersih' : 'Rugi bersih'} value={fmt(net)} accent={net < 0 ? 'danger' : 'default'} testId="pnl12-kpi-net" />
-        </div>
+        <p className="text-sm text-muted-foreground" data-testid="pnl12-ringkas">
+          Tahun {year}: pendapatan <b className="text-foreground tabular-nums" data-testid="pnl12-kpi-rev">{fmt(data?.groups?.revenue?.total)}</b>
+          {/* HP: laba kotor & beban operasional hanya di tabel — kalimat ringkas tetap pendek */}
+          <span className="hidden sm:inline">
+            {' '}· laba kotor <b className={`tabular-nums ${Number(L.gross_profit?.total) < 0 ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`} data-testid="pnl12-kpi-gross">{fmt(L.gross_profit?.total)}</b>
+            {' '}· beban operasional <b className="text-foreground tabular-nums" data-testid="pnl12-kpi-exp">{fmt(data?.groups?.expense?.total)}</b>
+          </span>
+          {' '}· {net >= 0 ? 'laba' : 'rugi'} bersih <b className={`tabular-nums ${net < 0 ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`} data-testid="pnl12-kpi-net">{fmt(net)}</b>
+        </p>
       </>)}
     >
       {loading ? (

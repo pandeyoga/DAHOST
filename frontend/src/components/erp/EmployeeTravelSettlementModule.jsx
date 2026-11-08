@@ -13,6 +13,9 @@
  * Kini periode = PeriodPicker di toolbar kiri (menyaring daftar DAN unduhan, tanggal dibuat — sama dengan
  * from_date/to_date unduhan), "Unduh CSV" di kanan, penjelasan satu baris. Rincian penyelesaian dan pilihan
  * perjalanan dibuka DI HALAMAN (DetailPanel), bukan popup; formulir penyelesaian baru tetap dialog.
+ * 2026-11-08 (Standar UI/UX v2): rincian & pilih perjalanan = popup (tabel ui/table); form penyelesaian =
+ * FormPopup panjang + DatePicker per nota; Setujui/Catat hijau, Tolak merah; semua tabel bisa diunduh Excel/CSV
+ * (daftar penyelesaian, rincian biaya, uang muka belum selesai); warna teks token.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import FilterChips from '@/components/ui/filter-chips';
@@ -20,8 +23,7 @@ import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { isFinanceRole } from '../../lib/financeRoles'; // FIN-02
 import {
   Plus, RefreshCw, FileText, CheckCircle, XCircle,
-  Send, Banknote, Eye, AlertCircle, Upload, Trash2,
-  Download, Search, MapPin,
+  Send, Banknote, Eye, Upload, Trash2, Search, MapPin,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,13 +32,11 @@ import { MoneyInput } from '@/components/ui/money-input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
-} from '@/components/ui/dialog';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue
-} from '@/components/ui/select';
-import { EmptyState, Notice, StatusBadge as AtomStatusBadge } from './moduleAtoms';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Table, TableHeader, TableBody, TableFooter, TableRow, TableHead, TableCell } from '@/components/ui/table';
+import { EmptyState, StatusBadge as AtomStatusBadge } from './moduleAtoms';
 import PageLayout, { DetailPanel } from './layout/PageLayout';
 import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
 import { toast } from 'sonner';
@@ -65,8 +65,8 @@ const STATUS_CONFIG = {
 };
 
 const STL_TYPE_CONFIG = {
-  return:     { label: 'Kembalian',    color: 'text-[hsl(var(--success))]',     note: 'Karyawan kembalikan sisa' },
-  additional: { label: 'Kurang bayar', color: 'text-[hsl(var(--destructive))]', note: 'Perusahaan bayar tambahan' },
+  return:     { label: 'Kembalian',    color: 'text-[hsl(var(--success-text))]', note: 'Karyawan kembalikan sisa' },
+  additional: { label: 'Kurang bayar', color: 'text-[hsl(var(--danger-text))]',  note: 'Perusahaan bayar tambahan' },
   exact:      { label: 'Tepat',        color: 'text-muted-foreground',          note: 'Uang muka dan biaya aktual sama' },
 };
 
@@ -85,7 +85,7 @@ function ReconciliationCard({ settlement }) {
   return (
     <div className="space-y-2">
       <p className="text-sm font-semibold">Rekonsiliasi uang muka</p>
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div>
           <div className="text-xs text-muted-foreground">Uang muka diterima</div>
           <div className="text-lg font-bold tabular-nums whitespace-nowrap">{fmt(advance)}</div>
@@ -122,8 +122,8 @@ function GLPreview({ settlement, bankAccount }) {
   const bankName = bankAccount?.name || 'Bank (pilih rekening)';
 
   return (
-    <div className="rounded-[var(--radius-md)] bg-foreground/[0.03] p-3 space-y-2">
-      <p className="text-xs font-semibold text-muted-foreground">Pratinjau jurnal</p>
+    <div className="rounded-[var(--radius-md)] border border-[var(--glass-border)] p-3 space-y-2">
+      <p className="text-sm font-medium text-foreground">Pratinjau jurnal</p>
       <div className="text-xs space-y-1 tabular-nums">
         {actual > 0 && (
           <div className="flex items-center gap-2">
@@ -210,61 +210,57 @@ function SettlementForm({ token, travel, onClose, onSaved }) {
   };
 
   return (
-    <div className="space-y-4">
-      {/* Trip info */}
-      <div className="rounded-lg bg-muted/50 p-3 grid grid-cols-2 gap-2 text-sm">
-        <div><span className="text-xs text-muted-foreground">Perjalanan</span><p className="font-bold whitespace-nowrap">{travel.trip_number}</p></div>
-        <div><span className="text-xs text-muted-foreground">Tujuan</span><p className="font-medium">{travel.destination}</p></div>
-        <div><span className="text-xs text-muted-foreground">Tanggal</span><p>{fmtDate(travel.start_date)} – {fmtDate(travel.end_date)}</p></div>
-        <div><span className="text-xs text-muted-foreground">Uang muka diterima</span><p className="font-bold tabular-nums">{fmt(advance)}</p></div>
-      </div>
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="settlement-form"
+      judul="Penyelesaian perjalanan dinas" keterangan={`${travel.trip_number} · ${travel.destination || ''}`}
+      onSimpan={handleSave} menyimpan={saving} galat={error} labelSimpan="Simpan draf">
+      <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+        <div><dt className="text-xs text-muted-foreground">Perjalanan</dt><dd className="font-semibold whitespace-nowrap">{travel.trip_number}</dd></div>
+        <div><dt className="text-xs text-muted-foreground">Tujuan</dt><dd className="font-medium">{travel.destination}</dd></div>
+        <div><dt className="text-xs text-muted-foreground">Tanggal</dt><dd>{fmtDate(travel.start_date)} – {fmtDate(travel.end_date)}</dd></div>
+        <div><dt className="text-xs text-muted-foreground">Uang muka diterima</dt><dd className="font-semibold tabular-nums">{fmt(advance)}</dd></div>
+      </dl>
 
       <DocNumberField
         policy={numPolicy} value={stlNumber} onChange={setStlNumber}
         testId="settlement-docnum" label="Nomor Penyelesaian Dinas" />
 
-      {/* Actual items */}
+      {/* Biaya aktual */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <label className="text-sm font-medium">Biaya aktual *</label>
-          <Button size="sm" variant="outline" onClick={addItem}><Plus className="w-3.5 h-3.5" />Tambah</Button>
+          <p className="text-sm font-medium">Biaya aktual<span className="ml-0.5 text-[hsl(var(--danger-text))]">*</span></p>
+          <Button type="button" size="sm" variant="outline" onClick={addItem}><Plus className="w-3.5 h-3.5" />Tambah nota</Button>
         </div>
         <div className="space-y-3">
           {items.map((it, i) => (
-            <div key={i} className="border rounded-lg p-3 space-y-2 bg-muted/20">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs text-muted-foreground">Tanggal</label>
-                  <Input type="date" value={it.date} onChange={e => setItem(i,'date',e.target.value)} className="text-sm" />
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground">Kategori</label>
-                  <Select value={it.category} onValueChange={v => setItem(i,'category',v)}>
-                    <SelectTrigger className="text-sm"><SelectValue placeholder="Pilih" /></SelectTrigger>
-                    <SelectContent>{EXPENSE_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs text-muted-foreground">Nominal (Rp)</label>
-                  <MoneyInput placeholder="0" value={it.amount} onChange={e => setItem(i,'amount',e.target.value)} className="text-sm" />
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground">Keterangan</label>
-                  <Input placeholder="opsional" value={it.notes} onChange={e => setItem(i,'notes',e.target.value)} className="text-sm" />
-                </div>
+            <div key={i} className="rounded-[var(--radius-md)] border border-[var(--glass-border)] p-3 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Isian label="Tanggal">
+                  <DatePicker value={it.date} onChange={v => setItem(i, 'date', v)} testId={`settlement-item-date-${i}`} />
+                </Isian>
+                <Isian label="Kategori">
+                  <SmartNativeSelect value={it.category} onChange={e => setItem(i, 'category', e.target.value)} searchable={false}
+                    className="h-9 w-full" aria-label={`Kategori nota ${i + 1}`} data-testid={`settlement-item-category-${i}`}>
+                    <option value="">Pilih</option>
+                    {EXPENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </SmartNativeSelect>
+                </Isian>
+                <Isian label="Nominal (Rp)">
+                  <MoneyInput placeholder="0" value={it.amount} onChange={e => setItem(i,'amount',e.target.value)} />
+                </Isian>
+                <Isian label="Keterangan">
+                  <Input placeholder="opsional" value={it.notes} onChange={e => setItem(i,'notes',e.target.value)} />
+                </Isian>
               </div>
               <div className="flex items-center gap-3">
-                <label className="text-xs text-muted-foreground flex items-center gap-1 cursor-pointer">
-                  <Upload className="w-3 h-3" />Foto struk
+                <label className="text-sm text-muted-foreground flex items-center gap-1.5 cursor-pointer">
+                  <Upload className="w-4 h-4" />Foto struk
                   <input type="file" accept="image/*" className="hidden" onChange={e => handleReceipt(i, e.target.files[0])} />
                 </label>
-                {it.receipt_url && <span className="text-xs text-[hsl(var(--success))]">✓ Terunggah</span>}
+                {it.receipt_url && <span className="text-xs text-[hsl(var(--success-text))]">Struk terunggah</span>}
                 {items.length > 1 && (
-                  <Button size="icon-sm" variant="ghost" className="ml-auto text-[hsl(var(--destructive))]" onClick={() => removeItem(i)}
+                  <Button type="button" size="icon-sm" variant="ghost" className="ml-auto text-[hsl(var(--danger-text))]" onClick={() => removeItem(i)}
                     title="Hapus baris" aria-label="Hapus baris">
-                    <Trash2 className="w-3 h-3" />
+                    <Trash2 className="w-3.5 h-3.5" />
                   </Button>
                 )}
               </div>
@@ -275,38 +271,30 @@ function SettlementForm({ token, travel, onClose, onSaved }) {
 
       {/* Pratinjau rekonsiliasi */}
       <div className="space-y-2">
-        <p className="text-sm font-semibold">Pratinjau rekonsiliasi</p>
+        <p className="text-sm font-medium">Pratinjau rekonsiliasi</p>
         <div className="grid grid-cols-3 gap-2 text-sm">
           <div>
             <div className="text-xs text-muted-foreground">Uang muka</div>
-            <div className="font-bold tabular-nums whitespace-nowrap">{fmt(advance)}</div>
+            <div className="font-semibold tabular-nums whitespace-nowrap">{fmt(advance)}</div>
           </div>
           <div>
             <div className="text-xs text-muted-foreground">Biaya aktual</div>
-            <div className="font-bold tabular-nums whitespace-nowrap">{fmt(totalActual)}</div>
+            <div className="font-semibold tabular-nums whitespace-nowrap">{fmt(totalActual)}</div>
           </div>
           <div>
             <div className="text-xs text-muted-foreground">Selisih</div>
-            <div className={`font-bold tabular-nums whitespace-nowrap ${STL_TYPE_CONFIG[stlType].color}`}>{fmt(Math.abs(diff))}</div>
+            <div className={`font-semibold tabular-nums whitespace-nowrap ${STL_TYPE_CONFIG[stlType].color}`}>{fmt(Math.abs(diff))}</div>
             <div className={`text-xs ${STL_TYPE_CONFIG[stlType].color}`}>
-              {stlType === 'return' ? '← Kembalikan' : stlType === 'additional' ? '→ Klaim' : 'Tepat'}
+              {stlType === 'return' ? 'Dikembalikan karyawan' : stlType === 'additional' ? 'Diklaim karyawan' : 'Tepat'}
             </div>
           </div>
         </div>
       </div>
 
-      <div className="space-y-1">
-        <label className="text-sm font-medium">Catatan</label>
+      <Isian label="Catatan">
         <Textarea placeholder="Keterangan tambahan (opsional)" value={notes} onChange={e => setNotes(e.target.value)} rows={2} />
-      </div>
-
-      {error && <Notice tone="danger" icon={AlertCircle}>{error}</Notice>}
-
-      <DialogFooter>
-        <Button variant="outline" onClick={onClose}>Batal</Button>
-        <Button onClick={handleSave} disabled={saving}>{saving ? 'Menyimpan…' : 'Simpan draf'}</Button>
-      </DialogFooter>
-    </div>
+      </Isian>
+    </FormPopup>
   );
 }
 
@@ -362,16 +350,16 @@ function SettlementDetail({ stl, token, onClose, onRefresh, role }) {
         )}
         {canApprove && !showReject && (
           <>
-            <Button variant="outline" onClick={() => setShowReject(true)} disabled={loading}>
+            <Button variant="destructive" onClick={() => setShowReject(true)} disabled={loading}>
               <XCircle className="w-3.5 h-3.5" />Tolak
             </Button>
-            <Button onClick={() => doAction('approve', { note })} disabled={loading}>
+            <Button variant="success" onClick={() => doAction('approve', { note })} disabled={loading}>
               <CheckCircle className="w-3.5 h-3.5" />Setujui
             </Button>
           </>
         )}
         {isFinance && stl.status === 'approved' && (
-          <Button
+          <Button variant="success"
             onClick={() => doAction('post', { bank_account_id: bankAccountId })}
             disabled={loading || (needsBank && !bankAccountId)}
             title={needsBank && !bankAccountId ? 'Pilih rekening kas/bank untuk selisih dulu' : undefined}
@@ -385,7 +373,7 @@ function SettlementDetail({ stl, token, onClose, onRefresh, role }) {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
           <div><p className="text-xs text-muted-foreground">Status</p><StatusBadge status={stl.status} /></div>
           <div><p className="text-xs text-muted-foreground">Karyawan</p><p className="font-medium">{stl.employee_name}</p></div>
-          <div><p className="text-xs text-muted-foreground">Perjalanan</p><p className="text-xs whitespace-nowrap">{stl.trip_number}</p></div>
+          <div><p className="text-xs text-muted-foreground">Perjalanan</p><p className="whitespace-nowrap">{stl.trip_number}</p></div>
           <div><p className="text-xs text-muted-foreground">Tujuan</p><p className="font-semibold">{stl.destination}</p></div>
         </div>
 
@@ -413,7 +401,7 @@ function SettlementDetail({ stl, token, onClose, onRefresh, role }) {
         {/* Rekening selisih + pratinjau jurnal (hanya Keuangan) */}
         {isFinance && stl.status === 'approved' && needsBank && (
           <div className="space-y-1 max-w-md">
-            <p className="text-xs font-medium text-muted-foreground">Rekening kas/bank untuk selisih *</p>
+            <p className="text-sm font-medium text-foreground">Rekening kas/bank untuk selisih<span className="ml-0.5 text-[hsl(var(--danger-text))]">*</span></p>
             <CashAccountSelect accounts={cashAccounts} loaded={cashLoaded} value={bankAccountId}
               onChange={setBankAccountId} valueKey="id" testId="stl-post-bank-account" />
           </div>
@@ -422,31 +410,36 @@ function SettlementDetail({ stl, token, onClose, onRefresh, role }) {
 
         {/* Biaya aktual */}
         {(stl.actual_items || []).length > 0 && (
-          <div>
-            <p className="text-sm font-medium mb-2">Rincian biaya aktual</p>
-            <div className="overflow-x-auto -mx-4">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50"><tr>
-                  <th className="text-left p-2 text-xs">Tanggal</th>
-                  <th className="text-left p-2 text-xs">Kategori</th>
-                  <th className="text-right p-2 text-xs">Nominal</th>
-                  <th className="text-left p-2 text-xs">Struk</th>
-                </tr></thead>
-                <tbody>{(stl.actual_items || []).map((it, i) => (
-                  <tr key={i} className="border-t">
-                    <td className="p-2 text-xs whitespace-nowrap">{fmtDate(it.date)}</td>
-                    <td className="p-2 text-xs">{it.category}</td>
-                    <td className="p-2 text-xs text-right tabular-nums whitespace-nowrap font-medium">{fmt(it.amount)}</td>
-                    <td className="p-2">
-                      {it.receipt_url ? <a href={it.receipt_url} target="_blank" rel="noreferrer" className="text-[hsl(var(--primary))] text-xs hover:underline">Lihat</a> : <span className="text-xs text-muted-foreground">—</span>}
-                    </td>
-                  </tr>
-                ))}</tbody>
-              </table>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-medium">Rincian biaya aktual</p>
+              <TombolUnduh namaBerkas={`rincian-biaya-${stl.settlement_number || 'dinas'}`} namaLembar="Biaya aktual" baris={stl.actual_items || []} testId="settlement-items-unduh"
+                kolom={[
+                  { label: 'Tanggal', nilai: (it) => fmtDate(it.date) },
+                  { label: 'Kategori', nilai: (it) => it.category || '' },
+                  { label: 'Nominal', nilai: (it) => Number(it.amount) || 0 },
+                  { label: 'Keterangan', nilai: (it) => it.notes || '' },
+                  { label: 'Struk', nilai: (it) => (it.receipt_url ? 'Ada' : 'Tidak ada') },
+                ]} />
             </div>
+            <Table className="md:min-w-0">
+              <TableHeader><TableRow>
+                <TableHead>Tanggal</TableHead><TableHead>Kategori</TableHead>
+                <TableHead className="text-right">Nominal</TableHead><TableHead>Struk</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>{(stl.actual_items || []).map((it, i) => (
+                <TableRow key={i}>
+                  <TableCell className="whitespace-nowrap">{fmtDate(it.date)}</TableCell>
+                  <TableCell>{it.category}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap font-medium">{fmt(it.amount)}</TableCell>
+                  <TableCell>
+                    {it.receipt_url ? <a href={it.receipt_url} target="_blank" rel="noreferrer" className="text-[hsl(var(--primary))] hover:underline">Lihat</a> : <span className="text-muted-foreground">—</span>}
+                  </TableCell>
+                </TableRow>
+              ))}</TableBody>
+            </Table>
           </div>
         )}
-
         {/* Jurnal bila sudah diposting */}
         {stl.gl_je_number && (
           <p className="text-sm text-muted-foreground">
@@ -458,7 +451,7 @@ function SettlementDetail({ stl, token, onClose, onRefresh, role }) {
         {/* Alasan ditolak */}
         {stl.reject_reason && (
           <div className="text-sm">
-            <p className="font-medium text-[hsl(var(--destructive))]">Alasan ditolak</p>
+            <p className="font-medium text-[hsl(var(--danger-text))]">Alasan ditolak</p>
             <p className="text-foreground">{stl.reject_reason}</p>
           </div>
         )}
@@ -498,63 +491,76 @@ function OutstandingAdvancePanel({ token }) {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        {data.total} uang muka belum diselesaikan · total <strong className="text-[hsl(var(--warning))] tabular-nums">{fmt(data.total_outstanding)}</strong> · akun 1-1610 Uang Muka Karyawan
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          {data.total} uang muka belum diselesaikan · total <strong className="text-[hsl(var(--warning-text))] tabular-nums">{fmt(data.total_outstanding)}</strong> · akun 1-1610 Uang Muka Karyawan
+        </p>
+        <TombolUnduh namaBerkas="uang-muka-dinas-belum-selesai" namaLembar="Uang muka dinas" baris={data.items || []} testId="outstanding-unduh"
+          kolom={[
+            { label: 'Perjalanan', nilai: (x) => x.trip_number },
+            { label: 'Karyawan', nilai: (x) => x.employee_name },
+            { label: 'Departemen', nilai: (x) => x.employee_dept || '' },
+            { label: 'Tujuan', nilai: (x) => x.destination || '' },
+            { label: 'Tanggal kembali', nilai: (x) => fmtDate(x.end_date) },
+            { label: 'Uang muka', nilai: (x) => Number(x.cash_advance_paid) || 0 },
+            { label: 'Hari belum selesai', nilai: (x) => (x.days_since_return ?? '') },
+            { label: 'Status penyelesaian', nilai: (x) => (x.pending_settlement ? `${x.pending_settlement.settlement_number}: ${STATUS_CONFIG[x.pending_settlement.status]?.label || x.pending_settlement.status}` : 'Belum ada penyelesaian') },
+          ]} />
+      </div>
       <GlassCard className="p-0 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50 border-b">
-              <tr>
-                <th className="text-left p-3 font-medium">Perjalanan / karyawan</th>
-                <th className="text-left p-3 font-medium">Tujuan</th>
-                <th className="text-left p-3 font-medium">Tanggal kembali</th>
-                <th className="text-right p-3 font-medium">Uang muka</th>
-                <th className="text-right p-3 font-medium">Hari belum selesai</th>
-                <th className="text-left p-3 font-medium">Status penyelesaian</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table className="w-full md:min-w-0 text-sm">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="text-left p-3 font-medium">Perjalanan / karyawan</TableHead>
+                <TableHead className="text-left p-3 font-medium">Tujuan</TableHead>
+                <TableHead className="text-left p-3 font-medium">Tanggal kembali</TableHead>
+                <TableHead className="text-right p-3 font-medium">Uang muka</TableHead>
+                <TableHead className="text-right p-3 font-medium">Hari belum selesai</TableHead>
+                <TableHead className="text-left p-3 font-medium">Status penyelesaian</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {(data.items || []).map(item => {
                 const daysOverdue = item.days_since_return;
                 const isOverdue = daysOverdue !== null && daysOverdue > 7;
                 return (
-                  <tr key={item.id} className={`border-t ${ isOverdue ? 'bg-[hsl(var(--destructive)/0.06)]' : '' }`}>
-                    <td className="p-3">
+                  <TableRow key={item.id} className={`border-t ${ isOverdue ? 'bg-[hsl(var(--destructive)/0.06)]' : '' }`}>
+                    <TableCell className="p-3">
                       <div className="text-xs text-muted-foreground whitespace-nowrap">{item.trip_number}</div>
                       <div className="font-medium">{item.employee_name}</div>
                       <div className="text-xs text-muted-foreground">{item.employee_dept}</div>
-                    </td>
-                    <td className="p-3">{item.destination}</td>
-                    <td className="p-3 text-xs whitespace-nowrap">{fmtDate(item.end_date)}</td>
-                    <td className="p-3 text-right tabular-nums whitespace-nowrap font-bold">{fmt(item.cash_advance_paid)}</td>
-                    <td className="p-3 text-right tabular-nums whitespace-nowrap">
+                    </TableCell>
+                    <TableCell className="p-3">{item.destination}</TableCell>
+                    <TableCell className="p-3 whitespace-nowrap">{fmtDate(item.end_date)}</TableCell>
+                    <TableCell className="p-3 text-right tabular-nums whitespace-nowrap font-bold">{fmt(item.cash_advance_paid)}</TableCell>
+                    <TableCell className="p-3 text-right tabular-nums whitespace-nowrap">
                       {daysOverdue !== null ? (
-                        <span className={`font-bold ${ isOverdue ? 'text-[hsl(var(--destructive))]' : 'text-[hsl(var(--warning))]' }`}>
+                        <span className={`font-bold ${ isOverdue ? 'text-[hsl(var(--danger-text))]' : 'text-[hsl(var(--warning-text))]' }`}>
                           {daysOverdue} hari
                         </span>
                       ) : '—'}
-                    </td>
-                    <td className="p-3">
+                    </TableCell>
+                    <TableCell className="p-3">
                       {item.pending_settlement ? (
                         <AtomStatusBadge status={item.pending_settlement.status} tone="warning"
                           label={`${item.pending_settlement.settlement_number}: ${STATUS_CONFIG[item.pending_settlement.status]?.label || item.pending_settlement.status}`} />
                       ) : (
                         <AtomStatusBadge status="none" tone="danger" label="Belum ada penyelesaian" />
                       )}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-            <tfoot className="border-t bg-muted/50">
-              <tr>
-                <td colSpan={3} className="p-3 text-sm font-bold">Total sisa (1-1610)</td>
-                <td className="p-3 text-right tabular-nums whitespace-nowrap font-bold text-[hsl(var(--warning))]">{fmt(data.total_outstanding)}</td>
-                <td colSpan={2} />
-              </tr>
-            </tfoot>
-          </table>
+            </TableBody>
+            <TableFooter className="border-t">
+              <TableRow>
+                <TableCell colSpan={3} className="p-3 text-sm font-bold">Total sisa (1-1610)</TableCell>
+                <TableCell className="p-3 text-right tabular-nums whitespace-nowrap font-bold text-[hsl(var(--warning-text))]">{fmt(data.total_outstanding)}</TableCell>
+                <TableCell colSpan={2} />
+              </TableRow>
+            </TableFooter>
+          </Table>
         </div>
       </GlassCard>
     </div>
@@ -587,8 +593,6 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
   // tanggal kosong = semua). Rentang yang sama menyaring daftar menurut tanggal dibuat, sehingga yang terunduh
   // = yang terlihat.
   const [period, setPeriod] = useState(() => periodFromPreset('12m'));
-  const exportFromDate = period.from;
-  const exportToDate = period.to;
 
   const role = user?.role || '';
   const isFinance = isFinanceRole(role); // FIN-02
@@ -622,32 +626,6 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
 
   useEffect(() => { fetchData(); }, [fetchData]);
   const refresh = () => { setReloadTick((t) => t + 1); fetchData(); };
-
-  // Phase 4: Export function — RC-23: toast sukses hanya bila backend OK (dulu fire-and-forget)
-  const handleExport = async () => {
-    const params = new URLSearchParams();
-    if (filter !== 'all') params.set('status', filter);
-    if (exportFromDate) params.set('from_date', exportFromDate);
-    if (exportToDate) params.set('to_date', exportToDate);
-    try {
-      const res = await fetch(`${API}/api/hr/expenses/settlements/export?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        toast.error(`Unduhan gagal (HTTP ${res.status}). Coba lagi atau hubungi admin.`);
-        return;
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `penyelesaian-dinas-${exportFromDate}-${exportToDate}.csv`;
-      document.body.appendChild(a); a.click(); a.remove();
-      URL.revokeObjectURL(url);
-      toast.success('CSV terunduh.');
-    } catch (e) {
-      toast.error('Unduhan gagal: ' + (e?.message || 'jaringan bermasalah'));
-    }
-  };
 
   // Phase 4: Bulk approve
   const handleBulkApprove = async () => {
@@ -789,7 +767,7 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
               <option value="posted">Terjurnal</option>
               <option value="rejected">Ditolak</option>
             </SmartNativeSelect>
-            <div className="relative w-64 max-w-full">
+            <div className="relative w-full sm:w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <GlassInput placeholder="Cari nomor / tujuan…" aria-label="Cari" value={search} onChange={e => setSearch(e.target.value)}
                 className="h-9 pl-9" data-testid="travel-search" />
@@ -803,10 +781,22 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
           <RefreshCw className="w-4 h-4" />
         </Button>
         {listTab && (
-          <Button variant="outline" onClick={handleExport} data-testid="travel-export-csv"
-            title="Unduh penyelesaian pada periode & status terpilih">
-            <Download className="w-4 h-4" />Unduh CSV
-          </Button>
+          <TombolUnduh namaBerkas={`penyelesaian-dinas-${period.from}-${period.to}`} namaLembar="Penyelesaian dinas" baris={filteredItems} testId="travel-export-csv"
+            kolom={[
+              { label: 'Nomor', nilai: (x) => x.settlement_number || '' },
+              { label: 'Perjalanan', nilai: (x) => x.trip_number || '' },
+              { label: 'Karyawan', nilai: (x) => x.employee_name || '' },
+              { label: 'Departemen', nilai: (x) => x.employee_dept || '' },
+              { label: 'Tujuan', nilai: (x) => x.destination || '' },
+              { label: 'Berangkat', nilai: (x) => fmtDate(x.start_date) },
+              { label: 'Kembali', nilai: (x) => fmtDate(x.end_date) },
+              { label: 'Biaya aktual', nilai: (x) => Number(x.total_actual) || 0 },
+              { label: 'Uang muka', nilai: (x) => Number(x.advance_received) || 0 },
+              { label: 'Selisih', nilai: (x) => Number(x.difference) || 0 },
+              { label: 'Jenis selisih', nilai: (x) => (STL_TYPE_CONFIG[x.settlement_type] || STL_TYPE_CONFIG.exact).label },
+              { label: 'Status', nilai: (x) => STATUS_CONFIG[x.status]?.label || x.status },
+              { label: 'Jurnal', nilai: (x) => x.gl_je_number || '' },
+            ]} />
         )}
       </>}
       summary={
@@ -823,26 +813,24 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
               <EmptyState icon={MapPin} title="Tidak ada perjalanan dinas yang bisa diselesaikan"
                 description="Perjalanan dinas muncul di sini setelah disetujui atau uang mukanya dibayar." />
             ) : (
-              <div className="overflow-x-auto -mx-4">
-                <table className="w-full text-sm">
-                  <thead><tr>
-                    <th className="text-left p-2">Nomor</th><th className="text-left p-2">Tujuan</th>
-                    <th className="text-left p-2">Tanggal</th><th className="text-right p-2">Uang muka</th><th className="p-2" />
-                  </tr></thead>
-                  <tbody>{myTrips.map(tr => (
-                    <tr key={tr.id} className="border-t cursor-pointer hover:bg-muted/40" onClick={() => setSelectedTravel(tr)}
-                      data-testid={`settlement-trip-${tr.id}`}>
-                      <td className="p-2 text-xs whitespace-nowrap">{tr.trip_number}</td>
-                      <td className="p-2 font-medium">{tr.destination}</td>
-                      <td className="p-2 text-xs whitespace-nowrap">{fmtDate(tr.start_date)} – {fmtDate(tr.end_date)}</td>
-                      <td className="p-2 text-right tabular-nums whitespace-nowrap font-bold">{fmt(tr.cash_advance_paid || tr.cash_advance_approved || 0)}</td>
-                      <td className="p-2 text-right">
-                        <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setSelectedTravel(tr); }}>Pilih</Button>
-                      </td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </div>
+              <Table className="md:min-w-0">
+                <TableHeader><TableRow>
+                  <TableHead>Nomor</TableHead><TableHead>Tujuan</TableHead>
+                  <TableHead>Tanggal</TableHead><TableHead className="text-right">Uang muka</TableHead><TableHead />
+                </TableRow></TableHeader>
+                <TableBody>{myTrips.map(tr => (
+                  <TableRow key={tr.id} className="cursor-pointer" onClick={() => setSelectedTravel(tr)}
+                    data-testid={`settlement-trip-${tr.id}`}>
+                    <TableCell className="whitespace-nowrap">{tr.trip_number}</TableCell>
+                    <TableCell className="font-medium">{tr.destination}</TableCell>
+                    <TableCell className="whitespace-nowrap">{fmtDate(tr.start_date)} – {fmtDate(tr.end_date)}</TableCell>
+                    <TableCell className="text-right tabular-nums whitespace-nowrap font-semibold">{fmt(tr.cash_advance_paid || tr.cash_advance_approved || 0)}</TableCell>
+                    <TableCell className="text-right">
+                      <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setSelectedTravel(tr); }}>Pilih</Button>
+                    </TableCell>
+                  </TableRow>
+                ))}</TableBody>
+              </Table>
             )}
           </DetailPanel>
         )}
@@ -871,7 +859,7 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
               </div>
               <div className="flex items-center gap-2">
                 {isApprover && (
-                  <Button variant="outline" size="sm" onClick={handleBulkApprove} disabled={bulkLoading} data-testid="bulk-approve-btn">
+                  <Button variant="success" size="sm" onClick={handleBulkApprove} disabled={bulkLoading} data-testid="bulk-approve-btn">
                     <CheckCircle className="w-3.5 h-3.5" />Setujui yang dipilih
                   </Button>
                 )}
@@ -901,100 +889,95 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
           ) : (
             <>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50 border-b">
-                    <tr>
+                <Table className="w-full md:min-w-0 text-sm">
+                  <TableHeader>
+                    <TableRow>
                       {canSelect && (
-                        <th className="text-left p-3 w-12">
+                        <TableHead className="text-left p-3 w-12">
                           <Checkbox
                             checked={selectedIds.length === filteredItems.length && filteredItems.length > 0}
                             onCheckedChange={toggleSelectAll}
                             data-testid="select-all-checkbox"
                           />
-                        </th>
+                        </TableHead>
                       )}
-                      <th className="text-left p-3 font-medium">Nomor / perjalanan</th>
-                      <th className="text-left p-3 font-medium">Karyawan</th>
-                      <th className="text-left p-3 font-medium">Tujuan</th>
-                      <th className="text-right p-3 font-medium">Biaya aktual</th>
-                      <th className="text-right p-3 font-medium">Uang muka</th>
-                      <th className="text-right p-3 font-medium">Selisih</th>
-                      <th className="text-left p-3 font-medium">Status</th>
-                      <th className="p-3" aria-label="Rincian" />
-                    </tr>
-                  </thead>
-                  <tbody>
+                      <TableHead className="text-left p-3 font-medium">Nomor / perjalanan</TableHead>
+                      <TableHead className="text-left p-3 font-medium">Karyawan</TableHead>
+                      <TableHead className="text-left p-3 font-medium">Tujuan</TableHead>
+                      <TableHead className="text-right p-3 font-medium">Biaya aktual</TableHead>
+                      <TableHead className="text-right p-3 font-medium">Uang muka</TableHead>
+                      <TableHead className="text-right p-3 font-medium">Selisih</TableHead>
+                      <TableHead className="text-left p-3 font-medium">Status</TableHead>
+                      <TableHead className="p-3" aria-label="Rincian" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {paged.map(s => {
                       const diff = s.difference || 0;
                       const stlType = s.settlement_type || 'exact';
                       const open = selected?.id === s.id;
                       return (
-                        <tr key={s.id} className={`border-t hover:bg-muted/30 transition-colors ${open ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
+                        <TableRow key={s.id} className={`border-t hover:bg-muted/30 transition-colors ${open ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
                           {canSelect && (
-                            <td className="p-3">
+                            <TableCell className="p-3">
                               <Checkbox
                                 checked={selectedIds.includes(s.id)}
                                 onCheckedChange={() => toggleSelect(s.id)}
                                 data-testid={`select-checkbox-${s.id}`}
                               />
-                            </td>
+                            </TableCell>
                           )}
-                          <td className="p-3 whitespace-nowrap">
-                            <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => openDetail(s)}
+                          <TableCell className="p-3 whitespace-nowrap">
+                            <Button variant="link" size="sm" className="h-auto p-0" onClick={() => openDetail(s)}
                               data-testid={`settlement-open-${s.id}`}>
                               {s.settlement_number}
                             </Button>
                             <div className="text-xs text-muted-foreground">{s.trip_number}</div>
-                          </td>
-                          <td className="p-3">
+                          </TableCell>
+                          <TableCell className="p-3">
                             <div className="font-medium">{s.employee_name}</div>
                             <div className="text-xs text-muted-foreground">{s.employee_dept}</div>
-                          </td>
-                          <td className="p-3">
+                          </TableCell>
+                          <TableCell className="p-3">
                             <div>{s.destination}</div>
                             <div className="text-xs text-muted-foreground whitespace-nowrap">{fmtDate(s.start_date)} – {fmtDate(s.end_date)}</div>
-                          </td>
-                          <td className="p-3 text-right tabular-nums whitespace-nowrap font-bold">{fmt(s.total_actual)}</td>
-                          <td className="p-3 text-right tabular-nums whitespace-nowrap">{fmt(s.advance_received)}</td>
-                          <td className="p-3 text-right tabular-nums whitespace-nowrap">
-                            <span className={`text-xs font-bold ${(STL_TYPE_CONFIG[stlType] || STL_TYPE_CONFIG.exact).color}`}
+                          </TableCell>
+                          <TableCell className="p-3 text-right tabular-nums whitespace-nowrap font-bold">{fmt(s.total_actual)}</TableCell>
+                          <TableCell className="p-3 text-right tabular-nums whitespace-nowrap">{fmt(s.advance_received)}</TableCell>
+                          <TableCell className="p-3 text-right tabular-nums whitespace-nowrap">
+                            <span className={`font-semibold ${(STL_TYPE_CONFIG[stlType] || STL_TYPE_CONFIG.exact).color}`}
                               title={(STL_TYPE_CONFIG[stlType] || STL_TYPE_CONFIG.exact).label}>
                               {stlType === 'return' ? '↓' : stlType === 'additional' ? '↑' : '='} {fmt(Math.abs(diff))}
                             </span>
-                          </td>
-                          <td className="p-3"><StatusBadge status={s.status} /></td>
-                          <td className="p-3 text-right">
+                          </TableCell>
+                          <TableCell className="p-3"><StatusBadge status={s.status} /></TableCell>
+                          <TableCell className="p-3 text-right">
                             <Button size="icon-sm" variant="ghost" onClick={() => openDetail(s)}
                               title={open ? 'Tutup rincian' : 'Lihat rincian'} aria-label={open ? 'Tutup rincian' : 'Lihat rincian'} aria-expanded={open}>
                               <Eye className="w-3.5 h-3.5" />
                             </Button>
-                          </td>
-                        </tr>
+                          </TableCell>
+                        </TableRow>
                       );
                     })}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
               </div>
-              <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-3" />
+              {totalPages > 1 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-3" />}
             </>
           )}
         </GlassCard>
       )}
 
-      {/* Formulir penyelesaian baru — formulir isian, tetap dialog */}
-      <Dialog open={!!selectedTravel} onOpenChange={v => { if (!v) { setSelectedTravel(null); setShowCreate(false); } }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>Penyelesaian perjalanan dinas</DialogTitle></DialogHeader>
-          {selectedTravel && (
-            <SettlementForm
-              token={token}
-              travel={selectedTravel}
-              onClose={() => { setSelectedTravel(null); setShowCreate(false); }}
-              onSaved={(d) => { setSelectedTravel(null); setShowCreate(false); fetchData(); setSelected(d); }}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
+      {/* Formulir penyelesaian baru — popup form standar (FormPopup panjang) */}
+      {selectedTravel && (
+        <SettlementForm
+          token={token}
+          travel={selectedTravel}
+          onClose={() => { setSelectedTravel(null); setShowCreate(false); }}
+          onSaved={(d) => { setSelectedTravel(null); setShowCreate(false); fetchData(); setSelected(d); }}
+        />
+      )}
     </PageLayout>
   );
 }

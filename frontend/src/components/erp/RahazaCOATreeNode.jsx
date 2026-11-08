@@ -1,4 +1,5 @@
 import { Edit2, Trash2, Lock, Archive, RotateCcw, Link2, ChevronRight, ChevronDown } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 // 2026-11-02 (S2-H) — atom layar Bagan Akun: label Indonesia, lencana keterikatan, pohon dengan
 // aksi yang SELALU terlihat (dulu hanya muncul saat hover → tidak bisa dipakai di layar sentuh).
@@ -10,32 +11,23 @@ export const TYPE_LABELS = {
 export const TYPE_ORDER = ['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'COGS', 'EXPENSE', 'OTHER_INCOME', 'OTHER_EXPENSE'];
 export const NB_LABELS = { DEBIT: 'Debit', CREDIT: 'Kredit' };
 
-// Kontras cukup di tema terang (700) & gelap (300) — dulu hanya varian 300 (pucat di tema terang).
-const TYPE_COLORS = {
-  ASSET: 'text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border-emerald-500/30',
-  LIABILITY: 'text-amber-700 dark:text-amber-300 bg-amber-500/10 border-amber-500/30',
-  EQUITY: 'text-sky-700 dark:text-sky-300 bg-sky-500/10 border-sky-500/30',
-  REVENUE: 'text-violet-700 dark:text-violet-300 bg-violet-500/10 border-violet-500/30',
-  COGS: 'text-rose-700 dark:text-rose-300 bg-rose-500/10 border-rose-500/30',
-  EXPENSE: 'text-red-700 dark:text-red-300 bg-red-500/10 border-red-500/30',
-  OTHER_INCOME: 'text-teal-700 dark:text-teal-300 bg-teal-500/10 border-teal-500/30',
-  OTHER_EXPENSE: 'text-orange-700 dark:text-orange-300 bg-orange-500/10 border-orange-500/30',
-};
+// 2026-11-08 (Standar UI/UX v2): tipe akun = label netral (dulu 8 warna palet langsung — warna bukan hiasan).
+const TYPE_COLORS = {};
 
 export function TypeBadge({ type, className = '' }) {
-  const cls = TYPE_COLORS[type] || 'text-foreground/70 bg-foreground/5 border-foreground/10';
+  const cls = TYPE_COLORS[type] || 'text-muted-foreground bg-transparent border-[var(--glass-border)]';
   return (
-    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border whitespace-nowrap ${cls} ${className}`}>
+    <span className={`text-xs font-medium px-1.5 py-0.5 rounded border whitespace-nowrap ${cls} ${className}`}>
       {TYPE_LABELS[type] || type}
     </span>
   );
 }
 
 export const LEVEL_META = {
-  SISTEM: { label: 'Terhubung', cls: 'text-red-700 dark:text-red-300 bg-red-500/10 border-red-500/40' },
-  STRUKTUR: { label: 'Struktur', cls: 'text-amber-700 dark:text-amber-300 bg-amber-500/10 border-amber-500/40' },
-  SEED: { label: 'Bawaan', cls: 'text-slate-600 dark:text-slate-300 bg-slate-500/10 border-slate-500/30' },
-  BEBAS: { label: 'Bebas', cls: 'text-muted-foreground bg-transparent border-dashed border-foreground/20' },
+  SISTEM: { label: 'Terhubung', cls: 'text-[hsl(var(--danger-text))] bg-[hsl(var(--destructive)/0.08)] border-[hsl(var(--destructive)/0.35)]' },
+  STRUKTUR: { label: 'Struktur', cls: 'text-[hsl(var(--warning-text))] bg-[hsl(var(--warning)/0.08)] border-[hsl(var(--warning)/0.35)]' },
+  SEED: { label: 'Bawaan', cls: 'text-muted-foreground bg-muted/40 border-[var(--glass-border)]' },
+  BEBAS: { label: 'Bebas', cls: 'text-muted-foreground bg-transparent border-dashed border-[var(--glass-border)]' },
 };
 
 /** Lencana "Terhubung · N" — merah = sistem, kuning = struktur/laporan, abu = bawaan, garis putus = bebas. */
@@ -46,17 +38,19 @@ export function UsageBadge({ usage, onClick, testId }) {
   const text = showCount ? `${meta.label} · ${usage.count}` : meta.label;
   const tip = (usage.labels || []).join('\n') || (usage.level === 'BEBAS' ? 'Tidak terhubung ke apa pun — aman dihapus' : 'Akun bawaan sistem — bisa dinonaktifkan');
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
+      size="sm"
       onClick={onClick}
       title={tip}
       aria-label={`Keterikatan akun: ${text}. Buka rincian.`}
-      className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border whitespace-nowrap hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${meta.cls}`}
+      className={`h-auto gap-1 text-xs font-medium px-1.5 py-0.5 rounded-full border whitespace-nowrap hover:opacity-80 ${meta.cls}`}
       data-testid={testId}
     >
       {showCount && <Link2 className="w-3 h-3" aria-hidden="true" />}
       {showCount ? (<><span className="hidden sm:inline">{meta.label} · </span>{usage.count}</>) : text}
-    </button>
+    </Button>
   );
 }
 
@@ -66,28 +60,28 @@ export function RowActions({ acc, onEdit, onDelete, onReactivate, code }) {
   const inactive = acc.active === false;
   let DelIcon = Trash2;
   let delLabel = 'Hapus permanen';
-  let delCls = 'text-red-600 dark:text-red-400 hover:bg-red-500/10';
+  let delCls = 'text-[hsl(var(--danger-text))] hover:bg-[hsl(var(--destructive)/0.08)]';
   if (!u.can_delete) {
-    if (u.can_deactivate) { DelIcon = Archive; delLabel = 'Nonaktifkan'; delCls = 'text-amber-700 dark:text-amber-300 hover:bg-amber-500/10'; }
+    if (u.can_deactivate) { DelIcon = Archive; delLabel = 'Nonaktifkan'; delCls = 'text-[hsl(var(--warning-text))] hover:bg-[hsl(var(--warning)/0.08)]'; }
     else { DelIcon = Lock; delLabel = 'Terkunci — lihat alasan'; delCls = 'text-muted-foreground hover:bg-foreground/5'; }
   }
-  const btn = 'h-8 w-8 inline-grid place-items-center rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary';
+  // 2026-11-08 (Standar UI/UX v2): tombol ikon = Button (dulu tombol buatan sendiri berwarna palet langsung).
   return (
     <div className="flex items-center gap-0.5 shrink-0">
-      <button type="button" onClick={() => onEdit(acc)} className={`${btn} text-primary hover:bg-primary/10`}
+      <Button type="button" variant="ghost" size="icon-sm" onClick={() => onEdit(acc)} className="text-primary"
         title="Ubah akun" aria-label={`Ubah akun ${code}`} data-testid={`coa-edit-${code}`}>
         <Edit2 className="w-4 h-4" />
-      </button>
+      </Button>
       {inactive ? (
-        <button type="button" onClick={() => onReactivate(acc)} className={`${btn} text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10`}
+        <Button type="button" variant="ghost" size="icon-sm" onClick={() => onReactivate(acc)} className="text-[hsl(var(--success-text))]"
           title="Aktifkan lagi" aria-label={`Aktifkan lagi akun ${code}`} data-testid={`coa-reactivate-${code}`}>
           <RotateCcw className="w-4 h-4" />
-        </button>
+        </Button>
       ) : (
-        <button type="button" onClick={() => onDelete(acc)} className={`${btn} ${delCls}`}
+        <Button type="button" variant="ghost" size="icon-sm" onClick={() => onDelete(acc)} className={delCls}
           title={delLabel} aria-label={`${delLabel}: akun ${code}`} data-testid={`coa-delete-${code}`}>
           <DelIcon className="w-4 h-4" />
-        </button>
+        </Button>
       )}
     </div>
   );
@@ -155,14 +149,15 @@ function TreeRow({ row, onToggle, isOpen, matched, q, onEdit, onDelete, onReacti
       data-testid={`coa-row-${node.code}`}
     >
       {hasChildren ? (
-        <button type="button" onClick={() => onToggle(node.code)}
-          className="h-8 w-8 shrink-0 grid place-items-center rounded text-muted-foreground hover:text-foreground hover:bg-foreground/5"
+        <Button type="button" variant="ghost" size="icon-sm" onClick={() => onToggle(node.code)}
+          className="shrink-0 text-muted-foreground hover:text-foreground"
           aria-expanded={isOpen} aria-label={`${isOpen ? 'Tutup' : 'Buka'} anak akun ${node.code}`}
+          title={`${isOpen ? 'Tutup' : 'Buka'} anak akun`}
           data-testid={`coa-toggle-${node.code}`}>
           {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-        </button>
+        </Button>
       ) : (<span className="w-8 shrink-0" aria-hidden="true" />)}
-      <span className="font-mono text-xs text-foreground/75 flex-1 basis-16 min-w-0 sm:flex-none sm:basis-auto sm:shrink-0 sm:min-w-[5.5rem] sm:max-w-[9rem] truncate" title={node.code}>
+      <span className="text-xs text-muted-foreground tabular-nums flex-1 basis-16 min-w-0 sm:flex-none sm:basis-auto sm:shrink-0 sm:min-w-[5.5rem] sm:max-w-[9rem] truncate" title={node.code}>
         <Highlight text={node.code} q={q} />
       </span>
       <span className={`order-last basis-full pl-9 sm:order-none sm:basis-auto sm:pl-0 min-w-0 sm:flex-1 truncate text-sm ${node.is_group ? 'font-semibold text-foreground' : 'text-foreground/85'}`} title={node.name}>
@@ -170,9 +165,9 @@ function TreeRow({ row, onToggle, isOpen, matched, q, onEdit, onDelete, onReacti
       </span>
       <span className="hidden sm:inline-flex items-center gap-1 shrink-0">
         <TypeBadge type={node.type} />
-        {node.is_group && <span className="text-[10px] text-muted-foreground">grup</span>}
+        {node.is_group && <span className="text-xs text-muted-foreground">grup</span>}
       </span>
-      {inactive && <span className="text-[10px] px-1.5 py-0.5 rounded border border-foreground/20 text-muted-foreground shrink-0">nonaktif</span>}
+      {inactive && <span className="text-xs px-1.5 py-0.5 rounded border border-[var(--glass-border)] text-muted-foreground shrink-0">nonaktif</span>}
       <span className="shrink-0"><UsageBadge usage={node.usage} onClick={() => onUsage(node)} testId={`coa-usage-${node.code}`} /></span>
       <RowActions acc={node} code={node.code} onEdit={onEdit} onDelete={onDelete} onReactivate={onReactivate} />
     </div>

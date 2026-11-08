@@ -5,7 +5,9 @@ import { Button } from '@/components/ui/button';
 import FilterChips from '@/components/ui/filter-chips';
 import { Loader2, Sparkles, Upload, CheckCircle2, RefreshCw, ArrowRightLeft } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { formatRupiah as fmt } from '@/lib/format';
+import { formatDateID, formatRupiah as fmt } from '@/lib/format';
+import { humanMemo, journalSourceLabel } from '@/lib/financeLabels';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { MoneyInput } from '@/components/ui/money-input';
 import { EmptyState } from '../../moduleAtoms';
 import { DetailPanel } from '../../layout/PageLayout';
@@ -108,7 +110,7 @@ export function SessionDetail({ sessionId, headers, onBack, onChanged }) {
         <Button size="icon" variant="outline" data-testid="recon-refresh" onClick={load} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>
         {!readOnly && <>
           <Button variant="outline" data-testid="recon-import-toggle" onClick={() => setShowImport(v => !v)} aria-expanded={showImport}><Upload className="w-4 h-4" /> Impor mutasi</Button>
-          <Button variant="outline" data-testid="recon-approve"
+          <Button variant="success" data-testid="recon-approve"
             onClick={approve} disabled={busy || session.unmatched_count > 0 || !session.total_bank_txns}
             title={session.unmatched_count > 0 ? 'Cocokkan semua mutasi dulu' : 'Setujui sesi rekonsiliasi'}>
             <CheckCircle2 className="w-4 h-4" /> Setujui
@@ -140,6 +142,18 @@ export function SessionDetail({ sessionId, headers, onBack, onChanged }) {
         {section === 'bank' && txns.length > 0 && (
           <>
             <span className="w-px h-5 bg-[var(--glass-border)]" aria-hidden />
+            <span className="ml-auto order-last">
+              <TombolUnduh namaBerkas={`mutasi-bank-${session.period}-${session.account_name}`} namaLembar="Mutasi bank" baris={shown} testId="recon-txn-unduh"
+                kolom={[
+                  { label: 'Tanggal', nilai: (t) => formatDateID(t.txn_date) },
+                  { label: 'Keterangan', nilai: (t) => t.description || '' },
+                  { label: 'Referensi', nilai: (t) => t.reference || '' },
+                  { label: 'Arah', nilai: (t) => ((t.direction || (t.type === 'debit' ? 'in' : 'out')) === 'in' ? 'Masuk' : 'Keluar') },
+                  { label: 'Nominal', nilai: (t) => Number(t.amount) || 0 },
+                  { label: 'Status', nilai: (t) => (t.is_matched ? 'Cocok' : 'Belum cocok') },
+                  { label: 'Dicocokkan ke', nilai: (t) => t.match_ref || '' },
+                ]} />
+            </span>
             <FilterChips value={filter} onChange={setFilter} testId="recon-filter" ariaLabel="Saring mutasi" hideWhenEmpty={false}
               options={[
                 { key: 'all', label: 'Semua', count: txns.length },
@@ -147,6 +161,33 @@ export function SessionDetail({ sessionId, headers, onBack, onChanged }) {
                 { key: 'matched', label: 'Cocok', count: matchedCount },
               ]} />
           </>
+        )}
+        {section === 'gl' && (session.gl_lines?.length || 0) > 0 && (
+          <span className="ml-auto">
+            <TombolUnduh namaBerkas={`jurnal-akun-bank-${session.period}-${session.gl_account_code}`} namaLembar="Jurnal akun bank" baris={session.gl_lines} testId="recon-gl-unduh"
+              kolom={[
+                { label: 'Tanggal', nilai: (g) => formatDateID(g.date) },
+                { label: 'No. jurnal', nilai: (g) => g.je_number },
+                { label: 'Keterangan', nilai: (g) => humanMemo(g.memo || g.description) },
+                { label: 'Sumber', nilai: (g) => journalSourceLabel(g.source_module) },
+                { label: 'Debit', nilai: (g) => Number(g.debit) || 0 },
+                { label: 'Kredit', nilai: (g) => Number(g.credit) || 0 },
+                { label: 'Status', nilai: (g) => (g.is_matched ? 'Cocok' : 'Belum di bank') },
+              ]} />
+          </span>
+        )}
+        {section === 'internal' && (check?.movements?.length || 0) > 0 && (
+          <span className="ml-auto">
+            <TombolUnduh namaBerkas={`cek-kas-internal-${session.period}-${session.gl_account_code}`} namaLembar="Kas internal" baris={check.movements} testId="recon-ic-unduh"
+              kolom={[
+                { label: 'Tanggal', nilai: (m) => formatDateID(m.date) },
+                { label: 'Mutasi kas', nilai: (m) => m.ref_label || m.category || '' },
+                { label: 'Sumber', nilai: (m) => journalSourceLabel(m.source_module) },
+                { label: 'Nominal', nilai: (m) => (m.direction === 'in' ? 1 : -1) * (Number(m.amount) || 0) },
+                { label: 'Jurnal', nilai: (m) => m.gl_je_number || '' },
+                { label: 'Catatan', nilai: (m) => m.note || '' },
+              ]} />
+          </span>
         )}
       </div>
 

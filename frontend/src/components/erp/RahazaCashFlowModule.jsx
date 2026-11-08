@@ -1,16 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Wallet, Download, FileSpreadsheet } from 'lucide-react';
-import { toast } from 'sonner';
-import { downloadXlsx } from './finance/reportShared';
+import { RefreshCw, Wallet } from 'lucide-react';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import FilterChips from '@/components/ui/filter-chips';
-import { StatTile, EmptyState } from './moduleAtoms';
+import { EmptyState } from './moduleAtoms';
 import PageLayout from './layout/PageLayout';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateID } from '@/lib/format';
 import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
-import StatementTable from './finance/StatementTable';
+import StatementTable, { unduhanLaporan } from './finance/StatementTable';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
 const COLS = [{ key: 'in', label: 'Masuk' }, { key: 'out', label: 'Keluar' }, { key: 'net', label: 'Bersih' }];
@@ -22,6 +21,9 @@ const COLS = [{ key: 'in', label: 'Masuk' }, { key: 'out', label: 'Keluar' }, { 
  * 2026-11-04 (PANDUAN_UI G7): satu tabel laporan (Masuk · Keluar · Bersih) — dulu tiap aktivitas satu
  * kartu berwarna, ringkasan berupa kartu besar, dan angka berhuruf mesin ketik hijau/merah.
  * 2026-11-05 (PANDUAN_UI G1): cetakan PageLayout — periode & tampilan di toolbar kiri, muat ulang & unduh di kanan.
+ * 2026-11-08 (Standar UI/UX v2): satu tombol Unduh (Excel & CSV, isi = tabel yang tampil) menggantikan dua tombol;
+ * 3 kartu (kas awal/perubahan/akhir — sudah ada sebagai baris tabel) diganti satu kalimat; tabel saldo rekening
+ * juga bisa diunduh.
  */
 export default function RahazaCashFlowModule({ token }) {
   const [view, setView] = useState('account');
@@ -43,25 +45,6 @@ export default function RahazaCashFlowModule({ token }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, from, to]);
   useEffect(() => { fetchData(); }, [fetchData]);
-
-  const exportCSV = () => {
-    if (!data) return;
-    const lines = [['Aktivitas', 'Jenis', 'Masuk', 'Keluar', 'Bersih', 'Jumlah jurnal']];
-    Object.values(data.activities || {}).forEach((act) => {
-      (act.items || []).forEach((r) => lines.push([act.label, r.label, r.inflow, r.outflow, r.net, r.count]));
-      lines.push([`Total ${act.label}`, '', '', '', act.total, '']);
-    });
-    lines.push(['Perubahan kas', '', '', '', data.totals.net_change_in_cash, '']);
-    lines.push(['Kas awal', '', '', '', data.totals.opening_cash, '']);
-    lines.push(['Kas akhir', '', '', '', data.totals.closing_cash, '']);
-    const csv = lines.map((r) => r.map((c) => (typeof c === 'string' && c.includes(',')) ? `"${c}"` : c).join(',')).join('\n');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    const link = document.createElement('a');
-    link.href = url; link.download = `arus-kas-${from}-${to}.csv`; link.click();
-    URL.revokeObjectURL(url);
-  };
-  const exportXlsx = () => downloadXlsx(`/api/rahaza/finance/reports/export-xlsx?report=cash-flow&from=${from}&to=${to}`, token, `arus-kas-${from}-${to}.xlsx`)
-    .catch((e) => toast.error(`Ekspor gagal: ${e.message}`));
 
   const t = data?.totals || {};
   const ba = data?.by_account;
@@ -104,25 +87,25 @@ export default function RahazaCashFlowModule({ token }) {
       </>}
       tools={<>
         <Button variant="outline" size="icon" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang" data-testid="cf-refresh"><RefreshCw className="w-4 h-4" /></Button>
-        <Button variant="outline" onClick={exportCSV} disabled={!data} data-testid="cf-export"><Download className="w-4 h-4" />Unduh CSV</Button>
-        <Button variant="outline" onClick={exportXlsx} disabled={!data} data-testid="cf-export-xlsx"><FileSpreadsheet className="w-4 h-4" />Unduh Excel</Button>
+        <TombolUnduh namaBerkas={`arus-kas-${view === 'account' ? 'per-kelompok-akun' : 'per-jenis'}-${from}-${to}`} namaLembar="Arus kas" testId="cf-export"
+          baris={unduhanLaporan(COLS, rows, 'Arus kas').baris} kolom={unduhanLaporan(COLS, rows, 'Arus kas').kolom} />
       </>}
       summary={<>
-        {error && <p className="text-sm text-[hsl(var(--destructive))]" data-testid="cf-error">{error}</p>}
+        {error && <p className="text-sm text-[hsl(var(--danger-text))]" data-testid="cf-error">{error}</p>}
         {data && (
-          <div className="grid grid-cols-3 gap-3">
-            <StatTile label="Kas awal" value={fmt(opening)} testId="cf-kpi-open" />
-            <StatTile label="Perubahan kas" value={fmt(Number(closing || 0) - Number(opening || 0))} accent={Number(closing) < Number(opening) ? 'danger' : 'default'} testId="cf-kpi-net" />
-            <StatTile label="Kas akhir" value={fmt(closing)} testId="cf-kpi-closing" />
-          </div>
+          <p className="text-sm text-muted-foreground" data-testid="cf-ringkas">
+            Kas awal <b className="text-foreground tabular-nums" data-testid="cf-kpi-open">{fmt(opening)}</b>
+            {' '}{Number(closing) < Number(opening) ? '−' : '+'} perubahan <b className={`tabular-nums ${Number(closing) < Number(opening) ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`} data-testid="cf-kpi-net">{fmt(Math.abs(Number(closing || 0) - Number(opening || 0)))}</b>
+            {' '}= kas akhir <b className="text-foreground tabular-nums" data-testid="cf-kpi-closing">{fmt(closing)}</b>
+          </p>
         )}
         {data && view === 'account' && ba && (
-          <p className="text-sm text-muted-foreground">
-            {ba.totals?.journals || 0} jurnal kas dikelompokkan menurut akun lawan (Operasi / Investasi / Pendanaan di Bagan Akun).
+          <p className="hidden sm:block text-sm text-muted-foreground" data-testid="cf-ringkas-jurnal">
+            {`${ba.totals?.journals || 0} jurnal kas dikelompokkan menurut akun lawan (Operasi / Investasi / Pendanaan di Bagan Akun).`}
           </p>
         )}
         {data && view === 'account' && Math.abs(ba?.totals?.unexplained || 0) > 0.5 && (
-          <p className="text-sm text-[hsl(var(--destructive))]" data-testid="cf-acc-unexplained">
+          <p className="text-sm text-[hsl(var(--danger-text))]" data-testid="cf-acc-unexplained">
             Selisih {fmt(ba.totals.unexplained)} antara perubahan kas di buku besar dan jumlah per akun lawan — ada jurnal kas ke kas yang tidak seimbang.
           </p>
         )}
@@ -140,8 +123,15 @@ export default function RahazaCashFlowModule({ token }) {
             labelHeader={`${formatDateID(from)} – ${formatDateID(to)}`} blankZeroChildren />
           {view === 'category' && data.cash_accounts?.length > 0 && (
             <GlassCard className="p-0 overflow-hidden" data-testid="cf-accounts">
-              <div className="px-4 py-3 border-b border-[var(--glass-border)]">
-                <p className="font-semibold text-sm text-foreground">Saldo rekening kas/bank saat ini</p>
+              <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-[var(--glass-border)]">
+                <p className="font-semibold text-base text-foreground">Saldo rekening kas/bank saat ini</p>
+                <TombolUnduh namaBerkas="saldo-rekening-kas-bank" namaLembar="Saldo rekening" baris={data.cash_accounts} testId="cf-accounts-unduh"
+                  kolom={[
+                    { label: 'Kode', nilai: (a) => a.code },
+                    { label: 'Rekening', nilai: (a) => a.name },
+                    { label: 'Jenis', nilai: (a) => (a.type === 'bank' ? 'Bank' : 'Kas') },
+                    { label: 'Saldo', nilai: (a) => Number(a.balance) || 0 },
+                  ]} />
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -151,7 +141,7 @@ export default function RahazaCashFlowModule({ token }) {
                       <tr key={a.id}>
                         <td><span className="text-xs text-muted-foreground mr-2">{a.code}</span>{a.name}</td>
                         <td className="text-muted-foreground">{a.type === 'bank' ? 'Bank' : 'Kas'}</td>
-                        <td className={`text-right tabular-nums ${Number(a.balance) < 0 ? 'text-[hsl(var(--destructive))]' : ''}`}>{fmt(a.balance)}</td>
+                        <td className={`text-right tabular-nums ${Number(a.balance) < 0 ? 'text-[hsl(var(--danger-text))]' : ''}`}>{fmt(a.balance)}</td>
                       </tr>
                     ))}
                   </tbody>

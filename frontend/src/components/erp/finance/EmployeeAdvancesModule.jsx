@@ -7,17 +7,18 @@
  * Cr rekening; pertanggungjawaban: Dr beban per nota + Dr rekening untuk sisa uang / Cr 1-1610).
  * Beda dengan Kasbon: kasbon = gaji dimuka (lunas lewat potong gaji); uang muka = uang operasional
  * yang dipertanggungjawabkan dengan nota.
+ * 2026-11-08 (Standar UI/UX v2): form uang muka & pertanggungjawaban = FormPopup + DatePicker; daftar bisa diunduh
+ * Excel/CSV; ukuran huruf standar; paginasi di kaki halaman.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import FilterChips from '@/components/ui/filter-chips';
-import { AlertCircle, Plus, RefreshCw, Loader2, Search, HandCoins } from 'lucide-react';
+import { Plus, RefreshCw, Loader2, Search, HandCoins } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { GlassCard } from '@/components/ui/glass';
-import {
-  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { toast } from 'sonner';
 import { MoneyInput } from '@/components/ui/money-input';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
@@ -25,7 +26,7 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 import { formatRupiah, formatDateID } from '@/lib/format';
 import CashAccountSelect, { usePaymentCashAccounts } from '../SdmCashAccountSelect';
 import { todayWIB } from '../../../lib/waktu';
-import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
+import { EmptyState, StatusBadge } from '../moduleAtoms';
 import PageLayout from '../layout/PageLayout';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
@@ -65,16 +66,14 @@ function useAdvanceRefs(open) {
 
 function ExpenseAccountPicker({ category, value, onChange, refs, testId }) {
   const mappedCode = category ? refs.mapped[category] : null;
-  if (mappedCode) return <p className="text-[11px] text-muted-foreground">Akun beban dari pemetaan kategori: <strong>{mappedCode}</strong></p>;
+  if (mappedCode) return <p className="text-xs text-muted-foreground">Akun beban dari pemetaan kategori: <strong>{mappedCode}</strong></p>;
   return (
-    <div className="space-y-1">
-      <Label>Akun beban * <span className="text-[10px] text-muted-foreground">(kategori belum dipetakan)</span></Label>
-      <SmartNativeSelect value={value || ''} onChange={e => onChange(e.target.value)} data-testid={testId}
-        className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm">
+    <Isian label="Akun beban" wajib petunjuk="Kategori ini belum dipetakan ke akun beban.">
+      <SmartNativeSelect value={value || ''} onChange={e => onChange(e.target.value)} data-testid={testId} className="w-full h-9">
         <option value="">— Pilih akun beban —</option>
         {refs.expenseAccounts.map(a => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
       </SmartNativeSelect>
-    </div>
+    </Isian>
   );
 }
 
@@ -105,55 +104,33 @@ function NewAdvanceDialog({ open, onClose, onDone }) {
     } catch (e) { setErr(e.message); } finally { setSaving(false); }
   };
   return (
-    <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-md" data-testid="advance-new-dialog">
-        <DialogHeader>
-          <DialogTitle>Uang muka baru</DialogTitle>
-          <DialogDescription>Dicatat sebagai Uang Muka Karyawan; dibebankan saat nota dipertanggungjawabkan.</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3 py-1">
-          {err && <Notice tone="danger" icon={AlertCircle}>{err}</Notice>}
-          <div className="space-y-1">
-            <Label>Karyawan *</Label>
-            <SmartNativeSelect value={f.employee_id || ''} onChange={e => set('employee_id', e.target.value)} data-testid="advance-employee"
-              className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm">
-              <option value="">— Pilih karyawan —</option>
-              {refs.employees.map(e => <option key={e.id} value={e.id}>{e.employee_code ? `${e.employee_code} · ` : ''}{e.name}</option>)}
-            </SmartNativeSelect>
-          </div>
-          <div className="space-y-1">
-            <Label>Dibayar dari rekening *</Label>
-            <CashAccountSelect accounts={accounts} loaded={loaded} value={f.cash_account_id} onChange={v => set('cash_account_id', v)} testId="advance-cash-account" />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>Jumlah *</Label>
-              <MoneyInput value={f.amount || ''} onChange={e => set('amount', e.target.value)} data-testid="advance-amount" />
-            </div>
-            <div className="space-y-1">
-              <Label>Tanggal</Label>
-              <Input type="date" value={f.txn_date || ''} onChange={e => set('txn_date', e.target.value)} />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>Batas nota (hari)</Label>
-              <Input type="number" min="0" placeholder="0 = tanpa batas" value={f.settle_days || ''} onChange={e => set('settle_days', e.target.value)} />
-            </div>
-            <div className="space-y-1">
-              <Label>Keperluan</Label>
-              <Input value={f.memo || ''} onChange={e => set('memo', e.target.value)} placeholder="mis. belanja bahan pembantu" />
-            </div>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={saving}>Batal</Button>
-          <Button onClick={save} disabled={saving} data-testid="advance-save">
-            {saving && <Loader2 size={13} className="mr-1 animate-spin" />} Simpan
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open={open} onClose={onClose} ukuran="pendek" testId="advance-new-dialog"
+      judul="Uang muka baru" keterangan="Dicatat sebagai Uang Muka Karyawan; dibebankan saat nota dipertanggungjawabkan."
+      onSimpan={save} menyimpan={saving} galat={err}>
+      <Isian label="Karyawan" wajib>
+        <SmartNativeSelect value={f.employee_id || ''} onChange={e => set('employee_id', e.target.value)} data-testid="advance-employee" className="w-full h-9">
+          <option value="">— Pilih karyawan —</option>
+          {refs.employees.map(e => <option key={e.id} value={e.id}>{e.employee_code ? `${e.employee_code} · ` : ''}{e.name}</option>)}
+        </SmartNativeSelect>
+      </Isian>
+      <Isian label="Dibayar dari rekening" wajib>
+        <CashAccountSelect accounts={accounts} loaded={loaded} value={f.cash_account_id} onChange={v => set('cash_account_id', v)} testId="advance-cash-account" />
+      </Isian>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Isian label="Jumlah" wajib>
+          <MoneyInput value={f.amount || ''} onChange={e => set('amount', e.target.value)} data-testid="advance-amount" />
+        </Isian>
+        <Isian label="Tanggal">
+          <DatePicker value={f.txn_date || ''} onChange={v => set('txn_date', v)} bolehKosong={false} testId="advance-date" />
+        </Isian>
+        <Isian label="Batas nota (hari)" htmlFor="advance-settle-days" petunjuk="0 = tanpa batas.">
+          <Input id="advance-settle-days" type="number" min="0" placeholder="0" value={f.settle_days || ''} onChange={e => set('settle_days', e.target.value)} />
+        </Isian>
+        <Isian label="Keperluan" htmlFor="advance-memo">
+          <Input id="advance-memo" value={f.memo || ''} onChange={e => set('memo', e.target.value)} placeholder="mis. belanja bahan pembantu" />
+        </Isian>
+      </div>
+    </FormPopup>
   );
 }
 
@@ -200,58 +177,44 @@ function SettleDialog({ advance, onClose, onDone }) {
     } catch (e) { setErr(e.message); } finally { setSaving(false); }
   };
   return (
-    <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-lg" data-testid="settle-advance-dialog">
-        <DialogHeader>
-          <DialogTitle>Pertanggungjawaban uang muka</DialogTitle>
-          <DialogDescription>
-            {advance?.employee_name} · uang muka {fmt(advance?.amount)} · sisa <strong>{fmt(advance?.open_amount)}</strong>
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3 py-1">
-          {err && <Notice tone="danger" icon={AlertCircle}>{err}</Notice>}
-          {items.map((it, i) => (
-            <div key={i} className="rounded-lg border border-border p-2 space-y-2">
-              <div className="grid grid-cols-2 gap-2">
-                <SmartNativeSelect value={it.category} onChange={e => setItem(i, { category: e.target.value })}
-                  className="h-9 px-2 rounded-md border border-input bg-background text-sm" data-testid={`settle-cat-${i}`}>
-                  <option value="">— Kategori nota —</option>
-                  {refs.categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
-                </SmartNativeSelect>
-                <MoneyInput placeholder="Nominal nota" value={it.amount} onChange={e => setItem(i, { amount: e.target.value })} data-testid={`settle-amount-${i}`} />
-              </div>
-              <ExpenseAccountPicker category={it.category} value={it.account_code} refs={refs} testId={`settle-account-${i}`}
-                onChange={v => setItem(i, { account_code: v })} />
-            </div>
-          ))}
-          <Button variant="outline" size="sm" onClick={() => setItems(xs => [...xs, { category: '', account_code: '', amount: '' }])}>+ Nota</Button>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>Sisa uang dikembalikan</Label>
-              <MoneyInput value={returned} onChange={e => setReturned(e.target.value)} data-testid="settle-returned" />
-            </div>
-            <div className="space-y-1">
-              <Label>Tanggal</Label>
-              <Input type="date" value={date} onChange={e => setDate(e.target.value)} />
-            </div>
+    <FormPopup open={open} onClose={onClose} ukuran="panjang" testId="settle-advance-dialog"
+      judul="Pertanggungjawaban uang muka"
+      keterangan={`${advance?.employee_name || ''} · uang muka ${fmt(advance?.amount)} · sisa ${fmt(advance?.open_amount)}`}
+      onSimpan={save} menyimpan={saving} galat={err}>
+      <p className="text-sm font-medium text-foreground">Nota</p>
+      {items.map((it, i) => (
+        <div key={i} className="rounded-[var(--radius-md)] border border-[var(--glass-border)] p-3 space-y-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <SmartNativeSelect value={it.category} onChange={e => setItem(i, { category: e.target.value })}
+              className="h-9 w-full" aria-label={`Kategori nota ${i + 1}`} data-testid={`settle-cat-${i}`}>
+              <option value="">— Kategori nota —</option>
+              {refs.categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+            </SmartNativeSelect>
+            <MoneyInput placeholder="Nominal nota" value={it.amount} onChange={e => setItem(i, { amount: e.target.value })} aria-label={`Nominal nota ${i + 1}`} data-testid={`settle-amount-${i}`} />
           </div>
-          {Number(returned) > 0 && (
-            <div className="space-y-1">
-              <Label>Sisa uang masuk ke rekening</Label>
-              <CashAccountSelect accounts={accounts} loaded={loaded} value={returnAcc} onChange={setReturnAcc} testId="settle-return-account" />
-            </div>
-          )}
-          <Input placeholder="Keterangan" value={memo} onChange={e => setMemo(e.target.value)} />
-          <p className="text-xs text-muted-foreground">Nota + sisa: <strong>{fmt(total)}</strong> · boleh bertahap, paling banyak {fmt(advance?.open_amount)}</p>
+          <ExpenseAccountPicker category={it.category} value={it.account_code} refs={refs} testId={`settle-account-${i}`}
+            onChange={v => setItem(i, { account_code: v })} />
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={saving}>Batal</Button>
-          <Button onClick={save} disabled={saving} data-testid="settle-save">
-            {saving && <Loader2 size={13} className="mr-1 animate-spin" />} Simpan
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      ))}
+      <Button type="button" variant="outline" size="sm" onClick={() => setItems(xs => [...xs, { category: '', account_code: '', amount: '' }])}><Plus className="w-4 h-4" />Tambah nota</Button>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Isian label="Sisa uang dikembalikan">
+          <MoneyInput value={returned} onChange={e => setReturned(e.target.value)} data-testid="settle-returned" />
+        </Isian>
+        <Isian label="Tanggal">
+          <DatePicker value={date} onChange={v => setDate(v || todayWIB())} bolehKosong={false} testId="settle-date" />
+        </Isian>
+      </div>
+      {Number(returned) > 0 && (
+        <Isian label="Sisa uang masuk ke rekening">
+          <CashAccountSelect accounts={accounts} loaded={loaded} value={returnAcc} onChange={setReturnAcc} testId="settle-return-account" />
+        </Isian>
+      )}
+      <Isian label="Keterangan" htmlFor="settle-memo">
+        <Input id="settle-memo" placeholder="Opsional" value={memo} onChange={e => setMemo(e.target.value)} />
+      </Isian>
+      <p className="text-sm text-muted-foreground">Nota + sisa: <strong className="text-foreground tabular-nums">{fmt(total)}</strong> · boleh bertahap, paling banyak {fmt(advance?.open_amount)}</p>
+    </FormPopup>
   );
 }
 
@@ -293,16 +256,31 @@ export default function EmployeeAdvancesModule() {
       filters={<>
         <FilterChips value={status} onChange={setStatus} testId="advance-status" ariaLabel="Status uang muka" hideWhenEmpty={false}
           options={[{ key: 'open', label: 'Belum selesai' }, { key: 'all', label: 'Semua' }]} />
-        <div className="relative w-72 max-w-full">
+        <div className="relative w-full sm:w-64">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input className="pl-9 h-9" placeholder="Cari karyawan / keperluan" aria-label="Cari" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
       </>}
-      tools={<Button size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>}
+      tools={<>
+        <TombolUnduh namaBerkas="uang-muka-karyawan" namaLembar="Uang muka" baris={rows} testId="advance-unduh"
+          kolom={[
+            { label: 'Tanggal', nilai: (a) => formatDateID(a.txn_date) },
+            { label: 'Karyawan', nilai: (a) => a.employee_name },
+            { label: 'Kode karyawan', nilai: (a) => a.employee_code || '' },
+            { label: 'Keperluan', nilai: (a) => a.memo || '' },
+            { label: 'Rekening', nilai: (a) => a.cash_account_name || (a.source === 'kas_kecil' ? 'Kas Kecil (dana lama)' : '') },
+            { label: 'Uang muka', nilai: (a) => Number(a.amount) || 0 },
+            { label: 'Sisa', nilai: (a) => Number(a.open_amount) || 0 },
+            { label: 'Batas nota', nilai: (a) => (a.due_date ? formatDateID(a.due_date) : '') },
+            { label: 'Status', nilai: (a) => STATUS[a.advance_status] || a.advance_status },
+          ]} />
+        <Button size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>
+      </>}
+      footer={pg.totalPages > 1 && <PaginationLite page={pg.page} totalPages={pg.totalPages} total={pg.total} pageSize={pg.pageSize} onPageChange={pg.setPage} />}
       summary={status === 'open' && data.total_open > 0 && (
         <p className="text-sm text-muted-foreground" data-testid="advance-summary">
           Belum dipertanggungjawabkan: <strong className="text-foreground tabular-nums">{fmt(data.total_open)}</strong> · {data.by_employee.length} karyawan
-          {overdue.length > 0 && <span className="text-[hsl(var(--warning))]"> · {overdue.length} lewat batas nota</span>}
+          {overdue.length > 0 && <span className="text-[hsl(var(--warning-text))]"> · {overdue.length} lewat batas nota</span>}
         </p>
       )}
     >
@@ -315,26 +293,26 @@ export default function EmployeeAdvancesModule() {
             description={search ? 'Ubah atau kosongkan pencarian.' : 'Tekan "Uang muka baru" untuk mencatat uang yang diberikan ke karyawan.'} />
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="border-b border-[var(--glass-border)]">
-                <tr className="text-left text-xs text-muted-foreground">
-                  <th className="px-4 py-2">Tanggal</th><th className="py-2">Karyawan</th><th className="py-2">Keperluan</th>
-                  <th className="py-2">Rekening</th><th className="py-2 text-right">Uang muka</th><th className="py-2 text-right">Sisa</th>
-                  <th className="py-2">Batas nota</th><th className="py-2">Status</th><th className="px-4 py-2" />
+            <table className="w-full">
+              <thead>
+                <tr className="text-left">
+                  <th>Tanggal</th><th>Karyawan</th><th>Keperluan</th>
+                  <th className="hidden md:table-cell">Rekening</th><th className="text-right">Uang muka</th><th className="text-right">Sisa</th>
+                  <th className="hidden md:table-cell">Batas nota</th><th>Status</th><th />
                 </tr>
               </thead>
               <tbody>
                 {pg.paged.map(a => (
                   <tr key={a.id} className={`border-b border-[var(--glass-border)] ${a.overdue && a.open_amount > 0 ? 'bg-[hsl(var(--warning)/0.08)]' : ''}`}>
-                    <td className="px-4 py-2 text-xs whitespace-nowrap">{formatDateID(a.txn_date)}</td>
-                    <td className="py-2 text-xs">{a.employee_name}{a.employee_code && <span className="text-muted-foreground"> · {a.employee_code}</span>}</td>
-                    <td className="py-2 text-xs">{a.memo || '—'}</td>
-                    <td className="py-2 text-xs">{a.cash_account_name || (a.source === 'kas_kecil' ? 'Kas Kecil (dana lama)' : '—')}</td>
-                    <td className="py-2 text-xs text-right tabular-nums whitespace-nowrap">{fmt(a.amount)}</td>
-                    <td className="py-2 text-xs text-right tabular-nums whitespace-nowrap font-medium">{fmt(a.open_amount)}</td>
-                    <td className="py-2 text-xs whitespace-nowrap">{a.due_date ? `${formatDateID(a.due_date)}${a.overdue && a.open_amount > 0 ? ' · lewat' : ''}` : '—'}</td>
-                    <td className="py-2 text-xs"><StatusBadge status={a.advance_status} label={STATUS[a.advance_status] || a.advance_status} tone={STATUS_TONE[a.advance_status]} /></td>
-                    <td className="px-4 py-2 text-right whitespace-nowrap">
+                    <td className="whitespace-nowrap">{formatDateID(a.txn_date)}</td>
+                    <td>{a.employee_name}{a.employee_code && <span className="text-muted-foreground"> · {a.employee_code}</span>}</td>
+                    <td>{a.memo || '—'}</td>
+                    <td className="hidden md:table-cell">{a.cash_account_name || (a.source === 'kas_kecil' ? 'Kas Kecil (dana lama)' : '—')}</td>
+                    <td className="text-right tabular-nums whitespace-nowrap">{fmt(a.amount)}</td>
+                    <td className="text-right tabular-nums whitespace-nowrap font-medium">{fmt(a.open_amount)}</td>
+                    <td className="whitespace-nowrap hidden md:table-cell">{a.due_date ? `${formatDateID(a.due_date)}${a.overdue && a.open_amount > 0 ? ' · lewat' : ''}` : '—'}</td>
+                    <td><StatusBadge status={a.advance_status} label={STATUS[a.advance_status] || a.advance_status} tone={STATUS_TONE[a.advance_status]} /></td>
+                    <td className="text-right whitespace-nowrap">
                       {a.open_amount > 0.009 && (
                         <Button size="sm" variant="outline" onClick={() => setSettling(a)} data-testid={`settle-btn-${a.id}`}>
                           Pertanggungjawaban
@@ -347,7 +325,6 @@ export default function EmployeeAdvancesModule() {
             </table>
           </div>
         )}
-        {pg.totalPages > 1 && <div className="px-4 py-2"><PaginationLite page={pg.page} totalPages={pg.totalPages} total={pg.total} pageSize={pg.pageSize} onPageChange={pg.setPage} /></div>}
       </GlassCard>
 
       <NewAdvanceDialog open={adding} onClose={() => setAdding(false)} onDone={load} />

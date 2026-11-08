@@ -5,6 +5,8 @@ import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import PageLayout from './layout/PageLayout';
+import { Notice } from './moduleAtoms';
+import { Switch } from '@/components/ui/switch';
 
 // 2026-11-02 (K35) — penomoran akun pendapatan per toko (entity `store_revenue`).
 const STORE_REV_FORMATS = [
@@ -58,7 +60,7 @@ function StoreRevenueCard({ cfg, accounts, onChange, headers }) {
       <div className="flex items-center gap-2">
         <Landmark className="w-4 h-4 text-primary" />
         <div>
-          <div className="font-semibold text-sm text-foreground">{ENTITY_LABEL.store_revenue.label}</div>
+          <div className="font-semibold text-base text-foreground">{ENTITY_LABEL.store_revenue.label}</div>
           <div className="text-xs text-muted-foreground">
             Dipakai saat toko marketplace baru dibuat. Toko lama tidak diubah.
           </div>
@@ -66,9 +68,9 @@ function StoreRevenueCard({ cfg, accounts, onChange, headers }) {
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
         <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Format nomor akun</label>
+          <label className="text-sm font-medium text-foreground mb-1.5 block">Format nomor akun</label>
           <SmartNativeSelect value={fmt} onChange={(e) => onChange('code_format', e.target.value)}
-            searchable={false} className="w-full h-9" data-testid="coa-auto-store-format">
+            searchable={false} className="w-full md:max-w-sm h-9" data-testid="coa-auto-store-format">
             {STORE_REV_FORMATS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
           </SmartNativeSelect>
         </div>
@@ -86,10 +88,10 @@ function StoreRevenueCard({ cfg, accounts, onChange, headers }) {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {STORE_REV_PLATFORMS.map(([p, label]) => (
           <div key={p}>
-            <label className="text-xs text-muted-foreground mb-1 block">Kelompok {label}</label>
+            <label className="text-sm font-medium text-foreground mb-1.5 block">Kelompok {label}</label>
             <SmartNativeSelect value={groups[p] || ''}
               onChange={(e) => onChange('parent_by_platform', { ...groups, [p]: e.target.value })}
-              className="w-full h-9" data-testid={`coa-auto-store-group-${p}`}>
+              className="w-full md:max-w-sm h-9" data-testid={`coa-auto-store-group-${p}`}>
               <option value="">Bawaan</option>
               {revenueGroups.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
             </SmartNativeSelect>
@@ -192,16 +194,8 @@ export default function RahazaCoaAutoModule({ token }) {
         </Button>
       }
       summary={<>
-        {error && (
-          <div className="flex items-center gap-2 text-sm text-[hsl(var(--destructive))]" role="alert" data-testid="coa-auto-error">
-            <AlertCircle className="w-4 h-4" /> {error}
-          </div>
-        )}
-        {info && (
-          <div className="flex items-center gap-2 text-sm text-[hsl(var(--success))]" data-testid="coa-auto-info">
-            <CheckCircle2 className="w-4 h-4" /> {info}
-          </div>
-        )}
+        {error && <Notice tone="danger" icon={AlertCircle} testId="coa-auto-error">{error}</Notice>}
+        {info && <Notice tone="success" icon={CheckCircle2} testId="coa-auto-info">{info}</Notice>}
       </>}
       footer={!loading && settings && (
         <p className="text-xs text-muted-foreground">
@@ -231,21 +225,19 @@ export default function RahazaCoaAutoModule({ token }) {
               <div className="flex items-center gap-2">
                 <Landmark className="w-4 h-4 text-primary" />
                 <div>
-                  <div className="font-semibold text-sm text-foreground">{ENTITY_LABEL[key]?.label || cfg.label || key.replace(/_/g, ' ')}</div>
+                  <div className="font-semibold text-base text-foreground">{ENTITY_LABEL[key]?.label || cfg.label || key.replace(/_/g, ' ')}</div>
                   <div className="text-xs text-muted-foreground">
                     Akun baru dibuat di bawah akun induk saat {ENTITY_LABEL[key]?.who || 'data'} baru ditambahkan.
                   </div>
                 </div>
               </div>
               <label className="flex items-center gap-2 text-sm cursor-pointer select-none" data-testid={`coa-auto-enabled-label-${key}`}>
-                <input
-                  type="checkbox"
+                <Switch
                   checked={!!cfg.enabled}
-                  onChange={(e) => patchEntity(key, 'enabled', e.target.checked)}
-                  className="w-4 h-4 accent-[var(--primary)]"
+                  onCheckedChange={(v) => patchEntity(key, 'enabled', !!v)}
                   data-testid={`coa-auto-enabled-${key}`}
                 />
-                <span className={cfg.enabled ? 'text-[hsl(var(--success))] font-medium' : 'text-muted-foreground'}>
+                <span className={cfg.enabled ? 'text-[hsl(var(--success-text))] font-medium' : 'text-muted-foreground'}>
                   {cfg.enabled ? 'Aktif' : 'Nonaktif'}
                 </span>
               </label>
@@ -253,11 +245,11 @@ export default function RahazaCoaAutoModule({ token }) {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Akun induk (kontrol)</label>
+                <label className="text-sm font-medium text-foreground mb-1.5 block">Akun induk (kontrol)</label>
                 <SmartNativeSelect
                   value={cfg.parent_code || ''}
                   onChange={(e) => patchEntity(key, 'parent_code', e.target.value)}
-                  className="w-full h-9"
+                  className="w-full md:max-w-sm h-9"
                   data-testid={`coa-auto-parent-${key}`}
                 >
                   <option value="">Pilih akun</option>
@@ -266,7 +258,7 @@ export default function RahazaCoaAutoModule({ token }) {
                   ))}
                 </SmartNativeSelect>
               </div>
-              <p className="text-[11px] text-muted-foreground">Akun untuk data lama dibuat admin di Adm. Sistem › Perawatan Data Keuangan.</p>
+              <p className="text-xs text-muted-foreground">Akun untuk data lama dibuat admin di Adm. Sistem › Perawatan Data Keuangan.</p>
             </div>
 
           </GlassCard>

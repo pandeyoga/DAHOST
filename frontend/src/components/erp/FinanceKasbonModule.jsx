@@ -1,6 +1,8 @@
 /**
  * FinanceKasbonModule — Finance Portal: Pencairan & Monitoring Kasbon/Pinjaman
  * Finance proses pencairan setelah HR approve, catat pembayaran, monitoring outstanding.
+ * 2026-11-08 (Standar UI/UX v2): form pencairan & pembayaran = FormPopup + DatePicker; unduh Excel & CSV;
+ * judul kolom tanpa huruf kapital / tombol buatan sendiri; warna teks token.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import FilterChips from '@/components/ui/filter-chips';
@@ -13,9 +15,11 @@ import { formatRupiah } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker from '@/components/ui/date-picker';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { MoneyInput } from '@/components/ui/money-input';
-import ExportCsvButton from '@/components/ui/export-csv-button';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import CashAccountSelect, { usePaymentCashAccounts } from './SdmCashAccountSelect';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
@@ -41,9 +45,6 @@ const SORT_COLS = [
   { key: 'installment_amount', label: 'Cicilan/bulan', num: true },
   { key: 'deduction_start_period', label: 'Mulai potong' },
 ];
-const CSV_HEAD = ['No. Pengajuan', 'Karyawan', 'Departemen', 'Jenis', 'Keperluan',
-  'Status', 'Jumlah', 'Terbayar', 'Sisa', 'Cicilan/bulan', 'Jml cicilan',
-  'Mulai potong'];
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const authH = () => ({ Authorization: `Bearer ${localStorage.getItem('erp_token')}`, 'Content-Type': 'application/json' });
@@ -97,61 +98,39 @@ function DisburseModal({ req, onClose, onDone }) {
     finally { setSaving(false); }
   };
 
-  // 2026-11-05 (PANDUAN_UI G3/G9): formulir pendek = Dialog aplikasi + Button (dulu lapisan & tombol buatan sendiri)
+  // 2026-11-08 (Standar UI/UX v2): popup form standar (FormPopup pendek, Isian, DatePicker, Simpan hijau).
   return (
-    <Dialog open onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-md" data-testid="kasbon-disburse-dialog">
-        <DialogHeader>
-          <DialogTitle>Proses pencairan</DialogTitle>
-          <DialogDescription>{req.request_number} · {req.employee_name}</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="p-3 rounded-[var(--radius-md)] bg-[var(--glass-bg)] space-y-1 text-xs">
-            <div className="flex justify-between"><span className="text-muted-foreground">Karyawan</span><strong>{req.employee_name}</strong></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Jenis</span><span>{req.type_label}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Jumlah</span><strong className="text-foreground text-sm tabular-nums">{fmt(req.amount)}</strong></div>
-            {req.installment_count > 1 && <div className="flex justify-between"><span className="text-muted-foreground">Cicilan</span><span className="tabular-nums">{req.installment_count}x × {fmt(req.installment_amount)}/bulan</span></div>}
-            <div className="flex justify-between"><span className="text-muted-foreground">Keperluan</span><span>{req.purpose}</span></div>
-          </div>
-
-          <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1" htmlFor="kasbon-disburse-date">Tanggal pencairan</label>
-            <GlassInput id="kasbon-disburse-date" type="date" value={form.disbursement_date} onChange={e => setForm(p => ({...p, disbursement_date: e.target.value}))}
-              className="h-9" />
-            <p className="text-xs text-muted-foreground mt-1">Tanggal ini menjadi tanggal jurnal.</p>
-          </div>
-
-          <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1">Dicairkan dari rekening</label>
-            <CashAccountSelect accounts={accounts} loaded={loaded} value={form.cash_account_id}
-              onChange={v => setForm(p => ({...p, cash_account_id: v}))} testId="kasbon-disburse-account" />
-          </div>
-
-          <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1">Mulai potongan gaji (bulan)</label>
-            {/* 2026-11-07 (audit form Tahap 5, PANDUAN_UI G6): pilihan bulan berlabel — dulu input type="month" polos */}
-            <SmartNativeSelect value={form.deduction_start_period} onChange={e => setForm(p => ({...p, deduction_start_period: e.target.value}))}
-              searchable={false} className="h-9 w-full" aria-label="Mulai potongan gaji" data-testid="kasbon-deduction-start">
-              {DEDUCTION_MONTHS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </SmartNativeSelect>
-            <p className="text-xs text-muted-foreground mt-1">Potongan gaji mulai bulan ini.</p>
-          </div>
-
-          <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1" htmlFor="kasbon-finance-notes">Catatan Keuangan</label>
-            <Textarea id="kasbon-finance-notes" value={form.finance_notes} onChange={e => setForm(p => ({...p, finance_notes: e.target.value}))}
-              placeholder="Nomor transfer, cara pencairan, dll."
-              className="h-16 resize-none" />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={handleSubmit} disabled={saving || !form.cash_account_id} data-testid="kasbon-disburse-save">
-            {saving ? 'Memproses…' : 'Cairkan sekarang'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="kasbon-disburse-dialog"
+      judul="Proses pencairan" keterangan={`${req.request_number} · ${req.employee_name}`}
+      onSimpan={handleSubmit} menyimpan={saving} bisaSimpan={!!form.cash_account_id} labelSimpan="Cairkan sekarang">
+      <dl className="divide-y divide-[var(--glass-border)]">
+        <BarisDetail label="Karyawan"><strong>{req.employee_name}</strong></BarisDetail>
+        <BarisDetail label="Jenis">{req.type_label}</BarisDetail>
+        <BarisDetail label="Jumlah"><strong className="tabular-nums">{fmt(req.amount)}</strong></BarisDetail>
+        {req.installment_count > 1 && <BarisDetail label="Cicilan"><span className="tabular-nums">{req.installment_count}x × {fmt(req.installment_amount)}/bulan</span></BarisDetail>}
+        <BarisDetail label="Keperluan">{req.purpose}</BarisDetail>
+      </dl>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Isian label="Tanggal pencairan" petunjuk="Menjadi tanggal jurnal.">
+          <DatePicker id="kasbon-disburse-date" value={form.disbursement_date} onChange={v => setForm(p => ({ ...p, disbursement_date: v }))} bolehKosong={false} testId="kasbon-disburse-date" />
+        </Isian>
+        {/* 2026-11-07 (audit form Tahap 5, PANDUAN_UI G6): pilihan bulan berlabel — dulu pemilih bulan bawaan peramban */}
+        <Isian label="Mulai potongan gaji" petunjuk="Potongan gaji mulai bulan ini.">
+          <SmartNativeSelect value={form.deduction_start_period} onChange={e => setForm(p => ({...p, deduction_start_period: e.target.value}))}
+            searchable={false} className="h-9 w-full" aria-label="Mulai potongan gaji" data-testid="kasbon-deduction-start">
+            {DEDUCTION_MONTHS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+      </div>
+      <Isian label="Dicairkan dari rekening" wajib>
+        <CashAccountSelect accounts={accounts} loaded={loaded} value={form.cash_account_id}
+          onChange={v => setForm(p => ({...p, cash_account_id: v}))} testId="kasbon-disburse-account" />
+      </Isian>
+      <Isian label="Catatan Keuangan" htmlFor="kasbon-finance-notes">
+        <Textarea id="kasbon-finance-notes" value={form.finance_notes} onChange={e => setForm(p => ({...p, finance_notes: e.target.value}))}
+          placeholder="Nomor transfer, cara pencairan, dll." rows={2} />
+      </Isian>
+    </FormPopup>
   );
 }
 
@@ -184,61 +163,35 @@ function RepayModal({ req, onClose, onDone }) {
   };
 
   return (
-    <Dialog open onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-md" data-testid="kasbon-repay-dialog">
-        <DialogHeader>
-          <DialogTitle>Catat pembayaran</DialogTitle>
-          <DialogDescription>{req.request_number} · {req.employee_name}</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="p-3 rounded-[var(--radius-md)] bg-[var(--glass-bg)] text-xs space-y-1">
-            <div className="flex justify-between"><span className="text-muted-foreground">Karyawan</span><strong>{req.employee_name}</strong></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Sisa pinjaman</span><strong className="text-[hsl(var(--warning))] tabular-nums">{fmt(req.outstanding_balance)}</strong></div>
-            {req.installment_amount > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Cicilan bulanan</span><span className="tabular-nums">{fmt(req.installment_amount)}</span></div>}
-          </div>
-
-          <p className="text-xs text-muted-foreground" data-testid="repay-payroll-note">
-            Bayar manual (tunai/transfer) oleh karyawan. Potongan gaji tidak dicatat di sini — tercatat
-            otomatis saat penggajian periode {req.deduction_start_period ? fmtPeriod(req.deduction_start_period) : 'berjalan'} difinalisasi.
-          </p>
-
-          <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1">Jumlah pembayaran</label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">Rp</span>
-              <MoneyInput unstyled value={form.amount} onChange={e => setForm(p => ({...p, amount: e.target.value}))}
-                className="w-full h-9 pl-10 pr-3 rounded-[var(--radius-sm)] border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1" htmlFor="kasbon-repay-date">Tanggal bayar</label>
-              <GlassInput id="kasbon-repay-date" type="date" value={form.date} onChange={e => setForm(p => ({...p, date: e.target.value}))}
-                className="h-9" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Diterima di rekening</label>
-              <CashAccountSelect accounts={accounts} loaded={loaded} value={form.cash_account_id}
-                onChange={v => setForm(p => ({...p, cash_account_id: v}))} testId="kasbon-repay-account" />
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1" htmlFor="kasbon-repay-notes">Catatan</label>
-            <GlassInput id="kasbon-repay-notes" value={form.notes} onChange={e => setForm(p => ({...p, notes: e.target.value}))}
-              placeholder="Referensi pembayaran, dll."
-              className="h-9" />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={handleSubmit} disabled={saving || !form.amount || !form.cash_account_id} data-testid="kasbon-repay-save">
-            {saving ? 'Menyimpan…' : 'Catat pembayaran'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="kasbon-repay-dialog"
+      judul="Catat pembayaran" keterangan={`${req.request_number} · ${req.employee_name}`}
+      onSimpan={handleSubmit} menyimpan={saving} bisaSimpan={!!form.amount && !!form.cash_account_id} labelSimpan="Catat pembayaran">
+      <dl className="divide-y divide-[var(--glass-border)]">
+        <BarisDetail label="Karyawan"><strong>{req.employee_name}</strong></BarisDetail>
+        <BarisDetail label="Sisa pinjaman"><strong className="text-[hsl(var(--warning-text))] tabular-nums">{fmt(req.outstanding_balance)}</strong></BarisDetail>
+        {req.installment_amount > 0 && <BarisDetail label="Cicilan bulanan"><span className="tabular-nums">{fmt(req.installment_amount)}</span></BarisDetail>}
+      </dl>
+      <p className="text-xs text-muted-foreground" data-testid="repay-payroll-note">
+        Bayar manual (tunai/transfer) oleh karyawan. Potongan gaji tidak dicatat di sini — tercatat
+        otomatis saat penggajian periode {req.deduction_start_period ? fmtPeriod(req.deduction_start_period) : 'berjalan'} difinalisasi.
+      </p>
+      <Isian label="Jumlah pembayaran (Rp)" wajib>
+        <MoneyInput glass value={form.amount} onChange={e => setForm(p => ({...p, amount: e.target.value}))} data-testid="kasbon-repay-amount" />
+      </Isian>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Isian label="Tanggal bayar">
+          <DatePicker id="kasbon-repay-date" value={form.date} onChange={v => setForm(p => ({ ...p, date: v }))} bolehKosong={false} testId="kasbon-repay-date" />
+        </Isian>
+        <Isian label="Diterima di rekening" wajib>
+          <CashAccountSelect accounts={accounts} loaded={loaded} value={form.cash_account_id}
+            onChange={v => setForm(p => ({...p, cash_account_id: v}))} testId="kasbon-repay-account" />
+        </Isian>
+      </div>
+      <Isian label="Catatan" htmlFor="kasbon-repay-notes">
+        <GlassInput id="kasbon-repay-notes" value={form.notes} onChange={e => setForm(p => ({...p, notes: e.target.value}))}
+          placeholder="Referensi pembayaran, dll." className="h-9" />
+      </Isian>
+    </FormPopup>
   );
 }
 
@@ -260,7 +213,7 @@ function ActiveRow({ req, onRepay, onDisburse }) {
         </div>
         <div className="text-right shrink-0">
           <p className="text-sm font-bold text-foreground tabular-nums whitespace-nowrap">{fmt(req.amount)}</p>
-          <p className="text-xs text-[hsl(var(--warning))] font-medium tabular-nums whitespace-nowrap">Sisa: {fmt(req.outstanding_balance)}</p>
+          <p className="text-xs text-[hsl(var(--warning-text))] font-medium tabular-nums whitespace-nowrap">Sisa: {fmt(req.outstanding_balance)}</p>
         </div>
       </div>
 
@@ -365,12 +318,20 @@ export default function FinanceKasbonModule() {
   const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 12);
   const toggleSort = (key) => setSort((s) => (
     s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' }));
-  const csvRows = rows.map((r) => [
-    r.request_number, r.employee_name, r.department, r.type_label, r.purpose,
-    STATUS_CFG[r.status]?.label || r.status, r.amount ?? 0, r.paid_amount ?? 0,
-    r.outstanding_balance ?? 0, r.installment_amount ?? 0, r.installment_count ?? 0,
-    r.deduction_start_period || '',
-  ]);
+  const KOLOM_UNDUH = [
+    { label: 'No. pengajuan', nilai: (r) => r.request_number },
+    { label: 'Karyawan', nilai: (r) => r.employee_name },
+    { label: 'Departemen', nilai: (r) => r.department || '' },
+    { label: 'Jenis', nilai: (r) => r.type_label },
+    { label: 'Keperluan', nilai: (r) => r.purpose || '' },
+    { label: 'Status', nilai: (r) => STATUS_CFG[r.status]?.label || r.status },
+    { label: 'Jumlah', nilai: (r) => Number(r.amount) || 0 },
+    { label: 'Terbayar', nilai: (r) => Number(r.paid_amount) || 0 },
+    { label: 'Sisa', nilai: (r) => Number(r.outstanding_balance) || 0 },
+    { label: 'Cicilan/bulan', nilai: (r) => Number(r.installment_amount) || 0 },
+    { label: 'Jumlah cicilan', nilai: (r) => Number(r.installment_count) || 0 },
+    { label: 'Mulai potong', nilai: (r) => (r.deduction_start_period ? fmtPeriod(r.deduction_start_period) : '') },
+  ];
 
   // 2026-11-05 (PANDUAN_UI G1/G6/G10, owner): cetakan PageLayout. Tabel/Kartu = ViewToggle di kanan (dulu pil
   // seperti penyaring), "Unduh CSV" (dulu "CSV"), tampilan kosong di kartu tabel, tombol muat ulang standar.
@@ -383,7 +344,7 @@ export default function FinanceKasbonModule() {
         <FilterChips value={tab} onChange={setTab} testId="kasbon-tab" ariaLabel="Status kasbon"
           options={[{ key: 'pending', label: 'Siap dicairkan', count: tabCount('pending') }, { key: 'active', label: 'Aktif', count: tabCount('active') },
             { key: 'done', label: 'Selesai', count: tabCount('done') }, { key: 'all', label: 'Semua', count: requests.length }]} />
-        <div className="relative w-72 max-w-full">
+        <div className="relative w-full sm:w-64">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <GlassInput value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari karyawan / no. pengajuan…"
             data-testid="kasbon-search" aria-label="Cari"
@@ -394,9 +355,7 @@ export default function FinanceKasbonModule() {
         <Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang">
           <RefreshCw className="w-4 h-4" />
         </Button>
-        <ExportCsvButton filename="kasbon-pinjaman-karyawan" testId="kasbon-export-csv"
-          head={CSV_HEAD} rows={csvRows} label="Unduh CSV" size="default" className=""
-          note={`Rp ${(rows.reduce((s, r) => s + Number(r.outstanding_balance || 0), 0)).toLocaleString('id-ID')} sisa`} />
+        <TombolUnduh namaBerkas="kasbon-pinjaman-karyawan" namaLembar="Kasbon" baris={rows} kolom={KOLOM_UNDUH} testId="kasbon-export-csv" />
         <ViewToggle value={view} onChange={setView} testId="kasbon-view" />
       </>}
       summary={
@@ -424,48 +383,48 @@ export default function FinanceKasbonModule() {
               description={search ? 'Ubah atau kosongkan pencarian.' : 'Pengajuan muncul di sini setelah disetujui HR.'} />
           ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs" data-testid="kasbon-table">
-              <thead className="bg-[var(--glass-bg)]">
+            <table className="w-full" data-testid="kasbon-table">
+              <thead>
                 <tr className="text-left">
                   {SORT_COLS.map(({ key: k, label, num }) => (
-                    <th key={k} className={`px-2.5 py-2 font-semibold whitespace-nowrap ${num ? 'text-right' : ''}`}>
-                      <button type="button" onClick={() => toggleSort(k)}
-                        data-testid={`kasbon-sort-${k}`}
-                        className="inline-flex items-center gap-1 uppercase hover:text-primary">
+                    <th key={k} className={`whitespace-nowrap ${num ? 'text-right' : ''}`}>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => toggleSort(k)}
+                        data-testid={`kasbon-sort-${k}`} title={`Urutkan menurut ${label.toLowerCase()}`}
+                        className="h-auto p-0 font-semibold text-muted-foreground hover:bg-transparent hover:text-primary">
                         {label}
-                        <ArrowUpDown size={10}
+                        <ArrowUpDown size={12}
                           className={sort.key === k ? 'text-primary' : 'opacity-40'} />
-                      </button>
+                      </Button>
                     </th>
                   ))}
-                  <th className="px-2.5 py-2 font-semibold text-right">Tindakan</th>
+                  <th className="text-right">Tindakan</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--glass-border)]">
                 {paged.map((r) => (
                   <tr key={r.id} className="hover:bg-[var(--glass-bg)]"
                     data-testid={`kasbon-row-${r.request_number}`}>
-                    <td className="px-2.5 py-2 whitespace-nowrap">{r.request_number}</td>
-                    <td className="px-2.5 py-2 font-medium">{r.employee_name}</td>
-                    <td className="px-2.5 py-2 text-muted-foreground">{r.department || '—'}</td>
-                    <td className="px-2.5 py-2">{r.type_label}</td>
-                    <td className="px-2.5 py-2 text-muted-foreground max-w-[16rem] truncate"
+                    <td className="whitespace-nowrap">{r.request_number}</td>
+                    <td className="font-medium">{r.employee_name}</td>
+                    <td className="text-muted-foreground">{r.department || '—'}</td>
+                    <td>{r.type_label}</td>
+                    <td className="text-muted-foreground max-w-[16rem] truncate"
                       title={r.purpose}>{r.purpose || '—'}</td>
-                    <td className="px-2.5 py-2"><StatusBadge status={r.status} /></td>
-                    <td className="px-2.5 py-2 text-right tabular-nums font-semibold whitespace-nowrap">{fmt(r.amount)}</td>
-                    <td className="px-2.5 py-2 text-right tabular-nums whitespace-nowrap">{fmt(r.paid_amount)}</td>
-                    <td className="px-2.5 py-2 text-right tabular-nums font-semibold whitespace-nowrap text-[hsl(var(--warning))]">
+                    <td><StatusBadge status={r.status} /></td>
+                    <td className="text-right tabular-nums font-semibold whitespace-nowrap">{fmt(r.amount)}</td>
+                    <td className="text-right tabular-nums whitespace-nowrap">{fmt(r.paid_amount)}</td>
+                    <td className="text-right tabular-nums font-semibold whitespace-nowrap text-[hsl(var(--warning-text))]">
                       {fmt(r.outstanding_balance)}
                     </td>
-                    <td className="px-2.5 py-2 text-right tabular-nums whitespace-nowrap">
+                    <td className="text-right tabular-nums whitespace-nowrap">
                       {r.installment_count > 1
                         ? `${fmt(r.installment_amount)} × ${r.installment_count}`
                         : '—'}
                     </td>
-                    <td className="px-2.5 py-2 whitespace-nowrap">{fmtPeriod(r.deduction_start_period)}</td>
-                    <td className="px-2.5 py-2 text-right whitespace-nowrap">
+                    <td className="whitespace-nowrap">{fmtPeriod(r.deduction_start_period)}</td>
+                    <td className="text-right whitespace-nowrap">
                       {r.status === 'hr_approved' && (
-                        <Button variant="outline" size="sm" onClick={() => setDisburseReq(r)} data-testid={`disburse-btn-${r.id}`}>
+                        <Button variant="success" size="sm" onClick={() => setDisburseReq(r)} data-testid={`disburse-btn-${r.id}`}>
                           Cairkan
                         </Button>
                       )}

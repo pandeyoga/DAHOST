@@ -1,6 +1,7 @@
 /**
  * SettlementByStoreCards — kartu ringkas per toko untuk satu bulan: berapa persen omzet bruto
  * yang dipotong platform, dipecah komisi/iklan/refund, supaya Shopee vs TikTok bisa dibandingkan.
+ * 2026-11-08 (Standar UI/UX v2): satu TABEL (dulu satu kartu abu per toko), bisa diunduh Excel/CSV; tanpa kapital.
  */
 import { useCallback, useEffect, useState } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
@@ -9,7 +10,9 @@ import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { formatRupiah as rp } from '@/lib/format';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { EmptyState } from '../moduleAtoms';
+import { namaPlatform } from './PlatformBalanceCards';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -22,9 +25,9 @@ function monthLabel(m) {
 
 // 2026-11-05 (PANDUAN_UI G8): warna hanya token — merah = potongan jauh di atas rata-rata.
 function pctTone(p, avg) {
-  if (p > avg + 2) return 'text-[hsl(var(--destructive))]';
-  if (p < avg - 2) return 'text-[hsl(var(--success))]';
-  return 'text-[hsl(var(--warning))]';
+  if (p > avg + 2) return 'text-[hsl(var(--danger-text))]';
+  if (p < avg - 2) return 'text-[hsl(var(--success-text))]';
+  return 'text-foreground';
 }
 
 export function SettlementByStoreCards({ refreshKey, month: monthProp = '' }) {
@@ -61,15 +64,31 @@ export function SettlementByStoreCards({ refreshKey, month: monthProp = '' }) {
   };
 
   return (
-    <GlassCard className="p-4 space-y-3" data-testid="fin-settlement-by-store">
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="font-medium text-sm flex items-center gap-2">
-          <Store className="w-4 h-4" /> Potongan per toko
-          <span className="text-xs text-muted-foreground font-normal tabular-nums">
-            rata-rata {res?.average_deduction_pct ?? 0}% dari bruto
-          </span>
-        </h3>
+    <GlassCard className="p-0 overflow-hidden" data-testid="fin-settlement-by-store">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3 pb-2">
+        <div className="min-w-0">
+          <p className="font-semibold text-base text-foreground flex items-center gap-2">
+            <Store className="w-4 h-4 text-muted-foreground" /> Potongan per toko
+          </p>
+          <p className="text-sm text-muted-foreground tabular-nums">
+            Rata-rata {String(res?.average_deduction_pct ?? 0).replace('.', ',')}% dari bruto · merah = jauh di atas rata-rata
+          </p>
+        </div>
         <div className="flex items-center gap-1">
+          <TombolUnduh namaBerkas={`potongan-per-toko-${res?.month || ''}`} namaLembar="Potongan per toko" baris={res?.data || []} testId="fin-settlement-by-store-unduh"
+            kolom={[
+              { label: 'Bulan', nilai: () => monthLabel(res?.month) },
+              { label: 'Toko', nilai: (x) => x.account_name },
+              { label: 'Platform', nilai: (x) => namaPlatform(x.platform) },
+              { label: 'Jumlah pencairan', nilai: (x) => Number(x.count) || 0 },
+              { label: 'Omzet bruto', nilai: (x) => Number(x.gross_sales) || 0 },
+              { label: 'Potongan %', nilai: (x) => Number(x.deduction_pct) || 0 },
+              { label: 'Komisi %', nilai: (x) => Number(x.commission_pct) || 0 },
+              { label: 'Iklan %', nilai: (x) => Number(x.ads_pct) || 0 },
+              { label: 'Refund %', nilai: (x) => Number(x.refund_pct) || 0 },
+              { label: 'Masuk saldo', nilai: (x) => Number(x.net_payout) || 0 },
+              { label: 'Belum seimbang', nilai: (x) => Number(x.unverified_count) || 0 },
+            ]} />
           <Button variant="outline" size="icon-sm" data-testid="fin-settlement-by-store-prev" onClick={() => step(1)}
             disabled={idx < 0 || idx >= months.length - 1} title="Bulan sebelumnya" aria-label="Bulan sebelumnya">
             <ChevronLeft className="w-4 h-4" />
@@ -86,7 +105,7 @@ export function SettlementByStoreCards({ refreshKey, month: monthProp = '' }) {
       </div>
 
       {loading ? (
-        <div className="py-6 text-center text-xs text-muted-foreground flex items-center justify-center gap-2">
+        <div className="py-6 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
           <Loader2 className="w-4 h-4 animate-spin" /> memuat…
         </div>
       ) : !res?.data?.length ? (
@@ -94,39 +113,42 @@ export function SettlementByStoreCards({ refreshKey, month: monthProp = '' }) {
           title={`Belum ada dana dilepas tercatat untuk ${monthLabel(res?.month)}`}
           description="Potongan per toko muncul setelah laporan dana dilepas dicatat." />
       ) : (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {res.data.map((s) => (
-            <div key={s.account_id} className="rounded-xl bg-foreground/5 p-3 space-y-1.5"
-              data-testid={`fin-settlement-store-card-${s.account_id}`}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium truncate">{s.account_name}</div>
-                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                    {s.platform} · {s.count} pencairan
-                  </div>
-                </div>
-                <div className={`text-xl font-semibold tabular-nums ${pctTone(s.deduction_pct, res.average_deduction_pct)}`}>
-                  {s.deduction_pct}%
-                </div>
-              </div>
-              <div className="h-1.5 rounded-full bg-foreground/10 overflow-hidden">
-                <div className="h-full bg-[hsl(var(--warning))]" style={{ width: `${Math.min(100, s.deduction_pct)}%` }} />
-              </div>
-              <div className="grid grid-cols-3 gap-1 text-[10px] text-muted-foreground tabular-nums">
-                <div>komisi <b>{s.commission_pct}%</b></div>
-                <div>iklan <b>{s.ads_pct}%</b></div>
-                <div>refund <b>{s.refund_pct}%</b></div>
-              </div>
-              <div className="text-xs text-muted-foreground tabular-nums">
-                bruto {rp(s.gross_sales)} → masuk saldo <b className="text-foreground whitespace-nowrap">{rp(s.net_payout)}</b>
-              </div>
-              {s.unverified_count > 0 ? (
-                <div className="text-[10px] text-[hsl(var(--destructive))] flex items-center gap-1">
-                  <AlertTriangle className="w-3 h-3" /> {s.unverified_count} belum seimbang
-                </div>
-              ) : null}
-            </div>
-          ))}
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr>
+                <th className="text-left">Toko</th>
+                <th className="text-right">Potongan</th>
+                <th className="text-right hidden md:table-cell">Komisi</th>
+                <th className="text-right hidden md:table-cell">Iklan</th>
+                <th className="text-right hidden md:table-cell">Refund</th>
+                <th className="text-right hidden sm:table-cell">Omzet bruto</th>
+                <th className="text-right">Masuk saldo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {res.data.map((x) => (
+                <tr key={x.account_id} data-testid={`fin-settlement-store-card-${x.account_id}`}>
+                  <td>
+                    <span className="font-medium text-foreground">{x.account_name}</span>
+                    <span className="block text-xs text-muted-foreground">{namaPlatform(x.platform)} · {x.count} pencairan
+                      {x.unverified_count > 0 ? (
+                        <span className="ml-1 inline-flex items-center gap-1 text-[hsl(var(--danger-text))]">
+                          <AlertTriangle className="w-3 h-3" /> {x.unverified_count} belum seimbang
+                        </span>
+                      ) : null}
+                    </span>
+                  </td>
+                  <td className={`text-right tabular-nums font-semibold ${pctTone(x.deduction_pct, res.average_deduction_pct)}`}>{String(x.deduction_pct).replace('.', ',')}%</td>
+                  <td className="text-right tabular-nums hidden md:table-cell">{String(x.commission_pct).replace('.', ',')}%</td>
+                  <td className="text-right tabular-nums hidden md:table-cell">{String(x.ads_pct).replace('.', ',')}%</td>
+                  <td className="text-right tabular-nums hidden md:table-cell">{String(x.refund_pct).replace('.', ',')}%</td>
+                  <td className="text-right tabular-nums whitespace-nowrap hidden sm:table-cell">{rp(x.gross_sales)}</td>
+                  <td className="text-right tabular-nums whitespace-nowrap font-medium">{rp(x.net_payout)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </GlassCard>

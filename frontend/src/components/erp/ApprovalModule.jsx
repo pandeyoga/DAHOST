@@ -10,12 +10,17 @@ import { toast } from 'sonner';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 /*
  * Persetujuan Perubahan Faktur (menu Keuangan).
  * 2026-11-05 (PANDUAN_UI G1/G8/G10/G13): cetakan PageLayout; status berbahasa Indonesia lewat StatusBadge (dulu
  * "Pending/Approved/Rejected" berwarna palet langsung); rincian permintaan dibuka DI HALAMAN di atas daftar
  * (dulu popup); tampilan kosong di kartu daftar (dulu teks berjarak besar di luar kartu → pita kosong 80 px).
+ * 2026-11-08 (Standar UI/UX v2): rincian = popup (DetailPanel ber-onClose); daftar = TabelData (kartu ringkas di
+ * HP) + unduh Excel/CSV; Setujui hijau / Tolak merah; item faktur sebelum/sesudah = tabel kecil, bukan kartu per item.
  */
 const STATUS_META = {
   Pending: { label: 'Menunggu', tone: 'warning' },
@@ -23,7 +28,6 @@ const STATUS_META = {
   Rejected: { label: 'Ditolak', tone: 'danger' },
 };
 const CATEGORY_LABEL = { VENDOR: 'Pemasok', CUSTOMER: 'Pelanggan' };
-const COLUMNS = ['Status', 'No. faktur', 'No. PO', 'Kategori', 'Ringkasan perubahan', 'Diajukan oleh', 'Waktu pengajuan', 'Aksi'];
 
 const fmt = formatRupiah;
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
@@ -36,14 +40,14 @@ function ReqStatus({ status }) {
 /** Satu pasang nilai sebelum → sesudah (netral; warna tidak dipakai sebagai hiasan — G8). */
 function BeforeAfter({ label, before, after, big }) {
   return (
-    <div className="grid grid-cols-2 gap-4">
-      <div className="rounded-[var(--radius-md)] bg-foreground/[0.03] p-3">
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="rounded-[var(--radius-md)] border border-[var(--glass-border)] p-3">
         <p className="text-xs text-muted-foreground font-medium mb-1">Sebelum · {label}</p>
-        <p className={`text-foreground/70 ${big ? 'text-lg font-bold tabular-nums' : 'text-sm'}`}>{before}</p>
+        <p className={`text-muted-foreground ${big ? 'text-lg font-semibold tabular-nums' : 'text-sm'}`}>{before}</p>
       </div>
-      <div className="rounded-[var(--radius-md)] bg-[hsl(var(--primary)/0.06)] p-3">
-        <p className="text-xs text-muted-foreground font-medium mb-1">Sesudah · {label}</p>
-        <p className={`text-foreground ${big ? 'text-lg font-bold tabular-nums' : 'text-sm'}`}>{after}</p>
+      <div className="rounded-[var(--radius-md)] border border-[hsl(var(--primary)/0.4)] p-3">
+        <p className="text-xs text-[hsl(var(--primary))] font-medium mb-1">Sesudah · {label}</p>
+        <p className={`text-foreground ${big ? 'text-lg font-semibold tabular-nums' : 'text-sm'}`}>{after}</p>
       </div>
     </div>
   );
@@ -51,20 +55,27 @@ function BeforeAfter({ label, before, after, big }) {
 
 function ItemList({ title, items, tint }) {
   return (
-    <div className={`rounded-[var(--radius-md)] p-3 ${tint ? 'bg-[hsl(var(--primary)/0.06)]' : 'bg-foreground/[0.03]'}`}>
-      <p className="text-xs text-muted-foreground font-medium mb-2">{title}</p>
-      <div className="space-y-1.5">
-        {(items || []).map((item, idx) => (
-          <div key={idx} className="bg-[var(--card-surface)] rounded p-2 text-xs border border-[var(--glass-border)]">
-            <p className="font-medium text-foreground">{item.product_name}</p>
-            <p className="text-muted-foreground">{item.sku} · {item.size}/{item.color}</p>
-            <div className="flex justify-between mt-1 tabular-nums">
-              <span>Qty: <strong>{item.invoice_qty}</strong></span>
-              <span>Subtotal: <strong>{fmt(item.subtotal || 0)}</strong></span>
-            </div>
-          </div>
-        ))}
-      </div>
+    <div className={`rounded-[var(--radius-md)] border p-3 ${tint ? 'border-[hsl(var(--primary)/0.4)]' : 'border-[var(--glass-border)]'}`}>
+      <p className={`text-xs font-medium mb-1 ${tint ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground'}`}>{title} · {(items || []).length} item</p>
+      <Table className="md:min-w-0">
+        <TableHeader><TableRow>
+          <TableHead className="text-xs">Produk</TableHead>
+          <TableHead className="text-xs text-right">Qty</TableHead>
+          <TableHead className="text-xs text-right">Subtotal</TableHead>
+        </TableRow></TableHeader>
+        <TableBody>
+          {(items || []).map((item, idx) => (
+            <TableRow key={idx}>
+              <TableCell>
+                <p className="font-medium text-foreground">{item.product_name}</p>
+                <p className="text-xs text-muted-foreground">{item.sku} · {item.size}/{item.color}</p>
+              </TableCell>
+              <TableCell className="text-right tabular-nums">{item.invoice_qty}</TableCell>
+              <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(item.subtotal || 0)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </div>
   );
 }
@@ -209,7 +220,7 @@ export default function ApprovalModule({ token, userRole }) {
       changes.push(
         <div key="items" className="space-y-3">
           <p className="font-semibold text-foreground">Perubahan item faktur</p>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             <ItemList title="Sebelum" items={itemsChange.before} />
             <ItemList title="Sesudah" items={itemsChange.after} tint />
           </div>
@@ -245,7 +256,7 @@ export default function ApprovalModule({ token, userRole }) {
       }
     >
       <div className="space-y-4">
-        <div className="grid grid-cols-3 gap-3 text-sm">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
           <div>
             <p className="text-xs text-muted-foreground">Status</p>
             <div className="mt-1"><ReqStatus status={selectedRequest.status} /></div>
@@ -295,11 +306,11 @@ export default function ApprovalModule({ token, userRole }) {
               data-testid="approval-notes-textarea"
             />
             <div className="flex gap-2">
-              <Button onClick={handleApprove} disabled={actionLoading} data-testid="approve-button">
+              <Button variant="success" onClick={handleApprove} disabled={actionLoading} data-testid="approve-button">
                 <CheckCircle className="w-4 h-4" />
                 {actionLoading ? 'Memproses…' : 'Setujui'}
               </Button>
-              <Button variant="outline" onClick={handleReject} disabled={actionLoading} data-testid="reject-button">
+              <Button variant="destructive" onClick={handleReject} disabled={actionLoading} data-testid="reject-button">
                 <XCircle className="w-4 h-4" />
                 {actionLoading ? 'Memproses…' : 'Tolak'}
               </Button>
@@ -318,7 +329,7 @@ export default function ApprovalModule({ token, userRole }) {
       filters={<>
         <FilterChips value={filterStatus} onChange={setFilterStatus} testId="filter-status" ariaLabel="Status permintaan" hideWhenEmpty={false}
           options={[{ key: 'Pending', label: 'Menunggu' }, { key: 'Approved', label: 'Disetujui' }, { key: 'Rejected', label: 'Ditolak' }, { key: '', label: 'Semua' }]} />
-        <div className="relative w-72 max-w-full">
+        <div className="relative w-full sm:w-64">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <GlassInput
             type="text"
@@ -332,7 +343,20 @@ export default function ApprovalModule({ token, userRole }) {
           />
         </div>
       </>}
-      tools={<Button variant="outline" size="icon" onClick={fetchRequests} title="Muat ulang" aria-label="Muat ulang" data-testid="approval-refresh-button"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>}
+      tools={<>
+        <TombolUnduh namaBerkas="persetujuan-perubahan-faktur" namaLembar="Permintaan" baris={filtered} testId="approval-unduh"
+          kolom={[
+            { label: 'Status', nilai: (r) => STATUS_META[r.status]?.label || r.status },
+            { label: 'No. faktur', nilai: (r) => r.invoice_number },
+            { label: 'No. PO', nilai: (r) => r.po_number || '' },
+            { label: 'Kategori', nilai: (r) => CATEGORY_LABEL[r.invoice_category] || r.invoice_category || '' },
+            { label: 'Ringkasan perubahan', nilai: (r) => r.change_summary || '' },
+            { label: 'Diajukan oleh', nilai: (r) => r.requested_by_name || r.requested_by || '' },
+            { label: 'Waktu pengajuan', nilai: (r) => fmtDate(r.requested_at) },
+            { label: 'Catatan keputusan', nilai: (r) => r.approval_notes || '' },
+          ]} />
+        <Button variant="outline" size="icon" onClick={fetchRequests} title="Muat ulang" aria-label="Muat ulang" data-testid="approval-refresh-button"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>
+      </>}
       detail={detail}
     >
       {loading ? (
@@ -347,43 +371,18 @@ export default function ApprovalModule({ token, userRole }) {
               description={searchQuery ? 'Ubah atau kosongkan pencarian.' : 'Permintaan muncul di sini setelah admin mengajukan perubahan faktur.'} />
           ) : (
             <>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-[var(--glass-bg)] border-b">
-                    <tr>
-                      {COLUMNS.map(h => (
-                        <th key={h} className="text-left px-3 py-3 text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {paged.map(req => {
-                      const open = showDetail && selectedRequest?.id === req.id;
-                      return (
-                        <tr key={req.id} className={`hover:bg-[var(--glass-bg)] ${open ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`} data-testid="approval-request-row">
-                          <td className="px-3 py-3"><ReqStatus status={req.status} /></td>
-                          <td className="px-3 py-3 whitespace-nowrap font-semibold">{req.invoice_number}</td>
-                          <td className="px-3 py-3 text-xs text-muted-foreground whitespace-nowrap">{req.po_number || '-'}</td>
-                          <td className="px-3 py-3 text-xs whitespace-nowrap">{CATEGORY_LABEL[req.invoice_category] || req.invoice_category}</td>
-                          <td className="px-3 py-3 text-foreground max-w-xs">
-                            <div className="truncate" title={req.change_summary}>{req.change_summary}</div>
-                          </td>
-                          <td className="px-3 py-3 text-muted-foreground">
-                            <p className="font-medium">{req.requested_by_name}</p>
-                            <p className="text-xs text-muted-foreground">{req.requested_by}</p>
-                          </td>
-                          <td className="px-3 py-3 text-muted-foreground text-xs whitespace-nowrap">{fmtDate(req.requested_at)}</td>
-                          <td className="px-3 py-3 whitespace-nowrap">
-                            <Button variant="outline" size="sm" onClick={() => openDetail(req)} data-testid="approval-view-detail-button">
-                              {open ? 'Tutup' : 'Rincian'}
-                            </Button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              <TabelData baris={paged} kunci={(r) => r.id} onKlikBaris={openDetail} testId="approval-table"
+                kolom={[
+                  { kunci: 'status', label: 'Status', hp: 'nilai', isi: (r) => <ReqStatus status={r.status} /> },
+                  { kunci: 'faktur', label: 'No. faktur', hp: 'judul', isi: (r) => <span className="whitespace-nowrap font-semibold" data-testid="approval-request-row">{r.invoice_number}</span> },
+                  { kunci: 'po', label: 'No. PO', isi: (r) => <span className="whitespace-nowrap text-muted-foreground">{r.po_number || '—'}</span> },
+                  { kunci: 'kategori', label: 'Kategori', isi: (r) => CATEGORY_LABEL[r.invoice_category] || r.invoice_category },
+                  { kunci: 'ringkasan', label: 'Ringkasan perubahan', hp: 'keterangan', isi: (r) => <div className="md:max-w-xs md:truncate" title={r.change_summary}>{r.change_summary}</div> },
+                  { kunci: 'pengaju', label: 'Diajukan oleh', isi: (r) => <span>{r.requested_by_name}<span className="block text-xs text-muted-foreground">{r.requested_by}</span></span> },
+                  { kunci: 'waktu', label: 'Waktu pengajuan', isi: (r) => <span className="whitespace-nowrap text-muted-foreground">{fmtDate(r.requested_at)}</span> },
+                  { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+                    <Button variant="outline" size="sm" onClick={() => openDetail(r)} data-testid="approval-view-detail-button">Rincian</Button>) },
+                ]} />
               <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-3" />
             </>
           )}
