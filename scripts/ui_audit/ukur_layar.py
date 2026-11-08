@@ -15,7 +15,7 @@ Pemeriksaan (V = nomor di rencana):
   V5 ukuran_huruf    jumlah ukuran huruf berbeda pada teks tampil
   V6 kontras         teks dengan rasio kontras < 4.5 (normal) / < 3 (besar)
   V8 daftar_kartu    kelompok kartu berulang (≥ 6 saudara, tinggi ≥ 70 px) yang seharusnya tabel
-  V9 penyaring_lebar kotak cari/pilihan yang lebih lebar dari 420 px (desktop)
+  V9 penyaring_lebar kotak cari/pilihan yang lebih lebar dari 420 px (desktop; isian di dalam popup form tidak dihitung)
   V10 tanggal_bawaan isian tanggal bawaan peramban
   V11 istilah        kata Inggris/istilah program yang tampil + label HURUF BESAR
   V12 nilai_aneh     undefined/NaN/null/Invalid Date/[object Object] yang tampil
@@ -118,7 +118,7 @@ JS_UKUR = r"""
     const sama = sig.filter(x => x === sig[0]).length; const tinggi = anak.map(a => a.getBoundingClientRect().height);
     if (sama >= 6 && tinggi.filter(h => h >= 70).length >= 6 && !['TBODY','TR','UL','OL','SELECT'].includes(p.tagName)) daftarKartu.push(p.tagName + ' ×' + sama); });
   // V9 penyaring lebar
-  const lebar = []; if (window.innerWidth >= 1200) root.querySelectorAll('input[type=search], input[placeholder*=ari], [role=combobox], select').forEach(el => {
+  const lebar = []; if (window.innerWidth >= 1200 && !arg.dialog) root.querySelectorAll('input[type=search], input[placeholder*=ari], [role=combobox], select').forEach(el => {
     if (!vis(el)) return; const w = el.getBoundingClientRect().width; if (w > 420) lebar.push((el.getAttribute('placeholder') || el.textContent || el.tagName).trim().slice(0, 30) + ' ' + Math.round(w) + 'px'); });
   // V10 tanggal bawaan
   const tglBawaan = [...root.querySelectorAll('input[type=date], input[type=month], input[type=datetime-local]')].filter(vis).length;
