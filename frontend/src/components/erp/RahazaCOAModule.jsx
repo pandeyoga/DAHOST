@@ -17,7 +17,7 @@ import {
   TypeBadge, CoaTreeView, UsageBadge, RowActions, buildTree, TYPE_LABELS, TYPE_ORDER, NB_LABELS, LEVEL_META,
 } from './RahazaCOATreeNode';
 import ImportExportToolbar from './ImportExportToolbar';
-import { Notice } from './moduleAtoms';
+import { Notice, EmptyState } from './moduleAtoms';
 
 // 2026-11-02 (S2-H) — permintaan owner: "untuk Chart of akun itu tolong tandai mana yang terhubung atau
 // tidak karena takutnya salah hapus … cek ui uxnya". Sumber keterikatan = backend core/coa_bindings
@@ -892,13 +892,12 @@ export default function RahazaCOAModule({ token, onNavigate }) {
     >
       <GlassCard className="p-3 sm:p-4 min-w-0">
         <div>
-          {loading && <div className="py-12 grid place-items-center text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /></div>}
+          {loading && <div className="py-8 grid place-items-center text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /></div>}
           {!loading && loadError && <p className="py-6 text-center text-sm text-[hsl(var(--danger-text))]">{loadError}</p>}
           {!loading && !loadError && accounts.length === 0 && (
-            <div className="py-12 text-center space-y-3">
-              <div className="text-muted-foreground">Bagan Akun masih kosong.</div>
-              <Button onClick={doSeed} data-testid="coa-seed-empty"><Sparkles className="w-4 h-4 mr-1.5" />Pasang template PSAK garmen</Button>
-            </div>
+            <EmptyState icon={FolderTree} title="Bagan akun masih kosong"
+              description="Pasang susunan akun bawaan untuk usaha garmen (PSAK), lalu sesuaikan."
+              action={<Button onClick={doSeed} data-testid="coa-seed-empty"><Sparkles className="w-4 h-4 mr-1.5" />Pasang bagan akun bawaan PSAK garmen</Button>} />
           )}
           {!loading && accounts.length > 0 && view === 'tree' && (
             <CoaTreeView tree={tree} open={open} setOpen={setOpen} visible={visible} matched={filtering ? matched : undefined} q={q}
