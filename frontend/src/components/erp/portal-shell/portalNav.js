@@ -652,6 +652,8 @@ export const PORTAL_NAV = {
           // Tahap 2 (2026-11-06): satu menu absen — "Kehadiran" (self-dashboard) digabung ke Absen Saya
           // (riwayat 30 hari + koreksi absen ada di sana); id lama tetap diarahkan ke sini.
           { id: 'portal-absen',      label: 'Absen Saya',   icon: Clock },
+          // Tahap C audit HR (9 Nov 2026): jadwal shift sendiri + ajukan ganti/tukar shift (rekan → atasan → SDM)
+          { id: 'portal-shift',      label: 'Jadwal Shift', icon: CalendarRange },
           { id: 'portal-cuti',       label: 'Cuti & Lembur', icon: Calendar },
           { id: 'portal-notifikasi', label: 'Notifikasi',   icon: Bell },
         ],

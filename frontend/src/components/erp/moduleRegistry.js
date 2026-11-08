@@ -567,7 +567,10 @@ const MyAnnualReviewModule = lazyRetry(() => import('./portal/MyAnnualReviewModu
 const PeerFeedbackModule = lazyRetry(() => import('./portal/PeerFeedbackModule'));
 
 // Session 17 Batch 1 — HR/SDM Features (P2-11, P2-12, P2-16)
-const ShiftSchedulerModule = lazyRetry(() => import('./hr/ShiftSchedulerModule'));
+// Tahap C audit HR (9 Nov 2026): ShiftSchedulerModule ("Jadwal otomatis" + "Pola jadwal") DIHAPUS — diganti Roster &
+// Pola rotasi di hub Shift; id lama 'hr-shift-scheduler' diarahkan ke tab Roster.
+// Portal Saya › Jadwal Shift: jadwal sendiri + ganti/tukar shift (rekan → atasan → SDM).
+const PortalShiftSayaModule = lazyRetry(() => import('./portal/PortalShiftSayaModule'));
 const JobBoardModule = lazyRetry(() => import('./hr/JobBoardModule'));
 const CareerCoachModule = lazyRetry(() => import('./portal/CareerCoachModule'));
 
@@ -1043,7 +1046,7 @@ export const MODULE_REGISTRY = {
   'hr-coaching':           makeRedirect('hr-ai-hub', 'coaching'),       // T3.5 → hub
 
   // Session 17 — HR/SDM Features
-  'hr-shift-scheduler':    ShiftSchedulerModule,
+  'hr-shift-scheduler':    makeRedirect('hr-shift-hub', 'schedule'),   // Tahap C: → Roster
   'hr-job-board':          JobBoardModule,
   
   // Session 18 — P2-20 Skill Gap Analysis
@@ -1071,6 +1074,7 @@ export const MODULE_REGISTRY = {
   'portal-profile':        PortalSayaProfile,
   'portal-cuti':           PortalSayaCuti,
   'portal-absen':          PortalSayaAbsen,
+  'portal-shift':          PortalShiftSayaModule,     // Tahap C audit HR (9 Nov 2026)
   'portal-payslip':        PortalSayaPayslip,
   'portal-training':       PortalSayaTraining,
   'portal-notifikasi':     PortalSayaNotifikasi,
