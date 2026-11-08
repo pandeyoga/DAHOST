@@ -269,11 +269,11 @@ async def assert_host_assigned(db, host_id: str, account_id: str) -> dict:
 # dan aplikasinya yang disalahkan.
 _DEMO_ACCOUNTS = (
     {"account_code": "DA-SHOPEE", "account_name": "DA Official Shopee",
-     "platform": "shopee", "username": "da_official", "group": "official_store"},
+     "platform": "shopee", "username": "da_official", "group": "other"},
     {"account_code": "DL-TIKTOK", "account_name": "Daluna TikTok Shop",
-     "platform": "tiktok", "username": "daluna.official", "group": "official_store"},
+     "platform": "tiktok", "username": "daluna.official", "group": "daluna"},
     {"account_code": "DA-TOKPED", "account_name": "DA Tokopedia",
-     "platform": "tokopedia", "username": "dewiaditya", "group": "official_store"},
+     "platform": "tokopedia", "username": "dewiaditya", "group": "other"},
 )
 
 
