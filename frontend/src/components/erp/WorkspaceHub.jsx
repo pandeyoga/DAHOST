@@ -152,22 +152,22 @@ function WorkspaceNotepad({ headers }) {
   if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin" /></div>;
 
   return (
-    <div className="flex gap-4 h-[580px]">
+    <div className="flex flex-col gap-4 md:h-[580px] md:flex-row">
       {/* Sidebar */}
-      <div className="w-56 flex-shrink-0 flex flex-col gap-2">
+      <div className="flex w-full flex-shrink-0 flex-col gap-2 md:w-56">
         <Button data-testid="btn-new-note" size="sm" className="w-full" onClick={newNote}>
-          <Plus className="w-4 h-4 mr-1" /> Catatan Baru
+          <Plus className="w-4 h-4 mr-1" /> Catatan baru
         </Button>
         <div className="flex-1 overflow-y-auto space-y-1 pr-1">
           {pinned.length > 0 && (
-            <p className="text-xs text-muted-foreground px-1 pt-1">PINNED</p>
+            <p className="text-xs text-muted-foreground px-1 pt-1">Disematkan</p>
           )}
           {pinned.map(n => (
             <NoteItem key={n.id} note={n} active={activeNote?.id === n.id}
               onOpen={() => openNote(n)} onDelete={deleteNote} onPin={togglePin} />
           ))}
           {unpinned.length > 0 && pinned.length > 0 && (
-            <p className="text-xs text-muted-foreground px-1 pt-1">CATATAN</p>
+            <p className="text-xs text-muted-foreground px-1 pt-1">Catatan lain</p>
           )}
           {unpinned.map(n => (
             <NoteItem key={n.id} note={n} active={activeNote?.id === n.id}
@@ -180,7 +180,7 @@ function WorkspaceNotepad({ headers }) {
       </div>
 
       {/* Editor */}
-      <div className="flex-1 flex flex-col gap-2 min-w-0">
+      <div className={`flex min-w-0 flex-1 flex-col gap-2 md:min-h-0 ${activeNote ? 'min-h-[420px]' : ''}`}>
         {activeNote ? (
           <>
             <div className="flex items-center gap-2">
@@ -206,13 +206,13 @@ function WorkspaceNotepad({ headers }) {
             <div style={{ backgroundColor: editColor }} className="flex-1 rounded-lg overflow-hidden">
               <TipTapEditor value={editContent} onChange={setEditContent} minHeight={240} />
             </div>
-            <p className="text-xs text-muted-foreground text-right">Auto-save aktif · Terakhir disimpan: {activeNote.updated_at?.slice(0, 16).replace('T', ' ')}</p>
+            <p className="text-xs text-muted-foreground text-right">Simpan otomatis aktif · terakhir disimpan {activeNote.updated_at?.slice(0, 16).replace('T', ' ')}</p>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground flex-col gap-3">
+          <div className="hidden flex-1 flex-col items-center justify-center gap-3 text-muted-foreground md:flex">
             <StickyNote className="w-12 h-12 opacity-30" />
             <p className="text-sm">Pilih catatan atau buat catatan baru</p>
-            <Button size="sm" onClick={newNote}><Plus className="w-4 h-4 mr-1" /> Catatan Baru</Button>
+            <Button size="sm" onClick={newNote}><Plus className="w-4 h-4 mr-1" /> Catatan baru</Button>
           </div>
         )}
       </div>
@@ -506,7 +506,7 @@ function WorkspaceReminder({ headers }) {
           {reminders.length === 0 && (
             <div className="text-center py-6 text-muted-foreground">
               <Bell className="w-10 h-10 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">Belum ada reminder.</p>
+              <p className="text-sm">Belum ada pengingat.</p>
             </div>
           )}
           {reminders.map(r => (
@@ -535,15 +535,15 @@ function WorkspaceReminder({ headers }) {
               </div>
               <div className="flex gap-1">
                 {!r.is_done && (
-                  <button onClick={() => markDone(r.id)}
-                    className="p-1 rounded hover:bg-[hsl(var(--success)/0.12)] text-muted-foreground hover:text-[hsl(var(--success-text))]">
-                    <CheckSquare className="w-4 h-4" />
-                  </button>
+                  <Button type="button" variant="ghost" size="icon-sm" onClick={() => markDone(r.id)} title="Tandai selesai" aria-label="Tandai selesai"
+                    className="text-muted-foreground hover:text-[hsl(var(--success-text))]">
+                    <CheckSquare />
+                  </Button>
                 )}
-                <button onClick={() => deleteReminder(r.id)}
-                  className="p-1 rounded hover:bg-[hsl(var(--destructive)/0.12)] text-muted-foreground hover:text-[hsl(var(--danger-text))]">
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <Button type="button" variant="ghost" size="icon-sm" onClick={() => deleteReminder(r.id)} title="Hapus pengingat" aria-label="Hapus pengingat"
+                  className="text-muted-foreground hover:text-[hsl(var(--danger-text))]">
+                  <Trash2 />
+                </Button>
               </div>
             </div>
           ))}
@@ -554,7 +554,7 @@ function WorkspaceReminder({ headers }) {
       {/* Browser Push Notification opt-in */}
       <div className="pt-4 border-t">
         <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
-          <Bell className="w-3.5 h-3.5" /> Notifikasi Push Browser
+          <Bell className="w-3.5 h-3.5" /> Notifikasi dorong di browser
         </p>
         <PushNotificationToggle headers={headers} />
       </div>
@@ -665,7 +665,7 @@ function WorkspaceCalendar({ headers }) {
 
       {/* Legend */}
       <div className="flex gap-3 flex-wrap text-xs">
-        {Object.entries({ personal: 'Event', leave: 'Cuti', overtime: 'Lembur', reminder: 'Reminder' }).map(([k, v]) => (
+        {Object.entries({ personal: 'Acara', leave: 'Cuti', overtime: 'Lembur', reminder: 'Pengingat' }).map(([k, v]) => (
           <span key={k} className="flex items-center gap-1">
             <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: EVENT_COLORS[k] }} />
             {v}

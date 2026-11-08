@@ -198,7 +198,7 @@ export default function PushNotificationToggle({ headers }) {
           {status === 'unsubscribed' && (
             <Button size="sm" onClick={subscribe} disabled={loading} data-testid="btn-push-subscribe">
               {loading ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Bell className="w-4 h-4 mr-1" />}
-              Aktifkan Notifikasi
+              Aktifkan notifikasi
             </Button>
           )}
 
@@ -206,7 +206,7 @@ export default function PushNotificationToggle({ headers }) {
             <>
               <Button size="sm" variant="outline" onClick={sendTest} disabled={loading} data-testid="btn-push-test">
                 {testSent ? <CheckCircle2 className="w-4 h-4 mr-1 text-[hsl(var(--success-text))]" /> : loading ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <BellRing className="w-4 h-4 mr-1" />}
-                {testSent ? 'Terkirim!' : 'Tes Notifikasi'}
+                {testSent ? 'Terkirim!' : 'Tes notifikasi'}
               </Button>
               <Button size="sm" variant="ghost" onClick={unsubscribe} disabled={loading} data-testid="btn-push-unsubscribe"
                 className="text-muted-foreground hover:text-[hsl(var(--danger-text))]">
@@ -218,7 +218,7 @@ export default function PushNotificationToggle({ headers }) {
           {status === 'denied' && (
             <p className="text-xs text-[hsl(var(--danger-text))] flex items-center gap-1">
               <BellOff className="w-3.5 h-3.5" />
-              Buka pengaturan browser → Notifications → Izinkan untuk situs ini.
+              Buka pengaturan browser → Notifikasi → izinkan untuk situs ini.
             </p>
           )}
 
@@ -241,7 +241,7 @@ export default function PushNotificationToggle({ headers }) {
 
           {status === 'unsupported' && (
             <p className="text-xs text-muted-foreground">
-              Browser Anda tidak mendukung Web Push Notifications.
+              Browser ini tidak mendukung notifikasi dorong. Coba Chrome, Edge, atau Firefox versi terbaru.
             </p>
           )}
         </div>

@@ -181,7 +181,7 @@ export function InboxRow({ n, compact = false, expanded = false, onActivate, onA
   const isHistory = n.kind === 'action' && !!n.resolved_at;
   const unreadTone = !n.read && !isHistory ? 'bg-[hsl(var(--primary)/0.04)]' : '';
   return (
-    <div className={`flex items-start gap-2 px-3 py-2.5 ${unreadTone} ${expanded ? 'ring-1 ring-inset ring-[hsl(var(--primary)/0.35)]' : ''}`}
+    <div className={`${compact ? 'flex items-start' : 'flex flex-col sm:flex-row sm:items-start'} gap-2 px-3 py-2.5 ${unreadTone} ${expanded ? 'ring-1 ring-inset ring-[hsl(var(--primary)/0.35)]' : ''}`}
          data-testid={isAction ? 'inbox-action-row' : isHistory ? 'inbox-history-row' : 'notif-row'}>
       <button type="button" onClick={() => onActivate?.(n)}
               className="min-w-0 flex-1 text-left focus:outline-none focus-visible:underline"
@@ -211,20 +211,20 @@ export function InboxRow({ n, compact = false, expanded = false, onActivate, onA
         </span>
       </button>
       {isAction && n.action && (
-        <Button type="button" size="sm" onClick={() => onAction?.(n)} className="shrink-0 self-center"
+        <Button type="button" size="sm" onClick={() => onAction?.(n)} className={`shrink-0 ${compact ? 'self-center' : 'self-start sm:self-center'}`}
                 data-testid="inbox-action-btn">
           {n.action.label || 'Buka'} <ArrowRight />
         </Button>
       )}
       {!isAction && !isHistory && !n.read && onMarkRead && !compact && (
         <Button type="button" variant="link" size="sm" onClick={() => onMarkRead(n.id)}
-                className="shrink-0 self-center h-auto px-1 text-muted-foreground"
+                className="shrink-0 self-start h-auto px-1 text-muted-foreground sm:self-center"
                 data-testid="notif-mark-one">
           Tandai dibaca
         </Button>
       )}
       {!isAction && !isHistory && !punyaTujuan(n) && !compact && (
-        <ChevronDown className={`shrink-0 self-center w-3.5 h-3.5 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`hidden shrink-0 self-center w-3.5 h-3.5 sm:block text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`} />
       )}
     </div>
   );
