@@ -76,7 +76,8 @@ async def setup_status(request: Request):
         {"key": "locations", "label": "Gedung & Lokasi", "done": loc > 0, "count": loc, "required": True},
         {"key": "processes", "label": "Proses Produksi", "done": proc > 0, "count": proc, "required": True},
         {"key": "shifts", "label": "Shift Kerja", "done": shifts > 0, "count": shifts, "required": True},
-        {"key": "lines", "label": "Line Produksi", "done": lines > 0, "count": lines, "required": True},
+        # Keputusan owner 8 Nov 2026: Line Produksi opsional (produksi lewat vendor CMT, lini internal tidak dipakai).
+        {"key": "lines", "label": "Line Produksi", "done": lines > 0, "count": lines, "required": False},
         {"key": "employees", "label": "Karyawan / Operator", "done": emps > 0, "count": emps, "required": True},
         {"key": "models_sizes", "label": "Model & Size", "done": (models > 0 and sizes > 0),
          "count": models + sizes, "required": True},
@@ -85,7 +86,7 @@ async def setup_status(request: Request):
     ]
 
     all_required_done = all(s["done"] for s in steps if s["required"])
-    master_ok = loc > 0 and proc > 0 and shifts > 0 and lines > 0 and emps > 0 and models > 0 and sizes > 0 and boms > 0
+    master_ok = loc > 0 and proc > 0 and shifts > 0 and emps > 0 and models > 0 and sizes > 0 and boms > 0
     transaction_ok = orders > 0
 
     state_doc = await db.rahaza_setup_state.find_one({"user_id": uid}, {"_id": 0})

@@ -58,10 +58,14 @@ async def _count(db, collection: str, filter_: dict) -> int:
 # Setiap rule adalah async function yang return None atau dict action card.
 
 async def rule_setup_empty(db, portal: str) -> Optional[dict]:
-    """Jika pabrik belum ada master minimum → tawarkan Setup Wizard."""
+    """Jika pabrik belum ada master minimum → tawarkan Setup Wizard.
+
+    Keputusan owner 8 Nov 2026: "Line Produksi" BUKAN syarat lagi. Produksi berjalan lewat vendor CMT
+    (PO internal → kirim ke CMT → terima & QC → kirim hasil); lini jahit internal, penugasan operator per lini,
+    dan catatan hasil per lini tidak ada di menu dan tidak dipakai — syarat itu hanya memunculkan peringatan palsu.
+    """
     loc = await _count(db, "rahaza_locations", {"active": True})
     proc = await _count(db, "rahaza_processes", {})
-    lin = await _count(db, "rahaza_lines", {"active": True})
     emp = await _count(db, "rahaza_employees", {"active": True})
     mod = await _count(db, "rahaza_models", {"active": True})
     siz = await _count(db, "rahaza_sizes", {"active": True})
@@ -71,8 +75,6 @@ async def rule_setup_empty(db, portal: str) -> Optional[dict]:
         missing.append("Lokasi/Gedung")
     if proc == 0:
         missing.append("Proses Produksi")
-    if lin == 0:
-        missing.append("Line Produksi")
     if emp == 0:
         missing.append("Karyawan")
     if mod == 0:
