@@ -522,11 +522,11 @@ export default function KOLCreatorModule({ token }) {
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input data-testid="creator-search" value={search} onChange={e => setSearch(e.target.value)} className="pl-8" placeholder="Cari kreator" />
           </div>
-          <SmartNativeSelect value={filterAccountId} onChange={(e) => setFilterAccountId(e.target.value)} className="w-48" wrapperClassName="w-48 max-w-full" data-testid="creator-account-filter">
+          <SmartNativeSelect value={filterAccountId} onChange={(e) => setFilterAccountId(e.target.value)} className="w-full" wrapperClassName="w-48 max-w-full" data-testid="creator-account-filter">
             <option value="">Semua toko</option>
             {accounts.map((a) => <option key={a.id} value={a.id}>{a.account_name}</option>)}
           </SmartNativeSelect>
-          <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="w-36" wrapperClassName="w-36 max-w-full" searchable={false}>
+          <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="w-full" wrapperClassName="w-36 max-w-full" searchable={false}>
             <option value="">Semua status</option>
             <option value="active">Aktif</option>
             <option value="inactive">Nonaktif</option>

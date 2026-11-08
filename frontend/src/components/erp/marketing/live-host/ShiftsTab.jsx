@@ -142,14 +142,14 @@ export default function ShiftsTab({ authH }) {
     <PageLayout testId="shifts-tab" title="Shift host live" subtitle="Jadwal shift, kehadiran, dan performa tiap shift."
       actions={<Button onClick={() => setShowAddShiftModal(true)} data-testid="add-shift-btn"><Plus />Tambah shift</Button>}
       filters={<>
-        <SmartNativeSelect value={filters.host_id} onChange={(e) => setFilters((f) => ({ ...f, host_id: e.target.value }))} className="w-48" wrapperClassName="w-48 max-w-full" data-testid="filter-host">
+        <SmartNativeSelect value={filters.host_id} onChange={(e) => setFilters((f) => ({ ...f, host_id: e.target.value }))} className="w-full" wrapperClassName="w-48 max-w-full" data-testid="filter-host">
           <option value="all">Semua host</option>
           {hosts.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
         </SmartNativeSelect>
         <PeriodPicker value={periode} presets={[ALL_TIME, ...PERIOD_PRESETS]} testId="filter-shift-period"
           onChange={(v) => { setPeriode(v); setFilters((f) => ({ ...f, date_from: v.from || '', date_to: v.to || '' })); }} />
         <SmartNativeSelect value={filters.attendance_status} onChange={(e) => setFilters((f) => ({ ...f, attendance_status: e.target.value }))}
-          className="w-44" wrapperClassName="w-44 max-w-full" searchable={false} data-testid="filter-attendance">
+          className="w-full" wrapperClassName="w-44 max-w-full" searchable={false} data-testid="filter-attendance">
           <option value="all">Semua kehadiran</option>
           {Object.entries(LABEL_KEHADIRAN).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </SmartNativeSelect>

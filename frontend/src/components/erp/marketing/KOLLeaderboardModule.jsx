@@ -129,10 +129,10 @@ export default function KOLLeaderboardModule() {
     <PageLayout testId="kol-leaderboard" title="Peringkat KOL"
       subtitle="Performa kreator dari sesi live: penonton, pesanan per sesi, konversi, omzet."
       filters={<>
-        <SmartNativeSelect value={String(days)} onChange={(e) => setDays(Number(e.target.value))} className="w-44" wrapperClassName="w-44 max-w-full" searchable={false} data-testid="kol-period">
+        <SmartNativeSelect value={String(days)} onChange={(e) => setDays(Number(e.target.value))} className="w-full" wrapperClassName="w-44 max-w-full" searchable={false} data-testid="kol-period">
           {PERIOD_OPTIONS.map(o => <option key={o.value} value={String(o.value)}>{o.label}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="w-48" wrapperClassName="w-48 max-w-full" searchable={false} data-testid="kol-sort">
+        <SmartNativeSelect value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="w-full" wrapperClassName="w-48 max-w-full" searchable={false} data-testid="kol-sort">
           {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </SmartNativeSelect>
       </>}

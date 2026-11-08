@@ -338,13 +338,13 @@ export default function KREATORRequestModule({ token, currentUser, user, moduleI
           <Input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && fetchRequests()}
             placeholder="Cari kode, kreator, konsep" className="pl-8" data-testid="kreator-req-search-input" />
         </div>
-        <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)} className="w-40" wrapperClassName="w-40 max-w-full" searchable={false}
+        <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)} className="w-full" wrapperClassName="w-40 max-w-full" searchable={false}
           data-testid="kreator-req-filter-type">
           <option value="">Semua tipe</option>
           <option value="live_streaming">Live streaming</option>
           <option value="tiktok_video">Video TikTok</option>
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="w-44" wrapperClassName="w-44 max-w-full" searchable={false}
+        <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="w-full" wrapperClassName="w-44 max-w-full" searchable={false}
           data-testid="kreator-req-filter-status">
           <option value="">Semua status</option>
           {Object.entries(STATUS_CONF).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}

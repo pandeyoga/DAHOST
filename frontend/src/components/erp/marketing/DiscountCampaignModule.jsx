@@ -244,16 +244,16 @@ export default function DiscountCampaignModule({ token }) {
         <MarketingAccountSelect token={token} value={filterAccountId} className="w-44"
           onChange={(v) => { setFilterAccountId(v); setPage(1); }} label=""
           includeAll allLabel="Semua toko" required={false} testId="discount-filter-account" />
-        <SmartNativeSelect value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }} className="w-36" wrapperClassName="w-36 max-w-full" searchable={false}>
+        <SmartNativeSelect value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }} className="w-full" wrapperClassName="w-36 max-w-full" searchable={false}>
           <option value="">Semua status</option>
           {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterPlatform} onChange={(e) => { setFilterPlatform(e.target.value); setPage(1); }} className="w-40" wrapperClassName="w-40 max-w-full" searchable={false}>
+        <SmartNativeSelect value={filterPlatform} onChange={(e) => { setFilterPlatform(e.target.value); setPage(1); }} className="w-full" wrapperClassName="w-40 max-w-full" searchable={false}>
           <option value="">Semua platform</option>
           {Object.entries(PLATFORM_LABEL).filter(([k]) => k !== 'semua_platform').map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           <option value="semua_platform">Kampanye lintas platform</option>
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterType} onChange={(e) => { setFilterType(e.target.value); setPage(1); }} className="w-40" wrapperClassName="w-40 max-w-full" searchable={false}>
+        <SmartNativeSelect value={filterType} onChange={(e) => { setFilterType(e.target.value); setPage(1); }} className="w-full" wrapperClassName="w-40 max-w-full" searchable={false}>
           <option value="">Semua jenis</option>
           {Object.entries(DISCOUNT_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </SmartNativeSelect>

@@ -123,11 +123,11 @@ export default function LiveHostsTab({ authH }) {
           <Input placeholder="Cari nama atau email" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-8" data-testid="search-livehost" />
         </div>
-        <SmartNativeSelect value={filterAccountId} onChange={(e) => setFilterAccountId(e.target.value)} className="w-48" wrapperClassName="w-48 max-w-full" data-testid="filter-account">
+        <SmartNativeSelect value={filterAccountId} onChange={(e) => setFilterAccountId(e.target.value)} className="w-full" wrapperClassName="w-48 max-w-full" data-testid="filter-account">
           <option value="">Semua toko</option>
           {accounts.map((a) => <option key={a.id} value={a.id}>{a.account_name}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-40" wrapperClassName="w-40 max-w-full" searchable={false} data-testid="filter-status">
+        <SmartNativeSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-full" wrapperClassName="w-40 max-w-full" searchable={false} data-testid="filter-status">
           <option value="all">Semua status</option>
           {Object.entries(LABEL_STATUS_HOST).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </SmartNativeSelect>

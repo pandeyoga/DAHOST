@@ -191,15 +191,15 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
   return (
     <PageLayout testId="live-analytics" title="Analitik live" subtitle="Performa sesi live di semua platform."
       filters={<>
-        <SmartNativeSelect value={accountId} onChange={(e) => setAccountId(e.target.value)} className="w-56" wrapperClassName="w-56 max-w-full" data-testid="sel-analytics-account">
+        <SmartNativeSelect value={accountId} onChange={(e) => setAccountId(e.target.value)} className="w-full" wrapperClassName="w-56 max-w-full" data-testid="sel-analytics-account">
           <option value="">Semua toko</option>
           {accounts.map((a) => <option key={a.id} value={a.id}>{`${a.account_name} · ${labelPlatform(a.platform)}`}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={platform} onChange={(e) => setPlatform(e.target.value)} className="w-40" wrapperClassName="w-40 max-w-full" searchable={false} data-testid="sel-platform">
+        <SmartNativeSelect value={platform} onChange={(e) => setPlatform(e.target.value)} className="w-full" wrapperClassName="w-40 max-w-full" searchable={false} data-testid="sel-platform">
           <option value="all">Semua platform</option>
           {PLATFORMS_LIST.map((p) => <option key={p} value={p}>{labelPlatform(p)}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={days} onChange={(e) => setDays(e.target.value)} className="w-40" wrapperClassName="w-40 max-w-full" searchable={false} data-testid="sel-days">
+        <SmartNativeSelect value={days} onChange={(e) => setDays(e.target.value)} className="w-full" wrapperClassName="w-40 max-w-full" searchable={false} data-testid="sel-days">
           <option value="7">7 hari terakhir</option>
           <option value="30">30 hari terakhir</option>
           <option value="90">90 hari terakhir</option>

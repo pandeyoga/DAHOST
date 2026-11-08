@@ -185,7 +185,7 @@ export default function AIContentGeneratorModule() {
       subtitle="Caption & hashtag dari AI untuk Instagram, TikTok, Shopee, dan Tokopedia."
       actions={<Button onClick={() => setFormBuka(true)} data-testid="btn-generate-caption"><Sparkles />Buat caption</Button>}
       filters={
-        <SmartNativeSelect value={filter} onChange={(e) => setFilter(e.target.value)} className="w-40" wrapperClassName="w-40 max-w-full" searchable={false} data-testid="caption-history-filter">
+        <SmartNativeSelect value={filter} onChange={(e) => setFilter(e.target.value)} className="w-full" wrapperClassName="w-40 max-w-full" searchable={false} data-testid="caption-history-filter">
           <option value="all">Semua jenis</option>
           <option value="caption">Caption</option>
           <option value="image">Gambar</option>

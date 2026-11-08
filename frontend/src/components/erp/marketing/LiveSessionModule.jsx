@@ -38,7 +38,7 @@ function PilihAkun({ accounts = [], activeAccount, onChange, testId = 'pilih-aku
   const aktif = accounts.filter((a) => a.status === 'active' || !a.status);
   const daftar = activeAccount && !aktif.some((a) => a.id === activeAccount.id) ? [activeAccount, ...aktif] : aktif;
   return (
-    <SmartNativeSelect value={activeAccount?.id || ''} className={lebar} wrapperClassName={`${lebar} max-w-full`} wrapperClassName={`${lebar} max-w-full`} data-testid={testId}
+    <SmartNativeSelect value={activeAccount?.id || ''} className="w-full" wrapperClassName={`${lebar} max-w-full`} wrapperClassName={`${lebar} max-w-full`} data-testid={testId}
       onChange={(e) => onChange(daftar.find((a) => a.id === e.target.value) || null)}>
       <option value="">Semua toko</option>
       {daftar.map((a) => <option key={a.id} value={a.id}>{`${a.account_name} · ${labelPlatform(a.platform)}`}</option>)}
@@ -194,7 +194,7 @@ export default function LiveSessionModule({ token }) {
       filters={<>
         <PilihAkun accounts={masterAccounts} activeAccount={activeAccount} testId="live-account"
           onChange={(acc) => { setActiveAccount(acc); setPage(1); }} />
-        <SmartNativeSelect value={platformFilter} onChange={(e) => { setPlatformFilter(e.target.value); setPage(1); }} className="w-40" wrapperClassName="w-40 max-w-full"
+        <SmartNativeSelect value={platformFilter} onChange={(e) => { setPlatformFilter(e.target.value); setPage(1); }} className="w-full" wrapperClassName="w-40 max-w-full"
           searchable={false} data-testid="live-platform-filter">
           <option value="">Semua platform</option>
           <option value="shopee">Shopee</option>

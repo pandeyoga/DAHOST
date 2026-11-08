@@ -336,16 +336,16 @@ function ContentCalendarBase({ token }) {
         <MarketingAccountSelect token={token} value={filterAccountId} className="w-52"
           onChange={setFilterAccountId} label="" includeAll allLabel="Semua toko"
           required={false} testId="content-filter-account" />
-        <SmartNativeSelect value={filterPlatform} onChange={(e) => setFilterPlatform(e.target.value)} className="w-40" wrapperClassName="w-40 max-w-full" searchable={false}>
+        <SmartNativeSelect value={filterPlatform} onChange={(e) => setFilterPlatform(e.target.value)} className="w-full" wrapperClassName="w-40 max-w-full" searchable={false}>
           <option value="">Semua platform</option>
           {Object.entries(PLATFORM_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </SmartNativeSelect>
         {view === 'list' && <>
-          <SmartNativeSelect value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setListPage(1); }} className="w-36" wrapperClassName="w-36 max-w-full" searchable={false}>
+          <SmartNativeSelect value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setListPage(1); }} className="w-full" wrapperClassName="w-36 max-w-full" searchable={false}>
             <option value="">Semua status</option>
             {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </SmartNativeSelect>
-          <SmartNativeSelect value={filterType} onChange={(e) => { setFilterType(e.target.value); setListPage(1); }} className="w-44" wrapperClassName="w-44 max-w-full">
+          <SmartNativeSelect value={filterType} onChange={(e) => { setFilterType(e.target.value); setListPage(1); }} className="w-full" wrapperClassName="w-44 max-w-full">
             <option value="">Semua jenis</option>
             {contentTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
           </SmartNativeSelect>

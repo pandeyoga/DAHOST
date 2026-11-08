@@ -296,11 +296,11 @@ export default function ProductLaunchModule({ token }) {
         <MarketingAccountSelect token={token} value={filterAccountId} className="w-44"
           onChange={(v) => { setFilterAccountId(v); setPage(1); }} label=""
           includeAll allLabel="Semua toko" required={false} testId="launch-filter-account" />
-        <SmartNativeSelect value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }} className="w-44" wrapperClassName="w-44 max-w-full" searchable={false}>
+        <SmartNativeSelect value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }} className="w-full" wrapperClassName="w-44 max-w-full" searchable={false}>
           <option value="">Semua status</option>
           {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterPlatform} onChange={(e) => { setFilterPlatform(e.target.value); setPage(1); }} className="w-40" wrapperClassName="w-40 max-w-full" searchable={false}>
+        <SmartNativeSelect value={filterPlatform} onChange={(e) => { setFilterPlatform(e.target.value); setPage(1); }} className="w-full" wrapperClassName="w-40 max-w-full" searchable={false}>
           <option value="">Semua platform</option>
           {PLATFORMS.map(p => <option key={p} value={p}>{labelPlatform(p)}</option>)}
         </SmartNativeSelect>

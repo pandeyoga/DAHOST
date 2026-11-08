@@ -232,12 +232,12 @@ export default function TaskManagementModule({ token }) {
       actions={<Button onClick={() => setCreateOpen(true)} data-testid="create-task-button"><Plus />Buat tugas</Button>}
       filters={<>
         <SmartNativeSelect value={filter.priority} onChange={(e) => { setFilter(f => ({ ...f, priority: e.target.value })); setTaskPage(1); }}
-          className="w-40" wrapperClassName="w-40 max-w-full" searchable={false} data-testid="filter-priority">
+          className="w-full" wrapperClassName="w-40 max-w-full" searchable={false} data-testid="filter-priority">
           <option value="all">Semua prioritas</option>
           {Object.entries(PRIORITAS).map(([k, v]) => <option key={k} value={k}>{v[0]}</option>)}
         </SmartNativeSelect>
         <SmartNativeSelect value={filter.account_id} onChange={(e) => { setFilter(f => ({ ...f, account_id: e.target.value })); setTaskPage(1); }}
-          className="w-56" wrapperClassName="w-56 max-w-full" data-testid="filter-account">
+          className="w-full" wrapperClassName="w-56 max-w-full" data-testid="filter-account">
           <option value="all">Semua toko</option>
           {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.account_name}</option>)}
         </SmartNativeSelect>
