@@ -157,18 +157,18 @@ export default function ProcurementDashboardModule({ token, onNavigate }) {
             <span aria-hidden="true">·</span>
             <Button variant="link" size="sm" className="h-auto p-0" onClick={go('proc-suppliers')} disabled={!onNavigate}
               data-testid="proc-kpi-suppliers">
-              Pemasok aktif <b className="tabular-nums">{k.suppliers_active ?? 0}</b>/{k.suppliers_total ?? 0}
+              <span>Pemasok aktif <b className="tabular-nums">{k.suppliers_active ?? 0}</b>/{k.suppliers_total ?? 0}</span>
             </Button>
             <span aria-hidden="true">·</span>
             <Button variant="link" size="sm" className="h-auto p-0" onClick={go('proc-suppliers')} disabled={!onNavigate}
               data-testid="proc-kpi-price-rows">
-              Daftar harga aktif <b className="tabular-nums">{k.price_list_rows ?? 0}</b>
+              <span>Daftar harga aktif <b className="tabular-nums">{k.price_list_rows ?? 0}</b></span>
             </Button>
             <span aria-hidden="true">·</span>
             <Button variant="link" size="sm" className="h-auto p-0" onClick={go('proc-accessory-pr')} disabled={!onNavigate}
               data-testid="proc-kpi-acc-pr">
-              Request aksesoris <b className="tabular-nums">{k.accessory_pr_total ?? 0}</b>
-              {' '}({k.accessory_pr_awaiting_approval ?? 0} menunggu, {k.accessory_pr_pending ?? 0} berjalan)
+              <span>Request aksesoris <b className="tabular-nums">{k.accessory_pr_total ?? 0}</b>
+                {' '}({k.accessory_pr_awaiting_approval ?? 0} menunggu, {k.accessory_pr_pending ?? 0} berjalan)</span>
             </Button>
           </p>
         </div>
