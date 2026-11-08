@@ -84,6 +84,12 @@ JS_UKUR = r"""
   const kotak = teksEl.slice(0, 700).map(n => { const r = document.createRange(); r.selectNodeContents(n);
     const rb = r.getBoundingClientRect(); const pb = n.parentElement.getBoundingClientRect();
     const b = {left: Math.max(rb.left, pb.left), right: Math.min(rb.right, pb.right), top: Math.max(rb.top, pb.top), bottom: Math.min(rb.bottom, pb.bottom)};
+    // potong juga dengan wadah gulir terdekat (isi popup yang tergulir di bawah kaki popup tidak terlihat)
+    let e = n.parentElement.parentElement, langkah = 0;
+    while (e && e !== document.body && langkah++ < 12) { const o = getComputedStyle(e);
+      if (/(auto|scroll|hidden)/.test(o.overflowY + o.overflowX)) { const w = e.getBoundingClientRect();
+        b.left = Math.max(b.left, w.left); b.right = Math.min(b.right, w.right); b.top = Math.max(b.top, w.top); b.bottom = Math.min(b.bottom, w.bottom); }
+      e = e.parentElement; }
     b.width = b.right - b.left; b.height = b.bottom - b.top;
     return {el: n.parentElement, b, t: n.textContent.trim().slice(0, 30)}; })
     .filter(k => k.b.width > 2 && k.b.height > 2);

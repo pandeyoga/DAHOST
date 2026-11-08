@@ -91,7 +91,7 @@ export function StatTile({ label, value, accent = 'default', className, testId, 
       {sub && <p className={cn('text-xs mt-1 line-clamp-2', subTone ? colors[subTone] : 'text-muted-foreground')}>{sub}</p>}
       {/* v2 (keputusan 9): keterangan arti angka selalu tampil — dulu hanya bila kartu bisa diklik */}
       {hint && !sub && (
-        <p className="mt-1 truncate text-xs text-muted-foreground">{hint}{isClickable ? ' →' : ''}</p>
+        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground" title={hint}>{hint}{isClickable ? ' →' : ''}</p>
       )}
     </Tag>
   );
