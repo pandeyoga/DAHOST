@@ -106,8 +106,9 @@ function Marjin({ r }) {
     );
   }
   return (
-    <span className={cn('tabular-nums', Number(r.margin_pct) < 0 && 'font-medium text-[hsl(var(--danger-text))]')}>
-      {rp(r.margin)} · {Number(r.margin_pct || 0).toLocaleString('id-ID')}%
+    <span className={cn('inline-flex flex-col items-end tabular-nums', Number(r.margin_pct) < 0 && 'font-medium text-[hsl(var(--danger-text))]')}>
+      <span>{rp(r.margin)}</span>
+      <span className="text-xs text-muted-foreground">{Number(r.margin_pct || 0).toLocaleString('id-ID')}%</span>
     </span>
   );
 }
@@ -556,7 +557,7 @@ export default function CatalogItemsView({
             <option value="">Semua kategori</option>
             {productCategories.map((c) => <option key={c.id} value={c.id}>{c.sku_prefix} · {c.name}</option>)}
           </SmartNativeSelect>
-          <SmartNativeSelect className="w-44" data-testid="catalog-filter-publish"
+          <SmartNativeSelect className="w-52" data-testid="catalog-filter-publish"
             value={filters.publishState || ''} onChange={(e) => onFilterChange({ publishState: e.target.value })}>
             <option value="">Semua penayangan</option>
             <option value="draft">Belum tayang</option>

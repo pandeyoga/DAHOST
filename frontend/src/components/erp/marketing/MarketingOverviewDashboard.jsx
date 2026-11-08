@@ -165,7 +165,9 @@ export default function MarketingOverviewDashboard({ token, onNavigate }) {
     { kunci: 'rincian', label: 'Rincian', hp: 'keterangan', isi: (r) => (
       <p className="text-sm text-muted-foreground md:max-w-[40rem]">
         {r.rincian.map(([l, v, t], i) => (
-          <span key={l}>{i > 0 && ' · '}{l} <b className={warna[t] || 'text-foreground'}>{v}</b></span>
+          <React.Fragment key={l}>
+            <span className="whitespace-nowrap">{l} <b className={warna[t] || 'text-foreground'}>{v}</b>{i < r.rincian.length - 1 && ' ·'}</span>{' '}
+          </React.Fragment>
         ))}
       </p>) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
