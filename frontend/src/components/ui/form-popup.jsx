@@ -18,6 +18,7 @@ const LEBAR = { pendek: 'sm:max-w-lg', panjang: 'sm:max-w-3xl' };
 export default function FormPopup({
   open, onClose, judul, keterangan, ukuran = 'pendek', children, onSimpan, labelSimpan = 'Simpan',
   menyimpan = false, galat, bisaSimpan = true, aksiKiri, testId = 'form-popup', warnaSimpan = 'success',
+  testIdSimpan, testIdBatal, // opsional: pertahankan penanda lama yang dipakai tes
 }) {
   const kirim = (e) => {
     e.preventDefault();
@@ -48,9 +49,9 @@ export default function FormPopup({
             </div>
             {aksiKiri}
             <Button type="button" variant="outline" onClick={onClose} disabled={menyimpan}
-              data-testid={`${testId}-batal`}>Batal</Button>
+              data-testid={testIdBatal || `${testId}-batal`}>Batal</Button>
             <Button type="submit" variant={warnaSimpan} disabled={menyimpan || !bisaSimpan}
-              data-testid={`${testId}-simpan`}>
+              data-testid={testIdSimpan || `${testId}-simpan`}>
               {menyimpan && <Loader2 className="animate-spin" />}
               {menyimpan ? 'Menyimpan…' : labelSimpan}
             </Button>
