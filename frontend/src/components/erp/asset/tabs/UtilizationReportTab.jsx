@@ -12,7 +12,7 @@
  *  • tombol "CSV" (unduhan server berkolom Inggris) → TombolUnduh Excel/CSV berkolom Indonesia.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { FileDown, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,7 +24,7 @@ import PageLayout from '../../layout/PageLayout';
 import PeriodPicker, { periodFromPreset } from '../../finance/PeriodPicker';
 import { EmptyState } from '../../moduleAtoms';
 import { STATUS_CONFIG } from '../constants';
-import { angka, apicall, fmtCurrency, fmtDate, fmtPersen, useHP } from '../utils';
+import { API, angka, apicall, fmtCurrency, fmtDate, fmtPersen, useHP } from '../utils';
 import { KPICard, BarisKartu, Bagian } from '../components/KPICard';
 
 const nadaPemakaian = (p) => (p >= 80 ? 'text-[hsl(var(--success-text))]'
@@ -75,6 +75,37 @@ export function UtilizationReportTab({ token, categories }) {
     return pilihDaftar(data, view);
   };
 
+  /**
+   * Unduhan server lama (tetap ada — tanpa batas baris, semua aset hasil saringan, kolom berbahasa Inggris dari
+   * server). Kueri & otorisasi sama dengan kode lama: date_from, date_to, underutilized_threshold, category_id.
+   */
+  const exportCsv = async () => {
+    try {
+      const q = new URLSearchParams({
+        date_from: periode.from,
+        date_to: periode.to,
+        underutilized_threshold: String(threshold),
+      });
+      if (categoryId && categoryId !== 'all') q.append('category_id', categoryId);
+      const res = await fetch(`${API}/api/assets/reports/utilization/export.csv?${q}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`Unduhan gagal (${res.status})`);
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `asset_utilization_${periode.from}_to_${periode.to}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('CSV lengkap berhasil diunduh');
+    } catch (e) {
+      toast.error(e.message || 'Unduhan gagal');
+    }
+  };
+
   const summary = report?.summary || {};
   const detailRows = pilihDaftar(report, view);
   const adaAset = (summary.total_assets || 0) > 0;
@@ -99,6 +130,10 @@ export function UtilizationReportTab({ token, categories }) {
           { label: 'Terakhir dikembalikan', nilai: (r) => (r.last_returned_date ? fmtDate(r.last_returned_date) : '') },
           { label: 'Harga beli', nilai: (r) => angka(r.purchase_cost) },
         ]} />
+      <Button variant="outline" onClick={exportCsv} title="CSV lengkap dari server: semua aset hasil saringan, tanpa batas baris"
+        data-testid="util-export-csv-button">
+        <FileDown />Unduh lengkap (CSV)
+      </Button>
       <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
         data-testid="util-apply-button">
         <RefreshCw className={loading ? 'animate-spin' : ''} />
