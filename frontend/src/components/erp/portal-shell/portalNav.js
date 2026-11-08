@@ -125,14 +125,14 @@ export const PORTAL_NAV = {
           { id: 'fin-executive-report',  label: 'Laporan Eksekutif',   icon: Award },
           { id: 'phase7-reports',        label: 'Laporan Maklon',      icon: BarChart3 },
           { id: 'mgmt-reports',          label: 'Laporan Umum',        icon: FileSpreadsheet },
-          { id: 'rnd-dashboard',         label: 'Ringkasan RnD',       icon: FlaskConical },
+          { id: 'rnd-dashboard',         label: 'Dashboard RnD',       icon: FlaskConical },
         ],
       },
       {
         label: 'STRATEGI & PERSETUJUAN',
         items: [
           { id: 'unified-approval-hub',  label: 'Pusat Persetujuan', icon: Layers },
-          { id: 'mgmt-marketing-cycle',  label: 'Siklus Marketing', icon: Target },
+          { id: 'mgmt-marketing-cycle',  label: 'Target & Anggaran', icon: Target },
           { id: 'mgmt-marketing-change-log', label: 'Jejak Marketing', icon: History },
           { id: 'mgmt-okr',              label: 'OKR Tracker',     icon: Target },
           { id: 'mgmt-tools',            label: 'Digest Mingguan', icon: BarChart3 },
@@ -183,7 +183,7 @@ export const PORTAL_NAV = {
           // 2026-11-04 (owner, audit Keuangan): tombol perawatan data keuangan dari layar kerja Keuangan
           { id: 'sys-finance-maintenance', label: 'Perawatan Data Keuangan', icon: Wrench },
           { id: 'maklon-config',        label: 'Konfigurasi Maklon', icon: Settings2 },
-          { id: 'maklon-notifications', label: 'Notifikasi Maklon',  icon: Bell },
+          { id: 'maklon-notifications', label: 'Notifikasi',  icon: Bell },
           { id: 'mgmt-help',            label: 'Panduan Sistem',     icon: BookOpen },
         ],
       },
@@ -209,7 +209,7 @@ export const PORTAL_NAV = {
       {
         label: 'MASTER DATA',
         items: [
-          { id: 'prod-master-product-hub', label: 'Produk',     icon: Shirt },
+          { id: 'prod-master-product-hub', label: 'Master Produk',     icon: Shirt },
           { id: 'vendor-admin',            label: 'Vendor CMT', icon: Building2 },
         ],
       },
@@ -232,7 +232,7 @@ export const PORTAL_NAV = {
       {
         label: 'PANTAU',
         items: [
-          { id: 'production-dashboard', label: 'Dashboard',       icon: Gauge },
+          { id: 'production-dashboard', label: 'Dashboard Produksi',       icon: Gauge },
           { id: 'pantau-produksi',      label: 'Pantau Produksi', icon: Activity },
           { id: 'laporan-selisih',      label: 'Laporan Selisih', icon: Target },
         ],
@@ -428,7 +428,7 @@ export const PORTAL_NAV = {
       {
         label: 'AKSESORIS',
         items: [
-          { id: 'accessories-dashboard',        label: 'Dashboard',        icon: LayoutDashboard },
+          { id: 'accessories-dashboard',        label: 'Dashboard Aksesoris',        icon: LayoutDashboard },
           { id: 'accessories-master-stock',     label: 'Master Aksesoris', icon: Package },
           { id: 'accessories-opname',           label: 'Stok Opname',      icon: ClipboardCheck },
           { id: 'accessories-internal-request', label: 'Request Internal', icon: ArrowRightLeft },
@@ -712,7 +712,7 @@ export const PORTAL_NAV = {
       {
         label: 'PANTAU',
         items: [
-          { id: 'maklon-dashboard', label: 'Dashboard',       icon: Gauge },
+          { id: 'maklon-dashboard', label: 'Dashboard Maklon',       icon: Gauge },
           { id: 'pantau-produksi',  label: 'Pantau Produksi', icon: Activity },
           { id: 'laporan-selisih',  label: 'Laporan Selisih', icon: Target },
         ],
@@ -769,7 +769,7 @@ export const PORTAL_NAV = {
         // dan karena section penjualan sudah 8 pintu (batas INV-NAV-01).
         label: 'UANG TOKO: ANGGARAN',
         items: [
-          { id: 'marketing-targets',     label: 'Target & Budget', icon: Target },
+          { id: 'marketing-targets',     label: 'Target & Anggaran', icon: Target },
         ],
       },
       {
@@ -788,7 +788,7 @@ export const PORTAL_NAV = {
           { id: 'marketing-live-hub',  label: 'Live Selling',      icon: Video },
           { id: 'marketing-ai-hub',    label: 'AI Marketing',      icon: Sparkles },
           { id: 'marketing-scheduler', label: 'Penjadwal Otomasi', icon: Timer },
-          { id: 'marketing-change-log', label: 'Jejak Perubahan', icon: History },
+          { id: 'marketing-change-log', label: 'Jejak Marketing', icon: History },
         ],
       },
       {

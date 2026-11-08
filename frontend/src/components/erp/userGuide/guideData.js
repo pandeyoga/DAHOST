@@ -241,8 +241,8 @@ export const PORTALS_GUIDE = [
         ],
       },
       {
-        icon: BookMarked, title: 'Panduan Penggunaan ERP',
-        path: 'Bantuan › Panduan',
+        icon: BookMarked, title: 'Panduan Sistem',
+        path: 'Portal Administrasi Sistem › Sistem & Data › Panduan Sistem',
         description: 'Manual lengkap (halaman ini).',
         bullets: ['Search semua menu & fitur', '8 skenario test step-by-step', 'Tips & FAQ'],
       },
@@ -366,14 +366,14 @@ export const PORTALS_GUIDE = [
     summary: 'Kelola material, inventori, penerimaan barang, opname stok, multi-zona. (Pembelian/PO kini di Portal Pengadaan.)',
     menus: [
       {
-        icon: Package, title: 'Master Material',
-        path: 'Master Data › Material',
+        icon: Package, title: 'Master Item',
+        path: 'Inventori & Stok › Master Item',
         description: 'Daftar semua material (bahan, aksesoris, produk jadi).',
         bullets: ['Kategori: Bahan / Aksesoris / Produk Jadi', 'Min stock indicator (low-stock badge)'],
       },
       {
-        icon: Boxes, title: 'Inventori',
-        path: 'Inventori › Stok',
+        icon: Boxes, title: 'Stok & Akurasi',
+        path: 'Inventori & Stok › Stok & Akurasi',
         description: 'Stok real-time per material & lokasi.',
         bullets: [
           'FIFO valuation',
@@ -382,8 +382,8 @@ export const PORTALS_GUIDE = [
         ],
       },
       {
-        icon: Truck, title: 'Penerimaan Barang (GR)',
-        path: 'Penerimaan Barang',
+        icon: Truck, title: 'Penerimaan Barang',
+        path: 'Inbound — Penerimaan › Penerimaan Barang',
         description: 'Konfirmasi penerimaan barang dari PO. (PO-nya dibuat di Portal Pengadaan.)',
         bullets: [
           'No GR atomic counter (GR-00001 dst)',
@@ -392,8 +392,8 @@ export const PORTALS_GUIDE = [
         ],
       },
       {
-        icon: ListChecks, title: 'Stockopname',
-        path: 'Inventori › Opname',
+        icon: ListChecks, title: 'Opname stok',
+        path: 'Inventori & Stok › Stok & Akurasi › Opname stok',
         description: 'Stock taking dengan adjustment otomatis ke GL.',
         bullets: [
           'Input fisik vs sistem',
@@ -402,8 +402,8 @@ export const PORTALS_GUIDE = [
         ],
       },
       {
-        icon: AlertTriangle, title: 'Low Stock Indicators',
-        path: 'Inventori › Low Stock',
+        icon: AlertTriangle, title: 'Alert & Reorder',
+        path: 'Inventori & Stok › Alert & Reorder',
         description: 'Material di bawah minimum.',
         bullets: ['Threshold konfigurabel (angka tetap atau %)', 'Badge merah/kuning'],
       },
@@ -440,7 +440,7 @@ export const PORTALS_GUIDE = [
         tips: 'Isi daftar harga supaya harga PO terisi otomatis saat memilih material.',
       },
       {
-        icon: ClipboardList, title: 'Permintaan Pengadaan (PR)',
+        icon: ClipboardList, title: 'Permintaan Pengadaan',
         path: 'Permintaan & Pesanan › Permintaan Pengadaan',
         description: 'Divisi mengajukan kebutuhan; melewati rantai persetujuan lalu jadi PO.',
         bullets: [
@@ -450,7 +450,7 @@ export const PORTALS_GUIDE = [
         ],
       },
       {
-        icon: Receipt, title: 'Purchase Order (PO)',
+        icon: Receipt, title: 'Purchase Order',
         path: 'Permintaan & Pesanan › Purchase Order',
         description: 'Pesanan resmi ke supplier dengan satuan beli berjenjang.',
         bullets: [
@@ -461,7 +461,7 @@ export const PORTALS_GUIDE = [
         tips: 'Barang datang dicatat di Portal Gudang → Penerimaan Barang; qty diterima muncul kembali di PO.',
       },
       {
-        icon: ListChecks, title: 'Rekonsiliasi PO (3 Arah)',
+        icon: ListChecks, title: 'Rekonsiliasi PO',
         path: 'Rekonsiliasi & Faktur › Rekonsiliasi PO',
         description: 'Bandingkan dipesan ↔ diterima ↔ difaktur dalam satuan dasar.',
         bullets: [
@@ -499,14 +499,14 @@ export const PORTALS_GUIDE = [
     summary: 'Akuntansi penuh: CoA, jurnal, payroll, laporan keuangan.',
     menus: [
       {
-        icon: BookMarked, title: 'Chart of Accounts (CoA)',
-        path: 'Master › CoA',
+        icon: BookMarked, title: 'Bagan akun',
+        path: 'Pengaturan Keuangan › Bagan akun',
         description: 'Daftar akun akuntansi.',
         bullets: ['Hierarchy multi-level', 'Tipe: Asset/Liability/Equity/Revenue/Expense'],
       },
       {
-        icon: ScrollText, title: 'Jurnal Umum',
-        path: 'Akuntansi › Jurnal',
+        icon: ScrollText, title: 'Jurnal',
+        path: 'Jurnal',
         description: 'Posting jurnal manual & otomatis.',
         bullets: [
           'Auto-post dari opname adjustment & payroll',
@@ -529,7 +529,7 @@ export const PORTALS_GUIDE = [
         icon: FileText, title: 'Laporan Keuangan',
         path: 'Laporan › Finance',
         description: 'Laporan standar.',
-        bullets: ['Neraca, Laba-Rugi, Cash Flow Direct', 'Export Excel/PDF'],
+        bullets: ['Neraca, Laba-Rugi, Cash Flow Direct', 'Unduh Excel/PDF'],
       },
     ],
   },
@@ -540,8 +540,8 @@ export const PORTALS_GUIDE = [
     summary: 'Kelola karyawan, absensi, izin, payroll profile, laporan HR.',
     menus: [
       {
-        icon: Users, title: 'Master Karyawan',
-        path: 'SDM › Karyawan',
+        icon: Users, title: 'Data Karyawan',
+        path: 'Manajemen Karyawan › Data Karyawan',
         description: 'Daftar karyawan & profil.',
         bullets: [
           'Data identitas, departemen, lini, shift',
@@ -560,19 +560,19 @@ export const PORTALS_GUIDE = [
         ],
       },
       {
-        icon: ListChecks, title: 'Izin & Cuti',
-        path: 'SDM › Izin/Cuti',
+        icon: ListChecks, title: 'Cuti & Lembur',
+        path: 'Manajemen Karyawan › Cuti & Lembur',
         description: 'Request & approval cuti.',
         bullets: ['Saldo cuti per karyawan', 'Approval flow', 'Auto-fill ke attendance'],
       },
       {
-        icon: BarChart3, title: 'Laporan HR',
-        path: 'SDM › Laporan',
+        icon: BarChart3, title: 'Laporan SDM',
+        path: 'Analitik & Laporan › Laporan SDM',
         description: 'Laporan attendance, lembur, payroll, turnover.',
         bullets: [
           'Filter: department, location, shift',
           'Format: table + charts',
-          'Export Excel + PDF',
+          'Unduh Excel + PDF',
         ],
       },
     ],
@@ -584,20 +584,20 @@ export const PORTALS_GUIDE = [
     summary: 'Self-service untuk semua karyawan: kehadiran & slip gaji pribadi.',
     menus: [
       {
-        icon: UserCircle, title: 'Profil Saya',
-        path: 'Saya › Profil',
+        icon: UserCircle, title: 'Profil',
+        path: 'Profil & Kehadiran › Profil',
         description: 'Data pribadi & status karyawan.',
         bullets: ['Departemen, lini, shift', 'Saldo cuti'],
       },
       {
-        icon: Activity, title: 'Kehadiran Saya',
-        path: 'Saya › Absensi',
+        icon: Activity, title: 'Absen Saya',
+        path: 'Profil & Kehadiran › Absen Saya',
         description: 'Riwayat kehadiran pribadi.',
         bullets: ['Per bulan', 'Statistik kehadiran/lembur'],
       },
       {
-        icon: Receipt, title: 'Slip Gaji Saya',
-        path: 'Saya › Slip Gaji',
+        icon: Receipt, title: 'Slip Gaji',
+        path: 'Kompensasi & Kinerja › Slip Gaji',
         description: 'Download slip gaji per periode.',
         bullets: ['Detail komponen gaji', 'Download PDF'],
       },
@@ -990,18 +990,18 @@ export const SCENARIOS = [
     steps: [
       { portal: 'sdm', title: 'Input Lembur', menu: 'SDM › Absensi',
         detail: 'Input jam lembur per karyawan.' },
-      { portal: 'sdm', title: 'Export Review', menu: 'Absensi › Export',
+      { portal: 'sdm', title: 'Unduh rekap', menu: 'Absensi › Unduh',
         detail: 'Excel data attendance untuk validasi.' },
       { portal: 'keuangan', title: 'Validasi Payroll', menu: 'Payroll › Periksa Sekarang',
         detail: 'Sistem cek anomali (lembur > 3 jam tanpa approval, dll).' },
       { portal: 'keuangan', title: 'Selesaikan Warning', menu: '—',
-        detail: 'Approve / koreksi anomali.' },
+        detail: 'Setujui / koreksi anomali.' },
       { portal: 'keuangan', title: 'Proses Payroll', menu: 'Payroll › Run',
         detail: 'Hitung gaji + lembur + tunjangan - potongan.' },
       { portal: 'keuangan', title: 'Cetak Slip', menu: 'Payroll › Slip',
         detail: 'Generate slip semua karyawan.' },
       { portal: 'sdm', title: 'Laporan Lembur', menu: 'SDM › Laporan',
-        detail: 'Export Excel → kirim manajemen.' },
+        detail: 'Unduh Excel → kirim manajemen.' },
     ],
     expectedResults: [
       'Lembur terhitung otomatis',

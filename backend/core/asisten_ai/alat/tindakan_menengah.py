@@ -5,7 +5,7 @@ Semua lewat kartu konfirmasi DUA LANGKAH dengan alasan wajib (kartu + dialog ala
 * ``ubah_harga_jual``            — harga jual (dan harga coret) item katalog toko, banyak SKU sekaligus
   (= ubah item di layar Katalog, ``PUT /api/marketing/catalogs/{katalog}/items/{item}``); kartu memuat
   lama → baru dan margin terhadap HPP bila HPP diketahui. Dibalikkan = harga lama dipulihkan bila belum
-  diubah orang lain. Setiap perubahan masuk riwayat harga (Jejak Perubahan Marketing).
+  diubah orang lain. Setiap perubahan masuk riwayat harga (Jejak Marketing).
 * ``atur_promo``                 — buat / ubah / akhiri kampanye diskon (= layar Diskon,
   ``/api/marketing/discounts``). Dibalikkan = promo baru dihapus (atau diakhiri hari ini bila pengguna
   tidak boleh menghapus), ubahan dikembalikan.
@@ -16,10 +16,10 @@ Semua lewat kartu konfirmasi DUA LANGKAH dengan alasan wajib (kartu + dialog ala
   mengonfirmasi atau merilis PO. Dibalikkan = draf dihapus selama masih draf utuh.
 * ``ubah_titik_pesan_ulang``     — ambang stok minimum / titik pesan ulang barang (bahan, aksesoris, barang jadi)
   lewat layar Ambang Stok (``POST /api/rahaza/stock-thresholds/bulk``). TIDAK PERNAH mengubah jumlah stok.
-* ``tutup_buka_bulan_marketing`` — tutup / buka periode bulanan toko (Siklus Marketing,
+* ``tutup_buka_bulan_marketing`` — tutup / buka periode bulanan toko (Target & Anggaran › Siklus,
   ``POST /api/marketing/periods/lock``). Ini kunci periode MARKETING, bukan kunci periode akuntansi.
 
-Alat BACA pendukung: ``riwayat_harga`` (riwayat harga jual dari Jejak Perubahan + harga sekarang) dan
+Alat BACA pendukung: ``riwayat_harga`` (riwayat harga jual dari Jejak Marketing + harga sekarang) dan
 ``daftar_promo`` (kampanye diskon yang bisa dipilih).
 
 Aturan (desain §4, Kontrak D): ``siapkan`` hanya membaca; semua tulisan lewat ``ctx.api`` dengan token pengguna
@@ -228,7 +228,7 @@ async def _rencana_harga(ctx, args: dict) -> Tuple[dict, List[dict]]:
     ubah.insert(0, _ubah_alasan(args))
     catatan = ["Harga di Seller Center / TikTok Shop TIDAK ikut berubah; ubah juga di sana. Harga ini dipakai sebagai "
                "harga bawaan pesanan manual dan hitungan margin di DAHOST.",
-               "Setiap perubahan tercatat di riwayat harga (Jejak Perubahan Marketing) beserta alasan dan tanda "
+               "Setiap perubahan tercatat di riwayat harga (Jejak Marketing) beserta alasan dan tanda "
                "'Asisten AI'."]
     if sama:
         catatan.append(f"{sama} item lain sudah berharga sama dan dilewati.")
@@ -380,7 +380,7 @@ async def _peta_item_toko(ctx, akun_ids: List[str]) -> Dict[str, dict]:
     kind="read",
     label="Membaca riwayat harga jual",
     description=(
-        "Riwayat perubahan harga jual dan harga coret item katalog toko (dari Jejak Perubahan Marketing): waktu (WIB), "
+        "Riwayat perubahan harga jual dan harga coret item katalog toko (dari Jejak Marketing): waktu (WIB), "
         "toko, SKU, nama produk, harga lama → baru, siapa (nama & peran), alasan, dan apakah lewat Asisten AI; urut "
         "terbaru. Bila SKU disebut juga memberi harga SEKARANG per toko beserta margin terhadap HPP. Perubahan "
         "sebelum fitur riwayat harga dipasang tidak tercatat. Pakai sebelum menyarankan atau mengubah harga."),
@@ -436,7 +436,7 @@ async def riwayat_harga(ctx, args: dict) -> dict:
     hasil = {"jumlah_perubahan": total, "ditampilkan": len(daftar), "riwayat": daftar,
              "catatan": "Riwayat harga baru tercatat sejak fitur riwayat harga dipasang; perubahan sebelum itu tidak "
                         "ada di sini. Harga di Seller Center tidak tercatat di DAHOST.",
-             "_sumber": "Riwayat harga (Jejak Perubahan Marketing)"}
+             "_sumber": "Riwayat harga (Jejak Marketing)"}
     if args.get("sku"):
         hasil["harga_sekarang"] = harga_kini
     if total > len(daftar):
@@ -1375,7 +1375,7 @@ class UbahTitikPesanUlang:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 5. TUTUP / BUKA BULAN MARKETING (kunci periode Siklus Marketing)
+# 5. TUTUP / BUKA BULAN MARKETING (kunci periode di Target & Anggaran › Siklus)
 # ══════════════════════════════════════════════════════════════════════════════
 P_KUNCI = "/api/marketing/periods/lock"
 P_DAFTAR_KUNCI = "/api/marketing/periods/locks"
@@ -1392,7 +1392,7 @@ async def _rencana_periode(ctx, args: dict) -> Tuple[dict, List[dict]]:
     _alasan(args)
     if not can_manage_period(ctx.user):
         raise AlatError(403, "Hanya SPV/Manager Marketing, akunting, atau owner yang boleh menutup dan membuka periode "
-                             "marketing (aturan layar Siklus Marketing).")
+                             "marketing (aturan layar Target & Anggaran).")
     aksi, bulan = args["aksi"], args["bulan"]
     label = U.label_bulan(bulan)
     kini = B.bulan_ini(ctx)
@@ -1421,7 +1421,7 @@ async def _rencana_periode(ctx, args: dict) -> Tuple[dict, List[dict]]:
     catatan = [("Saat ditutup, target, rencana anggaran, belanja manual, dan rekap harian toko itu untuk bulan tersebut "
                 "tidak bisa diubah sampai dibuka lagi.") if mau_kunci else
                "Sesudah dibuka, target, anggaran, belanja manual, dan rekap harian bulan itu bisa diubah lagi.",
-               "Tercatat di Jejak Perubahan (Kunci periode) dengan alasan dan tanda 'Asisten AI'. Ini kunci periode "
+               "Tercatat di Jejak Marketing (Kunci periode) dengan alasan dan tanda 'Asisten AI'. Ini kunci periode "
                "MARKETING, bukan tutup buku akuntansi."]
     if lewat:
         catatan.append(f"Sudah {'ditutup' if mau_kunci else 'terbuka'} (dilewati): " + ", ".join(lewat[:10]) + ".")
@@ -1429,7 +1429,7 @@ async def _rencana_periode(ctx, args: dict) -> Tuple[dict, List[dict]]:
         "judul": f"{'Tutup' if mau_kunci else 'Buka'} periode marketing {label}",
         "ringkas": f"{len(sasaran)} toko akan {'ditutup' if mau_kunci else 'dibuka'} untuk {label}.",
         "perubahan": perubahan, "catatan": catatan, "peringatan": peringatan, "ubah": [_ubah_alasan(args)],
-        "tautan": {"label": "Buka layar Target & Siklus", "menu": "marketing-targets"}}), sasaran
+        "tautan": {"label": "Buka layar Target & Anggaran", "menu": "marketing-targets"}}), sasaran
 
 
 async def _set_kunci(ctx, bulan: str, entri: List[dict], aksi: str, alasan: str) -> List[str]:
@@ -1448,12 +1448,12 @@ async def _set_kunci(ctx, bulan: str, entri: List[dict], aksi: str, alasan: str)
     name="tutup_buka_bulan_marketing",
     label="Menutup atau membuka bulan marketing",
     description=(
-        "MENYIAPKAN penutupan atau pembukaan kembali periode bulanan MARKETING per toko (Siklus Marketing: tombol Tutup/"
+        "MENYIAPKAN penutupan atau pembukaan kembali periode bulanan MARKETING per toko (Target & Anggaran › Siklus: tombol Tutup/"
         "Buka Periode). Saat ditutup, target, rencana anggaran, belanja manual, dan rekap harian toko itu untuk bulan "
         "tersebut terkunci. Ini BUKAN tutup buku akuntansi.\n"
         "toko_id kosong = semua toko yang Anda pegang pada CV terpilih; toko yang sudah dalam keadaan itu dilewati. "
         "Aturan: SPV/Manager Marketing, akunting, atau owner; bulan yang belum berjalan tidak bisa ditutup; alasan "
-        "wajib dan tercatat di Jejak Perubahan. Bisa dibalikkan: keadaan kunci lama dipulihkan bila belum diubah "
+        "wajib dan tercatat di Jejak Marketing. Bisa dibalikkan: keadaan kunci lama dipulihkan bila belum diubah "
         "orang lain."),
     input_schema={
         "type": "object",

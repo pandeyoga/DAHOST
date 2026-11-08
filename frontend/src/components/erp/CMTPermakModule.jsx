@@ -124,7 +124,7 @@ export default function CMTPermakModule({ portalId }) {
   return (
     <PageLayoutSatuBaris
       testId="cmt-permak-module"
-      title="Perbaikan (permak)"
+      title="Perbaikan"
       subtitle="Perbaikan barang cacat dari CMT. Permak yang belum selesai mengurangi stok barang jadi."
       actions={<Button type="button" onClick={() => setCreating(true)} data-testid="btn-open-create-permak"><Plus className="w-4 h-4" />Buat permak</Button>}
       filters={<>

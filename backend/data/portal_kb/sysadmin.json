@@ -46,7 +46,7 @@
     {"modul": "mgmt-system-hub", "nama": "Pengaturan Sistem", "deskripsi": "Parameter umum sistem dan integrasi."},
     {"modul": "mgmt-backup-restore", "nama": "Backup Data", "deskripsi": "Membuat dan memulihkan cadangan basis data."},
     {"modul": "maklon-config", "nama": "Konfigurasi Maklon", "deskripsi": "Parameter khusus alur maklon."},
-    {"modul": "maklon-notifications", "nama": "Notifikasi Maklon", "deskripsi": "Pengaturan pemberitahuan alur maklon."},
+    {"modul": "maklon-notifications", "nama": "Notifikasi", "deskripsi": "Pengaturan pemberitahuan alur maklon."},
     {"modul": "mgmt-help", "nama": "Panduan Sistem", "deskripsi": "Dokumentasi penggunaan sistem."}
   ],
   "faq": [

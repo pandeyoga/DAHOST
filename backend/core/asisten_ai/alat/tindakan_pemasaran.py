@@ -3,7 +3,7 @@
 Lima tindakan berisiko rendah, semuanya lewat kartu konfirmasi (tidak ada yang tertulis sebelum
 pengguna menekan Setujui):
 
-* ``pasang_target_toko``         — target omzet/pesanan bulanan beberapa toko (= layar Target & Budget,
+* ``pasang_target_toko``         — target omzet/pesanan bulanan beberapa toko (= layar Target & Anggaran,
   ``POST /api/marketing/targets``); dibalikkan = nilai lama dipulihkan, target baru dihapus.
 * ``rencana_anggaran_marketing`` — rencana anggaran per kategori (``PUT /api/marketing/budget``);
   dibalikkan = rencana lama dipulihkan (yang sebelumnya belum ada → Rp 0).
@@ -267,11 +267,11 @@ async def _balikkan_target(ctx, bulan: str, entri: List[dict], alasan: str, *, p
     label="Memasang target toko",
     description=(
         "MENYIAPKAN pemasangan target bulanan (omzet Rp dan, bila disebut, pesanan) untuk satu atau beberapa "
-        "toko online — sama dengan mengisi layar Target & Budget Marketing. Alat ini hanya menyiapkan KARTU "
+        "toko online — sama dengan mengisi layar Target & Anggaran. Alat ini hanya menyiapkan KARTU "
         "KONFIRMASI (target lama → baru per toko); tidak ada yang tersimpan sebelum pengguna menekan Setujui.\n"
         "Aturan: hanya SPV/Manager Marketing atau owner; hanya toko yang dipegang pengguna pada CV terpilih; "
         "bulan berjalan s.d. 12 bulan ke depan; periode yang sudah ditutup ditolak. Target pesanan yang tidak "
-        "disebut, skor kesehatan, dan catatan target tetap seperti sekarang. Tercatat di Jejak Perubahan dengan "
+        "disebut, skor kesehatan, dan catatan target tetap seperti sekarang. Tercatat di Jejak Marketing dengan "
         "tanda 'Asisten AI'. Bisa dibalikkan: target lama dipulihkan, target yang baru dibuat dihapus.\n"
         "Pakai SETELAH pengguna memilih angka (mis. dari skenario_target: isian_pasang_target). Satu panggilan "
         "untuk satu kumpulan perubahan; jangan mengaku sudah terpasang sebelum hasilnya 'Disetujui dan "
@@ -317,7 +317,7 @@ class PasangTargetToko:
         if terkunci:
             raise AlatError(423, f"Periode {label} sudah DITUTUP untuk toko: "
                                  f"{', '.join(terlihat[i].get('toko') or i for i in terkunci)}. Minta SPV Marketing "
-                                 "membuka periodenya di Siklus Marketing, atau keluarkan toko itu dari daftar.")
+                                 "membuka periodenya di Target & Anggaran › Siklus, atau keluarkan toko itu dari daftar.")
         perubahan, peringatan, ubah = [], [], []
         tot_lama = tot_baru = 0.0
         ada_lama = berubah = 0
@@ -359,7 +359,7 @@ class PasangTargetToko:
                    if terbaca else
                    "Status kunci periode tidak bisa dibaca dengan akun ini; bila periodenya sudah ditutup, "
                    "penyimpanan akan ditolak.",
-                   "Disimpan lewat jalur yang sama dengan layar Target & Budget dan tercatat di Jejak Perubahan "
+                   "Disimpan lewat jalur yang sama dengan layar Target & Anggaran dan tercatat di Jejak Marketing "
                    "dengan tanda 'Asisten AI'.",
                    "Target pesanan yang tidak disebut, skor kesehatan, dan catatan target tetap seperti sekarang."]
         return _batasi({
@@ -369,7 +369,7 @@ class PasangTargetToko:
                         + (f" (sebelumnya {rp(tot_lama)} untuk {ada_lama} toko)." if ada_lama else
                            " (sebelumnya belum ada target).")),
             "perubahan": perubahan, "catatan": catatan, "peringatan": peringatan, "ubah": ubah,
-            "tautan": {"label": "Buka layar Target", "menu": "marketing-targets"}})
+            "tautan": {"label": "Buka layar Target & Anggaran", "menu": "marketing-targets"}})
 
     @staticmethod
     async def jalankan(ctx, args: dict, rencana: dict) -> dict:
@@ -472,7 +472,7 @@ async def _balikkan_anggaran(ctx, periode: str, entri: List[dict], alasan: str, 
     description=(
         "MENYIAPKAN rencana anggaran marketing per kategori (iklan=ads, KOL=kol, komisi kreator=komisi, host "
         "live=livehost, sampel=sample, diskon=diskon; Rupiah) untuk satu atau beberapa toko pada satu periode — "
-        "sama dengan layar Target & Budget (tab Budget). Hanya menyiapkan KARTU KONFIRMASI (lama → baru per "
+        "sama dengan layar Target & Anggaran (tab Anggaran). Hanya menyiapkan KARTU KONFIRMASI (lama → baru per "
         "kategori); tidak ada yang tersimpan sebelum pengguna menekan Setujui.\n"
         "Periode TTTT-BB (bulanan) atau TTTT-BB-HH (periode 7 hari mulai tanggal itu, bawaan layar). Kategori "
         "yang tidak disebut tetap seperti sekarang. Aturan: hanya SPV/Manager Marketing atau owner; toko dalam "
@@ -562,12 +562,12 @@ class RencanaAnggaranMarketing:
                     "Status kunci periode tidak bisa dibaca; bila periodenya sudah ditutup, penyimpanan akan ditolak."),
                    "Kategori yang tidak disebut tetap seperti sekarang. Ini rencana, bukan pengeluaran: tidak ada "
                    "biaya atau jurnal yang dibuat.",
-                   "Tercatat di Jejak Perubahan dengan tanda 'Asisten AI'."]
+                   "Tercatat di Jejak Marketing dengan tanda 'Asisten AI'."]
         return _batasi({
             "judul": f"Rencana anggaran marketing {_label_periode(periode)}",
             "ringkas": f"{len(toko)} toko — total rencana {rp(tot_baru)} (sebelumnya {rp(tot_lama)}).",
             "perubahan": perubahan, "catatan": catatan, "peringatan": peringatan, "ubah": ubah,
-            "tautan": {"label": "Buka layar Target & Budget", "menu": "marketing-targets"}})
+            "tautan": {"label": "Buka layar Target & Anggaran", "menu": "marketing-targets"}})
 
     @staticmethod
     async def jalankan(ctx, args: dict, rencana: dict) -> dict:

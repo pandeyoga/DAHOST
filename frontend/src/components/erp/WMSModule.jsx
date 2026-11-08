@@ -1026,7 +1026,7 @@ function AuditTrailTab({ token }) {
   const rca = rcaModal?.result;
 
   return (
-    <PageLayout testId="wms-section-audit" title="Audit trail gudang"
+    <PageLayout testId="wms-section-audit" title="Audit trail"
       subtitle="Riwayat penyesuaian stok hasil opname, per operator dan per posisi rak."
       filters={<>
         <Input data-testid="audit-filter-operator" placeholder="Operator (email)" value={ketik.operator}

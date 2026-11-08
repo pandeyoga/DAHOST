@@ -137,8 +137,8 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
   return (
     <PageLayoutSatuBaris
       testId="prod-cmt-billing"
-      title="Tagihan vendor CMT"
-      subtitle="Hutang jasa jahit: terjadwal sejak PO dikonfirmasi, matang saat barang lolos QC, lalu dibayar."
+      title="Tagihan CMT"
+      subtitle="Hutang jasa jahit ke vendor CMT: terjadwal sejak PO dikonfirmasi, matang saat barang lolos QC, lalu dibayar."
       filters={<>
         {businessType !== 'internal' && (
           <FilterChips value={view} onChange={setView} testId="cmt-billing-view" ariaLabel="Tampilan" hideWhenEmpty={false}

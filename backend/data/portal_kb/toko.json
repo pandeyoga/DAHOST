@@ -61,7 +61,7 @@
     {"modul": "marketing-kol-hub", "nama": "KOL & Kreator", "deskripsi": "Data kreator, komisi, dan leaderboard."},
     {"modul": "marketing-reports", "nama": "Laporan Marketing", "deskripsi": "Penjualan per channel, produk, dan periode."},
     {"modul": "marketing-health", "nama": "Kesehatan Akun", "deskripsi": "Skor performa toko di tiap marketplace."},
-    {"modul": "marketing-targets", "nama": "Target & Budget", "deskripsi": "Target bulanan dan realisasinya."},
+    {"modul": "marketing-targets", "nama": "Target & Anggaran", "deskripsi": "Target bulanan dan realisasinya."},
     {"modul": "marketing-live-hub", "nama": "Live Selling", "deskripsi": "Jadwal, host, dan hasil sesi live."},
     {"modul": "marketing-ai-hub", "nama": "AI Marketing", "deskripsi": "Bantuan AI untuk konten dan analisis."},
     {"modul": "marketing-scheduler", "nama": "Penjadwal Otomasi", "deskripsi": "Tugas terjadwal untuk operasional marketing."},

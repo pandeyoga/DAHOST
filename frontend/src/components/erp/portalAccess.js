@@ -78,7 +78,7 @@ export function hiddenModules() {
 }
 
 /**
- * Izin granular per menu (Lihat/Tambah/Ubah/Hapus/Approve/Export) dari backend
+ * Izin granular per menu (Lihat/Tambah/Ubah/Hapus/Setujui/Unduh) dari backend
  * (`data/module_catalog.py`). Menu yang tidak tercantum = portalnya belum diatur
  * granular oleh owner -> diperlakukan boleh (aturan lama berlaku).
  */

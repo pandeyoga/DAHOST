@@ -76,7 +76,8 @@ function Val({ v, money }) {
   return <span>{String(v)}</span>;
 }
 
-export default function MarketingChangeLogModule({ token, scope = 'marketing' }) {
+// 8 Nov 2026 (satu layar = satu nama): judul "Jejak marketing" di Portal Marketing & Manajemen (dulu beda per portal).
+export default function MarketingChangeLogModule({ token }) {
   const [rows, setRows] = useState([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, page_size: 20, total_pages: 1 });
   const [filters, setFilters] = useState({ entities: [], actions: [], actors: [] });
@@ -172,7 +173,7 @@ export default function MarketingChangeLogModule({ token, scope = 'marketing' })
   return (
     <PageLayout
       testId="marketing-changelog"
-      title={scope === 'management' ? 'Jejak Marketing' : 'Jejak perubahan marketing'}
+      title="Jejak marketing"
       subtitle="Siapa mengubah target, anggaran, kunci periode, dan kewenangan toko (hanya baca)."
       filters={(
         <>
