@@ -30,7 +30,7 @@ const JENIS_HABIS = [
 
 export function DashboardTab({
   dashData, expiringAlerts, memuat, onAssetClick, onMuatUlang,
-  onTambahAset, onScan, onImpor, onBuatPR, onDepresiasiMassal,
+  onTambahAset, onScan, onImpor, onBuatPR, onBukaPenyusutan,
 }) {
   const s = dashData?.summary || null;
   const totalAset = s?.total_assets || 0;
@@ -53,7 +53,7 @@ export function DashboardTab({
   );
   const aksi = (
     <AksiAset onTambahAset={onTambahAset} onScan={onScan} onImpor={onImpor} onBuatPR={onBuatPR}
-      onDepresiasiMassal={onDepresiasiMassal} />
+      onBukaPenyusutan={onBukaPenyusutan} />
   );
 
   return (

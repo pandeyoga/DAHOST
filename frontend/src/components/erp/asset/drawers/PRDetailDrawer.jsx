@@ -5,6 +5,10 @@
  * (Ajukan · Setujui hijau · Tolak merah · Batalkan); alasan penolakan lewat dialog konfirmasi (server
  * mewajibkan alasan); kode mentah (prioritas, jenis, langkah persetujuan) → label Indonesia; daftar barang =
  * tabel yang bisa diunduh. Endpoint & syarat tombol tidak berubah.
+ * 2026-11-08 (keputusan owner): kotak persetujuan juga memuat Request Pembelian Aksesoris (`kind: acc_pr`) dan
+ * Purchase Order (`kind: po`). Setujui/Tolak dulu SELALU memanggil `/api/procurement/requests/…` → baris
+ * aksesoris/PO gagal. Kini endpoint dipilih per jenis baris (`basisKeputusan`); hak tetap diperiksa server
+ * (`eval_approval`). Ajukan/Batalkan hanya untuk Permintaan Pengadaan (jenis lain tidak punya endpoint itu di sini).
  */
 import { useState } from 'react';
 import { Ban, Check, Send, X } from 'lucide-react';
@@ -20,23 +24,42 @@ import { StatusBadge } from '../components/StatusBadge';
 import { Bagian } from '../components/KPICard';
 import { PR_STATUS_CONFIG, PR_PRIORITY_LABEL, PR_TYPE_LABEL, PR_STEP_LABEL } from '../constants';
 
+/** Endpoint keputusan per jenis baris kotak persetujuan (`kind` dari `/api/procurement/inbox`). */
+export const BASIS_KEPUTUSAN = {
+  pr: '/api/procurement/requests',
+  acc_pr: '/api/acc/purchase-requests',
+  po: '/api/rahaza/purchase-orders',
+};
+/** Baris tanpa `kind` (daftar "Semua permintaan") = Permintaan Pengadaan. */
+export const basisKeputusan = (pr) => BASIS_KEPUTUSAN[pr?.kind || 'pr'] || pr?.api_base || BASIS_KEPUTUSAN.pr;
+const PESAN_BERHASIL = {
+  submit: 'Permintaan diajukan untuk persetujuan', approve: 'Permintaan disetujui',
+  reject: 'Permintaan ditolak', cancel: 'Permintaan dibatalkan',
+};
+
 export function PRDetailDrawer({ pr, token, open, onClose, onRefresh, currentUser }) {
   const [loading, setLoading] = useState(false);
   const [comment] = useState('');
 
   if (!pr) return null;
 
+  const jenisPengadaan = (pr.kind || 'pr') === 'pr';
   const canApprove = ['submitted', 'dept_approved', 'finance_approved'].includes(pr.status);
-  const canSubmit = pr.status === 'draft';
-  const canCancel = ['draft', 'submitted'].includes(pr.status) &&
+  const canSubmit = jenisPengadaan && pr.status === 'draft';
+  const canCancel = jenisPengadaan && ['draft', 'submitted'].includes(pr.status) &&
     (pr.requested_by === currentUser?.id || currentUser?.role === 'superadmin' || currentUser?.role === 'admin');
 
+  // Gagal = HTTP bukan 2xx (apicall melempar) atau `ok: false`. PO menjawab dokumen PO tanpa `ok`.
   const action = async (endpoint, body = {}) => {
     setLoading(true);
     try {
-      const d = await apicall('POST', `/api/procurement/requests/${pr.id}/${endpoint}`, token, body);
-      if (d.ok) { toast.success('Berhasil'); onRefresh(); onClose(); }
-      else toast.error(d.detail || 'Gagal');
+      const d = await apicall('POST', `${basisKeputusan(pr)}/${pr.id}/${endpoint}`, token, body);
+      if (d?.ok === false) toast.error(d.detail || 'Gagal');
+      else {
+        toast.success(endpoint === 'approve' && d?.next_stage_label
+          ? `Disetujui — lanjut ke ${d.next_stage_label}` : PESAN_BERHASIL[endpoint] || 'Berhasil');
+        onRefresh(); onClose();
+      }
     } catch (e) { toast.error(e.message || 'Gagal'); }
     finally { setLoading(false); }
   };
