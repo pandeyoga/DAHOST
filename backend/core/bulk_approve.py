@@ -11,17 +11,18 @@ from typing import Iterable
 
 from fastapi import HTTPException
 
-from auth import log_activity
-from core.roles import APPROVER_ROLES
+from auth import check_role, log_activity
+from core.roles import APPROVER_ROLES, EXPENSE_APPROVE_PERMS
 
 logger = logging.getLogger(__name__)
 
 
 async def bulk_approve(db, user: dict, ids: Iterable[str], *, collection: str, number_field: str, module: str,
                        approval_note: str = "", allowed_roles=APPROVER_ROLES,
+                       allowed_perms=EXPENSE_APPROVE_PERMS,
                        allowed_from_status=("submitted",)) -> dict:
-    role = (user.get("role") or "").lower()
-    if role not in allowed_roles:
+    # 2026-11-08: kode peran ATAU izin approve (sama dengan tombol setujui satu per satu) — peran buatan owner.
+    if not check_role(user, allowed_roles, allowed_perms):
         raise HTTPException(403, "Tidak punya hak approve")
     ids = list(ids)
     results = {"success": [], "failed": []}

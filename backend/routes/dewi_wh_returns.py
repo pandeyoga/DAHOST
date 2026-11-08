@@ -340,7 +340,7 @@ async def update_return(return_id: str, request: Request):
     return serialize_doc(result)
 
 
-@router.delete("/returns/{return_id}", dependencies=only(*WAREHOUSE_ROLES))  # T-01 2.3
+@router.delete("/returns/{return_id}", dependencies=only(*WAREHOUSE_ROLES, perm="warehouse.manage"))  # T-01 2.3
 async def delete_return(return_id: str, request: Request):
     await require_auth(request)
     db = get_db()
@@ -769,7 +769,7 @@ async def cancel_return(return_id: str, request: Request):
 # ══════════════════════════════════════════════════════════════════════════════
 # 2026-11-02 (K1) — BALIK KEPUTUSAN: jurnal pembalik + stok keluar berjejak
 # ══════════════════════════════════════════════════════════════════════════════
-@router.post("/returns/{return_id}/reverse-decision", dependencies=only(*WAREHOUSE_ROLES))
+@router.post("/returns/{return_id}/reverse-decision", dependencies=only(*WAREHOUSE_ROLES, perm="warehouse.approve"))
 async def reverse_decision(return_id: str, request: Request):
     """Balik keputusan gudang yang SUDAH dibukukan (Resolved).
 

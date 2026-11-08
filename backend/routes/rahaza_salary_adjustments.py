@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, check_role
 
 router = APIRouter(prefix="/api/rahaza", tags=["rahaza-salary"])
 
@@ -29,6 +29,17 @@ def _now(): return datetime.now(timezone.utc)
 
 ADJUSTMENT_STATUSES = ["pending_manager", "pending_hr", "approved", "rejected", "cancelled"]
 ADJUSTMENT_TYPES = ["kpi_raise", "performance_raise", "promotion", "annual_increment", "manual"]
+
+
+# 2026-11-08: "HR boleh melewati atasan" = kode peran lama ATAU izin yang sama dengan `_require_hr`
+# (`hr.manage` / `salary.manage`). Peran buatan owner dulu hanya melihat usulan timnya dan 403 saat menyetujui.
+# Cermin layar: `frontend/src/components/erp/RahazaSalaryAdjustmentModule.jsx` (isHR).
+SALARY_HR_ROLES = ("superadmin", "admin", "owner", "hr")
+SALARY_HR_PERMS = ("hr.manage", "salary.manage")
+
+
+def is_salary_hr(user: dict) -> bool:
+    return check_role(user, SALARY_HR_ROLES, SALARY_HR_PERMS)
 
 
 async def _require_hr(request: Request):
@@ -66,8 +77,7 @@ async def list_adjustments(
         q["adjustment_type"] = adjustment_type
     
     # Filter by role: managers only see their team's proposals
-    role = (user.get("role") or "").lower()
-    if role not in ("superadmin", "admin", "owner", "hr"):
+    if not is_salary_hr(user):
         # Show proposals where this user is the manager
         my_emp = await db.rahaza_employees.find_one({"user_id": user["id"]}, {"_id": 0, "id": 1})
         if my_emp:
@@ -207,8 +217,7 @@ async def approve_by_manager(adj_id: str, request: Request):
     my_emp = await db.rahaza_employees.find_one({"user_id": user["id"]}, {"_id": 0, "id": 1})
     if not my_emp or my_emp["id"] != doc.get("manager_id"):
         # Allow HR/Admin to bypass
-        role = (user.get("role") or "").lower()
-        if role not in ("superadmin", "admin", "owner", "hr"):
+        if not is_salary_hr(user):
             raise HTTPException(403, "Hanya manager yang assigned yang bisa approve.")
     
     res = await db.rahaza_salary_adjustments.update_one(
@@ -311,10 +320,9 @@ async def reject_adjustment(adj_id: str, request: Request):
         raise HTTPException(400, f"Tidak bisa reject adjustment dengan status '{doc.get('status')}'")
     
     # Verify permission
-    role = (user.get("role") or "").lower()
     my_emp = await db.rahaza_employees.find_one({"user_id": user["id"]}, {"_id": 0, "id": 1})
-    
-    is_hr = role in ("superadmin", "admin", "owner", "hr")
+
+    is_hr = is_salary_hr(user)
     is_manager = my_emp and my_emp["id"] == doc.get("manager_id")
     
     if not (is_hr or is_manager):

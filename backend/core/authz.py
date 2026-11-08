@@ -77,17 +77,36 @@ def deny_roles(*roles: str):
     return _dep
 
 
-def require_roles(*roles: str):
+def require_roles(*roles: str, perm=None):
+    """Kode peran (dari JWT, tanpa query DB) ATAU — bila `perm` diisi — izin peran yang dibaca LIVE.
+
+    2026-11-08: peran buatan owner ("HR Generalist", "Koordinator Packing", …) tidak ada di daftar kode
+    peran. `perm` (satu kunci atau tuple, salah satu cukup) = izin yang mengatur area endpoint itu; aturannya
+    sama dengan `auth.check_role` (superadmin, kode peran di daftar, izin "*", atau izin yang diminta).
+    Tanpa `perm` perilakunya persis seperti dulu.
+    """
     allowed = {r.lower() for r in roles} | {"superadmin", "admin"}
+    keys = (perm,) if isinstance(perm, str) else tuple(perm or ())
 
     async def _dep(request: Request):
         role = _role_of(request)
-        if role not in allowed:
-            raise HTTPException(403, f"Akses ditolak: butuh peran {', '.join(sorted(roles))}.")
-    _dep.__name__ = f"require_roles[{','.join(sorted(allowed))}]"
+        if role in allowed:
+            return
+        if keys:
+            try:
+                user = await _auth.require_auth(request)
+            except HTTPException:
+                user = None
+            if user and _auth.check_role(user, sorted(allowed), keys):
+                return
+        raise HTTPException(403, f"Akses ditolak: butuh peran {', '.join(sorted(roles))}.")
+    _dep.__name__ = f"require_roles[{','.join(sorted(allowed))}{'|' + ','.join(keys) if keys else ''}]"
     return _dep
 
 
-def only(*roles: str) -> list:
-    """Gerbang eksplisit per endpoint (FASE 2.3): `@router.delete(path, dependencies=only(*HR_ROLES))`."""
-    return [Depends(require_roles(*roles))]
+def only(*roles: str, perm=None) -> list:
+    """Gerbang eksplisit per endpoint (FASE 2.3): `@router.delete(path, dependencies=only(*HR_ROLES))`.
+
+    `perm=` (opsional): izin yang juga meloloskan peran buatan owner — lihat `require_roles`.
+    """
+    return [Depends(require_roles(*roles, perm=perm))]

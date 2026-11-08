@@ -397,7 +397,7 @@ async def toggle_buyer_catalog(catalog_id: str, user: dict = Depends(require_aut
     return {'message': f"Status diubah menjadi {new_status}", 'status': new_status}
 
 
-@router.delete('/buyer-catalog/{catalog_id}', dependencies=only(*MAKLON_ROLES))  # T-01 2.3
+@router.delete('/buyer-catalog/{catalog_id}', dependencies=only(*MAKLON_ROLES, perm="maklon.manage"))  # T-01 2.3
 async def delete_buyer_catalog(catalog_id: str, user: dict = Depends(require_auth)):
     """Soft-delete: ubah status ke 'discontinued'. (Hard delete dihindari untuk audit trail.)"""
     db = get_db()

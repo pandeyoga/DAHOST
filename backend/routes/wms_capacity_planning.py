@@ -164,7 +164,7 @@ class CapacityConfigIn(BaseModel):
     shifts_per_day: Optional[int] = Field(default=None, ge=1, le=4)
 
 
-@router.put("/config", dependencies=only(*PRODUCTION_ROLES))
+@router.put("/config", dependencies=only(*PRODUCTION_ROLES, perm="production.manage"))
 async def update_capacity_config(body: CapacityConfigIn, request: Request):
     user = await require_auth(request)
     db = get_db()

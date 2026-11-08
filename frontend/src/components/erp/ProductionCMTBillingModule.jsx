@@ -38,6 +38,7 @@ import PageLayout, { DetailPanel } from './layout/PageLayout';
 import { PageLayoutSatuBaris } from './engine/DataTable';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import { formatDateID } from '@/lib/format';
+import { checkPerm } from '@/lib/rbac';
 
 const fmtRp = (v) => `Rp ${Number(v || 0).toLocaleString('id-ID')}`;
 const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
@@ -54,7 +55,7 @@ const StatusPill = ({ status }) => {
 };
 const FIN_ROLES = ['superadmin', 'admin', 'owner', 'accounting', 'staff_keuangan', 'manager_keuangan'];
 
-export default function ProductionCMTBillingModule({ portalId, userRole }) {
+export default function ProductionCMTBillingModule({ portalId, userRole, user }) {
   const businessType = portalId === 'maklon' ? 'maklon' : portalId === 'production' ? 'internal' : null;
   const [view, setView] = useState('bills');           // bills | schedules
   const [rows, setRows] = useState([]);
@@ -68,7 +69,8 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
   const [vendorOpts, setVendorOpts] = useState([]);
   const [detail, setDetail] = useState(null);
   const [posting, setPosting] = useState('');
-  const canPost = FIN_ROLES.includes((userRole || '').toLowerCase());
+  // 2026-11-08: + izin finance.manage (sama dengan server: selisih tagihan CMT `FINANCE_BOOK_PERMS`).
+  const canPost = checkPerm({ user, role: userRole, roles: FIN_ROLES, keys: ['finance.manage'] });
 
   const load = useCallback(async () => {
     setLoading(true);

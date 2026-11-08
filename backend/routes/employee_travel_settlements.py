@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, date, timezone
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, check_role
 import logging
 import uuid
 import csv
@@ -59,10 +59,27 @@ async def _travel_codes(db) -> dict:
             'advance': await role_code(db, 'employee_travel', 'debit_employee_advance', GL_EMPLOYEE_ADVANCE),
             'bank': await role_code(db, 'employee_travel', 'credit_bank_default', GL_BANK_DEFAULT)}
 
-from core.roles import APPROVER_ROLES, FINANCE_ROLES  # T-08 · FIN-02
+from core.roles import (  # T-08 · FIN-02
+    APPROVER_ROLES, FINANCE_ROLES, FINANCE_BOOK_PERMS, SETTLEMENT_APPROVE_PERMS, SETTLEMENT_VIEW_ALL_PERMS,
+)
 from routes.rahaza_payroll_shared import (  # 2026-11-02 (K25): pemisahan tugas
     ensure_not_self_approval, merge_own_failures, split_own_requests,
 )
+
+
+# 2026-11-08: kode peran lama ATAU izin (lihat `core.roles`) — peran buatan owner ("Accounting & Finance",
+# "HR Generalist", …) dulu 403 / hanya melihat miliknya. Cermin layar: EmployeeTravelSettlementModule.jsx.
+def can_view_all_settlements(user: dict) -> bool:
+    return check_role(user, APPROVER_ROLES, SETTLEMENT_VIEW_ALL_PERMS)
+
+
+def is_settlement_approver(user: dict) -> bool:
+    return check_role(user, APPROVER_ROLES, SETTLEMENT_APPROVE_PERMS)
+
+
+def is_settlement_poster(user: dict) -> bool:
+    """Posting jurnal penyelesaian (uang keluar/masuk) — Keuangan saja (K25), atau izin `finance.manage`."""
+    return check_role(user, FINANCE_ROLES, FINANCE_BOOK_PERMS)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -185,8 +202,7 @@ async def create_settlement(req_id: str, body: SettlementCreate, user: dict = De
     tr = await _get_travel_or_404(db, req_id)
 
     # Hanya karyawan pemilik atau approver yang bisa buat settlement
-    role = (user.get('role') or '').lower()
-    if tr.get('employee_id') != user.get('id') and role not in APPROVER_ROLES:
+    if tr.get('employee_id') != user.get('id') and not is_settlement_approver(user):
         raise HTTPException(403, 'Hanya pemilik perjalanan yang dapat membuat settlement')
 
     # Status harus advance_paid atau completed
@@ -282,8 +298,7 @@ async def list_trip_settlements(req_id: str, user: dict = Depends(require_auth))
     """List settlements untuk 1 travel request."""
     db = get_db()
     tr = await _get_travel_or_404(db, req_id)
-    role = (user.get('role') or '').lower()
-    if tr.get('employee_id') != user.get('id') and role not in APPROVER_ROLES:
+    if tr.get('employee_id') != user.get('id') and not can_view_all_settlements(user):
         raise HTTPException(403, 'Tidak punya akses')
     docs = await db.employee_travel_settlements.find(
         {'travel_request_id': req_id}, {'_id': 0}
@@ -302,10 +317,9 @@ async def list_all_settlements(
 ):
     """List semua settlements. Finance/HR lihat semua, karyawan hanya miliknya."""
     db = get_db()
-    role = (user.get('role') or '').lower()
     q: dict = {}
 
-    if role not in APPROVER_ROLES:
+    if not can_view_all_settlements(user):
         q['employee_id'] = user.get('id')
     elif employee_id:
         q['employee_id'] = employee_id
@@ -341,11 +355,10 @@ async def export_settlements(
 ):
     """Export settlements ke CSV (with RBAC filter)."""
     db = get_db()
-    role = (user.get('role') or '').lower()
     q: dict = {}
 
     # RBAC filter
-    if role not in APPROVER_ROLES:
+    if not can_view_all_settlements(user):
         q['employee_id'] = user.get('id')
     elif employee_id:
         q['employee_id'] = employee_id
@@ -414,11 +427,10 @@ async def export_settlements(
 async def export_outstanding_advances(user: dict = Depends(require_auth)):
     """Export outstanding advances ke CSV (with RBAC filter)."""
     db = get_db()
-    role = (user.get('role') or '').lower()
     q = {'status': {'$in': ['advance_paid', 'on_trip']}, 'cash_advance_paid': {'$gt': 0}}
 
     # RBAC filter
-    if role not in APPROVER_ROLES:
+    if not can_view_all_settlements(user):
         q['employee_id'] = user.get('id')
 
     docs = await db.employee_travel_requests.find(q, {'_id': 0}).sort('advance_paid_at', -1).to_list(500)
@@ -477,8 +489,7 @@ async def get_settlement(stl_id: str, user: dict = Depends(require_auth)):
     """Detail settlement."""
     db = get_db()
     doc = await _get_or_404(db, stl_id)
-    role = (user.get('role') or '').lower()
-    if doc.get('employee_id') != user.get('id') and role not in APPROVER_ROLES:
+    if doc.get('employee_id') != user.get('id') and not can_view_all_settlements(user):
         raise HTTPException(403, 'Tidak punya akses')
     return _serialize(doc)
 
@@ -567,8 +578,7 @@ async def submit_settlement(stl_id: str, user: dict = Depends(require_auth)):
 async def approve_settlement(stl_id: str, payload: ApprovePayload, user: dict = Depends(require_auth)):
     """Approve settlement (Manager/HR)."""
     db = get_db()
-    role = (user.get('role') or '').lower()
-    if role not in APPROVER_ROLES:
+    if not is_settlement_approver(user):
         raise HTTPException(403, 'Hanya Manager/HR yang dapat approve')
     doc = await _get_or_404(db, stl_id)
     if doc.get('status') != 'submitted':
@@ -597,8 +607,7 @@ async def approve_settlement(stl_id: str, payload: ApprovePayload, user: dict = 
 async def reject_settlement(stl_id: str, payload: RejectPayload, user: dict = Depends(require_auth)):
     """Reject settlement."""
     db = get_db()
-    role = (user.get('role') or '').lower()
-    if role not in APPROVER_ROLES:
+    if not is_settlement_approver(user):
         raise HTTPException(403, 'Hanya Manager/HR yang dapat reject')
     doc = await _get_or_404(db, stl_id)
     if doc.get('status') not in ('submitted', 'approved'):
@@ -643,10 +652,9 @@ async def post_settlement_gl(stl_id: str, payload: PostPayload, user: dict = Dep
       -- Jika exact: tidak ada baris bank tambahan
     """
     db = get_db()
-    role = (user.get('role') or '').lower()
     # 2026-11-02 (K25): posting penyelesaian = uang keluar/masuk (bayar tambahan / terima kembalian) →
     # hanya peran Keuangan; HR tidak lagi (dulu FINANCE_ROLES + 'hr').
-    if role not in FINANCE_ROLES:  # FIN-02
+    if not is_settlement_poster(user):  # FIN-02
         raise HTTPException(403, 'Hanya Keuangan yang dapat memposting penyelesaian dinas (pemisahan tugas).')
     # 2026-11-06 (pola P9): penyelesaian DIKUNCI selama dijurnal (penolakan yang menyalip → 409).
     from core import doc_lock
@@ -797,8 +805,7 @@ async def outstanding_advances(user: dict = Depends(require_auth)):
     Menampilkan semua travel request yg advance sudah dibayar tapi settlement belum di-post.
     """
     db = get_db()
-    role = (user.get('role') or '').lower()
-    if role not in APPROVER_ROLES:
+    if not can_view_all_settlements(user):
         return {'total': 0, 'total_outstanding': 0, 'items': []}
 
     # Travel requests dengan status advance_paid atau on_trip (advance sudah keluar, belum settled)
@@ -858,8 +865,7 @@ async def outstanding_advances(user: dict = Depends(require_auth)):
 async def settlement_summary(user: dict = Depends(require_auth)):
     """Summary stats untuk settlement dashboard."""
     db = get_db()
-    role = (user.get('role') or '').lower()
-    is_approver = role in APPROVER_ROLES
+    is_approver = can_view_all_settlements(user)
     base_q = {} if is_approver else {'employee_id': user.get('id')}
 
     statuses = ['draft', 'submitted', 'approved', 'posted', 'rejected']
@@ -907,7 +913,8 @@ async def bulk_approve_settlements(body: BulkApproveSettlementRequest, user: dic
     db = get_db()
     ids, own = await split_own_requests(db, "employee_travel_settlements", body.settlement_ids, user)  # K25
     res = await bulk_approve(db, user, ids, collection="employee_travel_settlements", number_field="settlement_number",
-                             module="travel_settlement", approval_note=body.approval_note or "")
+                             module="travel_settlement", approval_note=body.approval_note or "",
+                             allowed_perms=SETTLEMENT_APPROVE_PERMS)
     return merge_own_failures(res, own, len(body.settlement_ids))
 
 
@@ -918,8 +925,7 @@ class BulkPostSettlementRequest(BaseModel):
 @router.post('/settlements/bulk-post')
 async def bulk_post_settlements(body: BulkPostSettlementRequest, user: dict = Depends(require_auth)):
     """Bulk post GL for multiple settlements (Finance only)."""
-    role = (user.get('role') or '').lower()
-    if role not in FINANCE_ROLES:  # FIN-02
+    if not is_settlement_poster(user):  # FIN-02
         raise HTTPException(403, 'Hanya Finance yang bisa post GL')
 
     db = get_db()

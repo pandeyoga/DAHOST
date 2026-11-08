@@ -446,7 +446,7 @@ async def list_spend(request: Request, account_id: str = Query(...), period: str
     return {'ok': True, 'entries': [serialize_doc(r) for r in rows], 'total': len(rows)}
 
 
-@router.delete('/spend/{sid}', dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete('/spend/{sid}', dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_spend(sid: str, request: Request):
     await require_auth(request)
     db = get_db()

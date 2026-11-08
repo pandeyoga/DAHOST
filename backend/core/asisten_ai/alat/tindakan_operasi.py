@@ -431,9 +431,9 @@ class BuatObjektifOkr:
 
     @staticmethod
     async def siapkan(ctx, args: dict) -> dict:
-        from routes.dewi_okr import OKR_OBJECTIVE_WRITER_ROLES
+        from routes.dewi_okr import can_write_objective
         a = _bersih_args(args)
-        if _peran(ctx) not in OKR_OBJECTIVE_WRITER_ROLES:
+        if not can_write_objective(getattr(ctx, "user", None)):
             raise AlatError(403, "Objektif OKR hanya boleh dibuat owner, manajer, atau admin. "
                                  "Akun ini tidak punya hak itu.")
         await _wajib_gerbang(ctx, "POST", f"{_OKR}/objectives")

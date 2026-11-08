@@ -604,7 +604,7 @@ async def roll_label_pdf(roll_id: str, request: Request, token: Optional[str] = 
     )
 
 
-@router.delete("/{roll_id}", dependencies=only(*WAREHOUSE_ROLES))  # T-01 2.3
+@router.delete("/{roll_id}", dependencies=only(*WAREHOUSE_ROLES, perm="inv.stock.manage"))  # T-01 2.3
 async def delete_roll(roll_id: str, request: Request):
     await require_auth(request)
     db = get_db()

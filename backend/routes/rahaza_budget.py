@@ -28,7 +28,7 @@ import uuid
 import logging
 import io
 from core.authz import only  # T-01 2.3
-from core.roles import FINANCE_ROLES  # T-01 2.3
+from core.roles import FINANCE_ROLES, FINANCE_BOOK_PERMS  # T-01 2.3
 from routes.shared import require_portal_dep  # FIN-04
 from utils.waktu import today_wib
 
@@ -145,7 +145,7 @@ async def update_budget(bid: str, request: Request):
     return serialize_doc(out)
 
 
-@router.delete("/budgets/{bid}", dependencies=only(*FINANCE_ROLES))  # T-01 2.3
+@router.delete("/budgets/{bid}", dependencies=only(*FINANCE_ROLES, perm=FINANCE_BOOK_PERMS))  # T-01 2.3
 async def delete_budget(bid: str, request: Request):
     await require_auth(request)
     db = get_db()
@@ -304,7 +304,7 @@ async def update_budget_item(bid: str, iid: str, request: Request):
     return serialize_doc(out)
 
 
-@router.delete("/budgets/{bid}/items/{iid}", dependencies=only(*FINANCE_ROLES))  # T-01 2.3
+@router.delete("/budgets/{bid}/items/{iid}", dependencies=only(*FINANCE_ROLES, perm=FINANCE_BOOK_PERMS))  # T-01 2.3
 async def delete_budget_item(bid: str, iid: str, request: Request):
     await require_auth(request)
     db = get_db()

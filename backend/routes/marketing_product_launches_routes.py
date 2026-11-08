@@ -475,7 +475,7 @@ async def update_launch(launch_id: str, body: LaunchUpdate, request: Request):
     return {"success": True, "data": serialize(updated)}
 
 
-@router.delete("/{launch_id}", dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete("/{launch_id}", dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_launch(launch_id: str, request: Request):
     await require_auth(request)
     db = get_db()

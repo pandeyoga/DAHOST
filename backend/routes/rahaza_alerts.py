@@ -19,7 +19,7 @@ Endpoints:
 """
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth
+from auth import require_auth, check_role
 from datetime import datetime, timezone, timedelta, date
 from typing import Optional
 import asyncio
@@ -77,8 +77,8 @@ async def _get_settings(db) -> dict:
 
 async def _require_admin(request: Request):
     user = await require_auth(request)
-    role = (user.get("role") or "").lower()
-    if role not in ("admin", "superadmin", "owner", "manager_production"):
+    # 2026-11-08: kode peran lama ATAU izin `production.manage` ("Ubah data di Portal Produksi").
+    if not check_role(user, ("admin", "superadmin", "owner", "manager_production"), "production.manage"):
         raise HTTPException(403, "Butuh role Admin/Manager Produksi untuk mengubah setting alert")
     return user
 

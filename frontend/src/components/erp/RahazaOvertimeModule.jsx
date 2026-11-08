@@ -26,6 +26,11 @@ import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, StatusBadge } from './moduleAtoms';
 import { EmployeeSelect } from './hr/hrPickers';
+import { checkPerm } from '@/lib/rbac';
+
+// 2026-11-08: sama dengan server routes/rahaza_overtime.py (OT_APPROVER_ROLES ATAU izin hr.approve).
+const OT_APPROVER_ROLES = ['superadmin', 'admin', 'owner', 'hr', 'manager'];
+const OT_APPROVER_PERM = 'hr.approve';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -45,7 +50,7 @@ export default function RahazaOvertimeModule({ token, user }) {
   const [loading, setLoading] = useState(false);
   const [dialog, setDialog] = useState(null);
 
-  const isApprover = ['superadmin', 'admin', 'owner', 'hr', 'manager'].includes(user?.role);
+  const isApprover = checkPerm({ user, roles: OT_APPROVER_ROLES, perm: OT_APPROVER_PERM });
 
   const load = useCallback(async () => {
     setLoading(true);

@@ -14,10 +14,18 @@ from typing import Optional, List, Dict
 from fastapi import APIRouter, Request, Query, HTTPException
 from pydantic import BaseModel
 from database import get_db
-from auth import require_auth
+from auth import require_auth, check_role
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/hr/skill-gap", tags=["skill-gap"])
+
+# 2026-11-08: kode peran lama ATAU izin `hr.manage` (peran buatan owner seperti "HR Generalist" dulu 403).
+SKILL_GAP_PERM = "hr.manage"
+
+
+def _require_skill_gap(user: dict, roles: list, message: str) -> None:
+    if not check_role(user, roles, SKILL_GAP_PERM):
+        raise HTTPException(403, message)
 
 # ============================================================================
 # MODELS
@@ -59,8 +67,7 @@ async def create_skill_requirement(request: Request, requirement: SkillRequireme
     db = get_db()
     
     user = request.state.user
-    if user.get("role") not in ["superadmin", "hr", "manager"]:
-        raise HTTPException(403, "Unauthorized")
+    _require_skill_gap(user, ["superadmin", "hr", "manager"], "Unauthorized")
     
     req_data = requirement.dict()
     req_data["id"] = str(uuid.uuid4())
@@ -231,8 +238,7 @@ async def analyze_department(request: Request, analysis: AnalysisRequest):
     db = get_db()
     
     user = request.state.user
-    if user.get("role") not in ["superadmin", "hr", "manager"]:
-        raise HTTPException(403, "Unauthorized")
+    _require_skill_gap(user, ["superadmin", "hr", "manager"], "Unauthorized")
     
     department_name = analysis.target_id
     if not department_name:
@@ -373,8 +379,7 @@ async def analyze_company(request: Request, analysis: AnalysisRequest):
     db = get_db()
     
     user = request.state.user
-    if user.get("role") not in ["superadmin", "hr"]:
-        raise HTTPException(403, "Unauthorized - requires HR access")
+    _require_skill_gap(user, ["superadmin", "hr"], "Unauthorized - requires HR access")
     
     # Get all active employees
     employees = await db["rahaza_employees"].find({"active": True}).to_list(length=2000)

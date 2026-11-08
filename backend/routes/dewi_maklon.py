@@ -262,7 +262,7 @@ async def update_client(client_id: str, payload: MaklonClient, user: dict = Depe
     return {'message': 'Client berhasil diperbarui'}
 
 
-@router.delete('/clients/{client_id}', dependencies=only(*MAKLON_ROLES))  # T-01 2.3
+@router.delete('/clients/{client_id}', dependencies=only(*MAKLON_ROLES, perm="maklon.manage"))  # T-01 2.3
 async def delete_client(client_id: str, user: dict = Depends(require_auth)):
     db = get_db()
     result = await db.dewi_maklon_clients.update_one(
@@ -615,7 +615,7 @@ async def list_material_issues(order_id: str, user: dict = Depends(require_auth)
     return issues
 
 
-@router.delete('/orders/{order_id}/material-issues/{issue_id}', deprecated=True, dependencies=only(*MAKLON_ROLES))  # T-01 2.3
+@router.delete('/orders/{order_id}/material-issues/{issue_id}', deprecated=True, dependencies=only(*MAKLON_ROLES, perm="maklon.manage"))  # T-01 2.3
 async def cancel_material_issue(order_id: str, issue_id: str, user: dict = Depends(require_auth)):
     """
     Batalkan permintaan issue material.

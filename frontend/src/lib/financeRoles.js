@@ -8,3 +8,15 @@ export const isCurrentUserFinance = () => {
     return isFinanceRole(JSON.parse(localStorage.getItem('erp_user') || 'null')?.role);
   } catch { return false; }
 };
+
+// 2026-11-08: cermin core/roles.py — penyetuju klaim/dinas (APPROVER_ROLES) dan izin PASANGAN daftar peran.
+// Tombol memakai `checkPerm({ user, roles, keys })` (lib/rbac.jsx) = aturan `auth.check_role` di server, supaya
+// peran buatan owner ("Accounting & Finance", "HR Generalist", …) melihat tombol yang memang boleh mereka pakai.
+export const APPROVER_ROLES = [...FINANCE_ROLES, 'hr', 'hr_manager', 'manager'];
+export const EXPENSE_APPROVE_PERMS = ['hr.approve'];
+export const SETTLEMENT_APPROVE_PERMS = ['hr.approve', 'finance.approve'];
+export const FINANCE_PAY_PERMS = ['finance.manage', 'fin.payment.manage'];
+export const FINANCE_BOOK_PERMS = ['finance.manage'];
+export const FINANCE_CASH_PERMS = ['fin.cash.manage', 'finance.manage'];
+export const EXPENSE_VIEW_ALL_PERMS = [...EXPENSE_APPROVE_PERMS, ...FINANCE_PAY_PERMS];
+export const SETTLEMENT_VIEW_ALL_PERMS = [...SETTLEMENT_APPROVE_PERMS, ...FINANCE_PAY_PERMS];

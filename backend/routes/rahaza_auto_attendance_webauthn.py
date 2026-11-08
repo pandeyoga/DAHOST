@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, check_role
 from dotenv import load_dotenv
 from utils.waktu import today_wib
 
@@ -74,7 +74,8 @@ async def list_webauthn_devices(request: Request, employee_id: Optional[str] = N
         q["employee_id"] = employee_id
     else:
         # HR dapat lihat semua; karyawan hanya lihat milik sendiri
-        if user.get("role") not in ("superadmin", "admin", "owner", "hr"):
+        # 2026-11-08: kode peran lama ATAU izin `hr.attendance.manage` melihat perangkat semua karyawan.
+        if not check_role(user, ("superadmin", "admin", "owner", "hr"), "hr.attendance.manage"):
             # Cari employee_id dari user
             emp = await db.rahaza_employees.find_one({"user_id": user["id"]}, {"_id": 0})
             if emp:
@@ -520,11 +521,12 @@ async def revoke_webauthn_device(device_id: str, request: Request):
     if not cred:
         raise HTTPException(404, "Credential tidak ditemukan.")
     # T-01 2.3: hanya pemilik credential (karyawan ybs) atau HR/admin yang boleh mencabut.
-    role = (user.get("role") or "").lower()
     my_emp = await db.rahaza_employees.find_one({"user_id": user["id"]}, {"_id": 0, "id": 1})
     owner_ok = cred.get("employee_id") in (user.get("employee_id"), (my_emp or {}).get("id")) or \
         cred.get("user_id") == user["id"]
-    if not owner_ok and role not in ("hr", "hr_manager", "staff_hr", "superadmin", "admin", "owner"):
+    # 2026-11-08: HR = kode peran lama ATAU izin `hr.attendance.manage`.
+    if not owner_ok and not check_role(user, ("hr", "hr_manager", "staff_hr", "superadmin", "admin", "owner"),
+                                       "hr.attendance.manage"):
         raise HTTPException(403, "Akses ditolak: biometrik milik karyawan lain hanya bisa dicabut HR/admin.")
     await db.rahaza_webauthn_credentials.update_one(
         {"id": device_id}, {"$set": {"revoked_at": _now()}}

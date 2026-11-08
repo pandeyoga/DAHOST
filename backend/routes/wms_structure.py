@@ -208,7 +208,7 @@ async def update_building(building_id: str, data: BuildingIn, request: Request):
     return {"message": "Gedung diupdate"}
 
 
-@router.delete("/buildings/{building_id}", dependencies=only(*WAREHOUSE_ROLES))  # T-01 2.3
+@router.delete("/buildings/{building_id}", dependencies=only(*WAREHOUSE_ROLES, perm="wh.bin.manage"))  # T-01 2.3
 async def delete_building(building_id: str, request: Request):
     await require_auth(request)
     db = get_db()
@@ -285,7 +285,7 @@ async def update_zone(zone_id: str, data: ZoneIn, request: Request):
     return {"message": "Zona diupdate"}
 
 
-@router.delete("/zones/{zone_id}", dependencies=only(*WAREHOUSE_ROLES))  # T-01 2.3
+@router.delete("/zones/{zone_id}", dependencies=only(*WAREHOUSE_ROLES, perm="wh.bin.manage"))  # T-01 2.3
 async def delete_zone(zone_id: str, request: Request):
     await require_auth(request)
     db = get_db()
@@ -496,7 +496,7 @@ async def update_rack(rack_id: str, data: RackIn, request: Request):
     return serialize_doc({"message": f"Rak diupdate{f', {added} posisi baru ditambahkan' if added else ''}"})
 
 
-@router.delete("/racks/{rack_id}", dependencies=only(*WAREHOUSE_ROLES))  # T-01 2.3
+@router.delete("/racks/{rack_id}", dependencies=only(*WAREHOUSE_ROLES, perm="wh.bin.manage"))  # T-01 2.3
 async def delete_rack(rack_id: str, request: Request):
     await require_auth(request)
     db = get_db()

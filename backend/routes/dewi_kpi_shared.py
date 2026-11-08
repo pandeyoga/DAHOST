@@ -42,7 +42,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException, Query
 from database import get_db
-from auth import require_auth
+from auth import require_auth, check_role
 from routes.shared import get_pagination_params, paginated_response
 
 router = APIRouter(prefix="/api/dewi/kpi", tags=["dewi-kpi"])
@@ -80,10 +80,19 @@ def _grade(score: float):
     else:
         return {"grade": "E", "label": "Sangat Kurang", "status": "Cut Off", "raise_pct": 0}
 
+# 2026-11-08: kode peran lama ATAU izin `hr.manage` (modul Manajemen Kinerja di Peran & Hak Akses).
+KPI_HR_ROLES = ("superadmin", "admin", "owner", "hr", "manager", "supervisor")
+KPI_HR_PERM = "hr.manage"
+
+
+def is_kpi_hr(user: dict) -> bool:
+    """HR/atasan KPI: kode peran lama atau izin `hr.manage` — dipakai `_require_hr` dan saringan daftar goal."""
+    return check_role(user, KPI_HR_ROLES, KPI_HR_PERM)
+
+
 async def _require_hr(request: Request):
     user = await require_auth(request)
-    role = (user.get("role") or "").lower()
-    if role in ("superadmin", "admin", "owner", "hr", "manager", "supervisor"):
+    if is_kpi_hr(user):
         return user
     raise HTTPException(403, "Akses ditolak: butuh role HR/Manager/Supervisor.")
 

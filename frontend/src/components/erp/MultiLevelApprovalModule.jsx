@@ -6,7 +6,7 @@
  * Dulu: kartu besar berulang (tiga kolom), kotak warna-warni, <select>/<button> buatan sendiri,
  * daftar "Semua" diam-diam hanya 50 ajuan pertama (kini berhalaman, unduhan = semua baris).
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import { CheckCircle, ExternalLink, RefreshCw, XCircle } from 'lucide-react';
@@ -81,7 +81,7 @@ const tahap = (it) => {
 };
 
 // ── Detail (popup) ────────────────────────────────────────────────────────────
-function DetailAjuan({ item, onClose, onApprove, onReject, isManager, onModuleChange }) {
+function DetailAjuan({ item, onClose, onApprove, onReject, bolehPutuskan, onModuleChange }) {
   const [note, setNote] = useState('');
   const [acting, setActing] = useState(false);
 
@@ -133,7 +133,7 @@ function DetailAjuan({ item, onClose, onApprove, onReject, isManager, onModuleCh
         </ol>
       </div>
 
-      {isManager && item.status === 'pending' && (
+      {bolehPutuskan && (
         <div className="space-y-2 border-t border-[var(--glass-border)] pt-4">
           <label htmlFor="approval-detail-note" className="block text-sm font-medium text-foreground">Catatan (opsional)</label>
           <Textarea id="approval-detail-note" value={note} onChange={(e) => setNote(e.target.value)} rows={2}
@@ -168,7 +168,11 @@ export default function MultiLevelApprovalModule({ user, onModuleChange }) {
   const [actingId, setActingId]       = useState(null);
   const token   = localStorage.getItem('erp_token');
   const headers = { Authorization: `Bearer ${token}` };
-  const isManager = ['superadmin','admin','owner','manager','hr'].includes((user?.role||'').toLowerCase());
+  const isManagerRole = ['superadmin','admin','owner','manager','hr'].includes((user?.role||'').toLowerCase());
+  // 2026-11-08: tombol putuskan juga tampil untuk ajuan yang menunggu AKUN INI (`/approvals/pending` = level aktif
+  // ber-peran sama dengan peran akun, termasuk peran buatan owner yang dipasang di alur) — aturan server yang sama.
+  const myPendingIds = useMemo(() => new Set(myPending.map((p) => p.id)), [myPending]);
+  const bolehPutuskan = (it) => it?.status === 'pending' && (isManagerRole || myPendingIds.has(it.id));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -270,7 +274,7 @@ export default function MultiLevelApprovalModule({ user, onModuleChange }) {
     { kunci: 'tanggal', label: 'Diajukan', isi: (it) => <span className="text-sm md:whitespace-nowrap">{tanggal(it.created_at)}</span> },
     { kunci: 'tahap', label: 'Tahap', isi: (it) => <span className="text-sm">{tahap(it)}</span> },
     { kunci: 'status', label: 'Status', isi: (it) => <Status status={it.status} /> },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (isManager && it.status === 'pending' ? (
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (bolehPutuskan(it) ? (
       <div className="flex justify-end gap-2">
         <Button size="sm" variant="destructive" disabled={actingId === it.id} onClick={() => putuskanCepat(it, 'reject')}
           data-testid={`approval-reject-${it.id}`}><XCircle />Tolak</Button>
@@ -385,7 +389,7 @@ export default function MultiLevelApprovalModule({ user, onModuleChange }) {
         <DetailAjuan
           item={selectedItem} onClose={() => setSelectedItem(null)}
           onApprove={handleApprove} onReject={handleReject}
-          isManager={isManager} onModuleChange={onModuleChange}
+          bolehPutuskan={bolehPutuskan(selectedItem)} onModuleChange={onModuleChange}
         />
       )}
     </div>

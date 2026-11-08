@@ -684,7 +684,7 @@ async def update_line(receipt_id: str, line_id: str, request: Request):
     return serialize_doc(result)
 
 
-@router.delete("/cmt-receipts/{receipt_id}/lines/{line_id}", dependencies=only(*PRODUCTION_ROLES))  # T-01 2.3
+@router.delete("/cmt-receipts/{receipt_id}/lines/{line_id}", dependencies=only(*PRODUCTION_ROLES, perm="cmt.intake.manage"))  # T-01 2.3
 async def delete_line(receipt_id: str, line_id: str, request: Request):
     """Hapus baris — hanya selama penerimaan masih "Sedang QC" dan stok baris itu belum
     tercatat. Tahap 1 (6 Nov 2026): dulu tanpa penjaga status, sehingga baris yang sudah

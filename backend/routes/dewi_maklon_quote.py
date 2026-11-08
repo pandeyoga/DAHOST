@@ -381,7 +381,7 @@ async def accept_quote(request: Request, quote_id: str):
     return {"success": True, "message": "Quote ditandai accepted"}
 
 
-@router.delete("/{quote_id}", dependencies=only(*MAKLON_ROLES))  # T-01 2.3
+@router.delete("/{quote_id}", dependencies=only(*MAKLON_ROLES, perm="maklon.manage"))  # T-01 2.3
 async def delete_quote(request: Request, quote_id: str):
     await require_auth(request)
     db = get_db()

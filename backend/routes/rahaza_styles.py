@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from fastapi import APIRouter, Request, HTTPException, UploadFile, File
 from database import get_db
-from auth import require_auth
+from auth import require_auth, check_role
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza", tags=["style-master"])
@@ -25,7 +25,8 @@ def serialize_doc(d):
 
 async def _require_admin(request: Request):
     user = await require_auth(request)
-    if user.get("role") not in ("superadmin", "admin", "manager", "gudang"):
+    # 2026-11-08: kode peran lama ATAU izin `rnd.manage` (modul Style, Pola & Tech Pack — memuat master style).
+    if not check_role(user, ("superadmin", "admin", "manager", "gudang"), "rnd.manage"):
         raise HTTPException(403, "Tidak ada akses.")
     return user
 

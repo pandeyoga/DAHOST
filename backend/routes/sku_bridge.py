@@ -252,7 +252,7 @@ async def create_master(body: CreateMasterIn, user: dict = Depends(require_auth)
     return res
 
 
-@router.delete('/mappings/{platform_sku_id}', dependencies=only(*WAREHOUSE_ROLES, *MARKETING_ROLES))  # T-01 2.3
+@router.delete('/mappings/{platform_sku_id}', dependencies=only(*WAREHOUSE_ROLES, *MARKETING_ROLES, perm="mod.wh_sku_bridge.delete"))  # T-01 2.3
 async def unmap(platform_sku_id: str, user: dict = Depends(require_auth)):
     db = get_db()
     res = await bridge.remove_mapping(db, platform_sku_id, user=user)

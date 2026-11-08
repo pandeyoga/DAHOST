@@ -10,7 +10,8 @@
  * tab hub), satu kartu tabel (dulu dua Card shadcn: kartu penyaring + kartu tabel), tampilan kosong EmptyState.
  */
 import React, { useState, useEffect, useCallback } from 'react';
-import { FINANCE_ROLES as ADMIN_ROLES } from '../../lib/financeRoles'; // FIN-02
+import { FINANCE_BOOK_PERMS, FINANCE_ROLES as ADMIN_ROLES } from '../../lib/financeRoles'; // FIN-02
+import { checkPerm } from '../../lib/rbac';
 import {
   Plus, Pencil, Trash2, RefreshCw, Tag,
   Search, Database, Loader2
@@ -41,12 +42,10 @@ function getToken() {
   return localStorage.getItem('erp_token');
 }
 
-function getUserRole() {
+function getStoredUser() {
   try {
     const raw = localStorage.getItem('erp_user');
-    if (!raw) return null;
-    const u = JSON.parse(raw);
-    return u?.role || null;
+    return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
   }
@@ -145,8 +144,8 @@ export default function EmployeeExpenseCategoryMasterModule() {
   const [editingCat, setEditingCat] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
-  const userRole = getUserRole();
-  const canEdit = ADMIN_ROLES.includes(userRole);
+  // 2026-11-08: kode peran Keuangan ATAU izin finance.manage — sama dengan server `_is_category_admin`.
+  const canEdit = checkPerm({ user: getStoredUser(), roles: ADMIN_ROLES, keys: FINANCE_BOOK_PERMS });
 
   const fetchCategories = useCallback(async () => {
     setLoading(true);

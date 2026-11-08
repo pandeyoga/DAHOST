@@ -436,7 +436,7 @@ async def update_entry(entry_id: str, body: ContentEntryUpdate, request: Request
     return {"success": True, "data": serialize(updated)}
 
 
-@router.delete("/{entry_id}", dependencies=only(*MARKETING_CS_ROLES))  # T-01 2.3
+@router.delete("/{entry_id}", dependencies=only(*MARKETING_CS_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_entry(entry_id: str, request: Request):
     await require_auth(request)
     db = get_db()

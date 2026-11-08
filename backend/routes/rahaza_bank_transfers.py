@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime, timezone, date
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, check_role
 from routes.rahaza_posting import _create_posted_je, _find_existing_je, get_mapping
 from core import entities as ent_mod
 import logging
@@ -25,7 +25,13 @@ router = APIRouter(prefix='/api/finance/bank-transfers', tags=['Bank-Transfer'])
 
 # RC-FLOW-kasbank-1 FIX: role Finance kanonik = 'accounting'/'staff_keuangan' (bukan 'finance').
 # Akun finance@dewiaditya.id (role 'accounting') sebelumnya DITOLAK 403 saat membuat transfer bank.
-from core.roles import FINANCE_ROLES  # FIN-02: satu sumber peran keuangan
+from core.roles import FINANCE_ROLES, FINANCE_CASH_PERMS  # FIN-02: satu sumber peran keuangan
+
+
+def _is_cash_officer(user: dict) -> bool:
+    """2026-11-08: kode peran Keuangan ATAU izin kas & bank (`FINANCE_CASH_PERMS`) — peran buatan owner
+    ("Accounting & Finance") dulu 403. Cermin layar: BankTransferModule.jsx (canManage)."""
+    return check_role(user, FINANCE_ROLES, FINANCE_CASH_PERMS)
 
 
 def _uid(): return str(uuid.uuid4())
@@ -145,7 +151,7 @@ async def list_transfers(
 
 @router.post('')
 async def create_transfer(body: TransferCreate, user: dict = Depends(require_auth), request: Request = None):
-    if user.get('role') not in FINANCE_ROLES:
+    if not _is_cash_officer(user):
         raise HTTPException(403, 'Hanya Finance/Admin yang bisa membuat transfer bank.')
     if body.from_account_code == body.to_account_code:
         raise HTTPException(400, 'Akun sumber dan tujuan tidak boleh sama.')
@@ -220,7 +226,7 @@ async def get_transfer(tf_id: str, user: dict = Depends(require_auth)):
 
 @router.post('/{tf_id}/retry-posting')
 async def retry_posting(tf_id: str, user: dict = Depends(require_auth)):
-    if user.get('role') not in FINANCE_ROLES:
+    if not _is_cash_officer(user):
         raise HTTPException(403, 'Hanya Finance yang bisa retry posting.')
     db = get_db()
     doc = await db.rahaza_bank_transfers.find_one({'id': tf_id}, {'_id': 0})
@@ -233,7 +239,7 @@ async def retry_posting(tf_id: str, user: dict = Depends(require_auth)):
 @router.post('/{tf_id}/void')
 async def void_transfer(tf_id: str, user: dict = Depends(require_auth)):
     """Void transfer: buat reversal JE (Dr sumber / Cr tujuan)."""
-    if user.get('role') not in FINANCE_ROLES:
+    if not _is_cash_officer(user):
         raise HTTPException(403, 'Hanya Finance/Admin yang bisa void transfer.')
     db = get_db()
     original = await db.rahaza_bank_transfers.find_one({'id': tf_id}, {'_id': 0})

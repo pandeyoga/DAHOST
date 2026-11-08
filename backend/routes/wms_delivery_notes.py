@@ -794,7 +794,7 @@ async def cancel_sj(sj_id: str, data: CancelIn, request: Request):
     return {"ok": True}
 
 
-@router.delete("/{sj_id}", dependencies=only(*WAREHOUSE_ROLES))  # T-01 2.3
+@router.delete("/{sj_id}", dependencies=only(*WAREHOUSE_ROLES, perm="shipment.manage"))  # T-01 2.3
 async def delete_sj(sj_id: str, request: Request):
     await require_auth(request)
     db = get_db()

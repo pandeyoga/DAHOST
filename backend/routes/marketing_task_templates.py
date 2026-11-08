@@ -13,7 +13,7 @@ from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel, Field
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, check_role
 from utils.query_guards import q_date
 from routes.marketing_shared import _uid, _now, _get_user, _sanitize, TaskTemplateCreate, RecurrenceConfig
 from core.authz import only  # T-01 2.3
@@ -171,7 +171,7 @@ async def update_task_template(template_id: str, data: TaskTemplateCreate, reque
     return serialize_doc({"message": "Task template updated", "template": updated})
 
 
-@router.delete("/task-templates/{template_id}", dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete("/task-templates/{template_id}", dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_task_template(template_id: str, request: Request):
     """Delete task template (set is_active=false)"""
     await require_auth(request)
@@ -285,8 +285,9 @@ async def trigger_auto_create_tasks(request: Request):
     Admin/PIC only.
     """
     user = await require_auth(request)
-    role = user.get("role", "")
-    if role not in ["admin", "owner", "superadmin", "pic_marketing", "pic_toko", "manager_marketing"]:
+    # 2026-11-08: kode peran lama ATAU izin `toko.manage` (peran buatan owner).
+    if not check_role(user, ["admin", "owner", "superadmin", "pic_marketing", "pic_toko", "manager_marketing"],
+                      "toko.manage"):
         raise HTTPException(403, "Hanya admin/PIC/manager marketing yang bisa trigger ini")
     
     try:

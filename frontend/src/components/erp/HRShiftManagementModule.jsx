@@ -33,6 +33,7 @@ import { todayWIB } from '@/lib/waktu';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, StatusBadge } from './moduleAtoms';
 import { EmployeeSelect, useActiveEmployees, employeeLabel } from './hr/hrPickers';
+import { checkPerm } from '@/lib/rbac';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const DAYS_ID = { Mon: 'Sen', Tue: 'Sel', Wed: 'Rab', Thu: 'Kam', Fri: 'Jum', Sat: 'Sab', Sun: 'Min' };
@@ -239,7 +240,9 @@ export default function HRShiftManagementModule({ user, bagian }) {
   const [assignCounts, setAssignCounts] = useState({});
   const token = localStorage.getItem('erp_token');
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
-  const isAdmin = ['superadmin', 'admin', 'owner', 'hr'].includes((user?.role || '').toLowerCase());
+  // 2026-11-08: kode peran lama ATAU izin Shift & Penjadwalan (hr.attendance.manage / hr.manage) — izin yang sama
+  // dengan server `_require_shift_writer` (routes/hr_shifts.py), supaya peran buatan owner melihat tombolnya.
+  const isAdmin = checkPerm({ user, roles: ['superadmin', 'admin', 'owner', 'hr'], keys: ['hr.attendance.manage', 'hr.manage'] });
   const { employees } = useActiveEmployees(token);
   const empById = useMemo(() => Object.fromEntries(employees.map(e => [e.id, e])), [employees]);
 

@@ -45,7 +45,7 @@ router = APIRouter(prefix="/api/dewi/kasbon", tags=["Kasbon"])
 
 # FIN-03 (temuan 2026-09-23): gerbang peran untuk review HR, pencairan Finance, seeder demo
 from core.authz import only  # noqa: E402
-from core.roles import FINANCE_ROLES, HR_ROLES  # noqa: E402
+from core.roles import FINANCE_ROLES, FINANCE_PAY_PERMS, HR_ROLES  # noqa: E402
 from routes.rahaza_payroll_shared import (  # noqa: E402 — 2026-11-02 (P5): helper bersama
     ensure_not_self_approval, notify_requester, parse_ymd, resolve_payment_account,
 )
@@ -477,7 +477,7 @@ async def get_kasbon_detail(
 
 
 # ─── HR Review ────────────────────────────────────────────────────────────────
-@router.patch("/requests/{req_id}/hr-review", dependencies=only(*HR_ROLES))  # FIN-03
+@router.patch("/requests/{req_id}/hr-review", dependencies=only(*HR_ROLES, perm="hr.approve"))  # FIN-03
 async def hr_review_kasbon(
     req_id: str,
     request: Request,
@@ -554,7 +554,7 @@ async def hr_review_kasbon(
 
 
 # ─── Finance Disburse ─────────────────────────────────────────────────────────
-@router.patch("/requests/{req_id}/disburse", dependencies=only(*FINANCE_ROLES))  # FIN-03
+@router.patch("/requests/{req_id}/disburse", dependencies=only(*FINANCE_ROLES, perm=FINANCE_PAY_PERMS))  # FIN-03
 async def finance_disburse(
     req_id: str,
     request: Request,

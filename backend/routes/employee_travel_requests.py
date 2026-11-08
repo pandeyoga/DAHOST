@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, date, timezone
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, check_role
 from core import doc_lock
 import logging
 import uuid
@@ -59,7 +59,9 @@ STATUS_LABELS = {
     'rejected': 'Ditolak',
 }
 
-from core.roles import APPROVER_ROLES, FINANCE_ROLES  # T-08: satu konstanta
+from core.roles import (  # T-08: satu konstanta
+    APPROVER_ROLES, FINANCE_ROLES, EXPENSE_APPROVE_PERMS, EXPENSE_VIEW_ALL_PERMS, FINANCE_PAY_PERMS,
+)
 from utils.employee_identity import job_title_of
 from routes.rahaza_payroll_shared import (  # 2026-11-02 (P5): helper bersama
     ensure_not_self_approval, merge_own_failures, notify_requester, parse_ymd, resolve_payment_account,
@@ -72,6 +74,19 @@ from routes.rahaza_payroll_shared import (  # 2026-11-02 (P5): helper bersama
 # 2026-11-02 (K25, keputusan owner): pemisahan tugas uang keluar — HR TIDAK lagi boleh membayar uang
 # muka (dulu satu orang HR bisa membuat, menyetujui, dan membayar dinasnya sendiri).
 ADVANCE_PAYER_ROLES = tuple(FINANCE_ROLES)
+# 2026-11-08: peran yang melihat dinas SEMUA karyawan (daftar, unduhan, detail) — ATAU izin di
+# `core.roles.EXPENSE_VIEW_ALL_PERMS` (penyetuju / pembayar). Cermin layar: EmployeeTravelModule.jsx.
+TRAVEL_VIEW_ALL_ROLES = ('superadmin', 'admin', 'owner', 'hr', 'manager', 'finance')
+
+
+def can_view_all_travel(user: dict) -> bool:
+    return check_role(user, TRAVEL_VIEW_ALL_ROLES, EXPENSE_VIEW_ALL_PERMS)
+
+
+def is_travel_approver(user: dict) -> bool:
+    return check_role(user, APPROVER_ROLES, EXPENSE_APPROVE_PERMS)
+
+
 GL_EMPLOYEE_ADVANCE = '1-1610'   # Uang Muka Karyawan
 GL_BANK_DEFAULT = '1-1201'       # cadangan bila klien lama tidak mengirim rekening
 # Portal Saya belum punya menu Klaim/Dinas → tautan notifikasi ke Dashboard Portal Saya (id menu nyata).
@@ -282,10 +297,9 @@ async def list_travel_requests(
 ):
     """List travel requests."""
     db = get_db()
-    role = (user.get('role') or '').lower()
     q: dict = {}
 
-    if role not in ('superadmin', 'admin', 'owner', 'hr', 'manager', 'finance'):
+    if not can_view_all_travel(user):
         q['employee_id'] = user.get('id')
     elif employee_id:
         q['employee_id'] = employee_id
@@ -322,11 +336,10 @@ async def export_travel_requests(
 ):
     """Export travel requests ke CSV (with RBAC filter)."""
     db = get_db()
-    role = (user.get('role') or '').lower()
     q: dict = {}
 
     # RBAC filter
-    if role not in ('superadmin', 'admin', 'owner', 'hr', 'manager', 'finance'):
+    if not can_view_all_travel(user):
         q['employee_id'] = user.get('id')
     elif employee_id:
         q['employee_id'] = employee_id
@@ -395,8 +408,7 @@ async def get_travel_request(req_id: str, user: dict = Depends(require_auth)):
     """Detail travel request."""
     db = get_db()
     doc = await _get_or_404(db, req_id)
-    role = (user.get('role') or '').lower()
-    if role not in ('superadmin', 'admin', 'owner', 'hr', 'manager', 'finance'):
+    if not can_view_all_travel(user):
         if doc.get('employee_id') != user.get('id'):
             raise HTTPException(403, 'Tidak punya akses ke request ini')
     return _serialize(doc)
@@ -514,8 +526,7 @@ async def submit_travel_request(req_id: str, user: dict = Depends(require_auth))
 async def approve_travel_request(req_id: str, payload: ApprovePayload, user: dict = Depends(require_auth)):
     """Setujui travel request."""
     db = get_db()
-    role = (user.get('role') or '').lower()
-    if role not in APPROVER_ROLES:
+    if not is_travel_approver(user):
         raise HTTPException(403, 'Hanya Manager/HR yang dapat approve')
 
     doc = await _get_or_404(db, req_id)
@@ -577,8 +588,7 @@ async def _notify_travel_decision(db, doc: dict, *, approved: bool, note: str = 
 async def reject_travel_request(req_id: str, payload: RejectPayload, user: dict = Depends(require_auth)):
     """Tolak travel request."""
     db = get_db()
-    role = (user.get('role') or '').lower()
-    if role not in APPROVER_ROLES:
+    if not is_travel_approver(user):
         raise HTTPException(403, 'Hanya Manager/HR yang dapat reject')
 
     doc = await _get_or_404(db, req_id)
@@ -616,8 +626,8 @@ async def mark_advance_paid(req_id: str, payload: AdvancePaidPayload, user: dict
           Cr  <rekening kas/bank dipilih>  (amount_paid)
     """
     db = get_db()
-    role = (user.get('role') or '').lower()
-    if role not in ADVANCE_PAYER_ROLES:
+    # 2026-11-08: kode peran Keuangan ATAU izin bayar (`FINANCE_PAY_PERMS`; tidak tersirat dari modul SDM).
+    if not check_role(user, ADVANCE_PAYER_ROLES, FINANCE_PAY_PERMS):
         raise HTTPException(403, 'Hanya Keuangan yang dapat membayar uang muka dinas (pemisahan tugas: HR tidak membayar).')
     # 2026-11-06 (pola P9): dinas DIKUNCI selama uang muka dibayar (penolakan / bayar kedua → 409).
     token = await doc_lock.claim(db, 'employee_travel_requests', req_id, field='advance_lock', actor=user,
@@ -730,7 +740,7 @@ async def complete_travel_request(req_id: str, user: dict = Depends(require_auth
     """Tandai perjalanan dinas selesai."""
     db = get_db()
     doc = await _get_or_404(db, req_id)
-    if doc.get('employee_id') != user.get('id') and (user.get('role') or '').lower() not in APPROVER_ROLES:
+    if doc.get('employee_id') != user.get('id') and not is_travel_approver(user):
         raise HTTPException(403, 'Tidak punya akses')
     if doc.get('status') not in ('approved', 'advance_paid', 'on_trip'):
         raise HTTPException(400, f"Status '{doc.get('status')}' tidak bisa diselesaikan")
