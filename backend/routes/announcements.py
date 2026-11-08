@@ -67,10 +67,10 @@ class AnnouncementResponse(BaseModel):
 # ─── BANTUAN ─────────────────────────────────────────────────────────────────
 
 def _utc(v):
-    """Datetime dari Mongo (naif, sebenarnya UTC) → berzona UTC, supaya JSON membawa +00:00."""
-    if isinstance(v, datetime) and v.tzinfo is None:
-        return v.replace(tzinfo=timezone.utc)
-    return v
+    """Datetime dari Mongo (naif, sebenarnya UTC) → berzona UTC, supaya JSON membawa +00:00.
+    8 Nov 2026: memakai helper bersama `utils.waktu.mongo_utc` (juga dipakai log aktivitas, pengguna, dll.)."""
+    from utils.waktu import mongo_utc
+    return mongo_utc(v)
 
 
 def _require_kelola(user: dict):

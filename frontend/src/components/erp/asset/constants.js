@@ -77,3 +77,8 @@ export const SEVERITY_CONFIG = {
   warning:  { label: 'Perlu perhatian', tone: 'warning' },
   info:     { label: 'Informasi',       tone: 'info' },
 };
+
+/** 2026-11-08 (keputusan owner): satu kalimat yang sama di menu "Lainnya" dan di detail aset. Sejak K18 penyusutan
+ *  hanya diposting dari registri Keuangan (menu `fin-fixed-assets`, tab Penyusutan). */
+export const KALIMAT_PENYUSUTAN = 'Penyusutan aset diposting di Keuangan › Aset Tetap, bukan di Portal Aset.';
+export const MENU_PENYUSUTAN = { modul: 'fin-fixed-assets', tab: 'depreciation' };

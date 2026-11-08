@@ -75,7 +75,7 @@
     {"modul": "hr-lms", "nama": "Pembelajaran", "deskripsi": "Materi pelatihan dan progres karyawan."},
     {"modul": "hr-ai-hub", "nama": "AI SDM", "deskripsi": "Analisis risiko keluar karyawan dan rekomendasi berbasis AI."},
     {"modul": "hr-inbox", "nama": "Inbox SDM", "deskripsi": "Pengajuan yang menunggu tindakan HR."},
-    {"modul": "approval-multilevel", "nama": "Approval Bertingkat", "deskripsi": "Rantai persetujuan berjenjang."}
+    {"modul": "approval-multilevel", "nama": "Persetujuan Bertingkat", "deskripsi": "Rantai persetujuan berjenjang."}
   ],
   "faq": [
     {

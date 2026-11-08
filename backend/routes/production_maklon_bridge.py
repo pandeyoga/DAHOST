@@ -729,6 +729,9 @@ async def maklon_actual_costs(db, po_id: str) -> dict:
         'revenue': revenue, 'qty_billable': f.get('qty_dispatched', 0),
         'margin': round(revenue - total, 2),
         'margin_pct': round((revenue - total) / revenue * 100, 2) if revenue else 0.0,
+        # 8 Nov 2026: margin terealisasi (pendapatan − biaya pcs yang sudah dikirim ke klien), lihat core.hpp_aktual
+        'realized_cost': f.get('realized_cost'), 'margin_realized': f.get('margin_realized'),
+        'margin_realized_pct': f.get('margin_realized_pct'),
         'margin_per_pcs': f.get('margin_per_pcs'), 'selling_price_per_pcs': f.get('selling_price_per_pcs'),
         'has_actual': bool(bills),
         'cmt_payments': [{'payment_code': p.get('payment_code'), 'total_pcs': p.get('total_pcs'),

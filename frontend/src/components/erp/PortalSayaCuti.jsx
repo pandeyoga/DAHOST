@@ -122,7 +122,7 @@ export default function PortalSayaCuti({ user, headers }) {
   const [wdPreview, setWdPreview] = useState(null);
   const [wdLoading, setWdLoading] = useState(false);
 
-  // Tahap 2 (2026-11-06): karyawan mengisi tanggal, jumlah jam, dan alasan saja — pengali dari Pengaturan Payroll.
+  // Tahap 2 (2026-11-06): karyawan mengisi tanggal, jumlah jam, dan alasan saja — pengali dari Pengaturan gaji.
   const OT_EMPTY = { date: '', hours: '', reason: '' };
   const [otForm, setOtForm] = useState(OT_EMPTY);
   const [showOtForm, setShowOtForm] = useState(false);
@@ -479,7 +479,7 @@ export default function PortalSayaCuti({ user, headers }) {
 
       {/* Form pengajuan lembur */}
       <FormPopup open={showOtForm} onClose={() => setShowOtForm(false)} ukuran="pendek" testId="ot-form"
-        judul="Ajukan lembur" keterangan="Pengali upah lembur mengikuti Pengaturan Payroll."
+        judul="Ajukan lembur" keterangan="Pengali upah lembur mengikuti Pengaturan gaji."
         onSimpan={submitOT} menyimpan={submitting} labelSimpan="Kirim pengajuan">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Isian label="Tanggal" wajib>

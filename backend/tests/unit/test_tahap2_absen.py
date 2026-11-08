@@ -233,9 +233,28 @@ class TestSatuFungsiPersetujuan:
     def test_massal_tolak_saldo_kurang_tanpa_menulis(self, db, monkeypatch):
         as_user(monkeypatch, HR)
         _leave(db, lt="lt-iz", f="2026-11-02", t="2026-11-07", attachment_url="/api/uploads/x.pdf")   # 6 > jatah 3
-        out = run(leave_mod.bulk_approve_leaves(FakeRequest({})))
+        out = run(leave_mod.bulk_approve_leaves(FakeRequest({"leave_ids": ["lv1"]})))
         assert out["approved"] == 0 and len(out["failed"]) == 1 and "Sisa cuti tidak cukup" in out["failed"][0]["reason"]
         assert db.rahaza_attendance_events.docs == [] and db.rahaza_leave_requests.docs[0]["status"] == "pending_approval"
+
+    def test_massal_hanya_yang_dikirim_body_kosong_ditolak(self, db, monkeypatch):
+        """Keputusan 8 Nov: "Setujui yang tampil" hanya menyetujui `leave_ids` yang dikirim layar."""
+        as_user(monkeypatch, HR)
+        _leave(db, lid="lv1")
+        _leave(db, lid="lv2", f="2026-11-16", t="2026-11-16")
+        for body in ({}, {"leave_ids": []}, {"leave_ids": None}):
+            assert _status(leave_mod.bulk_approve_leaves(FakeRequest(body))) == 400
+        assert [d["status"] for d in db.rahaza_leave_requests.docs] == ["pending_approval", "pending_approval"]
+        out = run(leave_mod.bulk_approve_leaves(FakeRequest({"leave_ids": ["lv2", "lv2", "tidak-ada"]})))
+        assert out["approved"] == 1 and out["skipped"] == 0
+        status = {d["id"]: d["status"] for d in db.rahaza_leave_requests.docs}
+        assert status == {"lv1": "pending_approval", "lv2": "approved"}
+
+    def test_massal_tetap_butuh_penyetuju(self, db, monkeypatch):
+        as_user(monkeypatch, OPS)
+        _leave(db)
+        assert _status(leave_mod.bulk_approve_leaves(FakeRequest({"leave_ids": ["lv1"]}))) == 403
+        assert db.rahaza_leave_requests.docs[0]["status"] == "pending_approval"
 
     def test_dialog_persetujuan_memuat_alasan_lampiran_dan_usulan(self, db, monkeypatch):
         as_user(monkeypatch, HR)

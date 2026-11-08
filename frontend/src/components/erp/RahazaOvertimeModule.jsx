@@ -248,7 +248,7 @@ function OvertimeDialog({ employees, isApprover, currentUser, onSave, onClose })
 
   return (
     <FormPopup open onClose={onClose} ukuran="pendek" testId="overtime-form" judul="Ajukan lembur"
-      keterangan="Pengali upah lembur mengikuti Pengaturan penggajian." onSimpan={submit} menyimpan={saving}
+      keterangan="Pengali upah lembur mengikuti Pengaturan gaji." onSimpan={submit} menyimpan={saving}
       labelSimpan="Ajukan">
       <div className="grid gap-4 sm:grid-cols-2">
         {isApprover && (

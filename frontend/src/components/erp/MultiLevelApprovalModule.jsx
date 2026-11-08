@@ -1,5 +1,5 @@
 /**
- * Approval Bertingkat (Portal SDM) — persetujuan bertingkat lintas departemen.
+ * Persetujuan Bertingkat (Portal SDM) — persetujuan bertingkat lintas departemen.
  *
  * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, daftar = tabel (kartu ringkas di HP) + unduh Excel/CSV,
  * detail = popup (catatan, Setujui hijau, Tolak merah), kartu angka StatTile dengan keterangan, bahasa Indonesia.

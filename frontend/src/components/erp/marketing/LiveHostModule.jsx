@@ -9,7 +9,7 @@
  *
  * External API (preserved):
  *   - Default export `LiveHostModule`
- *   - Props: { token }
+ *   - Props: { token, user, onNavigate } (user & onNavigate dipakai Rekap host → SDM › Penggajian)
  *
  * Sub-components live in `./live-host/`:
  *   - LiveHostsTab.jsx + AddEditHostModal.jsx
@@ -19,9 +19,9 @@
  *   - TrainingTab.jsx + TrainingModal.jsx + AssignTrainingModal.jsx
  *   - utils.js, Badges.jsx (shared)
  *
- * Pre-existing tabs (UNCHANGED):
+ * Pre-existing tabs:
  *   - AnalyticsTab (./AnalyticsTab)
- *   - PaymentTab (./PaymentTab)
+ *   - PaymentTab (./PaymentTab) — sejak 8 Nov 2026 "Rekap host" (rekap per host, tanpa tombol bayar)
  *
  * Standar UI/UX v2 (8 Nov 2026): tampilan dipilih dengan pil penyaring (dulu deret tombol tab buatan sendiri =
  * tab di dalam tab hub); tanpa kepala sendiri (judul hub Live Selling sudah tampil); label Indonesia.
@@ -46,10 +46,11 @@ const TAMPILAN = [
   { key: 'scripts', label: 'Naskah', icon: Video },
   { key: 'training', label: 'Pelatihan', icon: TrendingUp },
   { key: 'analytics', label: 'Analitik', icon: BarChart3 },
-  { key: 'payment', label: 'Pembayaran', icon: DollarSign },
+  // 8 Nov 2026 (keputusan pemilik): "Pembayaran" → rekap per host; gaji dibayar lewat SDM › Penggajian.
+  { key: 'payment', label: 'Rekap host', icon: DollarSign },
 ];
 
-export default function LiveHostModule({ token }) {
+export default function LiveHostModule({ token, user, onNavigate }) {
   const [activeTab, setActiveTab] = useState('hosts'); // hosts | shifts | calendar | scripts | training | analytics | payment
   const authH = useMemo(
     () => ({ Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` }),
@@ -65,7 +66,7 @@ export default function LiveHostModule({ token }) {
       {activeTab === 'scripts' && <ScriptsTab authH={authH} />}
       {activeTab === 'training' && <TrainingTab authH={authH} />}
       {activeTab === 'analytics' && <AnalyticsTab authH={authH} />}
-      {activeTab === 'payment' && <PaymentTab authH={authH} />}
+      {activeTab === 'payment' && <PaymentTab authH={authH} user={user} onNavigate={onNavigate} />}
     </PageLayout>
   );
 }

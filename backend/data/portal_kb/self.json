@@ -50,10 +50,10 @@
     {"modul": "portal-payslip", "nama": "Slip Gaji", "deskripsi": "Rincian gaji per periode."},
     {"modul": "portal-kasbon", "nama": "Kasbon", "deskripsi": "Pinjaman dan cicilannya."},
     {"modul": "kpi-portal", "nama": "KPI", "deskripsi": "Target dan capaian pribadi."},
-    {"modul": "portal-annual-review", "nama": "Annual Review", "deskripsi": "Penilaian kinerja tahunan."},
+    {"modul": "portal-annual-review", "nama": "Tinjauan Tahunan", "deskripsi": "Penilaian kinerja tahunan."},
     {"modul": "portal-training", "nama": "Training", "deskripsi": "Materi pelatihan yang harus diselesaikan."},
-    {"modul": "portal-peer-feedback", "nama": "Peer Feedback", "deskripsi": "Umpan balik antar rekan kerja."},
-    {"modul": "portal-career-coach", "nama": "Career Coach", "deskripsi": "Saran pengembangan karier."},
+    {"modul": "portal-peer-feedback", "nama": "Umpan Balik Rekan", "deskripsi": "Umpan balik antar rekan kerja."},
+    {"modul": "portal-career-coach", "nama": "Pendamping Karier", "deskripsi": "Saran pengembangan karier."},
     {"modul": "portal-workspace", "nama": "Ruang Kerja", "deskripsi": "Catatan dan tugas pribadi."},
     {"modul": "portal-documents", "nama": "Dokumen", "deskripsi": "Dokumen kepegawaian Anda."}
   ],

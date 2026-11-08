@@ -456,7 +456,7 @@ async def _cari_lembur(ctx, oid: str) -> dict:
         "persetujuan yang sama dengan layar Lembur dan Inbox SDM). Isian: `id` pengajuan (dari "
         "daftar_persetujuan_menunggu) dan `keputusan` setujui|tolak. Hanya penyetuju SDM (HR, manajer, owner); "
         "lembur milik/ajuan sendiri ditolak. Lembur yang disetujui ikut dihitung di payroll (jam × pengali dari "
-        "Pengaturan Payroll); pemohon dikabari. Alasan yang ditulis pengguna di kartu dikirim sebagai catatan "
+        "Pengaturan gaji); pemohon dikabari. Alasan yang ditulis pengguna di kartu dikirim sebagai catatan "
         "persetujuan/alasan penolakan. Tidak bisa dibalikkan otomatis."),
     input_schema={
         "type": "object",

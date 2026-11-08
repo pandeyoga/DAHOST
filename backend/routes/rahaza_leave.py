@@ -770,19 +770,26 @@ async def reject_leave(leave_id: str, request: Request):
 async def bulk_approve_leaves(request: Request):
     """Setujui banyak pengajuan sekaligus — tiap pengajuan lewat `approve_leave_request` yang sama
     (saldo hari kerja, absensi per hari kerja, tingkat 2, kunci payroll). Tahap 2 (2026-11-06): dulu jalur ini
-    melewati pemeriksaan saldo dan menulis "cuti" di setiap hari kalender. Keputusan bayar = usulan sistem."""
+    melewati pemeriksaan saldo dan menulis "cuti" di setiap hari kalender. Keputusan bayar = usulan sistem.
+
+    2026-11-08 (keputusan pemilik): `leave_ids` WAJIB — hanya pengajuan yang tampil di layar (sesuai penyaring)
+    yang disetujui. Dulu body kosong menyetujui SEMUA pengajuan menunggu di server (≤ 500)."""
     user = await _require_leave_approver(request)
     db = get_db()
     body = await request.json()
-    leave_ids = body.get("leave_ids")  # list or None (None = all pending)
+    raw_ids = body.get("leave_ids") if isinstance(body, dict) else None
+    if not isinstance(raw_ids, list):
+        raise HTTPException(400, "Pilih pengajuan yang akan disetujui (daftar pengajuan kosong).")
+    leave_ids = list(dict.fromkeys(str(i).strip() for i in raw_ids if isinstance(i, str) and i.strip()))
+    if not leave_ids:
+        raise HTTPException(400, "Pilih pengajuan yang akan disetujui (daftar pengajuan kosong).")
+    if len(leave_ids) > 500:
+        raise HTTPException(400, "Paling banyak 500 pengajuan sekali setuju.")
 
-    query = {"status": {"$in": list(PENDING_LEAVE_STATUSES)}}
-    if leave_ids:
-        query["id"] = {"$in": leave_ids}
-
+    query = {"status": {"$in": list(PENDING_LEAVE_STATUSES)}, "id": {"$in": leave_ids}}
     pending = await db.rahaza_leave_requests.find(query, {"_id": 0, "id": 1}).to_list(500)
     if not pending:
-        return {"approved": 0, "skipped": 0, "message": "Tidak ada request pending untuk disetujui."}
+        return {"approved": 0, "skipped": 0, "message": "Tidak ada pengajuan menunggu yang bisa disetujui."}
 
     from core.leave_engine import approve_leave_request
     approved_count, forwarded, failed = 0, 0, []

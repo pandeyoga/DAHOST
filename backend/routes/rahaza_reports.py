@@ -8,8 +8,8 @@ from core import stock_service
 # supaya tidak lahir sumber kebenaran kedua (lihat services/mgmt_analytics.py).
 from services.mgmt_analytics import (
     MAX_DOCS, as_iso_date as _as_iso_date, buyer_dispatch_map, domain_label, domain_scope,
-    f as _f, i as _i, in_period as _in_period, norm_domain, po_buckets,
-    resolve_period, today as _today,
+    f as _f, i as _i, in_period as _in_period, norm_domain, on_time_stats, output_in_period, output_sources,
+    po_buckets, resolve_period, today as _today,
 )
 
 router = APIRouter(prefix="/api/rahaza", tags=["rahaza-reports"])
@@ -53,20 +53,13 @@ async def overview(request: Request):
                     if (j.get("status") or "").lower() in ("completed", "closed"))
 
     # Output pada periode — internal: catatan progres; maklon: penerimaan dari CMT.
-    progress_rows = await db.production_progress.find(
-        {"job_id": {"$in": sc["job_ids"]}}, {"_id": 0, "job_id": 1, "completed_quantity": 1,
-                                             "progress_date": 1},
-    ).to_list(MAX_DOCS) if sc["job_ids"] else []
-    output_progress = sum(_i(r.get("completed_quantity")) for r in progress_rows
-                          if _in_period(r.get("progress_date"), start, end))
-
-    receipts = await db.cmt_receipts.find(
-        {"po_id": {"$in": sc["po_ids"]}},
-        {"_id": 0, "id": 1, "po_id": 1, "receipt_date": 1, "status": 1,
-         "total_actual": 1, "total_rejected": 1, "total_qty_short": 1},
-    ).to_list(MAX_DOCS) if sc["po_ids"] else []
+    # 8 Nov 2026: SATU pembaca (`services.mgmt_analytics.output_sources`) yang juga dipakai Dashboard Eksekutif.
+    out_src = await output_sources(db, sc)
+    progress_rows, receipts = out_src["progress"], out_src["receipts"]
+    out_period = output_in_period(out_src, start, end)
+    output_progress = out_period["progress"]
     receipts_period = [r for r in receipts if _in_period(r.get("receipt_date"), start, end)]
-    qty_received = sum(_i(r.get("total_actual")) for r in receipts_period)
+    qty_received = out_period["received"]
 
     # Pengiriman
     vendor_ship = await db.vendor_shipments.count_documents(
@@ -334,51 +327,17 @@ async def on_time_delivery(request: Request, days: int = Query(90, ge=1, le=3650
     db = get_db()
     domain = _norm_domain(request.query_params.get("domain"))
     sc = await domain_scope(db, domain)
-    since = (_today() - timedelta(days=days)).isoformat()
-
-    ships = await db.buyer_shipments.find(
-        {"po_id": {"$in": sc["po_ids"]}}, {"_id": 0, "id": 1, "po_id": 1},
-    ).to_list(MAX_DOCS) if sc["po_ids"] else []
-    ship_po = {s["id"]: s.get("po_id") for s in ships}
-    items = await db.buyer_shipment_items.find(
-        {"shipment_id": {"$in": list(ship_po.keys())}},
-        {"_id": 0, "shipment_id": 1, "dispatch_date": 1, "qty_shipped": 1},
-    ).to_list(MAX_DOCS) if ship_po else []
-
-    last_dispatch: dict = {}
-    for it in items:
-        d = _as_iso_date(it.get("dispatch_date"))
-        if not d or d < since:
-            continue
-        po_id = ship_po.get(it.get("shipment_id"))
-        if not po_id:
-            continue
-        if d > last_dispatch.get(po_id, ""):
-            last_dispatch[po_id] = d
-
-    total = 0
-    on_time = 0
-    late_rows = []
-    for po_id, d in last_dispatch.items():
-        po = sc["po_by_id"].get(po_id) or {}
-        due = _as_iso_date(po.get("deadline") or po.get("delivery_deadline"))
-        if not due:
-            continue  # tanpa deadline → tidak bisa dinilai (jangan dipaksa)
-        total += 1
-        if d <= due:
-            on_time += 1
-        else:
-            late_rows.append({"po_number": po.get("po_number"), "deadline": due, "dispatch": d})
-    rate = (on_time / total * 100) if total else 0.0
+    # 8 Nov 2026: hitungan dipindah ke `services.mgmt_analytics.on_time_stats` (juga dipakai /api/dashboard)
+    st = await on_time_stats(db, sc, days)
     return {
         "domain": domain, "domain_label": _domain_label(domain), "days": days,
-        "total_po": total, "on_time": on_time, "late": total - on_time,
-        "rate_pct": round(rate, 1),
+        "total_po": st["total_po"], "on_time": st["on_time"], "late": st["late"],
+        "rate_pct": st["rate_pct"],
         "measurable_note": "Hanya PO yang punya deadline DAN sudah dikirim ke buyer yang dinilai.",
-        "late_examples": late_rows[:5],
+        "late_examples": st["late_examples"],
         "sources": [
-            {"collection": "buyer_shipments", "count": len(ships), "note": "pengiriman ke buyer"},
-            {"collection": "buyer_shipment_items", "count": len(items), "note": "tanggal dispatch"},
+            {"collection": "buyer_shipments", "count": st["shipments"], "note": "pengiriman ke buyer"},
+            {"collection": "buyer_shipment_items", "count": st["shipment_items"], "note": "tanggal dispatch"},
         ],
     }
 

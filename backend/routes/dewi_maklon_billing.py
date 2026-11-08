@@ -619,6 +619,8 @@ async def get_hpp(order_id: str, user: dict = Depends(require_auth)):
         'margin_per_pcs': fig.get('margin_per_pcs'),
         'actual_margin_pct': fig.get('margin_pct') if fig.get('margin_pct') is not None else 0,
         'revenue': a['revenue'], 'margin': a['margin'], 'margin_pct': a['margin_pct'],
+        'realized_cost': a.get('realized_cost'), 'margin_realized': a.get('margin_realized'),
+        'margin_realized_pct': a.get('margin_realized_pct'),
         'actual': a, 'gaps': fig['gaps'], 'notes': '', 'manual_snapshot': None,
     }
 

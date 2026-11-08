@@ -327,7 +327,7 @@ export default function KREATORRequestModule({ token, currentUser, user, moduleI
   const s = stats || {};
 
   return (
-    <PageLayout testId="kreator-request-module" title={isRndScope ? 'Persetujuan permintaan kreator' : 'Permintaan kreator'}
+    <PageLayout testId="kreator-request-module" title={isRndScope ? 'Persetujuan kreator' : 'Permintaan kreator'}
       subtitle={isRndScope
         ? 'Antrian tinjauan permintaan produk dari kreator: setujui/tolak lalu tandai sample siap.'
         : 'Permintaan produk dari kreator (live streaming & video TikTok) — koordinasi Marketing ↔ RnD.'}

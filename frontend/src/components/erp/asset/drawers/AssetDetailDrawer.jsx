@@ -6,14 +6,16 @@
  *    di kepala popup; "Lepas aset" memakai dialog konfirmasi aplikasi (dulu konfirmasi bawaan peramban);
  *  • kotak abu ber-label HURUF BESAR → baris detail (BarisDetail); kotak biru/hijau ber-emoji untuk garansi &
  *    asuransi → bagian biasa dengan lencana "Sudah habis / Habis < 30 hari";
- *  • form di dalam panel (tugaskan, catat pemeliharaan, posting penyusutan) → tombol yang membuka popup form
- *    standar; isian tanggal/bulan bawaan peramban → DatePicker / pilihan bulan;
+ *  • form di dalam panel (tugaskan, catat pemeliharaan) → tombol yang membuka popup form
+ *    standar; isian tanggal bawaan peramban → DatePicker;
  *  • riwayat penyusutan, penugasan, pemeliharaan = tabel yang bisa diunduh.
  * Endpoint, isian, dan aturan (batas Rp 5 juta untuk pelepasan lewat persetujuan) tidak berubah.
+ * 2026-11-08 (keputusan owner): tombol + form "Posting penyusutan" dihapus — `POST /api/assets/{id}/depreciate/…`
+ * selalu ditolak server sejak K18 (410). Gantinya satu kalimat + tombol ke Keuangan › Aset Tetap (tab Penyusutan).
  */
 import { useState, useEffect, useRef } from 'react';
 import {
-  ArrowRight, Camera, Package, Printer, Trash2, TrendingDown, UserPlus, Undo2, Wrench,
+  ArrowRight, Camera, Package, Printer, Trash2, UserPlus, Undo2, Wrench,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -30,13 +32,12 @@ import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { todayWIB, thisMonthWIB, toWIBDate, daysAheadWIB } from '@/lib/waktu';
-import { monthOptions } from '../../finance/PeriodPicker';
+import { todayWIB, toWIBDate, daysAheadWIB } from '@/lib/waktu';
 import { Notice, StatusBadge as Lencana } from '../../moduleAtoms';
 import { angka, apicall, fmtCurrency, fmtDate, fmtPersen, API } from '../utils';
 import { StatusBadge } from '../components/StatusBadge';
 import { Bagian } from '../components/KPICard';
-import { STATUS_CONFIG, MAINT_TYPE_LABEL, MAINT_STATUS_LABEL } from '../constants';
+import { KALIMAT_PENYUSUTAN, STATUS_CONFIG, MAINT_TYPE_LABEL, MAINT_STATUS_LABEL } from '../constants';
 
 const BATAS_PERSETUJUAN = 5_000_000;
 /** Riwayat penyusutan: catatan lama Portal Aset memakai amount/cumulative; jadwal registri Keuangan (aset tertaut)
@@ -54,9 +55,10 @@ function MasaBerlaku({ tanggal }) {
   return null;
 }
 
-export function AssetDetailDrawer({ asset: assetProp, token, open, onClose, onRefresh, onTransferClick, onRequestDisposalClick }) {
+export function AssetDetailDrawer({
+  asset: assetProp, token, open, onClose, onRefresh, onTransferClick, onRequestDisposalClick, onBukaPenyusutan,
+}) {
   const [detail, setDetail] = useState(assetProp);
-  const [deprPeriod, setDeprPeriod] = useState(thisMonthWIB());
   const [assignForm, setAssignForm] = useState({ user_id: '', user_name: '', notes: '' });
   const [maintForm, setMaintForm] = useState(MAINT_KOSONG);
   const [activeTab, setActiveTab] = useState('info');
@@ -64,7 +66,7 @@ export function AssetDetailDrawer({ asset: assetProp, token, open, onClose, onRe
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [assignments, setAssignments] = useState([]);
   const [maintenance, setMaintenance] = useState([]);
-  const [popup, setPopup] = useState(null);        // null | 'tugas' | 'rawat' | 'susut'
+  const [popup, setPopup] = useState(null);        // null | 'tugas' | 'rawat'
   const [galat, setGalat] = useState('');
   const photoInputRef = useRef(null);
 
@@ -141,20 +143,6 @@ export function AssetDetailDrawer({ asset: assetProp, token, open, onClose, onRe
   };
 
   const bukaPopup = (jenis) => { setGalat(''); setPopup(jenis); };
-
-  const postDepr = async () => {
-    if (!deprPeriod) return;
-    setLoading(true); setGalat('');
-    try {
-      const d = await apicall('POST', `/api/assets/${asset.id}/depreciate/${deprPeriod}`, token, {});
-      if (d.id) {
-        toast.success(`Penyusutan ${deprPeriod} diposting: ${fmtCurrency(d.amount)}`);
-        setPopup(null);
-        await reloadDetail(); onRefresh();
-      } else setGalat(d.detail || 'Gagal posting penyusutan.');
-    } catch (e) { setGalat(e.message || 'Gagal posting penyusutan.'); }
-    finally { setLoading(false); }
-  };
 
   const assignAsset = async () => {
     if (!assignForm.user_id) { setGalat('ID karyawan wajib diisi.'); return; }
@@ -337,12 +325,16 @@ export function AssetDetailDrawer({ asset: assetProp, token, open, onClose, onRe
 
           {/* Penyusutan */}
           <TabsContent value="depr" className="mt-4 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm">Penyusutan per bulan: <span className="font-semibold tabular-nums">{fmtCurrency(asset.monthly_depreciation)}</span></p>
-              <Button size="sm" variant="outline" onClick={() => bukaPopup('susut')} data-testid="post-depr-open-btn">
-                <TrendingDown />Posting penyusutan
-              </Button>
-            </div>
+            <p className="text-sm">Penyusutan per bulan: <span className="font-semibold tabular-nums">{fmtCurrency(asset.monthly_depreciation)}</span></p>
+            <Notice tone="info" testId="asset-depr-keuangan"
+              action={onBukaPenyusutan && (
+                <Button size="sm" variant="outline" onClick={() => { onClose(); onBukaPenyusutan(); }}
+                  data-testid="asset-depr-keuangan-open">
+                  <ArrowRight />Buka Aset Tetap
+                </Button>
+              )}>
+              {KALIMAT_PENYUSUTAN}
+            </Notice>
             <Bagian judul="Riwayat penyusutan"
               alat={<TombolUnduh namaBerkas={`penyusutan-${asset.asset_number}`} namaLembar="Penyusutan" baris={riwayatSusut}
                 testId="asset-depr-unduh" kolom={[
@@ -424,18 +416,6 @@ export function AssetDetailDrawer({ asset: assetProp, token, open, onClose, onRe
           </TabsContent>
         </Tabs>
       </DetailPopup>
-
-      {/* Posting penyusutan satu bulan */}
-      <FormPopup open={popup === 'susut'} onClose={() => setPopup(null)} ukuran="pendek" testId="asset-depr-form"
-        judul="Posting penyusutan bulanan" keterangan={`${asset.asset_number} — ${asset.name}`}
-        labelSimpan="Posting" onSimpan={postDepr} menyimpan={loading} galat={galat}>
-        <Isian label="Periode" wajib petunjuk={`Penyusutan per bulan: ${fmtCurrency(asset.monthly_depreciation)}.`}>
-          <SmartNativeSelect value={deprPeriod} onChange={e => setDeprPeriod(e.target.value)} searchable={false}
-            className="h-9 w-full" data-testid="post-depr-period">
-            {monthOptions(24).map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-          </SmartNativeSelect>
-        </Isian>
-      </FormPopup>
 
       {/* Tugaskan ke karyawan */}
       <FormPopup open={popup === 'tugas'} onClose={() => setPopup(null)} ukuran="pendek" testId="asset-assign-form"

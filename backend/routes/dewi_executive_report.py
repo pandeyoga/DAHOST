@@ -134,6 +134,17 @@ async def _gl_revenue(db, start: str, end: str) -> float:
     return round(float(r.get("c") or 0) - float(r.get("d") or 0), 2)
 
 
+AR_OVERDUE_STATUSES = ["sent", "issued", "partial", "partial_paid", "overdue"]
+
+
+def ar_overdue_match(today_iso: str) -> dict:
+    """Saringan faktur piutang lewat jatuh tempo: belum lunas & jatuh tempo SEBELUM `today_iso` (WIB).
+
+    8 Nov 2026 (keputusan owner): faktur yang jatuh tempo hari ini belum terlambat — aturan yang sama dengan
+    Umur piutang (`rahaza_ar_canonical`), Ringkasan Bisnis, dan tugas `cron/mark-overdue`."""
+    return {"status": {"$in": AR_OVERDUE_STATUSES}, "due_date": {"$lt": today_iso}}
+
+
 async def _finance_kpis(db, year: int, month: int) -> dict:
     start, end = _month_range(year, month)
 
@@ -162,10 +173,11 @@ async def _finance_kpis(db, year: int, month: int) -> dict:
     pl_totals = (await compute_profit_loss(db, start, end))["totals"]
     total_expenses = round(pl_totals["cogs"] + pl_totals["expense"] + pl_totals["other_expense"], 2)
 
-    # AR overdue — SSOT rahaza_ar_invoices: belum lunas & due_date lewat
-    today = today_wib().isoformat()
+    # AR overdue — SSOT rahaza_ar_invoices: belum lunas & due_date lewat.
+    # 8 Nov 2026 (keputusan owner): lewat jatuh tempo = jatuh tempo SEBELUM hari ini (WIB). Faktur yang jatuh
+    # tempo HARI INI belum terlambat (dulu `$lte` → 6 faktur/111 jt vs 5/88,4 jt di Umur piutang & Ringkasan).
     ar_overdue_pipeline = [
-        {"$match": {"status": {"$in": ["sent", "issued", "partial", "partial_paid", "overdue"]}, "due_date": {"$lte": today}}},  # FIN-09
+        {"$match": ar_overdue_match(today_wib().isoformat())},  # FIN-09
         {"$group": {"_id": None, "total": {"$sum": {"$ifNull": ["$balance", 0]}}, "count": {"$sum": 1}}},
     ]
     ar_rows = await db.rahaza_ar_invoices.aggregate(ar_overdue_pipeline).to_list(1)

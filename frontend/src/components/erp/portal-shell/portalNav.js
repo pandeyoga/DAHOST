@@ -129,9 +129,9 @@ export const PORTAL_NAV = {
         ],
       },
       {
-        label: 'STRATEGI & APPROVAL',
+        label: 'STRATEGI & PERSETUJUAN',
         items: [
-          { id: 'unified-approval-hub',  label: 'Pusat Approval',  icon: Layers },
+          { id: 'unified-approval-hub',  label: 'Pusat Persetujuan', icon: Layers },
           { id: 'mgmt-marketing-cycle',  label: 'Siklus Marketing', icon: Target },
           { id: 'mgmt-marketing-change-log', label: 'Jejak Marketing', icon: History },
           { id: 'mgmt-okr',              label: 'OKR Tracker',     icon: Target },
@@ -165,7 +165,7 @@ export const PORTAL_NAV = {
         label: 'AKSES & AUDIT',
         items: [
           { id: 'mgmt-access-hub', label: 'Kontrol Akses', icon: Shield },
-          { id: 'sys-rbac-audit', label: 'Audit Approval & Notifikasi', icon: ShieldCheck },
+          { id: 'sys-rbac-audit', label: 'Audit Persetujuan & Notifikasi', icon: ShieldCheck },
           { id: 'mgmt-activity',   label: 'Log Aktivitas', icon: History },
           { id: 'sys-notif-config', label: 'Aturan Notifikasi', icon: Bell },
           { id: 'audit-findings',   label: 'Papan Temuan Audit', icon: ShieldCheck },
@@ -432,7 +432,7 @@ export const PORTAL_NAV = {
           { id: 'accessories-master-stock',     label: 'Master Aksesoris', icon: Package },
           { id: 'accessories-opname',           label: 'Stok Opname',      icon: ClipboardCheck },
           { id: 'accessories-internal-request', label: 'Request Internal', icon: ArrowRightLeft },
-          { id: 'accessories-inbox',            label: 'Inbox Approval',   icon: Inbox },
+          { id: 'accessories-inbox',            label: 'Inbox Persetujuan', icon: Inbox },
           // ACC-3: "Peminjaman" (dulu id 'accessories-loans') DIPINDAH ke Manajemen Aset.
           // Peminjaman = domain ASET (unit fisik yang harus kembali), BUKAN konsumsi
           // aksesoris. Id lama tetap resolve via App.js LEGACY_MODULE_TO_PORTAL.
@@ -604,9 +604,9 @@ export const PORTAL_NAV = {
           { id: 'hr-performance-hub',   label: 'Manajemen Kinerja',   icon: Target },
           { id: 'hr-lms',               label: 'Pembelajaran',        icon: GraduationCap },
           { id: 'hr-ai-hub',            label: 'AI SDM',              icon: Brain },
-          { id: 'unified-approval-hub', label: 'Pusat Approval',      icon: Layers },
+          { id: 'unified-approval-hub', label: 'Pusat Persetujuan',      icon: Layers },
           { id: 'hr-inbox',             label: 'Inbox SDM',           icon: Inbox },
-          { id: 'approval-multilevel',  label: 'Approval Bertingkat', icon: CheckSquare },
+          { id: 'approval-multilevel',  label: 'Persetujuan Bertingkat', icon: CheckSquare },
         ],
       },
     ],
@@ -635,7 +635,7 @@ export const PORTAL_NAV = {
         items: [
           { id: 'rnd-costing-hub',      label: 'Costing & HPP', icon: Calculator },
           { id: 'rnd-analytics',        label: 'RnD Analytics', icon: BarChart3 },
-          { id: 'rnd-kreator-requests', label: 'Approval Kreator', icon: Users },
+          { id: 'rnd-kreator-requests', label: 'Persetujuan Kreator', icon: Users },
         ],
       },
     ],
@@ -662,15 +662,15 @@ export const PORTAL_NAV = {
           { id: 'portal-payslip',       label: 'Slip Gaji',     icon: Banknote },
           { id: 'portal-kasbon',        label: 'Kasbon',        icon: Wallet },
           { id: 'kpi-portal',           label: 'KPI',           icon: Target },
-          { id: 'portal-annual-review', label: 'Annual Review', icon: Trophy },
+          { id: 'portal-annual-review', label: 'Tinjauan Tahunan', icon: Trophy },
         ],
       },
       {
         label: 'PENGEMBANGAN & DOKUMEN',
         items: [
           { id: 'portal-training',      label: 'Training',     icon: BookOpen },
-          { id: 'portal-peer-feedback', label: 'Peer Feedback', icon: MessageSquareIcon },
-          { id: 'portal-career-coach',  label: 'Career Coach', icon: Brain },
+          { id: 'portal-peer-feedback', label: 'Umpan Balik Rekan', icon: MessageSquareIcon },
+          { id: 'portal-career-coach',  label: 'Pendamping Karier', icon: Brain },
           { id: 'portal-workspace',     label: 'Ruang Kerja',  icon: Star },
           { id: 'portal-documents',     label: 'Dokumen',      icon: FileTextIcon },
         ],

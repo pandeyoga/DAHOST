@@ -5,6 +5,9 @@ RUMUS (keputusan No. 13 + rumus HPP aktual per PO)
     HPP aktual PO = potongan (nilai dari cutting, saat diserahkan) + aksesoris yang diserahkan
                   + upah CMT (tagihan nyata) + permak
     margin (maklon) = harga jasa − HPP
+    margin terealisasi (maklon) = pendapatan (pcs dikirim ke klien × harga jasa) − biaya pcs yang dikirim itu
+                                  (bahan per pcs dikirim ke CMT × pcs dikirim ke klien + upah CMT & permak pro-rata
+                                  pcs dikirim ÷ pcs lolos QC) — dasar hitung pendapatan & biaya SEPADAN (8 Nov 2026)
 
 * BOM hanya simulasi/standar (tab "HPP standar per potong"); angka di sini hanya dari data nyata.
 * Upah internal dan biaya umum produksi (overhead) TIDAK masuk HPP (keputusan 6 Nov, No. 6). Biaya umum per pcs
@@ -605,6 +608,15 @@ def po_hpp_figures(*, po: dict, items: list, summary: dict, qmap: dict, bills: l
     if not summary.get("has_issues") and _f(tot["sent"]) > 0:
         gaps.append("Belum ada bahan yang tercatat diserahkan untuk kiriman PO ini.")
     price_avg = round(tot["price_x_qty"] / tot["ordered"], 2) if maklon and tot["ordered"] > 0 else None
+    # 8 Nov 2026 (keputusan owner): MARGIN TEREALISASI. Pendapatan hanya dari pcs yang sudah dikirim ke klien,
+    # sedangkan total HPP memuat bahan untuk SEMUA pcs yang sudah dikirim ke CMT — selama PO berjalan margin
+    # "pendapatan − total HPP" tampak kecil/minus. Dasar sepadan: biaya dialokasikan pro-rata ke pcs terkirim.
+    # Hanya tampilan/laporan — angka ini TIDAK dipakai jurnal mana pun.
+    disp_t = sum(r["qty_dispatched"] for r in rows)
+    cut_shipped = sum(min(r["cut_value"], (r["cut_per_pcs"] or 0) * r["qty_dispatched"]) for r in rows)
+    acc_shipped = min(acc_v, (acc_v / sent_t * disp_t) if sent_t > 0 else 0.0)
+    labor_ratio = (min(1.0, disp_t / accepted_t) if accepted_t > 0 else (1.0 if disp_t > 0 else 0.0))
+    realized_cost = round(cut_shipped + acc_shipped + (cmt_cost + permak_cost) * labor_ratio, 2) if maklon else None
     margin_pcs = round(price_avg - hpp_pcs, 2) if (price_avg is not None and hpp_pcs is not None) else None
     revenue = round(tot["revenue"], 2)
     months: dict = {}
@@ -632,6 +644,11 @@ def po_hpp_figures(*, po: dict, items: list, summary: dict, qmap: dict, bills: l
         "selling_price_per_pcs": price_avg, "margin_per_pcs": margin_pcs,
         "margin_pct": (round(margin_pcs / price_avg * 100, 2) if (margin_pcs is not None and price_avg) else None),
         "revenue": revenue, "margin": (round(revenue - total, 2) if maklon else None),
+        # margin terealisasi (dasar sepadan) — lihat catatan di atas; `margin` = pendapatan − total biaya s.d. kini
+        "realized_cost": realized_cost,
+        "margin_realized": (round(revenue - realized_cost, 2) if maklon else None),
+        "margin_realized_pct": (round((revenue - realized_cost) / revenue * 100, 2) if (maklon and revenue) else None),
+        "cost_not_shipped": (round(total - realized_cost, 2) if maklon else None),
         "items_missing_rate": missing_rate, "own_team": own_team,
         "receipt_months": {k: int(v) for k, v in sorted(months.items())},
         "lines": rows, "issue_lines": summary.get("lines") or [], "gaps": gaps,

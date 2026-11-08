@@ -25,7 +25,8 @@ const fmt = formatRupiah;
 
 // Kode kelompok umur dari server → label & nada StatusBadge (G8: kuning = perhatian, merah = masalah).
 const AGING_BUCKETS = {
-  '0-30 days': { label: '0-30 hari', tone: 'warning' },
+  // kode server tetap '0-30 days'; sejak 8 Nov 2026 server hanya mengirim faktur terlambat ≥ 1 hari
+  '0-30 days': { label: '1-30 hari', tone: 'warning' },
   '31-60 days': { label: '31-60 hari', tone: 'warning' },
   '61-90 days': { label: '61-90 hari', tone: 'danger' },
   '91-180 days': { label: '91-180 hari', tone: 'danger' },
@@ -92,9 +93,9 @@ export default function BadDebtWriteOffModule({ token }) {
   // ringkasan server (overdueData.summary) tidak dipakai untuk kartu — lihat catatan di bawah
   const invoices = overdueData?.invoices || [];
 
-  // 2026-11-08 (Standar UI/UX v2, verifikasi kartu): laporan server ikut menghitung faktur yang jatuh tempo HARI INI
-  // (terlambat 0 hari) sebagai "lewat jatuh tempo" — beda dengan Umur piutang & Beranda. Kartu dihitung dari daftar
-  // yang sama dengan tabel, hanya faktur yang benar-benar terlambat (≥ 1 hari).
+  // 2026-11-08 (Standar UI/UX v2, verifikasi kartu): laporan server dulu ikut menghitung faktur yang jatuh tempo HARI
+  // INI (terlambat 0 hari). Server kini sudah memperbaikinya di sumber (keputusan owner 8 Nov); saringan ≥ 1 hari di
+  // bawah tetap sebagai pengaman — kartu dihitung dari daftar yang sama dengan tabel.
   const telat = invoices.filter((i) => Number(i.overdue_days) > 0);
   const berisiko = invoices.filter((i) => Number(i.overdue_days) > 180);
   const jumlah = (xs) => xs.reduce((s, i) => s + (Number(i.balance) || 0), 0);

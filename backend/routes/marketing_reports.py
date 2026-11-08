@@ -27,6 +27,8 @@ from core import ukuran_penjualan as _ukuran
 # tidak boleh melihat omzet/tugas delapan toko lain di laporan harian & bulanan.
 from core import marketing_account_scope as _scope
 from utils.waktu import today_wib, wib_day_bounds_utc, now_wib
+# 2026-11-08 (keputusan pemilik): skor sehat toko di laporan = skor segar (dihitung ulang bila basi).
+from routes.marketing_shared import refresh_stale_health_scores
 
 router = APIRouter(prefix="/api/marketing/reports", tags=["marketing-reports"])
 
@@ -62,6 +64,7 @@ async def daily_report(
 
     # Akun aktif YANG BOLEH DILIHAT pemakai ini (F6)
     accounts = await _scope.visible_accounts(db, user, base={"status": "active"})
+    await refresh_stale_health_scores(db, accounts)
 
     accounts_status = []
     total_entered   = 0
@@ -187,6 +190,7 @@ async def monthly_report(
     total_days = last_day
 
     accounts = await _scope.visible_accounts(db, user, base={"status": "active"})
+    await refresh_stale_health_scores(db, accounts)
     # 2026-11-07 (Asisten AI) — satu bacaan rekap untuk semua toko (tanpa data contoh,
     # satu dokumen per toko-tanggal), sama dengan dashboard, target, dan Asisten AI.
     _oms = await _ukuran.ringkas_omzet(db, accounts, date_from, date_to)
@@ -332,6 +336,7 @@ async def export_monthly_report_pdf(
     total_days = last_day
 
     accounts = await _scope.visible_accounts(db, user, base={"status": "active"})
+    await refresh_stale_health_scores(db, accounts)
     _oms = await _ukuran.ringkas_omzet(db, accounts, date_from, date_to)   # 2026-11-07
     result = []
     for acc in accounts:

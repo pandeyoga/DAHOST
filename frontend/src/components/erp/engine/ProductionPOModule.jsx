@@ -806,7 +806,9 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
           ]} />
         {/* 2026-11-06 (T6): impor PO lama (/import-data) dihentikan — satu jalur impor PO berjalan saat
             cutoff lewat Data Transfer (pratinjau per baris; hanya admin/owner yang melihat tombolnya). */}
-        <ImportExportPanel importType={null} exportType="production-pos" exportFilters={{ status: filterStatus }}
+        {/* 8 Nov 2026: saringan yang SAMA dengan daftar PO (status, kata cari, jenis); kolom harga hanya untuk Keuangan (server) */}
+        <ImportExportPanel importType={null} exportType="production-pos"
+          exportFilters={{ status: filterStatus, search: cari.trim(), business_type: businessType }}
           exportLabel="Unduh per baris produk" exportTitle="Excel dari server: satu baris per produk PO" />
         <ImportExportToolbar collectionKey="po_berjalan" label="PO berjalan saat cutoff"
           importLabel="Impor PO berjalan" size="default" onImported={() => refetchPOs()} />
