@@ -16,6 +16,7 @@ from database import get_db
 from core import marketing_account_scope as scope
 from auth import require_auth, serialize_doc, log_activity
 from routes.marketing_shared import _uid, _now, _get_user, _sanitize, PlatformAccountCreate, PlatformAccountUpdate, SalesDataEntry
+from routes.marketing_shared import refresh_stale_health_scores
 from core import marketing_sales_shape as _shape
 from core.authz import only  # T-01 2.3
 from core.roles import MGMT_ROLES  # T-01 2.3
@@ -441,6 +442,8 @@ async def list_platform_accounts(
     query = await scope.scope_filter(db, _user, query, field='id')
 
     accounts = await db.marketing_platform_accounts.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    # 2026-11-08 (keputusan pemilik): skor sehat toko yang basi dihitung ulang dulu (≤ sekali sehari per toko).
+    await refresh_stale_health_scores(db, accounts)
     if not accounts and not scope.sees_all_accounts(_user):
         logger.info('[accounts] pemakai %s tanpa toko ter-assign (role=%s)',
                     _user.get('email'), _user.get('role'))
@@ -683,7 +686,7 @@ async def get_platform_account(account_id: str, request: Request):
     account = await db.marketing_platform_accounts.find_one({"id": account_id}, {"_id": 0})
     if not account:
         raise HTTPException(404, "Akun toko tidak ditemukan")
-    
+    await refresh_stale_health_scores(db, [account])   # skor sehat segar (keputusan 8 Nov 2026)
     return serialize_doc(account)
 
 

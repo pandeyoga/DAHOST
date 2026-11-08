@@ -392,7 +392,9 @@ async def create_manual_snapshot(payload: ManualSnapshotIn, request: Request):
     if payload.account_id:
         try:
             # Lazy import to avoid circular dependency
-            from routes.marketing import _recalculate_health_score
+            # 2026-11-08: dulu `from routes.marketing import …` — modul itu sudah tidak ada, jadi skor toko
+            # TIDAK PERNAH dihitung ulang setelah snapshot disimpan (galat ditelan diam-diam).
+            from routes.marketing_shared import _recalculate_health_score
             await _recalculate_health_score(db, payload.account_id)
         except Exception as e:
             # Silent fail (snapshot already saved, just log)

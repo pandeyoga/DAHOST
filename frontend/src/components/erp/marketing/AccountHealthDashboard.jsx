@@ -8,6 +8,10 @@
  * Perbaikan angka: panah tren dulu membandingkan baris dengan BARIS BERIKUTNYA di tabel — sering akun lain
  * (Shopee GHS dibandingkan dengan Shopee Outfit Boutique). Kini dibandingkan dengan snapshot SEBELUMNYA milik
  * akun yang sama (data yang sudah dimuat).
+ *
+ * 8 Nov 2026 (keputusan pemilik): dulu ada DUA pemilih akun (akun aktif global + "Semua akun" khusus layar ini)
+ * yang bisa saling bertentangan — bilah menampilkan toko A sementara tabel memuat semua toko. Kini satu pemilih:
+ * akun aktif (`ActiveAccountBar`, pilihan tersimpan sama dengan layar Marketing lain) menyaring riwayat kesehatan.
  */
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
@@ -250,8 +254,7 @@ export default function AccountHealthDashboard({ token }) {
   const [showOCR, setShowOCR] = useState(false);
 
   const [platformFilter, setPlatformFilter] = useState('');
-  const [accountFilter, setAccountFilter] = useState('');
-  const [accounts, setAccounts] = useState([]);
+  const accountFilter = activeAccount?.account_name || '';   // satu pemilih akun (akun aktif)
   const [days, setDays] = useState(90);
 
   const authH = { Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` };
@@ -283,16 +286,9 @@ export default function AccountHealthDashboard({ token }) {
     }
   }, [days, platformFilter, accountFilter, token]); // eslint-disable-line
 
-  const fetchAccounts = useCallback(async () => {
-    try {
-      const res = await axios.get(`${API}/api/marketing/health/accounts`, { headers: authH });
-      if (res.data.success) setAccounts(res.data.data.accounts || []);
-    } catch (e) { /* daftar akun pilihan tetap kosong */ }
-  }, [token]); // eslint-disable-line
+  const onSaved = () => { fetchSummary(); fetchTimeline(); };
 
-  const onSaved = () => { fetchSummary(); fetchTimeline(); fetchAccounts(); };
-
-  useEffect(() => { fetchSummary(); fetchAccounts(); }, [fetchSummary, fetchAccounts]);
+  useEffect(() => { fetchSummary(); }, [fetchSummary]);
   useEffect(() => { fetchTimeline(); }, [fetchTimeline]);
 
   // Pembanding tren = snapshot SEBELUMNYA milik akun yang sama (bukan baris berikutnya di tabel)
@@ -336,10 +332,7 @@ export default function AccountHealthDashboard({ token }) {
         <ActiveAccountBar
           accounts={masterAccounts}
           activeAccount={activeAccount}
-          onAccountChange={(acc) => {
-            setActiveAccount(acc);
-            setAccountFilter(acc ? acc.account_name : '');
-          }}
+          onAccountChange={(acc) => setActiveAccount(acc)}
           hint="Saring data kesehatan per akun"
         />
         <SmartNativeSelect className="w-40" value={platformFilter} onChange={(e) => setPlatformFilter(e.target.value)}
@@ -348,11 +341,6 @@ export default function AccountHealthDashboard({ token }) {
           <option value="shopee">Shopee</option>
           <option value="tiktok">TikTok</option>
           <option value="tokopedia">Tokopedia</option>
-        </SmartNativeSelect>
-        <SmartNativeSelect className="w-48" value={accountFilter} onChange={(e) => setAccountFilter(e.target.value)}
-          data-testid="health-filter-account">
-          <option value="">Semua akun</option>
-          {accounts.map(a => <option key={a} value={a}>{a}</option>)}
         </SmartNativeSelect>
         <SmartNativeSelect className="w-36" value={String(days)} onChange={(e) => setDays(Number(e.target.value))}
           data-testid="health-filter-days">
