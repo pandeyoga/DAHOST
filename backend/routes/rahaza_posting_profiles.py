@@ -660,6 +660,22 @@ ROLE_LABELS_BY_EVENT[("production_po_wip_variance", "debit_variance")] = (
 ROLE_LABELS_BY_EVENT[("production_po_wip_variance", "credit_wip")] = (
     "Persediaan WIP yang ditutup (Cr bila aktual > standar, Dr bila sebaliknya)")
 
+# ── 2026-11-07 (Tahap 9 lanjutan, keputusan owner): ongkos PERMAK ditanggung DA dan masuk HPP PO. Saat permak
+# PO internal selesai (berhasil / dibuang) dengan ongkos > 0 → Dr WIP PO / Cr hutang biaya permak. Dulu ongkos
+# permak ikut lapisan barang jadi (Cr WIP) tanpa pernah didebit, lalu muncul sebagai selisih 5-1960 saat Tutup PO.
+DEFAULT_PROFILES.append({
+    "event_type": "production_permak_cost",
+    "description": "Permak PO internal selesai → ongkos permak ke WIP PO (biaya DA, bagian HPP PO)",
+    "mapping": {
+        "debit_wip": "1-1403",
+        "credit_accrued": "2-1600",
+    },
+})
+EVENT_LABELS["production_permak_cost"] = "Ongkos permak PO internal (biaya DA, masuk HPP PO)"
+ROLE_LABELS_BY_EVENT[("production_permak_cost", "debit_wip")] = "Persediaan WIP PO yang dipermak (Dr)"
+ROLE_LABELS_BY_EVENT[("production_permak_cost", "credit_accrued")] = (
+    "Hutang biaya permak — dibayar lewat Pengeluaran ke penjahit/workshop (Cr)")
+
 
 def event_label(event_type: str) -> str:
     return EVENT_LABELS.get(event_type) or (event_type or "").replace("_", " ")

@@ -40,6 +40,7 @@ SRC_LABEL = {
     "material_return": "Retur material",
     "accessory_issue": "Pemakaian aksesoris",
     "cmt_bill": "Upah CMT (tagihan)",
+    "permak": "Ongkos permak",
     "fg_receipt": "Pindah ke barang jadi (Terima FG)",
     "job_complete": "Pindah ke barang jadi (job selesai)",
     "variance": "Selisih yang sudah ditutup",
@@ -118,6 +119,10 @@ async def _je_sources(db, po_id: str) -> dict:
     async for p in db.dewi_cmt_payments.find({"po_id": po_id, "gl_je_id": {"$nin": [None, ""]}},
                                              {"_id": 0, "gl_je_id": 1}):
         out.setdefault(p["gl_je_id"], "cmt_bill")
+    # Tahap 9 lanjutan: ongkos permak PO ini (Dr WIP saat permak selesai — `rahaza_posting.post_permak_cost`)
+    async for pm in db.dewi_cmt_permak.find({"po_id": po_id, "gl_je_id": {"$nin": [None, ""]}},
+                                           {"_id": 0, "gl_je_id": 1}):
+        out.setdefault(pm["gl_je_id"], "permak")
     async for je in db.rahaza_journal_entries.find(
             {"source_module": SOURCE_MODULE, "source_ref": {"$regex": f"^po_wip_var:{po_id}:"}, "status": "posted"},
             {"_id": 0, "id": 1}):
