@@ -25,6 +25,7 @@ import axios from 'axios';
 import { withFileAuth } from '@/lib/fileUrl';
 import { formatDateID } from '@/lib/format';
 import PageLayout from './layout/PageLayout';
+import { labelTahap } from '@/lib/tahapPersetujuan';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -39,9 +40,10 @@ const STATUS_CFG = {
   cancelled: { label: 'Dibatalkan', icon: X, tone: 'muted' },
 };
 const labelStatus = (status) => (STATUS_CFG[status] || STATUS_CFG.pending_approval).label;
-function StatusPengajuan({ status }) {
+// 2026-11-09 (Q6): label tahap dari rute persetujuan (atasan langsung → HR; tanpa atasan → langsung HR).
+function StatusPengajuan({ status, doc }) {
   const cfg = STATUS_CFG[status] || STATUS_CFG.pending_approval;
-  return <StatusBadge status={status} label={cfg.label} tone={cfg.tone} />;
+  return <StatusBadge status={status} label={(doc && labelTahap(doc)) || cfg.label} tone={cfg.tone} />;
 }
 
 const REQ_TYPE_CFG = {
@@ -127,6 +129,31 @@ export default function PortalSayaCuti({ user, headers }) {
   const [otForm, setOtForm] = useState(OT_EMPTY);
   const [showOtForm, setShowOtForm] = useState(false);
 
+  // 2026-11-09 (Q6, keputusan owner): atasan langsung memutus tingkat 1 cuti/izin/sakit & lembur timnya di sini,
+  // lalu HR. Tab hanya tampil bila akun ini atasan seseorang (manager_id karyawan) atau ada pengajuan menunggu.
+  const [team, setTeam] = useState({ is_manager: false, items: [] });
+  const [deciding, setDeciding] = useState(null);
+  const [rejectItem, setRejectItem] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const loadTeam = useCallback(async () => {
+    try {
+      const { data } = await axios.get(`${API}/api/portal/team-approvals`, { headers });
+      setTeam({ is_manager: Boolean(data?.is_manager), items: data?.items || [] });
+    } catch { setTeam({ is_manager: false, items: [] }); }
+  }, [headers]); // eslint-disable-line
+  const decide = async (item, action, reason = '') => {
+    setDeciding(`${item.kind}-${item.id}`);
+    try {
+      const { data } = await axios.post(`${API}/api/portal/team-approvals/${item.kind}/${item.id}/${action}`,
+        action === 'reject' ? { reason } : { notes: reason }, { headers });
+      toast({ title: data?.message || 'Tersimpan' });
+      setRejectItem(null); setRejectReason('');
+      loadTeam();
+    } catch (e) {
+      toast({ title: e.response?.data?.detail || 'Gagal menyimpan keputusan', variant: 'destructive' });
+    } finally { setDeciding(null); }
+  };
+
   // Resolve employee from current user — pakai endpoint /portal-saya/me/employee
   const loadEmployee = useCallback(async () => {
     try {
@@ -163,6 +190,7 @@ export default function PortalSayaCuti({ user, headers }) {
 
   useEffect(() => { loadEmployee(); }, [loadEmployee]);
   useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { if (employee?.id) loadTeam(); }, [employee?.id, loadTeam]);
 
   // Live working days preview
   useEffect(() => {
@@ -296,7 +324,7 @@ export default function PortalSayaCuti({ user, headers }) {
     { kunci: 'durasi', label: 'Durasi', isi: (lv) => <span className="text-sm">{durasi(lv)}</span> },
     { kunci: 'status', label: 'Status', isi: (lv) => (
       <div className="space-y-0.5">
-        <StatusPengajuan status={lv.status} />
+        <StatusPengajuan status={lv.status} doc={lv} />
         {lv.rejected_reason && <p className="text-xs text-[hsl(var(--danger-text))]">Alasan: {lv.rejected_reason}</p>}
         {lv.holidays_in_period?.length > 0 && (
           <p className="text-xs text-muted-foreground">Libur: {lv.holidays_in_period.map(h => h.name).join(', ')}</p>
@@ -325,16 +353,36 @@ export default function PortalSayaCuti({ user, headers }) {
     { kunci: 'jam', label: 'Jumlah jam', isi: (ot) => (
       <span className="text-sm">{ot.hours} jam{ot.start_time && ot.end_time ? ` (${ot.start_time}–${ot.end_time})` : ''}</span>) },
     { kunci: 'alasan', label: 'Alasan / pekerjaan', isi: (ot) => <p className="line-clamp-2 text-sm md:max-w-[22rem]">{ot.reason || '—'}</p> },
-    { kunci: 'status', label: 'Status', isi: (ot) => <StatusPengajuan status={ot.status || 'pending_approval'} /> },
+    { kunci: 'status', label: 'Status', isi: (ot) => <StatusPengajuan status={ot.status || 'pending_approval'} doc={ot} /> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (ot) => (ot.status === 'pending' ? (
       <Button size="sm" variant="outline" onClick={() => cancelOT(ot.id)} data-testid={`ot-cancel-${ot.id}`}>Batalkan</Button>
     ) : null) },
   ];
 
+  const kolomTim = [
+    { kunci: 'karyawan', label: 'Karyawan', hp: 'judul', isi: (it) => (
+      <div className="min-w-0"><p className="font-medium">{it.employee_name}</p><p className="text-xs text-muted-foreground">{it.employee_code}</p></div>) },
+    { kunci: 'pengajuan', label: 'Pengajuan', isi: (it) => (
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{it.title} · {it.detail}</p>
+        {(it.warnings || []).map((w) => <p key={w} className="text-xs text-[hsl(var(--warning-text))]">{w}</p>)}
+      </div>) },
+    { kunci: 'tanggal', label: 'Tanggal', isi: (it) => (
+      <span className="whitespace-nowrap text-sm">{fmt(it.from_date)}{it.to_date && it.to_date !== it.from_date ? ` – ${fmt(it.to_date)}` : ''}</span>) },
+    { kunci: 'alasan', label: 'Alasan', isi: (it) => <p className="line-clamp-2 text-sm md:max-w-[18rem]">{it.reason || '—'}</p> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (
+      <div className="flex flex-wrap items-center justify-end gap-1">
+        <Button size="sm" variant="success" disabled={deciding === `${it.kind}-${it.id}`} onClick={() => decide(it, 'approve')}
+          data-testid={`team-approve-${it.kind}-${it.id}`}><CheckCircle2 />Setujui</Button>
+        <Button size="sm" variant="outline" onClick={() => { setRejectItem(it); setRejectReason(''); }}
+          data-testid={`team-reject-${it.kind}-${it.id}`}><XCircle />Tolak</Button>
+      </div>) },
+  ];
+
   return (
     <PageLayout testId="portal-cuti" title="Cuti & lembur"
       subtitle={`${employee.name} · ${employee.employee_code} — ajukan cuti, izin, sakit, dan lembur, lalu pantau statusnya.`}
-      actions={tab === 'leaves'
+      actions={tab === 'team' ? null : tab === 'leaves'
         ? <Button onClick={bukaFormCuti} data-testid="btn-ajukan-cuti"><Plus />Ajukan cuti/izin</Button>
         : <Button onClick={bukaFormLembur} data-testid="btn-ajukan-lembur"><Plus />Ajukan lembur</Button>}
       tools={(
@@ -346,8 +394,12 @@ export default function PortalSayaCuti({ user, headers }) {
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="portal-cuti-saldo">
           {saldo.map(b => (
             /* Tahap 7: jenis tak dibayar tidak punya jatah — tampilkan pemakaian, bukan "sisa" minus */
-            <StatTile key={b.leave_type_id} label={b.leave_type_name} value={`${b.unpaid ? b.used : b.remaining} hari`}
-              sub={b.unpaid ? 'terpakai · tidak dibayar' : `sisa dari ${b.quota} hari`} />
+            /* 2026-11-09 (Q7): jenis per bulan / per kejadian / sakit bersurat tanpa "sisa per tahun" → tampil terpakai + aturannya */
+            <StatTile key={b.leave_type_id} label={b.leave_type_name}
+              value={`${b.unpaid || b.remaining == null ? b.used : b.remaining} hari`}
+              sub={b.unpaid ? 'terpakai · tidak dibayar'
+                : b.remaining == null ? `terpakai · ${b.quota_note || 'tanpa jatah tahunan'}`
+                  : `sisa dari ${b.quota} hari${b.quota_note ? ` · ${b.quota_note}` : ''}`} />
           ))}
         </div>
       )}>
@@ -355,6 +407,9 @@ export default function PortalSayaCuti({ user, headers }) {
         <TabsList>
           <TabsTrigger value="leaves" data-testid="tab-cuti">Cuti & izin ({leaves.length})</TabsTrigger>
           <TabsTrigger value="overtime" data-testid="tab-lembur">Lembur ({overtimes.length})</TabsTrigger>
+          {team.is_manager && (
+            <TabsTrigger value="team" data-testid="tab-tim">Persetujuan tim ({team.items.length})</TabsTrigger>
+          )}
         </TabsList>
 
         {/* ── CUTI/IZIN TAB ── */}
@@ -393,7 +448,25 @@ export default function PortalSayaCuti({ user, headers }) {
           <TabelData kolom={kolomLembur} baris={overtimes} testId="portal-ot-table"
             kosong={<EmptyState title="Belum ada pengajuan lembur" description="Tekan Ajukan lembur untuk mengajukan jam lembur." />} />
         </TabsContent>
+
+        {/* ── PERSETUJUAN TIM (atasan langsung) ── */}
+        {team.is_manager && (
+          <TabsContent value="team" className="mt-4 space-y-3">
+            <p className="text-sm text-muted-foreground">Pengajuan anggota tim yang menunggu keputusan Anda sebagai atasan langsung. Sesudah Anda setujui, HR memutus tahap berikutnya.</p>
+            <TabelData kolom={kolomTim} baris={team.items} kunci={(it) => `${it.kind}-${it.id}`} testId="portal-team-table"
+              kosong={<EmptyState title="Tidak ada pengajuan tim yang menunggu" description="Pengajuan cuti, izin, sakit, dan lembur anggota tim akan muncul di sini." />} />
+          </TabsContent>
+        )}
       </Tabs>
+
+      <FormPopup open={Boolean(rejectItem)} onClose={() => setRejectItem(null)} ukuran="pendek" testId="team-reject-form"
+        judul="Tolak pengajuan" keterangan={rejectItem ? `${rejectItem.employee_name} · ${rejectItem.title} ${rejectItem.detail}` : ''}
+        onSimpan={() => decide(rejectItem, 'reject', rejectReason.trim())} menyimpan={Boolean(deciding)} labelSimpan="Tolak">
+        <Isian label="Alasan penolakan" wajib htmlFor="team-reject-reason">
+          <Textarea id="team-reject-reason" rows={2} value={rejectReason} onChange={e => setRejectReason(e.target.value)}
+            data-testid="team-reject-reason" />
+        </Isian>
+      </FormPopup>
 
       {/* Form pengajuan cuti / izin */}
       <FormPopup open={showForm} onClose={() => setShowForm(false)} ukuran="panjang" testId="leave-form"

@@ -65,10 +65,12 @@ class HitungDB(FakeDB):
 
 
 def _req(db, rid=1, requester="u-pemohon", levels=("manager", "hr"), meta=None):
+    # 2026-11-09 (Q6): jenis "leave" tidak lagi diputus mesin rantai (cuti → core.leave_engine); uji mesin rantai
+    # memakai jenis lain yang masih aktif (klaim biaya).
     lv = [{"level": i + 1, "role": r, "label": {"manager": "Manajer", "hr": "HR", "owner": "Direktur"}.get(r, r),
            "status": "pending" if i == 0 else "waiting", "approver_id": None, "approver_name": None, "note": "",
            "actioned_at": None} for i, r in enumerate(levels)]
-    db.approval_requests.docs.append({"_id": rid, "id": rid, "type": "leave", "ref_id": "L1", "ref_code": "L1",
+    db.approval_requests.docs.append({"_id": rid, "id": rid, "type": "expense", "ref_id": "L1", "ref_code": "L1",
                                       "requester_id": requester, "requester_name": "Pemohon", "current_level": 1,
                                       "max_level": len(lv), "status": "pending", "levels": lv, "meta": meta or {},
                                       "created_at": "x", "updated_at": "x", "completed_at": None})

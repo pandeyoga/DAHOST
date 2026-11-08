@@ -27,6 +27,9 @@ from datetime import datetime, timezone
 from database import get_db
 from auth import require_auth, log_activity
 from services.approval_chain_service import (
+    LEVEL_ROLE_ALIASES,
+    LEVEL_SUPER_ROLES,
+    RETIRED_TYPES,
     create_approval_request,
     process_action,
     get_pending_for_user,
@@ -88,6 +91,33 @@ class ActionModel(BaseModel):
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
+def _uid_of(user: dict) -> str:
+    return str(user.get("id") or user.get("_id") or "")
+
+
+def sees_all_requests(user: dict) -> bool:
+    """2026-11-09 (H8/P1, audit HR): daftar SEMUA permintaan persetujuan (berisi alasan & data pemohon) hanya untuk
+    penyetuju — peran level rantai (alias), admin/owner/superadmin, atau HR/atasan. Dulu cukup login (diuji: akun
+    tim packing & PIC toko membaca alasan cuti semua karyawan). Selain itu hanya permintaan miliknya."""
+    role = (user.get("role") or "").lower()
+    if role in LEVEL_SUPER_ROLES or any(role in v for v in LEVEL_ROLE_ALIASES.values()):
+        return True
+    from utils.employee_identity import can_view_all_employees
+    if can_view_all_employees(user):
+        return True
+    perms = user.get("_permissions") or []
+    return any(p in perms for p in ("*", "hr.approve", "finance.approve", "proc.po.approve"))
+
+
+def _visible_query(user: dict, q: dict) -> dict:
+    """Saringan baca: jenis cuti/lembur disembunyikan (Q6) + non-penyetuju hanya miliknya (H8)."""
+    q = dict(q)
+    if "type" not in q:
+        q["type"] = {"$nin": list(RETIRED_TYPES)}
+    if not sees_all_requests(user):
+        q["requester_id"] = _uid_of(user)
+    return q
+
 def _ok(data=None, message="", **kwargs):
     resp = {"status": "ok"}
     if message:
@@ -114,6 +144,7 @@ async def list_chains(
     if type:
         q["type"] = type
     items = await db.approval_chains.find(q, {"_id": 0}).sort("type", 1).to_list(200)
+    items = [c for c in items if c.get("type") not in RETIRED_TYPES]   # Q6: cuti/lembur bukan di sini
     return _ok(items, total=len(items))
 
 
@@ -214,13 +245,16 @@ async def list_requests(
     limit: int = Query(50, ge=1, le=200),
     skip: int = Query(0, ge=0),
 ):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     q = {}
     if status:
         q["status"] = status
     if type:
+        if type in RETIRED_TYPES:
+            return _ok([], total=0, skip=skip, limit=limit)
         q["type"] = type
+    q = _visible_query(user, q)
     total = await db.approval_requests.count_documents(q)
     items = await db.approval_requests.find(q, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
     return _ok(items, total=total, skip=skip, limit=limit)
@@ -228,11 +262,13 @@ async def list_requests(
 
 @router.get("/requests/{request_id}")
 async def get_request(request: Request, request_id: str):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     doc = await db.approval_requests.find_one({"id": _coerce_id(request_id)}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Approval request tidak ditemukan.")
+    if not sees_all_requests(user) and str(doc.get("requester_id") or "") != _uid_of(user):
+        raise HTTPException(403, "Anda hanya bisa melihat permintaan persetujuan milik sendiri.")
     return _ok(doc)
 
 
@@ -313,6 +349,8 @@ async def my_pending(request: Request, limit: int = Query(50, ge=1, le=200)):
     role = (user.get("role") or "").lower()
     user_id = str(user.get("id") or user.get("_id") or "")
     items = await get_pending_for_user(db, role, user_id, limit)
+    if not sees_all_requests(user):   # H8: peran tanpa hak penyetuju hanya melihat ajuannya sendiri
+        items = [r for r in items if str(r.get("requester_id") or "") == user_id]
     return _ok(items, total=len(items))
 
 
@@ -323,14 +361,15 @@ async def approval_summary(request: Request):
     role = (user.get("role") or "").lower()
     user_id = str(user.get("id") or user.get("_id") or "")
 
-    total_pending = await db.approval_requests.count_documents({"status": "pending"})
+    total_pending = await db.approval_requests.count_documents(_visible_query(user, {"status": "pending"}))
     my_pending_list = await get_pending_for_user(db, role, user_id, 200)
-    approved_today = await db.approval_requests.count_documents({
+    approved_today = await db.approval_requests.count_documents(_visible_query(user, {
         "status": "approved",
         # completed_at = ISO UTC → batas "hari ini" WIB dinyatakan dalam UTC (No.54a)
         "completed_at": {"$gte": wib_day_bounds_utc()[0].isoformat()},
-    })
+    }))
     by_type = await db.approval_requests.aggregate([
+        {"$match": _visible_query(user, {})},
         {"$group": {"_id": "$type", "count": {"$sum": 1}, "pending": {"$sum": {"$cond": [{"$eq": ["$status", "pending"]}, 1, 0]}}}},
     ]).to_list(50)
 

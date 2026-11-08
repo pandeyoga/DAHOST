@@ -855,10 +855,15 @@ async def job_leave_carry_forward():
 
     try:
         # Fetch leave types yang bisa carry forward
-        carryable_types = await db.rahaza_leave_types.find(
+        # 2026-11-09 (Q7): hanya CUTI TAHUNAN yang dibawa, sebanyak `max_carry_days` jenisnya (bawaan 0 = tidak
+        # dibawa). Dulu `max_carry_days or 5` → isian 0 dibaca 5 hari dan SEMUA jenis dibayar (sakit, haid, izin)
+        # ikut dibawa ke tahun berikutnya.
+        from utils.leave_types import quota_rule_of
+        carryable_types = [t for t in await db.rahaza_leave_types.find(
             {"active": True, "unpaid": {"$ne": True}},
-            {"_id": 0, "id": 1, "name": 1, "quota_default": 1, "max_carry_days": 1}
-        ).to_list(100)
+            {"_id": 0, "id": 1, "name": 1, "code": 1, "request_type": 1, "legal_basis": 1, "quota_rule": 1,
+             "quota_default": 1, "max_carry_days": 1}
+        ).to_list(100) if quota_rule_of(t) == "tahunan" and int(t.get("max_carry_days") or 0) > 0]
 
         if not carryable_types:
             logger.info("[scheduler] job_leave_carry_forward: no carryable leave types")
@@ -874,7 +879,7 @@ async def job_leave_carry_forward():
             emp_id = emp["id"]
             for lt in carryable_types:
                 lt_id       = lt["id"]
-                max_carry   = int(lt.get("max_carry_days") or 5)  # default 5 hari carry
+                max_carry   = int(lt.get("max_carry_days") or 0)  # Q7: bawaan 0 (setelan per jenis)
 
                 # Cek balance tahun lama
                 old_bal = await db.rahaza_leave_balances.find_one(

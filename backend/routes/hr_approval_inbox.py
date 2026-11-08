@@ -73,6 +73,14 @@ async def _enrich_employee(db, emp_id: str) -> Dict[str, Any]:
     }
 
 
+def _stage_label(doc: dict) -> str:
+    """Teks tahap persetujuan untuk kotak masuk (Q6): 'Menunggu atasan: Nama' atau 'Menunggu HR'."""
+    from core.approval_route import waiting_manager
+    if waiting_manager(doc):
+        return f"Menunggu atasan: {(doc.get('approval_route') or {}).get('manager_name') or 'atasan langsung'}"
+    return "Menunggu HR"
+
+
 def _require_approver_role(user: dict):
     # 2026-08-06 — gerbang izin terpusat (routes.shared.can_act, fallback aman).
     from routes.shared import can_act as _can_act
@@ -137,6 +145,8 @@ async def _fetch_leaves(db, type_filter: Optional[str], limit: int) -> List[Dict
                 'request_type': leave_kind(r, lt),
                 'leave_kind': leave_kind(r, lt),
                 'approval_level': f"{r.get('current_approval_level') or 1}/{r.get('approval_level_required') or 1}",
+                # 2026-11-09 (Q6): tahap yang sedang ditunggu (atasan langsung → HR)
+                'approval_stage': _stage_label(r),
                 'pay_decision_suggestion': suggest_pay_decision(r, lt),
                 'from_date': r.get('from_date'),
                 'to_date': r.get('to_date'),
@@ -183,6 +193,8 @@ async def _fetch_overtime(db, type_filter: Optional[str], limit: int) -> List[Di
                 'end_time': r.get('end_time'),
                 'hours': r.get('hours'),
                 'rate_multiplier': r.get('rate_multiplier', 1.5),
+                'approval_stage': _stage_label(r),
+                'limit_warnings': r.get('limit_warnings') or [],
             },
             'raw': serialize_doc(r),
         })
@@ -662,6 +674,8 @@ async def approve_request(req_type: str, req_id: str, payload: Optional[ActionPa
         doc_lock.require_matched(res, 'Perjalanan dinas ini baru saja diputuskan pengguna lain — muat ulang kotak masuk.')
         await log_activity(actor_id, actor_name, 'approve', 'hr_inbox',
                            f'Approve travel request {req_id} via HR Inbox')
+        from core.tugas_luar import write_duty_days   # 2026-11-09 (Q11): hari dinas = hadir (tugas luar)
+        await write_duty_days(db, tr, user)
         await _kabari_pemohon('travel_request', tr, approved=True, note=note)
         return {'ok': True, 'type': 'travel_request', 'id': req_id, 'new_status': 'approved'}
 
@@ -809,6 +823,9 @@ async def reject_request(req_type: str, req_id: str, payload: ActionPayload,
                                       'muat ulang kotak masuk.')
         await log_activity(actor_id, actor_name, 'reject', 'hr_inbox',
                            f'Reject travel request {req_id}: {reason}')
+        if tr.get('status') == 'approved':   # 2026-11-09 (Q11): absensi tugas luar dikembalikan
+            from core.tugas_luar import restore_duty_days
+            await restore_duty_days(db, tr, user)
         await _kabari_pemohon('travel_request', tr, approved=False, note=reason)
         return {'ok': True, 'type': 'travel_request', 'id': req_id, 'new_status': 'rejected'}
 

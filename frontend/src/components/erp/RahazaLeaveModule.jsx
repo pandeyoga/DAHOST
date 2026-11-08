@@ -9,6 +9,7 @@
  *    tanpa emoji. Panggilan API, validasi, dan data yang dikirim tidak berubah.
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { bolehSetujuiHR, labelTahap } from '@/lib/tahapPersetujuan';
 import {
   Plus, CheckCircle2, XCircle, RefreshCw, CheckCheck, FileText, Upload, Paperclip, X, Pencil, CalendarDays,
 } from 'lucide-react';
@@ -118,7 +119,7 @@ function DocumentUpload({ value, onChange, required, docNote, token }) {
 }
 
 // ─── MAIN MODULE ──────────────────────────────────────────────────────────────
-export default function RahazaLeaveModule({ token, onNavigate, bagian }) {
+export default function RahazaLeaveModule({ token, user, onNavigate, bagian, deepLinkParams }) {
   const [leaves, setLeaves] = useState([]);
   const [totalServer, setTotalServer] = useState(0);   // jumlah pengajuan di server (daftar memuat 100 terbaru)
   const [dimuat, setDimuat] = useState(0);
@@ -181,6 +182,20 @@ export default function RahazaLeaveModule({ token, onNavigate, bagian }) {
   }, [filterStatus, filterReqType, token]); // eslint-disable-line
 
   useEffect(() => { load(); }, [load]);
+
+  // 2026-11-09 (Q2, keputusan owner): dari Absensi harian — "Buat pengajuan atas nama karyawan" membuka formulir
+  // pengajuan terisi (karyawan, tanggal, jenis sesuai status izin/sakit/cuti). Satu jalur dengan Portal Saya.
+  const prefill = deepLinkParams?.buat_pengajuan;
+  const prefillDone = useRef(false);
+  useEffect(() => {
+    if (!prefill || prefillDone.current || leaveTypes.length === 0) return;
+    prefillDone.current = true;
+    const kind = String(prefill.kind || 'cuti');
+    const lt = leaveTypes.find(t => t.active !== false && (t.request_type || 'cuti') === kind);
+    setRequestForm(f => ({ ...f, employee_id: prefill.employee_id || '', from_date: prefill.from_date || '',
+      to_date: prefill.from_date || '', leave_type_id: lt?.id || '' }));
+    setRequestModal(true);
+  }, [prefill, leaveTypes]);
 
   // 2026-11-08 (keputusan pemilik): "Setujui yang tampil" hanya mengirim pengajuan menunggu yang tampil
   // (sesuai penyaring status & kelompok), bukan semua pengajuan menunggu di server.
@@ -388,12 +403,15 @@ export default function RahazaLeaveModule({ token, onNavigate, bagian }) {
   // ── Aksi per pengajuan (dipakai di tabel & popup rincian) ──
   const aksiPengajuan = (lv) => {
     if (lv.status === 'pending_approval' || lv.status === 'pending_hr_approval') {
-      const hr = lv.status === 'pending_hr_approval';
+      const hr = lv.status === 'pending_hr_approval' || (lv.approval_route && labelTahap(lv) === 'Menunggu HR');
       return (<>
-        <Button size="sm" variant="success" onClick={() => approveLeave(lv.id)}
-          data-testid={hr ? `approve-hr-${lv.id}` : `approve-${lv.id}`}>
-          <CheckCircle2 />{hr ? 'Setujui (HR)' : 'Setujui (atasan)'}
-        </Button>
+        {/* 2026-11-09 (Q6): tingkat 1 diputus atasan langsung lewat Portal Saya; HR menunggu (boleh menolak). */}
+        {bolehSetujuiHR(lv, user) && (
+          <Button size="sm" variant="success" onClick={() => approveLeave(lv.id)}
+            data-testid={hr ? `approve-hr-${lv.id}` : `approve-${lv.id}`}>
+            <CheckCircle2 />{hr ? 'Setujui (HR)' : 'Setujui (atasan)'}
+          </Button>
+        )}
         <Button size="sm" variant="destructive" onClick={() => rejectLeave(lv)}
           data-testid={hr ? `reject-hr-${lv.id}` : `reject-${lv.id}`}>
           <XCircle />Tolak
@@ -427,7 +445,11 @@ export default function RahazaLeaveModule({ token, onNavigate, bagian }) {
       </div>) },
     { kunci: 'periode', label: 'Periode', isi: (lv) => <span className="whitespace-nowrap">{fmt(lv.from_date)} – {fmt(lv.to_date)}</span> },
     { kunci: 'durasi', label: 'Durasi', isi: (lv) => <span className="whitespace-nowrap">{fmtDuration(lv.duration_days, lv.duration_working_days)}</span> },
-    { kunci: 'status', label: 'Status', isi: (lv) => <LeaveBadge status={lv.status} /> },
+    { kunci: 'status', label: 'Status', isi: (lv) => (
+      <div className="space-y-0.5">
+        <LeaveBadge status={lv.status} />
+        {labelTahap(lv) && <p className="text-xs text-muted-foreground">{labelTahap(lv)}</p>}
+      </div>) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (lv) => <div className="flex justify-end gap-2">{aksiPengajuan(lv)}</div> },
   ];
 

@@ -146,12 +146,23 @@ DEFAULT_CHAINS: List[Dict] = [
 ]
 
 
+# 2026-11-09 (Q6, keputusan owner): cuti & lembur diputus SATU mesin — `core.leave_engine` (atasan langsung → HR)
+# dan `routes.rahaza_overtime` — bukan rantai di sini. Dulu menyetujui cuti di "Persetujuan Bertingkat" tidak
+# mengubah status cutinya sama sekali (mesin kedua yang tidak tersambung). Jenis ini disembunyikan dari menu itu,
+# tidak di-seed, dan tidak bisa diputus di sini; dokumen lama tetap tersimpan sebagai jejak.
+RETIRED_TYPES = ("leave", "overtime")
+
+
+def active_default_chains() -> List[Dict]:
+    return [c for c in DEFAULT_CHAINS if c["type"] not in RETIRED_TYPES]
+
+
 async def seed_default_chains(db) -> None:
     """Seed default chains jika belum ada (hanya saat collection kosong)."""
     existing = await db.approval_chains.count_documents({})
     if existing > 0:
         return
-    for idx, chain in enumerate(DEFAULT_CHAINS):
+    for idx, chain in enumerate(active_default_chains()):
         chain_id = await next_counter(db, "approval_chains")
         doc = {
             **chain,
@@ -161,7 +172,7 @@ async def seed_default_chains(db) -> None:
             "updated_at": _now().isoformat(),
         }
         await db.approval_chains.insert_one(doc)
-    logger.info("Seeded %d default approval chains.", len(DEFAULT_CHAINS))
+    logger.info("Seeded %d default approval chains.", len(active_default_chains()))
 
 
 async def seed_missing_chains(db) -> dict:
@@ -172,7 +183,7 @@ async def seed_missing_chains(db) -> dict:
     """
     added, skipped = 0, 0
     types_added = []
-    for chain in DEFAULT_CHAINS:
+    for chain in active_default_chains():
         existing = await db.approval_chains.find_one(
             {"type": chain["type"], "name": chain["name"]}
         )
@@ -238,6 +249,9 @@ async def create_approval_request(
 ) -> Optional[Dict]:
     """Create a multi-level approval request. Returns None if no matching chain."""
     meta = meta or {}
+    if req_type in RETIRED_TYPES:
+        logger.info("approval_request type=%s tidak dibuat: diputus mesin cuti/lembur (Q6)", req_type)
+        return None
     chain = await find_chain(db, req_type, meta)
     if not chain:
         logger.warning("No approval chain found for type=%s meta=%s", req_type, meta)
@@ -372,6 +386,9 @@ async def process_action(
         raise ValueError(f"Request sudah {doc['status']}, tidak bisa diubah.")
     if action not in ("approve", "reject"):
         raise ValueError("Aksi tidak dikenal.")
+    if doc.get("type") in RETIRED_TYPES:
+        raise ValueError("Cuti dan lembur diputus di menu Cuti & Lembur (atasan langsung lalu HR), "
+                         "bukan di Persetujuan Bertingkat.")
     await check_can_act(db, user, doc, action)
 
     current_level = doc["current_level"]
@@ -435,7 +452,7 @@ async def get_pending_for_user(
     role = (user_role or "").lower()
     # Find all requests that are pending AND current level matches user's role
     all_pending = await db.approval_requests.find(
-        {"status": "pending"}, {"_id": 0}
+        {"status": "pending", "type": {"$nin": list(RETIRED_TYPES)}}, {"_id": 0}
     ).sort("created_at", -1).limit(200).to_list(200)
 
     result = []
