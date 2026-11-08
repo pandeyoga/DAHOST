@@ -5,6 +5,8 @@
  *   • HPP aktual per PO = potongan (nilai dari cutting) + aksesoris yang diserahkan + upah CMT (tagihan) + permak.
  *     BOM hanya pembanding (kolom "Standar/pcs"); semua angka dari server (`core/hpp_aktual`).
  *   • Maklon: isian overhead/margin yang diketik sendiri dihapus — margin = harga jasa − HPP, otomatis.
+ *   • 8 Nov 2026 (keputusan owner): margin maklon = MARGIN TEREALISASI (pendapatan pcs terkirim − biaya pcs terkirim,
+ *     dasar sepadan). Total biaya sampai saat ini (termasuk bahan pcs yang belum dikirim) tampil terpisah.
  *   • Biaya umum produksi per pcs tampil sebagai INFORMASI (tidak masuk HPP).
  *   • Rekap upah jahit per baris (dulu menu Biaya Jahit) ada di rincian PO; tarif diubah di form PO.
  *   • Disaring per portal: Produksi = PO internal, Maklon = PO maklon (Keuangan: pilih jenis).
@@ -186,6 +188,10 @@ export default function RahazaHPPModule({ portalId, userRole }) {
             { label: 'Bahan belum jadi barang (Rp)', nilai: (r) => Number(r.unabsorbed_cost) || 0 },
             { label: 'Harga jasa per pcs (Rp)', nilai: (r) => (r.selling_price_per_pcs == null ? '' : Number(r.selling_price_per_pcs)) },
             { label: 'Margin per pcs (Rp)', nilai: (r) => (r.margin_per_pcs == null ? '' : Number(r.margin_per_pcs)) },
+            { label: 'Dikirim ke klien (pcs)', nilai: (r) => (r.business_type === 'maklon' ? Number(r.qty_dispatched) || 0 : '') },
+            { label: 'Pendapatan jasa (Rp)', nilai: (r) => (r.business_type === 'maklon' ? Number(r.revenue) || 0 : '') },
+            { label: 'Biaya pcs terkirim (Rp)', nilai: (r) => (r.realized_cost == null ? '' : Number(r.realized_cost)) },
+            { label: 'Margin terealisasi (Rp)', nilai: (r) => (r.margin_realized == null ? '' : Number(r.margin_realized)) },
           ]} />
         <Button type="button" variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="hpp-po-refresh">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -195,13 +201,16 @@ export default function RahazaHPPModule({ portalId, userRole }) {
         {error && <Notice tone="danger" icon={AlertTriangle} title="Gagal memuat data" testId="hpp-po-error">{error}</Notice>}
         {(sum.po_count > 0) && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <StatTile testId="hpp-kpi-total" label="Total HPP aktual" value={rp(sum.total_hpp)}
+            <StatTile testId="hpp-kpi-total" label={showMargin ? 'Total biaya sampai saat ini' : 'Total HPP aktual'} value={rp(sum.total_hpp)}
               sub={`${num(sum.po_count)} PO · potongan + aksesoris + upah CMT + permak (termasuk bahan pcs yang belum diterima)`} />
             <StatTile testId="hpp-kpi-pcs" label="HPP per pcs lolos QC" value={sum.hpp_per_pcs == null ? '—' : rp(sum.hpp_per_pcs)} accent="primary"
               sub={sum.hpp_per_pcs == null ? 'belum ada pcs lolos QC' : `biaya yang terserap ÷ ${num(sum.qty_accepted)} pcs lolos QC`} />
             {showMargin ? (
-              <StatTile testId="hpp-kpi-margin" label="Margin maklon" value={rp(sum.margin)}
-                accent={Number(sum.margin) < 0 ? 'danger' : 'success'} sub={`pendapatan ${rp(sum.revenue)} − total HPP · ${pct(sum.margin_pct)}`} />
+              <StatTile testId="hpp-kpi-margin" label="Margin terealisasi (maklon)" value={rp(sum.margin_realized ?? sum.margin)}
+                accent={Number(sum.margin_realized ?? sum.margin) < 0 ? 'danger' : 'success'}
+                sub={sum.margin_realized == null
+                  ? `pendapatan ${rp(sum.revenue)} − total HPP · ${pct(sum.margin_pct)}`
+                  : `pendapatan ${rp(sum.revenue)} − biaya pcs terkirim ${rp(sum.realized_cost)} · ${pct(sum.margin_realized_pct)}`} />
             ) : (
               <StatTile testId="hpp-kpi-selisih" label="Bahan belum jadi barang" value={rp(sum.unabsorbed_cost)}
                 sub="bahan untuk pcs yang belum/tidak diterima; ditutup saat PO ditutup" />
@@ -344,7 +353,7 @@ function PoHppDetail({ detail, canClear, onClose, onChanged }) {
         <Button type="button" onClick={clearWip} disabled={busy} data-testid="hpp-po-clear-wip">Tutup sisa biaya</Button>
       )}>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Figure label="Total HPP aktual" value={rp(d.total_hpp)} testId="hpp-detail-total" />
+        <Figure label={maklon ? 'Total biaya sampai saat ini' : 'Total HPP aktual'} value={rp(d.total_hpp)} testId="hpp-detail-total" />
         <Figure label="HPP per pcs lolos QC" value={rp(d.hpp_per_pcs)} testId="hpp-detail-per-pcs" strong />
         {maklon ? (
           <>
@@ -390,9 +399,16 @@ function PoHppDetail({ detail, canClear, onClose, onChanged }) {
           )}
           {maklon && (
             <TableRow>
-              <TableCell>Pendapatan jasa (qty diterima klien × harga jasa) · margin = pendapatan − HPP</TableCell>
+              <TableCell>Pendapatan jasa ({num(d.qty_dispatched)} pcs dikirim ke klien × harga jasa) · margin terealisasi = pendapatan − biaya {num(d.qty_dispatched)} pcs terkirim ({rp(d.realized_cost)})</TableCell>
               <TableCell className="text-right tabular-nums">{rp(d.revenue)}</TableCell>
-              <TableCell colSpan={2} className={`text-right tabular-nums ${Number(d.margin) < 0 ? 'text-[hsl(var(--danger-text))]' : ''}`} data-testid="hpp-detail-margin-total">margin {rp(d.margin)}</TableCell>
+              <TableCell colSpan={2} className={`text-right tabular-nums ${Number(d.margin_realized ?? d.margin) < 0 ? 'text-[hsl(var(--danger-text))]' : ''}`} data-testid="hpp-detail-margin-total">margin terealisasi {rp(d.margin_realized ?? d.margin)}{d.margin_realized_pct != null ? ` · ${pct(d.margin_realized_pct)}` : ''}</TableCell>
+            </TableRow>
+          )}
+          {maklon && d.margin_realized != null && (
+            <TableRow data-testid="hpp-detail-margin-sd-kini">
+              <TableCell className="text-muted-foreground">Pendapatan − total biaya sampai saat ini (termasuk {rp(d.cost_not_shipped)} biaya pcs yang belum dikirim ke klien)</TableCell>
+              <TableCell />
+              <TableCell colSpan={2} className="text-right tabular-nums text-muted-foreground">{rp(d.margin)}</TableCell>
             </TableRow>
           )}
         </TableBody>
