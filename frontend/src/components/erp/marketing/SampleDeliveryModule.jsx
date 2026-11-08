@@ -4,7 +4,7 @@
  * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, penyaring satu baris, 4 StatTile berketerangan (dulu 6 kartu),
  * tabel 10 kolom + unduh Excel/CSV semua baris (dulu CSV halaman ini saja; kolom SKU/HPP satuan/ongkir/kurir/resi
  * kini di popup detail & berkas unduhan), detail popup berisi form tindak lanjut, form = FormPopup + DatePicker.
- * Tampilan "Kartu" lama diganti tabel (di HP otomatis kartu ringkas). Kolom "Video" tetap terbuka; "Umur" (F10) kini baris kedua di kolom Tanggal ("55 hari lalu") supaya tabel muat tanpa geser.
+ * Tampilan "Kartu" lama diganti tabel (di HP otomatis kartu ringkas). Video (F10) kini baris kedua kolom Tindak lanjut, "Umur" (F10) baris kedua kolom Tanggal ("55 hari lalu") — keduanya tetap terlihat, tabel muat tanpa geser.
  * Perbaikan ikut: penyaring "Semua …" dulu mengirim nilai spasi ke server.
  */
 import { confirmDialog } from '@/components/ui/confirm-dialog';
@@ -346,11 +346,12 @@ export default function SampleDeliveryModule({ token }) {
     { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (x) => <span className="tabular-nums">{x.quantity || 0}</span> },
     { kunci: 'hpp', label: 'HPP (Rp)', rata: 'kanan', isi: (x) => <span className="tabular-nums font-medium">{(x.total_hpp || 0).toLocaleString('id-ID')}</span> },
     { kunci: 'kirim', label: 'Status kirim', isi: (x) => <Lencana peta={SHIPMENT_STATUS_CONFIG} nilai={x.shipment_status} /> },
-    { kunci: 'progres', label: 'Tindak lanjut', isi: (x) => <Lencana peta={PROGRESS_STATUS_CONFIG} nilai={x.progress} /> },
-    { kunci: 'video', label: 'Video', isi: (x) => (x.video_link ? (
-      <a href={x.video_link} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
-        className="inline-flex items-center gap-1 text-primary hover:underline"><Video className="h-3.5 w-3.5" />Buka</a>
-    ) : <span className="text-[hsl(var(--warning-text))]">belum ada</span>) },
+    { kunci: 'progres', label: 'Tindak lanjut · video', isi: (x) => (
+      <span className="flex flex-col items-start gap-1"><Lencana peta={PROGRESS_STATUS_CONFIG} nilai={x.progress} />
+        {x.video_link ? (
+          <a href={x.video_link} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
+            className="inline-flex items-center gap-1 text-xs text-primary hover:underline"><Video className="h-3.5 w-3.5" />Buka video</a>
+        ) : <span className="text-xs text-[hsl(var(--warning-text))]">Video belum ada</span>}</span>) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (x) => (
       <div className="flex justify-end gap-1">
         {tombolKirim(x)}

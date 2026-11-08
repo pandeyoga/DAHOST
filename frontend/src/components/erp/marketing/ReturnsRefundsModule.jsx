@@ -51,6 +51,8 @@ const STATUS_CONFIG = {
 };
 const REFUND_TYPE = { full_refund: 'Refund penuh', partial_refund: 'Refund sebagian', exchange: 'Tukar barang', no_refund: 'Tanpa refund' };
 const NAMA_PLATFORM = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', instagram: 'Instagram', lazada: 'Lazada' };
+// Label alasan dari server bergaya Judul ("Warna Berbeda dari Gambar") → huruf besar hanya di awal.
+const kalimat = (t) => String(t || '').split(' ').map((w, i) => (i === 0 || /^[A-Z0-9]{2,4}$/.test(w) ? w : w.toLowerCase())).join(' ');
 const labelPlatform = (p) => NAMA_PLATFORM[String(p || '').toLowerCase()] || ((getPlatformConfig(p).label !== 'Platform' ? getPlatformConfig(p).label
   : (p ? String(p).replace(/^./, (x) => x.toUpperCase()) : '—')));
 const StatusRetur = ({ status }) => (status
@@ -426,7 +428,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
     { kunci: 'toko', label: 'Toko', isi: (r) => (
       <span className="md:whitespace-nowrap">{r.account_name || '—'}<span className="block text-xs text-muted-foreground">{labelPlatform(r.platform)}</span></span>) },
     { kunci: 'produk', label: 'Produk', hp: 'judul', isi: (r) => <p className="truncate md:max-w-[14rem]" title={r.product}>{r.product || '—'}</p> },
-    { kunci: 'alasan', label: 'Alasan', isi: (r) => <p className="truncate md:max-w-[12rem]" title={r.reason_detail}>{r.reason_label || r.reason || '—'}</p> },
+    { kunci: 'alasan', label: 'Alasan', isi: (r) => <p className="truncate md:max-w-[12rem]" title={r.reason_detail}>{kalimat(r.reason_label || r.reason) || '—'}</p> },
     { kunci: 'refund', label: 'Refund (Rp)', rata: 'kanan', isi: (r) => <span className="tabular-nums font-medium">{(r.refund_amount || 0).toLocaleString('id-ID')}</span> },
     { kunci: 'status', label: 'Status', isi: (r) => <StatusRetur status={r.status} /> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
@@ -468,7 +470,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
         </SmartNativeSelect>
         <SmartNativeSelect value={filterReason} onChange={(e) => { setFilterReason(e.target.value); setCurrentPage(1); }} className="w-44">
           <option value="">Semua alasan</option>
-          {reasons.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+          {reasons.map(r => <option key={r.value} value={r.value}>{kalimat(r.label)}</option>)}
         </SmartNativeSelect>
       </>}
       tools={<>
@@ -481,7 +483,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
             { label: 'Produk', nilai: (r) => r.product || '' },
             { label: 'Qty', nilai: (r) => r.qty ?? '' },
             { label: 'Harga satuan', nilai: (r) => Number(r.price) || 0 },
-            { label: 'Alasan', nilai: (r) => r.reason_label || r.reason || '' },
+            { label: 'Alasan', nilai: (r) => kalimat(r.reason_label || r.reason) },
             { label: 'Rincian alasan', nilai: (r) => r.reason_detail || '' },
             { label: 'Jenis refund', nilai: (r) => REFUND_TYPE[r.refund_type] || '' },
             { label: 'Refund', nilai: (r) => Number(r.refund_amount) || 0 },
@@ -603,7 +605,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
         </Notice>
         <Isian label="Alasan" htmlFor="return-reason">
           <SmartNativeSelect id="return-reason" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })}>
-            {reasons.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+            {reasons.map(r => <option key={r.value} value={r.value}>{kalimat(r.label)}</option>)}
           </SmartNativeSelect>
         </Isian>
         <Isian label="Rincian alasan" wajib htmlFor="return-reason-detail">
@@ -628,7 +630,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
           <dl className="divide-y divide-[var(--glass-border)]">
             <BarisDetail label="Produk">{showDetail.product || '—'}{showDetail.qty ? ` · ${showDetail.qty} pcs` : ''}</BarisDetail>
             <BarisDetail label="Harga satuan">{rp(showDetail.price)}</BarisDetail>
-            <BarisDetail label="Alasan">{showDetail.reason_label || showDetail.reason || '—'}</BarisDetail>
+            <BarisDetail label="Alasan">{kalimat(showDetail.reason_label || showDetail.reason) || '—'}</BarisDetail>
             <BarisDetail label="Rincian alasan">{showDetail.reason_detail || '—'}</BarisDetail>
             <BarisDetail label="Jenis refund">{REFUND_TYPE[showDetail.refund_type] || '—'}</BarisDetail>
             <BarisDetail label="Refund"><span className="font-medium tabular-nums">{rp(showDetail.refund_amount)}</span></BarisDetail>
