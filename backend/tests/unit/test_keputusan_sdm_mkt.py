@@ -166,7 +166,14 @@ def test_migrasi_skor_sehat_pratinjau_lalu_tulis(capsys):
 # ═════════════════════════════════════════════════════════════════════════════
 # 4 · Rekap host live
 # ═════════════════════════════════════════════════════════════════════════════
-import routes.marketing_livehost_analytics as lha  # noqa: E402
+# marketing_livehost_shared membuat /app/uploads/livehost saat diimpor — di runner CI (bukan root) itu ditolak.
+# Sama seperti test_portal_eksternal_kreator_livehost: matikan makedirs sebentar saat impor.
+_makedirs_asli = os.makedirs
+os.makedirs = lambda *a, **k: None
+try:
+    import routes.marketing_livehost_analytics as lha  # noqa: E402
+finally:
+    os.makedirs = _makedirs_asli
 
 
 def test_rekap_per_host_fungsi_murni():
