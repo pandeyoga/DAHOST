@@ -10,7 +10,7 @@ import { EmptyState } from '../moduleAtoms';
 import PageLayout from '../layout/PageLayout';
 import IntercompanyNotes from './IntercompanyNotes';
 import StatementTable, { unduhanLaporan } from './StatementTable';
-import { fmt, authHeaders, yearOptions } from './reportShared';
+import { fmt, authHeaders, downloadXlsx, yearOptions } from './reportShared';
 
 const GROUPS = ['revenue', 'cogs', 'expense', 'other_income', 'other_expense'];
 // Sama dengan tab "Total periode": HPP & beban ditulis minus supaya alurnya terbaca.
@@ -88,6 +88,7 @@ export default function RahazaPnLMonthlyModule({ token }) {
       tools={<>
         <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="pnl12-refresh"><RefreshCw className="w-4 h-4" /></Button>
         <TombolUnduh namaBerkas={`laba-rugi-12-bulan-${year}`} namaLembar={`Laba rugi ${year}`} testId="pnl12-export"
+          aksiTambahan={[{ label: 'Excel format laporan (server)', onClick: () => downloadXlsx(`/api/rahaza/finance/reports/export-xlsx?report=profit-loss-monthly&year=${year}`, token, `laba-rugi-12-bulan-${year}.xlsx`).catch((e) => toast.error(e.message)) }]}
           baris={unduhanLaporan(columns, rows).baris} kolom={unduhanLaporan(columns, rows).kolom} />
       </>}
       summary={hasData && (<>

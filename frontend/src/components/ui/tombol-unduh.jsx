@@ -10,12 +10,15 @@
  *
  * Tabel berhalaman (server): berikan `ambilSemua={async () => semuaBaris}` agar yang diunduh SEMUA baris
  * hasil saringan, bukan hanya halaman yang tampil. `baris` tetap dipakai untuk menentukan aktif/nonaktif.
+ *
+ * `aksiTambahan={[{ label, onClick }]}` — pilihan unduhan lain yang sudah ada sebelumnya (mis. Excel berformat
+ * laporan buatan server) tetap tersedia di menu yang sama, di bawah garis pemisah.
  */
 import { Download, FileSpreadsheet, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
 const bersihNama = (s) => String(s || 'data').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -56,9 +59,9 @@ export function unduhCsv({ namaBerkas, kolom, baris }) {
 }
 
 export default function TombolUnduh({
-  namaBerkas, kolom, baris, namaLembar, label = 'Unduh', testId = 'tombol-unduh', ambilSemua,
+  namaBerkas, kolom, baris, namaLembar, label = 'Unduh', testId = 'tombol-unduh', ambilSemua, aksiTambahan = [],
 }) {
-  const kosong = !baris || baris.length === 0;
+  const kosong = (!baris || baris.length === 0) && aksiTambahan.length === 0;
   const jalan = async (jenis) => {
     try {
       const data = ambilSemua ? await ambilSemua() : baris;
@@ -84,6 +87,12 @@ export default function TombolUnduh({
         <DropdownMenuItem onSelect={() => jalan('csv')} data-testid={`${testId}-csv`}>
           <FileText className="mr-2 h-4 w-4" />CSV
         </DropdownMenuItem>
+        {aksiTambahan.length > 0 && <DropdownMenuSeparator />}
+        {aksiTambahan.map((a, i) => (
+          <DropdownMenuItem key={a.label} onSelect={() => a.onClick?.()} data-testid={`${testId}-lain-${i}`}>
+            <FileSpreadsheet className="mr-2 h-4 w-4" />{a.label}
+          </DropdownMenuItem>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );

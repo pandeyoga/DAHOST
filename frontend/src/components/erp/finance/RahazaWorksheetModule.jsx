@@ -9,7 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { EmptyState } from '../moduleAtoms';
 import PageLayout from '../layout/PageLayout';
-import { fmt, fmtCell, authHeaders } from './reportShared';
+import { fmt, fmtCell, authHeaders, downloadXlsx } from './reportShared';
 
 const COLS = ['opening_debit', 'opening_credit', 'period_debit', 'period_credit', 'end_debit', 'end_credit', 'pl_debit', 'pl_credit', 'bs_debit', 'bs_credit'];
 const HEAD = [['Saldo awal', 2], ['Mutasi', 2], ['Saldo akhir', 2], ['Laba rugi', 2], ['Neraca', 2]];
@@ -62,6 +62,7 @@ export default function RahazaWorksheetModule({ token }) {
       tools={<>
         <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="ws-refresh"><RefreshCw className="w-4 h-4" /></Button>
         <TombolUnduh namaBerkas={`neraca-lajur-${from}-${to}`} namaLembar="Neraca lajur" testId="ws-export"
+          aksiTambahan={[{ label: 'Excel format laporan (server)', onClick: () => downloadXlsx(`/api/rahaza/finance/reports/export-xlsx?report=worksheet&from=${from}&to=${to}&show_zero=${showZero}`, token, `neraca-lajur-${from}-${to}.xlsx`).catch((e) => toast.error(e.message)) }]}
           baris={hasRows ? [...data.rows,
             { code: '', name: 'Jumlah', ...t },
             { code: '', name: netLabel, pl_debit: b.pl_debit, pl_credit: b.pl_credit, bs_debit: b.bs_debit, bs_credit: b.bs_credit },

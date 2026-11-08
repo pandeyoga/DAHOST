@@ -952,6 +952,21 @@ function AuditTrailTab({ token }) {
     setPage({ limit: 50, skip: 0, total: 0 });
   };
 
+  // CSV buatan server (fitur lama) — kini lewat header Authorization (dulu token di alamat URL).
+  const unduhCsvServer = async () => {
+    const qStr = qs();
+    try {
+      const res = await fetch(`${API}/api/wms/audit/adjustments/export-csv${qStr ? `?${qStr}` : ''}`, { headers });
+      if (!res.ok) { toast.error(`Unduhan gagal (HTTP ${res.status}).`); return; }
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a');
+      a.href = url; a.download = 'audit-penyesuaian-gudang.csv'; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error('Unduhan gagal: ' + (e?.message || 'jaringan bermasalah'));
+    }
+  };
+
   // Unduh: SEMUA baris hasil saringan (bukan hanya halaman ini) — API yang sama, 500 per permintaan.
   const ambilSemua = async () => {
     const semua = [];
@@ -1033,6 +1048,7 @@ function AuditTrailTab({ token }) {
         <Button variant="link" className="px-1" onClick={resetFilters} data-testid="audit-reset">Atur ulang</Button>
         <Alat>
           <TombolUnduh namaBerkas="audit-trail-gudang" namaLembar="Audit trail" baris={items} ambilSemua={ambilSemua} testId="audit-export-csv"
+            aksiTambahan={[{ label: 'CSV lengkap dari server', onClick: unduhCsvServer }]}
             kolom={[
               { label: 'Waktu', nilai: (r) => formatDateTimeID(r.timestamp, { fallback: '' }) },
               { label: 'Sesi', nilai: (r) => r.session_ref || '' },

@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Wallet } from 'lucide-react';
+import { toast } from 'sonner';
+import { downloadXlsx } from './finance/reportShared';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -88,6 +90,7 @@ export default function RahazaCashFlowModule({ token }) {
       tools={<>
         <Button variant="outline" size="icon" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang" data-testid="cf-refresh"><RefreshCw className="w-4 h-4" /></Button>
         <TombolUnduh namaBerkas={`arus-kas-${view === 'account' ? 'per-kelompok-akun' : 'per-jenis'}-${from}-${to}`} namaLembar="Arus kas" testId="cf-export"
+          aksiTambahan={[{ label: 'Excel format laporan (server)', onClick: () => downloadXlsx(`/api/rahaza/finance/reports/export-xlsx?report=cash-flow&from=${from}&to=${to}`, token, `arus-kas-${from}-${to}.xlsx`).catch((e) => toast.error(e.message)) }]}
           baris={unduhanLaporan(COLS, rows, 'Arus kas').baris} kolom={unduhanLaporan(COLS, rows, 'Arus kas').kolom} />
       </>}
       summary={<>

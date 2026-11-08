@@ -599,6 +599,25 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
   const isApprover = ['superadmin','admin','owner','hr','manager','finance'].includes(role.toLowerCase());
   const headers = { Authorization: `Bearer ${token}` };
 
+  // Unduhan CSV buatan server (fitur lama, tetap tersedia di menu Unduh): status + rentang periode.
+  const unduhCsvServer = async () => {
+    const params = new URLSearchParams();
+    if (filter !== 'all') params.set('status', filter);
+    if (period?.from) params.set('from_date', period.from);
+    if (period?.to) params.set('to_date', period.to);
+    try {
+      const res = await fetch(`${API}/api/hr/expenses/settlements/export?${params}`, { headers });
+      if (!res.ok) { toast.error(`Unduhan gagal (HTTP ${res.status}).`); return; }
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a');
+      a.href = url; a.download = `penyelesaian-dinas-${period?.from || ''}-${period?.to || ''}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error('Unduhan gagal: ' + (e?.message || 'jaringan bermasalah'));
+    }
+  };
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
@@ -782,6 +801,7 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
         </Button>
         {listTab && (
           <TombolUnduh namaBerkas={`penyelesaian-dinas-${period.from}-${period.to}`} namaLembar="Penyelesaian dinas" baris={filteredItems} testId="travel-export-csv"
+            aksiTambahan={[{ label: 'CSV lengkap dari server', onClick: unduhCsvServer }]}
             kolom={[
               { label: 'Nomor', nilai: (x) => x.settlement_number || '' },
               { label: 'Perjalanan', nilai: (x) => x.trip_number || '' },

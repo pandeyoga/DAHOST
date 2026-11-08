@@ -10,7 +10,7 @@ import { EmptyState } from '../moduleAtoms';
 import PageLayout from '../layout/PageLayout';
 import IntercompanyNotes from './IntercompanyNotes';
 import StatementTable, { unduhanLaporan } from './StatementTable';
-import { fmt, authHeaders, yearOptions } from './reportShared';
+import { fmt, authHeaders, downloadXlsx, yearOptions } from './reportShared';
 
 const SECTIONS = ['assets', 'liabilities', 'equity'];
 // Kolom akun tetap terlihat saat tabel 12 bulan digulir ke samping. Latar = permukaan kartu di atas latar
@@ -83,6 +83,7 @@ export default function RahazaBalanceSheetMonthlyModule({ token }) {
       tools={<>
         <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="bs12-refresh"><RefreshCw className="w-4 h-4" /></Button>
         <TombolUnduh namaBerkas={`neraca-12-bulan-${year}`} namaLembar={`Neraca ${year}`} testId="bs12-export"
+          aksiTambahan={[{ label: 'Excel format laporan (server)', onClick: () => downloadXlsx(`/api/rahaza/finance/reports/export-xlsx?report=balance-sheet-monthly&year=${year}`, token, `neraca-12-bulan-${year}.xlsx`).catch((e) => toast.error(e.message)) }]}
           baris={unduhanLaporan(columns, rows).baris} kolom={unduhanLaporan(columns, rows).kolom} />
       </>}
       summary={hasData && <>

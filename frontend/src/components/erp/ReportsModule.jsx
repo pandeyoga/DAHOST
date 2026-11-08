@@ -87,6 +87,21 @@ function kalimat(label) {
 const PER_HALAMAN_UNDUH = 200;
 
 export default function ReportsModule({ token }) {
+  // Excel buatan server (fitur lama) — tetap tersedia di menu Unduh di samping Excel/CSV tabel.
+  const unduhExcelServer = async () => {
+    try {
+      const params = new URLSearchParams({ type: `report-${activeReport}` });
+      Object.entries(filters).forEach(([k, v]) => { if (v) params.append(k, v); });
+      const res = await fetch(`/api/export-excel?${params.toString()}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) { toast.error(`Unduhan gagal (HTTP ${res.status}).`); return; }
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a');
+      a.href = url; a.download = `laporan_${activeReport}_${todayWIB()}.xlsx`; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error('Unduhan gagal: ' + (e?.message || 'jaringan bermasalah'));
+    }
+  };
   const [activeReport, setActiveReport] = useState('production');
   const [domain, setDomain] = useState('all');
   const [data, setData] = useState([]);
@@ -509,6 +524,7 @@ export default function ReportsModule({ token }) {
         <>
           <TombolUnduh namaBerkas={`laporan-${activeReport}-${todayWIB()}`} namaLembar={jenis?.label || 'Laporan'} baris={data}
             ambilSemua={ambilSemua} testId="report-unduh"
+            aksiTambahan={[{ label: 'Excel format laporan (server)', onClick: unduhExcelServer }]}
             kolom={kolom.map((c) => ({ label: kalimat(c.label), nilai: (r) => nilaiUnduh(r, c) }))} />
           <Button variant="outline" onClick={() => setPickerOpen(true)} disabled={!data.length} data-testid="report-export-pdf-btn">
             <FileText />PDF
