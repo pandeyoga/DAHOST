@@ -3292,6 +3292,54 @@ async def post_wip_to_fg_on_cmt_receipt(db, receipt: dict, layer_ids: list, user
     return result
 
 
+PERMAK_PROFILE = "production_permak_cost"
+PERMAK_SOURCE = "permak_cost"
+
+
+async def post_permak_cost(db, permak: dict, user: dict) -> dict:
+    """2026-11-07 (Tahap 9 lanjutan, keputusan owner): ongkos permak DITANGGUNG DA dan masuk HPP PO.
+
+    Permak PO INTERNAL yang selesai (berhasil / dibuang) dengan ongkos > 0 → Dr WIP (1-1403) / Cr hutang biaya
+    permak (profil `production_permak_cost`, bawaan 2-1600). Lapisan barang jadi menyerap ongkos ini
+    (`fg_cost_layers.permak_to_absorb`), jadi WIP yang didebit di sini adalah pasangan kredit WIP saat barang
+    masuk stok; yang tidak terserap ditutup bersama sisa WIP saat Tutup PO (`core.po_wip`).
+    PO maklon dilewati: barang jadi maklon milik klien (tanpa WIP DA); HPP maklon membaca dokumen permak langsung.
+    Idempoten per permak (`permak:<id>`). Permak terkunci begitu selesai, jadi ongkosnya tidak berubah lagi."""
+    amount = round(float((permak or {}).get("total_cost") or 0), 2)
+    if amount <= 0:
+        return {"ok": True, "skipped": "tanpa_ongkos"}
+    po = await db.production_pos.find_one({"id": permak.get("po_id")},
+                                          {"_id": 0, "id": 1, "po_number": 1, "business_type": 1})
+    if not po:
+        return {"ok": False, "reason": "po_tidak_ada"}
+    if (po.get("business_type") or "internal") != "internal":
+        return {"ok": True, "skipped": "po_maklon"}
+    source_ref = f"permak:{permak['id']}"
+    existing = await _find_existing_je(db, PERMAK_SOURCE, source_ref)
+    if existing:
+        return {"ok": True, "je_id": existing["id"], "je_number": existing.get("je_number"), "already_posted": True}
+    mapping = await get_mapping(db, PERMAK_PROFILE)
+    wip_code, payable_code = mapping.get("debit_wip"), mapping.get("credit_accrued")
+    if not wip_code or not payable_code:
+        result = {"ok": False, "reason": "mapping_incomplete",
+                  "detail": "Profil posting 'Ongkos permak PO internal' belum lengkap — lengkapi di Profil Posting."}
+    else:
+        num = permak.get("permak_number") or permak["id"][:8]
+        who = permak.get("vendor_permak_name") or permak.get("vendor_permak") or "-"
+        memo = f"Ongkos permak {num} · PO {po.get('po_number') or ''} · {who}"
+        lines = [
+            {"account_code": wip_code, "debit": amount, "credit": 0,
+             "description": f"Ongkos permak {num} masuk biaya PO {po.get('po_number') or ''}"},
+            {"account_code": payable_code, "debit": 0, "credit": amount,
+             "description": f"Hutang biaya permak {num} ({who})"},
+        ]
+        result = await _create_posted_je(db, today_wib(), memo, PERMAK_SOURCE, source_ref, lines, user)
+    upd = ({"gl_je_id": result["je_id"], "gl_je_number": result.get("je_number"), "gl_post_error": None}
+           if result.get("ok") else {"gl_post_error": result.get("detail") or result.get("error") or result.get("reason")})
+    await db.dewi_cmt_permak.update_one({"id": permak["id"]}, {"$set": upd})
+    return result
+
+
 async def post_fg_to_wip_on_cmt_koreksi(db, receipt: dict, amount: float, user: dict,
                                         suffix: str) -> dict:
     """2026-11-02 — kebalikan persis WIP→FG untuk KOREKSI hasil QC TURUN (PO internal).

@@ -364,7 +364,9 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
   //     dipilih dari master (aturan F14): nama material yang diketik bebas
   //     membuat laporan pemakaian bahan salah diam-diam.
   const [showCreate, setShowCreate] = useState(false);
-  const [createTab, setCreateTab] = useState('job');
+  // Tahap 9 lanjutan (keputusan owner 7 Nov): layar ini KHUSUS pengeluaran di luar CMT — bahan untuk CMT keluar
+  // otomatis saat Kirim ke CMT, jadi pembuatan MI dari job produksi (semua job dijahit CMT) tidak dibuka lagi.
+  const [createTab] = useState('manual');
   const [jobs, setJobs] = useState([]);
   const [jobId, setJobId] = useState('');
   const [createLoc, setCreateLoc] = useState('');
@@ -479,7 +481,7 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
 
   return (
     <PageLayout testId="rahaza-mi-page" title="Pengeluaran Material"
-      subtitle="Semua bahan keluar gudang: MI manual, job produksi, kirim ke CMT, dan potong kain."
+      subtitle="Buat di sini hanya untuk pengeluaran di luar CMT. Bahan untuk CMT keluar otomatis saat Kirim ke CMT; dokumennya tampil di sini sebagai riwayat."
       actions={<Button onClick={openCreate} data-testid="mi-create-btn"><Plus /> Buat MI</Button>}
       filters={<>
         {/* FASE H-6b — penyaring SUMBER arus keluar; angka dari `GET /material-issues/sources`. Pil berangka 0 tetap
@@ -624,12 +626,10 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
         keterangan="MI dibuat sebagai draf; stok baru berkurang setelah disetujui."
         onSimpan={createTab === 'job' ? createFromJob : createManual} menyimpan={creating} galat={createErr}
         labelSimpan="Buat draf MI" testId="mi-create-form">
-        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Cara membuat MI">
-          <Button type="button" size="sm" variant={createTab === 'job' ? 'default' : 'outline'} aria-pressed={createTab === 'job'}
-            onClick={() => setCreateTab('job')} data-testid="mi-create-tab-job">Dari job produksi</Button>
-          <Button type="button" size="sm" variant={createTab === 'manual' ? 'default' : 'outline'} aria-pressed={createTab === 'manual'}
-            onClick={() => setCreateTab('manual')} data-testid="mi-create-tab-manual">Manual dari master</Button>
-        </div>
+        <p className="text-sm text-muted-foreground" data-testid="mi-create-non-cmt-note">
+          Untuk pengeluaran di luar kiriman ke CMT (sampel, perbaikan, keperluan lain). Bahan untuk CMT keluar
+          otomatis lewat menu Kirim ke CMT.
+        </p>
 
         {createTab === 'job' ? (
           <div className="space-y-3">

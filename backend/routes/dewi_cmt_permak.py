@@ -931,6 +931,14 @@ async def change_status(permak_id: str, data: StatusChange, request: Request):
             logger.exception("apply_rework_outcome gagal untuk permak %s", permak_id)
             effect = {"ok": False, "error": str(e)}
 
+    # 2026-11-07 (Tahap 9 lanjutan, keputusan owner): ongkos permak ditanggung DA → biaya PO (WIP), sekali saja.
+    if new in TERMINAL:
+        try:
+            from routes.rahaza_posting import post_permak_cost
+            fresh = await db.dewi_cmt_permak.find_one({"id": permak_id}, {"_id": 0})
+            await post_permak_cost(db, fresh or {**doc, **updates}, user)
+        except Exception:  # noqa: BLE001 — status permak tetap tersimpan; kegagalan jurnal tercatat di log
+            logger.exception("jurnal ongkos permak gagal (permak %s)", permak_id)
     await log_activity(user["id"], user.get("name", ""), "status", "cmt-permak",
                        f"Permak {doc.get('permak_number')} → {new}")
     out = await db.dewi_cmt_permak.find_one({"id": permak_id}, {"_id": 0})

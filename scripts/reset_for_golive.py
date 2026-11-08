@@ -29,6 +29,9 @@ MODE CUTOFF "HAPUS TRANSAKSI SAJA" (keputusan owner 2026-11-06, T5):
   * Nomor dokumen DILANJUTKAN, kecuali `--reset-nomor` (hanya penghitung milik koleksi transaksi/log).
   * `--apply` di mode ini WAJIB `--yes` DAN konfirmasi ketik `HAPUS TRANSAKSI` (boleh lewat stdin),
     serta mongodump ke backups/pre_cutoff_<waktu>/ lebih dulu.
+  * `--cakupan operasional` (keputusan owner 2026-11-07): HANYA transaksi produksi, gudang/stok, pembelian,
+    dan keuangan yang dihapus; Marketing, SDM, aset, RnD, dan semua log DIPERTAHANKAN
+    (`core.cutoff_reset.deleted_in_scope`). `--reset-nomor` tidak berlaku di cakupan ini.
 """
 from __future__ import annotations
 
@@ -94,6 +97,15 @@ def print_cutoff_plan(p: dict, dbname: str, apply: bool) -> None:
         for r in rows:
             if r["count"] or not hapus:
                 print(f"  {r['name']:40s} {r['count']:8d}")
+    keep_scope = p["classes"].get("dipertahankan") or []
+    if p.get("scope") and p["scope"] != "semua":
+        from core.cutoff_reset import SCOPE_LABEL
+        isi = sum(r["count"] for r in keep_scope)
+        print(f"\n{B}CAKUPAN{X}: {SCOPE_LABEL.get(p['scope'], p['scope'])}")
+        print(f"{B}TRANSAKSI & LOG DI LUAR CAKUPAN{X} — {G}DIPERTAHANKAN{X} · {len(keep_scope)} koleksi · {isi} dokumen")
+        for r in keep_scope:
+            if r["count"]:
+                print(f"  {r['name']:40s} {r['count']:8d}  ({cr.KIND_LABEL.get(r['kind'], r['kind'])})")
     if p["unknown"]:
         print(f"\n{R}{B}BELUM DIKLASIFIKASI{X} ({len(p['unknown'])} koleksi) — skrip menolak berjalan:")
         for r in p["unknown"]:
@@ -115,7 +127,7 @@ def print_cutoff_plan(p: dict, dbname: str, apply: bool) -> None:
           f"· koleksi: {t['koleksi']}")
 
 
-async def main_transaksi_saja(apply: bool, yes: bool, reset_nomor: bool) -> int:
+async def main_transaksi_saja(apply: bool, yes: bool, reset_nomor: bool, scope: str = "semua") -> int:
     from dotenv import load_dotenv
     load_dotenv(ROOT / "backend" / ".env")
     sys.path.insert(0, str(ROOT / "backend"))
@@ -125,7 +137,7 @@ async def main_transaksi_saja(apply: bool, yes: bool, reset_nomor: bool) -> int:
     client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=10000)
     try:
         db = client[dbname]
-        p = await cutoff_reset.build_plan(db, reset_nomor=reset_nomor)
+        p = await cutoff_reset.build_plan(db, reset_nomor=reset_nomor, scope=scope)
         print_cutoff_plan(p, dbname, apply)
         reasons = cutoff_reset.refusal_reasons(p)
         if reasons:
@@ -144,7 +156,7 @@ async def main_transaksi_saja(apply: bool, yes: bool, reset_nomor: bool) -> int:
         dest = mongodump(uri, dbname, label="pre_cutoff")
         print(f"{G}Backup mongodump:{X} {dest}")
         # rencana dihitung ulang sesudah backup — yang dihapus = yang ada di cadangan
-        p = await cutoff_reset.build_plan(db, reset_nomor=reset_nomor)
+        p = await cutoff_reset.build_plan(db, reset_nomor=reset_nomor, scope=scope)
         res = await cutoff_reset.apply_plan(db, p)
         print(f"\n{G}{B}CUTOFF SELESAI.{X} {res['deleted_total']} dokumen transaksi/log dihapus dari "
               f"{len(res['deleted'])} koleksi; field turunan direset di {len(res['derived'])} koleksi; "
@@ -218,9 +230,15 @@ if __name__ == "__main__":
                     help="cutoff: hapus transaksi & log saja, pertahankan konfigurasi & master")
     ap.add_argument("--reset-nomor", action="store_true",
                     help="(dengan --transaksi-saja) nomor dokumen transaksi mulai dari 1 lagi")
+    ap.add_argument("--cakupan", choices=("semua", "operasional"), default="semua",
+                    help="(dengan --transaksi-saja) operasional = produksi, gudang/stok, pembelian & keuangan saja")
     a = ap.parse_args()
     if a.reset_nomor and not a.transaksi_saja:
         ap.error("--reset-nomor hanya berlaku bersama --transaksi-saja")
+    if a.cakupan != "semua" and not a.transaksi_saja:
+        ap.error("--cakupan hanya berlaku bersama --transaksi-saja")
+    if a.cakupan == "operasional" and a.reset_nomor:
+        ap.error("--reset-nomor tidak berlaku untuk --cakupan operasional (nomor dokumen dilanjutkan)")
     if a.transaksi_saja:
-        sys.exit(asyncio.run(main_transaksi_saja(a.apply, a.yes, a.reset_nomor)))
+        sys.exit(asyncio.run(main_transaksi_saja(a.apply, a.yes, a.reset_nomor, a.cakupan)))
     sys.exit(asyncio.run(main(a.apply, a.yes)))
