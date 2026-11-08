@@ -527,9 +527,12 @@ async def budget_summary(request: Request, account_id: str = Query(...), period:
     budget_doc = await db.marketing_budgets.find_one({'account_id': account_id, 'period': period}, {'_id': 0})
     budget = {**_empty_cat(), **((budget_doc or {}).get('budget_by_category') or {})}
 
-    daily = await _cycle.actual_from_daily(db, account_id, period)
+    # M-05 — omzet & semua biaya otomatis membaca RENTANG periode yang sama (7 hari /
+    # bulanan); dulu omzet 1 hari dibandingkan biaya sebulan.
+    _days = (await get_period_settings(db))['period_days']
+    daily = await _cycle.actual_from_daily(db, account_id, period, _days)
     manual, manual_docs = await _cycle.manual_spend(db, account_id, period)
-    auto, spend_sources = await _cycle.auto_spend(db, account_id, period, daily)
+    auto, spend_sources = await _cycle.auto_spend(db, account_id, period, daily, _days)
 
     spend = {c: round(_num(manual.get(c)) + _num(auto.get(c)), 2) for c in CATEGORIES}
 
@@ -550,6 +553,7 @@ async def budget_summary(request: Request, account_id: str = Query(...), period:
         total_spend += s
 
     sales = _num(daily.get('revenue')) or await _sales_revenue(db, account_id, period)
+    _lo, _hi = _cycle.period_range(period, _days)
     total_budget = round(total_budget, 2)
     total_spend = round(total_spend, 2)
     roi_pct = round(((sales - total_spend) / total_spend * 100) if total_spend > 0 else 0, 2)
@@ -572,6 +576,7 @@ async def budget_summary(request: Request, account_id: str = Query(...), period:
         'livehost_detail': next((s.get('detail') for s in spend_sources
                                  if s.get('category') == 'livehost'), []) or [],
         'label': 'Angka omzet SEBELUM potongan platform.',
+        'date_from': _lo, 'date_to': _hi,
     }
 
 

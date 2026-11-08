@@ -264,6 +264,31 @@ def _pct(a: float, b: float, nd: int = 1) -> Optional[float]:
     return round(a / b * 100, nd) if b else None
 
 
+def capaian_gabungan(baris: Iterable[Any], target_of, aktual_of, nd: int = 1) -> dict:
+    """Persen capaian GABUNGAN dengan pembilang & penyebut dari himpunan toko yang SAMA.
+
+    M-04 (audit Marketing 9 Nov 2026) — laporan bulanan, target, rapat mingguan, dan analitik
+    dulu membagi omzet SEMUA toko dengan target toko yang PUNYA target: satu toko bertarget
+    68,6% tampil sebagai 117,3% (mingguan 1.115,9%). Sekarang hanya toko bertarget yang
+    dibandingkan; omzet toko tanpa target dilaporkan terpisah (`aktual_tanpa_target`).
+    """
+    tgt = akt = tanpa = 0.0
+    n_t = n_0 = 0
+    for b in baris or []:
+        t = _num(target_of(b))
+        a = _num(aktual_of(b))
+        if t > 0:
+            tgt += t
+            akt += a
+            n_t += 1
+        else:
+            tanpa += a
+            n_0 += 1
+    return {"target": tgt, "aktual_bertarget": akt, "aktual_tanpa_target": tanpa,
+            "toko_bertarget": n_t, "toko_tanpa_target": n_0,
+            "persen": round(akt / tgt * 100, nd) if tgt > 0 else None}
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 3. TOKO YANG BOLEH DIBACA (lingkup toko + pilihan CV)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -873,13 +898,22 @@ async def analitik_target(db, accounts: Sequence[dict], bulan: Sequence[str], *,
             tot["aktual_omzet"] += s["omzet"]
             tot["target_pesanan"] += tgt_o or 0
             tot["aktual_pesanan"] += s["pesanan"]
+    # M-04 — capaian gabungan hanya dari baris (toko × bulan) yang bertarget
+    cap = capaian_gabungan(baris, lambda b: b["target_omzet"], lambda b: b["aktual_omzet"])
+    catatan = ([] if any(b["target_omzet"] for b in baris)
+               else ["Belum ada target toko pada bulan-bulan ini."])
+    if cap["toko_bertarget"] and cap["toko_tanpa_target"]:
+        catatan.append(f"Capaian gabungan dihitung dari {cap['toko_bertarget']} baris toko-bulan yang "
+                       f"bertarget; omzet {cap['toko_tanpa_target']} baris tanpa target "
+                       f"(Rp{_rp(cap['aktual_tanpa_target']):,.0f}) tidak ikut dibandingkan."
+                       .replace(",", "."))
     return {"bulan": list(bulan), "definisi": DEFINISI_OMZET,
             "total": {"target_omzet": _rp(tot["target_omzet"]), "aktual_omzet": _rp(tot["aktual_omzet"]),
-                      "capaian_omzet_persen": _pct(tot["aktual_omzet"], tot["target_omzet"]),
+                      "capaian_omzet_persen": cap["persen"],
+                      "aktual_omzet_bertarget": _rp(cap["aktual_bertarget"]),
                       "target_pesanan": tot["target_pesanan"], "aktual_pesanan": tot["aktual_pesanan"]},
             "baris": baris,
-            "catatan": ([] if any(b["target_omzet"] for b in baris)
-                        else ["Belum ada target toko pada bulan-bulan ini."])}
+            "catatan": catatan}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -894,33 +928,148 @@ def tanggal_iklan(doc: dict) -> Optional[str]:
     return kunci_tanggal(doc.get("date")) or kunci_tanggal(doc.get("period_start"))
 
 
+MASA_IKLAN_MAKS = 92     # laporan lebih panjang dari ini tidak dibagi (dianggap salah isi)
+LABEL_DIBAGI_RATA = "dibagi rata"
+
+
+def rentang_iklan(doc: dict) -> Tuple[Optional[str], Optional[str]]:
+    """Rentang belanja satu baris iklan → ``(awal, akhir)`` inklusif.
+
+    Q-3 (keputusan owner 9 Nov 2026) — laporan per PERIODE (CPC Shopee 1–31 Agt) dulu
+    membebankan SELURUH biaya pada tanggal awal: minggu pertama tampak boros, minggu lain
+    "iklan belum diimpor". Baris berperiode sekarang dibagi rata per hari dalam periodenya.
+    Baris tanpa periode = satu hari (tanggalnya sendiri).
+    """
+    ps, pe = kunci_tanggal(doc.get("period_start")), kunci_tanggal(doc.get("period_end"))
+    if ps and pe and pe >= ps and jumlah_hari(ps, pe) <= MASA_IKLAN_MAKS:
+        return ps, pe
+    d = tanggal_iklan(doc)
+    return d, d
+
+
+def porsi_iklan(doc: dict, dari: str, sampai: str) -> float:
+    """Bagian baris iklan yang jatuh di ``[dari, sampai]`` (0..1), dibagi rata per hari."""
+    a, b = rentang_iklan(doc)
+    if not a:
+        return 0.0
+    lo, hi = max(a, dari), min(b, sampai)
+    if hi < lo:
+        return 0.0
+    return jumlah_hari(lo, hi) / jumlah_hari(a, b)
+
+
+def pecah_harian_iklan(doc: dict, dari: str, sampai: str) -> List[Tuple[str, float]]:
+    """Baris iklan → ``[(tanggal, porsi), …]`` untuk hari-hari di dalam ``[dari, sampai]``."""
+    a, b = rentang_iklan(doc)
+    if not a:
+        return []
+    lo, hi = max(a, dari), min(b, sampai)
+    if hi < lo:
+        return []
+    n = jumlah_hari(a, b)
+    d0 = date.fromisoformat(lo)
+    return [((d0 + timedelta(days=i)).isoformat(), 1.0 / n) for i in range(jumlah_hari(lo, hi))]
+
+
+def filter_iklan_rentang(dari: str, sampai: str) -> dict:
+    """Saringan Mongo: baris bertanggal di rentang ATAU berperiode yang beririsan."""
+    return {"$or": [filter_tanggal("date", dari, sampai),
+                    {"period_start": {"$lte": sampai + "\uffff"}, "period_end": {"$gte": dari}}]}
+
+
 async def baca_iklan(db, account_ids: Sequence[str], dari: str, sampai: str) -> List[dict]:
+    """Baris iklan yang MENYENTUH rentang, masing-masing dengan ``_porsi`` (Q-3).
+
+    ``_tanggal`` = hari pertama baris itu di dalam rentang; ``_dibagi_rata`` = baris
+    berperiode lebih dari satu hari (biayanya dibagi rata per hari).
+    """
     ids = [a for a in (account_ids or []) if a]
     if not ids:
         return []
-    q = {"$and": [{"account_id": {"$in": ids}}, filter_tanggal("date", dari, sampai),
+    q = {"$and": [{"account_id": {"$in": ids}}, filter_iklan_rentang(dari, sampai),
                   dict(TANPA_CONTOH)]}
     out = []
     async for d in db[ADS].find(q, {"_id": 0}):
-        k = tanggal_iklan(d)
-        if k and dari <= k <= sampai:
-            d["_tanggal"] = k
-            out.append(d)
+        porsi = porsi_iklan(d, dari, sampai)
+        if porsi <= 0:
+            continue
+        a, b = rentang_iklan(d)
+        d["_tanggal"] = max(a, dari)
+        d["_porsi"] = porsi
+        d["_dibagi_rata"] = bool(a and b and b > a)
+        out.append(d)
     return out
 
 
+def jalur_iklan(doc: dict) -> str:
+    """Asal satu baris iklan: ``shopee_ads_cpc`` · ``ads`` (impor) · ``manual``."""
+    if str(doc.get("source_report") or "") == "shopee_ads_cpc":
+        return "shopee_ads_cpc"
+    if doc.get("_import_session_id") or doc.get("_import_source_type"):
+        return str(doc.get("_import_source_type") or "ads")
+    return "manual"
+
+
+LABEL_JALUR_IKLAN = {"shopee_ads_cpc": "impor Laporan Iklan Shopee (CPC)",
+                     "ads": "impor Biaya & Performa Iklan", "manual": "entri manual"}
+
+
+async def bentrok_iklan(db, account_id: str, rows: Sequence[Tuple[str, str, str]], *,
+                        jalur: str, kecuali_id: Optional[str] = None) -> List[dict]:
+    """M-09 — baris iklan JALUR LAIN untuk kampanye & hari yang sama.
+
+    ``rows`` = ``[(nama_kampanye, awal, akhir), …]``. Dulu impor CPC Rp452.122 + entri manual
+    kampanye & tanggal sama Rp8.693 dijumlah di semua layar (Rp460.815). Baris dari jalur
+    yang SAMA tidak dihitung bentrok (itu ditangani kunci dedupe jalurnya: diperbarui).
+    """
+    rows = [(n, a, b) for n, a, b in rows if n and a and b]
+    if not rows or not account_id:
+        return []
+    lo = min(a for _n, a, _b in rows)
+    hi = max(b for _n, _a, b in rows)
+    want: Dict[str, List[Tuple[str, str]]] = {}
+    for n, a, b in rows:
+        want.setdefault(_norm(n), []).append((a, b))
+    q = {"$and": [{"account_id": account_id}, filter_iklan_rentang(lo, hi), dict(TANPA_CONTOH)]}
+    out = []
+    async for d in db[ADS].find(q, {"_id": 0}):
+        if kecuali_id and d.get("id") == kecuali_id:
+            continue
+        if jalur_iklan(d) == jalur:
+            continue
+        spans = want.get(_norm(d.get("campaign_name")))
+        if not spans:
+            continue
+        a, b = rentang_iklan(d)
+        if a and any(not (b < x or a > y) for x, y in spans):
+            out.append({"id": d.get("id"), "campaign_name": d.get("campaign_name"),
+                        "dari": a, "sampai": b, "spend": _num(d.get("spend")),
+                        "jalur": jalur_iklan(d)})
+    return out
+
+
+def pesan_bentrok_iklan(hits: Sequence[dict], *, saat: str) -> str:
+    contoh = "; ".join(
+        f"'{h['campaign_name']}' {h['dari']}{'' if h['dari'] == h['sampai'] else '..' + h['sampai']} "
+        f"({LABEL_JALUR_IKLAN.get(h['jalur'], h['jalur'])}, Rp{round(h['spend']):,})".replace(",", ".")
+        for h in list(hits)[:4])
+    return (f"{saat} dibatalkan: biaya iklan kampanye yang sama pada hari yang sama sudah tercatat "
+            f"lewat jalur lain — {contoh}. Kalau diteruskan, biaya iklan terhitung dua kali di "
+            "ROAS & anggaran. Ubah/hapus baris yang lama, atau pakai satu jalur saja untuk kampanye ini.")
+
+
 def _agg_iklan(rows: Sequence[dict]) -> dict:
-    spend = sum(_num(r.get("spend")) for r in rows)
-    rev = sum(_num(r.get("revenue")) for r in rows)
-    imp = sum(_num(r.get("impressions")) for r in rows)
-    clk = sum(_num(r.get("clicks")) for r in rows)
-    conv = sum(_num(r.get("conversions")) for r in rows)
+    def tot(k: str) -> float:
+        return sum(_num(r.get(k)) * float(r.get("_porsi", 1.0)) for r in rows)
+    spend, rev = tot("spend"), tot("revenue")
+    imp, clk, conv = tot("impressions"), tot("clicks"), tot("conversions")
     return {"belanja": _rp(spend), "omzet_atribusi": _rp(rev),
             "roas": round(rev / spend, 2) if spend else None,
-            "impresi": int(imp), "klik": int(clk), "konversi": int(conv),
+            "impresi": int(round(imp)), "klik": int(round(clk)), "konversi": int(round(conv)),
             "ctr_persen": _pct(clk, imp, 2), "cpc": _rp(spend / clk) if clk else None,
             "biaya_per_konversi": _rp(spend / conv) if conv else None,
-            "baris": len(rows)}
+            "baris": len(rows),
+            "dibagi_rata": sum(1 for r in rows if r.get("_dibagi_rata"))}
 
 
 async def analitik_iklan(db, accounts: Sequence[dict], dari: str, sampai: str, *,
@@ -940,13 +1089,23 @@ async def analitik_iklan(db, accounts: Sequence[dict], dari: str, sampai: str, *
             nm = str(r.get("campaign_name") or "Tanpa nama")
             return f"{r.get('account_id')}|{_norm(nm)}", nm
         if kelompok == "saluran":
-            s = str(r.get("ad_platform") or r.get("platform") or "lainnya")
+            # M-23 — saluran IKLAN (Shopee Ads/TikTok Ads/…), bukan platform toko
+            s = str(r.get("ad_platform") or r.get("source_report") or r.get("platform") or "lainnya")
             return s, s.replace("_", " ").capitalize()
         return _kunci_waktu(r["_tanggal"], kelompok)
 
+    if kelompok in KELOMPOK_WAKTU:
+        # Q-3 — baris berperiode dipecah per hari supaya tren harian/mingguan tidak menumpuk
+        expanded: List[dict] = []
+        for r in rows:
+            for day, frac in pecah_harian_iklan(r, dari, sampai):
+                expanded.append({**r, "_tanggal": day, "_porsi": frac})
+        group_rows = expanded
+    else:
+        group_rows = rows
     grp: Dict[str, List[dict]] = {}
     labels: Dict[str, str] = {}
-    for r in rows:
+    for r in group_rows:
         k, lab = key_of(r)
         grp.setdefault(k, []).append(r)
         labels[k] = lab
@@ -959,12 +1118,13 @@ async def analitik_iklan(db, accounts: Sequence[dict], dari: str, sampai: str, *
     total = _agg_iklan(rows)
     total["omzet_toko"] = omzet
     total["rasio_iklan_terhadap_omzet_persen"] = _pct(total["belanja"], omzet, 2)
-    melewati = sum(1 for r in rows if r.get("period_end")
-                   and (kunci_tanggal(r.get("period_end")) or "") > sampai)
-    catatan = ["Omzet atribusi = omzet yang dilaporkan platform iklan, bukan omzet rekap toko."]
-    if melewati:
-        catatan.append(f"{melewati} laporan iklan periodenya melewati tanggal 'sampai'; seluruh "
-                       "biayanya dihitung pada tanggal awal laporan.")
+    catatan = ["Omzet atribusi = omzet yang dilaporkan platform iklan, bukan omzet rekap toko.",
+               "ROAS = omzet atribusi iklan ÷ biaya iklan. Rasio iklan terhadap omzet = biaya iklan "
+               "÷ omzet seluruh toko pada periode yang sama."]
+    if total["dibagi_rata"]:
+        catatan.append(f"{total['dibagi_rata']} laporan iklan berperiode: biayanya {LABEL_DIBAGI_RATA} "
+                       "per hari dalam periode laporan, lalu hanya hari di dalam rentang ini yang "
+                       "dihitung.")
     if not rows:
         catatan.append("Belum ada data iklan pada periode ini (ROAS tidak bisa dihitung, bukan 0).")
     return {"periode": {"dari": dari, "sampai": sampai}, "kelompok": kelompok,
@@ -980,6 +1140,60 @@ def _live_num(d: dict, *names: str) -> float:
         if d.get(n) is not None:
             return _num(d.get(n))
     return 0.0
+
+
+DEFINISI_LIVE = (
+    "Omzet live resmi = omzet pesanan berkanal LIVE (kolom kanal di ekspor pesanan), dibaca dari "
+    "rekap harian (`kanal.live`) — bagian dari omzet toko, bukan tambahan. Angka yang diketik di "
+    "sesi live, shift host, atau sesi kreator adalah CATATAN KERJA dan pembanding, tidak dijumlah "
+    "sebagai omzet. Sesi berstatus batal tidak dihitung.")
+
+
+async def ringkas_live(db, accounts: Sequence[dict], dari: str, sampai: str) -> dict:
+    """Q-2 (keputusan owner 9 Nov 2026) — SATU definisi omzet live untuk semua layar.
+
+    Dulu satu siaran yang sama tampil Rp289.427 (analitik), Rp578.854 (Dashboard: shift host
+    + sesi kreator dijumlah), dan Rp789.427 (layar Sesi Live: sesi batal ikut).
+    → ``{omzet, pesanan, sesi, omzet_tercatat_sesi, selisih, ...}``.
+    """
+    ids = [a["id"] for a in accounts if a.get("id")]
+    oms = await ringkas_omzet(db, accounts, dari, sampai)
+    per_hari: Dict[Tuple[str, str], float] = {}
+    turunan = set()
+    for r in oms["baris"]:
+        per_hari[(r["account_id"], r["date"])] = _num((r.get("kanal") or {}).get("live"))
+        if r.get("sumber") == _shape.SOURCE_ORDERS_AUTO:
+            turunan.add((r["account_id"], r["date"]))
+    # Toko REKAP MANUAL (tanpa ekspor pesanan): angka live yang DIKETIK di rekap jenis "live"
+    # dipakai untuk hari yang tidak punya pesanan turunan & tidak punya kanal live di rekap
+    # total. Rekap live hasil sinkron shift/sesi kreator TIDAK dipakai (catatan kerja, Q-2).
+    live_rows, _dup = await baca_rekap(db, ids, dari, sampai, revenue_type="live")
+    for r in live_rows:
+        key = (r["account_id"], r["date"])
+        if (r.get("sumber") in (_shape.SOURCE_MANUAL, _shape.SOURCE_IMPORT, _shape.SOURCE_TASK,
+                                _shape.SOURCE_MANUAL_OVERRIDE)
+                and key not in turunan and not per_hari.get(key)):
+            per_hari[key] = _num(r.get("omzet"))
+    omzet = sum(per_hari.values())
+    per_toko: Dict[str, float] = {}
+    for (aid, _d), v in per_hari.items():
+        per_toko[aid] = per_toko.get(aid, 0.0) + v
+    orders = await baca_pesanan(db, ids, dari, sampai)
+    pesanan = sum(1 for o in orders if kanal_pesanan(o) == "live")
+    sesi = 0
+    tercatat = 0.0
+    if ids:
+        q = {"$and": [{"account_id": {"$in": ids}}, filter_tanggal("session_date", dari, sampai),
+                      dict(TANPA_CONTOH), {"status": {"$ne": "cancelled"}}]}
+        async for d in db[LIVE].find(q, {"_id": 0, "session_date": 1, "revenue": 1, "gmv": 1}):
+            k = kunci_tanggal(d.get("session_date"))
+            if k and dari <= k <= sampai:
+                sesi += 1
+                tercatat += _live_num(d, "revenue", "gmv")
+    return {"omzet": _rp(omzet), "pesanan": pesanan, "sesi": sesi,
+            "omzet_tercatat_sesi": _rp(tercatat), "selisih_tercatat": _rp(tercatat - omzet),
+            "per_toko": {k: _rp(v) for k, v in per_toko.items()},
+            "definisi": DEFINISI_LIVE}
 
 
 async def analitik_live(db, accounts: Sequence[dict], dari: str, sampai: str, *,
@@ -1026,11 +1240,20 @@ async def analitik_live(db, accounts: Sequence[dict], dari: str, sampai: str, *,
     out = [{"kunci": k, "label": labels[k], **agg(rs)} for k, rs in grp.items()]
     out.sort(key=(lambda r: r["kunci"]) if kelompok in KELOMPOK_WAKTU else (lambda r: -r["omzet"]))
     n = max(1, min(int(limit or 20), 400))
+    total = agg(rows)
+    resmi = await ringkas_live(db, accounts, dari, sampai)
+    # Q-2 — `omzet` sesi tetap ada (pembanding per host/sesi), tetapi angka RESMI-nya
+    # `omzet_live_pesanan`; selisihnya = kualitas data pencatatan sesi.
+    total["omzet_tercatat_sesi"] = total["omzet"]
+    total["omzet_live_pesanan"] = resmi["omzet"]
+    total["pesanan_live_pesanan"] = resmi["pesanan"]
+    total["selisih_tercatat_vs_pesanan"] = _rp(total["omzet"] - resmi["omzet"])
     return {"periode": {"dari": dari, "sampai": sampai}, "kelompok": kelompok,
-            "total": agg(rows), "baris": out[:n], "jumlah_baris": len(out),
-            "dipotong": len(out) > n,
-            "catatan": (["Omzet live = omzet sesi yang dicatat/diimpor per sesi (bagian dari omzet toko, "
-                         "bukan tambahan)."] + ([] if rows else ["Belum ada sesi live pada periode ini."]))}
+            "total": total, "baris": out[:n], "jumlah_baris": len(out),
+            "dipotong": len(out) > n, "definisi": DEFINISI_LIVE,
+            "catatan": (["Omzet live RESMI = pesanan berkanal LIVE (omzet_live_pesanan). Omzet per "
+                         "host/sesi di tabel = angka yang dicatat di sesi (pembanding, bukan omzet "
+                         "resmi)."] + ([] if rows else ["Belum ada sesi live pada periode ini."]))}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

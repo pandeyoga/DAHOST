@@ -36,6 +36,7 @@ from typing import Any, Dict, List, Optional
 from core import marketing_sales_shape as _shape
 from core import marketing_daily_rollup as _rollup
 from core import marketing_returns as _ret
+from core import ukuran_penjualan as _ukuran
 from utils.waktu import today_wib
 
 DAILY = "marketing_sales_data"
@@ -113,10 +114,32 @@ def _delta(now_v: float, prev_v: float) -> Dict[str, Any]:
 
 
 async def _sales_rows(db, account_id: str, dates: List[str]) -> List[dict]:
-    return await db[DAILY].find(
-        {"account_id": account_id, "date": {"$in": dates}, "revenue_type": "total"},
+    """Rekap harian minggu itu — aturan baku: tanpa data contoh, satu dokumen per tanggal."""
+    raw = await db[DAILY].find(
+        {"account_id": account_id, "date": {"$in": dates}, "revenue_type": "total",
+         **_ukuran.TANPA_CONTOH},
         {"_id": 0},
-    ).sort("date", 1).to_list(60)
+    ).sort("date", 1).to_list(200)
+    pick: Dict[str, dict] = {}
+    for r in raw:
+        k = str(r.get("date") or "")[:10]
+        if k in pick and str(r.get("updated_at") or "") <= str(pick[k].get("updated_at") or ""):
+            continue
+        pick[k] = r
+    return [pick[k] for k in sorted(pick)]
+
+
+def _returns_from_rekap(rows: List[dict]) -> Dict[str, float]:
+    """M-21 — nilai retur dari REKAP (sama dengan laporan bulanan: retur status pesanan +
+    retur modul yang sudah diputuskan gudang, K36). Dulu mingguan hanya membaca status
+    pesanan, sehingga "omzet setelah retur" mingguan ≠ bulanan untuk rentang yang sama."""
+    val = units = orders = 0.0
+    for r in rows:
+        b = _ukuran.baris_rekap(r)
+        val += _num(b.get("retur_nilai"))
+        orders += _num(b.get("retur_pesanan"))
+        units += _num(_shape.read_group(r, "fulfillment").get("returned_units"))
+    return {"nilai": round(val), "pesanan": int(orders), "pcs": int(units)}
 
 
 def _sum_metrics(rows: List[dict]) -> Dict[str, float]:
@@ -161,20 +184,17 @@ def _avg_fulfillment(rows: List[dict]) -> Dict[str, Optional[float]]:
 
 
 async def _ads(db, account_id: str, dates: List[str]) -> Dict[str, Any]:
-    """Belanja iklan minggu itu. `terisi=False` ⇒ ROAS TIDAK dihitung (bukan 0)."""
-    start = datetime.strptime(dates[0], "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    end = start + timedelta(days=7)
-    rows = await db[ADS].find(
-        {"account_id": account_id,
-         "$or": [{"date": {"$gte": start, "$lt": end}},
-                 {"date": {"$in": dates}}]},
-        {"_id": 0}).to_list(2000)
-    spend = sum(_num(r.get("spend")) for r in rows)
-    clicks = sum(_num(r.get("clicks")) for r in rows)
-    impressions = sum(_num(r.get("impressions")) for r in rows)
+    """Belanja iklan minggu itu. `terisi=False` ⇒ ROAS TIDAK dihitung (bukan 0).
+
+    Q-3 — laporan iklan berperiode (CPC Shopee 1–31 Agt) DIBAGI RATA per hari; minggu ini
+    hanya menanggung hari-harinya sendiri (dulu seluruh biaya jatuh di minggu pertama).
+    """
+    rows = await _ukuran.baca_iklan(db, [account_id], dates[0], dates[-1])
+    agg = _ukuran._agg_iklan(rows)
     return {"terisi": bool(rows), "kampanye": len({r.get("campaign_name") for r in rows}),
-            "spend": round(spend), "clicks": round(clicks),
-            "impressions": round(impressions), "baris": len(rows)}
+            "spend": round(agg["belanja"]), "clicks": agg["klik"],
+            "impressions": agg["impresi"], "omzet_atribusi": round(agg["omzet_atribusi"]),
+            "baris": len(rows), "dibagi_rata": agg["dibagi_rata"]}
 
 
 async def _orders_side(db, account_id: str, dates: List[str]) -> Dict[str, Any]:
@@ -224,18 +244,23 @@ async def _target_prorata(db, account_id: str, dates: List[str]) -> Dict[str, An
     rev = ord_ = 0.0
     lengkap = True
     bulan_tanpa_target = []
+    bulan_bertarget = []
     for (y, m), days in per_month.items():
         tgt = await db[TARGETS].find_one({"account_id": account_id, "year": y, "month": m},
                                          {"_id": 0})
-        if not tgt:
+        if not tgt or _num(tgt.get("revenue_target")) <= 0:
             lengkap = False
             bulan_tanpa_target.append(f"{_BULAN[m - 1]} {y}")
             continue
+        bulan_bertarget.append(f"{y:04d}-{m:02d}")
         dim = calendar.monthrange(y, m)[1]
         rev += _num(tgt.get("revenue_target")) * days / dim
         ord_ += _num(tgt.get("orders_target")) * days / dim
+    hari = sum(d for (y, m), d in per_month.items() if f"{y:04d}-{m:02d}" in bulan_bertarget)
     return {"revenue": round(rev), "orders": round(ord_), "lengkap": lengkap,
-            "bulan_tanpa_target": bulan_tanpa_target, "dasar": "prorata jumlah hari"}
+            "bulan_tanpa_target": bulan_tanpa_target, "bulan_bertarget": bulan_bertarget,
+            "hari_bertarget": hari,
+            "dasar": f"prorata jumlah hari ({hari} hari bertarget)"}
 
 
 async def build_weekly_report(db, week_start: Any = None,
@@ -278,6 +303,11 @@ async def build_weekly_report(db, week_start: Any = None,
                                  if (r.get("source") or "") == _shape.SOURCE_MANUAL_OVERRIDE})
         rev = cur["revenue"]
         roas = round(rev / ads["spend"], 2) if ads["terisi"] and ads["spend"] else None
+        # M-04 — pencapaian membandingkan omzet HARI yang bulannya bertarget saja dengan
+        # target prorata hari-hari itu (minggu 27 Jul–2 Agt tanpa target Juli dulu 1.062,6%).
+        rev_bertarget = sum(_num(_shape.read_metrics(r).get("revenue")) for r in rows
+                            if str(r.get("date") or "")[:7] in tgt.get("bulan_bertarget", []))
+        rekap_retur = _returns_from_rekap(rows)
 
         per_store.append({
             "account_id": acc["id"],
@@ -295,16 +325,17 @@ async def build_weekly_report(db, week_start: Any = None,
             # SESI #9 — dua angka omzet berdampingan. `omzet` TETAP bruto (dipakai
             # target, ROAS, dan pembanding minggu lalu); `omzet_setelah_retur`
             # angka baru untuk analisis.
-            "nilai_retur": osd["nilai_retur"],
-            "pcs_retur": osd["pcs_retur"],
-            "omzet_setelah_retur": max(round(rev) - osd["nilai_retur"], 0),
-            "retur_persen": (round(osd["nilai_retur"] / rev * 100, 1) if rev else 0.0),
+            "nilai_retur": rekap_retur["nilai"],
+            "pcs_retur": rekap_retur["pcs"],
+            "omzet_setelah_retur": max(round(rev) - rekap_retur["nilai"], 0),
+            "retur_persen": (round(rekap_retur["nilai"] / rev * 100, 1) if rev else 0.0),
             "vs_minggu_lalu": {
                 "omzet": _delta(rev, prev["revenue"]),
                 "pesanan": _delta(cur["orders"], prev["orders"]),
             },
             "target": tgt,
-            "pencapaian_target_persen": (round(rev / tgt["revenue"] * 100, 1)
+            "omzet_bertarget": round(rev_bertarget),
+            "pencapaian_target_persen": (round(rev_bertarget / tgt["revenue"] * 100, 1)
                                          if tgt["revenue"] else None),
             "kanal": {k: round(v) for k, v in traffic.items()},
             "kanal_persen": ({k: (round(v / sum(traffic.values()) * 100, 1)
@@ -330,6 +361,11 @@ async def build_weekly_report(db, week_start: Any = None,
     tot_spend = sum(_num(s["iklan"]["spend"]) for s in per_store)
     ads_any = any(s["iklan"]["terisi"] for s in per_store)
     tot_tgt_rev = sum(_num(s["target"]["revenue"]) for s in per_store)
+    # M-04 — pembilang & penyebut dari himpunan toko yang SAMA
+    cap = _ukuran.capaian_gabungan(per_store, lambda s: s["target"]["revenue"],
+                                   lambda s: s["omzet_bertarget"])
+    rev_beriklan = sum(_num(s["omzet"]) for s in per_store
+                       if s["iklan"]["terisi"] and _num(s["iklan"]["spend"]) > 0)
     kanal_tot = {k: sum(_num(s["kanal"].get(k)) for s in per_store) for k in TRAFFIC_KEYS}
     kanal_sum = sum(kanal_tot.values())
 
@@ -343,15 +379,19 @@ async def build_weekly_report(db, week_start: Any = None,
         "vs_minggu_lalu": {"omzet": _delta(tot_rev, prev_rev),
                            "pesanan": _delta(tot_ord, prev_ord)},
         "target_prorata": round(tot_tgt_rev),
-        "pencapaian_target_persen": (round(tot_rev / tot_tgt_rev * 100, 1)
-                                     if tot_tgt_rev else None),
+        "pencapaian_target_persen": cap["persen"],
+        "omzet_toko_tanpa_target": round(cap["aktual_tanpa_target"]),
         "iklan_spend": round(tot_spend),
-        "roas": (round(tot_rev / tot_spend, 2) if ads_any and tot_spend else None),
+        # Omzet toko yang BERIKLAN ÷ biaya iklannya (dulu omzet SEMUA toko ÷ biaya toko yang
+        # beriklan). Dasar: omzet toko, bukan omzet atribusi iklan.
+        "roas": (round(rev_beriklan / tot_spend, 2) if ads_any and tot_spend else None),
+        "roas_dasar": "omzet toko yang beriklan ÷ biaya iklan",
         "kanal": {k: round(v) for k, v in kanal_tot.items()},
         "kanal_persen": ({k: round(v / kanal_sum * 100, 1) for k, v in kanal_tot.items()}
                          if kanal_sum else {k: 0 for k in kanal_tot}),
         "batal": sum(s["pesanan_mentah"]["batal"] for s in per_store),
         "retur": sum(s["pesanan_mentah"]["retur"] for s in per_store),
+        "iklan_dibagi_rata": sum(int(s["iklan"].get("dibagi_rata") or 0) for s in per_store),
         "nilai_retur": sum(s["nilai_retur"] for s in per_store),
         "omzet_setelah_retur": max(round(tot_rev) - sum(s["nilai_retur"] for s in per_store), 0),
         "belum_dikirim": sum(s["pesanan_mentah"]["belum_dikirim"] for s in per_store),
@@ -386,6 +426,13 @@ async def build_weekly_report(db, week_start: Any = None,
         notes.append(f"{len(no_tgt)} toko belum punya target bulan ini "
                      f"({', '.join(no_tgt[:6])}{'…' if len(no_tgt) > 6 else ''}) — "
                      f"kolom pencapaian target kosong, bukan 0%.")
+    if gabungan["iklan_dibagi_rata"]:
+        notes.append(f"{gabungan['iklan_dibagi_rata']} laporan iklan berperiode lebih dari satu hari: "
+                     "biayanya dibagi rata per hari, dan minggu ini hanya menanggung harinya sendiri.")
+    if cap["toko_tanpa_target"] and cap["toko_bertarget"]:
+        notes.append(f"Pencapaian target gabungan hanya membandingkan toko yang punya target "
+                     f"({cap['toko_bertarget']} toko). Omzet toko tanpa target "
+                     f"Rp {_ret.rp(round(cap['aktual_tanpa_target']))} tidak ikut dibandingkan.")
     no_ads = [s["account_name"] for s in per_store if not s["iklan"]["terisi"]]
     if no_ads:
         notes.append(f"Belanja iklan belum diimpor untuk {len(no_ads)} toko ⇒ "

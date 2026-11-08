@@ -57,10 +57,13 @@ function TargetFormDialog({ open, onOpenChange, account, year, month, existingTa
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    // M-14 (audit 9 Nov 2026) — ringkasan bulanan mengirim target sebagai
+    // {revenue, orders, health_score}; dulu form membaca revenue_target dkk. sehingga
+    // terbuka kosong dan "Simpan" menimpa target menjadi 0.
     if (open) setForm({
-      revenue_target:      existingTarget?.revenue_target      || '',
-      orders_target:       existingTarget?.orders_target       || '',
-      health_score_target: existingTarget?.health_score_target ?? 80,
+      revenue_target:      existingTarget?.revenue ?? existingTarget?.revenue_target ?? '',
+      orders_target:       existingTarget?.orders ?? existingTarget?.orders_target ?? '',
+      health_score_target: existingTarget?.health_score ?? existingTarget?.health_score_target ?? 80,
       notes:               existingTarget?.notes               || '',
       reason:              '',
     });
@@ -311,7 +314,8 @@ export default function AccountTargetsModule({ token, scope = 'marketing', modul
               <StatTile label="Omzet aktual" value={fmtRp(s.rev_actual)} sub={s.rev_target > 0 ? `dari target ${fmtRp(s.rev_target)}` : 'Target belum diisi'} />
               <StatTile label="Pesanan aktual" value={fmtNum(s.ord_actual)} sub={s.ord_target > 0 ? `dari target ${fmtNum(s.ord_target)}` : 'Target belum diisi'} />
               <StatTile label="Pencapaian omzet" value={s.rev_pct != null ? `${s.rev_pct}%` : '—'} accent={nadaPct(s.rev_pct)}
-                sub={s.rev_pct == null ? 'Belum ada target omzet' : `${periodeLabel}`} />
+                sub={s.rev_pct == null ? 'Belum ada target omzet'
+                  : `${periodeLabel}${s.accounts_without_target ? ` · ${s.accounts_with_target} toko bertarget` : ''}`} />
             </div>
           )}
           <GlassCard className="space-y-3 p-4">

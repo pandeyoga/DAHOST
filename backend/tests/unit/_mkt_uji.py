@@ -229,3 +229,38 @@ async def rekap(db, aid, d, rtype="total"):
     m = x.get("metrics") or {}
     return {"omzet": m.get("revenue"), "pesanan": m.get("orders"), "src": x.get("source"),
             "doc": x}
+
+
+class Req(fm.FakeRequest):
+    """Request palsu + `query_params` (dipakai route yang membaca query sendiri)."""
+
+    def __init__(self, user=None, query=None, body=None):
+        super().__init__(body)
+        self.state.user = dict(user or SA)
+        self.query_params = dict(query or {})
+
+
+def patch_route(monkeypatch, mod, db, user=SA):
+    """Pasang route modul `mod` di atas `db` palsu dengan pemakai `user`."""
+    async def _auth(req=None, *a, **k):
+        if req is not None and getattr(req, "state", None) is not None:
+            req.state.user = dict(user)
+        return dict(user)
+
+    async def _noop(*_a, **_k):
+        return None
+    for name, val in (("get_db", lambda: db), ("require_auth", _auth), ("log_activity", _noop),
+                      ("refresh_stale_health_scores", _noop), ("_recalculate_health_score", _noop)):
+        if hasattr(mod, name):
+            monkeypatch.setattr(mod, name, val)
+    return mod
+
+
+def rekap_doc(aid, date, revenue, orders=1, *, live=0.0, source="orders_auto", rtype="total",
+              retur=0.0, **extra):
+    """Satu dokumen rekap harian bentuk kanonik (sintetis)."""
+    return {"id": f"rk-{aid}-{date}-{rtype}", "account_id": aid, "date": date, "revenue_type": rtype,
+            "source": source, "metrics": {"revenue": revenue, "orders": orders,
+                                          "revenue_product": revenue},
+            "traffic": {"live": live}, "fulfillment": {"returned_revenue_product": retur},
+            "revenue_basis": "produk_setelah_diskon", **extra}

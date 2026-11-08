@@ -2331,6 +2331,29 @@ async def _commit_blockers(db, st: SourceType, s: dict, built: List[dict],
                 "periode lama (Riwayat Impor → Rollback), atau ekspor ulang dengan "
                 "rentang yang sama persis supaya baris lama diperbarui.")})
 
+    # ── M-09 — BIAYA IKLAN DOBEL LINTAS JALUR (impor CPC × impor umum × manual) ──
+    if st.key in ("shopee_ads_cpc", "ads") and s.get("account_id"):
+        from core import ukuran_penjualan as _uk
+        spans = []
+        for r in built:
+            if r["status"] == "error":
+                continue
+            d = r.get("data") or {}
+            if st.key == "shopee_ads_cpc":
+                a = _uk.kunci_tanggal(d.get("period_start")) or _uk.kunci_tanggal(d.get("date"))
+                b = _uk.kunci_tanggal(d.get("period_end")) or a
+            else:
+                a = b = _uk.kunci_tanggal(d.get("date"))
+            spans.append((str(d.get("campaign_name") or ""), a, b))
+        hits = await _uk.bentrok_iklan(db, s["account_id"], spans, jalur=st.key)
+        if st.key == "ads":
+            # baris manual bertanggal & berkampanye sama = kunci dedupe impor ini (diperbarui),
+            # bukan bentrok; yang bentrok hanya laporan CPC berperiode.
+            hits = [h for h in hits if h["jalur"] == "shopee_ads_cpc"]
+        if hits:
+            out.append({"http": 409, "code": "iklan_dobel_lintas_jalur",
+                        "message": _uk.pesan_bentrok_iklan(hits, saat="Commit")})
+
     # ── F18#3 — rincian produk tidak boleh membuat omzet sesi live dobel ──────
     if st.key == "live_session_products":
         live = await db.marketing_live_sessions.find_one(

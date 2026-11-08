@@ -156,7 +156,7 @@ export default function MonthlyReportModule({ token }) {
           <StatTile label="Omzet" value={fmtRp(s.rev_actual)} sub={s.rev_target > 0 ? `Target ${fmtRp(s.rev_target)}` : `Belum ada target · ${s.total_accounts || 0} akun`} />
           <StatTile label="Pencapaian omzet" value={pctTxt(s.rev_pct)}
             accent={s.rev_pct == null ? 'default' : s.rev_pct >= 90 ? 'success' : s.rev_pct >= 70 ? 'warning' : 'danger'}
-            sub={s.rev_pct == null ? 'Isi target dulu' : s.rev_pct >= 90 ? 'Sesuai jalur' : s.rev_pct >= 70 ? 'Perlu dorongan' : 'Jauh dari target'} />
+            sub={s.rev_pct == null ? 'Isi target dulu' : `${s.rev_pct >= 90 ? 'Sesuai jalur' : s.rev_pct >= 70 ? 'Perlu dorongan' : 'Jauh dari target'}${s.accounts_without_target ? ` · ${s.accounts_with_target} toko bertarget` : ''}`} />
           <StatTile label="Pesanan" value={fmtNum(s.ord_actual)} sub={s.ord_target > 0 ? `Target ${fmtNum(s.ord_target)}` : 'Belum ada target'} />
           <StatTile label="Tugas selesai" value={pctTxt(s.task_completion)}
             sub={`Rata-rata hari terisi ${pctTxt(s.avg_sales_input_rate)} per akun`} />

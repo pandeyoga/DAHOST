@@ -299,8 +299,10 @@ export default function UnifiedOrdersDashboard({ token, onNavigate }) {
   // Unduh = SEMUA pesanan hasil saringan (bukan hanya halaman yang tampil)
   const ambilSemua = async () => {
     const out = [];
-    for (let p = 1; p <= 200; p += 1) {
-      const res = await axios.get(`${API}/api/marketing/orders`, { params: { page: p, page_size: 200, ...paramsSaring() }, headers: authH });
+    // M-22 (audit 9 Nov 2026) — server membatasi page_size ≤ 100; dulu 200 ⇒ HTTP 422 dan
+    // "Unduh semua" gagal. Halaman 100 baris diulang sampai habis (maks. 40.000 pesanan).
+    for (let p = 1; p <= 400; p += 1) {
+      const res = await axios.get(`${API}/api/marketing/orders`, { params: { page: p, page_size: 100, ...paramsSaring() }, headers: authH });
       out.push(...(res.data.orders || []));
       if (p >= (res.data.pagination?.total_pages || 1)) break;
     }
