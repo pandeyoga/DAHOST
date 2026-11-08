@@ -502,7 +502,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
       },
     },
     {
-      key: 'techpack', label: 'Tech Pack',
+      key: 'techpack', label: 'Tech pack',
       render: (row) => {
         const tp = row?.techpack;
         if (!tp) return <span className="text-xs text-muted-foreground">—</span>;
@@ -693,7 +693,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
           <div className="space-y-3 text-sm" data-testid="model-techpack-dialog">
             <p className="text-xs text-muted-foreground">
               Ringkasan spesifikasi hasil promosi dari R&D — <b>hanya baca</b>. Sumber kebenarannya
-              tetap Tech Pack di modul R&D.
+              tetap tech pack di modul R&D.
             </p>
             {(() => {
               const tp = techpackModel.techpack || {};
