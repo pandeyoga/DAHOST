@@ -154,7 +154,12 @@ async def live_summary(request: Request,
     # tabel yang penuh angka puluhan juta. Layar yang membantah dirinya sendiri.
     _sm = await _scope.scope_filter(db, user,
                                     {"account_id": account_id} if account_id else None)
-    _pre = [{"$match": _sm}] if _sm else []
+    # M-07 (audit 9 Nov 2026) — sesi BATAL & data contoh tidak dijumlah (dulu Rp500.000 sesi
+    # batal ikut: Rp789.427 untuk siaran Rp289.427). Angka di sini = omzet yang DICATAT di sesi
+    # (catatan kerja host, pembanding); omzet live resmi = pesanan berkanal LIVE (Q-2).
+    _sm = {"$and": [dict(_sm or {}), {"status": {"$ne": "cancelled"}},
+                    {"_seed_origin": {"$ne": True}}]}
+    _pre = [{"$match": _sm}]
     pipeline = _pre + [
         {"$group": {
             "_id": None,
@@ -208,6 +213,8 @@ async def live_summary(request: Request,
     return success_response(data={
         "total_sessions": stats["total_sessions"],
         "total_revenue": stats["total_revenue"],
+        "total_revenue_basis": ("omzet yang dicatat di sesi live (pembanding, bukan omzet resmi); "
+                                "omzet live resmi = pesanan berkanal LIVE"),
         "total_orders": stats["total_orders"],
         "total_viewers": stats["total_viewers"],
         "total_peak_viewers": stats.get("total_peak_viewers", 0),
