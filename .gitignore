@@ -118,3 +118,9 @@ credentials.json
 # demo subdomain (2026-11-03): situs Caddy hasil skrip & arsip data demo (berisi data klien)
 /deploy/caddy-sites/*.caddy
 /deploy/demo/data/
+
+# Data klien (Excel, laporan, ekspor) TIDAK BOLEH di folder publik — repo & situs terbuka (9 Nov 2026).
+frontend/public/downloads/
+frontend/public/*.xlsx
+frontend/public/*.xls
+frontend/public/*.csv
