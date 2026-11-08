@@ -81,10 +81,7 @@ export default function SelisihBarisTab() {
       footer={rows.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}
     >
       <Section>
-        {loading && !data ? <LoadingRows /> : rows.length === 0 ? (
-          <EmptyState icon={Scale} title={all.length ? 'Tidak ada baris pada pilihan ini' : 'Belum ada PO pada periode ini'}
-            description={all.length ? 'Pilih “Semua baris” untuk melihat seluruh rantai.' : 'Ubah periode atau portal.'} />
-        ) : (
+        {loading && !data ? <LoadingRows /> : (
           <Table data-testid="selisih-baris-table">
             <TableHeader><TableRow>
               <TableHead className="w-10" /><TableHead>PO</TableHead><TableHead>Barang</TableHead>
@@ -94,6 +91,11 @@ export default function SelisihBarisTab() {
               <TableHead>Selisih</TableHead><TableHead>Alasan</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {rows.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={11} className="p-0 [&>div]:py-8"><EmptyState icon={Scale} title={all.length ? 'Tidak ada baris pada pilihan ini' : 'Belum ada PO pada periode ini'} description={all.length ? 'Pilih “Semua baris” untuk melihat seluruh rantai.' : 'Ubah periode atau portal.'} /></TableCell>
+                </TableRow>
+              )}
               {paged.map((r) => {
                 const isOpen = open === r.po_item_id;
                 const kinds = [...new Set(r.differences.map((d) => d.kind))];

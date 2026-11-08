@@ -234,17 +234,6 @@ export default function ProductionCMTBillingModule({ portalId, userRole, user })
           </>
         ) : loading && !rows.length ? (
           <div className="p-4 text-sm text-muted-foreground"><RefreshCw className="w-4 h-4 animate-spin inline mr-2" />Memuat tagihan…</div>
-        ) : paged.length === 0 ? (
-          <div data-testid="cmt-billing-empty">
-            {filtered ? (
-              <EmptyState icon={Receipt} title="Tidak ada tagihan yang cocok dengan filter"
-                description="Ubah atau hapus penyaring untuk melihat tagihan lain."
-                action={<Button type="button" variant="outline" size="sm" onClick={resetFilters} data-testid="cmt-billing-empty-reset">Tampilkan semua tagihan</Button>} />
-            ) : (
-              <EmptyState icon={Receipt} title="Belum ada tagihan CMT"
-                description="Tagihan terbit otomatis setelah Terima FG dari CMT selesai QC." />
-            )}
-          </div>
         ) : (
           <Table>
             <TableHeader><TableRow>
@@ -254,6 +243,20 @@ export default function ProductionCMTBillingModule({ portalId, userRole, user })
               <TableHead>Status</TableHead><TableHead>Jurnal</TableHead><TableHead className="text-right">Aksi</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {paged.length === 0 && (
+                <TableRow data-testid="cmt-billing-empty" className="hover:bg-transparent">
+                  <TableCell colSpan={10} className="p-0 [&>div]:py-8">
+                    {filtered ? (
+                      <EmptyState icon={Receipt} title="Tidak ada tagihan yang cocok dengan filter"
+                        description="Ubah atau hapus penyaring untuk melihat tagihan lain."
+                        action={<Button type="button" variant="outline" size="sm" onClick={resetFilters} data-testid="cmt-billing-empty-reset">Tampilkan semua tagihan</Button>} />
+                    ) : (
+                      <EmptyState icon={Receipt} title="Belum ada tagihan CMT"
+                        description="Tagihan terbit otomatis setelah Terima FG dari CMT selesai QC." />
+                    )}
+                  </TableCell>
+                </TableRow>
+              )}
               {paged.map((r) => (
                 <TableRow key={r.id} data-testid={`cmt-billing-row-${r.payment_code}`}
                   className={detail?.bill?.id === r.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
@@ -306,10 +309,6 @@ export default function ProductionCMTBillingModule({ portalId, userRole, user })
 
 function ScheduleTable({ items, loading }) {
   if (loading && !items.length) return <div className="p-4 text-sm text-muted-foreground">Memuat jadwal…</div>;
-  if (!items.length) {
-    return <EmptyState icon={Receipt} title="Belum ada jadwal hutang CMT"
-      description="Jadwal lahir saat PO maklon dikonfirmasi: qty × upah CMT per vendor." />;
-  }
   return (
     <Table data-testid="cmt-ap-schedules">
       <TableHeader><TableRow>
@@ -318,6 +317,14 @@ function ScheduleTable({ items, loading }) {
         <TableHead className="text-right">Tertahan</TableHead><TableHead>Bisa dibayar</TableHead><TableHead>Status</TableHead>
       </TableRow></TableHeader>
       <TableBody>
+        {items.length === 0 && (
+          <TableRow className="hover:bg-transparent">
+            <TableCell colSpan={8} className="p-0 [&>div]:py-8">
+              <EmptyState icon={Receipt} title="Belum ada jadwal hutang CMT"
+                description="Jadwal lahir saat PO maklon dikonfirmasi: qty × upah CMT per vendor." />
+            </TableCell>
+          </TableRow>
+        )}
         {items.map((s) => (
           <TableRow key={s.id}>
             <TableCell className="font-medium whitespace-nowrap">{s.po_number}</TableCell>

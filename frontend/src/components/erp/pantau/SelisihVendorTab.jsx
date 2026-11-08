@@ -64,9 +64,7 @@ export default function SelisihVendorTab() {
       footer={rows.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}
     >
       <Section>
-        {loading && !data ? <LoadingRows /> : rows.length === 0 ? (
-          <EmptyState icon={FileWarning} title="Belum ada laporan dari vendor" description="Vendor melaporkan selisih produksi lewat Portal Vendor; selisih otomatis ada di tab Per baris PO." />
-        ) : (
+        {loading && !data ? <LoadingRows /> : (
           <Table data-testid="selisih-vendor-table">
             <TableHeader><TableRow>
               <TableHead className="w-10" /><TableHead>Tanggal</TableHead><TableHead>Vendor</TableHead><TableHead>PO · job</TableHead>
@@ -74,6 +72,11 @@ export default function SelisihVendorTab() {
               <TableHead>Status</TableHead><TableHead className="text-right">Aksi</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {rows.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={9} className="p-0 [&>div]:py-8"><EmptyState icon={FileWarning} title="Belum ada laporan dari vendor" description="Vendor melaporkan selisih produksi lewat Portal Vendor; selisih otomatis ada di tab Per baris PO." /></TableCell>
+                </TableRow>
+              )}
               {paged.map((v) => {
                 const isOpen = open === v.id;
                 return (

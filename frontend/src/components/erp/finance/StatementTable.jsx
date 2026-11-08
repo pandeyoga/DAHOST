@@ -15,10 +15,13 @@
  *   ]} />
  *
  * Angka: rata kanan, tabular, minus = "−1.234" merah, nol = abu. `defaultOpen` membuka semua kelompok.
+ * Kosong (keputusan owner 8 Nov 2026): kepala kolom tetap tampil; `kosong` (bawaan EmptyState "Belum ada data")
+ * tampil sebagai satu baris di badan tabel.
  */
 import { Fragment, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
+import { EmptyState } from '../moduleAtoms';
 import { cn } from '@/lib/utils';
 
 const fmtNum = (n) => {
@@ -63,7 +66,8 @@ export function unduhanLaporan(columns, rows, labelHeader = 'Akun') {
   return { kolom, baris };
 }
 
-export default function StatementTable({ columns, rows, labelHeader = 'Akun', defaultOpen = false, testId, blankZeroChildren = false, className }) {
+export default function StatementTable({ columns, rows: rowsIn, labelHeader = 'Akun', defaultOpen = false, testId, blankZeroChildren = false, className, kosong }) {
+  const rows = Array.isArray(rowsIn) ? rowsIn : [];
   const [open, setOpen] = useState(() => (defaultOpen ? new Set(rows.filter((r) => r.kind === 'group').map((r) => r.id)) : new Set()));
   const toggle = (id) => setOpen((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const colSpan = columns.length + 1;
@@ -78,6 +82,11 @@ export default function StatementTable({ columns, rows, labelHeader = 'Akun', de
             </tr>
           </thead>
           <tbody>
+            {rows.length === 0 && (
+              <tr className="hover:bg-transparent" data-testid={testId ? `${testId}-kosong` : undefined}>
+                <td colSpan={colSpan} className="p-0 [&>div]:py-8">{kosong || <EmptyState title="Belum ada data" />}</td>
+              </tr>
+            )}
             {rows.map((r, i) => {
               if (r.kind === 'group') {
                 const kids = (r.children || []).filter((c) => !r.hideZeroChildren || columns.some((col) => Math.abs(Number(c.values?.[col.key] || 0)) >= 0.5));

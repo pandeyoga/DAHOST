@@ -159,12 +159,12 @@ export function PredictiveMaintenanceTab({ token }) {
       <p className="text-sm text-muted-foreground" data-testid="pm-batas">{kalimatBatas}</p>
       {!report ? (
         <p className="py-10 text-center text-sm text-muted-foreground">Memuat peringatan…</p>
-      ) : !adaPeringatan ? (
-        <EmptyState title="Tidak ada peringatan pemeliharaan" testId="pm-empty-state"
-          description={'Semua aset terkendali menurut batas yang berlaku. Ubah batas lewat tombol "Atur batas" bila perlu.'} />
       ) : (
         <TabelData baris={baris} kunci={(a) => `${a.kind}-${a.asset_id}`} testId="pm-table"
-          kosong={<p className="py-6 text-center text-sm text-muted-foreground">Tidak ada peringatan jenis ini.</p>}
+          kosong={adaPeringatan
+            ? <EmptyState title="Tidak ada peringatan jenis ini" />
+            : <EmptyState title="Tidak ada peringatan pemeliharaan" testId="pm-empty-state"
+              description={'Semua aset terkendali menurut batas yang berlaku. Ubah batas lewat tombol "Atur batas" bila perlu.'} />}
           kolom={[
             { kunci: 'aset', label: 'Aset', hp: 'judul', isi: (a) => (
               <div className="min-w-0">

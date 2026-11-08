@@ -298,18 +298,6 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
         {tab === 'list' && (<div className="space-y-3">
           {loading && rows.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">Memuat daftar belanja…</p>
-          ) : rows.length === 0 ? (
-            <div data-testid="shopping-empty">
-              {summary && summary.with_threshold === 0 ? (
-                <EmptyState title="Belum ada satu pun ambang stok yang diisi"
-                  description="Selama ambang minimum kosong, sistem tidak bisa tahu barang apa yang perlu dibeli. Isi ambangnya massal dulu — dari lot pembelian nyata, persen stok, atau angka yang Anda tentukan."
-                  action={<Button onClick={() => goto('wh-master', 'thresholds')} data-testid="shopping-empty-cta">Isi ambang massal</Button>} />
-              ) : (
-                <EmptyState title="Tidak ada yang perlu dibeli minggu ini"
-                  description={`Semua barang yang sudah punya ambang stoknya masih di atas ambang.${summary && summary.without_threshold > 0
-                    ? ` Catatan: ${summary.without_threshold} barang belum berambang, jadi daftar ini belum lengkap.` : ''}`} />
-              )}
-            </div>
           ) : (
             <Table data-testid="shopping-table">
               <TableHeader>
@@ -330,6 +318,23 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {rows.length === 0 && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={10} className="p-0 [&>div]:py-8">
+            <div data-testid="shopping-empty">
+              {summary && summary.with_threshold === 0 ? (
+                <EmptyState title="Belum ada satu pun ambang stok yang diisi"
+                  description="Selama ambang minimum kosong, sistem tidak bisa tahu barang apa yang perlu dibeli. Isi ambangnya massal dulu — dari lot pembelian nyata, persen stok, atau angka yang Anda tentukan."
+                  action={<Button onClick={() => goto('wh-master', 'thresholds')} data-testid="shopping-empty-cta">Isi ambang massal</Button>} />
+              ) : (
+                <EmptyState title="Tidak ada yang perlu dibeli minggu ini"
+                  description={`Semua barang yang sudah punya ambang stoknya masih di atas ambang.${summary && summary.without_threshold > 0
+                    ? ` Catatan: ${summary.without_threshold} barang belum berambang, jadi daftar ini belum lengkap.` : ''}`} />
+              )}
+            </div>
+                    </TableCell>
+                  </TableRow>
+                )}
                 {rows.map(r => {
                   const meta = STATUS_META[r.stock_status] || STATUS_META.low;
                   const isSel = selected.has(r.material_id);

@@ -71,46 +71,49 @@ export function PayoutBankLinks({ accounts, banks, onChanged }) {
 
   return (
     <GlassCard className="p-0 overflow-hidden" data-testid="payout-bank-links">
-      {active.length === 0 ? (
-        <EmptyState icon={Store} title="Belum ada toko aktif"
-          description="Toko marketplace yang aktif akan muncul di sini untuk ditautkan ke rekening bank." />
-      ) : (
-        <Table className="md:min-w-0">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Toko</TableHead>
-              <TableHead>Platform</TableHead>
-              <TableHead>Rekening tujuan penarikan</TableHead>
-              <TableHead>Keterangan</TableHead>
+      <Table className="md:min-w-0">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Toko</TableHead>
+            <TableHead>Platform</TableHead>
+            <TableHead>Rekening tujuan penarikan</TableHead>
+            <TableHead>Keterangan</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {active.length === 0 && (
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={4} className="p-0 [&>div]:py-8">
+                <EmptyState icon={Store} title="Belum ada toko aktif"
+                  description="Toko marketplace yang aktif akan muncul di sini untuk ditautkan ke rekening bank." />
+              </TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {active.map((a) => (
-              <TableRow key={a.id} data-testid={`payout-bank-${a.account_code}`}>
-                <TableCell className="font-medium">{a.account_name}</TableCell>
-                <TableCell className="whitespace-nowrap text-muted-foreground">{namaPlatform(a.platform)}</TableCell>
-                <TableCell>
-                  <BankSelect banks={banks} value={a.coa_cash_code} onChange={(v) => save(a, v)}
-                    testId={`payout-bank-select-${a.account_code}`} emptyLabel="— belum ditautkan —" className="w-full sm:w-72" />
-                </TableCell>
-                <TableCell>
-                  {busy === a.id ? (
-                    <span className="inline-flex items-center gap-1 text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" /> menyimpan…</span>
-                  ) : !a.coa_cash_code ? (
-                    <span className="text-muted-foreground">Belum ditautkan</span>
-                  ) : cashIsConfirmed(a) ? (
-                    <span className="inline-flex items-center gap-1 text-[hsl(var(--success-text))]"><CheckCircle2 className="w-3.5 h-3.5" /> Sudah diatur</span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-[hsl(var(--warning-text))]" data-testid={`payout-bank-default-${a.account_code}`}>
-                      <AlertTriangle className="w-3.5 h-3.5" /> Rekening bawaan {a.coa_cash_code} — belum diatur
-                    </span>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+          )}
+          {active.map((a) => (
+            <TableRow key={a.id} data-testid={`payout-bank-${a.account_code}`}>
+              <TableCell className="font-medium">{a.account_name}</TableCell>
+              <TableCell className="whitespace-nowrap text-muted-foreground">{namaPlatform(a.platform)}</TableCell>
+              <TableCell>
+                <BankSelect banks={banks} value={a.coa_cash_code} onChange={(v) => save(a, v)}
+                  testId={`payout-bank-select-${a.account_code}`} emptyLabel="— belum ditautkan —" className="w-full sm:w-72" />
+              </TableCell>
+              <TableCell>
+                {busy === a.id ? (
+                  <span className="inline-flex items-center gap-1 text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" /> menyimpan…</span>
+                ) : !a.coa_cash_code ? (
+                  <span className="text-muted-foreground">Belum ditautkan</span>
+                ) : cashIsConfirmed(a) ? (
+                  <span className="inline-flex items-center gap-1 text-[hsl(var(--success-text))]"><CheckCircle2 className="w-3.5 h-3.5" /> Sudah diatur</span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[hsl(var(--warning-text))]" data-testid={`payout-bank-default-${a.account_code}`}>
+                    <AlertTriangle className="w-3.5 h-3.5" /> Rekening bawaan {a.coa_cash_code} — belum diatur
+                  </span>
+                )}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </GlassCard>
   );
 }

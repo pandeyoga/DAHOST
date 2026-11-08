@@ -252,10 +252,6 @@ export default function MarketingChangeLogModule({ token }) {
           <p className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />Membaca jejak perubahan…
           </p>
-        ) : !rows.length ? (
-          <EmptyState className="py-6" testId="changelog-empty"
-            title={hasFilter ? 'Tidak ada perubahan yang cocok' : 'Belum ada perubahan tercatat'}
-            description={hasFilter ? 'Longgarkan saringannya.' : 'Jejak lahir saat target, anggaran, kunci periode, atau pemegang toko diubah.'} />
         ) : (
           <div className="overflow-x-auto">
             <Table data-testid="changelog-table">
@@ -269,6 +265,13 @@ export default function MarketingChangeLogModule({ token }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {!rows.length && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={5} className="p-0 [&>div]:py-8"><EmptyState testId="changelog-empty"
+                    title={hasFilter ? 'Tidak ada perubahan yang cocok' : 'Belum ada perubahan tercatat'}
+                    description={hasFilter ? 'Longgarkan saringannya.' : 'Jejak lahir saat target, anggaran, kunci periode, atau pemegang toko diubah.'} /></TableCell>
+                  </TableRow>
+                )}
                 {rows.map((r) => (
                   <TableRow key={r.id} data-testid={`changelog-row-${r.id}`} className="align-top">
                     <TableCell className="whitespace-nowrap">

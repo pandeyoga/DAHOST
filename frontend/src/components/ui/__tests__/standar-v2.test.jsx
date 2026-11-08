@@ -66,9 +66,20 @@ describe('TabelData', () => {
     expect(klik).toHaveBeenCalledTimes(1);
     unmount();
   });
-  it('tanpa baris → menampilkan isi kosong', () => {
-    const { div, unmount } = render(<TabelData kolom={[]} baris={[]} kosong={<p>kosong</p>} />);
-    expect(div.textContent).toBe('kosong');
+  it('tanpa baris → tabel tetap tampil (kepala kolom) dengan isi kosong di dalamnya', () => {
+    // Keputusan owner 8 Nov 2026: tabel kosong tidak diganti satu pesan.
+    const { div, unmount } = render(<TabelData testId="t" kolom={[{ kunci: 'nama', label: 'Nama' }, { kunci: 'n', label: 'Jumlah' }]}
+      baris={[]} kosong={<p>kosong</p>} />);
+    expect([...div.querySelectorAll('th')].map((th) => th.textContent)).toEqual(['Nama', 'Jumlah']);
+    const sel = div.querySelector('[data-testid="t-kosong"] td');
+    expect(sel.getAttribute('colspan')).toBe('2');
+    expect(sel.textContent).toBe('kosong');
+    expect(div.querySelector('[data-testid="t-kosong-hp"]').textContent).toBe('kosong');
+    unmount();
+  });
+  it('tanpa baris dan tanpa isi kosong → pesan bawaan "Belum ada data"', () => {
+    const { div, unmount } = render(<TabelData testId="t" kolom={[{ kunci: 'nama', label: 'Nama' }]} baris={undefined} />);
+    expect(div.querySelector('[data-testid="t-kosong"]').textContent).toContain('Belum ada data');
     unmount();
   });
 });

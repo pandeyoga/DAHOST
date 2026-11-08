@@ -125,35 +125,40 @@ export default function AssetDepreciationModule({ token }) {
           ]} />
       )}
     >
-      {result.results && result.results.length > 0 && (
-        <Table className="md:min-w-0" data-testid="depr-result-table">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Status</TableHead>
-              <TableHead>Kode aset</TableHead>
-              <TableHead>Nama aset</TableHead>
-              <TableHead className="text-right">Penyusutan</TableHead>
-              <TableHead>No. jurnal</TableHead>
-              <TableHead>Keterangan</TableHead>
+      <Table className="md:min-w-0" data-testid="depr-result-table">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Status</TableHead>
+            <TableHead>Kode aset</TableHead>
+            <TableHead>Nama aset</TableHead>
+            <TableHead className="text-right">Penyusutan</TableHead>
+            <TableHead>No. jurnal</TableHead>
+            <TableHead>Keterangan</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {!(result.results?.length > 0) && (
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={6} className="p-0 [&>div]:py-8">
+                <EmptyState title="Belum ada hasil penyusutan" />
+              </TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {result.results.map((r, idx) => {
-              const st = RESULT_STATUS[r.status] || { label: r.status, tone: 'default' };
-              return (
-                <TableRow key={idx}>
-                  <TableCell><StatusBadge tone={st.tone} label={st.label} /></TableCell>
-                  <TableCell className="whitespace-nowrap">{r.asset_code}</TableCell>
-                  <TableCell>{r.asset_name}</TableCell>
-                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(r.depr_amount)}</TableCell>
-                  <TableCell className="whitespace-nowrap">{r.je_number || '—'}</TableCell>
-                  <TableCell className="text-muted-foreground">{r.reason && r.reason !== 'OK' ? r.reason : '—'}</TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      )}
+          )}
+          {(result.results || []).map((r, idx) => {
+            const st = RESULT_STATUS[r.status] || { label: r.status, tone: 'default' };
+            return (
+              <TableRow key={idx}>
+                <TableCell><StatusBadge tone={st.tone} label={st.label} /></TableCell>
+                <TableCell className="whitespace-nowrap">{r.asset_code}</TableCell>
+                <TableCell>{r.asset_name}</TableCell>
+                <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(r.depr_amount)}</TableCell>
+                <TableCell className="whitespace-nowrap">{r.je_number || '—'}</TableCell>
+                <TableCell className="text-muted-foreground">{r.reason && r.reason !== 'OK' ? r.reason : '—'}</TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
     </DetailPanel>
   );
 
@@ -201,9 +206,6 @@ export default function AssetDepreciationModule({ token }) {
       <GlassCard className="p-0 overflow-hidden">
         {loading ? (
           <Skeleton className="h-40 m-4" />
-        ) : assets.length === 0 ? (
-          <EmptyState icon={Calculator} title="Tidak ada aset yang perlu disusutkan"
-            description="Aset aktif dengan metode garis lurus atau saldo menurun muncul di sini." />
         ) : (
           <div className="overflow-x-auto">
             <Table className="w-full md:min-w-0" data-testid="depr-asset-table">
@@ -211,7 +213,7 @@ export default function AssetDepreciationModule({ token }) {
                 <TableRow>
                   <TableHead className="w-10">
                     <Checkbox
-                      checked={selectedAssets.length === assets.length}
+                      checked={assets.length > 0 && selectedAssets.length === assets.length}
                       onCheckedChange={v => (v ? selectAll() : clearSelection())}
                       aria-label="Pilih semua aset"
                     />
@@ -225,6 +227,14 @@ export default function AssetDepreciationModule({ token }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {assets.length === 0 && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={7} className="p-0 [&>div]:py-8">
+                      <EmptyState icon={Calculator} title="Tidak ada aset yang perlu disusutkan"
+                        description="Aset aktif dengan metode garis lurus atau saldo menurun muncul di sini." />
+                    </TableCell>
+                  </TableRow>
+                )}
                 {assets.map(a => (
                   <TableRow
                     key={a.id}

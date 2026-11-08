@@ -153,8 +153,6 @@ export default function POClosureModule({ portalId }) {
       <GlassCard className="p-0 overflow-x-auto">
         {loading && !rows.length ? (
           <div className="p-4 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin inline mr-2" />Memuat…</div>
-        ) : filtered.length === 0 ? (
-          <EmptyState icon={Package} title="Tidak ada PO pada penyaring ini" description="Pilih penyaring lain atau ubah kata pencarian." />
         ) : (
           <Table>
             <TableHeader><TableRow>
@@ -166,6 +164,13 @@ export default function POClosureModule({ portalId }) {
               <TableHead className="text-right">Aksi</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {filtered.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={10} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={Package} title="Tidak ada PO pada penyaring ini" description="Pilih penyaring lain atau ubah kata pencarian." />
+                  </TableCell>
+                </TableRow>
+              )}
               {filtered.map(({ po, fulfillment: f }) => {
                 const isTerminal = TERMINAL.includes(po.status);
                 const open = openRow === po.id;

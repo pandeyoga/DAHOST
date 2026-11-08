@@ -205,8 +205,12 @@ Kartu menandai **satu kelompok isi yang berdiri sendiri**: tabel, formulir, satu
 ## G10 · Kosong & memuat
 
 - **Kosong** = `EmptyState`: ikon, judul, satu kalimat langkah berikutnya, dan tombol bila ada. → `KOSONG-BUATAN`
-  Satu komponen saja (`erp/EmptyState.jsx` kini meneruskan ke `moduleAtoms.EmptyState`). Ditaruh di tempat tabelnya
-  (di dalam kartu tabel), sehingga semua layar kosong sama bentuknya. → `KOSONG-GAYA-BEDA`
+  Satu komponen saja (`erp/EmptyState.jsx` kini meneruskan ke `moduleAtoms.EmptyState`). → `KOSONG-GAYA-BEDA`
+- **Tabel kosong tetap tampil** (keputusan owner 8 Nov 2026): kepala kolom tetap ada, dan `EmptyState` tampil
+  sebagai satu baris di badan tabel — tabel tidak diganti satu pesan kosong, dan layar/dashboard tidak disembunyikan
+  seluruhnya. `TabelData` melakukannya sendiri (prop `kosong`); `DataTable` lewat `emptyTitle`/`emptyDescription`;
+  tabel `ui/table` buatan layar memakai satu `TableRow` berisi `TableCell colSpan` + `EmptyState`.
+  Boleh tetap disembunyikan: bagian peringatan yang memang hanya muncul bila ada isinya (mis. "perlu perhatian").
 - Saat kosong, **sembunyikan** kartu angka 0 dan penyaring berangka (0).
 - **Memuat** = `Skeleton` sesuai bentuk isi.
 

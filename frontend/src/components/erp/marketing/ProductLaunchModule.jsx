@@ -283,6 +283,12 @@ export default function ProductLaunchModule({ token }) {
       <Button size="icon-sm" variant="ghost" onClick={() => openEdit(item)} title="Ubah rencana" aria-label="Ubah rencana"><Pencil /></Button>) },
   ];
 
+  const kosongRencana = (
+    <EmptyState title={adaSaring ? 'Tidak ada rencana yang cocok' : 'Belum ada rencana peluncuran'}
+      description={adaSaring ? 'Ubah saringan atau kata pencarian.' : 'Tambahkan rencana peluncuran produk dari Master Produk.'}
+      action={!adaSaring && <Button onClick={openCreate}><Plus />Tambah rencana</Button>} />
+  );
+
   return (
     <PageLayout testId="product-launch-dashboard" title="Peluncuran produk"
       subtitle="Rencana peluncuran produk dari Master Produk: tanggal, harga, dan platform."
@@ -350,12 +356,10 @@ export default function ProductLaunchModule({ token }) {
       )}>
       {loading && items.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">Memuat rencana peluncuran…</p>
-      ) : items.length === 0 ? (
-        <EmptyState title={adaSaring ? 'Tidak ada rencana yang cocok' : 'Belum ada rencana peluncuran'}
-          description={adaSaring ? 'Ubah saringan atau kata pencarian.' : 'Tambahkan rencana peluncuran produk dari Master Produk.'}
-          action={!adaSaring && <Button onClick={openCreate}><Plus />Tambah rencana</Button>} />
       ) : viewMode === 'table' ? (
-        <TabelData kolom={kolom} baris={items} onKlikBaris={setDetail} testId="launch-table" />
+        <TabelData kolom={kolom} baris={items} onKlikBaris={setDetail} testId="launch-table" kosong={kosongRencana} />
+      ) : items.length === 0 ? (
+        kosongRencana
       ) : (
         /* Linimasa ringkas: satu baris per rencana, urut tanggal (dulu kartu besar per produk). */
         <ol className="space-y-0 border-l-2 border-[var(--glass-border)] pl-4" data-testid="launch-timeline">

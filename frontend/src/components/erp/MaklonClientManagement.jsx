@@ -333,10 +333,6 @@ export default function MaklonClientManagement() {
       <GlassCard className="p-0 overflow-hidden">
         {loading && !clients.length ? (
           <div className="p-4 text-sm text-muted-foreground">Memuat klien…</div>
-        ) : !paged.length ? (
-          <EmptyState icon={Users} title={clients.length ? 'Tidak ada klien yang cocok' : 'Belum ada klien terdaftar'}
-            description={clients.length ? 'Ubah kata pencarian atau penyaring status.' : 'Klik Klien baru untuk menambahkan klien maklon pertama.'}
-            action={clients.length && (search || status) ? <Button variant="outline" size="sm" onClick={() => { setSearch(''); setStatus(''); }}><X className="w-3.5 h-3.5" />Tampilkan semua</Button> : null} />
         ) : (
           <Table data-testid="maklon-client-table">
             <TableHeader><TableRow>
@@ -345,6 +341,15 @@ export default function MaklonClientManagement() {
               <TableHead>Kualitas</TableHead><TableHead>Status</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {!paged.length && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={7} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={Users} title={clients.length ? 'Tidak ada klien yang cocok' : 'Belum ada klien terdaftar'}
+                      description={clients.length ? 'Ubah kata pencarian atau penyaring status.' : 'Klik Klien baru untuk menambahkan klien maklon pertama.'}
+                      action={clients.length && (search || status) ? <Button variant="outline" size="sm" onClick={() => { setSearch(''); setStatus(''); }}><X className="w-3.5 h-3.5" />Tampilkan semua</Button> : null} />
+                  </TableCell>
+                </TableRow>
+              )}
               {paged.map((c) => (
                 <TableRow key={c.id} data-testid={`maklon-client-row-${c.id}`} className={panel?.id === c.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
                   <TableCell>

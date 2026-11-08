@@ -196,7 +196,7 @@ const Memuat = ({ teks = 'Memuat laporan…' }) => (
 
 /** Tabel sederhana: kolom [{label, nilai(row), angka?}] */
 function TabelSederhana({ kolom, baris, kunci, kosong = 'Belum ada data.' }) {
-  if (!baris?.length) return <p className="py-6 text-center text-sm text-muted-foreground">{kosong}</p>;
+  const daftar = baris || [];
   return (
     <div className="overflow-x-auto">
       <Table>
@@ -206,7 +206,12 @@ function TabelSederhana({ kolom, baris, kunci, kosong = 'Belum ada data.' }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {baris.map((r, i) => (
+          {daftar.length === 0 && (
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={kolom.length} className="p-0 [&>div]:py-8"><EmptyState title={kosong.replace(/\.$/, '')} /></TableCell>
+            </TableRow>
+          )}
+          {daftar.map((r, i) => (
             <TableRow key={kunci ? kunci(r) : i}>
               {kolom.map((k) => (
                 <TableCell key={k.label} className={k.angka ? 'whitespace-nowrap text-right tabular-nums' : ''}>{k.tampil ? k.tampil(r) : k.nilai(r)}</TableCell>

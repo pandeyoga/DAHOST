@@ -56,9 +56,7 @@ export default function KejarCMTTab(props) {
       footer={rows.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}
     >
       <Section>
-        {loading && !data ? <LoadingRows /> : rows.length === 0 ? (
-          <EmptyState icon={ListChecks} title="Tidak ada PO yang perlu dikejar" description="PO yang masih punya potongan di CMT akan muncul di sini." />
-        ) : (
+        {loading && !data ? <LoadingRows /> : (
           <Table data-testid="pantau-kejar-table">
             <TableHeader><TableRow>
               <TableHead className="w-10" /><TableHead>PO</TableHead><TableHead>Vendor CMT</TableHead><TableHead>Keadaan</TableHead>
@@ -69,6 +67,11 @@ export default function KejarCMTTab(props) {
               <TableHead className="text-right">Hari di CMT</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {rows.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={13} className="p-0 [&>div]:py-8"><EmptyState icon={ListChecks} title="Tidak ada PO yang perlu dikejar" description="PO yang masih punya potongan di CMT akan muncul di sini." /></TableCell>
+                </TableRow>
+              )}
               {paged.map((r) => {
                 const isOpen = open === r.po_id;
                 return (

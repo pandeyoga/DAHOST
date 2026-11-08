@@ -450,9 +450,6 @@ export default function FixedAssetsModule({ token }) {
       <GlassCard className="p-0 overflow-hidden">
         {loading ? (
           <Skeleton className="h-40 m-4" />
-        ) : assets.length === 0 ? (
-          <EmptyState icon={Package} title="Belum ada aset tetap"
-            description={filterCat || filterStatus !== 'active' ? 'Tidak ada aset yang cocok dengan penyaring.' : 'Daftarkan aset pertama lewat tombol Aset baru.'} />
         ) : (
           <div className="overflow-x-auto">
             <Table className="w-full md:min-w-0" data-testid="fa-table">
@@ -470,6 +467,14 @@ export default function FixedAssetsModule({ token }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {assets.length === 0 && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={9} className="p-0 [&>div]:py-8">
+                      <EmptyState icon={Package} title="Belum ada aset tetap"
+                        description={filterCat || filterStatus !== 'active' ? 'Tidak ada aset yang cocok dengan penyaring.' : 'Daftarkan aset pertama lewat tombol Aset baru.'} />
+                    </TableCell>
+                  </TableRow>
+                )}
                 {assets.map(a => {
                   const st = STATUS_META[a.status] || { label: a.status, tone: 'default' };
                   const open = selected?.id === a.id;

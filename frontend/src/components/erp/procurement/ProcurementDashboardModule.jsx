@@ -19,7 +19,7 @@ import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import PageLayout from '../layout/PageLayout';
-import { Notice, StatTile, StatusBadge } from '../moduleAtoms';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import { EP, apiGet, fmtDate, fmtRp } from './procApi';
 
 // Label status per tahap (sama dengan label di layar Permintaan, PO, Penerimaan, dan Faktur).
@@ -68,7 +68,6 @@ function Bagian({ judul, keterangan, alat, children, testId }) {
   );
 }
 
-const Kosong = ({ children }) => <p className="text-sm text-muted-foreground">{children}</p>;
 
 export default function ProcurementDashboardModule({ token, onNavigate }) {
   const [ov, setOv] = useState(null);
@@ -251,14 +250,13 @@ export default function ProcurementDashboardModule({ token, onNavigate }) {
               )}
             </>
           )}>
-          {recentPr.length === 0 ? <Kosong>Belum ada permintaan pengadaan.</Kosong> : (
-            <TabelData baris={recentPr} testId="proc-recent-pr-table"
-              kolom={[
-                { kunci: 'no', label: 'No. permintaan', hp: 'judul', isi: (r) => <span className="font-mono text-xs">{r.request_number}</span> },
-                { kunci: 'judul', label: 'Judul', hp: 'keterangan', isi: (r) => <span className="line-clamp-1">{r.title}</span> },
-                { kunci: 'nilai', label: 'Estimasi', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtRp(r.total_estimated)}</span> },
-              ]} />
-          )}
+          <TabelData baris={recentPr} testId="proc-recent-pr-table"
+            kolom={[
+              { kunci: 'no', label: 'No. permintaan', hp: 'judul', isi: (r) => <span className="font-mono text-xs">{r.request_number}</span> },
+              { kunci: 'judul', label: 'Judul', hp: 'keterangan', isi: (r) => <span className="line-clamp-1">{r.title}</span> },
+              { kunci: 'nilai', label: 'Estimasi', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtRp(r.total_estimated)}</span> },
+            ]}
+            kosong={<EmptyState title="Belum ada permintaan pengadaan" />} />
         </Bagian>
 
         <Bagian judul="Purchase order terbaru" testId="proc-recent-po"
@@ -277,14 +275,13 @@ export default function ProcurementDashboardModule({ token, onNavigate }) {
               )}
             </>
           )}>
-          {recentPo.length === 0 ? <Kosong>Belum ada purchase order.</Kosong> : (
-            <TabelData baris={recentPo} testId="proc-recent-po-table"
-              kolom={[
-                { kunci: 'no', label: 'No. PO', hp: 'judul', isi: (p) => <span className="font-mono text-xs">{p.po_number}</span> },
-                { kunci: 'pemasok', label: 'Pemasok', hp: 'keterangan', isi: (p) => <span className="line-clamp-1">{p.vendor_name}</span> },
-                { kunci: 'nilai', label: 'Nilai', rata: 'kanan', isi: (p) => <span className="tabular-nums">{fmtRp(p.total_value)}</span> },
-              ]} />
-          )}
+          <TabelData baris={recentPo} testId="proc-recent-po-table"
+            kolom={[
+              { kunci: 'no', label: 'No. PO', hp: 'judul', isi: (p) => <span className="font-mono text-xs">{p.po_number}</span> },
+              { kunci: 'pemasok', label: 'Pemasok', hp: 'keterangan', isi: (p) => <span className="line-clamp-1">{p.vendor_name}</span> },
+              { kunci: 'nilai', label: 'Nilai', rata: 'kanan', isi: (p) => <span className="tabular-nums">{fmtRp(p.total_value)}</span> },
+            ]}
+            kosong={<EmptyState title="Belum ada purchase order" />} />
         </Bagian>
       </div>
     </PageLayout>

@@ -89,14 +89,16 @@ function SamplesSection({ catalogId }) {
           { label: 'Warna', nilai: (x) => x.color_used || '' }, { label: 'Tanggal', nilai: (x) => (x.created_at ? formatDateID(x.created_at) : '') },
           { label: 'Status', nilai: (x) => (SAMPLE_STATUS[x.status] || [x.status])[0] }]} />}
       hint={rows.length ? `${sum.approved || 0} disetujui · ${sum.in_progress || 0} berjalan · ${sum.rejected || 0} ditolak` : 'Sampel dibuat dari rincian PO maklon dan tercatat di artikel ini.'}>
-      {loading ? <p className="text-sm text-muted-foreground">Memuat sampel…</p> : !rows.length ? (
-        <EmptyState icon={FlaskConical} title="Belum ada sampel untuk artikel ini" className="py-6" testId="bc-samples-empty"
-          description="Sampel dibuat dari rincian PO maklon; hasilnya tercatat di sini." />
-      ) : (
+      {loading ? <p className="text-sm text-muted-foreground">Memuat sampel…</p> : (
         <Table>
           <TableHeader><TableRow><TableHead>Kode sampel</TableHead><TableHead>Ukuran</TableHead><TableHead>Warna</TableHead>
             <TableHead>Tanggal</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
           <TableBody>
+            {!rows.length && (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={5} className="p-0 [&>div]:py-8"><EmptyState icon={FlaskConical} title="Belum ada sampel untuk artikel ini" testId="bc-samples-empty" description="Sampel dibuat dari rincian PO maklon; hasilnya tercatat di sini." /></TableCell>
+              </TableRow>
+            )}
             {rows.map((s) => {
               const [label, tone] = SAMPLE_STATUS[s.status] || [s.status || '—', 'default'];
               return (
@@ -174,13 +176,16 @@ function VariantsSection({ catalog }) {
         </Button>
       </>}>
       {!canGenerate && <Notice tone="warning">Lengkapi pilihan warna & ukuran (Ubah artikel) sebelum membuat varian.</Notice>}
-      {loading && !variants.length ? <p className="text-sm text-muted-foreground">Memuat varian…</p> : !variants.length ? (
-        <EmptyState icon={Boxes} title="Belum ada varian SKU" className="py-6" description="Klik Buat varian untuk membuat matriks SKU warna × ukuran." />
-      ) : (
+      {loading && !variants.length ? <p className="text-sm text-muted-foreground">Memuat varian…</p> : (
         <Table>
           <TableHeader><TableRow><TableHead>SKU</TableHead><TableHead>Warna</TableHead><TableHead>Ukuran</TableHead>
             <TableHead>Kode buyer</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Aksi</TableHead></TableRow></TableHeader>
           <TableBody>
+            {!variants.length && (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={6} className="p-0 [&>div]:py-8"><EmptyState icon={Boxes} title="Belum ada varian SKU" description="Klik Buat varian untuk membuat matriks SKU warna × ukuran." /></TableCell>
+              </TableRow>
+            )}
             {variants.map((v) => (
               <TableRow key={v.id} data-testid={`bc-variant-row-${v.sku}`}>
                 <TableCell className="text-xs font-medium text-[hsl(var(--primary))]">{v.sku}</TableCell>
@@ -240,13 +245,16 @@ function PriceHistorySection({ catalogId }) {
           { label: 'Sebelum', nilai: (h) => Number(h.old_cmt_price || 0) }, { label: 'Sesudah', nilai: (h) => Number(h.new_cmt_price || 0) },
           { label: 'Oleh', nilai: (h) => h.changed_by_name || '' }, { label: 'Catatan', nilai: (h) => h.note || '' }]} />}
       hint={`Setiap perubahan dari katalog atau PO. Peringatan bila naik/turun ≥${t.warn_pct || 10}%, ditolak ≥${t.block_pct || 25}%.`}>
-      {loading ? <p className="text-sm text-muted-foreground">Memuat riwayat…</p> : !rows.length ? (
-        <EmptyState icon={History} title="Belum ada perubahan harga" className="py-6" description="Perubahan upah CMT dari katalog atau PO tercatat di sini." />
-      ) : (
+      {loading ? <p className="text-sm text-muted-foreground">Memuat riwayat…</p> : (
         <Table>
           <TableHeader><TableRow><TableHead>Waktu</TableHead><TableHead>Sumber</TableHead><TableHead className="text-right">Sebelum</TableHead>
             <TableHead className="text-right">Sesudah</TableHead><TableHead className="text-right">Perubahan</TableHead><TableHead>Oleh</TableHead></TableRow></TableHeader>
           <TableBody>
+            {!rows.length && (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={6} className="p-0 [&>div]:py-8"><EmptyState icon={History} title="Belum ada perubahan harga" description="Perubahan upah CMT dari katalog atau PO tercatat di sini." /></TableCell>
+              </TableRow>
+            )}
             {rows.map((h, i) => {
               const delta = (h.new_cmt_price || 0) - (h.old_cmt_price || 0);
               const pct = h.old_cmt_price > 0 ? (delta / h.old_cmt_price) * 100 : 0;
@@ -443,13 +451,16 @@ function BomTemplatesSection({ catalog }) {
       {editor && (
         <BomEditor mode={editor.mode} data={editor.data} catalog={catalog} onClose={() => setEditor(null)} onSaved={() => { setEditor(null); load(); }} />
       )}
-      {loading ? <p className="text-sm text-muted-foreground">Memuat templat…</p> : !templates.length ? (
-        <EmptyState icon={ClipboardCheck} title="Belum ada templat BOM" description="Klik Versi baru untuk membuat resep material pertama." className="py-6" />
-      ) : (
+      {loading ? <p className="text-sm text-muted-foreground">Memuat templat…</p> : (
         <Table>
           <TableHeader><TableRow><TableHead>Versi</TableHead><TableHead>Label</TableHead><TableHead className="text-right">Material</TableHead>
             <TableHead className="text-right">Biaya/pcs</TableHead><TableHead>Diperbarui</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Aksi</TableHead></TableRow></TableHeader>
           <TableBody>
+            {!templates.length && (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={7} className="p-0 [&>div]:py-8"><EmptyState icon={ClipboardCheck} title="Belum ada templat BOM" description="Klik Versi baru untuk membuat resep material pertama." /></TableCell>
+              </TableRow>
+            )}
             {templates.map((t) => (
               <TableRow key={t.id} data-testid={`bom-template-${t.id}`}>
                 <TableCell className="font-semibold text-[hsl(var(--primary))]">v{t.version}</TableCell>

@@ -80,9 +80,7 @@ export default function KirimanCMTTab(props) {
       footer={rows.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}
     >
       <Section>
-        {loading && !data ? <LoadingRows /> : rows.length === 0 ? (
-          <EmptyState icon={Truck} title="Belum ada kiriman ke CMT" description="Kiriman potongan dari menu Kirim ke CMT akan muncul di sini." />
-        ) : (
+        {loading && !data ? <LoadingRows /> : (
           <Table data-testid="pantau-kiriman-table">
             <TableHeader><TableRow>
               <TableHead className="w-10" /><TableHead>Surat jalan</TableHead><TableHead>PO</TableHead><TableHead>Vendor CMT</TableHead>
@@ -90,6 +88,11 @@ export default function KirimanCMTTab(props) {
               <TableHead className="text-right">Diterima CMT</TableHead><TableHead className="text-right">Kurang</TableHead><TableHead>Periksa</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {rows.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={10} className="p-0 [&>div]:py-8"><EmptyState icon={Truck} title="Belum ada kiriman ke CMT" description="Kiriman potongan dari menu Kirim ke CMT akan muncul di sini." /></TableCell>
+                </TableRow>
+              )}
               {paged.map((b) => {
                 const isOpen = open === b.shipment_id;
                 const checked = b.total_received != null;

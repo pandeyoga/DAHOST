@@ -250,11 +250,6 @@ function AuditPanel({ vendorName }) {
       <GlassCard className="p-0 overflow-hidden">
         {loading ? (
           <div className="p-4 text-sm text-muted-foreground">Memuat jejak…</div>
-        ) : !entries.length ? (
-          <div data-testid="cmt-override-audit-empty">
-            <EmptyState icon={UserCog} title="Belum ada input staf DA untuk vendor ini"
-              description="Dokumen yang Anda simpan atas nama vendor akan tercatat di sini." />
-          </div>
         ) : (
           <Table>
             <TableHeader><TableRow>
@@ -262,6 +257,14 @@ function AuditPanel({ vendorName }) {
               <TableHead>Peran</TableHead><TableHead>Waktu</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {!entries.length && (
+                <TableRow className="hover:bg-transparent" data-testid="cmt-override-audit-empty">
+                  <TableCell colSpan={5} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={UserCog} title="Belum ada input staf DA untuk vendor ini"
+                      description="Dokumen yang Anda simpan atas nama vendor akan tercatat di sini." />
+                  </TableCell>
+                </TableRow>
+              )}
               {paged.map((e, i) => (
                 <TableRow key={`${e.collection}-${e.doc_id}-${i}`}>
                   <TableCell className="font-medium">{e.module}</TableCell>

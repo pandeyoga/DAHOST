@@ -517,23 +517,21 @@ function TabelLaporan({ judul, kolom, baris, namaBerkas, kosong = 'Tidak ada dat
       return merah && merah(r) && i === 0 ? <span className="text-[hsl(var(--danger-text))]">{v}</span> : v;
     },
   }));
-  // Tanpa data: satu baris ringkas (dulu kartu kosong + tombol unduh nonaktif berulang — di HP layar jadi panjang).
-  if (!baris || baris.length === 0) {
-    return (
-      <p className="px-1 text-sm text-muted-foreground" data-testid={testId}>
-        <span className={`font-medium text-foreground ${judulCls}`}>{judul}</span> — {kosong}
-      </p>
-    );
-  }
+  // Tanpa data: tabel tetap tampil dengan kepala kolom + pesan kosong di dalamnya (keputusan owner 8 Nov 2026).
+  const teksKosong = String(kosong).replace(/\.$/, '');
+  const judulKosong = teksKosong === 'Tidak ada' ? 'Belum ada data' : teksKosong;
+  const daftar = baris || [];
   return (
     <GlassCard className="space-y-2 p-3" hover={false} data-testid={testId}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className={`text-sm font-semibold ${judulCls}`}>{judul}</div>
-        <TombolUnduh namaBerkas={namaBerkas} namaLembar={String(judul).slice(0, 31)} baris={baris}
-          kolom={kolom.map((k) => ({ label: k.label, nilai: k.nilai }))} testId={testId ? `${testId}-unduh` : undefined} />
+        {daftar.length > 0 && (
+          <TombolUnduh namaBerkas={namaBerkas} namaLembar={String(judul).slice(0, 31)} baris={daftar}
+            kolom={kolom.map((k) => ({ label: k.label, nilai: k.nilai }))} testId={testId ? `${testId}-unduh` : undefined} />
+        )}
       </div>
-      <TabelData kolom={kol} baris={baris} kunci={(r) => r._k} testId={testId ? `${testId}-tabel` : undefined}
-        kosong={<p className="py-3 text-center text-sm text-muted-foreground">{kosong}</p>} />
+      <TabelData kolom={kol} baris={daftar} kunci={(r) => r._k} testId={testId ? `${testId}-tabel` : undefined}
+        kosong={<EmptyState title={judulKosong} />} />
     </GlassCard>
   );
 }

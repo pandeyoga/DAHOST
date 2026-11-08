@@ -200,6 +200,13 @@ export default function ContentPerformanceView({ token }) {
     { label: 'Jumlah pesanan', nilai: (r) => Number(r.order_count) || 0 },
   ];
 
+  const kosongPerforma = (
+    <EmptyState testId="perf-empty" title={data?.scope_empty ? 'Belum ada toko untuk akun Anda' : 'Belum ada konten di periode ini'}
+      description={data?.scope_empty
+        ? 'Layar ini kosong karena kewenangan, bukan karena tidak ada konten. Minta admin menugaskan toko Anda.'
+        : 'Ubah periode atau tambahkan konten di tab Kalender & rencana.'} />
+  );
+
   return (
     <PageLayout testId="content-performance-view" title="Performa konten"
       subtitle="KPI konten per konten, kreator, jenis, toko, atau platform."
@@ -247,15 +254,10 @@ export default function ContentPerformanceView({ token }) {
       )}
       {loading && !data ? (
         <p className="py-6 text-center text-sm text-muted-foreground">Menghitung performa konten…</p>
-      ) : !rows.length ? (
-        <EmptyState testId="perf-empty" title={data?.scope_empty ? 'Belum ada toko untuk akun Anda' : 'Belum ada konten di periode ini'}
-          description={data?.scope_empty
-            ? 'Layar ini kosong karena kewenangan, bukan karena tidak ada konten. Minta admin menugaskan toko Anda.'
-            : 'Ubah periode atau tambahkan konten di tab Kalender & rencana.'} />
       ) : perContent ? (
-        <TabelData kolom={kolomKonten} baris={rows} onKlikBaris={setEditing} testId="perf-content-table" />
+        <TabelData kolom={kolomKonten} baris={rows} onKlikBaris={setEditing} testId="perf-content-table" kosong={kosongPerforma} />
       ) : (
-        <TabelData kolom={kolomKelompok} baris={rows} kunci={(r) => r.key} onKlikBaris={setRincian} testId="perf-table" />
+        <TabelData kolom={kolomKelompok} baris={rows} kunci={(r) => r.key} onKlikBaris={setRincian} testId="perf-table" kosong={kosongPerforma} />
       )}
       {(data?.data_notes || []).length > 0 && (
         <Notice tone="info" icon={Info} title="Catatan tentang data" testId="perf-notes">

@@ -423,23 +423,24 @@ export default function ManagementOverviewModule({ token }) {
                 { label: 'Qty diterima', nilai: (m) => m.accepted },
               ]} />
           )}>
-          {topModels.length === 0 ? (
-            <EmptyState className="py-8" title="Belum ada item PO" />
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow><TableHead>Produk</TableHead><TableHead className="text-right">Diterima / dipesan</TableHead></TableRow>
-              </TableHeader>
-              <TableBody>
-                {topModels.map((m, idx) => (
-                  <TableRow key={`${m.sku}-${idx}`} data-testid={`top-model-${idx}`}>
-                    <TableCell className="max-w-[12rem] truncate" title={m.name || m.sku}>{m.name || m.sku}</TableCell>
-                    <TableCell className="whitespace-nowrap text-right tabular-nums">{fmtNum(m.accepted)} / {fmtNum(m.qty)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <Table>
+            <TableHeader>
+              <TableRow><TableHead>Produk</TableHead><TableHead className="text-right">Diterima / dipesan</TableHead></TableRow>
+            </TableHeader>
+            <TableBody>
+              {topModels.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={2} className="p-0 [&>div]:py-8"><EmptyState title="Belum ada item PO" /></TableCell>
+                </TableRow>
+              )}
+              {topModels.map((m, idx) => (
+                <TableRow key={`${m.sku}-${idx}`} data-testid={`top-model-${idx}`}>
+                  <TableCell className="max-w-[12rem] truncate" title={m.name || m.sku}>{m.name || m.sku}</TableCell>
+                  <TableCell className="whitespace-nowrap text-right tabular-nums">{fmtNum(m.accepted)} / {fmtNum(m.qty)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </ChartCard>
 
         <ChartCard testId="card-top-customers" title="5 pelanggan / klien teratas" subtitle="Volume PO (dan nilai order untuk maklon)."
@@ -452,26 +453,27 @@ export default function ManagementOverviewModule({ token }) {
                 { label: 'Nilai order (Rp)', nilai: (c) => c.total_value || '' },
               ]} />
           )}>
-          {topCustomers.length === 0 ? (
-            <EmptyState className="py-8" title="Belum ada PO" />
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow><TableHead>Pelanggan</TableHead><TableHead className="text-right">Qty</TableHead></TableRow>
-              </TableHeader>
-              <TableBody>
-                {topCustomers.map((c, idx) => (
-                  <TableRow key={`${c.name}-${idx}`} data-testid={`top-customer-${idx}`}>
-                    <TableCell className="max-w-[12rem]">
-                      <span className="block truncate font-medium" title={c.name}>{c.name}</span>
-                      <span className="text-xs text-muted-foreground">{fmtNum(c.orders)} PO{c.total_value ? ` · ${fmtShortIDR(c.total_value)}` : ''}</span>
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-right tabular-nums">{fmtNum(c.total_qty)} pcs</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <Table>
+            <TableHeader>
+              <TableRow><TableHead>Pelanggan</TableHead><TableHead className="text-right">Qty</TableHead></TableRow>
+            </TableHeader>
+            <TableBody>
+              {topCustomers.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={2} className="p-0 [&>div]:py-8"><EmptyState title="Belum ada PO" /></TableCell>
+                </TableRow>
+              )}
+              {topCustomers.map((c, idx) => (
+                <TableRow key={`${c.name}-${idx}`} data-testid={`top-customer-${idx}`}>
+                  <TableCell className="max-w-[12rem]">
+                    <span className="block truncate font-medium" title={c.name}>{c.name}</span>
+                    <span className="text-xs text-muted-foreground">{fmtNum(c.orders)} PO{c.total_value ? ` · ${fmtShortIDR(c.total_value)}` : ''}</span>
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-right tabular-nums">{fmtNum(c.total_qty)} pcs</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </ChartCard>
       </div>
 

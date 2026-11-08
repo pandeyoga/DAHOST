@@ -369,8 +369,6 @@ export default function RahazaAttendanceModule({ token }) {
       >
       {loading && rows.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">Memuat absensi…</p>
-      ) : rows.length === 0 ? (
-        <EmptyState icon={ClockIcon} title="Belum ada karyawan aktif" description="Tambahkan data karyawan terlebih dahulu untuk mengisi absensi." />
       ) : (
         <Table data-testid="att-table">
           <TableHeader>
@@ -385,6 +383,13 @@ export default function RahazaAttendanceModule({ token }) {
             </TableRow>
           </TableHeader>
           <TableBody>
+            {rows.length === 0 && (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={7} className="p-0 [&>div]:py-8">
+                  <EmptyState icon={ClockIcon} title="Belum ada karyawan aktif" description="Tambahkan data karyawan terlebih dahulu untuk mengisi absensi." />
+                </TableCell>
+              </TableRow>
+            )}
             {paged.map(r => (
               <Fragment key={r.employee_id}>
               <TableRow data-testid={`att-row-${r.employee_code}`}>

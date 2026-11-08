@@ -57,9 +57,7 @@ export default function SelisihKlienTab() {
       <Section>
         {!maklon ? (
           <EmptyState icon={PackageCheck} title="Hanya untuk PO maklon" description="PO internal diserahkan ke gudang DA sendiri, tidak dikonfirmasi klien. Pilih portal PO maklon." />
-        ) : loading && !data ? <LoadingRows /> : rows.length === 0 ? (
-          <EmptyState icon={PackageCheck} title="Belum ada kiriman ke klien" description="Kiriman dari menu Kirim hasil akan muncul di sini setelah dibuat." />
-        ) : (
+        ) : loading && !data ? <LoadingRows /> : (
           <Table data-testid="selisih-klien-table">
             <TableHeader><TableRow>
               <TableHead className="w-10" /><TableHead>PO</TableHead><TableHead>Klien</TableHead>
@@ -68,6 +66,11 @@ export default function SelisihKlienTab() {
               <TableHead className="text-right">Selisih terbuka</TableHead><TableHead>Status</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {rows.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={9} className="p-0 [&>div]:py-8"><EmptyState icon={PackageCheck} title="Belum ada kiriman ke klien" description="Kiriman dari menu Kirim hasil akan muncul di sini setelah dibuat." /></TableCell>
+                </TableRow>
+              )}
               {paged.map((r) => {
                 const isOpen = open === r.po_id;
                 return (

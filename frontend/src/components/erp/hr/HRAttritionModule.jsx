@@ -116,14 +116,13 @@ export default function HRAttritionModule({ token }) {
           <StatTile label="Risiko rendah" value={hitung('low')} sub="Stabil." />
         </div>
       )}>
-      {!result ? (
-        <EmptyState title="Belum ada prediksi"
-          description={`Pilih departemen (opsional), lalu klik "Prediksi risiko".${history.length ? ` Sudah ada ${history.length} prediksi tersimpan.` : ''}`} />
-      ) : (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[3fr_2fr]">
+      <div className={result ? 'grid grid-cols-1 gap-4 xl:grid-cols-[3fr_2fr]' : undefined}>
           <TabelData kolom={kolom} baris={emps} kunci={(e) => e.employee_id || e.name} onKlikBaris={setLihat} testId="attrition-employees"
-            kosong={<EmptyState title="Tidak ada karyawan yang dianalisis" />} />
-          <div className="space-y-4">
+            kosong={result
+              ? <EmptyState title="Tidak ada karyawan yang dianalisis" />
+              : <EmptyState title="Belum ada prediksi"
+                description={`Pilih departemen (opsional), lalu klik "Prediksi risiko".${history.length ? ` Sudah ada ${history.length} prediksi tersimpan.` : ''}`} />} />
+          {result && <div className="space-y-4">
             {(result.analysis?.overall_insights || result.analysis?.priority_actions?.length > 0) && (
               <GlassCard hover={false} className="space-y-3 p-4">
                 <p className="text-base font-semibold text-foreground">Wawasan & langkah prioritas</p>
@@ -151,9 +150,8 @@ export default function HRAttritionModule({ token }) {
                   ]} />
               </section>
             )}
-          </div>
+          </div>}
         </div>
-      )}
 
       {lihat && (
         <DetailPopup open onClose={() => setLihat(null)} judul={lihat.name} keterangan="Rincian risiko keluar"

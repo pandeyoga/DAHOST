@@ -3,7 +3,9 @@
  *
  * Standar UI/UX v2 (8 Nov 2026):
  *  • 4 kartu angka StatTile netral dengan keterangan cara menghitung (dulu kartu gradasi berwarna + ikon);
- *    semua 0 → tampilan kosong (bukan deretan "Rp 0").
+ *    semua 0 → kartu disembunyikan (bukan deretan "Rp 0").
+ *  • Keputusan owner 8 Nov malam: saat belum ada aset, tabel kategori & aset terbaru TETAP tampil (kepala kolom +
+ *    pesan kosong di dalam tabel), bukan diganti satu pesan kosong.
  *  • Diagram lingkaran "Distribusi per kategori" → tabel kategori · jumlah · porsi (angka terbaca, bisa diunduh).
  *  • Garansi/asuransi: satu Notice + satu tabel (dulu kotak kuning ber-emoji + 4 daftar terpotong 5 baris).
  *  • "Aset terbaru": tabel, klik baris membuka detail popup.
@@ -79,9 +81,6 @@ export function DashboardTab({
         <p className="py-10 text-center text-sm text-muted-foreground">Memuat ringkasan aset…</p>
       ) : dashData.gagal ? (
         <Notice tone="danger" title="Ringkasan aset gagal dimuat">Coba muat ulang beberapa saat lagi.</Notice>
-      ) : totalAset === 0 && recent.length === 0 ? (
-        <EmptyState title="Belum ada aset terdaftar" testId="asset-dashboard-empty"
-          description="Daftarkan aset pertama, atau impor daftar aset dari berkas CSV/Excel. Ringkasan nilai dan kategori tampil di sini." />
       ) : (
         <>
           {(segeraGaransi > 0 || segeraAsuransi > 0) && (
@@ -123,7 +122,7 @@ export function DashboardTab({
                   { label: 'Porsi (%)', nilai: (c) => (totalKategori ? Math.round((c.jumlah / totalKategori) * 1000) / 10 : 0) },
                 ]} />}>
               <TabelData baris={byCat} kunci={(c) => c.id} testId="asset-by-category-table"
-                kosong={<p className="py-6 text-center text-sm text-muted-foreground">Belum ada aset aktif.</p>}
+                kosong={<EmptyState title="Belum ada aset aktif" />}
                 kolom={[
                   { kunci: 'nama', label: 'Kategori', hp: 'judul' },
                   { kunci: 'jumlah', label: 'Jumlah aset', rata: 'kanan', isi: (c) => <span className="tabular-nums">{c.jumlah.toLocaleString('id-ID')}</span> },
@@ -142,7 +141,8 @@ export function DashboardTab({
                   { label: 'Status', nilai: (a) => STATUS_CONFIG[a.status]?.label || a.status },
                 ]} />}>
               <TabelData baris={recent} onKlikBaris={onAssetClick} testId="asset-recent-table"
-                kosong={<p className="py-6 text-center text-sm text-muted-foreground">Belum ada aset terdaftar.</p>}
+                kosong={<EmptyState title="Belum ada aset terdaftar" testId="asset-dashboard-empty"
+                  description="Daftarkan aset pertama, atau impor daftar aset dari berkas CSV/Excel." />}
                 kolom={[
                   { kunci: 'nama', label: 'Aset', hp: 'judul', isi: (a) => <span className="font-medium">{a.name}</span> },
                   { kunci: 'ket', label: 'Kategori · no. aset', hp: 'keterangan', isi: (a) => (

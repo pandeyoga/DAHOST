@@ -331,18 +331,6 @@ export default function CMTOverrideDailyRecap({
         <div className="flex items-center justify-center py-8" data-testid="cmt-recap-loading">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
-      ) : visible.length === 0 ? (
-        <EmptyState icon={CheckCircle2} testId="cmt-recap-empty"
-          title={rows.length === 0
-            ? 'Belum ada vendor CMT aktif di master'
-            : onlyPending
-              ? 'Tidak ada vendor yang belum lengkap — semua sudah diisi'
-              : 'Tidak ada vendor yang cocok dengan pencarian'}
-          description={rows.length === 0
-            ? 'Aktifkan vendor CMT di Master Data supaya muncul di rekap.'
-            : onlyPending
-              ? 'Matikan "Hanya yang belum lengkap" untuk melihat semua vendor.'
-              : 'Ubah kata pencarian atau kosongkan kotak cari.'} />
       ) : (
         <div className="overflow-x-auto">
           <Table className="min-w-[56rem]">
@@ -352,6 +340,23 @@ export default function CMTOverrideDailyRecap({
               <TableHead className="text-right">Aksi</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {visible.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={tasks.length + 2} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={CheckCircle2} testId="cmt-recap-empty"
+                      title={rows.length === 0
+                        ? 'Belum ada vendor CMT aktif di master'
+                        : onlyPending
+                          ? 'Tidak ada vendor yang belum lengkap — semua sudah diisi'
+                          : 'Tidak ada vendor yang cocok dengan pencarian'}
+                      description={rows.length === 0
+                        ? 'Aktifkan vendor CMT di Master Data supaya muncul di rekap.'
+                        : onlyPending
+                          ? 'Matikan "Hanya yang belum lengkap" untuk melihat semua vendor.'
+                          : 'Ubah kata pencarian atau kosongkan kotak cari.'} />
+                  </TableCell>
+                </TableRow>
+              )}
               {visible.map(r => {
                 const stat = ROW_STATUS[r.status] || ROW_STATUS.idle;
                 return (

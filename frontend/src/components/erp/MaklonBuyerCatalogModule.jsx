@@ -116,14 +116,6 @@ export default function MaklonBuyerCatalogModule({ token, onNavigate }) {
       <GlassCard className="p-0 overflow-hidden">
         {loading && !items.length ? (
           <div className="p-4 text-sm text-muted-foreground">Memuat artikel…</div>
-        ) : !paged.length ? (
-          (clientId || status || search) ? (
-            <EmptyState icon={BookOpen} title="Tidak ada artikel yang cocok" description="Ubah atau hapus penyaring untuk melihat artikel lain."
-              action={<Button variant="outline" size="sm" onClick={resetFilters}><X className="w-3.5 h-3.5" />Tampilkan semua artikel</Button>} />
-          ) : (
-            <EmptyState icon={BookOpen} title="Belum ada artikel buyer"
-              description="Buat artikel pertama untuk menyimpan spesifikasi & harga bawaan dari klien maklon." />
-          )
         ) : (
           <Table data-testid="buyer-catalog-table">
             <TableHeader><TableRow>
@@ -132,6 +124,19 @@ export default function MaklonBuyerCatalogModule({ token, onNavigate }) {
               <TableHead className="text-right">Varian</TableHead><TableHead className="text-right">Produksi (pcs)</TableHead><TableHead>Status</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {!paged.length && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={8} className="p-0 [&>div]:py-8">
+                    {(clientId || status || search) ? (
+                      <EmptyState icon={BookOpen} title="Tidak ada artikel yang cocok" description="Ubah atau hapus penyaring untuk melihat artikel lain."
+                        action={<Button variant="outline" size="sm" onClick={resetFilters}><X className="w-3.5 h-3.5" />Tampilkan semua artikel</Button>} />
+                    ) : (
+                      <EmptyState icon={BookOpen} title="Belum ada artikel buyer"
+                        description="Buat artikel pertama untuk menyimpan spesifikasi & harga bawaan dari klien maklon." />
+                    )}
+                  </TableCell>
+                </TableRow>
+              )}
               {paged.map((it) => (
                 <TableRow key={it.id} data-testid={`buyer-catalog-row-${it.id}`} className={panel?.id === it.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
                   <TableCell>

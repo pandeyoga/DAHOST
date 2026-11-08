@@ -401,7 +401,7 @@ export default function HRLMSModule({ token }) {
                   { kunci: 'jenis', label: 'Jenis', isi: (m) => MATERIAL_TYPE[m.type] || 'Teks' },
                   { kunci: 'durasi', label: 'Durasi', rata: 'kanan', isi: (m) => <span className="tabular-nums">{m.duration_minutes ?? '—'} menit</span> },
                 ]}
-                kosong={<p className="text-sm text-muted-foreground">Kursus ini belum punya materi.</p>} />
+                kosong={<EmptyState title="Kursus ini belum punya materi" />} />
             )}
           </div>
         </DetailPopup>

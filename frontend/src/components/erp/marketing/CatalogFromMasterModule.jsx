@@ -241,9 +241,6 @@ export default function CatalogFromMasterModule({ token, onAssigned }) {
 
       {loading ? (
         <div className="space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-12" />)}</div>
-      ) : products.length === 0 ? (
-        <EmptyState icon={PackagePlus} title="Belum ada produk master yang cocok" testId="cfm-empty"
-          description="Master produk (model + varian FG) dibuat di R&D / Master Produk — katalog toko hanya menempelkan produk yang sudah ada di sana." />
       ) : (
         <div data-testid="cfm-product-list">
           <Table>
@@ -260,6 +257,12 @@ export default function CatalogFromMasterModule({ token, onAssigned }) {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {products.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={8} className="p-0 [&>div]:py-8"><EmptyState icon={PackagePlus} title="Belum ada produk master yang cocok" testId="cfm-empty"
+                  description="Master produk (model + varian FG) dibuat di R&D / Master Produk — katalog toko hanya menempelkan produk yang sudah ada di sana." /></TableCell>
+                </TableRow>
+              )}
               {pg.paged.map((p) => {
                 const expanded = !!open[p.model_id];
                 const selectable = p.variants.filter((v) => !v.in_catalog);

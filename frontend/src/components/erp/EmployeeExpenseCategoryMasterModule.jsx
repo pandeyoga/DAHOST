@@ -312,11 +312,6 @@ export default function EmployeeExpenseCategoryMasterModule() {
             <Loader2 size={20} className="animate-spin" />
             <span className="text-sm">Memuat data…</span>
           </div>
-        ) : filtered.length === 0 ? (
-          <EmptyState icon={Tag} testId="category-empty"
-            title={search ? 'Tidak ada kategori yang cocok' : 'Belum ada kategori'}
-            description={search ? 'Ubah atau kosongkan pencarian.' : 'Isi kategori bawaan untuk memulai, atau tambahkan kategori sendiri.'}
-            action={canEdit && !search ? seedButton('default', 'category-seed-empty-button') : null} />
         ) : (
           <Table className="md:min-w-0">
             <TableHeader>
@@ -331,6 +326,16 @@ export default function EmployeeExpenseCategoryMasterModule() {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {filtered.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={canEdit ? 5 : 4} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={Tag} testId="category-empty"
+                      title={search ? 'Tidak ada kategori yang cocok' : 'Belum ada kategori'}
+                      description={search ? 'Ubah atau kosongkan pencarian.' : 'Isi kategori bawaan untuk memulai, atau tambahkan kategori sendiri.'}
+                      action={canEdit && !search ? seedButton('default', 'category-seed-empty-button') : null} />
+                  </TableCell>
+                </TableRow>
+              )}
               {filtered.map(cat => (
                 <TableRow
                   key={cat.id}

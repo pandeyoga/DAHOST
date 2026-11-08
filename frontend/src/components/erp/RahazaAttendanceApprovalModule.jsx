@@ -225,11 +225,10 @@ export default function RahazaAttendanceApprovalModule({ token }) {
     >
       {loading ? (
         <p className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Memuat antrean absen…</p>
-      ) : records.length === 0 ? (
-        <EmptyState icon={ClipboardCheck} title="Tidak ada absen untuk penyaring ini"
-          description={statusFilter === 'pending' ? 'Semua absen sudah diperiksa.' : 'Ubah status atau periode.'} />
       ) : (
-        <TabelData kolom={kolom} baris={paged} onKlikBaris={buka} testId="att-approval-table" />
+        <TabelData kolom={kolom} baris={paged} onKlikBaris={buka} testId="att-approval-table"
+          kosong={<EmptyState icon={ClipboardCheck} title="Tidak ada absen untuk penyaring ini"
+            description={statusFilter === 'pending' ? 'Semua absen sudah diperiksa.' : 'Ubah status atau periode.'} />} />
       )}
     </PageLayout>
   );

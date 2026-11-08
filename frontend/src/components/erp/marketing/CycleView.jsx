@@ -299,13 +299,17 @@ function ChangeLogPanel({ accountId, period, token }) {
     <div className="space-y-2" data-testid="cycle-changelog">
       <p className="text-sm font-medium text-foreground">Jejak perubahan bulan ini</p>
       {rows === null ? <p className="text-sm text-muted-foreground">Memuat…</p>
-        : rows.length === 0 ? <EmptyState className="py-4" title="Belum ada perubahan tercatat untuk bulan ini" />
-          : (
+        : (
             <Table>
               <TableHeader>
                 <TableRow><TableHead>Perubahan</TableHead><TableHead>Oleh</TableHead><TableHead className="hidden sm:table-cell">Omzet target</TableHead><TableHead className="hidden md:table-cell">Alasan</TableHead></TableRow>
               </TableHeader>
               <TableBody>
+                {rows.length === 0 && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={4} className="p-0 [&>div]:py-8"><EmptyState title="Belum ada perubahan tercatat untuk bulan ini" /></TableCell>
+                  </TableRow>
+                )}
                 {rows.map((r) => (
                   <TableRow key={r.id}>
                     <TableCell>{label(r.action)}</TableCell>

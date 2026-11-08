@@ -529,50 +529,50 @@ function SupplierDetail({ token, supplierId, materials, onClose, onChanged, onEd
               <Plus /> Tambah harga
             </Button>
           </div>
-          {priceList.length === 0 ? (
-            <EmptyState title="Belum ada daftar harga"
-              description="Tambahkan harga supaya harga PO terisi otomatis." />
-          ) : (
-            <Table data-testid="supplier-price-list">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Material</TableHead>
-                  <TableHead className="text-right">Harga per satuan beli</TableHead>
-                  <TableHead className="text-right">Per satuan dasar</TableHead>
-                  <TableHead className="text-right">MOQ</TableHead>
-                  <TableHead>Berlaku</TableHead>
-                  <TableHead className="text-right"><span className="sr-only">Aksi</span></TableHead>
+          <Table data-testid="supplier-price-list">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Material</TableHead>
+                <TableHead className="text-right">Harga per satuan beli</TableHead>
+                <TableHead className="text-right">Per satuan dasar</TableHead>
+                <TableHead className="text-right">MOQ</TableHead>
+                <TableHead>Berlaku</TableHead>
+                <TableHead className="text-right"><span className="sr-only">Aksi</span></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {priceList.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={6} className="p-0 [&>div]:py-8"><EmptyState title="Belum ada daftar harga" description="Tambahkan harga supaya harga PO terisi otomatis." /></TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {priceList.map((r) => (
-                  <TableRow key={r.id} className={r.is_active === false ? 'opacity-60' : ''}>
-                    <TableCell>
-                      <div className="font-medium">{r.material_code}</div>
-                      <div className="text-xs text-muted-foreground">{r.material_name}</div>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {fmtRp(r.price)} <span className="text-muted-foreground">/ {r.uom}</span>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {fmtRp(r.price_base)} <span className="text-muted-foreground">/ {r.base_uom}</span>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{r.moq ? `${fmtNum(r.moq)} ${r.uom}` : '—'}</TableCell>
-                    <TableCell>
-                      {fmtDate(r.valid_from)}{r.valid_to ? ` – ${fmtDate(r.valid_to)}` : ''}
-                      {r.is_active === false && <span className="ml-1 text-xs text-muted-foreground">(riwayat)</span>}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="ghost" size="icon-sm" onClick={() => delPrice(r.id)} title="Hapus baris harga"
-                        aria-label="Hapus baris harga" data-testid={`price-delete-${r.id}`}>
-                        <Trash2 className="text-[hsl(var(--danger-text))]" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+              )}
+              {priceList.map((r) => (
+                <TableRow key={r.id} className={r.is_active === false ? 'opacity-60' : ''}>
+                  <TableCell>
+                    <div className="font-medium">{r.material_code}</div>
+                    <div className="text-xs text-muted-foreground">{r.material_name}</div>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {fmtRp(r.price)} <span className="text-muted-foreground">/ {r.uom}</span>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {fmtRp(r.price_base)} <span className="text-muted-foreground">/ {r.base_uom}</span>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">{r.moq ? `${fmtNum(r.moq)} ${r.uom}` : '—'}</TableCell>
+                  <TableCell>
+                    {fmtDate(r.valid_from)}{r.valid_to ? ` – ${fmtDate(r.valid_to)}` : ''}
+                    {r.is_active === false && <span className="ml-1 text-xs text-muted-foreground">(riwayat)</span>}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button variant="ghost" size="icon-sm" onClick={() => delPrice(r.id)} title="Hapus baris harga"
+                      aria-label="Hapus baris harga" data-testid={`price-delete-${r.id}`}>
+                      <Trash2 className="text-[hsl(var(--danger-text))]" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
       )}
 

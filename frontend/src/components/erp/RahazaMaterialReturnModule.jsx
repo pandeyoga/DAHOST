@@ -131,8 +131,6 @@ export default function RahazaMaterialReturnModule({ deepLinkParams, portalId })
       <GlassCard className="p-0 overflow-hidden">
         {loading && !rows.length ? (
           <p className="py-6 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Memuat…</p>
-        ) : rows.length === 0 ? (
-          <EmptyState icon={Undo2} title="Belum ada retur material" description="Retur dibuat dari pengeluaran material atau surat jalan ke CMT yang bahannya sudah keluar." />
         ) : (
           <div className="overflow-x-auto">
           <Table>
@@ -142,6 +140,13 @@ export default function RahazaMaterialReturnModule({ deepLinkParams, portalId })
               <TableHead>Status</TableHead><TableHead>Jurnal</TableHead><TableHead className="text-right">Aksi</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {rows.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={7} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={Undo2} title="Belum ada retur material" description="Retur dibuat dari pengeluaran material atau surat jalan ke CMT yang bahannya sudah keluar." />
+                  </TableCell>
+                </TableRow>
+              )}
               {paged.map((r) => {
                 const [label, tone] = STATUS_META[r.status] || STATUS_META.draft;
                 const open = openRow === r.id;

@@ -271,7 +271,7 @@ export default function AdsPerformanceDashboard({ token }) {
         </Notice>
       )}
 
-      {perPlatform.length > 0 && activeTab === 'campaigns' && (
+      {activeTab === 'campaigns' && (
         <TabelData baris={perPlatform} kunci={(r) => r.platform} testId="ads-per-platform"
           kolom={[
             { kunci: 'platform', label: 'Platform iklan', hp: 'judul', isi: (r) => <span className="font-medium">{labelPlatform(r.platform)}</span> },
@@ -279,7 +279,8 @@ export default function AdsPerformanceDashboard({ token }) {
             { kunci: 'rev', label: 'Omzet', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtRp(r.revenue)}</span> },
             { kunci: 'roas', label: 'ROAS', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.roas}×</span> },
             { kunci: 'n', label: 'Kampanye', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmt(r.campaigns)}</span> },
-          ]} />
+          ]}
+          kosong={<EmptyState icon={Eye} title="Belum ada biaya iklan per platform" description="Rekap muncul setelah ada kampanye." />} />
       )}
 
       {/* Kampanye */}

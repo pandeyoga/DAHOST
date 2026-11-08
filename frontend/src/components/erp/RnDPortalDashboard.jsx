@@ -243,9 +243,6 @@ export default function RnDPortalDashboard({ token, onNavigate }) {
 
         {loading && !pending ? (
           <div className="space-y-2">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-12 rounded-lg" />)}</div>
-        ) : items.length === 0 ? (
-          <EmptyState icon={CheckCircle2} className="py-8" testId="rnd-pending-empty" title="Tidak ada yang menunggu keputusan"
-            description="Item muncul di sini ketika staf RnD mengirim style untuk ditinjau, mengajukan permintaan sample, atau menyiapkan tech pack." />
         ) : (
           <div className="overflow-x-auto" data-testid="rnd-pending-list">
             <Table>
@@ -258,6 +255,14 @@ export default function RnDPortalDashboard({ token, onNavigate }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {items.length === 0 && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={4} className="p-0 [&>div]:py-8">
+                      <EmptyState icon={CheckCircle2} testId="rnd-pending-empty" title="Tidak ada yang menunggu keputusan"
+                        description="Item muncul di sini ketika staf RnD mengirim style untuk ditinjau, mengajukan permintaan sample, atau menyiapkan tech pack." />
+                    </TableCell>
+                  </TableRow>
+                )}
                 {items.map((it) => (
                   <TableRow key={`${it.kind}-${it.id}`} className="cursor-pointer" onClick={() => setDetail(it)}
                     data-testid={`rnd-pending-${it.kind}-${it.id}`}>
@@ -338,10 +343,6 @@ export default function RnDPortalDashboard({ token, onNavigate }) {
         )}
         {!lifecycle ? (
           <Skeleton className="h-28 rounded-lg" />
-        ) : styleTersaring.length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground" data-testid="rnd-lifecycle-empty">
-            {semuaStyle.length ? 'Tidak ada style di tahap ini.' : 'Belum ada style RnD. Setelah staf RnD membuat style, posisinya muncul di sini.'}
-          </p>
         ) : (
           <>
             <div className="overflow-x-auto">
@@ -358,6 +359,14 @@ export default function RnDPortalDashboard({ token, onNavigate }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
+                  {styleTersaring.length === 0 && (
+                    <TableRow data-testid="rnd-lifecycle-empty" className="hover:bg-transparent">
+                      <TableCell colSpan={7} className="p-0 [&>div]:py-8">
+                        <EmptyState title={semuaStyle.length ? 'Tidak ada style di tahap ini' : 'Belum ada style RnD'}
+                          description={semuaStyle.length ? undefined : 'Setelah staf RnD membuat style, posisinya muncul di sini.'} />
+                      </TableCell>
+                    </TableRow>
+                  )}
                   {styleTampil.map((r) => (
                     <TableRow key={r.id} data-testid={`rnd-lifecycle-row-${r.id}`}>
                       <TableCell className="whitespace-nowrap"><span className="mr-2 text-xs text-muted-foreground">{r.style_code}</span>{r.style_name}</TableCell>
@@ -455,10 +464,6 @@ export default function RnDPortalDashboard({ token, onNavigate }) {
         </div>
         {!history ? (
           <Skeleton className="h-24 rounded-lg" />
-        ) : (history.items || []).length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground" data-testid="rnd-history-empty">
-            Belum ada keputusan tercatat. Setiap persetujuan/penolakan dari layar ini muncul di sini beserta nama pemutus dan alasannya.
-          </p>
         ) : (
           <div className="overflow-x-auto">
             <Table data-testid="rnd-history-table">
@@ -472,7 +477,15 @@ export default function RnDPortalDashboard({ token, onNavigate }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {history.items.map((r) => (
+                {(history.items || []).length === 0 && (
+                  <TableRow data-testid="rnd-history-empty" className="hover:bg-transparent">
+                    <TableCell colSpan={5} className="p-0 [&>div]:py-8">
+                      <EmptyState title="Belum ada keputusan tercatat"
+                        description="Setiap persetujuan/penolakan dari layar ini muncul di sini beserta nama pemutus dan alasannya." />
+                    </TableCell>
+                  </TableRow>
+                )}
+                {(history.items || []).map((r) => (
                   <TableRow key={`${r.kind}-${r.id}`} data-testid={`rnd-history-${r.id}`}>
                     <TableCell className="whitespace-normal">
                       <span className="text-xs text-muted-foreground">{r.kind_label} · {r.code}</span>

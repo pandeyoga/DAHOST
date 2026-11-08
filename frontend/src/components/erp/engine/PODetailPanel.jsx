@@ -374,7 +374,6 @@ function SummaryTab({ po, detail, isInternal, canEdit, closed, costCheck, busy, 
 function ItemsTab({ qty, isInternal }) {
   if (!qty) return <p className="text-sm text-muted-foreground">Memuat angka per baris…</p>;
   const items = qty.items || [];
-  if (!items.length) return <Empty icon={Package} title="PO ini belum punya baris" description="Tambahkan baris lewat tombol Ubah PO." />;
   const sum = (k) => items.reduce((s, i) => s + (Number(i[k]) || 0), 0);
   return (
     <Section title="Barang per baris" testId="po-detail-items" unduh={{ namaBerkas: 'po-barang-per-baris', baris: items, kolom: [
@@ -391,7 +390,11 @@ function ItemsTab({ qty, isInternal }) {
           <HeadNum>Dipesan</HeadNum><HeadNum>Bahan di CMT</HeadNum><HeadNum>Diproduksi</HeadNum>
           <HeadNum>Diterima (lolos QC)</HeadNum><HeadNum>{isInternal ? 'Diserahkan' : 'Dikirim ke klien'}</HeadNum>
         </TableRow></TableHeader>
-        <TableBody>{items.map(it => (
+        <TableBody>
+          {items.length === 0 && (
+            <TableRow className="hover:bg-transparent"><TableCell colSpan={8} className="p-0"><Empty icon={Package} title="PO ini belum punya baris" description="Tambahkan baris lewat tombol Ubah PO." /></TableCell></TableRow>
+          )}
+          {items.map(it => (
           <TableRow key={it.id} data-testid={`po-detail-line-${it.sku || it.id}`}>
             <TableCell><div className="font-medium">{it.product_name}</div><div className="text-xs text-muted-foreground tabular-nums">{it.sku || '—'}</div></TableCell>
             <TableCell className="tabular-nums text-xs">{it.serial_number || '—'}</TableCell>
@@ -399,7 +402,8 @@ function ItemsTab({ qty, isInternal }) {
             <Num>{n(it.ordered_qty)}</Num><Num>{n(it.received_qty)}</Num><Num>{n(it.produced_qty)}</Num>
             <Num>{n(it.accepted_total_qty ?? it.accepted_qty)}</Num><Num>{n(it.shipped_qty)}</Num>
           </TableRow>
-        ))}</TableBody>
+        ))}
+        </TableBody>
         <TableFooter><TableRow>
           <TableCell colSpan={3} className="font-semibold">Total</TableCell>
           <Num className="font-semibold">{n(sum('ordered_qty'))}</Num><Num className="font-semibold">{n(sum('received_qty'))}</Num>
@@ -504,26 +508,29 @@ function MaterialsTab({ poId, po, detail, isInternal, canEdit, accReq, onReloadA
         {(bom.warnings || []).length > 0 && (
           <Notice tone="warning" icon={AlertTriangle} testId="po-bom-warnings">{bom.warnings.slice(0, 6).join(' · ')}</Notice>
         )}
-        {(bom.lines || []).length === 0 ? (
-          <Empty icon={Layers} title="Belum ada BOM untuk PO ini"
-            description={isInternal ? 'Pastikan model setiap baris punya BOM aktif di Master Produk.' : 'Sinkronkan dari template aktif artikel Katalog Buyer.'} />
-        ) : (
-          <Table data-testid="po-detail-bom-table">
-            <TableHeader><TableRow>
-              <TableHead>Bahan</TableHead><TableHead>Jenis</TableHead>{!isInternal && <HeadNum>Per pcs</HeadNum>}
-              <HeadNum>Perkiraan total</HeadNum><TableHead>Satuan</TableHead><TableHead>Disediakan</TableHead>
-            </TableRow></TableHeader>
-            <TableBody>{bom.lines.map((l, i) => (
-              <TableRow key={`${l.code || l.name}-${i}`}>
-                <TableCell><div className="font-medium">{l.name}</div>{l.code && <div className="text-xs text-muted-foreground tabular-nums">{l.code}</div>}</TableCell>
-                <TableCell className="text-xs">{l.type_label}</TableCell>
-                {!isInternal && <Num>{n(l.qty_per_pcs)}</Num>}
-                <Num>{n(l.qty_total)}</Num><TableCell className="text-xs">{l.unit || '—'}</TableCell>
-                <TableCell className="text-xs">{l.supplied_by}</TableCell>
-              </TableRow>
-            ))}</TableBody>
-          </Table>
-        )}
+        <Table data-testid="po-detail-bom-table">
+          <TableHeader><TableRow>
+            <TableHead>Bahan</TableHead><TableHead>Jenis</TableHead>{!isInternal && <HeadNum>Per pcs</HeadNum>}
+            <HeadNum>Perkiraan total</HeadNum><TableHead>Satuan</TableHead><TableHead>Disediakan</TableHead>
+          </TableRow></TableHeader>
+          <TableBody>
+            {(bom.lines || []).length === 0 && (
+              <TableRow className="hover:bg-transparent"><TableCell colSpan={isInternal ? 5 : 6} className="p-0">
+                <Empty icon={Layers} title="Belum ada BOM untuk PO ini"
+                  description={isInternal ? 'Pastikan model setiap baris punya BOM aktif di Master Produk.' : 'Sinkronkan dari template aktif artikel Katalog Buyer.'} />
+              </TableCell></TableRow>
+            )}
+            {(bom.lines || []).map((l, i) => (
+            <TableRow key={`${l.code || l.name}-${i}`}>
+              <TableCell><div className="font-medium">{l.name}</div>{l.code && <div className="text-xs text-muted-foreground tabular-nums">{l.code}</div>}</TableCell>
+              <TableCell className="text-xs">{l.type_label}</TableCell>
+              {!isInternal && <Num>{n(l.qty_per_pcs)}</Num>}
+              <Num>{n(l.qty_total)}</Num><TableCell className="text-xs">{l.unit || '—'}</TableCell>
+              <TableCell className="text-xs">{l.supplied_by}</TableCell>
+            </TableRow>
+          ))}
+          </TableBody>
+        </Table>
       </Section>
 
       <Section title="Rencana aksesoris" testId="po-detail-acc-plan"
@@ -536,25 +543,28 @@ function MaterialsTab({ poId, po, detail, isInternal, canEdit, accReq, onReloadA
           { label: 'Satuan rencana', nilai: (a) => (a.has_handover && a.plan_qty_handover !== null ? a.handover_uom : a.usage_unit) || '' },
         ] }}
         aside={<span className="text-xs text-muted-foreground">Angka BOM = perkiraan; jumlah serah final diatur di form PO.</span>}>
-        {plan.length === 0 ? (
-          <Empty icon={Clipboard} title="Belum ada rencana aksesoris" description="Aksesoris dari BOM dan tambahan diatur lewat tombol Ubah PO." />
-        ) : (
-          <Table data-testid="po-detail-acc-plan-table">
-            <TableHeader><TableRow>
-              <TableHead>Aksesoris</TableHead><TableHead>Sumber</TableHead><HeadNum>Kebutuhan BOM</HeadNum>
-              <TableHead>Satuan serah</TableHead><HeadNum>Rencana serah</HeadNum>
-            </TableRow></TableHeader>
-            <TableBody>{plan.map((a, i) => (
-              <TableRow key={a.id || i} data-testid={`po-acc-plan-row-${i}`}>
-                <TableCell><div className="font-medium">{a.name}</div>{a.code && <div className="text-xs text-muted-foreground tabular-nums">{a.code}</div>}</TableCell>
-                <TableCell className="text-xs">{a.source_label}</TableCell>
-                <Num>{n(a.bom_qty_base)} {a.usage_unit}</Num>
-                <TableCell className="text-xs">{a.has_handover ? `${a.handover_uom} isi ${n(a.handover_factor)} ${a.usage_unit}` : '—'}</TableCell>
-                <Num>{a.has_handover && a.plan_qty_handover !== null ? `${n(a.plan_qty_handover)} ${a.handover_uom}` : `${n(a.bom_qty_base)} ${a.usage_unit}`}</Num>
-              </TableRow>
-            ))}</TableBody>
-          </Table>
-        )}
+        <Table data-testid="po-detail-acc-plan-table">
+          <TableHeader><TableRow>
+            <TableHead>Aksesoris</TableHead><TableHead>Sumber</TableHead><HeadNum>Kebutuhan BOM</HeadNum>
+            <TableHead>Satuan serah</TableHead><HeadNum>Rencana serah</HeadNum>
+          </TableRow></TableHeader>
+          <TableBody>
+            {plan.length === 0 && (
+              <TableRow className="hover:bg-transparent"><TableCell colSpan={5} className="p-0">
+                <Empty icon={Clipboard} title="Belum ada rencana aksesoris" description="Aksesoris dari BOM dan tambahan diatur lewat tombol Ubah PO." />
+              </TableCell></TableRow>
+            )}
+            {plan.map((a, i) => (
+            <TableRow key={a.id || i} data-testid={`po-acc-plan-row-${i}`}>
+              <TableCell><div className="font-medium">{a.name}</div>{a.code && <div className="text-xs text-muted-foreground tabular-nums">{a.code}</div>}</TableCell>
+              <TableCell className="text-xs">{a.source_label}</TableCell>
+              <Num>{n(a.bom_qty_base)} {a.usage_unit}</Num>
+              <TableCell className="text-xs">{a.has_handover ? `${a.handover_uom} isi ${n(a.handover_factor)} ${a.usage_unit}` : '—'}</TableCell>
+              <Num>{a.has_handover && a.plan_qty_handover !== null ? `${n(a.plan_qty_handover)} ${a.handover_uom}` : `${n(a.bom_qty_base)} ${a.usage_unit}`}</Num>
+            </TableRow>
+          ))}
+          </TableBody>
+        </Table>
       </Section>
 
       <Section title="Stok & pembelian aksesoris" testId="po-accessory-requirements"
@@ -574,9 +584,7 @@ function MaterialsTab({ poId, po, detail, isInternal, canEdit, accReq, onReloadA
         )}>
         {!accReq ? <p className="text-sm text-muted-foreground">Memuat stok aksesoris…</p>
           : accReq.error ? <Notice tone="danger" icon={AlertTriangle}>{accReq.error}</Notice>
-          : reqs.length === 0 ? (
-            <Empty icon={Clipboard} title="Tidak ada kebutuhan aksesoris" description="Kebutuhan dihitung dari BOM aktif dan rencana aksesoris PO." />
-          ) : (
+          : (
             <>
               {accReq.summary?.unlinked_lines > 0 && (
                 <Notice tone="warning" icon={AlertTriangle}>{accReq.summary.unlinked_lines} baris belum tertaut ke master bahan — stoknya tidak bisa dicek.</Notice>
@@ -586,7 +594,13 @@ function MaterialsTab({ poId, po, detail, isInternal, canEdit, accReq, onReloadA
                   <TableHead>Aksesoris</TableHead><HeadNum>Dibutuhkan</HeadNum><HeadNum>Sudah keluar</HeadNum>
                   <HeadNum>Tersedia</HeadNum><HeadNum>Kurang</HeadNum><TableHead>Status</TableHead>
                 </TableRow></TableHeader>
-                <TableBody>{reqs.map((a, i) => {
+                <TableBody>
+                {reqs.length === 0 && (
+                  <TableRow className="hover:bg-transparent"><TableCell colSpan={6} className="p-0">
+                    <Empty icon={Clipboard} title="Tidak ada kebutuhan aksesoris" description="Kebutuhan dihitung dari BOM aktif dan rencana aksesoris PO." />
+                  </TableCell></TableRow>
+                )}
+                {reqs.map((a, i) => {
                   const [lbl, tone] = ACC_STATUS[a.status] || [a.status || '—', 'default'];
                   return (
                     <TableRow key={a.id || i} data-testid={`po-acc-req-row-${i}`}>
@@ -597,7 +611,8 @@ function MaterialsTab({ poId, po, detail, isInternal, canEdit, accReq, onReloadA
                       <TableCell><StatusBadge status={a.status} label={lbl} tone={tone} /></TableCell>
                     </TableRow>
                   );
-                })}</TableBody>
+                })}
+                </TableBody>
               </Table>
               {(accReq.existing_requests || []).length > 0 && (
                 <p className="text-xs text-muted-foreground" data-testid="po-acc-existing-requests">
@@ -624,16 +639,19 @@ function ShipTab({ detail, isInternal }) {
         { label: 'CMT', nilai: (s) => s.vendor_name || '' }, { label: 'Jenis', nilai: (s) => s.type_label || '' },
         { label: 'Qty', nilai: (s) => Number(s.qty) || 0 }, { label: 'Status', nilai: (s) => s.status_label || '' },
       ] }}>
-        {vs.length === 0 ? <Empty icon={Truck} title="Belum ada kiriman ke CMT" description="Kiriman dibuat di menu Kirim ke CMT." /> : (
-          <Table>
+        <Table>
             <TableHeader><TableRow><TableHead>No. kiriman</TableHead><TableHead>Tanggal</TableHead><TableHead>CMT</TableHead><TableHead>Jenis</TableHead><HeadNum>Qty</HeadNum><TableHead>Status</TableHead></TableRow></TableHeader>
-            <TableBody>{vs.map(s => (
+            <TableBody>
+              {vs.length === 0 && (
+                <TableRow className="hover:bg-transparent"><TableCell colSpan={6} className="p-0"><Empty icon={Truck} title="Belum ada kiriman ke CMT" description="Kiriman dibuat di menu Kirim ke CMT." /></TableCell></TableRow>
+              )}
+              {vs.map(s => (
               <TableRow key={s.id}><TableCell className="tabular-nums">{s.number}</TableCell><TableCell>{dt(s.date)}</TableCell>
                 <TableCell>{s.vendor_name || '—'}</TableCell><TableCell className="text-xs">{s.type_label}</TableCell><Num>{n(s.qty)}</Num>
                 <TableCell><StatusBadge status={s.status} label={s.status_label} tone={s.status === 'Received' ? 'success' : 'info'} /></TableCell></TableRow>
-            ))}</TableBody>
+            ))}
+            </TableBody>
           </Table>
-        )}
       </Section>
       <Section title={`Penerimaan & QC (${rc.length})`} testId="po-detail-receipts" unduh={{ namaBerkas: 'po-penerimaan-qc', baris: rc, kolom: [
         { label: 'No. terima', nilai: (r) => r.number }, { label: 'Tanggal', nilai: (r) => dt(r.date) },
@@ -641,17 +659,20 @@ function ShipTab({ detail, isInternal }) {
         { label: 'Lolos', nilai: (r) => Number(r.qty_good) || 0 }, { label: 'Tolak', nilai: (r) => Number(r.qty_reject) || 0 },
         { label: 'Status', nilai: (r) => r.status_label || '' },
       ] }}>
-        {rc.length === 0 ? <Empty icon={CheckCircle2} title="Belum ada penerimaan dari CMT" description="Penerimaan dan QC dicatat di menu Terima & QC." /> : (
-          <Table>
+        <Table>
             <TableHeader><TableRow><TableHead>No. terima</TableHead><TableHead>Tanggal</TableHead><TableHead>CMT</TableHead><HeadNum>Dikirim CMT</HeadNum><HeadNum>Lolos</HeadNum><HeadNum>Tolak</HeadNum><TableHead>Status</TableHead></TableRow></TableHeader>
-            <TableBody>{rc.map(r => (
+            <TableBody>
+              {rc.length === 0 && (
+                <TableRow className="hover:bg-transparent"><TableCell colSpan={7} className="p-0"><Empty icon={CheckCircle2} title="Belum ada penerimaan dari CMT" description="Penerimaan dan QC dicatat di menu Terima & QC." /></TableCell></TableRow>
+              )}
+              {rc.map(r => (
               <TableRow key={r.id}><TableCell className="tabular-nums">{r.number}</TableCell><TableCell>{dt(r.date)}</TableCell>
                 <TableCell>{r.vendor_name || '—'}</TableCell><Num>{n(r.qty_claimed)}</Num><Num>{n(r.qty_good)}</Num>
                 <Num className={r.qty_reject ? 'text-[hsl(var(--danger-text))]' : ''}>{n(r.qty_reject)}</Num>
                 <TableCell><StatusBadge status={r.status} label={r.status_label} tone={r.status === 'completed_qc' ? 'success' : r.status === 'cancelled' ? 'danger' : 'warning'} /></TableCell></TableRow>
-            ))}</TableBody>
+            ))}
+            </TableBody>
           </Table>
-        )}
       </Section>
       <Section title={`Permak (${pm.length})`} testId="po-detail-permak" unduh={{ namaBerkas: 'po-permak', baris: pm, kolom: [
         { label: 'No. permak', nilai: (x) => x.number || '' }, { label: 'SKU', nilai: (x) => `${x.sku || ''} ${x.size || ''}`.trim() },
@@ -659,31 +680,37 @@ function ShipTab({ detail, isInternal }) {
         { label: 'Berhasil', nilai: (x) => Number(x.qty_fixed) || 0 }, { label: 'Dibuang', nilai: (x) => Number(x.qty_scrap) || 0 },
         { label: 'Status', nilai: (x) => x.status_label || '' },
       ] }}>
-        {pm.length === 0 ? <Empty icon={RotateCcw} title="Tidak ada permak" description="Barang tolak yang dipermak tercatat di menu Perbaikan." /> : (
-          <Table>
+        <Table>
             <TableHeader><TableRow><TableHead>No. permak</TableHead><TableHead>SKU</TableHead><TableHead>Tempat</TableHead><HeadNum>Qty</HeadNum><HeadNum>Berhasil</HeadNum><HeadNum>Dibuang</HeadNum><TableHead>Status</TableHead></TableRow></TableHeader>
-            <TableBody>{pm.map(p => (
+            <TableBody>
+              {pm.length === 0 && (
+                <TableRow className="hover:bg-transparent"><TableCell colSpan={7} className="p-0"><Empty icon={RotateCcw} title="Tidak ada permak" description="Barang tolak yang dipermak tercatat di menu Perbaikan." /></TableCell></TableRow>
+              )}
+              {pm.map(p => (
               <TableRow key={p.id}><TableCell className="tabular-nums">{p.number || '—'}</TableCell><TableCell className="tabular-nums text-xs">{p.sku} {p.size}</TableCell>
                 <TableCell className="text-xs">{p.where_label}</TableCell><Num>{n(p.qty)}</Num><Num>{n(p.qty_fixed)}</Num><Num>{n(p.qty_scrap)}</Num>
                 <TableCell><StatusBadge status={p.status} label={p.status_label} tone={p.status === 'selesai_berhasil' ? 'success' : p.status === 'gagal_buang' ? 'danger' : 'warning'} /></TableCell></TableRow>
-            ))}</TableBody>
+            ))}
+            </TableBody>
           </Table>
-        )}
       </Section>
       <Section title={`${isInternal ? 'Serah ke gudang DA' : 'Kiriman ke klien'} (${rs.length})`} testId="po-detail-result-shipments"
         unduh={{ namaBerkas: 'po-kiriman-hasil', baris: rs, kolom: [
           { label: 'No. surat jalan', nilai: (x) => x.number }, { label: 'Tanggal', nilai: (x) => dt(x.date) },
           { label: 'Qty', nilai: (x) => Number(x.qty) || 0 }, { label: 'Status', nilai: (x) => x.status_label || '' },
         ] }}>
-        {rs.length === 0 ? <Empty icon={Send} title="Belum ada kiriman hasil" description="Kiriman hasil dibuat di menu Kirim hasil." /> : (
-          <Table>
+        <Table>
             <TableHeader><TableRow><TableHead>No. surat jalan</TableHead><TableHead>Tanggal</TableHead><HeadNum>Qty</HeadNum><TableHead>Status</TableHead></TableRow></TableHeader>
-            <TableBody>{rs.map(s => (
+            <TableBody>
+              {rs.length === 0 && (
+                <TableRow className="hover:bg-transparent"><TableCell colSpan={4} className="p-0"><Empty icon={Send} title="Belum ada kiriman hasil" description="Kiriman hasil dibuat di menu Kirim hasil." /></TableCell></TableRow>
+              )}
+              {rs.map(s => (
               <TableRow key={s.id}><TableCell className="tabular-nums">{s.number}</TableCell><TableCell>{dt(s.date)}</TableCell><Num>{n(s.qty)}</Num>
                 <TableCell><StatusBadge status={s.status} label={s.status_label} tone="info" /></TableCell></TableRow>
-            ))}</TableBody>
+            ))}
+            </TableBody>
           </Table>
-        )}
       </Section>
     </>
   );
@@ -758,30 +785,37 @@ function BillingTab({ po, detail, isInternal, costCheck, onNavigate }) {
         { label: 'Dibayar', nilai: (b) => Number(b.paid) || 0 }, { label: 'Sisa', nilai: (b) => Number(b.outstanding) || 0 },
         { label: 'Status', nilai: (b) => b.status_label || '' },
       ] }}>
-        {bills.length === 0 ? <Empty icon={Wallet} title="Belum ada tagihan CMT" description="Tagihan CMT terbentuk setelah barang lolos QC di Terima & QC." /> : (
-          <Table>
-            <TableHeader><TableRow><TableHead>No. tagihan</TableHead><TableHead>CMT</TableHead><TableHead>Dari penerimaan</TableHead><HeadNum>Nilai</HeadNum><HeadNum>Dibayar</HeadNum><HeadNum>Sisa</HeadNum><TableHead>Status</TableHead></TableRow></TableHeader>
-            <TableBody>{bills.map(b => (
-              <TableRow key={b.id}><TableCell className="tabular-nums">{b.number || '—'}</TableCell><TableCell>{b.vendor_name || '—'}</TableCell>
-                <TableCell className="tabular-nums text-xs">{b.receipt_code || '—'}</TableCell><Num>{rp(b.amount)}</Num><Num>{rp(b.paid)}</Num><Num>{rp(b.outstanding)}</Num>
-                <TableCell><StatusBadge status={b.status} label={b.status_label} tone={b.status === 'paid' ? 'success' : b.status === 'cancelled' ? 'danger' : 'info'} /></TableCell></TableRow>
-            ))}</TableBody>
-            <TableFooter><TableRow><TableCell colSpan={3} className="font-semibold">Total</TableCell>
-              <Num className="font-semibold">{rp(bt.amount)}</Num><Num className="font-semibold">{rp(bt.paid)}</Num><Num className="font-semibold">{rp(bt.outstanding)}</Num><TableCell /></TableRow></TableFooter>
-          </Table>
-        )}
+        <Table>
+          <TableHeader><TableRow><TableHead>No. tagihan</TableHead><TableHead>CMT</TableHead><TableHead>Dari penerimaan</TableHead><HeadNum>Nilai</HeadNum><HeadNum>Dibayar</HeadNum><HeadNum>Sisa</HeadNum><TableHead>Status</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {bills.length === 0 && (
+              <TableRow className="hover:bg-transparent"><TableCell colSpan={7} className="p-0"><Empty icon={Wallet} title="Belum ada tagihan CMT" description="Tagihan CMT terbentuk setelah barang lolos QC di Terima & QC." /></TableCell></TableRow>
+            )}
+            {bills.map(b => (
+            <TableRow key={b.id}><TableCell className="tabular-nums">{b.number || '—'}</TableCell><TableCell>{b.vendor_name || '—'}</TableCell>
+              <TableCell className="tabular-nums text-xs">{b.receipt_code || '—'}</TableCell><Num>{rp(b.amount)}</Num><Num>{rp(b.paid)}</Num><Num>{rp(b.outstanding)}</Num>
+              <TableCell><StatusBadge status={b.status} label={b.status_label} tone={b.status === 'paid' ? 'success' : b.status === 'cancelled' ? 'danger' : 'info'} /></TableCell></TableRow>
+          ))}
+          </TableBody>
+          <TableFooter><TableRow><TableCell colSpan={3} className="font-semibold">Total</TableCell>
+            <Num className="font-semibold">{rp(bt.amount)}</Num><Num className="font-semibold">{rp(bt.paid)}</Num><Num className="font-semibold">{rp(bt.outstanding)}</Num><TableCell /></TableRow></TableFooter>
+        </Table>
       </Section>
       {!isInternal && (
         <Section title="Piutang klien" testId="po-detail-client-ar">
-          {!ar ? <Empty icon={Wallet} title="Piutang klien belum terbentuk" description="Piutang terjadwal dibuat saat PO dikonfirmasi." /> : (
-            <Table>
-              <TableHeader><TableRow><TableHead>No. piutang</TableHead><HeadNum>Terjadwal</HeadNum><HeadNum>Tertagih</HeadNum><HeadNum>Dibayar</HeadNum><HeadNum>Sisa</HeadNum></TableRow></TableHeader>
-              <TableBody><TableRow>
-                <TableCell className="tabular-nums">{ar.number || '—'}</TableCell><Num>{rp(ar.scheduled_total)}</Num><Num>{rp(ar.billed_total)}</Num>
-                <Num>{rp(ar.paid_total)}</Num><Num>{rp(ar.amount_due)}</Num>
-              </TableRow></TableBody>
-            </Table>
-          )}
+          <Table>
+            <TableHeader><TableRow><TableHead>No. piutang</TableHead><HeadNum>Terjadwal</HeadNum><HeadNum>Tertagih</HeadNum><HeadNum>Dibayar</HeadNum><HeadNum>Sisa</HeadNum></TableRow></TableHeader>
+            <TableBody>
+              {!ar ? (
+                <TableRow className="hover:bg-transparent"><TableCell colSpan={5} className="p-0"><Empty icon={Wallet} title="Piutang klien belum terbentuk" description="Piutang terjadwal dibuat saat PO dikonfirmasi." /></TableCell></TableRow>
+              ) : (
+                <TableRow>
+                  <TableCell className="tabular-nums">{ar.number || '—'}</TableCell><Num>{rp(ar.scheduled_total)}</Num><Num>{rp(ar.billed_total)}</Num>
+                  <Num>{rp(ar.paid_total)}</Num><Num>{rp(ar.amount_due)}</Num>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
         </Section>
       )}
     </>
@@ -822,77 +856,80 @@ function SamplesTab({ po, detail, canEdit, onReload }) {
         <Button type="button" variant="outline" size="sm" onClick={() => setForm({})} data-testid="sample-create-btn"><Plus className="w-3.5 h-3.5" /> Buat sampel</Button>
       )}>
       <p className="text-xs text-muted-foreground">Sampel dibuat sesudah PO ada. Riwayatnya juga tampil di artikel Katalog Buyer. Sampel belum disetujui hanya peringatan — kiriman tetap jalan.</p>
-      {samples.length === 0 ? (
-        <Empty icon={Clipboard} title="Belum ada sampel untuk PO ini" description="Klik Buat sampel, lalu kirim ke klien untuk disetujui." testId="samples-empty" />
-      ) : (
-        <Table data-testid="samples-table">
-          <TableHeader><TableRow>
-            <TableHead className="w-10" /><TableHead>Kode</TableHead><TableHead>Produk</TableHead><TableHead>Ukuran · qty</TableHead>
-            <HeadNum>Revisi</HeadNum><TableHead>Status</TableHead><TableHead>Diperbarui</TableHead><TableHead className="text-right">Aksi</TableHead>
-          </TableRow></TableHeader>
-          <TableBody>{samples.map(s => [
-            <TableRow key={s.id} data-testid={`sample-row-${s.sample_code}`}>
-              <TableCell><RowToggle open={!!open[s.id]} onClick={() => setOpen(o => ({ ...o, [s.id]: !o[s.id] }))} testId={`sample-toggle-${s.sample_code}`} /></TableCell>
-              <TableCell className="tabular-nums">{s.sample_code}</TableCell>
-              <TableCell><div className="font-medium">{s.product_name}</div>{s.buyer_catalog_snapshot?.artikel_code && <div className="text-xs text-muted-foreground tabular-nums">{s.buyer_catalog_snapshot.artikel_code}</div>}</TableCell>
-              <TableCell className="text-xs">{s.target_size || '—'} · {n(s.sample_qty)} pcs</TableCell>
-              <Num>{n(s.revision_number)}</Num>
-              <TableCell><StatusBadge status={s.status} label={s.status_label} tone={SAMPLE_TONE[s.status] || 'default'} testId={`sample-status-${s.sample_code}`} /></TableCell>
-              <TableCell className="text-xs">{dt(s.updated_at || s.created_at)}</TableCell>
-              <TableCell>
-                {canEdit && (
-                  <div className="flex justify-end gap-1">
-                    {s.can?.edit && <Button type="button" size="icon-sm" variant="ghost" onClick={() => setForm(s)} title="Ubah sampel" aria-label="Ubah sampel" data-testid={`sample-edit-${s.sample_code}`}><Edit2 className="w-3.5 h-3.5" /></Button>}
-                    {s.can?.submit && <Button type="button" size="icon-sm" variant="ghost" onClick={() => submit(s)} title="Kirim ke klien" aria-label="Kirim ke klien" data-testid={`sample-submit-${s.sample_code}`}><Send className="w-3.5 h-3.5" /></Button>}
-                    {(s.can?.approve || s.can?.revision || s.can?.reject || s.can?.delete) && (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button type="button" size="icon-sm" variant="ghost" title="Aksi lainnya" aria-label="Aksi lainnya" data-testid={`sample-more-${s.sample_code}`}><MoreHorizontal className="w-3.5 h-3.5" /></Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          {s.can?.approve && <DropdownMenuItem onSelect={() => approve(s)} data-testid={`sample-approve-${s.sample_code}`}><CheckCircle2 className="mr-2 h-4 w-4" />Setujui</DropdownMenuItem>}
-                          {s.can?.revision && <DropdownMenuItem onSelect={() => setReason({ kind: 'revision', sample: s })} data-testid={`sample-revise-${s.sample_code}`}><RotateCcw className="mr-2 h-4 w-4" />Minta revisi</DropdownMenuItem>}
-                          {s.can?.reject && <DropdownMenuItem onSelect={() => setReason({ kind: 'reject', sample: s })} data-testid={`sample-reject-${s.sample_code}`}><XCircle className="mr-2 h-4 w-4" />Tolak</DropdownMenuItem>}
-                          {s.can?.delete && (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem onSelect={() => remove(s)} data-testid={`sample-delete-${s.sample_code}`}
-                                className="text-[hsl(var(--danger-text))] focus:text-[hsl(var(--danger-text))]"><Trash2 className="mr-2 h-4 w-4" />Hapus sampel</DropdownMenuItem>
-                            </>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    )}
-                  </div>
-                )}
-              </TableCell>
-            </TableRow>,
-            open[s.id] && (
-              <RowDetail key={`${s.id}-d`} colSpan={8} testId={`sample-detail-${s.sample_code}`}>
-                <div className="space-y-3">
-                  <Facts items={[
-                    ['Kain', s.fabric_used], ['Warna', s.color_used], ['Deskripsi', s.description], ['Catatan', s.notes],
-                    ['Dikirim ke klien', s.submitted_at ? formatDateTimeID(s.submitted_at) : ''],
-                    ['Disetujui', s.approved_at ? `${s.approved_by_name || ''} · ${dt(s.approved_at)}${s.approval_feedback ? ` — ${s.approval_feedback}` : ''}` : ''],
-                    ['Ditolak', s.rejected_at ? `${s.rejected_by_name || ''} · ${s.rejection_reason || ''}` : ''],
-                    ['Dibuat oleh', s.created_by],
-                  ]} />
-                  {(s.revisions || []).length > 0 && (
-                    <Table>
-                      <TableHeader><TableRow><TableHead>Revisi</TableHead><TableHead>Tanggal</TableHead><TableHead>Alasan</TableHead><TableHead>Perubahan</TableHead><TableHead>Diminta oleh</TableHead></TableRow></TableHeader>
-                      <TableBody>{s.revisions.map(r => (
-                        <TableRow key={r.id}><TableCell>#{r.revision_number}</TableCell><TableCell>{dt(r.created_at)}</TableCell><TableCell>{r.reason}</TableCell>
-                          <TableCell>{r.changes_required || '—'}</TableCell><TableCell>{r.requested_by_role === 'client' ? `Klien · ${r.requested_by || ''}` : (r.requested_by || '—')}</TableCell></TableRow>
-                      ))}</TableBody>
-                    </Table>
+      <Table data-testid="samples-table">
+        <TableHeader><TableRow>
+          <TableHead className="w-10" /><TableHead>Kode</TableHead><TableHead>Produk</TableHead><TableHead>Ukuran · qty</TableHead>
+          <HeadNum>Revisi</HeadNum><TableHead>Status</TableHead><TableHead>Diperbarui</TableHead><TableHead className="text-right">Aksi</TableHead>
+        </TableRow></TableHeader>
+        <TableBody>
+          {samples.length === 0 && (
+            <TableRow className="hover:bg-transparent"><TableCell colSpan={8} className="p-0">
+              <Empty icon={Clipboard} title="Belum ada sampel untuk PO ini" description="Klik Buat sampel, lalu kirim ke klien untuk disetujui." testId="samples-empty" />
+            </TableCell></TableRow>
+          )}
+          {samples.map(s => [
+          <TableRow key={s.id} data-testid={`sample-row-${s.sample_code}`}>
+            <TableCell><RowToggle open={!!open[s.id]} onClick={() => setOpen(o => ({ ...o, [s.id]: !o[s.id] }))} testId={`sample-toggle-${s.sample_code}`} /></TableCell>
+            <TableCell className="tabular-nums">{s.sample_code}</TableCell>
+            <TableCell><div className="font-medium">{s.product_name}</div>{s.buyer_catalog_snapshot?.artikel_code && <div className="text-xs text-muted-foreground tabular-nums">{s.buyer_catalog_snapshot.artikel_code}</div>}</TableCell>
+            <TableCell className="text-xs">{s.target_size || '—'} · {n(s.sample_qty)} pcs</TableCell>
+            <Num>{n(s.revision_number)}</Num>
+            <TableCell><StatusBadge status={s.status} label={s.status_label} tone={SAMPLE_TONE[s.status] || 'default'} testId={`sample-status-${s.sample_code}`} /></TableCell>
+            <TableCell className="text-xs">{dt(s.updated_at || s.created_at)}</TableCell>
+            <TableCell>
+              {canEdit && (
+                <div className="flex justify-end gap-1">
+                  {s.can?.edit && <Button type="button" size="icon-sm" variant="ghost" onClick={() => setForm(s)} title="Ubah sampel" aria-label="Ubah sampel" data-testid={`sample-edit-${s.sample_code}`}><Edit2 className="w-3.5 h-3.5" /></Button>}
+                  {s.can?.submit && <Button type="button" size="icon-sm" variant="ghost" onClick={() => submit(s)} title="Kirim ke klien" aria-label="Kirim ke klien" data-testid={`sample-submit-${s.sample_code}`}><Send className="w-3.5 h-3.5" /></Button>}
+                  {(s.can?.approve || s.can?.revision || s.can?.reject || s.can?.delete) && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button type="button" size="icon-sm" variant="ghost" title="Aksi lainnya" aria-label="Aksi lainnya" data-testid={`sample-more-${s.sample_code}`}><MoreHorizontal className="w-3.5 h-3.5" /></Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        {s.can?.approve && <DropdownMenuItem onSelect={() => approve(s)} data-testid={`sample-approve-${s.sample_code}`}><CheckCircle2 className="mr-2 h-4 w-4" />Setujui</DropdownMenuItem>}
+                        {s.can?.revision && <DropdownMenuItem onSelect={() => setReason({ kind: 'revision', sample: s })} data-testid={`sample-revise-${s.sample_code}`}><RotateCcw className="mr-2 h-4 w-4" />Minta revisi</DropdownMenuItem>}
+                        {s.can?.reject && <DropdownMenuItem onSelect={() => setReason({ kind: 'reject', sample: s })} data-testid={`sample-reject-${s.sample_code}`}><XCircle className="mr-2 h-4 w-4" />Tolak</DropdownMenuItem>}
+                        {s.can?.delete && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onSelect={() => remove(s)} data-testid={`sample-delete-${s.sample_code}`}
+                              className="text-[hsl(var(--danger-text))] focus:text-[hsl(var(--danger-text))]"><Trash2 className="mr-2 h-4 w-4" />Hapus sampel</DropdownMenuItem>
+                          </>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   )}
-                  <FileAttachmentPanel entityType="maklon_sample" entityId={s.id} />
                 </div>
-              </RowDetail>
-            ),
-          ])}</TableBody>
-        </Table>
-      )}
+              )}
+            </TableCell>
+          </TableRow>,
+          open[s.id] && (
+            <RowDetail key={`${s.id}-d`} colSpan={8} testId={`sample-detail-${s.sample_code}`}>
+              <div className="space-y-3">
+                <Facts items={[
+                  ['Kain', s.fabric_used], ['Warna', s.color_used], ['Deskripsi', s.description], ['Catatan', s.notes],
+                  ['Dikirim ke klien', s.submitted_at ? formatDateTimeID(s.submitted_at) : ''],
+                  ['Disetujui', s.approved_at ? `${s.approved_by_name || ''} · ${dt(s.approved_at)}${s.approval_feedback ? ` — ${s.approval_feedback}` : ''}` : ''],
+                  ['Ditolak', s.rejected_at ? `${s.rejected_by_name || ''} · ${s.rejection_reason || ''}` : ''],
+                  ['Dibuat oleh', s.created_by],
+                ]} />
+                {(s.revisions || []).length > 0 && (
+                  <Table>
+                    <TableHeader><TableRow><TableHead>Revisi</TableHead><TableHead>Tanggal</TableHead><TableHead>Alasan</TableHead><TableHead>Perubahan</TableHead><TableHead>Diminta oleh</TableHead></TableRow></TableHeader>
+                    <TableBody>{s.revisions.map(r => (
+                      <TableRow key={r.id}><TableCell>#{r.revision_number}</TableCell><TableCell>{dt(r.created_at)}</TableCell><TableCell>{r.reason}</TableCell>
+                        <TableCell>{r.changes_required || '—'}</TableCell><TableCell>{r.requested_by_role === 'client' ? `Klien · ${r.requested_by || ''}` : (r.requested_by || '—')}</TableCell></TableRow>
+                    ))}</TableBody>
+                  </Table>
+                )}
+                <FileAttachmentPanel entityType="maklon_sample" entityId={s.id} />
+              </div>
+            </RowDetail>
+          ),
+        ])}
+        </TableBody>
+      </Table>
       {form && <SampleFormDialog po={po} sample={form.id ? form : null} onClose={() => setForm(null)} onSaved={async () => { setForm(null); await onReload(); }} />}
       {reason && (
         <ReasonDialog kind={reason.kind} sample={reason.sample} onClose={() => setReason(null)}
@@ -999,7 +1036,6 @@ function TimelineTab({ timeline }) {
   const events = timeline?.events || [];
   const pg = useClientPagination(events, 25);
   if (!timeline) return <p className="text-sm text-muted-foreground">Memuat riwayat…</p>;
-  if (!events.length) return <Empty icon={History} title="Belum ada riwayat untuk PO ini" description="Perubahan PO, kiriman, penerimaan, dan sampel tercatat di sini." />;
   return (
     <Section title={`Riwayat (${events.length} kejadian)`} testId="po-detail-timeline" unduh={{ namaBerkas: 'riwayat-po', baris: events, kolom: [
       { label: 'Waktu', nilai: (e) => formatDateTimeID(e.when) }, { label: 'Kejadian', nilai: (e) => e.label || '' },
@@ -1008,14 +1044,21 @@ function TimelineTab({ timeline }) {
     ] }}>
       <Table data-testid="po-detail-timeline-table">
         <TableHeader><TableRow><TableHead>Waktu</TableHead><TableHead>Kejadian</TableHead><TableHead>Oleh</TableHead><TableHead>Keterangan</TableHead></TableRow></TableHeader>
-        <TableBody>{pg.paged.map((e, i) => (
+        <TableBody>
+          {events.length === 0 && (
+            <TableRow className="hover:bg-transparent"><TableCell colSpan={4} className="p-0">
+              <Empty icon={History} title="Belum ada riwayat untuk PO ini" description="Perubahan PO, kiriman, penerimaan, dan sampel tercatat di sini." />
+            </TableCell></TableRow>
+          )}
+          {pg.paged.map((e, i) => (
           <TableRow key={`${e.when}-${i}`}>
             <TableCell className="text-xs whitespace-nowrap">{formatDateTimeID(e.when)}</TableCell>
             <TableCell>{e.label}{e.amount ? ` · ${rp(e.amount)}` : ''}</TableCell>
             <TableCell className="text-xs">{e.actor || '—'}</TableCell>
             <TableCell className="text-xs text-muted-foreground">{e.note || '—'}</TableCell>
           </TableRow>
-        ))}</TableBody>
+        ))}
+        </TableBody>
       </Table>
       {pg.total > pg.pageSize && <PaginationLite page={pg.page} totalPages={pg.totalPages} total={pg.total} pageSize={pg.pageSize} onPageChange={pg.setPage} />}
     </Section>

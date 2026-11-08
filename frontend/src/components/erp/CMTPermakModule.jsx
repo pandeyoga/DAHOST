@@ -172,9 +172,6 @@ export default function CMTPermakModule({ portalId }) {
       <GlassCard className="p-0 overflow-x-auto">
         {loading && !rows.length ? (
           <div className="p-4 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin inline mr-2" />Memuat…</div>
-        ) : filtered.length === 0 ? (
-          <EmptyState icon={Wrench} title="Belum ada permak"
-            description="Buat permak baru, atau kirim barang ditolak dari layar Terima & QC." />
         ) : (
           <Table>
             <TableHeader><TableRow>
@@ -185,6 +182,14 @@ export default function CMTPermakModule({ portalId }) {
               <TableHead>Status</TableHead><TableHead className="text-right">Aksi</TableHead>
             </TableRow></TableHeader>
             <TableBody data-testid="permak-table-body">
+              {filtered.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={10} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={Wrench} title="Belum ada permak"
+                      description="Buat permak baru, atau kirim barang ditolak dari layar Terima & QC." />
+                  </TableCell>
+                </TableRow>
+              )}
               {paged.map((r) => {
                 const terminal = r.status === 'selesai_berhasil' || r.status === 'gagal_buang';
                 const meta = STATUS_META[r.status] || { label: r.status, tone: 'muted' };

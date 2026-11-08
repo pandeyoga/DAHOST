@@ -167,51 +167,54 @@ function CustomerStatementPanel({ customerId, headers, onClose }) {
                   { label: 'Saldo', nilai: (t) => Number(t.balance_after) || 0 },
                 ]} />
             </div>
-            {txs.length === 0 ? (
-              <EmptyState icon={Receipt} title="Belum ada transaksi" description="Faktur dan pembayaran pelanggan ini akan tampil di sini." />
-            ) : (
-              <Table className="md:min-w-0">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Tanggal</TableHead>
-                    <TableHead>Jenis</TableHead>
-                    <TableHead>Referensi</TableHead>
-                    <TableHead>Keterangan</TableHead>
-                    <TableHead className="text-right">Debit</TableHead>
-                    <TableHead className="text-right">Kredit</TableHead>
-                    <TableHead className="text-right">Saldo</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {txs.map((t, idx) => {
-                    const isInvoice = t.type === 'invoice';
-                    return (
-                      <TableRow key={idx}>
-                        <TableCell className="text-muted-foreground whitespace-nowrap">{formatDateID(t.date)}</TableCell>
-                        <TableCell>
-                          <StatusBadge status={t.type} label={isInvoice ? 'Faktur' : 'Pembayaran'} tone={isInvoice ? 'info' : 'success'} />
-                        </TableCell>
-                        <TableCell className="whitespace-nowrap">{t.reference}</TableCell>
-                        <TableCell className="text-muted-foreground">{humanMemo(t.description)}</TableCell>
-                        <TableCell className="text-right tabular-nums whitespace-nowrap">{t.debit > 0 ? fmtRp(t.debit) : '—'}</TableCell>
-                        <TableCell className="text-right tabular-nums whitespace-nowrap">{t.credit > 0 ? fmtRp(t.credit) : '—'}</TableCell>
-                        <TableCell className="text-right tabular-nums whitespace-nowrap font-semibold">{fmtRp(t.balance_after)}</TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-                <TableFooter>
-                  <TableRow className="font-semibold">
-                    <TableCell colSpan={4} className="text-foreground">Saldo akhir</TableCell>
-                    <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(data.total_billed)}</TableCell>
-                    <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(data.total_paid)}</TableCell>
-                    <TableCell className={`text-right tabular-nums whitespace-nowrap ${data.closing_balance > 0 ? 'text-[hsl(var(--warning-text))]' : 'text-foreground'}`}>
-                      {fmtRp(data.closing_balance)}
+            <Table className="md:min-w-0">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Tanggal</TableHead>
+                  <TableHead>Jenis</TableHead>
+                  <TableHead>Referensi</TableHead>
+                  <TableHead>Keterangan</TableHead>
+                  <TableHead className="text-right">Debit</TableHead>
+                  <TableHead className="text-right">Kredit</TableHead>
+                  <TableHead className="text-right">Saldo</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {txs.length === 0 && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={7} className="p-0 [&>div]:py-8">
+                      <EmptyState icon={Receipt} title="Belum ada transaksi" description="Faktur dan pembayaran pelanggan ini akan tampil di sini." />
                     </TableCell>
                   </TableRow>
-                </TableFooter>
-              </Table>
-            )}
+                )}
+                {txs.map((t, idx) => {
+                  const isInvoice = t.type === 'invoice';
+                  return (
+                    <TableRow key={idx}>
+                      <TableCell className="text-muted-foreground whitespace-nowrap">{formatDateID(t.date)}</TableCell>
+                      <TableCell>
+                        <StatusBadge status={t.type} label={isInvoice ? 'Faktur' : 'Pembayaran'} tone={isInvoice ? 'info' : 'success'} />
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">{t.reference}</TableCell>
+                      <TableCell className="text-muted-foreground">{humanMemo(t.description)}</TableCell>
+                      <TableCell className="text-right tabular-nums whitespace-nowrap">{t.debit > 0 ? fmtRp(t.debit) : '—'}</TableCell>
+                      <TableCell className="text-right tabular-nums whitespace-nowrap">{t.credit > 0 ? fmtRp(t.credit) : '—'}</TableCell>
+                      <TableCell className="text-right tabular-nums whitespace-nowrap font-semibold">{fmtRp(t.balance_after)}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+              {txs.length > 0 && <TableFooter>
+                <TableRow className="font-semibold">
+                  <TableCell colSpan={4} className="text-foreground">Saldo akhir</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(data.total_billed)}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(data.total_paid)}</TableCell>
+                  <TableCell className={`text-right tabular-nums whitespace-nowrap ${data.closing_balance > 0 ? 'text-[hsl(var(--warning-text))]' : 'text-foreground'}`}>
+                    {fmtRp(data.closing_balance)}
+                  </TableCell>
+                </TableRow>
+              </TableFooter>}
+            </Table>
           </div>
         </>
       )}
@@ -230,16 +233,6 @@ function TopDebtorsTable({ debtors, search, selectedId, onPickCustomer }) {
     );
   }, [debtors, search]);
 
-  if (filtered.length === 0) {
-    return (
-      <EmptyState
-        icon={search ? Search : Users}
-        title={search ? 'Tidak ada pelanggan yang cocok' : 'Tidak ada piutang yang belum lunas'}
-        description={search ? 'Coba ubah kata kunci pencarian.' : 'Semua piutang pelanggan sudah lunas.'}
-      />
-    );
-  }
-
   return (
     <div className="overflow-x-auto">
       <Table className="w-full md:min-w-0">
@@ -254,6 +247,17 @@ function TopDebtorsTable({ debtors, search, selectedId, onPickCustomer }) {
           </TableRow>
         </TableHeader>
         <TableBody>
+          {filtered.length === 0 && (
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={6} className="p-0 [&>div]:py-8">
+                <EmptyState
+                  icon={search ? Search : Users}
+                  title={search ? 'Tidak ada pelanggan yang cocok' : 'Tidak ada piutang yang belum lunas'}
+                  description={search ? 'Coba ubah kata kunci pencarian.' : 'Semua piutang pelanggan sudah lunas.'}
+                />
+              </TableCell>
+            </TableRow>
+          )}
           {filtered.map((d, idx) => (
             <TableRow key={d.customer_id} className={`border-b border-foreground/5 hover:bg-foreground/[0.03] ${selectedId === d.customer_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
               <TableCell className="py-2 px-2 text-right tabular-nums text-muted-foreground">{idx + 1}</TableCell>
@@ -282,11 +286,6 @@ function TopDebtorsTable({ debtors, search, selectedId, onPickCustomer }) {
 
 // ─── Tabel umur per pelanggan ────────────────────────────────────────────
 function AgingMatrixTable({ rows, totals, selectedId, onPickCustomer }) {
-  if (rows.length === 0) {
-    return (
-      <EmptyState icon={FileSpreadsheet} title="Belum ada piutang" description="Umur piutang muncul setelah ada faktur penjualan." />
-    );
-  }
   const cell = (r, key) => (r[key] > 0
     ? <span className={key === 'current' ? 'text-foreground' : BUCKET_META[key].text}>{fmtRp(r[key])}</span>
     : <span className="text-foreground/20">—</span>);
@@ -306,6 +305,13 @@ function AgingMatrixTable({ rows, totals, selectedId, onPickCustomer }) {
           </TableRow>
         </TableHeader>
         <TableBody>
+          {rows.length === 0 && (
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={BUCKET_KEYS.length + 3 + (hasSched ? 1 : 0)} className="p-0 [&>div]:py-8">
+                <EmptyState icon={FileSpreadsheet} title="Belum ada piutang" description="Umur piutang muncul setelah ada faktur penjualan." />
+              </TableCell>
+            </TableRow>
+          )}
           {rows.map(r => (
             <TableRow key={r.customer_id} className={`border-b border-foreground/5 hover:bg-foreground/[0.03] ${selectedId === r.customer_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
               <TableCell className="py-2 px-2">

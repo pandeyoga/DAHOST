@@ -315,13 +315,6 @@ export function VendorPartnersTab() {
       <GlassCard className="p-0 overflow-x-auto">
         {loading && !rows.length ? (
           <div className="p-4 text-sm text-muted-foreground">Memuat vendor…</div>
-        ) : !paged.length ? (
-          rows.length ? (
-            <EmptyState icon={Building2} title="Tidak ada vendor yang cocok" description="Ubah kata pencarian atau penyaring status."
-              action={<Button type="button" variant="outline" size="sm" onClick={resetFilters}><X className="w-3.5 h-3.5" />Tampilkan semua vendor</Button>} />
-          ) : (
-            <EmptyState icon={Building2} title="Belum ada vendor CMT" description="Klik Vendor baru untuk mendaftarkan penjahit pertama." />
-          )
         ) : (
           <Table data-testid="partners-list">
             <TableHeader><TableRow>
@@ -331,6 +324,18 @@ export function VendorPartnersTab() {
               <TableHead>Pemilik</TableHead><TableHead>Status</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {!paged.length && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={9} className="p-0 [&>div]:py-8">
+                    {rows.length ? (
+                      <EmptyState icon={Building2} title="Tidak ada vendor yang cocok" description="Ubah kata pencarian atau penyaring status."
+                        action={<Button type="button" variant="outline" size="sm" onClick={resetFilters}><X className="w-3.5 h-3.5" />Tampilkan semua vendor</Button>} />
+                    ) : (
+                      <EmptyState icon={Building2} title="Belum ada vendor CMT" description="Klik Vendor baru untuk mendaftarkan penjahit pertama." />
+                    )}
+                  </TableCell>
+                </TableRow>
+              )}
               {paged.map((p) => (
                 <TableRow key={p.id} data-testid={`partner-row-${p.id}`} className={selectedId === p.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
                   <TableCell>
@@ -561,9 +566,6 @@ export function VendorAccountsTab() {
       <GlassCard className="p-0 overflow-x-auto">
         {loading && !rows.length ? (
           <div className="p-4 text-sm text-muted-foreground">Memuat akun…</div>
-        ) : !paged.length ? (
-          <EmptyState icon={Users} title={rows.length ? 'Tidak ada akun yang cocok' : 'Belum ada akun vendor'}
-            description={rows.length ? 'Ubah kata pencarian atau penyaring.' : 'Klik Akun baru untuk membuat login Portal Vendor.'} />
         ) : (
           <Table data-testid="accounts-list">
             <TableHeader><TableRow>
@@ -571,6 +573,14 @@ export function VendorAccountsTab() {
               <TableHead>Login terakhir</TableHead><TableHead>Status</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {!paged.length && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={5} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={Users} title={rows.length ? 'Tidak ada akun yang cocok' : 'Belum ada akun vendor'}
+                      description={rows.length ? 'Ubah kata pencarian atau penyaring.' : 'Klik Akun baru untuk membuat login Portal Vendor.'} />
+                  </TableCell>
+                </TableRow>
+              )}
               {paged.map((u) => (
                 <TableRow key={u.id} data-testid={`account-row-${u.id}`} className={selectedId === u.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
                   <TableCell>

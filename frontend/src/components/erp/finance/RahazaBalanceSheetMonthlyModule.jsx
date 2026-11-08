@@ -1,15 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, FileBarChart, CheckCircle2, AlertTriangle } from 'lucide-react';
-import { GlassCard } from '@/components/ui/glass';
+import { RefreshCw, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { toast } from 'sonner';
 import TombolUnduh from '@/components/ui/tombol-unduh';
-import { EmptyState } from '../moduleAtoms';
 import PageLayout from '../layout/PageLayout';
 import IntercompanyNotes from './IntercompanyNotes';
 import StatementTable, { unduhanLaporan } from './StatementTable';
+import { EmptyState } from '../moduleAtoms';
 import { fmt, authHeaders, downloadXlsx, yearOptions } from './reportShared';
 
 const SECTIONS = ['assets', 'liabilities', 'equity'];
@@ -101,14 +100,10 @@ export default function RahazaBalanceSheetMonthlyModule({ token }) {
     >
       {loading ? (
         <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
-      ) : !hasData ? (
-        <GlassCard className="p-0">
-          <EmptyState icon={FileBarChart} testId="bs12-empty" title={`Belum ada saldo neraca sampai akhir ${year}`}
-            description="Isi saldo awal di Pengaturan Keuangan › Saldo awal, atau catat jurnal di tahun ini." />
-        </GlassCard>
       ) : (
-        <div data-testid="bs12-table">
-          <StatementTable testId="bs12" defaultOpen columns={columns} rows={rows} className={STICKY_LABEL} />
+        <div data-testid={hasData ? 'bs12-table' : 'bs12-empty'}>
+          <StatementTable testId="bs12" defaultOpen columns={columns} rows={rows} className={STICKY_LABEL}
+            kosong={<EmptyState title={`Belum ada saldo neraca sampai akhir ${year}`} description="Isi saldo awal di Pengaturan Keuangan › Saldo awal, atau catat jurnal di tahun ini." />} />
         </div>
       )}
     </PageLayout>

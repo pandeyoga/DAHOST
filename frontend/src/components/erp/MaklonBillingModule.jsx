@@ -148,9 +148,6 @@ export default function MaklonBillingModule({ token }) {
       <GlassCard className="p-0 overflow-hidden">
         {loading && !(data.items || []).length ? (
           <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-11 rounded-lg" />)}</div>
-        ) : rows.length === 0 ? (
-          <EmptyState icon={Banknote} title="Belum ada piutang klien"
-            description="Piutang muncul begitu PO maklon dikonfirmasi (menu PO Maklon)." />
         ) : (
           <Table data-testid="mkl-ar-table">
             <TableHeader>
@@ -167,6 +164,14 @@ export default function MaklonBillingModule({ token }) {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {rows.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={9} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={Banknote} title="Belum ada piutang klien"
+                      description="Piutang muncul begitu PO maklon dikonfirmasi (menu PO Maklon)." />
+                  </TableCell>
+                </TableRow>
+              )}
               {paged.map((r) => (
                 <TableRow key={r.id} data-testid={`mkl-ar-row-${r.po_number}`}
                   className={selected === r.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
@@ -287,56 +292,59 @@ function ReceivableDetail({ arId, headers, token, onClose, onChanged }) {
                 { label: 'Dibayar', nilai: (g) => Number(g.paid || 0) }, { label: 'Sisa', nilai: (g) => Number(g.balance || 0) },
               ]} />
           </div>
-          {(d.dispatches || []).length === 0 ? (
-            <EmptyState icon={FileText} title="Belum ada kiriman ke klien"
-              description="Pendapatan dicatat otomatis saat barang dikirim lewat Kirim ke Buyer." />
-          ) : (
-            <Table data-testid="mkl-ar-dispatches">
-              <TableHeader><TableRow>
-                <TableHead className="w-10" /><TableHead>Surat jalan</TableHead><TableHead>Tanggal</TableHead>
-                <TableHead className="text-right">Nilai</TableHead><TableHead className="text-right">Dibayar</TableHead>
-                <TableHead className="text-right">Sisa</TableHead><TableHead className="text-right">Faktur</TableHead>
-              </TableRow></TableHeader>
-              <TableBody>
-                {d.dispatches.map((g) => {
-                  const key = `${g.shipment_id}:${g.dispatch_seq}`;
-                  const open = openShip === key;
-                  return (
-                    <Fragment key={key}>
-                      <TableRow>
-                        <TableCell><RowToggle open={open} onClick={() => setOpenShip(open ? null : key)} /></TableCell>
-                        <TableCell className="whitespace-nowrap">{g.shipment_number || '—'} · kirim ke-{g.dispatch_seq}</TableCell>
-                        <TableCell className="whitespace-nowrap">{g.date ? formatDateID(g.date) : '—'}</TableCell>
-                        <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(g.total)}</TableCell>
-                        <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(g.paid)}</TableCell>
-                        <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(g.balance)}</TableCell>
-                        <TableCell className="text-right">
-                          <Button variant="outline" size="sm" onClick={() => printShip(g)} data-testid={`mkl-ar-print-${g.seq_no}`}>
-                            <FileText className="w-3.5 h-3.5" />Cetak
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                      {open && (
-                        <RowDetail colSpan={7}>
-                          <div className="text-sm space-y-1">
-                            {g.lines.map((ln) => (
-                              <div key={ln.po_item_id} className="flex justify-between gap-3">
-                                <span>{ln.sku} {ln.size ? `· ${ln.size}` : ''} — {ln.qty} pcs × {fmt(ln.unit_price)}</span>
-                                <span className="tabular-nums">{fmt(ln.amount)}</span>
-                              </div>
-                            ))}
-                            <div className="text-xs text-muted-foreground">
-                              Jurnal: {g.journals.map((j) => `${j.je_number}${j.reverse ? ' (koreksi)' : ''}`).join(', ')}
+          <Table data-testid="mkl-ar-dispatches">
+            <TableHeader><TableRow>
+              <TableHead className="w-10" /><TableHead>Surat jalan</TableHead><TableHead>Tanggal</TableHead>
+              <TableHead className="text-right">Nilai</TableHead><TableHead className="text-right">Dibayar</TableHead>
+              <TableHead className="text-right">Sisa</TableHead><TableHead className="text-right">Faktur</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>
+              {(d.dispatches || []).length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={7} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={FileText} title="Belum ada kiriman ke klien"
+                      description="Pendapatan dicatat otomatis saat barang dikirim lewat Kirim ke Buyer." />
+                  </TableCell>
+                </TableRow>
+              )}
+              {(d.dispatches || []).map((g) => {
+                const key = `${g.shipment_id}:${g.dispatch_seq}`;
+                const open = openShip === key;
+                return (
+                  <Fragment key={key}>
+                    <TableRow>
+                      <TableCell><RowToggle open={open} onClick={() => setOpenShip(open ? null : key)} /></TableCell>
+                      <TableCell className="whitespace-nowrap">{g.shipment_number || '—'} · kirim ke-{g.dispatch_seq}</TableCell>
+                      <TableCell className="whitespace-nowrap">{g.date ? formatDateID(g.date) : '—'}</TableCell>
+                      <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(g.total)}</TableCell>
+                      <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(g.paid)}</TableCell>
+                      <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(g.balance)}</TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="outline" size="sm" onClick={() => printShip(g)} data-testid={`mkl-ar-print-${g.seq_no}`}>
+                          <FileText className="w-3.5 h-3.5" />Cetak
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                    {open && (
+                      <RowDetail colSpan={7}>
+                        <div className="text-sm space-y-1">
+                          {g.lines.map((ln) => (
+                            <div key={ln.po_item_id} className="flex justify-between gap-3">
+                              <span>{ln.sku} {ln.size ? `· ${ln.size}` : ''} — {ln.qty} pcs × {fmt(ln.unit_price)}</span>
+                              <span className="tabular-nums">{fmt(ln.amount)}</span>
                             </div>
+                          ))}
+                          <div className="text-xs text-muted-foreground">
+                            Jurnal: {g.journals.map((j) => `${j.je_number}${j.reverse ? ' (koreksi)' : ''}`).join(', ')}
                           </div>
-                        </RowDetail>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
+                        </div>
+                      </RowDetail>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </TableBody>
+          </Table>
         </>}
 
         <div className="flex items-center justify-between gap-2">
@@ -349,29 +357,32 @@ function ReceivableDetail({ arId, headers, token, onClose, onChanged }) {
               { label: 'Uang muka', nilai: (p) => Number(p.advance_portion || 0) }, { label: 'Jurnal', nilai: (p) => p.je_number || '' },
             ]} />
         </div>
-        {(d.payments || []).length === 0 ? (
-          <p className="text-sm text-muted-foreground">Klien belum membayar untuk PO ini.</p>
-        ) : (
-          <Table data-testid="mkl-ar-payments">
-            <TableHeader><TableRow>
-              <TableHead>Tanggal</TableHead><TableHead>Rekening</TableHead><TableHead className="text-right">Jumlah</TableHead>
-              <TableHead className="text-right">Menutup piutang</TableHead><TableHead className="text-right">Uang muka</TableHead>
-              <TableHead>Jurnal</TableHead>
-            </TableRow></TableHeader>
-            <TableBody>
-              {d.payments.map((p) => (
-                <TableRow key={p.id} className={p.status === 'voided' ? 'opacity-50' : ''}>
-                  <TableCell className="whitespace-nowrap">{p.date ? formatDateID(p.date) : '—'}{p.status === 'voided' ? ' · dibatalkan' : ''}</TableCell>
-                  <TableCell>{p.account_name || '—'}{p.reference_no ? ` · ${p.reference_no}` : ''}</TableCell>
-                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(p.amount)}</TableCell>
-                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(p.ar_portion)}</TableCell>
-                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(p.advance_portion)}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{p.je_number || '—'}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
+        <Table data-testid="mkl-ar-payments">
+          <TableHeader><TableRow>
+            <TableHead>Tanggal</TableHead><TableHead>Rekening</TableHead><TableHead className="text-right">Jumlah</TableHead>
+            <TableHead className="text-right">Menutup piutang</TableHead><TableHead className="text-right">Uang muka</TableHead>
+            <TableHead>Jurnal</TableHead>
+          </TableRow></TableHeader>
+          <TableBody>
+            {(d.payments || []).length === 0 && (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={6} className="p-0 [&>div]:py-8">
+                  <EmptyState title="Klien belum membayar untuk PO ini" />
+                </TableCell>
+              </TableRow>
+            )}
+            {(d.payments || []).map((p) => (
+              <TableRow key={p.id} className={p.status === 'voided' ? 'opacity-50' : ''}>
+                <TableCell className="whitespace-nowrap">{p.date ? formatDateID(p.date) : '—'}{p.status === 'voided' ? ' · dibatalkan' : ''}</TableCell>
+                <TableCell>{p.account_name || '—'}{p.reference_no ? ` · ${p.reference_no}` : ''}</TableCell>
+                <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(p.amount)}</TableCell>
+                <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(p.ar_portion)}</TableCell>
+                <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(p.advance_portion)}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{p.je_number || '—'}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       </>}
     </DetailPanel>
   );

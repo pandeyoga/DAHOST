@@ -9,17 +9,22 @@
  *   hp='judul'      → baris tebal di kartu HP      hp='keterangan' → baris kecil di bawah judul
  *   hp='nilai'      → pasangan "label: nilai"       hp='aksi'       → tombol di kaki kartu
  *   hp=false        → disembunyikan di HP           (bawaan: 'nilai')
+ *
+ * Kosong (keputusan owner 8 Nov 2026 malam): tabel TETAP tampil — kepala kolom tetap ada, dan `kosong`
+ * (EmptyState; bawaan "Belum ada data") tampil sebagai satu baris di badan tabel. Di HP: dalam kotak berbingkai.
  */
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { EmptyState } from '@/components/erp/moduleAtoms';
 import { cn } from '@/lib/utils';
 
 const RATA = { kanan: 'text-right', tengah: 'text-center' };
 const hentikan = (e) => e.stopPropagation();
 
 export default function TabelData({ kolom, baris, kunci = (b) => b.id, onKlikBaris, kosong, testId = 'tabel-data' }) {
-  if (!baris || baris.length === 0) return kosong || null;
+  const daftar = Array.isArray(baris) ? baris : [];
   const isi = (k, b) => (k.isi ? k.isi(b) : b[k.kunci]);
   const peran = (k) => (k.hp === undefined ? 'nilai' : k.hp);
+  const isiKosong = kosong || <EmptyState title="Belum ada data" />;
   return (
     <div data-testid={testId}>
       <div className="hidden md:block">
@@ -32,7 +37,12 @@ export default function TabelData({ kolom, baris, kunci = (b) => b.id, onKlikBar
             </TableRow>
           </TableHeader>
           <TableBody>
-            {baris.map((b) => (
+            {daftar.length === 0 && (
+              <TableRow data-testid={`${testId}-kosong`} className="hover:bg-transparent">
+                <TableCell colSpan={kolom.length} className="p-0 [&>div]:py-8">{isiKosong}</TableCell>
+              </TableRow>
+            )}
+            {daftar.map((b) => (
               <TableRow key={kunci(b)} data-testid={`${testId}-baris`}
                 onClick={onKlikBaris ? () => onKlikBaris(b) : undefined}
                 className={cn(onKlikBaris && 'cursor-pointer')}>
@@ -48,7 +58,13 @@ export default function TabelData({ kolom, baris, kunci = (b) => b.id, onKlikBar
         </Table>
       </div>
       <div className="space-y-2 md:hidden">
-        {baris.map((b) => {
+        {daftar.length === 0 && (
+          <div data-testid={`${testId}-kosong-hp`}
+            className="rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] [&>div]:py-8">
+            {isiKosong}
+          </div>
+        )}
+        {daftar.map((b) => {
           const judul = kolom.filter((k) => peran(k) === 'judul');
           const ket = kolom.filter((k) => peran(k) === 'keterangan');
           const nilai = kolom.filter((k) => peran(k) === 'nilai');

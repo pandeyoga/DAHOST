@@ -420,9 +420,6 @@ export default function DAReceiveFromCMTModule({ portalId }) {
           <ShortTable rows={shortRows} onResolve={(s) => { setResolveShort(s); setResType('hilang_tanggungan_vendor'); setResNotes(''); }} />
         ) : loading && !receipts.length ? (
           <div className="p-4 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin inline mr-2" />Memuat…</div>
-        ) : filtered.length === 0 ? (
-          <EmptyState icon={ClipboardCheck} title="Belum ada penerimaan pada penyaring ini"
-            description="Penerimaan muncul otomatis setelah vendor CMT mendeklarasikan kiriman." />
         ) : (
           <Table data-testid="receipt-table">
             <TableHeader><TableRow>
@@ -433,6 +430,14 @@ export default function DAReceiveFromCMTModule({ portalId }) {
               <TableHead>Status</TableHead><TableHead className="text-right">Aksi</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {filtered.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={10} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={ClipboardCheck} title="Belum ada penerimaan pada penyaring ini"
+                      description="Penerimaan muncul otomatis setelah vendor CMT mendeklarasikan kiriman." />
+                  </TableCell>
+                </TableRow>
+              )}
               {paged.map((r) => {
                 const open = !!expanded[r.id];
                 const editable = r.status === 'on_qc';
@@ -720,10 +725,6 @@ function ReceiptLines({ receipt: r, editable, draft, savingLine, lineValue, setL
 
 /* ── Antrean ditolak (supaya barang ditolak tidak pernah hilang dari layar) ─ */
 function RejectTable({ rows, onRework }) {
-  if (!rows.length) {
-    return <EmptyState icon={Wrench} title="Tidak ada barang ditolak yang menunggu keputusan"
-      description="Barang ditolak saat QC muncul di sini sampai dipermak atau diretur ke CMT." />;
-  }
   return (
     <Table data-testid="reject-queue-panel">
       <TableHeader><TableRow>
@@ -732,6 +733,14 @@ function RejectTable({ rows, onRework }) {
         <TableHead>Alasan</TableHead><TableHead className="text-right">Aksi</TableHead>
       </TableRow></TableHeader>
       <TableBody>
+        {rows.length === 0 && (
+          <TableRow className="hover:bg-transparent">
+            <TableCell colSpan={7} className="p-0 [&>div]:py-8">
+              <EmptyState icon={Wrench} title="Tidak ada barang ditolak yang menunggu keputusan"
+                description="Barang ditolak saat QC muncul di sini sampai dipermak atau diretur ke CMT." />
+            </TableCell>
+          </TableRow>
+        )}
         {rows.map((r) => {
           const line = { id: r.receipt_line_id, reject_qty: r.qty_reject, reject_reason: r.reject_reason };
           const rc = { id: r.receipt_id, receipt_code: r.receipt_code };
@@ -763,10 +772,6 @@ function RejectTable({ rows, onRework }) {
 
 /* ── Selisih kirim: barang belum sampai (kewajiban vendor) ───────────────── */
 function ShortTable({ rows, onResolve }) {
-  if (!rows.length) {
-    return <EmptyState icon={PackageSearch} title="Tidak ada barang yang belum sampai"
-      description="Selisih antara klaim vendor dan barang yang sampai muncul di sini setelah QC selesai." />;
-  }
   return (
     <div data-testid="short-shipment-panel">
       <Table>
@@ -776,6 +781,14 @@ function ShortTable({ rows, onResolve }) {
           <TableHead className="text-right">Belum sampai</TableHead><TableHead>Penerimaan</TableHead><TableHead className="text-right">Aksi</TableHead>
         </TableRow></TableHeader>
         <TableBody>
+          {rows.length === 0 && (
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={8} className="p-0 [&>div]:py-8">
+                <EmptyState icon={PackageSearch} title="Tidak ada barang yang belum sampai"
+                  description="Selisih antara klaim vendor dan barang yang sampai muncul di sini setelah QC selesai." />
+              </TableCell>
+            </TableRow>
+          )}
           {rows.map((s) => (
             <TableRow key={s.id} data-testid={`short-row-${s.short_number}`}>
               <TableCell className="whitespace-nowrap font-medium">{s.short_number}</TableCell>

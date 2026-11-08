@@ -228,34 +228,35 @@ export default function ReportsHubModule({ token, onNavigate }) {
                   )}
                 </>
               )}>
-              {t.rows.length === 0 ? (
-                <p className="py-6 text-center text-sm text-muted-foreground" data-testid={`hub-empty-${t.id}`}>
-                  {t.empty_hint || 'Belum ada data untuk periode ini.'}
-                </p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      {t.columns.map((c) => (
+                        <TableHead key={c.key} className={isAngka(c) ? 'text-right' : ''}>{kalimat(c.label)}</TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {t.rows.length === 0 && (
+                      <TableRow data-testid={`hub-empty-${t.id}`} className="hover:bg-transparent">
+                        <TableCell colSpan={t.columns.length} className="p-0 [&>div]:py-8">
+                          <EmptyState title={(t.empty_hint || 'Belum ada data untuk periode ini').replace(/\.$/, '')} />
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {t.rows.map((row, idx) => (
+                      <TableRow key={idx}>
                         {t.columns.map((c) => (
-                          <TableHead key={c.key} className={isAngka(c) ? 'text-right' : ''}>{kalimat(c.label)}</TableHead>
+                          <TableCell key={c.key} className={isAngka(c) ? 'whitespace-nowrap text-right tabular-nums' : ''}>
+                            {renderCell(row[c.key], c.format)}
+                          </TableCell>
                         ))}
                       </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {t.rows.map((row, idx) => (
-                        <TableRow key={idx}>
-                          {t.columns.map((c) => (
-                            <TableCell key={c.key} className={isAngka(c) ? 'whitespace-nowrap text-right tabular-nums' : ''}>
-                              {renderCell(row[c.key], c.format)}
-                            </TableCell>
-                          ))}
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </ChartCard>
           ))}
 

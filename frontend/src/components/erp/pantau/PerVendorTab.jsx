@@ -52,9 +52,7 @@ export default function PerVendorTab(props) {
       footer={rows.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}
     >
       <Section>
-        {loading && !data ? <LoadingRows /> : rows.length === 0 ? (
-          <EmptyState icon={Factory} title="Belum ada PO di vendor CMT" description="PO yang sudah dibuat akan muncul di sini, dikelompokkan per vendor." />
-        ) : (
+        {loading && !data ? <LoadingRows /> : (
           <Table data-testid="pantau-vendor-table">
             <TableHeader><TableRow>
               <TableHead className="w-10" /><TableHead>Vendor</TableHead><TableHead className="text-right">PO</TableHead>
@@ -64,6 +62,11 @@ export default function PerVendorTab(props) {
               <TableHead className="text-right">{finalLabel}</TableHead><TableHead>Keadaan</TableHead><TableHead>Input</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {rows.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={12} className="p-0 [&>div]:py-8"><EmptyState icon={Factory} title="Belum ada PO di vendor CMT" description="PO yang sudah dibuat akan muncul di sini, dikelompokkan per vendor." /></TableCell>
+                </TableRow>
+              )}
               {paged.map((v) => {
                 const key = v.vendor_id || v.vendor_name;
                 const isOpen = open === key;

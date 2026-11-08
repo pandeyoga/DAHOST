@@ -141,10 +141,6 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
       <GlassCard className="p-0 overflow-x-auto">
         {loading && !rows.length ? (
           <div className="p-4 text-sm text-muted-foreground"><RefreshCw className="w-4 h-4 animate-spin inline mr-2" />Memuat kiriman…</div>
-        ) : rows.length === 0 ? (
-          <EmptyState icon={Truck} title={search || status ? 'Tidak ada kiriman yang cocok' : 'Belum ada kiriman ke CMT'}
-            description={search || status ? 'Ubah atau hapus penyaring.' : 'Buat kiriman pertama: pilih vendor CMT dan PO.'}
-            testId="kirim-empty" />
         ) : (
           <Table data-testid="kirim-table">
             <TableHeader><TableRow>
@@ -153,6 +149,15 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
               <TableHead>Pengeluaran gudang</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Aksi</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {rows.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={10} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={Truck} title={search || status ? 'Tidak ada kiriman yang cocok' : 'Belum ada kiriman ke CMT'}
+                      description={search || status ? 'Ubah atau hapus penyaring.' : 'Buat kiriman pertama: pilih vendor CMT dan PO.'}
+                      testId="kirim-empty" />
+                  </TableCell>
+                </TableRow>
+              )}
               {rows.map((r) => [
                 <TableRow key={r.id} data-testid={`kirim-row-${r.shipment_number}`}
                   className={open === r.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>

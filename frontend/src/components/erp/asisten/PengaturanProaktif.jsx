@@ -126,11 +126,7 @@ function RiwayatJalan({ riwayat, pengguna, user, onNavigate, memuat, onMuatUlang
           </Button>
         </div>
       </div>
-      {rows.length === 0 ? (
-        <EmptyState icon={History} className="py-6" testId="ai-set-proaktif-riwayat-kosong" title="Riwayat masih kosong"
-          description="Jalan terjadwal dan manual tampil di sini setelah jadwal pertama berjalan." />
-      ) : (
-        <div className="overflow-hidden rounded-[var(--radius-sm)] border border-[var(--glass-border)]">
+      <div className="overflow-hidden rounded-[var(--radius-sm)] border border-[var(--glass-border)]">
           <Table className="min-w-0 text-sm">
             <TableHeader>
               <TableRow>
@@ -142,6 +138,14 @@ function RiwayatJalan({ riwayat, pengguna, user, onNavigate, memuat, onMuatUlang
               </TableRow>
             </TableHeader>
             <TableBody>
+              {rows.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={5} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={History} className="py-6" testId="ai-set-proaktif-riwayat-kosong" title="Riwayat masih kosong"
+                      description="Jalan terjadwal dan manual tampil di sini setelah jadwal pertama berjalan." />
+                  </TableCell>
+                </TableRow>
+              )}
               {rows.map((r) => (
                 <TableRow key={r.id} data-testid="ai-set-proaktif-riwayat-baris" data-status={r.status}>
                   <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTimeID(parseServerTime(r.waktu))}</TableCell>
@@ -166,7 +170,6 @@ function RiwayatJalan({ riwayat, pengguna, user, onNavigate, memuat, onMuatUlang
             </TableBody>
           </Table>
         </div>
-      )}
     </div>
   );
 }

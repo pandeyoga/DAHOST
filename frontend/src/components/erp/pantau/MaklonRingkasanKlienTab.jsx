@@ -87,9 +87,7 @@ export default function MaklonRingkasanKlienTab({ token, onNavigate }) {
       footer={orders.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}
     >
       <Section title="Order terbaru">
-        {loading && !orders.length ? <LoadingRows /> : orders.length === 0 ? (
-          <EmptyState icon={Package} title="Belum ada order maklon" description="Buat PO maklon pertama di menu PO Maklon; order terbaru akan tampil di sini." />
-        ) : (
+        {loading && !orders.length ? <LoadingRows /> : (
           <Table data-testid="maklon-recent-orders">
             <TableHeader><TableRow>
               <TableHead>Order</TableHead><TableHead>Klien</TableHead><TableHead>Produk</TableHead>
@@ -97,6 +95,11 @@ export default function MaklonRingkasanKlienTab({ token, onNavigate }) {
               <TableHead>Batas kirim</TableHead><TableHead className="text-right">Progres</TableHead><TableHead>Status</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {orders.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={8} className="p-0 [&>div]:py-8"><EmptyState icon={Package} title="Belum ada order maklon" description="Buat PO maklon pertama di menu PO Maklon; order terbaru akan tampil di sini." /></TableCell>
+                </TableRow>
+              )}
               {paged.map((o) => (
                 <TableRow key={o.id}>
                   <TableCell className="font-medium whitespace-nowrap">{o.order_code}</TableCell>

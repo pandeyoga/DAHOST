@@ -383,8 +383,6 @@ function MovementsPanel({ item, titipan, onClose }) {
       ) : null}>
       {loading ? (
         <div className="text-sm text-muted-foreground"><RefreshCw className="w-4 h-4 animate-spin inline mr-2" />Memuat riwayat…</div>
-      ) : rows.length === 0 ? (
-        <EmptyState icon={History} title="Belum ada riwayat mutasi" description="Mutasi tercatat saat barang masuk, keluar, atau disesuaikan." />
       ) : (
         <Table data-testid="inv-movements-table">
           <TableHeader><TableRow>
@@ -392,6 +390,13 @@ function MovementsPanel({ item, titipan, onClose }) {
             <TableHead>Dokumen</TableHead><TableHead>{titipan ? 'PO' : 'Dari → ke'}</TableHead><TableHead>Catatan</TableHead>
           </TableRow></TableHeader>
           <TableBody>
+            {rows.length === 0 && (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={6} className="p-0 [&>div]:py-8">
+                  <EmptyState icon={History} title="Belum ada riwayat mutasi" description="Mutasi tercatat saat barang masuk, keluar, atau disesuaikan." />
+                </TableCell>
+              </TableRow>
+            )}
             {rows.map((m, idx) => (
               <TableRow key={m.id || idx}>
                 <TableCell className="whitespace-nowrap">{fmtDate(m.created_at)}</TableCell>
