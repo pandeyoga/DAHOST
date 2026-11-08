@@ -52,6 +52,7 @@ class PlatformAccountCreate(BaseModel):
     platform_shop_id: Optional[str] = None
     revenue_basis: Optional[str] = None         # produk_setelah_diskon | order_amount
     pic_user_id: Optional[str] = None           # PIC toko — boleh diisi sejak pembuatan
+    sales_input_mode: Optional[str] = None      # Q-5: impor_pesanan | rekap_manual
 
 class PlatformAccountUpdate(BaseModel):
     account_name: Optional[str] = None
@@ -67,6 +68,7 @@ class PlatformAccountUpdate(BaseModel):
     platform_shop_id: Optional[str] = None
     revenue_basis: Optional[str] = None
     needs_owner_review: Optional[bool] = None   # BD-5: ditutup setelah owner mengoreksi
+    sales_input_mode: Optional[str] = None      # Q-5: impor_pesanan | rekap_manual
 
 class SalesDataEntry(BaseModel):
     account_id: str

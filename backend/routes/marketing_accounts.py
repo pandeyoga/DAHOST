@@ -363,6 +363,7 @@ async def create_platform_account(data: PlatformAccountCreate, request: Request)
         "platform_warehouse_name": _sanitize(data.platform_warehouse_name or "", 200),
         "platform_shop_id": _sanitize(data.platform_shop_id or "", 100),
         "revenue_basis": basis,
+        "sales_input_mode": _input_mode_or_400(data.sales_input_mode),
         # 'input' | 'auto_store' (2026-11-02) | 'fallback_platform' (data lama) — badge di UI
         "coa_revenue_source": revenue_source,
         # 2026-11-02 (K4) — bawaan; layar Finance menampilkan lencana "belum diatur"
@@ -668,6 +669,7 @@ async def coa_options(request: Request):
         "default_cash": await _default_cash_code(db),
         "fallback_revenue_by_platform": fallback,
         "platform_channel_map": PLATFORM_TO_COA_CHANNEL,
+        "sales_input_mode_options": _input_mode_options(),
         "revenue_basis_options": [
             {"value": "produk_setelah_diskon",
              "label": "Omzet produk (setelah diskon penjual, sebelum potongan platform)"},
@@ -675,6 +677,21 @@ async def coa_options(request: Request):
              "label": "Order Amount (yang dibayar pembeli, termasuk ongkir)"},
         ],
     })
+
+
+def _input_mode_or_400(mode):
+    """Q-5 — cara input omzet toko; kosong = belum dipilih (diturunkan dari data)."""
+    from core import marketing_input_mode as _mode
+    if mode in (None, ""):
+        return None
+    if not _mode.valid(mode):
+        raise HTTPException(400, "Cara input omzet harus 'impor_pesanan' atau 'rekap_manual'.")
+    return mode
+
+
+def _input_mode_options():
+    from core import marketing_input_mode as _mode
+    return list(_mode.OPTIONS)
 
 
 @router.get("/accounts/{account_id}")
@@ -739,6 +756,8 @@ async def update_platform_account(account_id: str, data: PlatformAccountUpdate, 
             update_data[fname] = val
             if fname == "coa_revenue_code" and val:
                 update_data["coa_revenue_source"] = "input"
+    if data.sales_input_mode is not None:
+        update_data["sales_input_mode"] = _input_mode_or_400(data.sales_input_mode)
     if data.revenue_basis is not None:
         if data.revenue_basis not in _shape.VALID_BASIS:
             raise HTTPException(400, "Basis omzet harus salah satu dari: "

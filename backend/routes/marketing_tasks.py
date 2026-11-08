@@ -417,6 +417,19 @@ async def _complete_task_action_locked(db, task_id: str, payload, user: dict):
                 acc = await db.marketing_platform_accounts.find_one({"id": merged["account_id"]}, {"_id": 0})
                 if not acc:
                     raise HTTPException(404, "Account tidak ditemukan")
+                # 9 Nov 2026 — pagar yang sama dengan entri manual (`POST /sales-data`):
+                # toko harus milik pemakai (account_id di dalam action_data tidak terlihat
+                # middleware), bulan tertutup dikunci (M-20), dan toko bermode impor pesanan
+                # tidak menerima rekap total yang diketik (Q-5).
+                await _scope.assert_account_visible(db, user, acc["id"])
+                from core import marketing_cycle as _cycle
+                _date = merged.get("date") or wib_date_str()
+                await _cycle.assert_period_open(db, acc["id"], _date,
+                                                action='menyimpan rekap harian dari tugas')
+                if (merged.get("revenue_type") or "total") == "total":
+                    from core import marketing_input_mode as _mode
+                    if await _mode.mode_toko(db, acc) == _mode.IMPOR:
+                        raise HTTPException(409, _mode.pesan_tolak_manual(acc, _date))
                 
                 revenue = float(merged.get("revenue", 0))
                 orders = int(merged.get("orders", 0))

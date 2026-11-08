@@ -635,6 +635,34 @@ async def job_auto_create_marketing_tasks():
             if not account_id:
                 continue
             
+            # Q-5 (keputusan owner 9 Nov 2026) — toko bermode "Impor pesanan" TIDAK mendapat
+            # tugas input manual (angkanya akan diganti turunan pesanan = kerja dobel); PIC
+            # cukup diingatkan bila pesanan kemarin belum diimpor.
+            from core import marketing_input_mode as _mode
+            if await _mode.mode_toko(db, acc) == _mode.IMPOR:
+                derived = await db.marketing_sales_data.find_one(
+                    {"account_id": account_id, "date": yesterday, "revenue_type": "total",
+                     "source": "orders_auto"}, {"_id": 0, "id": 1})
+                imported = await db.marketing_data_import_sessions.find_one(
+                    {"account_id": account_id, "status": "committed",
+                     "source_type": {"$in": list(_mode.IMPORT_TYPES)},
+                     "committed_at": {"$gte": now - timedelta(hours=36)}}, {"_id": 0, "id": 1})
+                pic_id = acc.get("pic_user_id")
+                if not derived and not imported and pic_id:
+                    try:
+                        from routes.rahaza_notifications import publish_notification
+                        await publish_notification(
+                            db, type_="marketing_import_reminder", severity="warning",
+                            title=f"Pesanan {account_name} {yesterday} belum diimpor",
+                            message=(f"Omzet {account_name} dihitung dari pesanan yang diimpor. "
+                                     f"Ekspor pesanan Seller Center tanggal {yesterday} lalu "
+                                     "impor di menu Impor Data."),
+                            link_module="marketing-import", target_user_ids=[pic_id],
+                            dedup_key=f"import_reminder_{account_id}_{yesterday}")
+                    except Exception as _ne:
+                        logger.warning(f"[scheduler] Gagal kirim pengingat impor: {_ne}")
+                continue
+
             # Check if sales data already entered for yesterday
             existing_sales = await db.marketing_sales_data.find_one({
                 "account_id": account_id,
