@@ -545,7 +545,7 @@ async def update_ads_entry(entry_id: str, body: AdsEntryUpdate, request: Request
     return success_response(data=serialize({**existing, **upd}))
 
 
-@router.delete("/campaigns/{entry_id}", dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete("/campaigns/{entry_id}", dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_ads_entry(entry_id: str, request: Request):
     await require_auth(request)
     db = get_db()

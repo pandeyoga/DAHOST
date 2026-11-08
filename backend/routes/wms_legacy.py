@@ -50,7 +50,7 @@ async def update_location(location_id: str, request: Request):
     return await legacy.update_location(location_id, request)
 
 
-@router.delete("/locations/{location_id}", dependencies=only(*WAREHOUSE_ROLES))  # T-01 2.3
+@router.delete("/locations/{location_id}", dependencies=only(*WAREHOUSE_ROLES, perm="inv.stock.manage"))  # T-01 2.3
 async def delete_location(location_id: str, request: Request):
     return await legacy.delete_location(location_id, request)
 
@@ -77,7 +77,7 @@ async def update_receiving(receipt_id: str, request: Request):
     return await legacy.update_receiving(receipt_id, request)
 
 
-@router.delete("/receiving/{receipt_id}", dependencies=only(*WAREHOUSE_ROLES))  # T-01 2.3
+@router.delete("/receiving/{receipt_id}", dependencies=only(*WAREHOUSE_ROLES, perm="inv.stock.manage"))  # T-01 2.3
 async def delete_receiving(receipt_id: str, request: Request):
     return await legacy.delete_receiving(receipt_id, request)
 

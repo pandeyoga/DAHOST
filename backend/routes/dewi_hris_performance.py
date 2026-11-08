@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field, field_validator
 
 from database import get_db
-from auth import require_auth, require_demo_seed_allowed
+from auth import require_auth, require_demo_seed_allowed, check_role
 from utils.helpers import _uid, _now, _clean
 from utils.employee_identity import job_title_of
 
@@ -471,9 +471,9 @@ async def submit_review(rid: str, payload: ReviewSubmitIn, user: dict = Depends(
         raise HTTPException(400, "actor harus 'self' atau 'manager'")
 
     # T-01 2.4: hanya pemilik review (self), atasan yang tercatat (manager), HR, atau admin.
-    role = (user.get("role") or "").lower()
     my_emp = await _my_employee_id(db, user)
-    is_hr_admin = role in ("hr", "hr_manager", "staff_hr", "admin", "superadmin", "owner")
+    # 2026-11-08: kode peran lama ATAU izin `hr.manage` (peran buatan owner, mis. "HR Generalist").
+    is_hr_admin = check_role(user, ("hr", "hr_manager", "staff_hr", "admin", "superadmin", "owner"), "hr.manage")
     if payload.actor == "self" and not (is_hr_admin or (my_emp and my_emp == review.get("employee_id"))):
         raise HTTPException(403, "Penilaian diri hanya boleh diisi oleh karyawan yang dinilai.")
     if payload.actor == "manager" and not (is_hr_admin or (my_emp and my_emp == review.get("manager_id"))):

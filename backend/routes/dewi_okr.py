@@ -27,7 +27,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Request, Query, HTTPException
 from pydantic import BaseModel, Field
 from database import get_db
-from auth import require_auth
+from auth import require_auth, check_role
 from core.authz import only  # T-01 2.3
 from core.roles import HR_ROLES  # T-01 2.3
 
@@ -39,6 +39,13 @@ KR_COL = "rahaza_okr_key_results"
 # Peran yang boleh membuat / mengarsipkan objektif (dipakai juga alat Asisten AI `buat_objektif_okr`
 # supaya aturannya satu). Nilai tidak berubah (2026-11-08).
 OKR_OBJECTIVE_WRITER_ROLES = ("superadmin", "admin", "manager", "owner")
+# 2026-11-08: ATAU izin `management.manage` (modul OKR Tracker, aksi kelola) — peran buatan owner dulu 403.
+OKR_OBJECTIVE_WRITER_PERM = "management.manage"
+
+
+def can_write_objective(user: dict) -> bool:
+    """Boleh membuat / mengarsipkan objektif OKR — dipakai endpoint dan alat Asisten AI `buat_objektif_okr`."""
+    return check_role(user or {}, OKR_OBJECTIVE_WRITER_ROLES, OKR_OBJECTIVE_WRITER_PERM)
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -192,7 +199,7 @@ async def create_objective(request: Request, payload: ObjectiveIn):
     await require_auth(request)
     db = get_db()
     user = request.state.user
-    if user.get("role") not in OKR_OBJECTIVE_WRITER_ROLES:
+    if not can_write_objective(user):
         raise HTTPException(403, "Unauthorized")
 
     obj = payload.dict(exclude={"key_results"})
@@ -258,7 +265,7 @@ async def delete_objective(request: Request, obj_id: str):
     await require_auth(request)
     db = get_db()
     user = request.state.user
-    if user.get("role") not in OKR_OBJECTIVE_WRITER_ROLES:
+    if not can_write_objective(user):
         raise HTTPException(403, "Unauthorized")
     res = await db[OBJ_COL].update_one(
         {"id": obj_id}, {"$set": {"status": "archived", "updated_at": _now()}}
@@ -303,7 +310,7 @@ async def update_key_result(request: Request, kr_id: str, payload: KeyResultPatc
     return {"success": True, "message": "Key Result diperbarui"}
 
 
-@router.delete("/key-results/{kr_id}", dependencies=only(*HR_ROLES))  # T-01 2.3
+@router.delete("/key-results/{kr_id}", dependencies=only(*HR_ROLES, perm=OKR_OBJECTIVE_WRITER_PERM))  # T-01 2.3
 async def delete_key_result(request: Request, kr_id: str):
     await require_auth(request)
     db = get_db()

@@ -25,7 +25,7 @@ from routes.rahaza_posting import _create_posted_je, _find_existing_je
 from routes.rahaza_posting_profiles import get_mapping
 from core.entities import DA, SMU, entity_of_po_id
 from core.authz import only
-from core.roles import FINANCE_ROLES
+from core.roles import FINANCE_ROLES, FINANCE_BOOK_PERMS
 import uuid
 import logging
 from utils.waktu import today_wib, wib_date_of
@@ -746,7 +746,7 @@ class CmtVarianceResolveIn(BaseModel):
     notes: str = Field(..., min_length=3)
 
 
-@router.post('/cmt-payments/{payment_id}/resolve-variance', dependencies=only(*FINANCE_ROLES))
+@router.post('/cmt-payments/{payment_id}/resolve-variance', dependencies=only(*FINANCE_ROLES, perm=FINANCE_BOOK_PERMS))
 async def resolve_cmt_variance(payment_id: str, payload: CmtVarianceResolveIn, user: dict = Depends(require_auth)):
     """2026-11-06 (Tahap 2): Keuangan menyelesaikan selisih tagihan CMT yang ditandai.
 

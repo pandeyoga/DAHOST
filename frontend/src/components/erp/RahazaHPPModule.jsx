@@ -35,6 +35,7 @@ import { ambilSemuaHalaman } from './engine/DataTable';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import PeriodPicker, { ALL_TIME, PERIOD_PRESETS, periodFromPreset } from './finance/PeriodPicker';
 import { apiGet, apiPost } from '@/lib/api';
+import { checkPerm } from '@/lib/rbac';
 
 const PER_PAGE = 25;
 const rp = (v) => (v === null || v === undefined ? '—' : `Rp ${Math.round(Number(v || 0)).toLocaleString('id-ID')}`);
@@ -66,7 +67,7 @@ export function portalBusinessType(portalId) {
   return '';
 }
 
-export default function RahazaHPPModule({ portalId, userRole }) {
+export default function RahazaHPPModule({ portalId, userRole, user }) {
   const fixedType = portalBusinessType(portalId);
   const [jenis, setJenis] = useState(fixedType);
   const businessType = fixedType || jenis;
@@ -82,7 +83,8 @@ export default function RahazaHPPModule({ portalId, userRole }) {
   const [error, setError] = useState('');
   const [detail, setDetail] = useState(null);
   const [residuals, setResiduals] = useState([]);
-  const canClear = FIN_ROLES.includes(String(userRole || '').toLowerCase());
+  // 2026-11-08: + izin finance.manage (sama dengan server `product_costing._require_finance_write`).
+  const canClear = checkPerm({ user, role: userRole, roles: FIN_ROLES, keys: ['finance.manage'] });
 
   const load = useCallback(async () => {
     setLoading(true);

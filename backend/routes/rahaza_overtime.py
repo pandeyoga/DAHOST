@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException, Query
 from database import get_db
-from auth import require_auth
+from auth import require_auth, check_role
 
 router = APIRouter(prefix="/api/rahaza/overtime", tags=["rahaza-overtime"])
 
@@ -33,10 +33,20 @@ def _s(d):
     return d
 
 
+# 2026-11-08: penyetuju lembur = kode peran lama ATAU izin `hr.approve` ("Setujui izin, cuti, lembur & klaim").
+# Aturan yang sama dipakai daftar (melihat semua pengajuan) dan pembatalan pengajuan orang lain.
+# Cermin layar: `frontend/src/components/erp/RahazaOvertimeModule.jsx` (isApprover).
+OT_APPROVER_ROLES = ("superadmin", "admin", "owner", "hr", "manager")
+OT_APPROVER_PERM = "hr.approve"
+
+
+def is_ot_approver(user: dict) -> bool:
+    return check_role(user, OT_APPROVER_ROLES, OT_APPROVER_PERM)
+
+
 async def _require_approver(request: Request):
     user = await require_auth(request)
-    role = user.get("role", "")
-    if role not in ("superadmin", "admin", "owner", "hr", "manager"):
+    if not is_ot_approver(user):
         raise HTTPException(403, "Hanya Supervisor/Manager/HR yang dapat approve lembur.")
     return user
 
@@ -68,7 +78,7 @@ async def list_overtime(
     db = get_db()
     filt = {}
     # Non-admin: only see own records
-    if user.get("role") not in ("superadmin", "admin", "owner", "hr", "manager"):
+    if not is_ot_approver(user):
         # BUG-4: `user.get("employee_id")` dibaca MENTAH dari JWT (berlaku 24 jam),
         # jadi karyawan yang baru ditautkan HR melihat daftar KOSONG sampai login
         # ulang. Pakai SSOT identitas.
@@ -422,7 +432,7 @@ async def cancel_request(ot_id: str, request: Request):
     # Employee can cancel own pending; admin can cancel anything
     # 2026-11-07 (Tahap 7): tombol Batalkan di Portal Saya — milik sendiri = diajukan akun ini ATAU karyawan yang
     # tertaut ke akun ini (SSOT identitas); hanya yang masih menunggu (klaim atomik di bawah → 409 bila diputus).
-    if user.get("role") not in ("superadmin", "admin", "owner", "hr", "manager"):
+    if not is_ot_approver(user):
         from utils.employee_identity import resolve_my_employee
         mine = await resolve_my_employee(db, user)
         if doc.get("submitted_by") != user["id"] and not (mine and mine.get("id") == doc.get("employee_id")):

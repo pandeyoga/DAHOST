@@ -13,7 +13,16 @@
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { isFinanceRole } from '../../lib/financeRoles'; // FIN-02
+import {
+  APPROVER_ROLES, EXPENSE_APPROVE_PERMS, EXPENSE_VIEW_ALL_PERMS, FINANCE_PAY_PERMS, FINANCE_ROLES,
+} from '../../lib/financeRoles'; // FIN-02
+import { checkPerm } from '../../lib/rbac';
+
+// 2026-11-08: aturan yang SAMA dengan server (routes/employee_travel_requests.py): kode peran ATAU izin.
+const TRAVEL_VIEW_ALL_ROLES = ['superadmin', 'admin', 'owner', 'hr', 'manager', 'finance'];
+const bolehSetujuiDinas = (user) => checkPerm({ user, roles: APPROVER_ROLES, keys: EXPENSE_APPROVE_PERMS });
+const bolehBayarUangMuka = (user) => checkPerm({ user, roles: FINANCE_ROLES, keys: FINANCE_PAY_PERMS });
+const bolehLihatSemuaDinas = (user) => checkPerm({ user, roles: TRAVEL_VIEW_ALL_ROLES, keys: EXPENSE_VIEW_ALL_PERMS });
 import {
   Plus, RefreshCw, CheckCircle, XCircle, Send, Banknote, Eye, Search, Download,
 } from 'lucide-react';
@@ -290,10 +299,10 @@ function AdvanceForm({ req, token, onClose, aksi }) {
 }
 
 // ─── Rincian perjalanan (popup detail) ───────────────────────────────────────
-function TravelDetail({ req, role, onClose, aksi, onApprove, onPay }) {
+function TravelDetail({ req, user, onClose, aksi, onApprove, onPay }) {
   const [busy, setBusy] = useState(false);
-  const isApprover = ['superadmin','admin','owner','hr','manager','finance'].includes(role?.toLowerCase());
-  const isFinance = isFinanceRole(role); // FIN-02
+  const isApprover = bolehSetujuiDinas(user);
+  const isFinance = bolehBayarUangMuka(user); // FIN-02
 
   const jalan = async (endpoint, body) => {
     setBusy(true);
@@ -404,8 +413,8 @@ export default function EmployeeTravelModule({ token, user }) {
   const [selectedIds, setSelectedIds] = useState([]);
   const [bulkLoading, setBulkLoading] = useState(false);
 
-  const role = user?.role || '';
-  const isApprover = ['superadmin','admin','owner','hr','manager','finance'].includes(role.toLowerCase());
+  const isApprover = bolehSetujuiDinas(user);
+  const bolehLihatSemua = bolehLihatSemuaDinas(user);
   const headers = { Authorization: `Bearer ${token}` };
 
   const fetchData = useCallback(async () => {
@@ -568,7 +577,7 @@ export default function EmployeeTravelModule({ token, user }) {
       subtitle="Ajukan, pantau, dan proses perjalanan dinas beserta uang mukanya."
       actions={<Button onClick={() => setShowCreate(true)} data-testid="btn-new-travel"><Plus />Pengajuan baru</Button>}
       filters={<>
-        {isApprover && (
+        {bolehLihatSemua && (
           <FilterChips value={viewMode} onChange={setViewMode} hideWhenEmpty={false} testId="travel-scope"
             ariaLabel="Pengajuan siapa" options={[{ key: 'my', label: 'Pengajuan saya' }, { key: 'all', label: 'Semua pengajuan' }]} />
         )}
@@ -650,7 +659,7 @@ export default function EmployeeTravelModule({ token, user }) {
           onSaved={(d) => { setShowCreate(false); fetchData(); setSelected(d); }} />
       )}
       {selected && (
-        <TravelDetail req={selected} role={role} onClose={() => setSelected(null)} aksi={aksi}
+        <TravelDetail req={selected} user={user} onClose={() => setSelected(null)} aksi={aksi}
           onApprove={(r) => { setSelected(null); setAksiForm({ jenis: 'approve', req: r }); }}
           onPay={(r) => { setSelected(null); setAksiForm({ jenis: 'advance', req: r }); }} />
       )}

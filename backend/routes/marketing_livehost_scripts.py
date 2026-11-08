@@ -153,7 +153,7 @@ async def update_script(script_id: str, data: ScriptCreate, request: Request):
     return serialize_doc({'message': 'Script berhasil diupdate'})
 
 
-@router.delete('/scripts/{script_id}', dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete('/scripts/{script_id}', dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_script(script_id: str, request: Request):
     """Admin deletes script (soft delete)"""
     await require_auth(request)

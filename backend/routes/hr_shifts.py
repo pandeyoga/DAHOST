@@ -266,7 +266,7 @@ async def get_employee_assignments(request: Request, employee_id: str):
     return _ok(items, total=len(items))
 
 
-@router.delete("/assignments/{assignment_id}", dependencies=only(*HR_ROLES))  # T-01 2.3
+@router.delete("/assignments/{assignment_id}", dependencies=only(*HR_ROLES, perm=("hr.attendance.manage", "hr.manage")))  # T-01 2.3
 async def cancel_assignment(request: Request, assignment_id: str):
     await require_auth(request)
     db = get_db()

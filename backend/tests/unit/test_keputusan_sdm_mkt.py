@@ -63,9 +63,14 @@ def test_job_board_peran_dari_akun_dan_sama_dengan_server():
     assert "setUserRole('user')" not in fe
     assert re.search(r"function JobBoardModule\(\{[^}]*\buser\b", fe)
     fe_roles = re.search(r"PERAN_PASANG_LOWONGAN = \[([^\]]+)\]", fe).group(1)
-    be_roles = re.search(r'user_role not in \[([^\]]+)\]', be).group(1)
+    # 2026-11-08: server = `check_role(user, JOB_BOARD_ROLES, JOB_BOARD_PERM)` (kode peran ATAU izin hr.manage)
+    be_roles = re.search(r'JOB_BOARD_ROLES = \[([^\]]+)\]', be).group(1)
     norm = lambda s: sorted(x.strip().strip("'\"") for x in s.split(","))  # noqa: E731
     assert norm(fe_roles) == norm(be_roles) == ["hr", "manager", "superadmin"]
+    fe_perm = re.search(r"IZIN_JOB_BOARD = '([^']+)'", fe).group(1)
+    be_perm = re.search(r'JOB_BOARD_PERM = "([^"]+)"', be).group(1)
+    assert fe_perm == be_perm == "hr.manage"
+    assert "checkPerm({ user, roles: PERAN_PASANG_LOWONGAN, perm: IZIN_JOB_BOARD })" in fe
 
 
 # ═════════════════════════════════════════════════════════════════════════════

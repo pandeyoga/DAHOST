@@ -379,7 +379,7 @@ class ManualIngestBody(BaseModel):
     payload: dict
 
 
-@router.post("/manual", dependencies=only(*MARKETING_ROLES))  # T-01 2.5
+@router.post("/manual", dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.5
 async def manual_ingest(body: ManualIngestBody, request: Request, background_tasks: BackgroundTasks):
     user = await require_auth(request)
     db = get_db()
@@ -443,7 +443,7 @@ async def get_event(event_id: str, request: Request):
     return {"ok": True, "data": serialize_doc(doc)}
 
 
-@router.post("/events/{event_id}/reprocess", dependencies=only(*MARKETING_ROLES))  # T-01 2.5
+@router.post("/events/{event_id}/reprocess", dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.5
 async def reprocess_event(event_id: str, request: Request, background_tasks: BackgroundTasks):
     await require_auth(request)
     db = get_db()

@@ -240,7 +240,7 @@ async def update_shipment(sid: str, body: dict, request: Request):
     return serialize_doc(out)
 
 
-@router.delete("/{sid}", dependencies=only(*WAREHOUSE_ROLES))  # T-01 2.3
+@router.delete("/{sid}", dependencies=only(*WAREHOUSE_ROLES, perm="shipment.delete"))  # T-01 2.3
 async def delete_shipment(sid: str, request: Request):
     user = await require_auth(request)
     db = get_db()

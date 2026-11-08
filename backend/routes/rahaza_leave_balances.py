@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth
+from auth import require_auth, check_role
 from utils.waktu import wib_year
 
 router = APIRouter(prefix="/api/rahaza/leave-balances", tags=["rahaza-leave-balances"])
@@ -36,10 +36,15 @@ def _s(d):
     return d
 
 
+# 2026-11-08: kode peran lama ATAU izin pengelola cuti — `hr.attendance.manage` (modul Cuti & Lembur) atau
+# `hr.manage` (sama dengan `routes/rahaza_leave._require_hr_admin`). Peran buatan owner dulu 403.
+LEAVE_BALANCE_ROLES = ("superadmin", "admin", "owner", "hr", "manager")
+LEAVE_BALANCE_PERMS = ("hr.attendance.manage", "hr.manage")
+
+
 async def _require_admin(request: Request):
     user = await require_auth(request)
-    role = user.get("role", "")
-    if role not in ("superadmin", "admin", "owner", "hr", "manager"):
+    if not check_role(user, LEAVE_BALANCE_ROLES, LEAVE_BALANCE_PERMS):
         raise HTTPException(403, "Hanya HR/Manager yang dapat mengelola saldo cuti.")
     return user
 

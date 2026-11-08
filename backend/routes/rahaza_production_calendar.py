@@ -22,6 +22,8 @@ from core.roles import HR_ROLES  # T-01 2.3
 # (Portal SDM › Kalender libur, `hr-holiday-calendar`). Penulisnya peran SDM (+ owner/manager/admin);
 # satu sumber yang dibaca cuti, payroll, dan absensi lewat `core.workdays.holidays_between`.
 CALENDAR_WRITE_ROLES = HR_ROLES
+# 2026-11-08: ATAU izin `hr.attendance.manage` (modul Kalender Libur, aksi kelola) — peran buatan owner dulu 403.
+CALENDAR_WRITE_PERM = "hr.attendance.manage"
 # 2026-11-06 (pola P5): preset libur nasional = `core.national_holidays` (tabel tahun → daftar, sumber
 # SKB 3 Menteri 2026 & 2027). Daftar lama `NATIONAL_HOLIDAYS_2026` di berkas ini berisi tanggal salah
 # (Idul Fitri 6–7 Apr, Nyepi 14 Mar, Waisak 24 Mei, …) dan hanya satu tahun.
@@ -88,7 +90,7 @@ async def list_calendar(
     return entries
 
 
-@router.post("/production-calendar", dependencies=only(*CALENDAR_WRITE_ROLES))
+@router.post("/production-calendar", dependencies=only(*CALENDAR_WRITE_ROLES, perm=CALENDAR_WRITE_PERM))
 async def create_calendar_entry(request: Request):
     """
     Create production calendar entry.
@@ -131,7 +133,7 @@ async def create_calendar_entry(request: Request):
     return doc
 
 
-@router.put("/production-calendar/{entry_id}", dependencies=only(*CALENDAR_WRITE_ROLES))
+@router.put("/production-calendar/{entry_id}", dependencies=only(*CALENDAR_WRITE_ROLES, perm=CALENDAR_WRITE_PERM))
 async def update_calendar_entry(entry_id: str, request: Request):
     """Update calendar entry."""
     user = await require_auth(request)
@@ -160,7 +162,7 @@ async def update_calendar_entry(entry_id: str, request: Request):
     return updated
 
 
-@router.delete("/production-calendar/{entry_id}", dependencies=only(*CALENDAR_WRITE_ROLES))  # T-01 2.3
+@router.delete("/production-calendar/{entry_id}", dependencies=only(*CALENDAR_WRITE_ROLES, perm=CALENDAR_WRITE_PERM))  # T-01 2.3
 async def delete_calendar_entry(entry_id: str, request: Request):
     """Delete calendar entry."""
     await require_auth(request)
@@ -260,7 +262,7 @@ async def seed_national_year(db, year: int) -> dict:
             "source": _nh.SOURCES.get(year, ""), "available_years": _nh.available_years()}
 
 
-@router.post("/production-calendar/seed-national", dependencies=only(*CALENDAR_WRITE_ROLES))
+@router.post("/production-calendar/seed-national", dependencies=only(*CALENDAR_WRITE_ROLES, perm=CALENDAR_WRITE_PERM))
 async def seed_national_holidays(request: Request, year: Optional[int] = None):
     """Isi hari libur nasional & cuti bersama Indonesia untuk `year` (bawaan: tahun berjalan WIB).
 

@@ -387,7 +387,7 @@ async def update_handover_template(template_id: str, request: Request):
     return updated
 
 
-@router.delete("/handover-templates/{template_id}", dependencies=only(*PRODUCTION_ROLES))  # T-01 2.3
+@router.delete("/handover-templates/{template_id}", dependencies=only(*PRODUCTION_ROLES, perm="prod.master.manage"))  # T-01 2.3
 async def deactivate_handover_template(template_id: str, request: Request):
     """Deactivate handover template."""
     await require_auth(request)

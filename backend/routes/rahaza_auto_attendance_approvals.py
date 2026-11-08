@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, check_role
 from dotenv import load_dotenv
 from utils.waktu import today_wib
 
@@ -48,6 +48,17 @@ def _today_iso(): return today_wib().isoformat()
 
 
 
+# 2026-11-08: penyetuju absen tertunda = kode peran lama ATAU izin `hr.approve` (modul Absensi, aksi Approve).
+# Peran buatan owner ("HR Generalist") dulu 403 di daftar maupun tombol setujui/tolak.
+ATT_APPROVER_ROLES = ("superadmin", "admin", "owner", "hr")
+ATT_APPROVER_PERM = "hr.approve"
+
+
+def _require_attendance_approver(user: dict) -> None:
+    if not check_role(user, ATT_APPROVER_ROLES, ATT_APPROVER_PERM):
+        raise HTTPException(403, "Hanya HR/Admin.")
+
+
 @router.get("/attendance/approvals")
 async def list_approval_queue(
     request: Request,
@@ -58,8 +69,7 @@ async def list_approval_queue(
 ):
     """Daftar absen yang perlu persetujuan HR."""
     user = await require_auth(request)
-    if user.get("role") not in ("superadmin", "admin", "owner", "hr"):
-        raise HTTPException(403, "Hanya HR/Admin.")
+    _require_attendance_approver(user)
     db = get_db()
 
     q = {}
@@ -153,8 +163,7 @@ async def notify_selfie_rejected(db, ev: dict, reason: str) -> None:
 async def approve_attendance(event_id: str, request: Request):
     """HR menyetujui absen yang pending."""
     user = await require_auth(request)
-    if user.get("role") not in ("superadmin", "admin", "owner", "hr"):
-        raise HTTPException(403, "Hanya HR/Admin.")
+    _require_attendance_approver(user)
     db = get_db()
     body = await request.json()
     await decide_selfie(db, event_id, user, approve=True, notes=body.get("notes", ""))
@@ -166,8 +175,7 @@ async def approve_attendance(event_id: str, request: Request):
 async def reject_attendance(event_id: str, request: Request):
     """HR menolak absen yang pending."""
     user = await require_auth(request)
-    if user.get("role") not in ("superadmin", "admin", "owner", "hr"):
-        raise HTTPException(403, "Hanya HR/Admin.")
+    _require_attendance_approver(user)
     db = get_db()
     body = await request.json()
     await decide_selfie(db, event_id, user, approve=False, notes=body.get("notes", ""))

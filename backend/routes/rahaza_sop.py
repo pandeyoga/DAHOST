@@ -20,7 +20,7 @@ Endpoints:
 """
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth
+from auth import require_auth, check_role
 from datetime import datetime, timezone
 import uuid
 import logging
@@ -39,8 +39,8 @@ def _ser(doc: dict) -> dict:
 
 async def _require_admin(request: Request):
     user = await require_auth(request)
-    role = (user.get("role") or "").lower()
-    if role not in ("admin", "superadmin", "owner", "manager_production"):
+    # 2026-11-08: kode peran lama ATAU izin `prod.master.manage` (modul Master Proses, Line & Mesin — memuat SOP).
+    if not check_role(user, ("admin", "superadmin", "owner", "manager_production"), "prod.master.manage"):
         raise HTTPException(403, "Butuh role Admin / Manager Produksi untuk mengelola SOP")
     return user
 

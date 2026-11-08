@@ -371,7 +371,7 @@ async def activate_bom_template(template_id: str, user: dict = Depends(require_a
     return {'message': f"v{doc['version']} sekarang aktif untuk artikel ini"}
 
 
-@router.delete('/bom-templates/{template_id}', dependencies=only(*MAKLON_ROLES))  # T-01 2.3
+@router.delete('/bom-templates/{template_id}', dependencies=only(*MAKLON_ROLES, perm="maklon.manage"))  # T-01 2.3
 async def delete_bom_template(template_id: str, user: dict = Depends(require_auth)):
     """Hapus permanen (boleh karena versioning sudah handle audit)."""
     db = get_db()

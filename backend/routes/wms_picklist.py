@@ -315,7 +315,7 @@ async def complete_picklist(picklist_id: str, request: Request):
     return {"ok": True}
 
 
-@router.delete("/{picklist_id}", dependencies=only(*WAREHOUSE_ROLES))  # T-01 2.3
+@router.delete("/{picklist_id}", dependencies=only(*WAREHOUSE_ROLES, perm="warehouse.manage"))  # T-01 2.3
 async def delete_picklist(picklist_id: str, request: Request):
     await require_auth(request)
     db = get_db()

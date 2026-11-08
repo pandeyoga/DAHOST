@@ -192,6 +192,8 @@ def _is_pic_role(user) -> bool:
     """
     Check if user has PIC Marketing-level role for approval workflow.
     Allowed roles: admin, owner, superadmin, manager_* (manager_marketing, manager_keuangan, dll), pic_marketing, pic_toko.
+    2026-11-08: ATAU izin `toko.approve` ("Setujui diskon, retur & komplain") — peran buatan owner (SPV marketing
+    dengan nama sendiri) dulu 403 saat menyetujui tugas / mengganti angka turunan.
     """
     role = (user.get("role") or "").lower()
     if role in {"admin", "owner", "superadmin"}:
@@ -200,7 +202,8 @@ def _is_pic_role(user) -> bool:
         return True
     if role in {"pic_marketing", "pic_toko"}:
         return True
-    return False
+    from auth import check_role
+    return check_role(user, [], "toko.approve")
 
 
 # 2026-11-08 (Asisten AI Tahap B, celah izin — keputusan owner no. 11). Docstring POST /tasks sejak

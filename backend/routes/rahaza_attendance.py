@@ -90,7 +90,8 @@ async def get_office_location(request: Request):
 @router.put("/attendance/office-location")
 async def set_office_location(request: Request):
     user = await require_auth(request)
-    if user.get("role") not in ("superadmin", "admin", "owner", "hr"):
+    # 2026-11-08: kode peran lama ATAU izin `hr.attendance.manage` ("Kelola absensi, shift & izin").
+    if not check_role(user, ("superadmin", "admin", "owner", "hr"), "hr.attendance.manage"):
         raise HTTPException(403, "Hanya admin/HR.")
     db = get_db()
     body = await request.json()

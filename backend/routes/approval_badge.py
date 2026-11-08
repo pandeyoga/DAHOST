@@ -31,7 +31,7 @@ import logging
 
 from fastapi import APIRouter, Request
 from database import get_db
-from auth import require_auth
+from auth import require_auth, check_role
 from utils.notif_unified import SOURCE_RULES, alert_roles_for_portal, rule_open_filter
 
 router = APIRouter(prefix="/api/approval-inbox", tags=["approval-badge"])
@@ -112,7 +112,9 @@ async def approval_groups(db, user: dict, *, exclude=frozenset()) -> list:
         groups.append(_group("ap", "AP Invoice belum dibayar", "fin-ap-aging", "hourglass",
                              await _open_keys(db, "ap_invoice"), exclude))
 
-    if role in _HR_ROLES:
+    # 2026-11-08: kode peran lama ATAU izin yang sama dengan gerbang HR Inbox (`hr.approve` / `hr.manage`),
+    # supaya peran buatan owner yang bisa menyetujui juga melihat hitungannya.
+    if role in _HR_ROLES or check_role(user, [], ("hr.approve", "hr.manage")):
         hr_keys = []
         for key in ("leave_manager", "leave_hr", "overtime", "salary_manager", "salary_hr"):
             hr_keys += await _open_keys(db, key, extra=not_mine_uid if key == "overtime" else None)
@@ -123,7 +125,9 @@ async def approval_groups(db, user: dict, *, exclude=frozenset()) -> list:
             groups.append(_group("kasbon_review", "Kasbon menunggu keputusan SDM", "hr-kasbon",
                                  "wallet", kas, exclude))
 
-    if role in _FINANCE_ROLES:
+    # 2026-11-08: ATAU izin bayar yang sama dengan gerbang pencairan klaim/kasbon (`core.roles.FINANCE_PAY_PERMS`).
+    from core.roles import FINANCE_PAY_PERMS
+    if role in _FINANCE_ROLES or check_role(user, [], FINANCE_PAY_PERMS):
         # K37 — klaim karyawan yang sudah disetujui menunggu pencairan di Pengeluaran Keuangan.
         exp = await _open_keys(db, "expense_disburse")
         if exp:

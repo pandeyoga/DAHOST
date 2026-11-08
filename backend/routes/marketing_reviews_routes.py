@@ -423,7 +423,7 @@ async def update_review(review_id: str, body: ReviewUpdate, request: Request):
     updated = {**existing, **upd}
     return {"success": True, "data": serialize(updated)}
 
-@router.delete("/{review_id}", dependencies=only(*MARKETING_CS_ROLES))  # T-01 2.3
+@router.delete("/{review_id}", dependencies=only(*MARKETING_CS_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_review(review_id: str, request: Request):
     await require_auth(request)
     db = get_db()

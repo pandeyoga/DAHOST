@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, timezone
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, check_role
 import logging
 import uuid
 
@@ -37,7 +37,12 @@ router = APIRouter(prefix='/api/hr/expenses', tags=['GL-Mapping'])
 # ── Default GL Account ─────────────────────────────────────────────────────────
 DEFAULT_TRAVEL_EXPENSE_GL = '6-3400'  # Biaya Perjalanan Dinas (fallback)
 
-from core.roles import FINANCE_ROLES as ADMIN_ROLES  # T-08
+from core.roles import FINANCE_ROLES as ADMIN_ROLES, FINANCE_BOOK_PERMS  # T-08
+
+
+def _is_gl_admin(user: dict) -> bool:
+    """2026-11-08: peta akun GL = pengaturan akuntansi → kode peran Keuangan ATAU izin `finance.manage`."""
+    return check_role(user, ADMIN_ROLES, FINANCE_BOOK_PERMS)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -78,8 +83,7 @@ async def list_gl_mappings(
     user: dict = Depends(require_auth),
 ):
     """List semua GL mappings (Admin/Finance only)."""
-    role = (user.get('role') or '').lower()
-    if role not in ADMIN_ROLES:
+    if not _is_gl_admin(user):
         raise HTTPException(403, 'Hanya Admin/Finance yang bisa akses GL mapping')
 
     db = get_db()
@@ -94,8 +98,7 @@ async def list_gl_mappings(
 @router.post('/gl-mappings', status_code=201)
 async def create_gl_mapping(body: GLMappingCreate, user: dict = Depends(require_auth)):
     """Buat mapping baru (Admin/Finance only)."""
-    role = (user.get('role') or '').lower()
-    if role not in ADMIN_ROLES:
+    if not _is_gl_admin(user):
         raise HTTPException(403, 'Hanya Admin/Finance yang bisa buat mapping')
 
     db = get_db()
@@ -133,8 +136,7 @@ async def create_gl_mapping(body: GLMappingCreate, user: dict = Depends(require_
 @router.put('/gl-mappings/{mapping_id}')
 async def update_gl_mapping(mapping_id: str, body: GLMappingUpdate, user: dict = Depends(require_auth)):
     """Update mapping (Admin/Finance only)."""
-    role = (user.get('role') or '').lower()
-    if role not in ADMIN_ROLES:
+    if not _is_gl_admin(user):
         raise HTTPException(403, 'Hanya Admin/Finance yang bisa update mapping')
 
     db = get_db()
@@ -174,8 +176,7 @@ async def update_gl_mapping(mapping_id: str, body: GLMappingUpdate, user: dict =
 @router.delete('/gl-mappings/{mapping_id}')
 async def delete_gl_mapping(mapping_id: str, user: dict = Depends(require_auth)):
     """Hapus mapping (Admin/Finance only)."""
-    role = (user.get('role') or '').lower()
-    if role not in ADMIN_ROLES:
+    if not _is_gl_admin(user):
         raise HTTPException(403, 'Hanya Admin/Finance yang bisa hapus mapping')
 
     db = get_db()
@@ -278,7 +279,7 @@ async def seed_default_gl_mappings(
     Hanya buat mapping untuk kategori yang BELUM punya mapping.
     Idempotent — aman dipanggil berkali-kali (Phase 5C).
     """
-    if user.get('role') not in ADMIN_ROLES:
+    if not _is_gl_admin(user):
         raise HTTPException(403, 'Hanya admin/finance yang dapat menjalankan seed.')
     db = get_db()
 

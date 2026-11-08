@@ -19,7 +19,7 @@ Admin Utility:
 """
 from fastapi import APIRouter, Request, HTTPException, Query
 from database import get_db
-from auth import require_auth, serialize_doc
+from auth import require_auth, serialize_doc, check_role
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 import uuid
@@ -189,7 +189,8 @@ async def self_payslip_detail(slip_id: str, request: Request):
 @router.put("/self/admin/link-employee")
 async def admin_link_employee(request: Request):
     user = await require_auth(request)
-    if user.get("role") not in ["superadmin", "admin", "owner", "hr"]:
+    # 2026-11-08: kode peran lama ATAU izin `hr.employee.manage` ("Kelola data karyawan").
+    if not check_role(user, ["superadmin", "admin", "owner", "hr"], "hr.employee.manage"):
         raise HTTPException(403, "Hanya admin / HR yang boleh menghubungkan akun ke karyawan.")
     db = get_db()
     body = await request.json()

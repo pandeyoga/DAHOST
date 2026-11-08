@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, timezone
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, check_role
 from core import doc_lock
 import logging
 import uuid
@@ -52,7 +52,24 @@ STATUS_LABELS = {
     'posted': 'Sudah di-Post GL',
 }
 
-from core.roles import APPROVER_ROLES, FINANCE_ROLES  # T-08: satu konstanta
+from core.roles import (  # T-08: satu konstanta
+    APPROVER_ROLES, FINANCE_ROLES, EXPENSE_APPROVE_PERMS, EXPENSE_VIEW_ALL_PERMS, FINANCE_PAY_PERMS,
+)
+
+
+# 2026-11-08: kode peran lama ATAU izin (lihat `core.roles`) — peran buatan owner dulu hanya melihat klaimnya
+# sendiri dan 403 saat menyetujui/mencairkan. Cermin layar: EmployeeExpenseModule.jsx (isApprover/isFinance).
+def can_view_all_claims(user: dict) -> bool:
+    return check_role(user, APPROVER_ROLES, EXPENSE_VIEW_ALL_PERMS)
+
+
+def is_claim_approver(user: dict) -> bool:
+    return check_role(user, APPROVER_ROLES, EXPENSE_APPROVE_PERMS)
+
+
+def is_claim_payer(user: dict) -> bool:
+    """Pencairan = uang keluar → Keuangan saja (K25), atau izin bayar yang tidak tersirat dari modul SDM."""
+    return check_role(user, FINANCE_ROLES, FINANCE_PAY_PERMS)
 from utils.employee_identity import job_title_of
 from routes.rahaza_payroll_shared import (  # 2026-11-02 (P5) · K25 pemisahan tugas
     ensure_not_self_approval, merge_own_failures, notify_requester, parse_ymd, resolve_payment_account,
@@ -240,11 +257,10 @@ async def list_claims(
 ):
     """List klaim biaya. Karyawan biasa hanya lihat miliknya sendiri."""
     db = get_db()
-    role = (user.get('role') or '').lower()
     q: dict = {}
 
     # Employee hanya bisa lihat klaim miliknya
-    if role not in APPROVER_ROLES:  # FIN-02
+    if not can_view_all_claims(user):  # FIN-02
         q['employee_id'] = user.get('id')
     elif employee_id:
         q['employee_id'] = employee_id
@@ -283,11 +299,10 @@ async def export_claims(
 ):
     """Export klaim biaya ke CSV (with RBAC filter)."""
     db = get_db()
-    role = (user.get('role') or '').lower()
     q: dict = {}
 
     # RBAC filter
-    if role not in APPROVER_ROLES:  # FIN-02
+    if not can_view_all_claims(user):  # FIN-02
         q['employee_id'] = user.get('id')
     elif employee_id:
         q['employee_id'] = employee_id
@@ -354,9 +369,8 @@ async def get_claim(claim_id: str, user: dict = Depends(require_auth)):
     """Detail klaim biaya."""
     db = get_db()
     doc = await _get_claim_or_404(db, claim_id)
-    role = (user.get('role') or '').lower()
     # Employee hanya boleh lihat miliknya
-    if role not in APPROVER_ROLES:  # FIN-02
+    if not can_view_all_claims(user):  # FIN-02
         if doc.get('employee_id') != user.get('id'):
             raise HTTPException(403, 'Tidak punya akses ke klaim ini')
     return _serialize_claim(doc)
@@ -447,8 +461,7 @@ async def submit_claim(claim_id: str, user: dict = Depends(require_auth)):
 async def approve_claim(claim_id: str, payload: ApprovePayload, user: dict = Depends(require_auth)):
     """Setujui klaim biaya."""
     db = get_db()
-    role = (user.get('role') or '').lower()
-    if role not in APPROVER_ROLES:
+    if not is_claim_approver(user):
         raise HTTPException(403, 'Hanya Manager/HR/Finance yang dapat approve')
 
     doc = await _get_claim_or_404(db, claim_id)
@@ -481,8 +494,7 @@ async def approve_claim(claim_id: str, payload: ApprovePayload, user: dict = Dep
 async def reject_claim(claim_id: str, payload: RejectPayload, user: dict = Depends(require_auth)):
     """Tolak klaim biaya."""
     db = get_db()
-    role = (user.get('role') or '').lower()
-    if role not in APPROVER_ROLES:
+    if not is_claim_approver(user):
         raise HTTPException(403, 'Hanya Manager/HR/Finance yang dapat reject')
 
     doc = await _get_claim_or_404(db, claim_id)
@@ -514,10 +526,9 @@ async def reject_claim(claim_id: str, payload: RejectPayload, user: dict = Depen
 async def disburse_claim(claim_id: str, payload: DisbursePayload, user: dict = Depends(require_auth)):
     """Finance disburse klaim — bayar ke karyawan + post GL."""
     db = get_db()
-    role = (user.get('role') or '').lower()
     # 2026-11-02 (K25): pencairan klaim = uang keluar → hanya peran Keuangan. Dulu APPROVER_ROLES
     # (termasuk hr/manager) sehingga HR bisa menyetujui sekaligus mencairkan.
-    if role not in FINANCE_ROLES:  # FIN-02
+    if not is_claim_payer(user):  # FIN-02
         raise HTTPException(403, 'Hanya Keuangan yang dapat mencairkan klaim (pemisahan tugas: HR tidak membayar).')
     # 2026-11-06 (pola P9): klaim DIKUNCI selama dicairkan — penolakan / pencairan kedua menunggu (409).
     token = await doc_lock.claim(db, 'rahaza_expense_claims', claim_id, field='disburse_lock', actor=user,

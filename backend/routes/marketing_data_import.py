@@ -915,7 +915,7 @@ async def list_formats(request: Request, source_type: Optional[str] = Query(None
                      "tidak ada tebakan diam-diam.")}
 
 
-@router.delete("/formats/{fingerprint}", dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete("/formats/{fingerprint}", dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def forget_format(fingerprint: str, request: Request,
                         source_type: str = Query(...)):
     """LUPAKAN satu susunan kolom yang diingat.
@@ -3876,7 +3876,7 @@ async def undo_report(session_id: str, request: Request):
             "trail": _ser(sample)}
 
 
-@router.delete("/sessions/{session_id}", dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete("/sessions/{session_id}", dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_session(session_id: str, request: Request):
     await require_auth(request)
     db = get_db()

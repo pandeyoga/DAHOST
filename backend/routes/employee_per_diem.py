@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime, timezone
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, check_role
 import logging
 import uuid
 from utils.waktu import now_wib
@@ -45,9 +45,13 @@ def _now():
     return datetime.now(timezone.utc)
 
 
+# 2026-11-08: kode peran lama ATAU izin `fin.expense.manage` (modul Klaim Dinas & Perjalanan, aksi kelola).
+PER_DIEM_ROLES = ('superadmin', 'admin', 'owner', 'hr')
+PER_DIEM_PERM = 'fin.expense.manage'
+
+
 def _admin_only(user: dict):
-    role = (user.get('role') or '').lower()
-    if role not in ('superadmin', 'admin', 'owner', 'hr'):
+    if not check_role(user, PER_DIEM_ROLES, PER_DIEM_PERM):
         raise HTTPException(403, 'Hanya admin/HR yang dapat mengubah konfigurasi Per Diem')
 
 

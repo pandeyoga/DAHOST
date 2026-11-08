@@ -116,7 +116,7 @@ async def update_training(training_id: str, data: TrainingCreate, request: Reque
     return serialize_doc({'message': 'Training berhasil diupdate'})
 
 
-@router.delete('/training/{training_id}', dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete('/training/{training_id}', dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_training(training_id: str, request: Request):
     """Admin deletes training (soft delete)"""
     await require_auth(request)

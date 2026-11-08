@@ -265,16 +265,23 @@ async def _load_rbac(role: str, user_id):
     _rbac_cache[key] = (nowts + _RBAC_TTL_SECONDS, role_perms, extra_perms)
     return list(role_perms), list(extra_perms)
 
-def check_role(user: dict, allowed_roles: list, perm_key: str = None) -> bool:
+def check_role(user: dict, allowed_roles: list, perm_key=None) -> bool:
+    """Kode peran di daftar ATAU izin peran (role_permissions + izin tambahan per orang).
+
+    `perm_key` boleh satu kunci atau beberapa (tuple/list) — salah satu cukup. 2026-11-08: peran buatan
+    owner di layar Peran ("HR Generalist", "Accounting & Finance", …) tidak pernah ada di daftar kode peran,
+    jadi gerbang wajib menyebut izin yang mengatur area itu supaya mereka tidak ditolak.
+    """
     if user.get('role') == 'superadmin':
         return True
     if user.get('role') in allowed_roles:
         return True
     # Check custom role permissions loaded by require_auth
-    perms = user.get('_permissions', [])
+    perms = user.get('_permissions') or []
     if '*' in perms:
         return True
-    if perm_key and perm_key in perms:
+    keys = (perm_key,) if isinstance(perm_key, str) else tuple(perm_key or ())
+    if any(k and k in perms for k in keys):
         return True
     # Don't grant access just because user has "any" permissions — only if specific perm_key matches
     return False

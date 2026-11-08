@@ -14,7 +14,15 @@
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { isFinanceRole } from '../../lib/financeRoles'; // FIN-02
+import {
+  APPROVER_ROLES, EXPENSE_APPROVE_PERMS, EXPENSE_VIEW_ALL_PERMS, FINANCE_PAY_PERMS, FINANCE_ROLES,
+} from '../../lib/financeRoles'; // FIN-02
+import { checkPerm } from '../../lib/rbac';
+
+// 2026-11-08: aturan yang SAMA dengan server (routes/employee_expense_claims.py): kode peran ATAU izin.
+const bolehSetujuiKlaim = (user) => checkPerm({ user, roles: APPROVER_ROLES, keys: EXPENSE_APPROVE_PERMS });
+const bolehBayarKlaim = (user) => checkPerm({ user, roles: FINANCE_ROLES, keys: FINANCE_PAY_PERMS });
+const bolehLihatSemuaKlaim = (user) => checkPerm({ user, roles: APPROVER_ROLES, keys: EXPENSE_VIEW_ALL_PERMS });
 import {
   Plus, RefreshCw, CheckCircle, XCircle, Send, Banknote, Trash2, Eye, Upload, Search, Download,
 } from 'lucide-react';
@@ -282,10 +290,10 @@ function PayForm({ claim, token, onClose, aksi }) {
 }
 
 // ─── Rincian klaim (popup detail) ────────────────────────────────────────────
-function ClaimDetail({ claim, role, onClose, aksi, onApprove, onPay }) {
+function ClaimDetail({ claim, user, onClose, aksi, onApprove, onPay }) {
   const [busy, setBusy] = useState(false);
-  const isApprover = ['superadmin','admin','owner','hr','manager','finance'].includes(role?.toLowerCase());
-  const isFinance = isFinanceRole(role); // FIN-02
+  const isApprover = bolehSetujuiKlaim(user);
+  const isFinance = bolehBayarKlaim(user); // FIN-02
   const items = claim.items || [];
 
   const jalan = async (endpoint, body) => {
@@ -427,8 +435,8 @@ export default function EmployeeExpenseModule({ token, user }) {
   const [selectedIds, setSelectedIds] = useState([]);
   const [bulkLoading, setBulkLoading] = useState(false);
 
-  const role = user?.role || '';
-  const isApprover = ['superadmin','admin','owner','hr','manager','finance'].includes(role.toLowerCase());
+  const isApprover = bolehSetujuiKlaim(user);
+  const bolehLihatSemua = bolehLihatSemuaKlaim(user);
 
   const headers = { Authorization: `Bearer ${token}` };
 
@@ -593,7 +601,7 @@ export default function EmployeeExpenseModule({ token, user }) {
       subtitle="Ajukan, pantau, dan proses klaim biaya (penggantian) karyawan."
       actions={<Button onClick={() => setShowCreate(true)} data-testid="btn-new-claim"><Plus />Klaim baru</Button>}
       filters={<>
-        {isApprover && (
+        {bolehLihatSemua && (
           <FilterChips value={viewMode} onChange={setViewMode} hideWhenEmpty={false} testId="claim-scope"
             ariaLabel="Klaim siapa" options={[{ key: 'my', label: 'Klaim saya' }, { key: 'all', label: 'Semua klaim' }]} />
         )}
@@ -670,7 +678,7 @@ export default function EmployeeExpenseModule({ token, user }) {
         <ClaimForm token={token} onClose={() => setShowCreate(false)} onSaved={handleClaimSaved} />
       )}
       {selected && (
-        <ClaimDetail claim={selected} role={role} onClose={() => setSelected(null)} aksi={aksi}
+        <ClaimDetail claim={selected} user={user} onClose={() => setSelected(null)} aksi={aksi}
           onApprove={(c) => { setSelected(null); setAksiForm({ jenis: 'approve', claim: c }); }}
           onPay={(c) => { setSelected(null); setAksiForm({ jenis: 'pay', claim: c }); }} />
       )}

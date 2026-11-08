@@ -31,6 +31,7 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 import { toast } from 'sonner';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import PageLayout from './layout/PageLayout';
+import { checkPerm } from '@/lib/rbac';
 import { EmptyState, Notice, StatusBadge as Lencana } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -112,8 +113,11 @@ export default function RahazaSalaryAdjustmentModule({ token, user }) {
   const [detail, setDetail] = useState(null);
   const [approveDialog, setApproveDialog] = useState(null); // { type: 'approve_manager' | 'approve_hr', adj }
 
-  const userRole = useMemo(() => (user?.role || '').toLowerCase(), [user]);
-  const isHR = ['superadmin', 'admin', 'owner', 'hr'].includes(userRole);
+  // 2026-11-08: sama dengan server `is_salary_hr` (routes/rahaza_salary_adjustments.py): kode peran ATAU izin
+  // hr.manage / salary.manage — peran buatan owner dulu tidak melihat tombol HR.
+  const isHR = useMemo(() => checkPerm({
+    user, roles: ['superadmin', 'admin', 'owner', 'hr'], keys: ['hr.manage', 'salary.manage'],
+  }), [user]);
 
   const loadData = useCallback(async () => {
     setLoading(true);

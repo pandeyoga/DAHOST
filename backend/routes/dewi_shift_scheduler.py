@@ -90,7 +90,7 @@ async def list_shift_templates(request: Request):
         "data": templates
     }
 
-@router.delete("/templates/{template_id}", dependencies=only(*HR_ROLES))  # T-01 2.3
+@router.delete("/templates/{template_id}", dependencies=only(*HR_ROLES, perm=("hr.attendance.manage", "hr.manage")))  # T-01 2.3
 async def delete_shift_template(request: Request, template_id: str):
     """Delete a shift template."""
     await require_auth(request)
@@ -321,7 +321,7 @@ async def publish_schedule(request: Request, schedule_id: str):
         "message": "Schedule published"
     }
 
-@router.delete("/schedules/{schedule_id}", dependencies=only(*HR_ROLES))  # T-01 2.3
+@router.delete("/schedules/{schedule_id}", dependencies=only(*HR_ROLES, perm=("hr.attendance.manage", "hr.manage")))  # T-01 2.3
 async def delete_schedule(request: Request, schedule_id: str):
     """Delete a schedule."""
     await require_auth(request)

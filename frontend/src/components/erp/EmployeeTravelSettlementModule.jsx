@@ -20,7 +20,14 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import FilterChips from '@/components/ui/filter-chips';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { isFinanceRole } from '../../lib/financeRoles'; // FIN-02
+import {
+  APPROVER_ROLES, FINANCE_BOOK_PERMS, FINANCE_ROLES, SETTLEMENT_APPROVE_PERMS,
+} from '../../lib/financeRoles'; // FIN-02
+import { checkPerm } from '../../lib/rbac';
+
+// 2026-11-08: aturan yang SAMA dengan server (routes/employee_travel_settlements.py): kode peran ATAU izin.
+const bolehSetujuiPenyelesaian = (user) => checkPerm({ user, roles: APPROVER_ROLES, keys: SETTLEMENT_APPROVE_PERMS });
+const bolehJurnalPenyelesaian = (user) => checkPerm({ user, roles: FINANCE_ROLES, keys: FINANCE_BOOK_PERMS });
 import {
   Plus, RefreshCw, FileText, CheckCircle, XCircle,
   Send, Banknote, Eye, Upload, Trash2, Search, MapPin,
@@ -299,14 +306,14 @@ function SettlementForm({ token, travel, onClose, onSaved }) {
 }
 
 // ─ Rincian + tindakan penyelesaian — DI HALAMAN (DetailPanel), dulu popup
-function SettlementDetail({ stl, token, onClose, onRefresh, role }) {
+function SettlementDetail({ stl, token, onClose, onRefresh, user }) {
   const [loading, setLoading] = useState(false);
   const [showReject, setShowReject] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [note, setNote] = useState('');
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-  const isApprover = ['superadmin','admin','owner','hr','manager','finance'].includes(role?.toLowerCase());
-  const isFinance  = isFinanceRole(role); // FIN-02
+  const isApprover = bolehSetujuiPenyelesaian(user);
+  const isFinance  = bolehJurnalPenyelesaian(user); // FIN-02
   // 2026-11-02: rekening kas/bank untuk baris selisih dipilih pengguna & DIKIRIM saat posting
   // (`bank_account_id`), bawaan = rekening yang tercatat di settlement bila masih aktif.
   const { accounts: cashAccounts, loaded: cashLoaded } = usePaymentCashAccounts(token, 'DA');  // Tahap 8: dinas staf DA
@@ -576,8 +583,7 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState(() => {   // my | queue | outstanding
-    const r = (user?.role || '').toLowerCase();
-    const canQueue = isFinanceRole(r) || ['superadmin', 'admin', 'owner', 'hr', 'manager', 'finance'].includes(r);
+    const canQueue = bolehJurnalPenyelesaian(user) || bolehSetujuiPenyelesaian(user);
     return defaultTab === 'queue' && !canQueue ? 'my' : defaultTab;
   });
   const [showCreate, setShowCreate] = useState(false);
@@ -594,9 +600,8 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
   // = yang terlihat.
   const [period, setPeriod] = useState(() => periodFromPreset('12m'));
 
-  const role = user?.role || '';
-  const isFinance = isFinanceRole(role); // FIN-02
-  const isApprover = ['superadmin','admin','owner','hr','manager','finance'].includes(role.toLowerCase());
+  const isFinance = bolehJurnalPenyelesaian(user); // FIN-02
+  const isApprover = bolehSetujuiPenyelesaian(user);
   const headers = { Authorization: `Bearer ${token}` };
 
   // Unduhan CSV buatan server (fitur lama, tetap tersedia di menu Unduh): status + rentang periode.
@@ -859,7 +864,7 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
             key={selected.id}
             stl={selected}
             token={token}
-            role={role}
+            user={user}
             onClose={() => setSelected(null)}
             onRefresh={fetchData}
           />

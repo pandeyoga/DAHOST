@@ -38,7 +38,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime, timezone, date, timedelta
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, check_role
 from routes.rahaza_posting import (
     _create_posted_je, _find_existing_je, get_mapping
 )
@@ -52,8 +52,18 @@ router = APIRouter(prefix='/api/finance/petty-cash', tags=['Petty-Cash'])
 # RC-FLOW-kasbank-1 FIX: role Finance kanonik di sistem = 'accounting'/'staff_keuangan'
 # (bukan 'finance'). Sebelumnya akun finance@dewiaditya.id (role 'accounting') DITOLAK 403
 # saat membuat/replenish/close dana kas kecil. Selaraskan dgn employee_expense_claims.py.
-from core.roles import FINANCE_ROLES  # FIN-02: satu sumber peran keuangan
+from core.roles import FINANCE_ROLES, FINANCE_CASH_PERMS  # FIN-02: satu sumber peran keuangan
 ALL_ROLES     = tuple(FINANCE_ROLES) + ('cashier', 'staff')
+
+
+# 2026-11-08: kode peran lama ATAU izin kas & bank (`FINANCE_CASH_PERMS`) — peran buatan owner dulu 403.
+def _is_finance(user: dict) -> bool:
+    return check_role(user, FINANCE_ROLES, FINANCE_CASH_PERMS)
+
+
+def _is_cash_user(user: dict) -> bool:
+    """Kasir + Keuangan (FIN-04) — sama dengan `_is_finance` ditambah kode peran kasir lama."""
+    return check_role(user, ALL_ROLES, FINANCE_CASH_PERMS)
 
 TXN_TYPES = ('expense', 'advance', 'return', 'replenish', 'opening')
 
@@ -358,7 +368,7 @@ async def list_funds(user: dict = Depends(require_auth)):
 
 @router.post('/funds')
 async def create_fund(body: FundCreate, user: dict = Depends(require_auth)):
-    if user.get('role') not in FINANCE_ROLES:
+    if not _is_finance(user):
         raise HTTPException(403, 'Hanya Finance/Admin yang bisa membuat dana kas kecil.')
     db = get_db()
     source_code = await _resolve_source_account(db, body.bank_account_code)  # 2026-11-02
@@ -417,7 +427,7 @@ async def get_fund(fund_id: str, user: dict = Depends(require_auth)):
 
 @router.post('/funds/{fund_id}/replenish')
 async def replenish_fund(fund_id: str, body: ReplenishIn, user: dict = Depends(require_auth)):
-    if user.get('role') not in FINANCE_ROLES:
+    if not _is_finance(user):
         raise HTTPException(403, 'Hanya Finance/Admin yang bisa replenish dana.')
     db = get_db()
     fund = await _get_fund_or_404(db, fund_id)
@@ -459,7 +469,7 @@ async def replenish_fund(fund_id: str, body: ReplenishIn, user: dict = Depends(r
 
 @router.post('/funds/{fund_id}/close')
 async def close_fund(fund_id: str, user: dict = Depends(require_auth)):
-    if user.get('role') not in FINANCE_ROLES:
+    if not _is_finance(user):
         raise HTTPException(403, 'Hanya Finance/Admin yang bisa menutup dana.')
     db = get_db()
     fund = await _get_fund_or_404(db, fund_id)
@@ -499,7 +509,7 @@ async def close_fund(fund_id: str, user: dict = Depends(require_auth)):
 
 @router.post('/transactions')
 async def create_txn(body: TxnCreate, user: dict = Depends(require_auth)):
-    if user.get('role') not in ALL_ROLES:  # FIN-04: kas kecil hanya peran keuangan/kasir
+    if not _is_cash_user(user):  # FIN-04: kas kecil hanya peran keuangan/kasir
         raise HTTPException(403, 'Hanya Finance/Kasir yang bisa mencatat transaksi kas kecil.')
     if body.txn_type not in ('expense', 'advance', 'return'):
         raise HTTPException(400, 'Hanya expense/advance/return yang bisa diinput via form. Replenish gunakan /funds/{id}/replenish.')
@@ -640,7 +650,7 @@ async def list_advances(
     user: dict = Depends(require_auth),
 ):
     """Daftar uang muka kas kecil atas nama karyawan, dikelompokkan per karyawan (K26)."""
-    if user.get('role') not in ALL_ROLES:
+    if not _is_cash_user(user):
         raise HTTPException(403, 'Hanya Finance/Kasir yang bisa melihat uang muka kas kecil.')
     db = get_db()
     q = {'txn_type': 'advance', 'gl_posted': True, 'employee_id': {'$exists': True, '$ne': None}}
@@ -671,7 +681,7 @@ async def list_advances(
 async def create_advance(body: AdvanceCreateIn, user: dict = Depends(require_auth)):
     """2026-11-04: uang muka karyawan dari rekening kas/bank (menu Kasbon & Uang Muka).
     Jurnal Dr Uang Muka Karyawan (1-1610) / Cr akun rekening; dibebankan saat pertanggungjawaban."""
-    if user.get('role') not in ALL_ROLES:
+    if not _is_cash_user(user):
         raise HTTPException(403, 'Hanya Finance/Kasir yang bisa mencatat uang muka karyawan.')
     db = get_db()
     from routes.rahaza_payroll_shared import resolve_payment_account
@@ -711,7 +721,7 @@ async def create_advance(body: AdvanceCreateIn, user: dict = Depends(require_aut
 async def settle_advance(txn_id: str, body: AdvanceSettleIn, user: dict = Depends(require_auth)):
     """Pertanggungjawaban uang muka (K26): nota per kategori → Dr beban; sisa kembali → Dr kas kecil; Cr 1-1610.
     Boleh bertahap (sebagian); total nota + sisa ≤ uang muka terbuka."""
-    if user.get('role') not in ALL_ROLES:
+    if not _is_cash_user(user):
         raise HTTPException(403, 'Hanya Finance/Kasir yang bisa mencatat pertanggungjawaban kas kecil.')
     db = get_db()
     adv = await db.rahaza_petty_cash_txns.find_one({'id': txn_id}, {'_id': 0})
@@ -793,7 +803,7 @@ async def settle_advance(txn_id: str, body: AdvanceSettleIn, user: dict = Depend
 @router.patch('/funds/{fund_id}/settings')
 async def update_fund_settings(fund_id: str, body: FundSettingsIn, user: dict = Depends(require_auth)):
     """Batas hari pertanggungjawaban uang muka per dana (K26). 0 = belum diatur."""
-    if user.get('role') not in FINANCE_ROLES:
+    if not _is_finance(user):
         raise HTTPException(403, 'Hanya Finance yang bisa mengubah pengaturan dana kas kecil.')
     db = get_db()
     await _get_fund_or_404(db, fund_id)
@@ -806,7 +816,7 @@ async def update_fund_settings(fund_id: str, body: FundSettingsIn, user: dict = 
 
 @router.post('/transactions/{txn_id}/retry-posting')
 async def retry_txn_posting(txn_id: str, user: dict = Depends(require_auth)):
-    if user.get('role') not in FINANCE_ROLES:
+    if not _is_finance(user):
         raise HTTPException(403, 'Hanya Finance yang bisa retry posting.')
     db = get_db()
     txn = await db.rahaza_petty_cash_txns.find_one({'id': txn_id}, {'_id': 0})

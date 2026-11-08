@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth
+from auth import require_auth, check_role
 
 router = APIRouter(prefix="/api/rahaza/salary-grades", tags=["rahaza-salary-grades"])
 
@@ -34,9 +34,14 @@ def _s(d):
     return d
 
 
+# 2026-11-08: kode peran lama ATAU izin `salary.manage` ("Kelola struktur & penyesuaian gaji").
+SALARY_GRADE_ROLES = ("superadmin", "admin", "owner", "hr")
+SALARY_GRADE_PERM = "salary.manage"
+
+
 async def _require_admin(request: Request):
     user = await require_auth(request)
-    if user.get("role") not in ("superadmin", "admin", "owner", "hr"):
+    if not check_role(user, SALARY_GRADE_ROLES, SALARY_GRADE_PERM):
         raise HTTPException(403, "Hanya Admin/HR yang dapat mengelola struktur gaji.")
     return user
 

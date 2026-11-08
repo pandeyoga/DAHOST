@@ -13,7 +13,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import FilterChips from '@/components/ui/filter-chips';
 import ViewToggle from '@/components/ui/view-toggle';
 import { toast } from 'sonner';
-import { isFinanceRole } from '../../lib/financeRoles'; // FIN-02
+import { FINANCE_PAY_PERMS, FINANCE_ROLES } from '../../lib/financeRoles'; // FIN-02
+import { checkPerm } from '../../lib/rbac';
 import {
   CheckCircle, XCircle, RefreshCw,
   Wallet, MapPin, Banknote, Search, ArrowUpDown,
@@ -230,8 +231,8 @@ export default function EmployeeExpenseApprovalModule({ token, user }) {
     try { localStorage.setItem(EXPENSE_VIEW_KEY, view); } catch { /* penyimpanan diblokir */ }
   }, [view]);
   const headers = { Authorization: `Bearer ${token}` };
-  const role = user?.role || '';
-  const isFinance = isFinanceRole(role); // FIN-02
+  // 2026-11-08: pembayar klaim = kode peran Keuangan ATAU izin bayar (sama dengan server `is_claim_payer`).
+  const isFinance = checkPerm({ user, roles: FINANCE_ROLES, keys: FINANCE_PAY_PERMS }); // FIN-02
 
   const fetchData = useCallback(async () => {
     setLoading(true);
