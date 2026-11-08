@@ -539,7 +539,7 @@ export default function CatalogItemsView({
     <div className="space-y-4" data-testid="catalog-items-view">
       <Toolbar
         filters={<>
-          <div className="relative w-full sm:w-64">
+          <div className="relative w-full sm:w-56">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input className="pl-8" placeholder="Cari nama, SKU, tag" value={baseFilters.search || ''}
               onChange={(e) => onBaseFilter.search?.(e.target.value)} data-testid="catalog-items-search" />
@@ -557,7 +557,7 @@ export default function CatalogItemsView({
             <option value="">Semua kategori</option>
             {productCategories.map((c) => <option key={c.id} value={c.id}>{c.sku_prefix} · {c.name}</option>)}
           </SmartNativeSelect>
-          <SmartNativeSelect className="w-52" data-testid="catalog-filter-publish"
+          <SmartNativeSelect className="w-48" data-testid="catalog-filter-publish"
             value={filters.publishState || ''} onChange={(e) => onFilterChange({ publishState: e.target.value })}>
             <option value="">Semua penayangan</option>
             <option value="draft">Belum tayang</option>
