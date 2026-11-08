@@ -363,27 +363,30 @@ export default function BudgetAllocationTab({ token, accounts, period: periodPro
             <Button variant="outline" onClick={() => setBukaBelanja(true)} disabled={!accountId} data-testid="spend-open-btn"><Plus />Catat belanja</Button>
           </div>
         </div>
-        {spendEntries.length > 0 ? (
-          <Table data-testid="spend-list">
-            <TableHeader>
-              <TableRow><TableHead>Kategori</TableHead><TableHead className="text-right">Jumlah</TableHead><TableHead>Keterangan</TableHead><TableHead><span className="sr-only">Aksi</span></TableHead></TableRow>
-            </TableHeader>
-            <TableBody>
-              {spendEntries.map((e) => (
-                <TableRow key={e.id}>
-                  <TableCell>{labelCat(e.category)}</TableCell>
-                  <TableCell className="whitespace-nowrap text-right font-medium tabular-nums">{fmtRp(e.amount)}</TableCell>
-                  <TableCell className="text-muted-foreground">{e.description || '—'}</TableCell>
-                  <TableCell className="text-right">
-                    <Button size="icon-sm" variant="ghost" onClick={() => hapusBelanja(e)} title="Hapus catatan" aria-label="Hapus catatan" data-testid={`spend-del-${e.id}`}>
-                      <Trash2 />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        ) : <EmptyState className="py-6" title="Belum ada catatan realisasi manual" />}
+        <Table data-testid="spend-list">
+          <TableHeader>
+            <TableRow><TableHead>Kategori</TableHead><TableHead className="text-right">Jumlah</TableHead><TableHead>Keterangan</TableHead><TableHead><span className="sr-only">Aksi</span></TableHead></TableRow>
+          </TableHeader>
+          <TableBody>
+            {spendEntries.length === 0 && (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={4} className="p-0 [&>div]:py-8"><EmptyState title="Belum ada catatan realisasi manual" /></TableCell>
+              </TableRow>
+            )}
+            {spendEntries.map((e) => (
+              <TableRow key={e.id}>
+                <TableCell>{labelCat(e.category)}</TableCell>
+                <TableCell className="whitespace-nowrap text-right font-medium tabular-nums">{fmtRp(e.amount)}</TableCell>
+                <TableCell className="text-muted-foreground">{e.description || '—'}</TableCell>
+                <TableCell className="text-right">
+                  <Button size="icon-sm" variant="ghost" onClick={() => hapusBelanja(e)} title="Hapus catatan" aria-label="Hapus catatan" data-testid={`spend-del-${e.id}`}>
+                    <Trash2 />
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       </GlassCard>
 
       {/* Konfigurasi biaya KOL */}
@@ -402,42 +405,43 @@ export default function BudgetAllocationTab({ token, accounts, period: periodPro
               { label: 'Komisi (%)', nilai: (k) => parseFloat(k.cost_config?.commission_pct) || 0 },
             ]} />
         </div>
-        {kolList.length === 0 ? (
-          <EmptyState className="py-6" title="Belum ada kreator yang ditugaskan ke akun ini" />
-        ) : (
-          <div className="overflow-x-auto">
-            <Table data-testid="kol-cost-table">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Kreator</TableHead>
-                  <TableHead>Skema bayar</TableHead>
-                  <TableHead className="text-right">Fee tetap</TableHead>
-                  <TableHead className="text-right">Komisi</TableHead>
-                  <TableHead><span className="sr-only">Aksi</span></TableHead>
+        <div className="overflow-x-auto">
+          <Table data-testid="kol-cost-table">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Kreator</TableHead>
+                <TableHead>Skema bayar</TableHead>
+                <TableHead className="text-right">Fee tetap</TableHead>
+                <TableHead className="text-right">Komisi</TableHead>
+                <TableHead><span className="sr-only">Aksi</span></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {kolList.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={5} className="p-0 [&>div]:py-8"><EmptyState title="Belum ada kreator yang ditugaskan ke akun ini" /></TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {kolList.map((k, idx) => {
-                  const cfg = k.cost_config || {};
-                  const ft = cfg.fee_type || 'none';
-                  return (
-                    <TableRow key={k.creator_id} data-testid={`kol-cost-row-${idx}`}>
-                      <TableCell><div className="font-medium">{k.name}</div><div className="text-xs text-muted-foreground">{k.creator_code}</div></TableCell>
-                      <TableCell>{FEE_TYPES.find((f) => f.v === ft)?.l || ft}</TableCell>
-                      <TableCell className="whitespace-nowrap text-right tabular-nums">{ft === 'fixed' || ft === 'both' ? fmtRp(parseFloat(cfg.fixed_fee) || 0) : '—'}</TableCell>
-                      <TableCell className="whitespace-nowrap text-right tabular-nums">{ft === 'commission' || ft === 'both' ? `${parseFloat(cfg.commission_pct) || 0}%` : '—'}</TableCell>
-                      <TableCell className="text-right">
-                        <Button size="sm" variant="outline" onClick={() => setKolEdit({ ...k, idx, cost_config: { ...cfg } })} data-testid={`kol-save-${idx}`}>
-                          <Pencil />Ubah
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        )}
+              )}
+              {kolList.map((k, idx) => {
+                const cfg = k.cost_config || {};
+                const ft = cfg.fee_type || 'none';
+                return (
+                  <TableRow key={k.creator_id} data-testid={`kol-cost-row-${idx}`}>
+                    <TableCell><div className="font-medium">{k.name}</div><div className="text-xs text-muted-foreground">{k.creator_code}</div></TableCell>
+                    <TableCell>{FEE_TYPES.find((f) => f.v === ft)?.l || ft}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right tabular-nums">{ft === 'fixed' || ft === 'both' ? fmtRp(parseFloat(cfg.fixed_fee) || 0) : '—'}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right tabular-nums">{ft === 'commission' || ft === 'both' ? `${parseFloat(cfg.commission_pct) || 0}%` : '—'}</TableCell>
+                    <TableCell className="text-right">
+                      <Button size="sm" variant="outline" onClick={() => setKolEdit({ ...k, idx, cost_config: { ...cfg } })} data-testid={`kol-save-${idx}`}>
+                        <Pencil />Ubah
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
         {summary?.kol_detail?.length > 0 && (
           <p className="text-sm text-muted-foreground">
             Biaya KOL terhitung periode ini: {summary.kol_detail.map((d) => `${d.creator_name} ${fmtRp(d.cost)}`).join(' · ')}

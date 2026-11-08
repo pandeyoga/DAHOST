@@ -80,8 +80,6 @@ export default function SalesReportModule() {
       }>
       {busy && !d ? (
         <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
-      ) : !rows.length ? (
-        <EmptyState testId="report-empty" title="Tidak ada penjualan pada rentang ini" description="Ubah periode atau kelompok laporan." />
       ) : (
         <div className="overflow-x-auto">
           <Table data-testid="report-table">
@@ -93,6 +91,11 @@ export default function SalesReportModule() {
               <TableHead className="text-right">Margin</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {!rows.length && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={10} className="p-0 [&>div]:py-8"><EmptyState testId="report-empty" title="Tidak ada penjualan pada rentang ini" description="Ubah periode atau kelompok laporan." /></TableCell>
+                </TableRow>
+              )}
               {rows.map((r) => (
                 <TableRow key={r.key} data-testid={`report-row-${r.key}`}>
                   <TableCell className="font-medium">{r.label}</TableCell>
@@ -109,6 +112,7 @@ export default function SalesReportModule() {
                 </TableRow>
               ))}
             </TableBody>
+            {t && rows.length > 0 && (
             <TableFooter>
               <TableRow data-testid="report-total-row">
                 <TableCell>Total</TableCell>
@@ -123,6 +127,7 @@ export default function SalesReportModule() {
                 <TableCell className="text-right tabular-nums">{t.margin_pct}%</TableCell>
               </TableRow>
             </TableFooter>
+            )}
           </Table>
         </div>
       )}

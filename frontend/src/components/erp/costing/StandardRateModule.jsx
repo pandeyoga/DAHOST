@@ -88,8 +88,6 @@ export default function StandardRateModule({ token }) {
       <GlassCard className="p-0 overflow-x-auto">
         {loading && !rows.length ? (
           <div className="space-y-2 p-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
-        ) : rows.length === 0 ? (
-          <EmptyState icon={Layers} title="Belum ada tahap produksi" description="Daftar tahap produksi belum tersedia." />
         ) : (
           <Table data-testid="std-rate-table">
             <TableHeader><TableRow>
@@ -97,6 +95,13 @@ export default function StandardRateModule({ token }) {
               <TableHead className="text-right">Tarif standar per pcs</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {rows.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={4} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={Layers} title="Belum ada tahap produksi" description="Daftar tahap produksi belum tersedia." />
+                  </TableCell>
+                </TableRow>
+              )}
               {rows.map((r) => (
                 <TableRow key={r.process_id} data-testid={`std-rate-row-${r.code}`}>
                   <TableCell className="font-medium">{r.name || r.code}</TableCell>

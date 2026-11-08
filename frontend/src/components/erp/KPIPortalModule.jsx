@@ -18,7 +18,7 @@ import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import { toast } from 'sonner';
 import { formatDateID } from '@/lib/format';
 import PageLayout from './layout/PageLayout';
-import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
+import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
 import KPIGamificationTab from './KPIGamificationTab';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -323,22 +323,20 @@ export default function KPIPortalModule({ token }) {
                 ]} />
               )}
             </div>
-            {myResults.length === 0 ? (
-              periods.some(p => p.status !== 'open')
-                ? <Notice tone="info">Hasil KPI sedang diproses oleh HR.</Notice>
-                : <p className="text-sm text-muted-foreground">Belum ada hasil KPI.</p>
-            ) : (
-              <TabelData baris={myResults} kunci={(r) => r.result_id} onKlikBaris={openResult} kolom={[
-                { kunci: 'period_name', label: 'Periode', hp: 'judul', isi: (r) => <span className="font-medium" data-testid={`kpi-result-${r.period_id}`}>{r.period_name}</span> },
-                { kunci: 'final', label: 'Nilai akhir', rata: 'kanan', isi: (r) => <span className="font-semibold tabular-nums">{angka(r.kpi_final)}</span> },
-                { kunci: 'grade', label: 'Nilai', isi: (r) => <NilaiBadge grade={r.grade} /> },
-                { kunci: 'perform', label: 'Kinerja', rata: 'kanan', isi: (r) => <span className="tabular-nums">{angka(r.perform_score)}</span> },
-                { kunci: 'attitude', label: 'Sikap', rata: 'kanan', isi: (r) => <span className="tabular-nums">{angka(r.attitude_score)}</span> },
-                { kunci: 'absensi', label: 'Absensi', rata: 'kanan', isi: (r) => <span className="tabular-nums">{angka(r.absensi_score)}</span> },
-                { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
-                  <Button size="sm" variant="outline" onClick={() => openResult(r)}><Eye />Rincian</Button>) },
-              ]} />
-            )}
+            <TabelData baris={myResults} kunci={(r) => r.result_id} onKlikBaris={openResult}
+              kosong={periods.some(p => p.status !== 'open')
+                ? <EmptyState title="Hasil KPI sedang diproses oleh HR" />
+                : <EmptyState title="Belum ada hasil KPI" />}
+              kolom={[
+              { kunci: 'period_name', label: 'Periode', hp: 'judul', isi: (r) => <span className="font-medium" data-testid={`kpi-result-${r.period_id}`}>{r.period_name}</span> },
+              { kunci: 'final', label: 'Nilai akhir', rata: 'kanan', isi: (r) => <span className="font-semibold tabular-nums">{angka(r.kpi_final)}</span> },
+              { kunci: 'grade', label: 'Nilai', isi: (r) => <NilaiBadge grade={r.grade} /> },
+              { kunci: 'perform', label: 'Kinerja', rata: 'kanan', isi: (r) => <span className="tabular-nums">{angka(r.perform_score)}</span> },
+              { kunci: 'attitude', label: 'Sikap', rata: 'kanan', isi: (r) => <span className="tabular-nums">{angka(r.attitude_score)}</span> },
+              { kunci: 'absensi', label: 'Absensi', rata: 'kanan', isi: (r) => <span className="tabular-nums">{angka(r.absensi_score)}</span> },
+              { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+                <Button size="sm" variant="outline" onClick={() => openResult(r)}><Eye />Rincian</Button>) },
+            ]} />
           </GlassCard>
         </>
       )}

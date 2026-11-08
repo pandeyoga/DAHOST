@@ -272,9 +272,6 @@ export default function ProductCostingModule({ token, onNavigate }) {
       <GlassCard className="p-0 overflow-x-auto">
         {loading && rows.length === 0 ? (
           <div className="space-y-2 p-4">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
-        ) : shownRows.length === 0 ? (
-          <EmptyState icon={Calculator} title="Tidak ada produk pada penyaring ini"
-            description="Ubah pencarian, pil status, atau hilangkan centang “Hanya yang masih ada kekurangan”." />
         ) : (
         <div className="overflow-x-auto">
           <Table data-testid="costing-table">
@@ -295,6 +292,14 @@ export default function ProductCostingModule({ token, onNavigate }) {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {shownRows.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={12} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={Calculator} title="Tidak ada produk pada penyaring ini"
+                      description="Ubah pencarian, pil status, atau hilangkan centang “Hanya yang masih ada kekurangan”." />
+                  </TableCell>
+                </TableRow>
+              )}
               {shownRows.map(r => (
                 <TableRow key={r.model_id}
                   className={`border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] ${openId === r.model_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}

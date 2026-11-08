@@ -70,18 +70,15 @@ function UserDetail({ uid, token, onClose, namaPeran }) {
           </dl>
           <div className="space-y-2">
             <p className="text-sm font-medium">Izin per modul ({modul.length} modul)</p>
-            {modul.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Belum ada izin per modul — aturan bawaan peran yang berlaku.</p>
-            ) : (
-              <TabelData baris={modul} kunci={(m) => m.module} testId="access-sync-detail-modules" kolom={[
-                { kunci: 'label', label: 'Modul', hp: 'judul', isi: (m) => <span className="font-medium">{m.label}</span> },
-                { kunci: 'portal', label: 'Portal', isi: (m) => namaPortal(m.portal) },
-                { kunci: 'acts', label: 'Izin', isi: (m) => (
-                  <div className="flex flex-wrap gap-1">
-                    {m.acts.map((a) => <StatusBadge key={a} status={a} label={ACT[a] || a} tone="primary" />)}
-                  </div>) },
-              ]} />
-            )}
+            <TabelData baris={modul} kunci={(m) => m.module} testId="access-sync-detail-modules"
+              kosong={<EmptyState title="Belum ada izin per modul" description="Aturan bawaan peran yang berlaku." />} kolom={[
+              { kunci: 'label', label: 'Modul', hp: 'judul', isi: (m) => <span className="font-medium">{m.label}</span> },
+              { kunci: 'portal', label: 'Portal', isi: (m) => namaPortal(m.portal) },
+              { kunci: 'acts', label: 'Izin', isi: (m) => (
+                <div className="flex flex-wrap gap-1">
+                  {m.acts.map((a) => <StatusBadge key={a} status={a} label={ACT[a] || a} tone="primary" />)}
+                </div>) },
+            ]} />
           </div>
         </>
       )}

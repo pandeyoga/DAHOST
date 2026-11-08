@@ -322,16 +322,15 @@ export default function StockSchemaHealthModule({ token }) {
               ]} />
           ) : null}>
           <span className="sr-only" data-testid="plan-relocated">{fmtNum(plan.summary?.rows_relocated)}</span>
-          {(plan.relocations || []).length > 0 && (
-            <div data-testid="plan-relocation-list">
-              <TabelData baris={plan.relocations} kunci={(r) => r.row_id} testId="plan-relocation-tabel"
-                kolom={[
-                  { kunci: 'dari', label: 'Dari', hp: 'judul', isi: (r) => r.from_location_code || r.from_location_id },
-                  { kunci: 'ke', label: 'Ke', isi: (r) => r.to_location_code || r.to_location_id },
-                  { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtNum(r.qty)}</span> },
-                ]} />
-            </div>
-          )}
+          <div data-testid="plan-relocation-list">
+            <TabelData baris={plan.relocations || []} kunci={(r) => r.row_id} testId="plan-relocation-tabel"
+              kosong={<EmptyState title="Tidak ada baris stok yang dipindah zona" />}
+              kolom={[
+                { kunci: 'dari', label: 'Dari', hp: 'judul', isi: (r) => r.from_location_code || r.from_location_id },
+                { kunci: 'ke', label: 'Ke', isi: (r) => r.to_location_code || r.to_location_id },
+                { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtNum(r.qty)}</span> },
+              ]} />
+          </div>
           {plan.summary?.unresolved_location > 0 && (
             <Notice tone="warning">Sebagian baris tanpa lokasi belum bisa diselesaikan karena zona penyimpanan kanonik belum ada — buat dulu di menu Struktur Gudang.</Notice>
           )}

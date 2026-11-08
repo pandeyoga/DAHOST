@@ -170,39 +170,42 @@ export default function IntercompanyBalanceModule() {
               { label: 'Sisa', nilai: (d) => Number(d.balance) || 0 },
             ]} />
         </div>
-        {docs.length === 0 ? (
-          <EmptyState icon={FileText} title="Belum ada dokumen antar CV"
-            description="Tagihan jasa jahit lahir dari penerimaan CMT tim CV Sukma; nota aksesoris dari pengeluaran aksesoris untuk PO maklon." />
-        ) : (
-          <Table className="md:min-w-0">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Dokumen</TableHead>
-                <TableHead>Penerbit</TableHead>
-                <TableHead>Tanggal</TableHead>
-                <TableHead>PO</TableHead>
-                <TableHead className="text-right">Total</TableHead>
-                <TableHead className="text-right">Sisa</TableHead>
-                <TableHead className="text-right">PDF</TableHead>
+        <Table className="md:min-w-0">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Dokumen</TableHead>
+              <TableHead>Penerbit</TableHead>
+              <TableHead>Tanggal</TableHead>
+              <TableHead>PO</TableHead>
+              <TableHead className="text-right">Total</TableHead>
+              <TableHead className="text-right">Sisa</TableHead>
+              <TableHead className="text-right">PDF</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {docs.length === 0 && (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={7} className="p-0 [&>div]:py-8">
+                  <EmptyState icon={FileText} title="Belum ada dokumen antar CV"
+                    description="Tagihan jasa jahit lahir dari penerimaan CMT tim CV Sukma; nota aksesoris dari pengeluaran aksesoris untuk PO maklon." />
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {docs.map((d) => (
-                <TableRow key={d.id} data-testid={`ic-doc-row-${d.invoice_number}`}>
-                  <TableCell className="text-sm"><p className="whitespace-nowrap">{d.invoice_number}</p><p className="text-xs text-muted-foreground">{KIND[d.ic_kind] || '—'}{Number(d.margin_amount) > 0 ? ` · margin ${d.margin_pct}%` : ''}</p></TableCell>
-                  <TableCell className="text-sm whitespace-nowrap">{cvLabel(d.entity)}</TableCell>
-                  <TableCell className="text-muted-foreground whitespace-nowrap">{formatDateID(d.issue_date)}</TableCell>
-                  <TableCell className="whitespace-nowrap">{d.po_number || '—'}</TableCell>
-                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(d.total)}</TableCell>
-                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(d.balance)}</TableCell>
-                  <TableCell className="text-right">
-                    <Button variant="outline" size="icon" onClick={() => openPdf(d)} title="Buka PDF" aria-label="Buka PDF" data-testid={`ic-doc-pdf-${d.invoice_number}`}><FileText className="w-4 h-4" /></Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
+            )}
+            {docs.map((d) => (
+              <TableRow key={d.id} data-testid={`ic-doc-row-${d.invoice_number}`}>
+                <TableCell className="text-sm"><p className="whitespace-nowrap">{d.invoice_number}</p><p className="text-xs text-muted-foreground">{KIND[d.ic_kind] || '—'}{Number(d.margin_amount) > 0 ? ` · margin ${d.margin_pct}%` : ''}</p></TableCell>
+                <TableCell className="text-sm whitespace-nowrap">{cvLabel(d.entity)}</TableCell>
+                <TableCell className="text-muted-foreground whitespace-nowrap">{formatDateID(d.issue_date)}</TableCell>
+                <TableCell className="whitespace-nowrap">{d.po_number || '—'}</TableCell>
+                <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(d.total)}</TableCell>
+                <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(d.balance)}</TableCell>
+                <TableCell className="text-right">
+                  <Button variant="outline" size="icon" onClick={() => openPdf(d)} title="Buka PDF" aria-label="Buka PDF" data-testid={`ic-doc-pdf-${d.invoice_number}`}><FileText className="w-4 h-4" /></Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       </GlassCard>
     </PageLayout>
   );

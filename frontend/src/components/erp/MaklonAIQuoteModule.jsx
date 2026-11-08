@@ -268,9 +268,6 @@ export default function MaklonAIQuoteModule() {
       <GlassCard className="p-0 overflow-hidden">
         {loading && !rows.length ? (
           <div className="p-4 text-sm text-muted-foreground">Memuat estimasi…</div>
-        ) : !paged.length ? (
-          <EmptyState icon={Calculator} title={rows.length ? 'Tidak ada estimasi yang cocok' : 'Belum ada estimasi harga'}
-            description={rows.length ? 'Ubah kata pencarian atau penyaring status.' : 'Klik Estimasi baru untuk menghitung harga jasa maklon.'} />
         ) : (
           <Table data-testid="quote-history-table">
             <TableHeader><TableRow>
@@ -279,6 +276,14 @@ export default function MaklonAIQuoteModule() {
               <TableHead className="text-right">Total</TableHead><TableHead>Status</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {!paged.length && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={7} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={Calculator} title={rows.length ? 'Tidak ada estimasi yang cocok' : 'Belum ada estimasi harga'}
+                      description={rows.length ? 'Ubah kata pencarian atau penyaring status.' : 'Klik Estimasi baru untuk menghitung harga jasa maklon.'} />
+                  </TableCell>
+                </TableRow>
+              )}
               {paged.map((q) => {
                 const [label, tone] = QUOTE_STATUS[q.status] || [q.status || 'Draf', 'muted'];
                 return (

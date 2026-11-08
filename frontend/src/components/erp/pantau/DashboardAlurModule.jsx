@@ -106,27 +106,28 @@ export function useDashboardAlur(props) {
             { label: 'Vendor CMT', nilai: (a) => a.vendor_name || '' }, { label: 'Status', nilai: (a) => poStatusLabel(a.status) },
             { label: 'Diam (hari)', nilai: (a) => Number(a.idle_days) || 0 },
           ] }}>
-          {data.aging.length === 0 ? (
-            <EmptyState icon={CheckCircle2} title="Tidak ada PO berjalan" description="PO baru dibuat di menu PO." />
-          ) : (
-            <Table data-testid="dash-aging-table">
-              <TableHeader><TableRow>
-                <TableHead>PO</TableHead><TableHead>Pemesan</TableHead><TableHead>Vendor CMT</TableHead><TableHead>Status</TableHead>
-                <TableHead className="text-right">Diam</TableHead>
-              </TableRow></TableHeader>
-              <TableBody>
-                {data.aging.map((a) => (
-                  <TableRow key={a.po_id}>
-                    <TableCell className="font-medium whitespace-nowrap">{a.po_number}</TableCell>
-                    <TableCell>{a.customer_name || '—'}</TableCell>
-                    <TableCell>{a.vendor_name || '—'}</TableCell>
-                    <TableCell>{poStatusLabel(a.status)}</TableCell>
-                    <TableCell className={`text-right tabular-nums ${a.idle_days >= 7 ? 'text-[hsl(var(--warning-text))] font-semibold' : ''}`}>{n(a.idle_days)} hari</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <Table data-testid="dash-aging-table">
+            <TableHeader><TableRow>
+              <TableHead>PO</TableHead><TableHead>Pemesan</TableHead><TableHead>Vendor CMT</TableHead><TableHead>Status</TableHead>
+              <TableHead className="text-right">Diam</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>
+              {data.aging.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={5} className="p-0 [&>div]:py-8"><EmptyState icon={CheckCircle2} title="Tidak ada PO berjalan" description="PO baru dibuat di menu PO." /></TableCell>
+                </TableRow>
+              )}
+              {data.aging.map((a) => (
+                <TableRow key={a.po_id}>
+                  <TableCell className="font-medium whitespace-nowrap">{a.po_number}</TableCell>
+                  <TableCell>{a.customer_name || '—'}</TableCell>
+                  <TableCell>{a.vendor_name || '—'}</TableCell>
+                  <TableCell>{poStatusLabel(a.status)}</TableCell>
+                  <TableCell className={`text-right tabular-nums ${a.idle_days >= 7 ? 'text-[hsl(var(--warning-text))] font-semibold' : ''}`}>{n(a.idle_days)} hari</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </Section>
         {data.overdue.length > 0 && (
           <Notice tone="danger" icon={ListChecks} testId="dash-overdue"

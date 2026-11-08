@@ -194,9 +194,6 @@ export default function EmployeeExpenseGLMappingModule() {
       <GlassCard className="p-0 overflow-hidden">
         {loading ? (
           <Skeleton className="h-40 m-4" />
-        ) : mappings.length === 0 ? (
-          <EmptyState icon={ListTree} title="Belum ada pemetaan akun klaim"
-            description="Tambahkan pemetaan supaya tiap kategori klaim masuk ke akun bebannya sendiri." />
         ) : (
           <Table className="md:min-w-0">
             <TableHeader>
@@ -209,6 +206,14 @@ export default function EmployeeExpenseGLMappingModule() {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {mappings.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={5} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={ListTree} title="Belum ada pemetaan akun klaim"
+                      description="Tambahkan pemetaan supaya tiap kategori klaim masuk ke akun bebannya sendiri." />
+                  </TableCell>
+                </TableRow>
+              )}
               {mappings.map((mapping) => (
                 <TableRow key={mapping.id} data-testid={`mapping-row-${mapping.id}`}>
                   <TableCell className="font-medium">{mapping.category}</TableCell>

@@ -286,9 +286,6 @@ export default function BankTransferModule() {
           <div className="flex justify-center py-8">
             <Loader2 className="animate-spin text-muted-foreground" />
           </div>
-        ) : transfers.length === 0 ? (
-          <EmptyState icon={ArrowRightLeft} title="Belum ada transfer antar rekening"
-            description={canManage ? 'Tekan “Transfer baru” untuk memindah uang antar rekening sendiri.' : 'Transfer antar rekening akan tampil di sini.'} />
         ) : (
           <Table className="md:min-w-0">
             <TableHeader>
@@ -304,6 +301,14 @@ export default function BankTransferModule() {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {transfers.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={canManage ? 8 : 7} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={ArrowRightLeft} title="Belum ada transfer antar rekening"
+                      description={canManage ? 'Tekan “Transfer baru” untuk memindah uang antar rekening sendiri.' : 'Transfer antar rekening akan tampil di sini.'} />
+                  </TableCell>
+                </TableRow>
+              )}
               {transfers.map(tf => {
                 const jeOpen = openJe === tf.id;
                 const toggleJe = () => setOpenJe(jeOpen ? null : tf.id);

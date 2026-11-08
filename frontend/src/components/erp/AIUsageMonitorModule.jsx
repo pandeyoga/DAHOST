@@ -297,8 +297,7 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
                       { label: 'Biaya (USD)', nilai: (f) => f.cost_usd },
                     ]} />
                 </KepalaBagian>
-                {today.top_features?.length > 0 ? (
-                  <Table>
+                <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Fitur</TableHead>
@@ -308,7 +307,15 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {today.top_features.map((f) => {
+                      {!(today.top_features?.length > 0) && (
+                        <TableRow className="hover:bg-transparent">
+                          <TableCell colSpan={4} className="p-0 [&>div]:py-8">
+                            <EmptyState icon={Sparkles} title="Belum ada panggilan AI hari ini"
+                              description="Statistik muncul setelah fitur AI (Asisten AI, ringkasan harian, dll.) dipakai." />
+                          </TableCell>
+                        </TableRow>
+                      )}
+                      {(today.top_features || []).map((f) => {
                         const pct = today.total_cost_usd > 0 ? (f.cost_usd / today.total_cost_usd * 100) : 0;
                         return (
                           <TableRow key={f.feature}>
@@ -320,11 +327,7 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
                         );
                       })}
                     </TableBody>
-                  </Table>
-                ) : (
-                  <EmptyState icon={Sparkles} className="py-8" title="Belum ada panggilan AI hari ini"
-                    description="Statistik muncul setelah fitur AI (Asisten AI, ringkasan harian, dll.) dipakai." />
-                )}
+                </Table>
               </GlassCard>
               <GlassCard className="space-y-3 p-4" data-testid="ai-usage-status">
                 <KepalaBagian judul="Status & anggaran" keterangan={`Hari ini, ${today.date}`}>
@@ -413,38 +416,41 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
                       { label: 'Biaya (USD)', nilai: (f) => f.cost_usd },
                     ]} />
                 </KepalaBagian>
-                {summary.by_feature?.length > 0 ? (
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Fitur</TableHead>
-                          <TableHead className="text-right">Panggilan</TableHead>
-                          <TableHead className="text-right">Berhasil</TableHead>
-                          <TableHead className="text-right">Gagal</TableHead>
-                          <TableHead className="hidden text-right md:table-cell">Token</TableHead>
-                          <TableHead className="hidden text-right md:table-cell">Waktu respons</TableHead>
-                          <TableHead className="text-right">Biaya</TableHead>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Fitur</TableHead>
+                        <TableHead className="text-right">Panggilan</TableHead>
+                        <TableHead className="text-right">Berhasil</TableHead>
+                        <TableHead className="text-right">Gagal</TableHead>
+                        <TableHead className="hidden text-right md:table-cell">Token</TableHead>
+                        <TableHead className="hidden text-right md:table-cell">Waktu respons</TableHead>
+                        <TableHead className="text-right">Biaya</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {!(summary.by_feature?.length > 0) && (
+                        <TableRow className="hover:bg-transparent">
+                          <TableCell colSpan={7} className="p-0 [&>div]:py-8">
+                            <EmptyState title="Belum ada panggilan AI pada periode ini" />
+                          </TableCell>
                         </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {summary.by_feature.map((f) => (
-                          <TableRow key={f.feature}>
-                            <TableCell className="font-medium" title={f.feature}>{labelFitur(f.feature, f.group)}</TableCell>
-                            <TableCell className="text-right tabular-nums">{fmtNum(f.calls)}</TableCell>
-                            <TableCell className="text-right tabular-nums">{fmtNum(f.successful)}</TableCell>
-                            <TableCell className={`text-right tabular-nums ${f.failed > 0 ? 'text-[hsl(var(--danger-text))]' : ''}`}>{fmtNum(f.failed)}</TableCell>
-                            <TableCell className="hidden text-right tabular-nums text-muted-foreground md:table-cell">{fmtNum(f.tokens)}</TableCell>
-                            <TableCell className="hidden text-right tabular-nums text-muted-foreground md:table-cell">{fmtNum(f.avg_latency_ms)} md</TableCell>
-                            <TableCell className="text-right font-medium tabular-nums">{fmtUSD(f.cost_usd)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ) : (
-                  <EmptyState className="py-8" title="Belum ada panggilan AI pada periode ini" />
-                )}
+                      )}
+                      {(summary.by_feature || []).map((f) => (
+                        <TableRow key={f.feature}>
+                          <TableCell className="font-medium" title={f.feature}>{labelFitur(f.feature, f.group)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{fmtNum(f.calls)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{fmtNum(f.successful)}</TableCell>
+                          <TableCell className={`text-right tabular-nums ${f.failed > 0 ? 'text-[hsl(var(--danger-text))]' : ''}`}>{fmtNum(f.failed)}</TableCell>
+                          <TableCell className="hidden text-right tabular-nums text-muted-foreground md:table-cell">{fmtNum(f.tokens)}</TableCell>
+                          <TableCell className="hidden text-right tabular-nums text-muted-foreground md:table-cell">{fmtNum(f.avg_latency_ms)} md</TableCell>
+                          <TableCell className="text-right font-medium tabular-nums">{fmtUSD(f.cost_usd)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </GlassCard>
 
               {summary.by_day?.length > 0 && (

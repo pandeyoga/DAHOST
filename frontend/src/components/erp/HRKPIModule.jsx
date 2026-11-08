@@ -665,66 +665,71 @@ export default function HRKPIModule({ token }) {
                   Ketik nilai kinerja (0–100) langsung di kolom isian, lalu klik "Simpan semua". Nilai kosong tidak disimpan.
                 </Notice>
               )}
-              {barisKinerja.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Karyawan</TableHead>
-                        <TableHead className="text-right">Nilai kinerja</TableHead>
-                        {bulkMode && <TableHead className="text-right">Isian baru</TableHead>}
-                        <TableHead>{bulkMode ? 'Catatan baru' : 'Catatan'}</TableHead>
-                        {!bulkMode && <TableHead />}
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Karyawan</TableHead>
+                      <TableHead className="text-right">Nilai kinerja</TableHead>
+                      {bulkMode && <TableHead className="text-right">Isian baru</TableHead>}
+                      <TableHead>{bulkMode ? 'Catatan baru' : 'Catatan'}</TableHead>
+                      {!bulkMode && <TableHead />}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {barisKinerja.length === 0 && (
+                      <TableRow className="hover:bg-transparent">
+                        <TableCell colSpan={4} className="p-0 [&>div]:py-8">
+                          <EmptyState title="Periode ini belum punya peserta" description="Tambahkan peserta lewat Ubah periode." />
+                        </TableCell>
                       </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {barisKinerja.map(({ empId, emp, perf }) => {
-                        const bulkVal = bulkScores[empId] || {};
-                        return (
-                          <TableRow key={empId}>
-                            <TableCell>
-                              <p className="font-medium">{emp?.name || 'Karyawan'}</p>
-                              <p className="text-xs text-muted-foreground">{emp?.employee_code || empId.slice(0, 8)}</p>
-                            </TableCell>
+                    )}
+                    {barisKinerja.map(({ empId, emp, perf }) => {
+                      const bulkVal = bulkScores[empId] || {};
+                      return (
+                        <TableRow key={empId}>
+                          <TableCell>
+                            <p className="font-medium">{emp?.name || 'Karyawan'}</p>
+                            <p className="text-xs text-muted-foreground">{emp?.employee_code || empId.slice(0, 8)}</p>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {perf ? <span className="font-semibold tabular-nums">{fmtScore(perf.perform_score)}</span>
+                              : <span className="text-sm text-muted-foreground">Belum diisi</span>}
+                          </TableCell>
+                          {bulkMode && (
                             <TableCell className="text-right">
-                              {perf ? <span className="font-semibold tabular-nums">{fmtScore(perf.perform_score)}</span>
-                                : <span className="text-sm text-muted-foreground">Belum diisi</span>}
+                              <Input type="number" min={0} max={100} step={0.5} className="ml-auto w-24 text-right"
+                                placeholder={perf?.perform_score?.toFixed(1) || '0–100'} value={bulkVal.perform_score ?? ''}
+                                onChange={e => setBulkScores(prev => ({ ...prev, [empId]: { ...prev[empId], perform_score: e.target.value } }))} />
                             </TableCell>
-                            {bulkMode && (
-                              <TableCell className="text-right">
-                                <Input type="number" min={0} max={100} step={0.5} className="ml-auto w-24 text-right"
-                                  placeholder={perf?.perform_score?.toFixed(1) || '0–100'} value={bulkVal.perform_score ?? ''}
-                                  onChange={e => setBulkScores(prev => ({ ...prev, [empId]: { ...prev[empId], perform_score: e.target.value } }))} />
-                              </TableCell>
-                            )}
-                            <TableCell className="text-sm text-muted-foreground">
-                              {bulkMode ? (
-                                <Input placeholder="Catatan" value={bulkVal.notes ?? ''}
-                                  onChange={e => setBulkScores(prev => ({ ...prev, [empId]: { ...prev[empId], notes: e.target.value } }))} />
-                              ) : (perf?.notes || '—')}
+                          )}
+                          <TableCell className="text-sm text-muted-foreground">
+                            {bulkMode ? (
+                              <Input placeholder="Catatan" value={bulkVal.notes ?? ''}
+                                onChange={e => setBulkScores(prev => ({ ...prev, [empId]: { ...prev[empId], notes: e.target.value } }))} />
+                            ) : (perf?.notes || '—')}
+                          </TableCell>
+                          {!bulkMode && (
+                            <TableCell className="text-right">
+                              <Button size="sm" variant="outline"
+                                onClick={() => setPerformDialog({
+                                  period_id: selectedPeriod.period_id,
+                                  employee_id: empId,
+                                  employee_name: emp?.name,
+                                  perform_score: perf?.perform_score || 0,
+                                  items: perf?.items || [{ label: 'KPI Utama', target: 100, actual: 0, score: 0, weight: 1 }],
+                                  notes: perf?.notes || '',
+                                })}>
+                                {perf ? <><Edit2 />Ubah</> : <><Plus />Isi</>}
+                              </Button>
                             </TableCell>
-                            {!bulkMode && (
-                              <TableCell className="text-right">
-                                <Button size="sm" variant="outline"
-                                  onClick={() => setPerformDialog({
-                                    period_id: selectedPeriod.period_id,
-                                    employee_id: empId,
-                                    employee_name: emp?.name,
-                                    perform_score: perf?.perform_score || 0,
-                                    items: perf?.items || [{ label: 'KPI Utama', target: 100, actual: 0, score: 0, weight: 1 }],
-                                    notes: perf?.notes || '',
-                                  })}>
-                                  {perf ? <><Edit2 />Ubah</> : <><Plus />Isi</>}
-                                </Button>
-                              </TableCell>
-                            )}
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
-              ) : <EmptyState title="Periode ini belum punya peserta" description="Tambahkan peserta lewat Ubah periode." />}
+                          )}
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
             </>
           )}
         </TabsContent>

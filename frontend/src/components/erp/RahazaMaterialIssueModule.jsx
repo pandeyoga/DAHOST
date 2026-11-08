@@ -533,92 +533,95 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
         </p>
       )}
       <GlassCard className="p-0 overflow-hidden">
-        {list.length === 0 ? (
-          <EmptyState icon={Package}
-            title={filterSource ? `Belum ada arus keluar dari sumber "${SOURCE_META[filterSource]?.label || filterSource}"` : 'Belum ada pengeluaran material'}
-            description="MI draf dibuat otomatis saat job produksi internal dibuat — gudang tinggal konfirmasi. MI manual juga bisa dibuat di sini, dan dokumen Cutting terbit sendiri saat progres potong dilaporkan."
-            action={
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              {filterSource && (
-                <Button size="sm" variant="outline" onClick={() => setFilterSource('')} data-testid="mi-empty-cta-clear-source">
-                  Tampilkan semua sumber
-                </Button>
-              )}
-              <Button size="sm" onClick={openCreate} data-testid="mi-empty-cta-create">
-                <Plus /> Buat MI
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>No. MI</TableHead>
+                <TableHead>Sumber</TableHead>
+                <TableHead>Acuan</TableHead>
+                <TableHead>Item</TableHead>
+                <TableHead className="text-right">Total qty</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Tanggal</TableHead>
+                <TableHead className="text-right">Aksi</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {list.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={8} className="p-0 [&>div]:py-8">
+        <EmptyState icon={Package}
+          title={filterSource ? `Belum ada arus keluar dari sumber "${SOURCE_META[filterSource]?.label || filterSource}"` : 'Belum ada pengeluaran material'}
+          description="MI draf dibuat otomatis saat job produksi internal dibuat — gudang tinggal konfirmasi. MI manual juga bisa dibuat di sini, dan dokumen Cutting terbit sendiri saat progres potong dilaporkan."
+          action={
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {filterSource && (
+              <Button size="sm" variant="outline" onClick={() => setFilterSource('')} data-testid="mi-empty-cta-clear-source">
+                Tampilkan semua sumber
               </Button>
-              {onNavigate && (
-                <Button size="sm" variant="outline" onClick={() => onNavigate('prod-work-orders')} data-testid="mi-empty-cta-wo" >
-                  Buka work order
-                </Button>
-              )}
-            </div>
-            } />
-        ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>No. MI</TableHead>
-                  <TableHead>Sumber</TableHead>
-                  <TableHead>Acuan</TableHead>
-                  <TableHead>Item</TableHead>
-                  <TableHead className="text-right">Total qty</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Tanggal</TableHead>
-                  <TableHead className="text-right">Aksi</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {list.map(mi => (
-                  <TableRow key={mi.id} data-testid={`mi-row-${mi.mi_number}`} className="cursor-pointer" onClick={() => openDetail(mi)}>
-                    <TableCell className="whitespace-nowrap">
-                      <Button variant="link" className="h-auto p-0 font-medium" onClick={(e) => { e.stopPropagation(); openDetail(mi); }}
-                        title="Lihat rincian" data-testid={`mi-detail-${mi.mi_number}`}>{mi.mi_number}</Button>
-                    </TableCell>
-                    <TableCell><SourceBadge mi={mi} /></TableCell>
-                    <TableCell className="text-sm">{refOf(mi) || <span className="text-muted-foreground">Manual</span>}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {mi.item_count} item
-                      {mi.first_material_code && <span className="block text-xs">{mi.first_material_code}</span>}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-right font-medium tabular-nums">
-                      {fmtQty(mi.total_required)}
-                      {mi.first_unit && <span className="ml-1 text-xs font-normal text-muted-foreground">{mi.first_unit}</span>}
-                    </TableCell>
-                    <TableCell><StatusMI status={mi.status} /></TableCell>
-                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{tglMI(mi)}</TableCell>
-                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                      <div className="inline-flex items-center gap-1">
-                        {/* FASE H-6b: dokumen Cutting tidak punya tombol Setujui/Hapus —
-                            kainnya sudah keluar; menyetujuinya akan memotong stok dua kali. */}
-                        {mi.source_key === 'cutting' && onNavigate && (
-                          <Button variant="ghost" size="icon-sm" onClick={() => onNavigate('cutting-orders')}
-                            title={`Buka order cutting ${mi.cutting_order_number || ''}`} aria-label="Buka order cutting"
-                            data-testid={`mi-open-cutting-${mi.mi_number}`}>
-                            <Scissors />
-                          </Button>
-                        )}
-                        {mi.status === 'draft' && (
-                          <>
-                            <Button size="sm" variant="outline" onClick={() => submitMI(mi)} title="Ajukan persetujuan" data-testid={`mi-submit-${mi.mi_number}`}><Send />Ajukan</Button>
-                            <Button variant="ghost" size="icon-sm" onClick={() => deleteMI(mi)} title="Hapus" aria-label="Hapus"><Trash2 /></Button>
-                          </>
-                        )}
-                        {mi.status === 'pending_approval' && (
-                          <>
-                            <Button size="sm" variant="success" onClick={() => approveMI(mi)} data-testid={`mi-approve-${mi.mi_number}`}><CheckCircle2 />Setujui</Button>
-                            <Button size="sm" variant="destructive" onClick={() => rejectMI(mi)} data-testid={`mi-reject-${mi.mi_number}`}><XCircle />Tolak</Button>
-                          </>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            )}
+            <Button size="sm" onClick={openCreate} data-testid="mi-empty-cta-create">
+              <Plus /> Buat MI
+            </Button>
+            {onNavigate && (
+              <Button size="sm" variant="outline" onClick={() => onNavigate('prod-work-orders')} data-testid="mi-empty-cta-wo" >
+                Buka work order
+              </Button>
+            )}
           </div>
-        )}
+          } />
+                  </TableCell>
+                </TableRow>
+              )}
+              {list.map(mi => (
+                <TableRow key={mi.id} data-testid={`mi-row-${mi.mi_number}`} className="cursor-pointer" onClick={() => openDetail(mi)}>
+                  <TableCell className="whitespace-nowrap">
+                    <Button variant="link" className="h-auto p-0 font-medium" onClick={(e) => { e.stopPropagation(); openDetail(mi); }}
+                      title="Lihat rincian" data-testid={`mi-detail-${mi.mi_number}`}>{mi.mi_number}</Button>
+                  </TableCell>
+                  <TableCell><SourceBadge mi={mi} /></TableCell>
+                  <TableCell className="text-sm">{refOf(mi) || <span className="text-muted-foreground">Manual</span>}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {mi.item_count} item
+                    {mi.first_material_code && <span className="block text-xs">{mi.first_material_code}</span>}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-right font-medium tabular-nums">
+                    {fmtQty(mi.total_required)}
+                    {mi.first_unit && <span className="ml-1 text-xs font-normal text-muted-foreground">{mi.first_unit}</span>}
+                  </TableCell>
+                  <TableCell><StatusMI status={mi.status} /></TableCell>
+                  <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{tglMI(mi)}</TableCell>
+                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="inline-flex items-center gap-1">
+                      {/* FASE H-6b: dokumen Cutting tidak punya tombol Setujui/Hapus —
+                          kainnya sudah keluar; menyetujuinya akan memotong stok dua kali. */}
+                      {mi.source_key === 'cutting' && onNavigate && (
+                        <Button variant="ghost" size="icon-sm" onClick={() => onNavigate('cutting-orders')}
+                          title={`Buka order cutting ${mi.cutting_order_number || ''}`} aria-label="Buka order cutting"
+                          data-testid={`mi-open-cutting-${mi.mi_number}`}>
+                          <Scissors />
+                        </Button>
+                      )}
+                      {mi.status === 'draft' && (
+                        <>
+                          <Button size="sm" variant="outline" onClick={() => submitMI(mi)} title="Ajukan persetujuan" data-testid={`mi-submit-${mi.mi_number}`}><Send />Ajukan</Button>
+                          <Button variant="ghost" size="icon-sm" onClick={() => deleteMI(mi)} title="Hapus" aria-label="Hapus"><Trash2 /></Button>
+                        </>
+                      )}
+                      {mi.status === 'pending_approval' && (
+                        <>
+                          <Button size="sm" variant="success" onClick={() => approveMI(mi)} data-testid={`mi-approve-${mi.mi_number}`}><CheckCircle2 />Setujui</Button>
+                          <Button size="sm" variant="destructive" onClick={() => rejectMI(mi)} data-testid={`mi-reject-${mi.mi_number}`}><XCircle />Tolak</Button>
+                        </>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       </GlassCard>
 
       {/* FASE H-2 — form Buat MI (dari job BOM / manual dari master) = FormPopup panjang */}

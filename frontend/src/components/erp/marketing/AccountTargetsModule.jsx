@@ -332,7 +332,6 @@ export default function AccountTargetsModule({ token, scope = 'marketing', modul
                 ]} />
             </div>
             {loading ? <p className="py-8 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Memuat…</p>
-            : !summary?.accounts?.length ? <EmptyState className="py-8" title="Belum ada akun aktif" />
             : (
               <div className="overflow-x-auto">
                 <Table data-testid="targets-table">
@@ -347,7 +346,12 @@ export default function AccountTargetsModule({ token, scope = 'marketing', modul
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {summary.accounts.map((row) => (
+                    {!summary?.accounts?.length && (
+                      <TableRow className="hover:bg-transparent">
+                        <TableCell colSpan={6} className="p-0 [&>div]:py-8"><EmptyState title="Belum ada akun aktif" /></TableCell>
+                      </TableRow>
+                    )}
+                    {(summary?.accounts || []).map((row) => (
                       <TableRow key={row.account_id} data-testid={`target-row-${row.account_code}`}>
                         <TableCell><AccountBadge account={row} size="xs" /></TableCell>
                         <TableCell className="text-right">
@@ -418,7 +422,6 @@ export default function AccountTargetsModule({ token, scope = 'marketing', modul
               </div>
             </div>
             {loadingCreator ? <p className="py-8 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Memuat…</p>
-            : !creatorSummary?.creators?.length ? <EmptyState className="py-8" title="Belum ada kreator aktif" />
             : (
               <div className="overflow-x-auto">
                 <Table data-testid="creator-targets-table">
@@ -432,7 +435,12 @@ export default function AccountTargetsModule({ token, scope = 'marketing', modul
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {creatorSummary.creators.map((row) => (
+                    {!creatorSummary?.creators?.length && (
+                      <TableRow className="hover:bg-transparent">
+                        <TableCell colSpan={5} className="p-0 [&>div]:py-8"><EmptyState title="Belum ada kreator aktif" /></TableCell>
+                      </TableRow>
+                    )}
+                    {(creatorSummary?.creators || []).map((row) => (
                       <TableRow key={row.creator_id} data-testid={`creator-target-row-${row.creator_code}`}>
                         <TableCell>
                           <div className="font-medium">{row.creator_name}</div>

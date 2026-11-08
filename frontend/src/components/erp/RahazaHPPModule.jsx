@@ -251,17 +251,6 @@ export default function RahazaHPPModule({ portalId, userRole, user }) {
       <GlassCard className="p-0 overflow-x-auto">
         {loading && !items.length ? (
           <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
-        ) : items.length === 0 ? (
-          <div data-testid="hpp-po-empty">
-            {filtered ? (
-              <EmptyState icon={Calculator} title="Tidak ada PO yang cocok dengan penyaring"
-                description="Ubah atau hapus penyaring untuk melihat PO lain."
-                action={<Button type="button" variant="outline" size="sm" onClick={resetFilters}>Tampilkan semua PO</Button>} />
-            ) : (
-              <EmptyState icon={Calculator} title="Belum ada PO dengan biaya"
-                description="HPP aktual muncul setelah PO dikonfirmasi dan bahan diserahkan ke CMT." />
-            )}
-          </div>
         ) : (
           <Table data-testid="hpp-po-table">
             <TableHeader><TableRow>
@@ -280,6 +269,20 @@ export default function RahazaHPPModule({ portalId, userRole, user }) {
               {showMargin && <TableHead className="text-right">Margin/pcs</TableHead>}
             </TableRow></TableHeader>
             <TableBody>
+              {items.length === 0 && (
+                <TableRow data-testid="hpp-po-empty" className="hover:bg-transparent">
+                  <TableCell colSpan={10 + (fixedType ? 0 : 1) + (showMargin ? 2 : 0)} className="p-0 [&>div]:py-8">
+                    {filtered ? (
+                      <EmptyState icon={Calculator} title="Tidak ada PO yang cocok dengan penyaring"
+                        description="Ubah atau hapus penyaring untuk melihat PO lain."
+                        action={<Button type="button" variant="outline" size="sm" onClick={resetFilters}>Tampilkan semua PO</Button>} />
+                    ) : (
+                      <EmptyState icon={Calculator} title="Belum ada PO dengan biaya"
+                        description="HPP aktual muncul setelah PO dikonfirmasi dan bahan diserahkan ke CMT." />
+                    )}
+                  </TableCell>
+                </TableRow>
+              )}
               {items.map((r) => (
                 <TableRow key={r.po_id} data-testid={`hpp-po-row-${r.po_number}`}
                   className={detail?.po_id === r.po_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
@@ -462,30 +465,33 @@ function PoHppDetail({ detail, canClear, onClose, onChanged }) {
       <p className="text-xs text-muted-foreground">Tarif jahit diubah di form PO (kolom upah jahit) sampai tagihan CMT terbit. {!maklon && 'Standar BOM = bahan BOM × harga master + tarif jahit — pembanding, bukan HPP.'}</p>
 
       <p className="text-sm font-semibold text-foreground">Bahan & aksesoris yang diserahkan ({(d.issue_lines || []).length})</p>
-      {(d.issue_lines || []).length === 0 ? (
-        <EmptyState icon={Calculator} className="py-6" title="Belum ada penyerahan bahan" description="Bahan tercatat saat Kirim ke CMT atau permintaan aksesoris untuk PO ini." />
-      ) : (
-        <Table data-testid="hpp-detail-issues">
-          <TableHeader><TableRow>
-            <TableHead>Dokumen</TableHead><TableHead>Barang</TableHead><TableHead>Jenis</TableHead>
-            <TableHead className="text-right">Qty</TableHead><TableHead className="text-right">Harga</TableHead>
-            <TableHead className="text-right">Nilai</TableHead><TableHead>Asal harga</TableHead>
-          </TableRow></TableHeader>
-          <TableBody>
-            {d.issue_lines.map((ln, i) => (
-              <TableRow key={`${ln.doc}-${ln.material_id}-${i}`}>
-                <TableCell className="text-xs whitespace-nowrap">{ln.doc || ln.source}</TableCell>
-                <TableCell>{ln.material_name || ln.material_code}<span className="block text-xs text-muted-foreground">{ln.material_code}</span></TableCell>
-                <TableCell><StatusBadge tone={KIND_TONE[ln.kind] || 'default'} label={ln.kind_label} /></TableCell>
-                <TableCell className="text-right tabular-nums whitespace-nowrap">{num(ln.qty)} {ln.unit}</TableCell>
-                <TableCell className="text-right tabular-nums">{rp(ln.unit_cost)}</TableCell>
-                <TableCell className="text-right tabular-nums">{rp(ln.value)}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">{ln.cost_source_label}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+      <Table data-testid="hpp-detail-issues">
+        <TableHeader><TableRow>
+          <TableHead>Dokumen</TableHead><TableHead>Barang</TableHead><TableHead>Jenis</TableHead>
+          <TableHead className="text-right">Qty</TableHead><TableHead className="text-right">Harga</TableHead>
+          <TableHead className="text-right">Nilai</TableHead><TableHead>Asal harga</TableHead>
+        </TableRow></TableHeader>
+        <TableBody>
+          {(d.issue_lines || []).length === 0 && (
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={7} className="p-0 [&>div]:py-6">
+                <EmptyState icon={Calculator} title="Belum ada penyerahan bahan" description="Bahan tercatat saat Kirim ke CMT atau permintaan aksesoris untuk PO ini." />
+              </TableCell>
+            </TableRow>
+          )}
+          {(d.issue_lines || []).map((ln, i) => (
+            <TableRow key={`${ln.doc}-${ln.material_id}-${i}`}>
+              <TableCell className="text-xs whitespace-nowrap">{ln.doc || ln.source}</TableCell>
+              <TableCell>{ln.material_name || ln.material_code}<span className="block text-xs text-muted-foreground">{ln.material_code}</span></TableCell>
+              <TableCell><StatusBadge tone={KIND_TONE[ln.kind] || 'default'} label={ln.kind_label} /></TableCell>
+              <TableCell className="text-right tabular-nums whitespace-nowrap">{num(ln.qty)} {ln.unit}</TableCell>
+              <TableCell className="text-right tabular-nums">{rp(ln.unit_cost)}</TableCell>
+              <TableCell className="text-right tabular-nums">{rp(ln.value)}</TableCell>
+              <TableCell className="text-xs text-muted-foreground">{ln.cost_source_label}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
 
       {!maklon && wip && !wip.error && (wip.groups || []).length > 0 && (
         <>

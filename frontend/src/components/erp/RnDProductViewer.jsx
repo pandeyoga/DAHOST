@@ -348,20 +348,19 @@ export default function RnDProductViewer() {
                     { label: 'Biaya per pcs (Rp)', nilai: (l) => Number(l.unit_cost || 0) },
                   ]} />
               )}>
-                {layers.length > 0 ? (<>
+                {layers.length > 0 && (
                   <p className="text-sm text-muted-foreground">
                     {SUMBER_HPP[det.hpp_layers?.source] || 'Sumber tidak diketahui'} · rata-rata {rp(det.hpp_layers?.hpp_fifo_avg)}
                     {' '}· batch terakhir {rp(det.hpp_layers?.hpp_last_batch)}
                   </p>
-                  <TabelData baris={layers} testId="rnd-detail-layers"
-                    kolom={[
-                      { kunci: 'po', label: 'Batch / PO', hp: 'judul', isi: (l) => l.batch?.po_number || '—' },
-                      { kunci: 'sisa', label: 'Sisa / masuk', rata: 'kanan', isi: (l) => <span className="tabular-nums">{l.qty_remaining}/{l.qty_in} pcs</span> },
-                      { kunci: 'biaya', label: 'Biaya per pcs', rata: 'kanan', isi: (l) => <span className="tabular-nums">{rp(l.unit_cost)}</span> },
-                    ]} />
-                </>) : (
-                  <p className="text-sm text-[hsl(var(--warning-text))]">Belum ada batch masuk gudang — HPP yang terlihat masih perkiraan BOM.</p>
                 )}
+                <TabelData baris={layers} testId="rnd-detail-layers"
+                  kosong={<EmptyState title="Belum ada batch masuk gudang" description="HPP yang terlihat masih perkiraan BOM." />}
+                  kolom={[
+                    { kunci: 'po', label: 'Batch / PO', hp: 'judul', isi: (l) => l.batch?.po_number || '—' },
+                    { kunci: 'sisa', label: 'Sisa / masuk', rata: 'kanan', isi: (l) => <span className="tabular-nums">{l.qty_remaining}/{l.qty_in} pcs</span> },
+                    { kunci: 'biaya', label: 'Biaya per pcs', rata: 'kanan', isi: (l) => <span className="tabular-nums">{rp(l.unit_cost)}</span> },
+                  ]} />
               </Seksi>
 
               <Seksi judul={`Katalog marketing (${katalog.length} item)`} alat={katalog.length > 0 && (
@@ -371,15 +370,12 @@ export default function RnDProductViewer() {
                     { label: 'Harga (Rp)', nilai: (c) => Number(c.harga_jual || c.unit_price || 0) },
                   ]} />
               )}>
-                {katalog.length > 0 ? (
-                  <TabelData baris={katalog} testId="rnd-detail-catalog"
-                    kolom={[
-                      { kunci: 'nama', label: 'Nama di katalog', hp: 'judul', isi: (c) => c.name || c.sku },
-                      { kunci: 'harga', label: 'Harga', rata: 'kanan', isi: (c) => <span className="tabular-nums">{rp(c.harga_jual || c.unit_price)}</span> },
-                    ]} />
-                ) : (
-                  <p className="text-sm text-[hsl(var(--warning-text))]">Belum pernah dimasukkan ke katalog toko mana pun.</p>
-                )}
+                <TabelData baris={katalog} testId="rnd-detail-catalog"
+                  kosong={<EmptyState title="Belum pernah dimasukkan ke katalog toko mana pun" />}
+                  kolom={[
+                    { kunci: 'nama', label: 'Nama di katalog', hp: 'judul', isi: (c) => c.name || c.sku },
+                    { kunci: 'harga', label: 'Harga', rata: 'kanan', isi: (c) => <span className="tabular-nums">{rp(c.harga_jual || c.unit_price)}</span> },
+                  ]} />
               </Seksi>
 
               <Seksi judul="BOM & model">

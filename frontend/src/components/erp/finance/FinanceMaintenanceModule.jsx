@@ -20,7 +20,7 @@ import TombolUnduh from '@/components/ui/tombol-unduh';
 import DetailPopup from '@/components/ui/detail-popup';
 import { toast } from 'sonner';
 import PageLayout from '../layout/PageLayout';
-import { StatusBadge } from '../moduleAtoms';
+import { EmptyState, StatusBadge } from '../moduleAtoms';
 import CronJobCard from '../CronJobCard';
 import { formatDateID, formatRupiah } from '@/lib/format';
 
@@ -89,7 +89,6 @@ function SubledgerBackfill() {
       + ((r.errors || []).length ? ` · ${r.errors.length} gagal` : '');
   };
   if (types === null) return <p className="text-sm text-muted-foreground">Memuat…</p>;
-  if (!types.length) return <p className="text-sm text-muted-foreground">Tidak ada jenis akun pembantu yang diatur.</p>;
   const baris = types.map(([key, cfg]) => ({ key, ...cfg }));
   return (
     <>
@@ -99,7 +98,8 @@ function SubledgerBackfill() {
         { label: 'Hasil terakhir', nilai: (t) => (res[t.key] ? hasil(t.key) : '') },
       ]} />
     </div>
-    <TabelData baris={baris} kunci={(t) => t.key} testId="maint-subledger-table" kolom={[
+    <TabelData baris={baris} kunci={(t) => t.key} testId="maint-subledger-table"
+      kosong={<EmptyState title="Tidak ada jenis akun pembantu yang diatur" />} kolom={[
       { kunci: 'label', label: 'Jenis akun pembantu', hp: 'judul', isi: (t) => (
         <span className="font-medium" data-testid={`maint-subledger-${t.key}`}>{t.label || t.key}</span>) },
       { kunci: 'status', label: 'Status', isi: (t) => (

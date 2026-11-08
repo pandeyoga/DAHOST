@@ -108,8 +108,6 @@ export default function KebutuhanBahan({ portalId }) {
       <GlassCard className="p-0 overflow-hidden">
         {loading && !pos.length ? (
           <div className="p-4 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin inline mr-2" />Memuat…</div>
-        ) : filtered.length === 0 ? (
-          <EmptyState icon={ClipboardList} title="Tidak ada PO pada penyaring ini" description="Pilih penyaring lain atau ubah kata pencarian." />
         ) : (
           <Table data-testid="kebutuhan-po-table">
             <TableHeader><TableRow>
@@ -118,6 +116,13 @@ export default function KebutuhanBahan({ portalId }) {
               <TableHead className="text-right">Aksi</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {filtered.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={7} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={ClipboardList} title="Tidak ada PO pada penyaring ini" description="Pilih penyaring lain atau ubah kata pencarian." />
+                  </TableCell>
+                </TableRow>
+              )}
               {paged.map((p) => (
                 <TableRow key={p.id} data-testid={`kebutuhan-po-${p.po_number}`}
                   className={detail?.po?.id === p.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
@@ -188,12 +193,7 @@ function NeedPanel({ detail, onClose }) {
           <ul className="list-disc pl-4 space-y-0.5">{notes.slice(0, 8).map((n, i) => <li key={i}>{n}</li>)}</ul>
         </Notice>
       )}
-      {rows.length === 0 ? (
-        <EmptyState icon={Info} title="Belum ada kebutuhan bahan untuk PO ini"
-          description={po.business_type === 'internal' ? 'Pastikan produk di PO punya BOM aktif untuk warna dan ukurannya.'
-            : 'Isi rencana bahan & aksesoris di form PO.'} />
-      ) : (
-        <div className="overflow-x-auto">
+      <div className="overflow-x-auto">
           <Table data-testid="kebutuhan-table">
             <TableHeader><TableRow>
               <TableHead>Jenis</TableHead><TableHead>Kode</TableHead><TableHead>Nama</TableHead><TableHead>Satuan</TableHead>
@@ -202,6 +202,15 @@ function NeedPanel({ detail, onClose }) {
               <TableHead className="text-right">Kurang</TableHead><TableHead>Keterangan</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {rows.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={10} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={Info} title="Belum ada kebutuhan bahan untuk PO ini"
+                      description={po.business_type === 'internal' ? 'Pastikan produk di PO punya BOM aktif untuk warna dan ukurannya.'
+                        : 'Isi rencana bahan & aksesoris di form PO.'} />
+                  </TableCell>
+                </TableRow>
+              )}
               {rows.map((r, i) => {
                 const [label, tone] = STATUS_LINE[r.status] || [r.status, 'muted'];
                 return (
@@ -224,7 +233,6 @@ function NeedPanel({ detail, onClose }) {
             </TableBody>
           </Table>
         </div>
-      )}
       <p className="text-xs text-muted-foreground">
         {po.business_type === 'internal'
           ? 'Dihitung dari BOM produk × qty PO — angka yang sama dipakai saat kirim ke CMT mengurangi stok.'

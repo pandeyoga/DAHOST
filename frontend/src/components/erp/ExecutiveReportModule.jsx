@@ -343,28 +343,31 @@ export default function ExecutiveReportModule({ user, headers }) {
                   { label: 'WO selesai', nilai: (r) => r.wo_completed },
                 ]} />
             )}>
-            {kpiComparison.length === 0 ? <EmptyState className="py-8" title="Belum ada data" /> : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Bulan</TableHead>
-                    <TableHead className="text-right">Pendapatan</TableHead>
-                    <TableHead className="text-right">Laba bersih</TableHead>
-                    <TableHead className="text-right">WO selesai</TableHead>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Bulan</TableHead>
+                  <TableHead className="text-right">Pendapatan</TableHead>
+                  <TableHead className="text-right">Laba bersih</TableHead>
+                  <TableHead className="text-right">WO selesai</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {kpiComparison.length === 0 && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={4} className="p-0 [&>div]:py-8"><EmptyState title="Belum ada data" /></TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {kpiComparison.map((r) => (
-                    <TableRow key={r.period}>
-                      <TableCell className="whitespace-nowrap">{labelBulan(r.period)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{FMT_IDR(r.revenue_rp)}</TableCell>
-                      <TableCell className={`text-right tabular-nums ${r.net_income_rp < 0 ? 'text-[hsl(var(--danger-text))]' : ''}`}>{FMT_IDR(r.net_income_rp)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{FMT_NUM(r.wo_completed)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
+                )}
+                {kpiComparison.map((r) => (
+                  <TableRow key={r.period}>
+                    <TableCell className="whitespace-nowrap">{labelBulan(r.period)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{FMT_IDR(r.revenue_rp)}</TableCell>
+                    <TableCell className={`text-right tabular-nums ${r.net_income_rp < 0 ? 'text-[hsl(var(--danger-text))]' : ''}`}>{FMT_IDR(r.net_income_rp)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{FMT_NUM(r.wo_completed)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </ChartCard>
         </div>)}
 
@@ -428,30 +431,33 @@ export default function ExecutiveReportModule({ user, headers }) {
                   { label: 'Total gaji (Rp)', nilai: (r) => r.payroll_total_rp },
                 ]} />
             )}>
-            {trend.length === 0 ? <EmptyState className="py-8" title="Belum ada data" /> : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Bulan</TableHead>
-                    <TableHead className="text-right">Pendapatan</TableHead>
-                    <TableHead className="text-right">Laba bersih</TableHead>
-                    <TableHead className="hidden text-right sm:table-cell">Kehadiran</TableHead>
-                    <TableHead className="hidden text-right sm:table-cell">Total gaji</TableHead>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Bulan</TableHead>
+                  <TableHead className="text-right">Pendapatan</TableHead>
+                  <TableHead className="text-right">Laba bersih</TableHead>
+                  <TableHead className="hidden text-right sm:table-cell">Kehadiran</TableHead>
+                  <TableHead className="hidden text-right sm:table-cell">Total gaji</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {trend.length === 0 && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={5} className="p-0 [&>div]:py-8"><EmptyState title="Belum ada data" /></TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {trend.map((r) => (
-                    <TableRow key={r.period}>
-                      <TableCell className="whitespace-nowrap">{labelBulan(r.period)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{FMT_IDR(r.revenue_rp)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{FMT_IDR(r.net_income_rp)}</TableCell>
-                      <TableCell className="hidden text-right tabular-nums sm:table-cell">{FMT_PCT(r.attendance_rate_pct)}</TableCell>
-                      <TableCell className="hidden text-right tabular-nums sm:table-cell">{FMT_IDR(r.payroll_total_rp)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
+                )}
+                {trend.map((r) => (
+                  <TableRow key={r.period}>
+                    <TableCell className="whitespace-nowrap">{labelBulan(r.period)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{FMT_IDR(r.revenue_rp)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{FMT_IDR(r.net_income_rp)}</TableCell>
+                    <TableCell className="hidden text-right tabular-nums sm:table-cell">{FMT_PCT(r.attendance_rate_pct)}</TableCell>
+                    <TableCell className="hidden text-right tabular-nums sm:table-cell">{FMT_IDR(r.payroll_total_rp)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </ChartCard>
         </div>)}
       </div>

@@ -195,9 +195,6 @@ export default function IntercompanyTransactionsModule() {
       <GlassCard className="p-0 overflow-hidden">
         {loading ? (
           <div className="flex justify-center py-8"><Loader2 className="animate-spin text-muted-foreground" /></div>
-        ) : rows.length === 0 ? (
-          <EmptyState icon={ArrowRightLeft} title="Belum ada transaksi antar CV"
-            description="Tekan “Transaksi baru” untuk mencatat talangan, pinjaman, uang nyasar, atau pelunasan." testId="ic-txn-empty" />
         ) : (
           <Table className="min-w-[760px] md:min-w-0">
             <TableHeader>
@@ -214,6 +211,14 @@ export default function IntercompanyTransactionsModule() {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {rows.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={9} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={ArrowRightLeft} title="Belum ada transaksi antar CV"
+                      description="Tekan “Transaksi baru” untuk mencatat talangan, pinjaman, uang nyasar, atau pelunasan." testId="ic-txn-empty" />
+                  </TableCell>
+                </TableRow>
+              )}
               {rows.map((t) => {
                 const open = openId === t.id;
                 return (

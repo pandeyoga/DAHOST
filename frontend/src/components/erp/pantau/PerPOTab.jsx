@@ -65,10 +65,7 @@ export default function PerPOTab(props) {
       footer={rows.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}
     >
       <Section>
-        {loading && !data ? <LoadingRows /> : rows.length === 0 ? (
-          <EmptyState icon={ClipboardList} title={q || state ? 'Tidak ada PO yang cocok' : 'Belum ada PO berjalan'}
-            description={q || state ? 'Ubah kata kunci atau status.' : 'PO yang dibuat di menu PO akan muncul di sini.'} />
-        ) : (
+        {loading && !data ? <LoadingRows /> : (
           <Table data-testid="pantau-po-table">
             <TableHeader><TableRow>
               <TableHead className="w-10" /><TableHead>PO</TableHead><TableHead>Vendor CMT</TableHead><TableHead>Batas kirim</TableHead>
@@ -80,6 +77,11 @@ export default function PerPOTab(props) {
               <TableHead>Status</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {rows.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={13} className="p-0 [&>div]:py-8"><EmptyState icon={ClipboardList} title={q || state ? 'Tidak ada PO yang cocok' : 'Belum ada PO berjalan'} description={q || state ? 'Ubah kata kunci atau status.' : 'PO yang dibuat di menu PO akan muncul di sini.'} /></TableCell>
+                </TableRow>
+              )}
               {paged.map((r) => {
                 const isOpen = open === r.po_id;
                 return (

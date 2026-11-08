@@ -1,15 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, FileBarChart } from 'lucide-react';
-import { GlassCard } from '@/components/ui/glass';
+import { RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { toast } from 'sonner';
 import TombolUnduh from '@/components/ui/tombol-unduh';
-import { EmptyState } from '../moduleAtoms';
 import PageLayout from '../layout/PageLayout';
 import IntercompanyNotes from './IntercompanyNotes';
 import StatementTable, { unduhanLaporan } from './StatementTable';
+import { EmptyState } from '../moduleAtoms';
 import { fmt, authHeaders, downloadXlsx, yearOptions } from './reportShared';
 
 const GROUPS = ['revenue', 'cogs', 'expense', 'other_income', 'other_expense'];
@@ -106,14 +105,10 @@ export default function RahazaPnLMonthlyModule({ token }) {
     >
       {loading ? (
         <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
-      ) : !hasData ? (
-        <GlassCard className="p-0">
-          <EmptyState icon={FileBarChart} testId="pnl12-empty" title={`Belum ada jurnal laba rugi di tahun ${year}`}
-            description="Laba rugi per bulan muncul setelah ada jurnal pendapatan atau beban yang terposting." />
-        </GlassCard>
       ) : (
-        <div data-testid="pnl12-table">
-          <StatementTable testId="pnl12" defaultOpen columns={columns} rows={rows} className={STICKY_LABEL} />
+        <div data-testid={hasData ? 'pnl12-table' : 'pnl12-empty'}>
+          <StatementTable testId="pnl12" defaultOpen columns={columns} rows={rows} className={STICKY_LABEL}
+            kosong={<EmptyState title={`Belum ada jurnal laba rugi tahun ${year}`} description="Laba rugi per bulan muncul setelah ada jurnal pendapatan atau beban yang terposting." />} />
         </div>
       )}
     </PageLayout>

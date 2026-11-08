@@ -66,7 +66,6 @@ export default function MyAnnualReviewModule({ token }) {
   const reviews = data?.reviews || [];
   const cycles = data?.cycles || [];
   const kpis = data?.kpis || [];
-  const kosongSemua = assignments.length === 0 && reviews.length === 0 && cycles.length === 0 && kpis.length === 0;
   const isReviewer = (a) => a.reviewer_id === (employee.id || employee.employee_code);
 
   return (
@@ -81,65 +80,59 @@ export default function MyAnnualReviewModule({ token }) {
       )}>
       {loading && !data ? (
         <p className="py-6 text-center text-sm text-muted-foreground">Memuat penilaian…</p>
-      ) : kosongSemua ? (
-        <EmptyState title="Belum ada data penilaian tahunan" description="Periode review dan hasil penilaian dari HR akan muncul di sini." />
       ) : (
         <>
-          {cycles.length > 0 && (
-            <Bagian judul="Periode review aktif" testId="annual-cycles">
-              <TabelData baris={cycles} kolom={[
-                { kunci: 'cycle_name', label: 'Periode', hp: 'judul', isi: (c) => <span className="font-medium">{c.cycle_name}</span> },
-                { kunci: 'mulai', label: 'Mulai', isi: (c) => tgl(c.start_date) },
-                { kunci: 'selesai', label: 'Selesai', isi: (c) => tgl(c.end_date) },
-                { kunci: 'status', label: 'Status', isi: (c) => <StatusBadge status={c.status} label={st(c.status).label} tone={st(c.status).tone} /> },
-              ]} />
-            </Bagian>
-          )}
+          <Bagian judul="Periode review aktif" testId="annual-cycles">
+            <TabelData baris={cycles} kolom={[
+              { kunci: 'cycle_name', label: 'Periode', hp: 'judul', isi: (c) => <span className="font-medium">{c.cycle_name}</span> },
+              { kunci: 'mulai', label: 'Mulai', isi: (c) => tgl(c.start_date) },
+              { kunci: 'selesai', label: 'Selesai', isi: (c) => tgl(c.end_date) },
+              { kunci: 'status', label: 'Status', isi: (c) => <StatusBadge status={c.status} label={st(c.status).label} tone={st(c.status).tone} /> },
+            ]}
+              kosong={<EmptyState title="Belum ada periode review aktif" description="Periode review dari HR akan muncul di sini." />} />
+          </Bagian>
 
-          {assignments.length > 0 && (
-            <Bagian judul="Tugas review saya" testId="annual-assignments"
-              alat={<TombolUnduh namaBerkas="tugas-review-saya" namaLembar="Tugas review" baris={assignments} kolom={[
-                { label: 'Peran', nilai: (a) => (isReviewer(a) ? 'Saya menilai' : 'Saya dinilai') },
-                { label: 'Pihak lain', nilai: (a) => (isReviewer(a) ? a.employee_id : a.reviewer_id) },
-                { label: 'Periode', nilai: (a) => a.review_period || '' }, { label: 'Status', nilai: (a) => st(a.status).label },
-              ]} />}>
-              <TabelData baris={assignments} kolom={[
-                { kunci: 'peran', label: 'Tugas', hp: 'judul', isi: (a) => (isReviewer(a) ? `Review untuk ${a.employee_id}` : `Direview oleh ${a.reviewer_id}`) },
-                { kunci: 'periode', label: 'Periode', isi: (a) => a.review_period || '—' },
-                { kunci: 'status', label: 'Status', isi: (a) => <StatusBadge status={a.status} label={st(a.status).label} tone={st(a.status).tone} /> },
-              ]} />
-            </Bagian>
-          )}
+          <Bagian judul="Tugas review saya" testId="annual-assignments"
+            alat={<TombolUnduh namaBerkas="tugas-review-saya" namaLembar="Tugas review" baris={assignments} kolom={[
+              { label: 'Peran', nilai: (a) => (isReviewer(a) ? 'Saya menilai' : 'Saya dinilai') },
+              { label: 'Pihak lain', nilai: (a) => (isReviewer(a) ? a.employee_id : a.reviewer_id) },
+              { label: 'Periode', nilai: (a) => a.review_period || '' }, { label: 'Status', nilai: (a) => st(a.status).label },
+            ]} />}>
+            <TabelData baris={assignments} kolom={[
+              { kunci: 'peran', label: 'Tugas', hp: 'judul', isi: (a) => (isReviewer(a) ? `Review untuk ${a.employee_id}` : `Direview oleh ${a.reviewer_id}`) },
+              { kunci: 'periode', label: 'Periode', isi: (a) => a.review_period || '—' },
+              { kunci: 'status', label: 'Status', isi: (a) => <StatusBadge status={a.status} label={st(a.status).label} tone={st(a.status).tone} /> },
+            ]}
+              kosong={<EmptyState title="Belum ada tugas review" description="Tugas review dari HR akan muncul di sini." />} />
+          </Bagian>
 
-          {reviews.length > 0 && (
-            <Bagian judul="Riwayat penilaian" testId="annual-reviews"
-              alat={<TombolUnduh namaBerkas="riwayat-penilaian-saya" namaLembar="Riwayat" baris={reviews} kolom={[
-                { label: 'Periode', nilai: (r) => r.review_period || '' }, { label: 'Dikirim', nilai: (r) => tgl(r.submitted_at) },
-                { label: 'Skor akhir', nilai: (r) => r.final_score ?? '' },
-              ]} />}>
-              <TabelData baris={reviews} onKlikBaris={setRincian} kolom={[
-                { kunci: 'periode', label: 'Periode', hp: 'judul', isi: (r) => <span className="font-medium">{r.review_period || '—'}</span> },
-                { kunci: 'dikirim', label: 'Dikirim', isi: (r) => tgl(r.submitted_at) },
-                { kunci: 'skor', label: 'Skor akhir', rata: 'kanan', isi: (r) => <span className="font-semibold tabular-nums">{r.final_score ?? '—'}</span> },
-                { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (r.criteria_scores && Object.keys(r.criteria_scores).length > 0
-                  ? <Button size="sm" variant="outline" onClick={() => setRincian(r)}>Rincian</Button> : null) },
-              ]} />
-            </Bagian>
-          )}
+          <Bagian judul="Riwayat penilaian" testId="annual-reviews"
+            alat={<TombolUnduh namaBerkas="riwayat-penilaian-saya" namaLembar="Riwayat" baris={reviews} kolom={[
+              { label: 'Periode', nilai: (r) => r.review_period || '' }, { label: 'Dikirim', nilai: (r) => tgl(r.submitted_at) },
+              { label: 'Skor akhir', nilai: (r) => r.final_score ?? '' },
+            ]} />}>
+            <TabelData baris={reviews} onKlikBaris={setRincian} kolom={[
+              { kunci: 'periode', label: 'Periode', hp: 'judul', isi: (r) => <span className="font-medium">{r.review_period || '—'}</span> },
+              { kunci: 'dikirim', label: 'Dikirim', isi: (r) => tgl(r.submitted_at) },
+              { kunci: 'skor', label: 'Skor akhir', rata: 'kanan', isi: (r) => <span className="font-semibold tabular-nums">{r.final_score ?? '—'}</span> },
+              { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (r.criteria_scores && Object.keys(r.criteria_scores).length > 0
+                ? <Button size="sm" variant="outline" onClick={() => setRincian(r)}>Rincian</Button> : null) },
+            ]}
+              kosong={<EmptyState title="Belum ada riwayat penilaian" description="Hasil penilaian dari HR akan muncul di sini." />} />
+          </Bagian>
 
-          {kpis.length > 0 && (
-            <Bagian judul="Sasaran KPI" testId="annual-kpis"
-              alat={<TombolUnduh namaBerkas="sasaran-kpi-saya" namaLembar="KPI" baris={kpis} kolom={[
-                { label: 'KPI', nilai: (k) => k.kpi_name || 'KPI' }, { label: 'Target', nilai: (k) => k.target_value ?? '' },
-                { label: 'Satuan', nilai: (k) => k.unit || '' }, { label: 'Realisasi', nilai: (k) => k.actual_value ?? '' },
-              ]} />}>
-              <TabelData baris={kpis} kolom={[
-                { kunci: 'nama', label: 'KPI', hp: 'judul', isi: (k) => k.kpi_name || 'KPI' },
-                { kunci: 'target', label: 'Target', rata: 'kanan', isi: (k) => <span className="tabular-nums">{k.target_value} {k.unit}</span> },
-                { kunci: 'realisasi', label: 'Realisasi', rata: 'kanan', isi: (k) => <span className="tabular-nums">{k.actual_value ?? '—'}</span> },
-              ]} />
-            </Bagian>
-          )}
+          <Bagian judul="Sasaran KPI" testId="annual-kpis"
+            alat={<TombolUnduh namaBerkas="sasaran-kpi-saya" namaLembar="KPI" baris={kpis} kolom={[
+              { label: 'KPI', nilai: (k) => k.kpi_name || 'KPI' }, { label: 'Target', nilai: (k) => k.target_value ?? '' },
+              { label: 'Satuan', nilai: (k) => k.unit || '' }, { label: 'Realisasi', nilai: (k) => k.actual_value ?? '' },
+            ]} />}>
+            <TabelData baris={kpis} kolom={[
+              { kunci: 'nama', label: 'KPI', hp: 'judul', isi: (k) => k.kpi_name || 'KPI' },
+              { kunci: 'target', label: 'Target', rata: 'kanan', isi: (k) => <span className="tabular-nums">{k.target_value} {k.unit}</span> },
+              { kunci: 'realisasi', label: 'Realisasi', rata: 'kanan', isi: (k) => <span className="tabular-nums">{k.actual_value ?? '—'}</span> },
+            ]}
+              kosong={<EmptyState title="Belum ada sasaran KPI" description="Sasaran KPI dari HR akan muncul di sini." />} />
+          </Bagian>
         </>
       )}
 

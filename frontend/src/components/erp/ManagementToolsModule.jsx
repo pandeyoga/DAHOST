@@ -200,32 +200,35 @@ function PermissionAuditTab() {
                   { label: 'Rincian', nilai: (l) => ringkasDiff(l.diff) },
                 ]} />
             </div>
-            {log.length === 0 ? (
-              <p className="py-4 text-center text-sm text-muted-foreground">Tidak ada perubahan izin dalam periode ini.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Tanggal</TableHead>
-                      <TableHead>Pengguna</TableHead>
-                      <TableHead>Perubahan</TableHead>
-                      <TableHead className="hidden md:table-cell">Rincian</TableHead>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Tanggal</TableHead>
+                    <TableHead>Pengguna</TableHead>
+                    <TableHead>Perubahan</TableHead>
+                    <TableHead className="hidden md:table-cell">Rincian</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {log.length === 0 && (
+                    <TableRow className="hover:bg-transparent">
+                      <TableCell colSpan={4} className="p-0 [&>div]:py-8">
+                        <EmptyState title="Tidak ada perubahan izin dalam periode ini" />
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {log.map((l, i) => (
-                      <TableRow key={i}>
-                        <TableCell className="whitespace-nowrap">{tgl(l.timestamp)}</TableCell>
-                        <TableCell>{l.user_name || l.user_id}</TableCell>
-                        <TableCell>{manusiawi(l.action)} — {manusiawi(l.entity_type)}</TableCell>
-                        <TableCell className="hidden max-w-md text-sm text-muted-foreground md:table-cell">{ringkasDiff(l.diff) || '—'}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
+                  )}
+                  {log.map((l, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="whitespace-nowrap">{tgl(l.timestamp)}</TableCell>
+                      <TableCell>{l.user_name || l.user_id}</TableCell>
+                      <TableCell>{manusiawi(l.action)} — {manusiawi(l.entity_type)}</TableCell>
+                      <TableCell className="hidden max-w-md text-sm text-muted-foreground md:table-cell">{ringkasDiff(l.diff) || '—'}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           </GlassCard>
 
           <GlassCard className="space-y-3 p-4">

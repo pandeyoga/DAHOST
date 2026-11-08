@@ -31,7 +31,7 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { monthOptions } from '../finance/PeriodPicker';
-import { Notice, StatTile, StatusBadge } from '../moduleAtoms';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -359,10 +359,7 @@ export default function AccessoryValuationAutomation({ token, onChanged }) {
             </div>
             {openHistory && (
               <div data-testid="acc-report-history">
-                {runs.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Rapor belum pernah dikirim.</p>
-                ) : (
-                  <Table>
+                <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Waktu</TableHead>
@@ -373,6 +370,13 @@ export default function AccessoryValuationAutomation({ token, onChanged }) {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
+                      {runs.length === 0 && (
+                        <TableRow className="hover:bg-transparent">
+                          <TableCell colSpan={5} className="p-0 [&>div]:py-8">
+                            <EmptyState title="Rapor belum pernah dikirim" />
+                          </TableCell>
+                        </TableRow>
+                      )}
                       {runs.slice(0, 8).map((r) => (
                         <TableRow key={r.id}>
                           <TableCell className="whitespace-nowrap">{fmtDateTime(r.created_at)}</TableCell>
@@ -388,7 +392,6 @@ export default function AccessoryValuationAutomation({ token, onChanged }) {
                       ))}
                     </TableBody>
                   </Table>
-                )}
               </div>
             )}
           </div>

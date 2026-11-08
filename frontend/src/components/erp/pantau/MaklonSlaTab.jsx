@@ -70,9 +70,7 @@ export default function MaklonSlaTab() {
       </>}
     >
       <Section>
-        {loading && !data ? <LoadingRows /> : items.length === 0 ? (
-          <EmptyState icon={Users} title="Belum ada order dalam periode ini" description="Pilih periode yang lebih panjang untuk melihat SLA per klien." />
-        ) : (
+        {loading && !data ? <LoadingRows /> : (
           <Table data-testid="sla-table">
             <TableHeader><TableRow>
               <TableHead className="w-10" /><TableHead>Klien</TableHead><TableHead className="text-right">Order</TableHead>
@@ -81,6 +79,11 @@ export default function MaklonSlaTab() {
               <TableHead className="text-right">Rata-rata hari</TableHead><TableHead>Status</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {items.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={9} className="p-0 [&>div]:py-8"><EmptyState icon={Users} title="Belum ada order dalam periode ini" description="Pilih periode yang lebih panjang untuk melihat SLA per klien." /></TableCell>
+                </TableRow>
+              )}
               {items.map((c, i) => {
                 const key = c.client_id || String(i);
                 const isOpen = open === key;

@@ -128,10 +128,6 @@ export default function PermintaanTab({ portalId, userRole }) {
       <GlassCard className="p-0 overflow-x-auto">
         {loading && !rows.length ? (
           <div className="p-4 text-sm text-muted-foreground"><RefreshCw className="w-4 h-4 animate-spin inline mr-2" />Memuat permintaan…</div>
-        ) : rows.length === 0 ? (
-          <EmptyState icon={Inbox} testId="permintaan-empty"
-            title={status === 'menunggu' ? 'Tidak ada permintaan yang menunggu' : 'Tidak ada permintaan yang cocok'}
-            description="Permintaan dari vendor (kurang/cacat) dan input staf muncul di sini." />
         ) : (
           <Table data-testid="permintaan-table">
             <TableHeader><TableRow>
@@ -140,6 +136,15 @@ export default function PermintaanTab({ portalId, userRole }) {
               <TableHead className="text-right">Aksi</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {rows.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={9} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={Inbox} testId="permintaan-empty"
+                      title={status === 'menunggu' ? 'Tidak ada permintaan yang menunggu' : 'Tidak ada permintaan yang cocok'}
+                      description="Permintaan dari vendor (kurang/cacat) dan input staf muncul di sini." />
+                  </TableCell>
+                </TableRow>
+              )}
               {rows.map((r) => (
                 <TableRow key={r.key} data-testid={`permintaan-row-${r.number}`}
                   className={open && `${open.src}:${open.id}` === r.key ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>

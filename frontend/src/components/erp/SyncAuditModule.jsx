@@ -274,8 +274,9 @@ export default function SyncAuditModule({ onNavigate }) {
                     ]} />
                 )}>
                 <MetricGrid metrics={sec.metrics} bagian={key} />
-                {rujukan.length > 0 && (
+                {key === 'E' && (
                   <TabelData baris={rujukan} kunci={(r) => `${r.collection}.${r.field}`} testId="sync-rujukan"
+                    kosong={<EmptyState title="Belum ada rujukan yang diperiksa" />}
                     kolom={[
                       { kunci: 'note', label: 'Rujukan', hp: 'judul', isi: (r) => <span title={`${r.collection}.${r.field}`}>{r.note}</span> },
                       { kunci: 'docs', label: 'Dokumen', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmt(r.docs)}</span> },

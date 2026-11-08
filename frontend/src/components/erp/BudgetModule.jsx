@@ -280,14 +280,19 @@ export default function BudgetModule({ token }) {
         <input ref={importRef} type="file" accept=".xlsx,.xls" className="hidden" id="import-budget" onChange={handleImport} />
         {showVar ? (
           <VarianceView variance={variance} />
-        ) : items.length === 0 ? (
-          <EmptyState icon={FileText} title="Belum ada item anggaran" description="Tambah item satu per satu atau impor dari Excel." />
         ) : (
           <Table className="md:min-w-0" data-testid="budget-items-table">
             <TableHeader>
               <TableRow><TableHead>Akun</TableHead><TableHead className="text-right">Anggaran</TableHead><TableHead>Catatan</TableHead><TableHead className="w-10" /></TableRow>
             </TableHeader>
             <TableBody>
+              {items.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={4} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={FileText} title="Belum ada item anggaran" description="Tambah item satu per satu atau impor dari Excel." />
+                  </TableCell>
+                </TableRow>
+              )}
               {Object.keys(itemsByMonth).sort().map(month => (
                 <Fragment key={month}>
                   <TableRow className="bg-muted/40">
@@ -379,9 +384,6 @@ export default function BudgetModule({ token }) {
       <GlassCard className="p-0 overflow-hidden">
         {loading ? (
           <Skeleton className="h-40 m-4" />
-        ) : budgets.length === 0 ? (
-          <EmptyState icon={BarChart2} title={`Belum ada anggaran ${filterYear}`}
-            description="Buat anggaran pertama lewat tombol Anggaran baru." />
         ) : (
           <div className="overflow-x-auto">
             <Table className="w-full md:min-w-0" data-testid="budget-table">
@@ -397,6 +399,14 @@ export default function BudgetModule({ token }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {budgets.length === 0 && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={7} className="p-0 [&>div]:py-8">
+                      <EmptyState icon={BarChart2} title={`Belum ada anggaran ${filterYear}`}
+                        description="Buat anggaran pertama lewat tombol Anggaran baru." />
+                    </TableCell>
+                  </TableRow>
+                )}
                 {budgets.map(b => {
                   const st = STATUS_MAP[b.status] || STATUS_MAP.draft;
                   const open = selected?.id === b.id;
@@ -512,32 +522,35 @@ function VarianceView({ variance }) {
           </div>
         ))}
       </dl>
-      {vrows.length === 0 ? (
-        <EmptyState icon={BarChart2} title="Belum ada realisasi untuk dibandingkan" description="Realisasi muncul setelah ada jurnal pada akun yang dianggarkan." />
-      ) : (
-        <Table className="md:min-w-0" data-testid="budget-variance-table">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Bulan</TableHead><TableHead>Akun</TableHead><TableHead className="text-right">Anggaran</TableHead>
-              <TableHead className="text-right">Realisasi</TableHead><TableHead className="text-right">Selisih</TableHead><TableHead className="text-right">%</TableHead><TableHead>Status</TableHead>
+      <Table className="md:min-w-0" data-testid="budget-variance-table">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Bulan</TableHead><TableHead>Akun</TableHead><TableHead className="text-right">Anggaran</TableHead>
+            <TableHead className="text-right">Realisasi</TableHead><TableHead className="text-right">Selisih</TableHead><TableHead className="text-right">%</TableHead><TableHead>Status</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {vrows.length === 0 && (
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={7} className="p-0 [&>div]:py-8">
+                <EmptyState icon={BarChart2} title="Belum ada realisasi untuk dibandingkan" description="Realisasi muncul setelah ada jurnal pada akun yang dianggarkan." />
+              </TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {vrows.map((r, i) => (
-              <TableRow key={i}>
-                <TableCell className="whitespace-nowrap">{periodLabel(r.month)}</TableCell>
-                <TableCell>{r.account_code} <span className="text-muted-foreground">{r.account_name}</span></TableCell>
-                <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(r.amount_budgeted)}</TableCell>
-                <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(r.amount_actual)}</TableCell>
-                <TableCell className={`text-right tabular-nums whitespace-nowrap font-medium ${signClass(r.variance)}`}>{fmtRp(r.variance)}</TableCell>
-                <TableCell className={`text-right tabular-nums ${signClass(r.variance)}`}>{formatPercent(r.variance_pct, 1)}</TableCell>
-                {/* 2026-11-02 (audit No.53): baris pendapatan memakai label target (di atas = baik) */}
-                <TableCell><StatusBadge tone={varianceTone(r.status)} label={BUDGET_STATUS_LABEL[r.status] || 'Sesuai anggaran'} /></TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+          )}
+          {vrows.map((r, i) => (
+            <TableRow key={i}>
+              <TableCell className="whitespace-nowrap">{periodLabel(r.month)}</TableCell>
+              <TableCell>{r.account_code} <span className="text-muted-foreground">{r.account_name}</span></TableCell>
+              <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(r.amount_budgeted)}</TableCell>
+              <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(r.amount_actual)}</TableCell>
+              <TableCell className={`text-right tabular-nums whitespace-nowrap font-medium ${signClass(r.variance)}`}>{fmtRp(r.variance)}</TableCell>
+              <TableCell className={`text-right tabular-nums ${signClass(r.variance)}`}>{formatPercent(r.variance_pct, 1)}</TableCell>
+              {/* 2026-11-02 (audit No.53): baris pendapatan memakai label target (di atas = baik) */}
+              <TableCell><StatusBadge tone={varianceTone(r.status)} label={BUDGET_STATUS_LABEL[r.status] || 'Sesuai anggaran'} /></TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </div>
   );
 }

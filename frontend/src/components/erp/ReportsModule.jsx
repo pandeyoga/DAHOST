@@ -556,9 +556,6 @@ export default function ReportsModule({ token }) {
 
         {loading ? (
           <p className="py-6 text-center text-sm text-muted-foreground">Memuat laporan…</p>
-        ) : !data.length ? (
-          <EmptyState icon={FileText} className="py-6" title="Tidak ada data untuk laporan ini"
-            description="Coba ubah domain, periode, atau status." />
         ) : (
           <div className="overflow-x-auto">
             <Table>
@@ -573,6 +570,14 @@ export default function ReportsModule({ token }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {!data.length && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={kolom.length + 1} className="p-0 [&>div]:py-8">
+                      <EmptyState icon={FileText} title="Tidak ada data untuk laporan ini"
+                        description="Coba ubah domain, periode, atau status." />
+                    </TableCell>
+                  </TableRow>
+                )}
                 {data.map((row, i) => (
                   <TableRow key={i}>
                     <TableCell className="text-muted-foreground tabular-nums">{((page - 1) * limit) + i + 1}</TableCell>

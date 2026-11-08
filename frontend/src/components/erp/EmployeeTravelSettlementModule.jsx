@@ -834,29 +834,34 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
         {showCreate && !selectedTravel && (
           <DetailPanel title="Pilih perjalanan dinas" description="Perjalanan dinas yang uang mukanya belum diselesaikan."
             onClose={() => setShowCreate(false)} testId="settlement-trip-picker">
-            {myTrips.length === 0 ? (
-              <EmptyState icon={MapPin} title="Tidak ada perjalanan dinas yang bisa diselesaikan"
-                description="Perjalanan dinas muncul di sini setelah disetujui atau uang mukanya dibayar." />
-            ) : (
-              <Table className="md:min-w-0">
-                <TableHeader><TableRow>
-                  <TableHead>Nomor</TableHead><TableHead>Tujuan</TableHead>
-                  <TableHead>Tanggal</TableHead><TableHead className="text-right">Uang muka</TableHead><TableHead />
-                </TableRow></TableHeader>
-                <TableBody>{myTrips.map(tr => (
-                  <TableRow key={tr.id} className="cursor-pointer" onClick={() => setSelectedTravel(tr)}
-                    data-testid={`settlement-trip-${tr.id}`}>
-                    <TableCell className="whitespace-nowrap">{tr.trip_number}</TableCell>
-                    <TableCell className="font-medium">{tr.destination}</TableCell>
-                    <TableCell className="whitespace-nowrap">{fmtDate(tr.start_date)} – {fmtDate(tr.end_date)}</TableCell>
-                    <TableCell className="text-right tabular-nums whitespace-nowrap font-semibold">{fmt(tr.cash_advance_paid || tr.cash_advance_approved || 0)}</TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setSelectedTravel(tr); }}>Pilih</Button>
+            <Table className="md:min-w-0">
+              <TableHeader><TableRow>
+                <TableHead>Nomor</TableHead><TableHead>Tujuan</TableHead>
+                <TableHead>Tanggal</TableHead><TableHead className="text-right">Uang muka</TableHead><TableHead />
+              </TableRow></TableHeader>
+              <TableBody>
+                {myTrips.length === 0 && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={5} className="p-0 [&>div]:py-8">
+                      <EmptyState icon={MapPin} title="Tidak ada perjalanan dinas yang bisa diselesaikan"
+                        description="Perjalanan dinas muncul di sini setelah disetujui atau uang mukanya dibayar." />
                     </TableCell>
                   </TableRow>
-                ))}</TableBody>
-              </Table>
-            )}
+                )}
+                {myTrips.map(tr => (
+                <TableRow key={tr.id} className="cursor-pointer" onClick={() => setSelectedTravel(tr)}
+                  data-testid={`settlement-trip-${tr.id}`}>
+                  <TableCell className="whitespace-nowrap">{tr.trip_number}</TableCell>
+                  <TableCell className="font-medium">{tr.destination}</TableCell>
+                  <TableCell className="whitespace-nowrap">{fmtDate(tr.start_date)} – {fmtDate(tr.end_date)}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap font-semibold">{fmt(tr.cash_advance_paid || tr.cash_advance_approved || 0)}</TableCell>
+                  <TableCell className="text-right">
+                    <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setSelectedTravel(tr); }}>Pilih</Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+              </TableBody>
+            </Table>
           </DetailPanel>
         )}
         {selected && (
@@ -901,16 +906,6 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
             <div className="flex items-center justify-center h-48">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--primary))]" />
             </div>
-          ) : filteredItems.length === 0 ? (
-            settlements.length === 0 ? (
-              <EmptyState icon={FileText} title="Belum ada penyelesaian perjalanan dinas"
-                description={myTrips.length > 0
-                  ? 'Tekan "Penyelesaian baru" untuk mencocokkan biaya aktual dengan uang muka.'
-                  : 'Penyelesaian dibuat setelah karyawan pulang dinas.'} />
-            ) : (
-              <EmptyState icon={Search} title="Tidak ada penyelesaian yang cocok"
-                description="Ubah periode, status, atau pencarian." />
-            )
           ) : (
             <>
               <div className="overflow-x-auto">
@@ -937,6 +932,21 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
                     </TableRow>
                   </TableHeader>
                   <TableBody>
+                    {filteredItems.length === 0 && (
+                      <TableRow className="hover:bg-transparent">
+                        <TableCell colSpan={canSelect ? 9 : 8} className="p-0 [&>div]:py-8">
+                          {settlements.length === 0 ? (
+                            <EmptyState icon={FileText} title="Belum ada penyelesaian perjalanan dinas"
+                              description={myTrips.length > 0
+                                ? 'Tekan "Penyelesaian baru" untuk mencocokkan biaya aktual dengan uang muka.'
+                                : 'Penyelesaian dibuat setelah karyawan pulang dinas.'} />
+                          ) : (
+                            <EmptyState icon={Search} title="Tidak ada penyelesaian yang cocok"
+                              description="Ubah periode, status, atau pencarian." />
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    )}
                     {paged.map(s => {
                       const diff = s.difference || 0;
                       const stlType = s.settlement_type || 'exact';

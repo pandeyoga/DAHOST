@@ -157,16 +157,21 @@ export default function RahazaCashAccountsModule({ token }) {
           ]} />
       }
     >
-      {mutInfo && movements.length === 0 ? (
-        <EmptyState icon={Wallet} title="Belum ada mutasi" description="Mutasi muncul setelah ada jurnal yang memakai rekening ini." />
-      ) : (
-        <Table className="md:min-w-0" data-testid="ca-mutations-table">
+      <Table className="md:min-w-0" data-testid="ca-mutations-table">
           <TableHeader><TableRow>
             <TableHead className="w-10" /><TableHead>Tanggal</TableHead><TableHead>Jurnal</TableHead>
             <TableHead className="hidden md:table-cell">Jenis</TableHead><TableHead>Keterangan</TableHead>
             <TableHead className="text-right">Masuk</TableHead><TableHead className="text-right">Keluar</TableHead><TableHead className="text-right">Saldo</TableHead>
           </TableRow></TableHeader>
-          <TableBody>{movements.map((m) => {
+          <TableBody>
+            {mutInfo && movements.length === 0 && (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={8} className="p-0 [&>div]:py-8">
+                  <EmptyState icon={Wallet} title="Belum ada mutasi" description="Mutasi muncul setelah ada jurnal yang memakai rekening ini." />
+                </TableCell>
+              </TableRow>
+            )}
+            {movements.map((m) => {
             const open = openJe === m.id;
             const toggle = () => setOpenJe(open ? null : m.id);
             return (
@@ -189,7 +194,6 @@ export default function RahazaCashAccountsModule({ token }) {
           })}
           </TableBody>
         </Table>
-      )}
       {mutPages > 1 && (
         <PaginationLite page={mutPage} totalPages={mutPages} total={mutInfo?.count || 0} pageSize={MUT_PAGE}
           onPageChange={(p) => fetchMovements(selected.id, p)} />
@@ -230,15 +234,19 @@ export default function RahazaCashAccountsModule({ token }) {
       )}
     >
       <GlassCard className="p-0 overflow-hidden">
-        {accounts.length === 0 && !loading ? (
-          <EmptyState icon={Wallet} title="Belum ada rekening" description="Tambahkan rekening kas atau bank untuk mulai mencatat mutasi." />
-        ) : (
           <div className="overflow-x-auto">
             <Table className="w-full md:min-w-0" data-testid="ca-table">
               <TableHeader>
                 <TableRow><TableHead className="text-left">Rekening</TableHead><TableHead className="text-left hidden md:table-cell">No. rekening</TableHead><TableHead className="text-left hidden md:table-cell">Milik</TableHead><TableHead className="text-right">Saldo</TableHead><TableHead className="text-right hidden sm:table-cell">Mutasi</TableHead><TableHead className="w-12" /></TableRow>
               </TableHeader>
               <TableBody>
+                {accounts.length === 0 && !loading && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={6} className="p-0 [&>div]:py-8">
+                      <EmptyState icon={Wallet} title="Belum ada rekening" description="Tambahkan rekening kas atau bank untuk mulai mencatat mutasi." />
+                    </TableCell>
+                  </TableRow>
+                )}
                 {groups.map((g) => (
                   <Fragment key={g.name}>
                     <TableRow className="bg-[hsl(var(--muted))]/50">
@@ -283,7 +291,6 @@ export default function RahazaCashAccountsModule({ token }) {
               </TableBody>
             </Table>
           </div>
-        )}
       </GlassCard>
       {editing && <CAEditor value={editing} onClose={() => setEditing(null)} onSave={save} headers={headers} />}
     </PageLayout>

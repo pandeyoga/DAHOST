@@ -368,9 +368,6 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
             <BuyerShortTable rows={shortRows} onResolve={setResolveBShort} />
           ) : loading && !shipments.length ? (
             <div className="p-4 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin inline mr-2" />Memuat…</div>
-          ) : filteredShipments.length === 0 ? (
-            <EmptyState icon={Package} title="Belum ada surat jalan pada penyaring ini"
-              description={canEdit ? 'Buat surat jalan dari barang yang sudah lolos QC.' : 'Surat jalan muncul setelah barang lolos QC dikirim.'} />
           ) : (
             <Table data-testid="buyer-shipment-table">
               <TableHeader><TableRow>
@@ -379,6 +376,14 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                 <TableHead>Progres pengiriman</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Aksi</TableHead>
               </TableRow></TableHeader>
               <TableBody>
+              {filteredShipments.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={7} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={Package} title="Belum ada surat jalan pada penyaring ini"
+                      description={canEdit ? 'Buat surat jalan dari barang yang sudah lolos QC.' : 'Surat jalan muncul setelah barang lolos QC dikirim.'} />
+                  </TableCell>
+                </TableRow>
+              )}
                 {paged.map((row) => {
                   const nums = row.po_numbers?.length ? row.po_numbers : (row.po_number ? [row.po_number] : []);
                   const pct = row.progress_pct || 0;
@@ -563,9 +568,6 @@ function CogsCell({ item }) {
 /* ── Kekurangan kirim: papan per PO + rincian per item ───────────────────── */
 function OutstandingView({ loading, rows, poBoard, canEdit, onDispatch }) {
   if (loading) return <div className="p-4 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin inline mr-2" />Memuat…</div>;
-  if (!rows.length) {
-    return <EmptyState icon={CheckCircle} testId="outstanding-empty" title="Tidak ada kekurangan kirim" description="Semua item sudah terkirim penuh." />;
-  }
   return (
     <div data-testid="dispatch-outstanding-panel">
       <p className="px-4 pt-3 text-xs text-muted-foreground">
@@ -579,6 +581,13 @@ function OutstandingView({ loading, rows, poBoard, canEdit, onDispatch }) {
           <TableHead className="text-right">Sisa bisa kirim</TableHead><TableHead>Surat jalan berjalan</TableHead><TableHead className="text-right">Aksi</TableHead>
         </TableRow></TableHeader>
         <TableBody>
+          {rows.length === 0 && (
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={8} className="p-0 [&>div]:py-8">
+                <EmptyState icon={CheckCircle} testId="outstanding-empty" title="Tidak ada kekurangan kirim" description="Semua item sudah terkirim penuh." />
+              </TableCell>
+            </TableRow>
+          )}
           {poBoard.map((g) => (
             <TableRow key={g.key} data-testid={`po-board-row-${g.po_number}`}>
               <TableCell className="font-medium whitespace-nowrap">{g.po_number}</TableCell>
@@ -611,6 +620,13 @@ function OutstandingView({ loading, rows, poBoard, canEdit, onDispatch }) {
           <TableHead className="text-right">Dikirim</TableHead><TableHead className="text-right">Sisa bisa kirim</TableHead><TableHead className="text-right">Stok barang jadi</TableHead>
         </TableRow></TableHeader>
         <TableBody>
+          {rows.length === 0 && (
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={10} className="p-0 [&>div]:py-8">
+                <EmptyState title="Belum ada item" />
+              </TableCell>
+            </TableRow>
+          )}
           {rows.map((r) => (
             <TableRow key={r.key} data-testid={`outstanding-row-${r.sku || r.key}`}>
               <TableCell className="whitespace-nowrap">{r.po_number || '—'}</TableCell>
@@ -641,7 +657,6 @@ function OutstandingView({ loading, rows, poBoard, canEdit, onDispatch }) {
 
 /* ── Barang belum sampai di penerima ─────────────────────────────────────── */
 function BuyerShortTable({ rows, onResolve }) {
-  if (!rows.length) return <EmptyState icon={PackageSearch} title="Tidak ada barang yang belum sampai" description="Selisih terima muncul di sini setelah qty diterima dicatat." />;
   return (
     <Table data-testid="buyer-short-table">
       <TableHeader><TableRow>
@@ -650,6 +665,13 @@ function BuyerShortTable({ rows, onResolve }) {
         <TableHead className="text-right">Belum sampai</TableHead><TableHead className="text-right">Aksi</TableHead>
       </TableRow></TableHeader>
       <TableBody>
+        {rows.length === 0 && (
+          <TableRow className="hover:bg-transparent">
+            <TableCell colSpan={8} className="p-0 [&>div]:py-8">
+              <EmptyState icon={PackageSearch} title="Tidak ada barang yang belum sampai" description="Selisih terima muncul di sini setelah qty diterima dicatat." />
+            </TableCell>
+          </TableRow>
+        )}
         {rows.map((s) => (
           <TableRow key={s.id}>
             <TableCell className="font-medium whitespace-nowrap">{s.short_number}</TableCell>
@@ -1023,8 +1045,7 @@ function ShipmentDetail({ data, canForceEdit, onClose, onEditReceived }) {
         <StatTile label="Diterima (aktual)" value={fmtNum(totalReceived)} suffix="pcs" />
         <StatTile label="Selisih" value={fmtNum(totalShipped - totalReceived)} suffix="pcs" accent={totalShipped - totalReceived > 0 ? 'danger' : 'muted'} />
       </div>
-      {(data.dispatches || []).length > 0 && (
-        <div className="overflow-x-auto">
+      <div className="overflow-x-auto">
           <Table data-testid="detail-dispatch-table">
             <TableHeader><TableRow>
               <TableHead>Kirim</TableHead><TableHead>SKU</TableHead><TableHead>Produk</TableHead>
@@ -1033,7 +1054,14 @@ function ShipmentDetail({ data, canForceEdit, onClose, onEditReceived }) {
               <TableHead className="text-right">Aksi</TableHead>
             </TableRow></TableHeader>
             <TableBody>
-              {data.dispatches.map((d) => {
+              {(data.dispatches || []).length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={8} className="p-0 [&>div]:py-8">
+                    <EmptyState icon={Package} title="Belum ada barang pada surat jalan ini" />
+                  </TableCell>
+                </TableRow>
+              )}
+              {(data.dispatches || []).map((d) => {
                 cumulative += d.total_qty;
                 return d.items.map((item, idx) => {
                   const received = item.qty_received != null ? item.qty_received : item.qty_shipped;
@@ -1071,7 +1099,6 @@ function ShipmentDetail({ data, canForceEdit, onClose, onEditReceived }) {
             </TableBody>
           </Table>
         </div>
-      )}
       {(data.summary_items || []).length > 0 && (
         <div className="overflow-x-auto">
           <p className="text-xs font-medium text-muted-foreground mb-1">Ringkasan per item</p>

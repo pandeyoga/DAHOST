@@ -96,9 +96,7 @@ export default function KapasitasCMTTab(props) {
       </Section>
 
       <Section title="Beban per vendor" testId="pantau-kapasitas-vendor">
-        {loading && !data ? <LoadingRows /> : vendors.length === 0 ? (
-          <EmptyState icon={Gauge} title="Belum ada vendor CMT" description="Tambah vendor dan kapasitasnya di menu Vendor CMT." />
-        ) : (
+        {loading && !data ? <LoadingRows /> : (
           <Table data-testid="pantau-kapasitas-table">
             <TableHeader><TableRow>
               <TableHead>Vendor</TableHead><TableHead className="text-right">Kapasitas</TableHead>
@@ -108,6 +106,11 @@ export default function KapasitasCMTTab(props) {
               <TableHead className="text-right">Perkiraan habis</TableHead><TableHead className="text-right">PO telat</TableHead><TableHead>Keadaan</TableHead>
             </TableRow></TableHeader>
             <TableBody>
+              {vendors.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={11} className="p-0 [&>div]:py-8"><EmptyState icon={Gauge} title="Belum ada vendor CMT" description="Tambah vendor dan kapasitasnya di menu Vendor CMT." /></TableCell>
+                </TableRow>
+              )}
               {vendors.map((v) => (
                 <TableRow key={v.vendor_id} data-testid={`pantau-kapasitas-row-${v.code || v.name}`}>
                   <TableCell className="font-medium">{v.name}{v.code ? <span className="text-xs text-muted-foreground"> · {v.code}</span> : null}
