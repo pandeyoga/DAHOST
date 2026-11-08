@@ -1,5 +1,11 @@
 import { useState, useEffect } from 'react';
-import { BookOpen, Briefcase, ListChecks, Video, Image as ImageIcon, PlayCircle, ArrowLeft, AlertCircle, Loader2, Package } from 'lucide-react';
+import { BookOpen, Briefcase, ListChecks, Video, Image as ImageIcon, PlayCircle, AlertCircle, Loader2, Package } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DetailPopup from '@/components/ui/detail-popup';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
 import { apiGet } from '../../../lib/api';
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL || '';
@@ -68,9 +74,9 @@ export default function VendorProductionGuide() {
     const empty = photos.length === 0 && steps.length === 0 && videos.length === 0 && refImages.length === 0 && !g.hero_image_url;
     const badge = g.source_type === 'buyer_catalog' ? 'Katalog Buyer' : 'Model Internal';
     return (
-      <div key={gi} className="rounded-2xl border border-border bg-card p-4 space-y-5" data-testid={`vendor-guide-article-${gi}`}>
+      <section key={gi} className="space-y-5 border-t border-[var(--glass-border)] pt-4 first:border-t-0 first:pt-0" data-testid={`vendor-guide-article-${gi}`}>
         <div className="flex items-center gap-2 flex-wrap border-b border-border pb-3">
-          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+          <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary">
             <Package className="w-3.5 h-3.5" /> {badge}
           </span>
           {g.code && <span className="tabular-nums text-xs text-muted-foreground">{g.code}</span>}
@@ -86,7 +92,7 @@ export default function VendorProductionGuide() {
 
         {photos.length > 0 && (
           <section>
-            <h3 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5"><ImageIcon className="w-4 h-4 text-primary" /> Foto Produk</h3>
+            <p className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5"><ImageIcon className="w-4 h-4 text-primary" /> Foto Produk</p>
             <div className="flex flex-wrap gap-2" data-testid="vendor-guide-photos">
               {photos.map((p) => (
                 <img key={p} src={fileUrl(p)} alt="produk" onClick={() => setLightbox(fileUrl(p))}
@@ -98,7 +104,7 @@ export default function VendorProductionGuide() {
 
         {steps.length > 0 && (
           <section>
-            <h3 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5"><ListChecks className="w-4 h-4 text-primary" /> Tata Cara Produksi ({steps.length} langkah)</h3>
+            <p className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5"><ListChecks className="w-4 h-4 text-primary" /> Tata Cara Produksi ({steps.length} langkah)</p>
             <ol className="space-y-2" data-testid="vendor-guide-steps">
               {steps.map((s, i) => (
                 <li key={s.id || i} className="flex gap-3 rounded-xl border border-border bg-muted/30 p-3">
@@ -119,7 +125,7 @@ export default function VendorProductionGuide() {
 
         {videos.length > 0 && (
           <section>
-            <h3 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5"><Video className="w-4 h-4 text-primary" /> Referensi Video</h3>
+            <p className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5"><Video className="w-4 h-4 text-primary" /> Referensi Video</p>
             <div className="flex flex-wrap gap-3" data-testid="vendor-guide-videos">
               {videos.map((v, i) => {
                 const yid = ytId(v.url);
@@ -139,7 +145,7 @@ export default function VendorProductionGuide() {
 
         {refImages.length > 0 && (
           <section>
-            <h3 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5"><ImageIcon className="w-4 h-4 text-primary" /> Gambar Referensi</h3>
+            <p className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5"><ImageIcon className="w-4 h-4 text-primary" /> Gambar Referensi</p>
             <div className="flex flex-wrap gap-2" data-testid="vendor-guide-refimages">
               {refImages.map((v, i) => (
                 <a key={i} href={v.url} target="_blank" rel="noreferrer" title={v.caption}>
@@ -151,104 +157,70 @@ export default function VendorProductionGuide() {
         )}
 
         {empty && (
-          <div className="text-sm text-[hsl(var(--warning))] bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-lg p-3 flex items-start gap-2">
+          <div className="text-sm text-[hsl(var(--warning-text))] flex items-start gap-2">
             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
             Panduan Produksi untuk artikel ini belum diisi. Admin/PPIC dapat mengisi SOP di
             {g.source_type === 'buyer_catalog' ? ' Katalog Buyer → Panduan Produksi.' : ' Master Produk → Panduan.'}
           </div>
         )}
-      </div>
+      </section>
     );
   };
 
-  // ── Detail view ────────────────────────────────────────────────────────────
-  if (selected) {
-    const guides = guide?.guides || [];
-    return (
-      <div className="space-y-5">
-        <button onClick={() => { setSelected(null); setGuide(null); }}
-          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground" data-testid="guide-back">
-          <ArrowLeft className="w-4 h-4" /> Kembali ke daftar
-        </button>
+  // Standar UI/UX v2 (8 Nov 2026): daftar pekerjaan = tabel (dulu tombol-kartu berulang); panduan satu pekerjaan
+  // dibuka sebagai popup (dulu halaman pengganti dengan tombol "Kembali" dan judul kedua).
+  const kolom = [
+    { kunci: 'job', label: 'Pekerjaan', hp: 'judul', isi: (j) => (
+      <div className="min-w-0"><span className="font-medium tabular-nums">{j.job_number}</span>
+        <span className="block text-xs text-muted-foreground">{j.customer_name || j.vendor_name || 'Pekerjaan produksi'}</span></div>) },
+    { kunci: 'po', label: 'PO', isi: (j) => <span className="tabular-nums">{j.po_number || '—'}</span> },
+    { kunci: 'jenis', label: 'Jenis', isi: (j) => ((j.business_type || 'maklon') !== 'internal'
+      ? <StatusBadge status="maklon" tone="success" label="Maklon" /> : <StatusBadge status="internal" tone="primary" label="Internal" />) },
+    { kunci: 'target', label: 'Target', rata: 'kanan', isi: (j) => (j.item_count != null
+      ? <span className="tabular-nums text-sm">{j.item_count} baris · {j.total_available || j.total_ordered || 0} pcs</span> : '—') },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (j) => (
+      <Button type="button" size="sm" variant="outline" onClick={() => openGuide(j)} data-testid={`guide-job-${j.job_number}`}><BookOpen className="w-4 h-4" />Lihat panduan</Button>) },
+  ];
+  const guides = guide?.guides || [];
 
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <BookOpen className="w-6 h-6 text-primary" /> Panduan Produksi
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {selected.job_number}
-            {selected.po_number ? <> · <span className="tabular-nums">{selected.po_number}</span></> : null}
-          </p>
-        </div>
-
-        {guideLoading ? (
-          <div className="flex items-center gap-2 text-muted-foreground text-sm py-10 justify-center">
-            <Loader2 className="w-5 h-5 animate-spin" /> Memuat panduan...
-          </div>
-        ) : !guide?.has_guide ? (
-          <div className="bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-xl p-4 text-sm text-[hsl(var(--warning))] flex items-start gap-2" data-testid="guide-no-model">
-            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-            {guide?.message || 'Belum ada panduan produksi untuk pekerjaan ini.'}
-          </div>
-        ) : (
-          <div className="space-y-4" data-testid="vendor-guide-content">
-            {guides.map((g, gi) => renderGuideCard(g, gi))}
-          </div>
-        )}
-
-        {lightbox && (
-          <div className="fixed inset-0 z-[200] bg-black/80 flex items-center justify-center p-6" onClick={() => setLightbox(null)} data-testid="vendor-guide-lightbox">
-            <img src={lightbox} alt="preview" className="max-w-full max-h-full rounded-lg object-contain" />
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // ── List view ────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-          <BookOpen className="w-6 h-6 text-primary" /> Panduan Produksi
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Cara & tahapan pembuatan artikel untuk pekerjaan yang ditugaskan ke Anda. Pilih pekerjaan untuk melihat SOP, video, & gambar referensi.
-        </p>
-      </div>
-
+    <PageLayout testId="vendor-production-guide" title="Panduan produksi"
+      subtitle="Cara & tahapan pembuatan artikel untuk pekerjaan yang ditugaskan: SOP, video, dan gambar referensi."
+      tools={<TombolUnduh namaBerkas="pekerjaan-panduan-produksi" baris={jobs} kolom={[
+        { label: 'Pekerjaan', nilai: (j) => j.job_number }, { label: 'PO', nilai: (j) => j.po_number || '' },
+        { label: 'Pelanggan', nilai: (j) => j.customer_name || '' },
+        { label: 'Jenis', nilai: (j) => ((j.business_type || 'maklon') !== 'internal' ? 'Maklon' : 'Internal') },
+        { label: 'Baris', nilai: (j) => (j.item_count != null ? Number(j.item_count) : '') },
+        { label: 'Target (pcs)', nilai: (j) => Number(j.total_available || j.total_ordered) || 0 },
+      ]} />}>
       {loading ? (
-        <div className="flex items-center gap-2 text-muted-foreground text-sm py-10 justify-center"><Loader2 className="w-5 h-5 animate-spin" /> Memuat...</div>
-      ) : jobs.length === 0 ? (
-        <div className="bg-card rounded-xl border border-border p-12 text-center" data-testid="guide-empty">
-          <Briefcase className="w-12 h-12 mx-auto mb-3 text-muted-foreground/50" />
-          <p className="text-muted-foreground font-medium">Belum ada pekerjaan yang ditugaskan</p>
-          <p className="text-xs text-muted-foreground/70 mt-1">Panduan produksi akan muncul setelah pekerjaan produksi dibuat untuk vendor Anda.</p>
-        </div>
+        <p className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /> Memuat…</p>
       ) : (
-        <div className="space-y-3" data-testid="guide-jobs-list">
-          {jobs.map((j) => {
-            const isMaklon = (j.business_type || 'maklon') !== 'internal';
-            return (
-              <button key={j.id} onClick={() => openGuide(j)}
-                className="w-full text-left p-4 rounded-xl border border-border bg-card hover:border-primary/40 hover:bg-muted/40 transition-colors flex items-center justify-between gap-3"
-                data-testid={`guide-job-${j.job_number}`}>
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="tabular-nums text-xs text-primary">{j.job_number}</span>
-                    {j.po_number && <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground tabular-nums">{j.po_number}</span>}
-                    <span className={`text-[11px] px-1.5 py-0.5 rounded font-medium ${isMaklon ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' : 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]'}`}>{isMaklon ? 'Maklon' : 'Internal'}</span>
-                    {j.status && <span className="text-[11px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">{j.status}</span>}
-                  </div>
-                  <p className="text-sm text-foreground mt-1">{j.customer_name || j.vendor_name || 'Pekerjaan Produksi'}</p>
-                  {j.item_count != null && <p className="text-xs text-muted-foreground mt-0.5">{j.item_count} item · target {j.total_available || j.total_ordered || 0} pcs</p>}
-                </div>
-                <span className="flex items-center gap-1 text-sm text-primary shrink-0"><BookOpen className="w-4 h-4" /> Lihat Panduan</span>
-              </button>
-            );
-          })}
+        <TabelData kolom={kolom} baris={jobs} onKlikBaris={openGuide} testId="guide-jobs-list"
+          kosong={<div data-testid="guide-empty"><EmptyState icon={Briefcase} title="Belum ada pekerjaan yang ditugaskan"
+            description="Panduan produksi muncul setelah pekerjaan produksi dibuat untuk vendor ini." /></div>} />
+      )}
+
+      {selected && (
+        <DetailPopup open onClose={() => { setSelected(null); setGuide(null); }} testId="vendor-guide-detail"
+          judul={`Panduan produksi ${selected.job_number}`} keterangan={selected.po_number ? `PO ${selected.po_number}` : undefined}>
+          {guideLoading ? (
+            <p className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /> Memuat panduan…</p>
+          ) : !guide?.has_guide ? (
+            <Notice tone="warning" icon={AlertCircle} testId="guide-no-model">{guide?.message || 'Belum ada panduan produksi untuk pekerjaan ini.'}</Notice>
+          ) : (
+            <div className="space-y-4" data-testid="vendor-guide-content">
+              {guides.map((g, gi) => renderGuideCard(g, gi))}
+            </div>
+          )}
+        </DetailPopup>
+      )}
+
+      {lightbox && (
+        <div className="fixed inset-0 z-[200] bg-black/80 flex items-center justify-center p-6" onClick={() => setLightbox(null)} data-testid="vendor-guide-lightbox">
+          <img src={lightbox} alt="pratinjau" className="max-w-full max-h-full rounded-lg object-contain" />
         </div>
       )}
-    </div>
+    </PageLayout>
   );
 }

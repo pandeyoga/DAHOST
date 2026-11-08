@@ -4,6 +4,7 @@
  * setor nyata (pcs lolos QC per hari) dan cek order baru: pengganti Kapasitas di Analitik Produksi yang
  * memakai data lini/mesin yang sudah tidak dipakai (keputusan owner no. 11).
  */
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { useState } from 'react';
 import { AlertCircle, CheckCircle2, Gauge, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -45,7 +46,16 @@ export default function KapasitasCMTTab(props) {
     <PageLayout
       testId="pantau-kapasitas"
       title="Kapasitas CMT"
-      tools={<RefreshButton onClick={reload} loading={loading} testId="pantau-kapasitas-refresh" />}
+      tools={<><TombolUnduh namaBerkas="kapasitas-cmt" baris={vendors} kolom={[
+          { label: 'Vendor', nilai: (v) => v.name || '' }, { label: 'Kode', nilai: (v) => v.code || '' },
+          { label: 'Beban internal (pcs)', nilai: (v) => Number(v.load_internal_pcs) || 0 }, { label: 'Beban maklon (pcs)', nilai: (v) => Number(v.load_maklon_pcs) || 0 },
+          { label: 'Total beban (pcs)', nilai: (v) => Number(v.current_load_pcs) || 0 }, { label: 'Kapasitas (pcs)', nilai: (v) => (v.capacity_pcs == null ? '' : Number(v.capacity_pcs)) },
+          { label: 'Sisa (pcs)', nilai: (v) => (v.available_pcs == null ? '' : Number(v.available_pcs)) },
+          { label: 'Terpakai (%)', nilai: (v) => (v.utilization_pct == null ? '' : Number(v.utilization_pct)) },
+          { label: 'Laju per hari', nilai: (v) => Number(v.daily_rate) || 0 }, { label: 'Perkiraan habis (hari)', nilai: (v) => (v.days_to_clear == null ? '' : Number(v.days_to_clear)) },
+          { label: 'PO telat', nilai: (v) => Number(v.telat_po_count) || 0 }, { label: 'Keadaan', nilai: (v) => v.status || '' },
+        ]} />
+        <RefreshButton onClick={reload} loading={loading} testId="pantau-kapasitas-refresh" /></>}
       summary={<>
         {error && <Notice tone="danger" icon={AlertCircle}>{error}</Notice>}
         {data && (
@@ -71,7 +81,7 @@ export default function KapasitasCMTTab(props) {
                 <option value="">Semua vendor</option>
                 {vendors.map((v) => <option key={v.vendor_id} value={v.vendor_id}>{v.name}</option>)}
               </SmartNativeSelect></div>
-            <Button onClick={runCheck} disabled={!(Number(qty) > 0) || checking} data-testid="pantau-cek-run">{checking ? 'Menghitung…' : 'Cek order'}</Button>
+            <Button type="button" onClick={runCheck} disabled={!(Number(qty) > 0) || checking} data-testid="pantau-cek-run">{checking ? 'Menghitung…' : 'Cek order'}</Button>
           </div>
           {checkErr && <Notice tone="danger" icon={AlertCircle}>{checkErr}</Notice>}
           {check && (
@@ -101,13 +111,13 @@ export default function KapasitasCMTTab(props) {
               {vendors.map((v) => (
                 <TableRow key={v.vendor_id} data-testid={`pantau-kapasitas-row-${v.code || v.name}`}>
                   <TableCell className="font-medium">{v.name}{v.code ? <span className="text-xs text-muted-foreground"> · {v.code}</span> : null}
-                    {v.capacity_note ? <div className="text-[11px] text-muted-foreground">{v.capacity_note}</div> : null}</TableCell>
+                    {v.capacity_note ? <div className="text-xs text-muted-foreground">{v.capacity_note}</div> : null}</TableCell>
                   <TableCell className="text-right tabular-nums">{v.capacity_pcs ? n(v.capacity_pcs) : '—'}</TableCell>
                   <TableCell className="text-right tabular-nums" data-testid="pantau-kap-internal">{n(v.load_internal_pcs)}</TableCell>
                   <TableCell className="text-right tabular-nums" data-testid="pantau-kap-maklon">{n(v.load_maklon_pcs)}</TableCell>
                   <TableCell className="text-right tabular-nums font-semibold">{n(v.current_load_pcs)}</TableCell>
                   <TableCell className="text-right tabular-nums">{v.utilization_pct == null ? '—' : pct(v.utilization_pct)}</TableCell>
-                  <TableCell className={`text-right tabular-nums ${v.available_pcs < 0 ? 'text-[hsl(var(--destructive))] font-semibold' : ''}`}>{v.available_pcs == null ? '—' : n(v.available_pcs)}</TableCell>
+                  <TableCell className={`text-right tabular-nums ${v.available_pcs < 0 ? 'text-[hsl(var(--danger-text))] font-semibold' : ''}`}>{v.available_pcs == null ? '—' : n(v.available_pcs)}</TableCell>
                   <TableCell className="text-right tabular-nums">{n(v.daily_rate)}</TableCell>
                   <TableCell className="text-right tabular-nums">{!v.current_load_pcs || v.days_to_clear == null ? '—' : `${n(v.days_to_clear)} hari`}</TableCell>
                   <TableCell className="text-right tabular-nums">{n(v.telat_po_count)}</TableCell>

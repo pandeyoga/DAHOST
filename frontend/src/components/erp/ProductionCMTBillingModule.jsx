@@ -22,6 +22,9 @@ import { RefreshCw, Search, Receipt, AlertTriangle, CheckCircle2, Landmark, X } 
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { Input } from '@/components/ui/input';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DatePicker from '@/components/ui/date-picker';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
@@ -32,6 +35,7 @@ import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB } from '@/lib/waktu';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PageLayout, { DetailPanel } from './layout/PageLayout';
+import { PageLayoutSatuBaris } from './engine/DataTable';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import { formatDateID } from '@/lib/format';
 
@@ -131,7 +135,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
   const filtered = partnerId || status || search.trim();
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="prod-cmt-billing"
       title="Tagihan vendor CMT"
       subtitle="Hutang jasa jahit: terjadwal sejak PO dikonfirmasi, matang saat barang lolos QC, lalu dibayar."
@@ -141,13 +145,13 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
             options={[{ key: 'bills', label: 'Tagihan', count: rows.length },
               { key: 'schedules', label: 'Jadwal hutang per PO', count: (schedules.items || []).length }]} />
         )}
-        <div className="relative w-72 max-w-full">
+        <div className="relative w-full sm:w-64">
           <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') load(); }} placeholder="Cari kode tagihan / vendor / PO…"
-            className="pl-8 h-9" data-testid="cmt-billing-search" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') load(); }} placeholder="Cari tagihan, vendor, PO (Enter)"
+            className="pl-8" data-testid="cmt-billing-search" />
         </div>
-        <SmartNativeSelect value={status} onChange={(e) => setStatus(e.target.value)} className="h-9 w-44" data-testid="cmt-billing-status-filter" aria-label="Status">
+        <SmartNativeSelect value={status} onChange={(e) => setStatus(e.target.value)} className="w-44" data-testid="cmt-billing-status-filter" aria-label="Status">
           <option value="">Semua status</option>
           <option value="draft">Draf</option>
           <option value="posted">Terjurnal</option>
@@ -156,7 +160,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
           <option value="cancelled">Dibatalkan</option>
         </SmartNativeSelect>
         {vendorOpts.length > 0 && (
-          <SmartNativeSelect value={partnerId} onChange={(e) => setPartnerId(e.target.value)} className="h-9 w-80 max-w-full"
+          <SmartNativeSelect value={partnerId} onChange={(e) => setPartnerId(e.target.value)} className="w-56"
             data-testid="cmt-billing-vendor-filter" aria-label="Vendor CMT">
             <option value="">Semua vendor CMT ({vendorOpts.length})</option>
             {vendorOpts.map((v) => (
@@ -167,12 +171,33 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
           </SmartNativeSelect>
         )}
         {filtered && (
-          <Button variant="outline" onClick={resetFilters} data-testid="cmt-billing-reset"><X className="h-3.5 w-3.5" />Reset filter</Button>
+          <Button type="button" variant="outline" onClick={resetFilters} data-testid="cmt-billing-reset"><X className="h-3.5 w-3.5" />Reset filter</Button>
         )}
       </>}
-      tools={<Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="cmt-billing-refresh">
-        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-      </Button>}
+      tools={<>
+        {/* Standar UI/UX v2: unduh Excel/CSV tampilan aktif (semua baris hasil saringan dari server). */}
+        {view === 'schedules' ? (
+          <TombolUnduh namaBerkas="jadwal-hutang-cmt" baris={schedules.items || []} testId="cmt-billing-unduh" kolom={[
+            { label: 'PO', nilai: (s) => s.po_number || '' }, { label: 'Vendor CMT', nilai: (s) => s.vendor_name || '' },
+            { label: 'Jadwal (Rp)', nilai: (s) => Number(s.scheduled_amount) || 0 }, { label: 'Jadwal (pcs)', nilai: (s) => Number(s.scheduled_qty) || 0 },
+            { label: 'Lolos QC (Rp)', nilai: (s) => Number(s.matured_amount) || 0 }, { label: 'Dibayar (Rp)', nilai: (s) => Number(s.paid_amount) || 0 },
+            { label: 'Tertahan (Rp)', nilai: (s) => Number(s.blocked_amount) || 0 }, { label: 'Bisa dibayar (Rp)', nilai: (s) => Number(s.payable_amount) || 0 },
+            { label: 'Status', nilai: (s) => s.status_label || s.status || '' },
+          ]} />
+        ) : (
+          <TombolUnduh namaBerkas="tagihan-cmt" baris={rows} testId="cmt-billing-unduh" kolom={[
+            { label: 'Kode', nilai: (r) => r.payment_code || '' }, { label: 'Vendor CMT', nilai: (r) => r.cmt_name || '' },
+            { label: 'PO', nilai: (r) => r.po_number || r.source_receipt_code || '' }, { label: 'Pcs', nilai: (r) => Number(r.total_pcs) || 0 },
+            { label: 'Nilai (Rp)', nilai: (r) => Number(r.amount) || 0 }, { label: 'Bisa dibayar (Rp)', nilai: (r) => Number(r.payable_amount) || 0 },
+            { label: 'Tertahan (Rp)', nilai: (r) => Number(r.blocked_amount) || 0 },
+            { label: 'Selisih belum selesai (pcs)', nilai: (r) => Number(r.variance_unresolved_qty) || 0 },
+            { label: 'Status', nilai: (r) => r.status || '' }, { label: 'Jurnal', nilai: (r) => (r.gl_posted ? (r.gl_je_number || 'terjurnal') : 'Belum dijurnal') },
+          ]} />
+        )}
+        <Button type="button" title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="cmt-billing-refresh">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </>}
       summary={<>
         {error && <Notice tone="danger" icon={AlertTriangle} title="Gagal memuat data" testId="cmt-billing-error">{error}</Notice>}
         {(summary?.total_bills > 0) && (
@@ -192,7 +217,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
         <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
       )}
     >
-      <GlassCard className="p-0 overflow-hidden">
+      <GlassCard className="p-0 overflow-x-auto">
         {view === 'schedules' ? (
           <>
             {/* Tahap 8 fase 2: PO maklon yang dijahit tim CV Sukma sendiri — tanpa tagihan & jadwal hutang CMT */}
@@ -212,7 +237,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
             {filtered ? (
               <EmptyState icon={Receipt} title="Tidak ada tagihan yang cocok dengan filter"
                 description="Ubah atau hapus penyaring untuk melihat tagihan lain."
-                action={<Button variant="outline" size="sm" onClick={resetFilters} data-testid="cmt-billing-empty-reset">Tampilkan semua tagihan</Button>} />
+                action={<Button type="button" variant="outline" size="sm" onClick={resetFilters} data-testid="cmt-billing-empty-reset">Tampilkan semua tagihan</Button>} />
             ) : (
               <EmptyState icon={Receipt} title="Belum ada tagihan CMT"
                 description="Tagihan terbit otomatis setelah Terima FG dari CMT selesai QC." />
@@ -231,7 +256,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
                 <TableRow key={r.id} data-testid={`cmt-billing-row-${r.payment_code}`}
                   className={detail?.bill?.id === r.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
                   <TableCell className="whitespace-nowrap">
-                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => openDetail(r.id)}
+                    <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => openDetail(r.id)}
                       data-testid={`cmt-billing-detail-${r.payment_code}`}>{r.payment_code || r.id?.slice(0, 8)}</Button>
                   </TableCell>
                   <TableCell>
@@ -246,25 +271,25 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
                   <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(r.payable_amount)}</TableCell>
                   <TableCell className="text-xs" data-testid={`cmt-billing-variance-${r.payment_code}`}>
                     {Number(r.blocked_amount || 0) > 0 ? (
-                      <span className="text-[hsl(var(--destructive))]">tertahan {fmtRp(r.blocked_amount)}</span>
+                      <span className="text-[hsl(var(--danger-text))]">tertahan {fmtRp(r.blocked_amount)}</span>
                     ) : Number(r.variance_unresolved_qty || 0) > 0 ? (
-                      <span className="text-[hsl(var(--warning))]">{fmtNum(r.variance_unresolved_qty)} pcs belum selesai</span>
+                      <span className="text-[hsl(var(--warning-text))]">{fmtNum(r.variance_unresolved_qty)} pcs belum selesai</span>
                     ) : r.variance_flagged && !r.variance_resolution ? (
-                      <span className="text-[hsl(var(--warning))]">ditandai</span>
+                      <span className="text-[hsl(var(--warning-text))]">ditandai</span>
                     ) : <span className="text-muted-foreground">—</span>}
                   </TableCell>
                   <TableCell><StatusPill status={r.status} /></TableCell>
                   <TableCell className="text-xs">
-                    {r.gl_posted ? <span className="text-[hsl(var(--success))]">{r.gl_je_number || 'terjurnal'}</span>
-                      : <span className="text-[hsl(var(--warning))]">Belum dijurnal</span>}
+                    {r.gl_posted ? <span className="text-[hsl(var(--success-text))]">{r.gl_je_number || 'terjurnal'}</span>
+                      : <span className="text-[hsl(var(--warning-text))]">Belum dijurnal</span>}
                   </TableCell>
                   <TableCell className="text-right">
                     {!r.gl_posted && (r.status || '').toLowerCase() !== 'cancelled' && canPost ? (
-                      <Button size="sm" variant="outline" disabled={posting === r.id} onClick={() => postToGl(r.id)} data-testid={`cmt-billing-post-${r.payment_code}`}>
+                      <Button type="button" size="sm" variant="outline" disabled={posting === r.id} onClick={() => postToGl(r.id)} data-testid={`cmt-billing-post-${r.payment_code}`}>
                         <Landmark className="w-3.5 h-3.5" />Jurnalkan
                       </Button>
                     ) : (
-                      <Button size="sm" variant="outline" onClick={() => openDetail(r.id)}>Rincian</Button>
+                      <Button type="button" size="sm" variant="outline" onClick={() => openDetail(r.id)}>Rincian</Button>
                     )}
                   </TableCell>
                 </TableRow>
@@ -273,7 +298,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
           </Table>
         )}
       </GlassCard>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 
@@ -299,7 +324,7 @@ function ScheduleTable({ items, loading }) {
             <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(s.matured_amount)}</TableCell>
             <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(s.paid_amount)}</TableCell>
             <TableCell className="text-right tabular-nums whitespace-nowrap">
-              {Number(s.blocked_amount || 0) > 0 ? <span className="text-[hsl(var(--destructive))]">{fmtRp(s.blocked_amount)}</span> : fmtRp(0)}
+              {Number(s.blocked_amount || 0) > 0 ? <span className="text-[hsl(var(--danger-text))]">{fmtRp(s.blocked_amount)}</span> : fmtRp(0)}
             </TableCell>
             <TableCell className="whitespace-nowrap text-sm" data-testid={`cmt-ap-payable-${s.po_number}`}>
               Bisa dibayar <b className="tabular-nums">{fmtRp(s.payable_amount)}</b> dari <span className="tabular-nums">{fmtRp(Math.max(Number(s.scheduled_amount || 0), Number(s.matured_amount || 0)))}</span>
@@ -402,14 +427,14 @@ function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
       title={`${bill.payment_code || 'Tagihan'} · ${bill.cmt_name || '—'}`}
       description={`PO ${bill.po_number || '—'} · ${fmtNum(bill.total_pcs)} pcs lolos QC · ditolak ${fmtNum(bill.total_rejected)} · nilai ${fmtRp(bill.amount)}`}
       actions={!bill.gl_posted && canPost && (bill.status || '').toLowerCase() !== 'cancelled' && (
-        <Button variant="outline" onClick={() => onPost(bill.id)} disabled={posting === bill.id} data-testid="cmt-billing-detail-post">
+        <Button type="button" variant="outline" onClick={() => onPost(bill.id)} disabled={posting === bill.id} data-testid="cmt-billing-detail-post">
           <Landmark className="w-4 h-4" />Jurnalkan
         </Button>
       )}>
       {isIc && (
         <Notice tone="info" icon={Landmark} testId="cmt-bill-ic"
           title="Tagihan antar CV — tim jahit CV Sukma"
-          action={bill.ic_ar_invoice_id && <Button size="sm" variant="outline" onClick={openIcPdf} data-testid="cmt-bill-ic-pdf">Tagihan jasa jahit (PDF)</Button>}>
+          action={bill.ic_ar_invoice_id && <Button type="button" size="sm" variant="outline" onClick={openIcPdf} data-testid="cmt-bill-ic-pdf">Tagihan jasa jahit (PDF)</Button>}>
           Hutang CV Dewi Aditya ke CV Sukma. Piutang pasangannya di buku CV Sukma: {bill.ic_ar_invoice_number || 'belum dibuat'}.
           Pembayaran di sini otomatis dicatat sebagai penerimaan di rekening CV Sukma yang dipilih.
         </Notice>
@@ -424,8 +449,8 @@ function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
           title={bill.variance_resolution ? 'Selisih sudah diputuskan Keuangan' : blocked > 0 ? `Rp ${fmtNum(blocked)} tertahan — selisih perlu diputuskan Keuangan` : 'Ada selisih qty pada penerimaan'}
           action={canPost && !bill.variance_resolution && Number(bill.overbilled_amount || 0) > 0 && (
             <span className="flex gap-2">
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => resolve('potong')} data-testid="cmt-resolve-potong">Potong dari tagihan</Button>
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => resolve('bayar')} data-testid="cmt-resolve-bayar">Bayar penuh</Button>
+              <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => resolve('potong')} data-testid="cmt-resolve-potong">Potong dari tagihan</Button>
+              <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => resolve('bayar')} data-testid="cmt-resolve-bayar">Bayar penuh</Button>
             </span>
           )}>
           {(bill.variance_reasons || []).length > 0
@@ -464,7 +489,7 @@ function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
           {disbursements.map((d) => (
             <div key={d.id} className="flex items-center justify-between gap-2 text-sm" data-testid={`cmt-disb-${d.id}`}>
               <span>{fmtDate(d.payment_date)} · {d.cash_account_name} · <span className="tabular-nums">{fmtRp(d.amount)}</span>{d.gl_je_number ? ` · ${d.gl_je_number}` : ''}</span>
-              {canPost && <Button size="sm" variant="outline" onClick={() => voidDisbursement(d.id)} data-testid={`cmt-disb-void-${d.id}`}>Batalkan</Button>}
+              {canPost && <Button type="button" size="sm" variant="outline" onClick={() => voidDisbursement(d.id)} data-testid={`cmt-disb-void-${d.id}`}>Batalkan</Button>}
             </div>
           ))}
         </div>
@@ -485,9 +510,9 @@ function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
           )}
           <MoneyInput glass placeholder={`maks. ${fmtNum(payable)}`} value={payForm.amount} onChange={(e) => setPayForm((f) => ({ ...f, amount: e.target.value }))}
             className="h-9 w-40" data-testid="cmt-pay-amount" />
-          <GlassInput type="date" value={payForm.payment_date} onChange={(e) => setPayForm((f) => ({ ...f, payment_date: e.target.value }))} className="h-9 w-40" data-testid="cmt-pay-date" />
+          <div className="w-44"><DatePicker value={payForm.payment_date} onChange={(v) => setPayForm((f) => ({ ...f, payment_date: v }))} placeholder="Tanggal bayar" testId="cmt-pay-date" /></div>
           <GlassInput placeholder="No. referensi" value={payForm.reference_no} onChange={(e) => setPayForm((f) => ({ ...f, reference_no: e.target.value }))} className="h-9 w-40" data-testid="cmt-pay-ref" />
-          <Button onClick={pay} disabled={busy} data-testid="cmt-pay-submit"><CheckCircle2 className="w-4 h-4" />Bayar vendor</Button>
+          <Button type="button" variant="success" onClick={pay} disabled={busy} data-testid="cmt-pay-submit"><CheckCircle2 className="w-4 h-4" />Bayar vendor</Button>
         </div>
       )}
       {bill.notes && <p className="text-xs text-muted-foreground">{bill.notes}</p>}

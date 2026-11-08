@@ -120,7 +120,7 @@ export const InlineMaterialPicker = ({ type = '', categories = [], token, onSele
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild data-testid="inline-material-picker-trigger">
           {children || (
-            <Button variant="outline" size="sm" className="w-full justify-start">
+            <Button type="button" variant="outline" size="sm" className="w-full justify-start">
               <Search className="w-4 h-4 mr-2" />
               Pilih dari master data
             </Button>
@@ -161,7 +161,7 @@ export const InlineMaterialPicker = ({ type = '', categories = [], token, onSele
               </CommandGroup>
             </CommandList>
             <div className="border-t border-border p-2">
-              <Button
+              <Button type="button"
                 variant="ghost"
                 size="sm"
                 className="w-full justify-start text-primary"
@@ -177,9 +177,9 @@ export const InlineMaterialPicker = ({ type = '', categories = [], token, onSele
       </Popover>
 
       <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-        <DialogContent className="sm:max-w-[520px]" data-testid="inline-material-create-dialog">
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto" data-testid="inline-material-create-dialog">
           <DialogHeader>
-            <DialogTitle>Buat Material Baru</DialogTitle>
+            <DialogTitle>Buat material baru</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="grid grid-cols-2 gap-4">
@@ -289,15 +289,15 @@ export const InlineMaterialPicker = ({ type = '', categories = [], token, onSele
             </div>
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setCreateDialogOpen(false)} disabled={saving}>
+            <Button type="button" variant="ghost" onClick={() => setCreateDialogOpen(false)} disabled={saving}>
               Batal
             </Button>
-            <Button
+            <Button type="button" variant="success"
               onClick={handleCreateMaterial}
               disabled={saving}
               data-testid="inline-material-create-form-submit-button"
             >
-              {saving ? 'Menyimpan...' : 'Buat Material'}
+              {saving ? 'Menyimpan…' : 'Buat material'}
             </Button>
           </DialogFooter>
         </DialogContent>

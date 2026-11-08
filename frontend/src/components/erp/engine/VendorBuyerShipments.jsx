@@ -1,11 +1,19 @@
 import { useState, useEffect } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { Plus, Send, Download, Filter, Search, ChevronDown, ChevronRight, X, CheckCircle, Pencil } from 'lucide-react';
+import { Plus, Send, Download, Search, CheckCircle, Pencil, Eye, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
-import { EmptyState, Notice } from '../moduleAtoms';
-import Modal from './Modal';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker from '@/components/ui/date-picker';
+import { formatDateID } from '@/lib/format';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
 import { apiGet } from '../../../lib/api';
 import { postWithOverQtyReason } from '../../../lib/overQty';
 import { todayWIB } from '../../../lib/waktu';
@@ -84,7 +92,7 @@ export default function VendorBuyerShipments({ user }) {
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     if (!form.job_id) { toast.error('Pilih Production Job terlebih dahulu'); return; }
     const validItems = form.items.filter(i => Number(i.qty_shipped) > 0);
     if (validItems.length === 0) { toast.error('Isi minimal 1 item dengan qty > 0'); return; }
@@ -169,10 +177,10 @@ export default function VendorBuyerShipments({ user }) {
     } catch (err) { toast.error('Gagal generate PDF: ' + err.message); }
   };
 
-  const fmtDate = d => d ? new Date(d).toLocaleDateString('id-ID') : '-';
+  const fmtDate = (d) => formatDateID(d, { fallback: '—' });
   const getStatusColor = (s) => {
-    if (s === 'Fully Shipped') return 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border border-[hsl(var(--success)/0.35)]';
-    if (s === 'Partially Shipped') return 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border border-[hsl(var(--warning)/0.35)]';
+    if (s === 'Fully Shipped') return 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success-text))] border border-[hsl(var(--success)/0.35)]';
+    if (s === 'Partially Shipped') return 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))] border border-[hsl(var(--warning)/0.35)]';
     return 'bg-muted text-muted-foreground';
   };
 
@@ -182,256 +190,195 @@ export default function VendorBuyerShipments({ user }) {
     return job.status === 'In Progress' || job.total_produced > 0;
   };
 
+  // Standar UI/UX v2 (8 Nov 2026): daftar deklarasi = tabel (dulu kartu tinggi per deklarasi), riwayat dispatch &
+  // PDF di popup rincian, form = FormPopup panjang dengan DatePicker. Perhitungan & API sama.
+  const n = (v) => Number(v || 0).toLocaleString('id-ID');
+  const hitung = (s) => {
+    const totalOrdered = s.total_ordered || 0;
+    const totalShipped = s.total_shipped || 0;
+    const progressPct = s.progress_pct || (totalOrdered > 0 ? Math.round((totalShipped / totalOrdered) * 100) : 0);
+    return { totalOrdered, totalShipped, remaining: s.remaining || Math.max(0, totalOrdered - totalShipped), progressPct };
+  };
+  const statusKirim = (pct) => (pct >= 100 ? ['Terkirim penuh', 'success'] : pct > 0 ? ['Terkirim sebagian', 'warning'] : ['Belum dikirim', 'muted']);
+  const [rincian, setRincian] = useState(null);
+  const bukaRincian = (s) => { setRincian(s); if (expandedShipment !== s.id) loadDispatches(s.id); };
+  const tutupRincian = () => { setRincian(null); setExpandedShipment(null); };
+  const lanjutan = !!(form.job_id && shipments.find((s) => s.job_id === form.job_id));
+  const sumF = (k) => form.items.reduce((t, i) => t + (Number(i[k]) || 0), 0);
+
+  const kolom = [
+    { kunci: 'no', label: 'Deklarasi', hp: 'judul', isi: (s) => (
+      <div className="min-w-0"><span className="font-medium tabular-nums">{s.shipment_number}</span>
+        <span className="block text-xs text-muted-foreground">{(s.dispatch_count || s.last_dispatch_seq || 0)} dispatch</span></div>) },
+    { kunci: 'po', label: 'PO · pelanggan', isi: (s) => (
+      <div className="min-w-0 text-sm"><span className="tabular-nums">{s.po_number || '—'}</span>
+        <span className="block text-xs text-muted-foreground">{s.customer_name || '—'} · job {jobs.find((j) => j.id === s.job_id)?.job_number || s.job_id || '—'}</span></div>) },
+    { kunci: 'kirim', label: 'Dikirim / dipesan', isi: (s) => { const h = hitung(s); return (
+      <div className="min-w-[9rem]">
+        <span className="text-sm tabular-nums">{n(h.totalShipped)} / {n(h.totalOrdered)} pcs ({h.progressPct}%)</span>
+        <div className="mt-1 h-1.5 w-full rounded-full bg-muted"><div className="h-1.5 rounded-full bg-[hsl(var(--primary))]" style={{ width: `${Math.min(h.progressPct, 100)}%` }} /></div>
+      </div>); } },
+    { kunci: 'sisa', label: 'Sisa', rata: 'kanan', isi: (s) => <span className="tabular-nums">{n(hitung(s).remaining)} pcs</span> },
+    { kunci: 'status', label: 'Status', isi: (s) => { const [l, t] = statusKirim(hitung(s).progressPct); return <StatusBadge status={l} label={l} tone={t} />; } },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
+      <div className="flex justify-end gap-1">
+        {hitung(s).progressPct < 100 && (
+          <Button type="button" size="sm" variant="outline" onClick={() => openDispatch(s)} data-testid={`vendor-dispatch-${s.id}`}><Plus className="w-3.5 h-3.5" />Dispatch</Button>
+        )}
+        <Button type="button" size="icon-sm" variant="ghost" onClick={() => bukaRincian(s)} title="Riwayat dispatch & PDF" aria-label="Riwayat dispatch"><Eye className="w-4 h-4" /></Button>
+      </div>) },
+  ];
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Deklarasi Pengiriman ke DA</h1>
-          <p className="text-muted-foreground text-sm mt-1">Kirim produk jadi (FG) dari CMT ke Gudang DA. DA akan verifikasi qty aktual + reject, lalu baru dispatch ke buyer.</p>
-        </div>
-        <Button onClick={() => { setForm({ job_id: '', shipment_date: todayWIB(), notes: '', items: [] }); setSelectedJob(null); setJobItems([]); setShowModal(true); }}
-          data-testid="btn-create-cmt-shipment">
-          <Plus /> Deklarasi kirim ke DA
-        </Button>
-      </div>
-
-      {/* Phase B info banner */}
-      <Notice tone="info" icon={CheckCircle} testId="phase-b-banner" className="text-xs"
-        title="Perubahan alur: CMT → DA → Buyer">
-        Vendor CMT tidak lagi kirim langsung ke buyer. Setiap deklarasi pengiriman di sini otomatis
-        dibuatkan <em>CMT Receipt</em> draf di sisi DA. Setelah DA memverifikasi dan menyetujui (bisa
-        menolak sebagian bila cacat), stok FG DA naik dan utang CMT tercatat di Keuangan sebesar qty
-        aktual × tarif CMT. Baru DA yang mengirim ke buyer.
-      </Notice>
-
-      {/* ── KEWAJIBAN: barang yang BELUM SAMPAI di DA ────────────────────────
-          Aturan owner: qty pada dokumen deklarasi disesuaikan dengan yang
-          benar-benar diterima DA; kekurangannya tetap kewajiban vendor. */}
+    <PageLayout testId="vendor-buyer-shipments" title="Kirim ke DA"
+      subtitle="Deklarasi kiriman barang jadi dari CMT ke gudang DA; DA memverifikasi qty dan reject."
+      actions={<Button type="button" onClick={() => { setForm({ job_id: '', shipment_date: todayWIB(), notes: '', items: [] }); setSelectedJob(null); setJobItems([]); setShowModal(true); }}
+        data-testid="btn-create-cmt-shipment"><Plus /> Deklarasi kirim ke DA</Button>}
+      tools={<TombolUnduh namaBerkas="deklarasi-kirim-ke-da" namaLembar="Deklarasi" baris={shipments} kolom={[
+        { label: 'Deklarasi', nilai: (s) => s.shipment_number }, { label: 'PO', nilai: (s) => s.po_number || '' },
+        { label: 'Pelanggan', nilai: (s) => s.customer_name || '' }, { label: 'Job', nilai: (s) => jobs.find((j) => j.id === s.job_id)?.job_number || '' },
+        { label: 'Dipesan', nilai: (s) => hitung(s).totalOrdered }, { label: 'Dikirim', nilai: (s) => hitung(s).totalShipped },
+        { label: 'Sisa', nilai: (s) => hitung(s).remaining }, { label: 'Kemajuan (%)', nilai: (s) => hitung(s).progressPct },
+        { label: 'Status', nilai: (s) => statusKirim(hitung(s).progressPct)[0] }, { label: 'Dispatch', nilai: (s) => s.dispatch_count || s.last_dispatch_seq || 0 },
+      ]} />}
+      summary={<p className="text-sm text-muted-foreground" data-testid="phase-b-banner">
+        Alur CMT → DA → buyer: tiap deklarasi otomatis menjadi draf penerimaan CMT di DA. Setelah DA menyetujui (bisa menolak
+        sebagian bila cacat), stok barang jadi DA naik dan utang CMT tercatat sebesar qty aktual × tarif CMT. DA yang mengirim ke buyer.
+      </p>}>
+      {/* KEWAJIBAN: barang yang BELUM SAMPAI di DA (aturan owner: qty deklarasi mengikuti yang diterima DA). */}
       {shorts.items?.length > 0 && (
-        <GlassCard className="overflow-hidden border-[hsl(var(--destructive)/0.35)]" data-testid="vendor-short-panel">
-          <div className="px-3 py-2 bg-[hsl(var(--destructive)/0.1)] border-b border-[hsl(var(--destructive)/0.35)]">
-            <p className="text-sm font-bold text-[hsl(var(--destructive))]">
-              ⚠ {Number(shorts.total_qty_open || 0).toLocaleString('id-ID')} pcs BELUM SAMPAI di DA — harus dicari &amp; dikirim ulang
-            </p>
-            <p className="text-[11px] text-[hsl(var(--destructive))] mt-0.5">
-              DA hanya menerima lebih sedikit dari klaim kirim Anda. Dokumen deklarasi sudah
-              dikoreksi mengikuti qty yang diterima, dan <strong>sisa kirim Anda bertambah</strong> —
-              silakan buat <em>Dispatch</em> baru untuk mengirim ulang kekurangannya.
-            </p>
+        <section className="space-y-2" data-testid="vendor-short-panel">
+          <Notice tone="danger" icon={AlertTriangle} title={`${n(shorts.total_qty_open)} pcs belum sampai di DA — harus dicari & dikirim ulang`}>
+            DA menerima lebih sedikit dari klaim kirim. Dokumen deklarasi sudah dikoreksi mengikuti qty yang diterima dan sisa kirim bertambah —
+            buat dispatch baru untuk mengirim ulang kekurangannya.
+          </Notice>
+          <div className="flex justify-end">
+            <TombolUnduh namaBerkas="barang-belum-sampai-di-da" baris={shorts.items} kolom={[
+              { label: 'No. selisih', nilai: (s) => s.short_number }, { label: 'PO', nilai: (s) => s.po_number || '' }, { label: 'SKU', nilai: (s) => s.sku || '' },
+              { label: 'Klaim kirim', nilai: (s) => Number(s.qty_claimed) || 0 }, { label: 'Diterima DA', nilai: (s) => Number(s.qty_arrived) || 0 },
+              { label: 'Belum sampai', nilai: (s) => Number(s.qty_open ?? s.qty_short) || 0 }, { label: 'Tanggal', nilai: (s) => s.short_date || '' },
+            ]} />
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs min-w-[720px]">
-              <thead className="bg-muted/40">
-                <tr className="text-left text-muted-foreground">
-                  <th className="px-3 py-2 font-semibold">No. Selisih</th>
-                  <th className="px-3 py-2 font-semibold">PO</th>
-                  <th className="px-3 py-2 font-semibold">SKU</th>
-                  <th className="px-3 py-2 font-semibold text-right">Klaim kirim</th>
-                  <th className="px-3 py-2 font-semibold text-right">Diterima DA</th>
-                  <th className="px-3 py-2 font-semibold text-right">Belum sampai</th>
-                  <th className="px-3 py-2 font-semibold">Tanggal</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shorts.items.map(s => (
-                  <tr key={s.id} className="border-t border-border/60">
-                    <td className="px-3 py-2 tabular-nums text-[11px] font-semibold">{s.short_number}</td>
-                    <td className="px-3 py-2">{s.po_number || '—'}</td>
-                    <td className="px-3 py-2 tabular-nums text-[11px]">{s.sku || '—'}</td>
-                    <td className="px-3 py-2 text-right text-muted-foreground">{Number(s.qty_claimed || 0).toLocaleString('id-ID')}</td>
-                    <td className="px-3 py-2 text-right text-[hsl(var(--success))] font-medium">{Number(s.qty_arrived || 0).toLocaleString('id-ID')}</td>
-                    <td className="px-3 py-2 text-right font-bold text-[hsl(var(--destructive))]">{Number(s.qty_open ?? s.qty_short ?? 0).toLocaleString('id-ID')}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{s.short_date || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <Table>
+              <TableHeader><TableRow><TableHead>No. selisih</TableHead><TableHead>PO</TableHead><TableHead>SKU</TableHead>
+                <TableHead className="text-right">Klaim kirim</TableHead><TableHead className="text-right">Diterima DA</TableHead>
+                <TableHead className="text-right">Belum sampai</TableHead><TableHead>Tanggal</TableHead></TableRow></TableHeader>
+              <TableBody>{shorts.items.map((s) => (
+                <TableRow key={s.id}>
+                  <TableCell className="tabular-nums font-medium">{s.short_number}</TableCell><TableCell>{s.po_number || '—'}</TableCell>
+                  <TableCell className="tabular-nums">{s.sku || '—'}</TableCell>
+                  <TableCell className="text-right tabular-nums">{n(s.qty_claimed)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{n(s.qty_arrived)}</TableCell>
+                  <TableCell className="text-right tabular-nums font-semibold text-[hsl(var(--danger-text))]">{n(s.qty_open ?? s.qty_short)}</TableCell>
+                  <TableCell>{s.short_date ? formatDateID(s.short_date, { fallback: s.short_date }) : '—'}</TableCell>
+                </TableRow>
+              ))}</TableBody>
+            </Table>
           </div>
-        </GlassCard>
+        </section>
       )}
 
-      <div className="space-y-4">
-        {shipments.length === 0 ? (
-          <GlassCard>
-            <EmptyState icon={Send} title="Belum ada data pengiriman"
-              description="Klik Deklarasi kirim ke DA untuk mencatat pengiriman pertama." />
-          </GlassCard>
-        ) : shipments.map(s => {
-          // Use backend-calculated fixed totals
-          const totalOrdered = s.total_ordered || 0;
-          const totalShipped = s.total_shipped || 0;
-          const remaining = s.remaining || Math.max(0, totalOrdered - totalShipped);
-          const progressPct = s.progress_pct || (totalOrdered > 0 ? Math.round((totalShipped / totalOrdered) * 100) : 0);
-          const isExpanded = expandedShipment === s.id;
-          const jobForShipment = jobs.find(j => j.id === s.job_id);
-          const dispatchCount = s.dispatch_count || s.last_dispatch_seq || 0;
+      <TabelData kolom={kolom} baris={shipments} onKlikBaris={bukaRincian} testId="vendor-buyer-shipments-table"
+        kosong={<EmptyState icon={Send} title="Belum ada data pengiriman" description="Klik Deklarasi kirim ke DA untuk mencatat pengiriman pertama." />} />
 
-          return (
-            <div key={s.id} className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-              <div className="p-5">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-bold text-foreground">{s.shipment_number}</p>
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(progressPct >= 100 ? 'Fully Shipped' : progressPct > 0 ? 'Partially Shipped' : 'Pending')}`}>
-                        {progressPct >= 100 ? 'Fully Shipped' : progressPct > 0 ? 'Partially Shipped' : 'Pending'}
-                      </span>
-                      {dispatchCount > 0 && <span className="text-xs text-muted-foreground/70">{dispatchCount} dispatch</span>}
-                    </div>
-                    <p className="text-sm text-muted-foreground mt-0.5">PO: {s.po_number || '-'} • {s.customer_name || '-'}</p>
-                    <p className="text-xs text-muted-foreground/70 mt-0.5">Job: {jobForShipment?.job_number || s.job_id || '-'}</p>
-                  </div>
-                  <div className="flex items-center gap-2 ml-4 flex-shrink-0">
-                    {/* Add dispatch button — only if not fully shipped */}
-                    {progressPct < 100 && (
-                      <button onClick={() => openDispatch(s)}
-                        className="flex items-center gap-1 px-3 py-1.5 bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] rounded-lg text-sm hover:bg-[hsl(var(--success)/0.15)] border border-[hsl(var(--success)/0.35)]">
-                        <Plus className="w-3.5 h-3.5" /> Dispatch
-                      </button>
-                    )}
-                    <button onClick={() => { loadDispatches(s.id); downloadPDF(s, dispatches[s.id]); }}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-muted/40 text-foreground/90 rounded-lg text-sm hover:bg-muted">
-                      <Download className="w-3.5 h-3.5" /> PDF
-                    </button>
-                    <button onClick={() => loadDispatches(s.id)}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))] rounded-lg text-sm hover:bg-[hsl(var(--primary)/0.15)]">
-                      {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />} Riwayat
-                    </button>
-                  </div>
-                </div>
-
-                {/* Progress bar with FIXED ordered qty */}
-                <div className="mt-3 bg-muted/40 rounded-lg p-3">
-                  <div className="flex items-center justify-between text-sm mb-1.5">
-                    <span className="font-bold text-foreground/90">{totalShipped.toLocaleString('id-ID')} / {totalOrdered.toLocaleString('id-ID')} pcs</span>
-                    <span className={`font-bold ${progressPct >= 100 ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--primary))]'}`}>{progressPct}%</span>
-                  </div>
-                  <div className="w-full h-2.5 bg-muted rounded-full overflow-hidden">
-                    <div className={`h-full rounded-full transition-all ${progressPct >= 100 ? 'bg-[hsl(var(--success))]' : progressPct > 50 ? 'bg-[hsl(var(--primary))]' : 'bg-[hsl(var(--warning))]'}`}
-                      style={{ width: `${Math.min(progressPct, 100)}%` }} />
-                  </div>
-                  <div className="flex items-center justify-between text-xs text-muted-foreground/70 mt-1">
-                    <span>Sisa: {remaining.toLocaleString('id-ID')} pcs</span>
-                    <span>Ordered (PO): {totalOrdered.toLocaleString('id-ID')} pcs</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Dispatch history */}
-              {isExpanded && (
-                <div className="border-t border-border/60 bg-muted/40">
-                  <p className="px-5 pt-3 text-xs font-semibold text-muted-foreground uppercase">Riwayat Dispatch</p>
-                  {(dispatches[s.id] || []).length === 0 ? (
-                    <p className="px-5 py-3 text-sm text-muted-foreground/70">Memuat riwayat...</p>
-                  ) : (() => {
-                    let cumulative = 0;
-                    return (dispatches[s.id] || []).map(d => {
-                      cumulative += d.total_qty || 0;
-                      const dispatchRemaining = Math.max(0, totalOrdered - cumulative);
-                      return (
-                        <div key={d.dispatch_seq} className="px-5 py-3 border-b border-border/60 last:border-0">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <span className="w-6 h-6 rounded-full bg-[hsl(var(--primary))] text-white text-xs font-bold flex items-center justify-center">{d.dispatch_seq}</span>
-                              <span className="text-xs font-bold text-foreground/90">Dispatch #{d.dispatch_seq}</span>
-                              <span className="text-xs text-muted-foreground/70">{fmtDate(d.dispatch_date)}</span>
-                            </div>
-                            <div className="flex items-center gap-3 text-xs">
-                              <span className="text-[hsl(var(--success))] font-bold">+{(d.total_qty || 0).toLocaleString('id-ID')} pcs</span>
-                              <span className="text-[hsl(var(--primary))]">Kumulatif: {cumulative.toLocaleString('id-ID')}/{totalOrdered.toLocaleString('id-ID')}</span>
-                              <span className="text-muted-foreground/70">Sisa: {dispatchRemaining.toLocaleString('id-ID')}</span>
-                            </div>
-                          </div>
-                          <div className="mt-2 grid grid-cols-4 gap-1.5">
-                            {(d.items || []).map(it => (
-                              <div key={it.id} className="bg-card rounded px-2 py-1.5 text-xs border border-border/60">
-                                <p className="tabular-nums text-[hsl(var(--warning))] font-semibold">{it.serial_number || '—'}</p>
-                                <p className="tabular-nums text-[hsl(var(--primary))]">{it.sku || '-'}</p>
-                                <p className="font-bold">{(it.qty_shipped || 0).toLocaleString('id-ID')} pcs</p>
-                                {it.edit_history?.length > 0 && (
-                                  <span data-testid={`vendor-edited-badge-${it.id}`}
-                                    title={(it.edit_history || []).map(h => `${fmtDate(h.edited_at)} • ${h.old_qty}→${h.new_qty} pcs • ${h.edited_by}: ${h.reason}`).join('\n')}
-                                    className="mt-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] text-[9px] font-semibold cursor-help">
-                                    <Pencil className="w-2.5 h-2.5" /> diedit admin
-                                  </span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    });
-                  })()}
+      {/* Rincian deklarasi: riwayat dispatch + PDF */}
+      {rincian && (() => {
+        const h = hitung(rincian);
+        const list = dispatches[rincian.id];
+        let kumulatif = 0;
+        const [sl, st] = statusKirim(h.progressPct);
+        return (
+          <DetailPopup open onClose={tutupRincian} judul={`Deklarasi ${rincian.shipment_number}`} testId="vendor-buyer-shipment-detail"
+            keterangan={`PO ${rincian.po_number || '—'} · ${rincian.customer_name || '—'}`}
+            status={<StatusBadge status={sl} label={sl} tone={st} />}
+            aksi={<>
+              {h.progressPct < 100 && <Button type="button" size="sm" variant="outline" onClick={() => { tutupRincian(); openDispatch(rincian); }}><Plus className="w-4 h-4" />Dispatch</Button>}
+              <Button type="button" size="sm" variant="outline" disabled={!list} onClick={() => downloadPDF(rincian, list)}><Download className="w-4 h-4" />Unduh PDF</Button>
+            </>}>
+            <dl className="divide-y divide-[var(--glass-border)]">
+              <BarisDetail label="Dikirim / dipesan">{n(h.totalShipped)} / {n(h.totalOrdered)} pcs ({h.progressPct}%)</BarisDetail>
+              <BarisDetail label="Sisa">{n(h.remaining)} pcs</BarisDetail>
+            </dl>
+            <section className="space-y-2">
+              <p className="text-sm font-semibold text-foreground">Riwayat dispatch</p>
+              {!list ? <p className="text-sm text-muted-foreground">Memuat riwayat…</p> : list.length === 0 ? (
+                <EmptyState title="Belum ada dispatch" description="Dispatch yang dibuat untuk deklarasi ini tampil di sini." />
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader><TableRow><TableHead>Dispatch</TableHead><TableHead>Tanggal</TableHead><TableHead>No. seri</TableHead><TableHead>SKU</TableHead>
+                      <TableHead className="text-right">Qty</TableHead><TableHead className="text-right">Kumulatif</TableHead><TableHead className="text-right">Sisa</TableHead></TableRow></TableHeader>
+                    <TableBody>{list.flatMap((d) => {
+                      kumulatif += d.total_qty || 0;
+                      const sisa = Math.max(0, h.totalOrdered - kumulatif);
+                      const kum = kumulatif;
+                      return (d.items || []).map((it, i) => (
+                        <TableRow key={`${d.dispatch_seq}-${it.id}`}>
+                          <TableCell className="tabular-nums">{i === 0 ? `#${d.dispatch_seq}` : ''}</TableCell>
+                          <TableCell>{i === 0 ? fmtDate(d.dispatch_date) : ''}</TableCell>
+                          <TableCell className="tabular-nums">{it.serial_number || '—'}</TableCell>
+                          <TableCell className="tabular-nums">
+                            {it.sku || '—'}
+                            {it.edit_history?.length > 0 && (
+                              <span data-testid={`vendor-edited-badge-${it.id}`} className="ml-2 inline-flex items-center gap-1 text-xs text-[hsl(var(--warning-text))]"
+                                title={(it.edit_history || []).map((x) => `${fmtDate(x.edited_at)} • ${x.old_qty}→${x.new_qty} pcs • ${x.edited_by}: ${x.reason}`).join('\n')}>
+                                <Pencil className="w-3 h-3" />diubah admin
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">{n(it.qty_shipped)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{i === 0 ? n(kum) : ''}</TableCell>
+                          <TableCell className="text-right tabular-nums">{i === 0 ? n(sisa) : ''}</TableCell>
+                        </TableRow>
+                      ));
+                    })}</TableBody>
+                  </Table>
                 </div>
               )}
-            </div>
-          );
-        })}
-      </div>
+            </section>
+          </DetailPopup>
+        );
+      })()}
 
-      {/* Create/Add Dispatch Modal */}
+      {/* Buat / tambah dispatch — FormPopup panjang */}
       {showModal && (
-        <Modal title={form.job_id && shipments.find(s => s.job_id === form.job_id) ? "Tambah Dispatch Pengiriman" : "Buat Pengiriman ke Buyer"} onClose={() => setShowModal(false)} size="xl">
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Show info if this is a continuation */}
-            {form.job_id && shipments.find(s => s.job_id === form.job_id) && (
-              <div className="bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--warning))]">
-                📦 <strong>Pengiriman Lanjutan</strong>: Dispatch baru akan ditambahkan ke record pengiriman yang sudah ada untuk job ini.
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-foreground/90 mb-1">Pilih Job Produksi *</label>
-                {/* Search */}
-                <input
-                  type="text"
-                  placeholder="🔍 Cari nomor job atau PO..."
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--success)/0.35)] mb-2"
-                  value={searchJob}
-                  onChange={e => setSearchJob(e.target.value)}
-                />
-                <SmartNativeSelect className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--success)/0.35)]"
-                  value={form.job_id} onChange={e => { setSearchJob(''); loadJobItems(e.target.value); }}>
-                  <option value="">— Pilih Job Produksi —</option>
-                  {/* Jobs with available qty to ship — shown by default */}
+        <FormPopup open onClose={() => setShowModal(false)} ukuran="panjang" testId="vendor-buyer-shipment-form"
+          judul={lanjutan ? 'Tambah dispatch pengiriman' : 'Deklarasi kirim ke DA'}
+          keterangan={lanjutan ? 'Dispatch baru ditambahkan ke deklarasi yang sudah ada untuk job ini.' : 'Qty kirim tidak boleh melebihi sisa yang belum dikirim.'}
+          onSimpan={handleSubmit} menyimpan={loading} labelSimpan="Kirim">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Isian label="Job produksi" wajib petunjuk={jobs.length === 0 ? 'Job produksi untuk vendor ini belum tersedia.' : null}>
+              <div className="space-y-2">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input className="pl-8" placeholder="Cari no. job atau PO" value={searchJob} onChange={(e) => setSearchJob(e.target.value)} />
+                </div>
+                <SmartNativeSelect className="w-full" value={form.job_id} onChange={(e) => { setSearchJob(''); loadJobItems(e.target.value); }} aria-label="Pilih job produksi">
+                  <option value="">Pilih job produksi</option>
                   {(() => {
                     const q = searchJob.toLowerCase();
-                    // Filter jobs yang masih punya remaining to ship
-                    const available = jobs.filter(j => {
-                      const hasRemaining = (j.remaining_to_ship || 0) > 0;
-                      const matchSearch = !q || j.job_number?.toLowerCase().includes(q) || j.po_number?.toLowerCase().includes(q);
-                      return hasRemaining && matchSearch;
-                    });
-                    const notStarted = jobs.filter(j => {
-                      const noProduced = (j.total_produced || 0) === 0;
-                      const matchSearch = !q || j.job_number?.toLowerCase().includes(q) || j.po_number?.toLowerCase().includes(q);
-                      return noProduced && matchSearch && (showAllJobs || q);
-                    });
-                    const completed = jobs.filter(j => {
-                      const fullyShipped = (j.remaining_to_ship || 0) <= 0 && (j.total_produced || 0) > 0;
-                      const matchSearch = !q || j.job_number?.toLowerCase().includes(q) || j.po_number?.toLowerCase().includes(q);
-                      return fullyShipped && matchSearch && (showAllJobs || q);
-                    });
+                    const cocok = (j) => !q || j.job_number?.toLowerCase().includes(q) || j.po_number?.toLowerCase().includes(q);
+                    const available = jobs.filter((j) => (j.remaining_to_ship || 0) > 0 && cocok(j));
+                    const notStarted = jobs.filter((j) => (j.total_produced || 0) === 0 && cocok(j) && (showAllJobs || q));
+                    const completed = jobs.filter((j) => (j.remaining_to_ship || 0) <= 0 && (j.total_produced || 0) > 0 && cocok(j) && (showAllJobs || q));
                     return (
                       <>
                         {available.length > 0 && (
-                          <optgroup label={`✅ Ada Sisa Kirim (${available.length})`}>
-                            {available.map(j => {
-                              const existShipment = shipments.find(s => s.job_id === j.id);
-                              const label = existShipment ? `${j.job_number} | PO: ${j.po_number || '-'} | ${j.progress_pct || 0}% prod. | Lanjut kirim` : `${j.job_number} | PO: ${j.po_number || '-'} | ${j.progress_pct || 0}% prod. | Belum dikirim`;
-                              return <option key={j.id} value={j.id}>{label}</option>;
-                            })}
+                          <optgroup label={`Ada sisa kirim (${available.length})`}>
+                            {available.map((j) => (
+                              <option key={j.id} value={j.id}>{j.job_number} · PO {j.po_number || '—'} · {j.progress_pct || 0}% produksi · {shipments.find((s) => s.job_id === j.id) ? 'lanjut kirim' : 'belum dikirim'}</option>
+                            ))}
                           </optgroup>
                         )}
                         {notStarted.length > 0 && (
-                          <optgroup label={`⏳ Belum Ada Produksi (${notStarted.length})`}>
-                            {notStarted.map(j => <option key={j.id} value={j.id}>{j.job_number} | PO: {j.po_number || '-'} | 0% prod.</option>)}
+                          <optgroup label={`Belum ada produksi (${notStarted.length})`}>
+                            {notStarted.map((j) => <option key={j.id} value={j.id}>{j.job_number} · PO {j.po_number || '—'} · 0% produksi</option>)}
                           </optgroup>
                         )}
                         {completed.length > 0 && (
-                          <optgroup label={`🏁 Sudah Fully Shipped (${completed.length})`}>
-                            {completed.map(j => <option key={j.id} value={j.id}>{j.job_number} | PO: {j.po_number || '-'} | Selesai</option>)}
+                          <optgroup label={`Sudah terkirim penuh (${completed.length})`}>
+                            {completed.map((j) => <option key={j.id} value={j.id}>{j.job_number} · PO {j.po_number || '—'} · selesai</option>)}
                           </optgroup>
                         )}
                         {available.length === 0 && notStarted.length === 0 && completed.length === 0 && q && (
@@ -441,106 +388,59 @@ export default function VendorBuyerShipments({ user }) {
                     );
                   })()}
                 </SmartNativeSelect>
-                {/* Toggle show all */}
-                <button type="button" className="text-xs text-[hsl(var(--primary))] hover:underline mt-1" onClick={() => setShowAllJobs(v => !v)}>
-                  {showAllJobs ? '▲ Sembunyikan job selesai/belum mulai' : '▼ Tampilkan semua job'}
-                </button>
-                {jobs.length === 0 && <p className="text-xs text-[hsl(var(--warning))] mt-1">Job produksi untuk vendor ini belum tersedia.</p>}
+                <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => setShowAllJobs((v) => !v)}>
+                  {showAllJobs ? 'Sembunyikan job selesai/belum mulai' : 'Tampilkan semua job'}
+                </Button>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-foreground/90 mb-1">Tanggal Dispatch</label>
-                <GlassInput type="date"
-                  value={form.shipment_date} onChange={e => setForm(f => ({ ...f, shipment_date: e.target.value }))} />
+            </Isian>
+            <Isian label="Tanggal dispatch">
+              <DatePicker value={form.shipment_date} onChange={(v) => setForm((f) => ({ ...f, shipment_date: v }))} bolehKosong={false} />
+            </Isian>
+          </div>
+          {selectedJob && <p className="text-sm text-muted-foreground">{selectedJob.job_number} — {selectedJob.po_number}. Qty kirim tidak boleh melebihi sisa kirim.</p>}
+          {form.items.length > 0 && (
+            <section className="space-y-2">
+              <p className="text-sm font-medium text-foreground">Barang yang dikirim</p>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader><TableRow>
+                    <TableHead>No. seri</TableHead><TableHead>Produk / SKU</TableHead>
+                    {['Dipesan', 'Diproduksi', 'Diklaim ke DA', 'Diterima DA', 'Belum sampai', 'Sisa kirim', 'Kirim sekarang *'].map((h) => <TableHead key={h} className="text-right whitespace-nowrap">{h}</TableHead>)}
+                  </TableRow></TableHeader>
+                  <TableBody>{form.items.map((item, idx) => (
+                    <TableRow key={idx}>
+                      <TableCell className="tabular-nums">{item.serial_number || '—'}</TableCell>
+                      <TableCell><p className="font-medium">{item.product_name}</p><p className="text-xs text-muted-foreground tabular-nums">{item.sku || '—'} · {item.size}/{item.color}</p></TableCell>
+                      <TableCell className="text-right tabular-nums">{n(item.ordered_qty)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{n(item.produced_qty)}{item.child_produced_qty > 0 && <span className="block text-xs text-muted-foreground">+{item.child_produced_qty} turunan</span>}</TableCell>
+                      <TableCell className="text-right tabular-nums">{n(item.shipped_to_da)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{n(item.received_by_da)}</TableCell>
+                      <TableCell className={`text-right tabular-nums ${(item.qty_short_open || 0) > 0 ? 'text-[hsl(var(--danger-text))] font-semibold' : 'text-muted-foreground'}`}>{n(item.qty_short_open)}</TableCell>
+                      <TableCell className="text-right tabular-nums font-medium">{n(item.remaining_to_ship)}</TableCell>
+                      <TableCell className="text-right">
+                        <Input type="number" min="0" max={item.remaining_to_ship} aria-label={`Kirim sekarang ${item.product_name}`}
+                          className={`h-8 w-24 ml-auto text-right ${Number(item.qty_shipped) > Number(item.remaining_to_ship) ? 'border-[hsl(var(--destructive))] text-[hsl(var(--danger-text))]' : ''}`}
+                          value={item.qty_shipped} onChange={(e) => updateQty(idx, e.target.value)} />
+                      </TableCell>
+                    </TableRow>
+                  ))}</TableBody>
+                  <TableFooter><TableRow>
+                    <TableCell colSpan={2} className="font-semibold">Total</TableCell>
+                    {['ordered_qty', 'produced_qty', 'shipped_to_da', 'received_by_da', 'qty_short_open', 'remaining_to_ship'].map((k) => (
+                      <TableCell key={k} className="text-right tabular-nums font-semibold">{n(sumF(k))}</TableCell>
+                    ))}
+                    <TableCell className="text-right tabular-nums font-semibold">{n(sumF('qty_shipped'))} pcs</TableCell>
+                  </TableRow></TableFooter>
+                </Table>
               </div>
-            </div>
-
-            {selectedJob && (
-              <div className="bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] rounded-lg p-3 text-sm">
-                <p className="font-semibold text-[hsl(var(--primary))]">{selectedJob.job_number} — {selectedJob.po_number}</p>
-                <p className="text-xs text-[hsl(var(--primary))] mt-0.5">Qty kirim tidak boleh melebihi sisa yang belum dikirim</p>
-              </div>
-            )}
-
-            {form.items.length > 0 && (
-              <div>
-                <label className="block text-sm font-semibold text-foreground/90 mb-2">Item Pengiriman</label>
-                <div className="overflow-x-auto rounded-xl border border-border">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/40">
-                      <tr>
-                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--warning))]">Serial</th>
-                        <th className="text-left px-3 py-2 text-xs text-muted-foreground">Produk / SKU</th>
-                        <th className="text-right px-3 py-2 text-xs text-muted-foreground">Dipesan</th>
-                        <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))]">Diproduksi</th>
-                        <th className="text-right px-3 py-2 text-xs text-muted-foreground bg-[hsl(var(--warning)/0.1)]">Diklaim ke DA</th>
-                        <th className="text-right px-3 py-2 text-xs text-muted-foreground bg-[hsl(var(--primary)/0.1)]">Diterima DA</th>
-                        <th className="text-right px-3 py-2 text-xs text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.1)]">Belum sampai</th>
-                        <th className="text-right px-3 py-2 text-xs text-muted-foreground bg-[hsl(var(--success)/0.1)]">Sisa Kirim</th>
-                        <th className="text-right px-3 py-2 text-xs text-foreground/90 font-bold">Kirim Sekarang *</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {form.items.map((item, idx) => (
-                        <tr key={idx} className="border-t border-border/60">
-                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--warning))] font-semibold">{item.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
-                          <td className="px-3 py-2">
-                            <p className="font-medium">{item.product_name}</p>
-                            <p className="text-xs tabular-nums text-[hsl(var(--primary))]">{item.sku || '-'} · {item.size}/{item.color}</p>
-                          </td>
-                          <td className="px-3 py-2 text-right text-muted-foreground">{(item.ordered_qty || 0).toLocaleString('id-ID')}</td>
-                          <td className="px-3 py-2 text-right text-[hsl(var(--success))] font-medium">
-                            {(item.produced_qty || 0).toLocaleString('id-ID')}
-                            {item.child_produced_qty > 0 && (
-                              <span className="block text-xs text-[hsl(var(--primary))]">+{item.child_produced_qty} child</span>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-right text-[hsl(var(--warning))] bg-[hsl(var(--warning)/0.1)]">{(item.shipped_to_da || 0).toLocaleString('id-ID')}</td>
-                          <td className="px-3 py-2 text-right text-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.1)]">{(item.received_by_da || 0).toLocaleString('id-ID')}</td>
-                          <td className={`px-3 py-2 text-right font-bold bg-[hsl(var(--destructive)/0.1)] ${(item.qty_short_open || 0) > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground/60'}`}>{(item.qty_short_open || 0).toLocaleString('id-ID')}</td>
-                          <td className="px-3 py-2 text-right text-[hsl(var(--success))] font-bold bg-[hsl(var(--success)/0.1)]">{(item.remaining_to_ship || 0).toLocaleString('id-ID')}</td>
-                          <td className="px-3 py-2">
-                            <input type="number" min="0" max={item.remaining_to_ship}
-                              className={`w-24 border rounded px-2 py-1 text-sm text-right ml-auto block focus:outline-none focus:ring-1 ${Number(item.qty_shipped) > Number(item.remaining_to_ship) ? 'border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]' : 'border-border focus:ring-[hsl(var(--success)/0.35)]'}`}
-                              value={item.qty_shipped}
-                              onChange={e => updateQty(idx, e.target.value)} />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot className="bg-muted/40 font-bold border-t border-border">
-                      <tr>
-                        <td colSpan={2} className="px-3 py-2">Total</td>
-                        <td className="px-3 py-2 text-right">{form.items.reduce((s, i) => s + (Number(i.ordered_qty) || 0), 0).toLocaleString('id-ID')}</td>
-                        <td className="px-3 py-2 text-right text-[hsl(var(--success))]">{form.items.reduce((s, i) => s + (Number(i.produced_qty) || 0), 0).toLocaleString('id-ID')}</td>
-                        <td className="px-3 py-2 text-right text-[hsl(var(--warning))] bg-[hsl(var(--warning)/0.1)]">{form.items.reduce((s, i) => s + (Number(i.shipped_to_da) || 0), 0).toLocaleString('id-ID')}</td>
-                        <td className="px-3 py-2 text-right text-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.1)]">{form.items.reduce((s, i) => s + (Number(i.received_by_da) || 0), 0).toLocaleString('id-ID')}</td>
-                        <td className="px-3 py-2 text-right text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.1)]">{form.items.reduce((s, i) => s + (Number(i.qty_short_open) || 0), 0).toLocaleString('id-ID')}</td>
-                        <td className="px-3 py-2 text-right text-[hsl(var(--success))] bg-[hsl(var(--success)/0.1)]">{form.items.reduce((s, i) => s + (Number(i.remaining_to_ship) || 0), 0).toLocaleString('id-ID')}</td>
-                        <td className="px-3 py-2 text-right text-[hsl(var(--primary))]">{form.items.reduce((s, i) => s + (Number(i.qty_shipped) || 0), 0).toLocaleString('id-ID')} pcs</td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            <div>
-              <label className="block text-sm font-medium text-foreground/90 mb-1">Catatan</label>
-              <textarea rows="2" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--success)/0.35)]"
-                value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
-            </div>
-
-            <div className="flex gap-3">
-              <button type="submit" disabled={loading}
-                className="flex-1 bg-[hsl(var(--success))] text-white py-2 rounded-lg text-sm font-medium hover:bg-[hsl(var(--success)/0.9)] disabled:opacity-50">
-                {loading ? 'Menyimpan...' : 'Kirim'}
-              </button>
-              <button type="button" onClick={() => setShowModal(false)} className="flex-1 border border-border py-2 rounded-lg text-sm hover:bg-muted/60">Batal</button>
-            </div>
-          </form>
-        </Modal>
+            </section>
+          )}
+          <Isian label="Catatan">
+            <Textarea rows={2} value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
+          </Isian>
+        </FormPopup>
       )}
-    </div>
+    </PageLayout>
   );
 }
 // ─── VENDOR MATERIAL INSPECTION ───────────────────────────────────────────────

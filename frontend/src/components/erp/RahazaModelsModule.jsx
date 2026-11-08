@@ -6,6 +6,9 @@ import {
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import Modal from './Modal';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup from '@/components/ui/detail-popup';
+import { Checkbox } from '@/components/ui/checkbox';
 import { DataTable } from './DataTableV2';
 import { PageHeader, EmptyState, Notice } from './moduleAtoms';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
@@ -41,10 +44,10 @@ const rupiah = (v) => {
 const HPP_SOURCE_LABEL = {
   // 2026-08-23 — sumber baru & DIDAHULUKAN: HPP lahir dari BOM × harga pembelian
   // + upah CMT/cutting (layar "HPP per Potong"), bukan ketikan master.
-  bom: { text: 'BOM + pembelian', cls: 'bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.4)] text-[hsl(var(--success))] ' },
+  bom: { text: 'BOM + pembelian', cls: 'bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.4)] text-[hsl(var(--success-text))] ' },
   rnd: { text: 'dari R&D', cls: 'bg-[hsl(var(--primary)/0.1)] border-[hsl(var(--primary)/0.4)] text-[hsl(var(--primary))] ' },
-  manual: { text: 'manual', cls: 'bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.4)] text-[hsl(var(--warning))] ' },
-  none: { text: 'belum ada', cls: 'bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.4)] text-[hsl(var(--destructive))] ' },
+  manual: { text: 'manual', cls: 'bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.4)] text-[hsl(var(--warning-text))] ' },
+  none: { text: 'belum ada', cls: 'bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.4)] text-[hsl(var(--danger-text))] ' },
 };
 
 function HppCell({ row }) {
@@ -53,7 +56,7 @@ function HppCell({ row }) {
   return (
     <div className="flex flex-col gap-0.5" data-testid={`model-hpp-${row?.code}`}>
       <span className={val ? 'text-foreground font-medium' : 'text-muted-foreground'}>{rupiah(val)}</span>
-      <span className={`text-[10px] px-1.5 py-0.5 rounded-full border w-fit ${src.cls}`}>{src.text}</span>
+      <span className={`text-xs px-1.5 py-0.5 rounded-full border w-fit ${src.cls}`}>{src.text}</span>
     </div>
   );
 }
@@ -71,11 +74,11 @@ function ImageThumb({ path, token, onDelete, large = false }) {
       <img src={url} alt="model" className="w-full h-full object-cover"
         onError={(e) => { e.target.src = IMAGE_FALLBACK; e.target.style.objectFit = 'contain'; e.target.style.padding = '6px'; }} />
       {onDelete && (
-        <button onClick={onDelete}
-          className="absolute top-0.5 right-0.5 p-1 rounded-full bg-[hsl(var(--destructive)/0.9)] text-white opacity-0 group-hover:opacity-100 transition-opacity"
-          data-testid="model-image-delete" title="Hapus foto">
-          <X className="w-3 h-3" />
-        </button>
+        <Button type="button" variant="destructive" size="icon-sm" onClick={onDelete}
+          className="absolute top-0.5 right-0.5 h-6 w-6 rounded-full opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity [&_svg]:size-3"
+          data-testid="model-image-delete" title="Hapus foto" aria-label="Hapus foto">
+          <X />
+        </Button>
       )}
     </div>
   );
@@ -170,7 +173,9 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
   };
 
   return (
-    <Modal onClose={onClose} title={`Panduan Produksi · ${model.code} — ${model.name}`} size="lg">
+    // Standar UI/UX v2: FormPopup panjang — kaki Batal · Simpan panduan (hijau).
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="panduan-produksi-popup" onSimpan={saveSop} menyimpan={saving}
+      judul={`Panduan produksi ${model.code} — ${model.name}`} labelSimpan="Simpan panduan (SOP + video)">
       <div className="space-y-4" data-testid="panduan-produksi-dialog">
         <FilterChips value={tab} onChange={setTab} testId="panduan-tab" ariaLabel="Bagian panduan produksi" hideWhenEmpty={false}
           options={[
@@ -192,7 +197,7 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
                   data-testid="model-image-upload-label">
                   {uploading ? <span className="text-xs text-muted-foreground">Uploading...</span> : (<>
                     <Upload className="w-5 h-5 text-muted-foreground" />
-                    <span className="text-[10px] text-muted-foreground">Tambah foto</span>
+                    <span className="text-xs text-muted-foreground">Tambah foto</span>
                   </>)}
                   <input type="file" accept="image/*" className="hidden" disabled={uploading} onChange={handleUploadPhoto} data-testid="model-image-upload-input" />
                 </label>
@@ -210,12 +215,12 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
             </p>
             <div className="space-y-3 max-h-[45vh] overflow-y-auto pr-1">
               {steps.map((st, idx) => (
-                <GlassCard key={st.id} className="p-3" data-testid={`sop-step-${idx}`}>
+                <div key={st.id} className="rounded-lg border border-border p-3" data-testid={`sop-step-${idx}`}>
                   <div className="flex items-start gap-3">
                     <div className="flex flex-col items-center gap-1 pt-1">
                       <span className="w-6 h-6 rounded-full bg-primary/15 text-primary text-xs font-bold flex items-center justify-center">{idx + 1}</span>
-                      <button onClick={() => moveStep(idx, -1)} disabled={idx === 0} className="p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30" title="Naik"><ArrowUp className="w-3.5 h-3.5" /></button>
-                      <button onClick={() => moveStep(idx, 1)} disabled={idx === steps.length - 1} className="p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30" title="Turun"><ArrowDown className="w-3.5 h-3.5" /></button>
+                      <Button type="button" variant="ghost" size="icon-sm" onClick={() => moveStep(idx, -1)} disabled={idx === 0} title="Naik" aria-label="Naik"><ArrowUp className="w-3.5 h-3.5" /></Button>
+                      <Button type="button" variant="ghost" size="icon-sm" onClick={() => moveStep(idx, 1)} disabled={idx === steps.length - 1} title="Turun" aria-label="Turun"><ArrowDown className="w-3.5 h-3.5" /></Button>
                     </div>
                     <div className="flex-1 space-y-2">
                       <GlassInput value={st.title} onChange={(e) => updateStep(idx, { title: e.target.value })}
@@ -229,30 +234,30 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
                           <div className="relative group">
                             <img src={fileUrl(st.image_path, token)} alt="step" className="w-20 h-20 rounded-lg object-cover border border-[var(--glass-border)]"
                               onError={(e) => { e.target.src = IMAGE_FALLBACK; }} />
-                            <button onClick={() => updateStep(idx, { image_path: '' })}
-                              className="absolute -top-1.5 -right-1.5 p-1 rounded-full bg-[hsl(var(--destructive)/0.9)] text-white" title="Hapus foto langkah"><X className="w-3 h-3" /></button>
+                            <Button type="button" variant="destructive" size="icon-sm" onClick={() => updateStep(idx, { image_path: '' })}
+                              className="absolute -top-1.5 -right-1.5 h-6 w-6 rounded-full [&_svg]:size-3" title="Hapus foto langkah" aria-label="Hapus foto langkah"><X /></Button>
                           </div>
                         ) : (
                           <label className="w-20 h-20 rounded-lg border-2 border-dashed border-[var(--glass-border)] flex flex-col items-center justify-center gap-1 cursor-pointer hover:border-primary text-muted-foreground"
                             data-testid={`sop-step-${idx}-photo-label`}>
-                            {stepUploading === idx ? <span className="text-[9px]">...</span> : (<><ImageIcon className="w-4 h-4" /><span className="text-[9px]">Foto</span></>)}
+                            {stepUploading === idx ? <span className="text-xs">...</span> : (<><ImageIcon className="w-4 h-4" /><span className="text-xs">Foto</span></>)}
                             <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadStepPhoto(idx, e.target.files?.[0])} />
                           </label>
                         )}
-                        <button onClick={() => removeStep(idx)} className="ml-auto flex items-center gap-1 text-xs text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]" data-testid={`sop-step-${idx}-remove`}>
-                          <Trash2 className="w-3.5 h-3.5" /> Hapus langkah
-                        </button>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => removeStep(idx)} className="ml-auto text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))]" data-testid={`sop-step-${idx}-remove`}>
+                          <Trash2 /> Hapus langkah
+                        </Button>
                       </div>
                     </div>
                   </div>
-                </GlassCard>
+                </div>
               ))}
               {steps.length === 0 && (
                 <EmptyState icon={ListChecks} className="py-8" title="Belum ada langkah"
                   description='Klik "Tambah Langkah" untuk menulis langkah pertama.' />
               )}
             </div>
-            <Button variant="outline" size="sm" onClick={addStep} data-testid="sop-add-step-btn"><Plus className="w-4 h-4 mr-1" /> Tambah Langkah</Button>
+            <Button type="button" variant="outline" size="sm" onClick={addStep} data-testid="sop-add-step-btn"><Plus className="w-4 h-4 mr-1" /> Tambah Langkah</Button>
           </div>
         )}
 
@@ -262,21 +267,21 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-semibold text-foreground flex items-center gap-1.5"><Video className="w-4 h-4 text-primary" /> Referensi Video</span>
-                <Button variant="outline" size="sm" onClick={addVideo} data-testid="ref-add-video-btn"><Plus className="w-4 h-4 mr-1" /> Video</Button>
+                <Button type="button" variant="outline" size="sm" onClick={addVideo} data-testid="ref-add-video-btn"><Plus className="w-4 h-4 mr-1" /> Video</Button>
               </div>
               <div className="space-y-2">
                 {videos.map((v, idx) => {
                   const yid = ytId(v.url);
                   return (
-                    <GlassCard key={idx} className="flex items-center gap-3 p-2" data-testid={`ref-video-${idx}`}>
+                    <div key={idx} className="flex items-center gap-3 rounded-lg border border-border p-2" data-testid={`ref-video-${idx}`}>
                       {yid ? <img src={`https://img.youtube.com/vi/${yid}/default.jpg`} alt="yt" className="w-16 h-12 rounded object-cover" />
                            : <div className="w-16 h-12 rounded bg-foreground/10 flex items-center justify-center"><Video className="w-5 h-5 text-muted-foreground" /></div>}
                       <div className="flex-1 space-y-1">
                         <GlassInput value={v.title} onChange={(e) => updateVideo(idx, { title: e.target.value })} placeholder="Judul video" data-testid={`ref-video-${idx}-title`} />
                         <GlassInput value={v.url} onChange={(e) => updateVideo(idx, { url: e.target.value })} placeholder="https://youtu.be/... atau link Drive" data-testid={`ref-video-${idx}-url`} />
                       </div>
-                      <button onClick={() => removeVideo(idx)} className="p-1.5 text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]" data-testid={`ref-video-${idx}-remove`}><Trash2 className="w-4 h-4" /></button>
-                    </GlassCard>
+                      <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeVideo(idx)} title="Hapus video" aria-label="Hapus video" data-testid={`ref-video-${idx}-remove`}><Trash2 className="w-4 h-4" /></Button>
+                    </div>
                   );
                 })}
                 {videos.length === 0 && (
@@ -288,18 +293,18 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-semibold text-foreground flex items-center gap-1.5"><Link2 className="w-4 h-4 text-primary" /> Gambar Referensi (link)</span>
-                <Button variant="outline" size="sm" onClick={addRefImage} data-testid="ref-add-image-btn"><Plus className="w-4 h-4 mr-1" /> Gambar</Button>
+                <Button type="button" variant="outline" size="sm" onClick={addRefImage} data-testid="ref-add-image-btn"><Plus className="w-4 h-4 mr-1" /> Gambar</Button>
               </div>
               <div className="space-y-2">
                 {refImages.map((v, idx) => (
-                  <GlassCard key={idx} className="flex items-center gap-3 p-2" data-testid={`ref-image-${idx}`}>
+                  <div key={idx} className="flex items-center gap-3 rounded-lg border border-border p-2" data-testid={`ref-image-${idx}`}>
                     <img src={v.url || IMAGE_FALLBACK} alt="ref" className="w-14 h-14 rounded object-cover bg-foreground/5" onError={(e) => { e.target.src = IMAGE_FALLBACK; e.target.style.objectFit = 'contain'; e.target.style.padding = '4px'; }} />
                     <div className="flex-1 space-y-1">
                       <GlassInput value={v.caption} onChange={(e) => updateRefImage(idx, { caption: e.target.value })} placeholder="Keterangan" data-testid={`ref-image-${idx}-caption`} />
                       <GlassInput value={v.url} onChange={(e) => updateRefImage(idx, { url: e.target.value })} placeholder="https://.../gambar.jpg" data-testid={`ref-image-${idx}-url`} />
                     </div>
-                    <button onClick={() => removeRefImage(idx)} className="p-1.5 text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]" data-testid={`ref-image-${idx}-remove`}><Trash2 className="w-4 h-4" /></button>
-                  </GlassCard>
+                    <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeRefImage(idx)} title="Hapus gambar" aria-label="Hapus gambar" data-testid={`ref-image-${idx}-remove`}><Trash2 className="w-4 h-4" /></Button>
+                  </div>
                 ))}
                 {refImages.length === 0 && (
                   <EmptyState icon={ImageIcon} className="py-6" title="Belum ada gambar referensi"
@@ -310,14 +315,8 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
           </div>
         )}
 
-        <div className="flex justify-end gap-2 pt-3 border-t border-[var(--glass-border)]">
-          <Button variant="ghost" onClick={onClose} data-testid="panduan-close">Tutup</Button>
-          <Button onClick={saveSop} disabled={saving} data-testid="panduan-save">
-            {saving ? 'Menyimpan...' : 'Simpan Panduan (SOP + Video)'}
-          </Button>
-        </div>
       </div>
-    </Modal>
+    </FormPopup>
   );
 }
 
@@ -441,7 +440,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
       render: (row) => {
         if (!row.category_id) {
           return (
-            <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.4)] text-[hsl(var(--warning))] "
+            <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.4)] text-[hsl(var(--warning-text))] "
               title="Kategori belum dipilih — tidak ditebak oleh sistem" data-testid={`model-nocat-${row.code}`}>
               <AlertTriangle className="w-3 h-3" /> belum dipilih
             </span>
@@ -449,7 +448,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
         }
         return (
           <span className="inline-flex items-center gap-1.5" data-testid={`model-cat-${row.code}`}>
-            <span className="tabular-nums text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/30">
+            <span className="tabular-nums text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/30">
               {row.category_code || '—'}
             </span>
             <span className="text-sm">{row.category_name || row.category}</span>
@@ -483,7 +482,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
         return (
           <div className="flex items-center gap-1.5" data-testid={`model-images-${row.code}`}>
             {arr.slice(0, 3).map((p) => <ImageThumb key={p} path={p} token={token} />)}
-            {arr.length > 3 && <span className="text-[10px] text-muted-foreground">+{arr.length - 3}</span>}
+            {arr.length > 3 && <span className="text-xs text-muted-foreground">+{arr.length - 3}</span>}
           </div>
         );
       },
@@ -494,45 +493,42 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
         const nSop = (row?.sop_steps || []).length;
         const nVid = (row?.reference_videos || []).length;
         return (
-          <button
-            onClick={(e) => { e.stopPropagation(); setPanduanModel(row); }}
-            className="px-2 py-1 rounded text-xs border border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] flex items-center gap-1 text-muted-foreground hover:text-foreground"
-            data-testid={`model-panduan-${row.code}`} title="Panduan Produksi (SOP + Foto + Video)">
+          <Button type="button" variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setPanduanModel(row); }}
+            data-testid={`model-panduan-${row.code}`} title="Panduan produksi (SOP, foto, video)">
             <BookOpen className="w-3.5 h-3.5" />
             <span>{nSop} SOP · {nVid} video</span>
-          </button>
+          </Button>
         );
       },
     },
     {
-      key: 'techpack', label: 'Tech Pack',
+      key: 'techpack', label: 'Tech pack',
       render: (row) => {
         const tp = row?.techpack;
         if (!tp) return <span className="text-xs text-muted-foreground">—</span>;
         return (
-          <button onClick={(e) => { e.stopPropagation(); setTechpackModel(row); }}
-            className="px-2 py-1 rounded text-xs border border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] flex items-center gap-1 text-muted-foreground hover:text-foreground"
-            data-testid={`model-techpack-${row.code}`} title="Ringkasan spesifikasi dari R&D (read-only)">
+          <Button type="button" variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setTechpackModel(row); }}
+            data-testid={`model-techpack-${row.code}`} title="Ringkasan spesifikasi dari R&D (hanya baca)">
             <FileText className="w-3.5 h-3.5" />
             <span>v{tp.version ?? '?'} · {(tp.bom_items || []).length} bahan</span>
-          </button>
+          </Button>
         );
       },
     },
-    { key: 'material_kg_per_pcs', label: 'Kain/pcs (kg) · info lama', render: (row) => { const v = readNumber(row, FIELD.materialKgPerPcs); return v ? Number(v).toFixed(3) : '-'; } },
+    { key: 'material_kg_per_pcs', label: 'Kain/pcs (kg) · catatan lama', render: (row) => { const v = readNumber(row, FIELD.materialKgPerPcs); return v ? Number(v).toFixed(3) : '-'; } },
     { key: 'bundle_size', label: 'Bundle', render: (row, v) => `${v || 30} pcs` },
     {
       key: 'actions', label: 'Aksi',
       render: (row) => (
         <div className="flex items-center gap-1">
-          <button onClick={(e) => { e.stopPropagation(); openEdit(row); }}
-            className="p-1.5 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground hover:text-foreground" title="Edit" data-testid={`model-edit-${row.code}`}>
+          <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); openEdit(row); }}
+            title="Ubah" aria-label="Ubah" data-testid={`model-edit-${row.code}`}>
             <Edit2 className="w-3.5 h-3.5" />
-          </button>
-          <button onClick={(e) => { e.stopPropagation(); handleDelete(row); }}
-            className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.15)] text-muted-foreground hover:text-[hsl(var(--destructive))] " title="Nonaktifkan" data-testid={`model-deactivate-${row.code}`}>
+          </Button>
+          <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); handleDelete(row); }}
+            title="Nonaktifkan" aria-label="Nonaktifkan" data-testid={`model-deactivate-${row.code}`}>
             <Trash2 className="w-3.5 h-3.5" />
-          </button>
+          </Button>
         </div>
       ),
     },
@@ -540,7 +536,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
 
   const categoryFilter = (
     <SmartNativeSelect value={catFilter} onChange={(e) => setCatFilter(e.target.value)}
-      className="w-56 text-sm"
+      className="w-56"
       data-testid="model-filter-category" aria-label="Kategori">
       <option value="">Semua kategori</option>
       {categories.map((c) => <option key={c.id} value={c.id}>{c.sku_prefix} · {c.name}</option>)}
@@ -548,7 +544,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
   );
   const importExport = <ImportExportToolbar collectionKey="models" label="Model Produk" onImported={fetchRows} />;
   const createBtn = (
-    <Button onClick={openCreate} className="gap-1.5" data-testid="model-create-btn">
+    <Button type="button" onClick={openCreate} className="gap-1.5" data-testid="model-create-btn">
       <Plus className="w-4 h-4" /> Tambah model
     </Button>
   );
@@ -568,37 +564,35 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
   const dialogs = (
     <>
       {modalOpen && (
-        <Modal onClose={() => setModalOpen(false)} title={editing ? `Edit Model · ${editing.code}` : 'Tambah Model Baru'} size="md">
-          <div className="space-y-3" data-testid="model-form">
+        // Standar UI/UX v2 (8 Nov 2026): FormPopup panjang — kaki Batal · Simpan (hijau), isian & simpan sama.
+        <FormPopup open onClose={() => setModalOpen(false)} ukuran="panjang" testId="model-form-popup"
+          judul={editing ? `Ubah model ${editing.code}` : 'Tambah model baru'} onSimpan={handleSave} menyimpan={saving}>
+          <div className="space-y-4" data-testid="model-form">
             {!editing && (
               <Notice tone="warning" icon={Info} testId="model-rnd-hint" className="text-xs">
                 <b>Disarankan lewat R&D:</b> produk internal idealnya lahir dari modul R&D (publish style → otomatis jadi master + bawa foto desain). Input manual ini untuk kasus khusus.
               </Notice>
             )}
-            <div>
-              <label className="text-xs text-muted-foreground">Nama Model <span className="text-[hsl(var(--destructive))] ">*</span></label>
-              <GlassInput value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Contoh: Vest Rajut Formal" data-testid="model-form-name" />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground">Kategori <span className="text-[hsl(var(--destructive))] ">*</span></label>
-              <SmartNativeSelect value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}
-                className="w-full text-sm" data-testid="model-form-category">
-                <option value="">— pilih kategori —</option>
-                {categories.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.sku_prefix})</option>)}
-              </SmartNativeSelect>
-              <p className="text-[11px] text-muted-foreground mt-1">
-                Dipakai untuk filter & grouping katalog marketing. Daftar ini diambil dari tab <b>Kategori</b>.
-              </p>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Isian label="Nama model" wajib>
+                <GlassInput value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Contoh: Vest Rajut Formal" data-testid="model-form-name" />
+              </Isian>
+              <Isian label="Kategori" wajib petunjuk="Untuk saringan & pengelompokan katalog; daftar dari tab Kategori.">
+                <SmartNativeSelect value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}
+                  className="w-full" data-testid="model-form-category" aria-label="Kategori">
+                  <option value="">Pilih kategori</option>
+                  {categories.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.sku_prefix})</option>)}
+                </SmartNativeSelect>
+              </Isian>
             </div>
 
             {/* ── Kode produk: otomatis dari prefix kategori (K-1A) ── */}
-            <GlassCard className="p-3 space-y-2">
+            <div className="space-y-2 rounded-lg border border-[var(--glass-border)] p-3">
               <div className="flex items-center justify-between">
-                <label className="text-xs text-muted-foreground">Kode Produk</label>
+                <span className="text-sm font-medium text-foreground">Kode produk</span>
                 {!editing && (
-                  <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
-                    <input type="checkbox" checked={autoCode} onChange={(e) => setAutoCode(e.target.checked)}
-                      data-testid="model-form-autocode" />
+                  <label className="flex items-center gap-1.5 text-sm text-muted-foreground cursor-pointer select-none">
+                    <Checkbox checked={autoCode} onCheckedChange={(v) => setAutoCode(!!v)} data-testid="model-form-autocode" />
                     Buat otomatis
                   </label>
                 )}
@@ -609,7 +603,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
                   <span className="tabular-nums">
                     {selectedCat ? `${selectedCat.sku_prefix}-0001` : '(pilih kategori dulu)'}
                   </span>
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-xs text-muted-foreground">
                     — nomor urut berikutnya dibuat server; SKU varian menjadi{' '}
                     <span className="tabular-nums">{selectedCat ? `${selectedCat.sku_prefix}-0001-NVY-M` : '…'}</span>
                   </span>
@@ -618,32 +612,26 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
                 <GlassInput value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })}
                   placeholder="Contoh: VST-0001" data-testid="model-form-code" />
               )}
-            </GlassCard>
+            </div>
 
             {/* ── HPP · Harga Jual · Berat (F5 — menutup P1 & P4) ── */}
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="text-xs text-muted-foreground">HPP dasar (Rp)</label>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <Isian label="HPP dasar (Rp)" petunjuk="Dipakai bila belum ada HPP dari R&D.">
                 <MoneyInput glass value={form.base_hpp}
                   onChange={(e) => setForm({ ...form, base_hpp: e.target.value })} data-testid="model-form-base-hpp" />
-                <p className="text-[10px] text-muted-foreground mt-1">Dipakai bila belum ada HPP dari R&D.</p>
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground">Harga jual resmi (Rp)</label>
+              </Isian>
+              <Isian label="Harga jual resmi (Rp)" petunjuk="Jadi nilai awal harga di katalog.">
                 <MoneyInput glass value={form.retail_price}
                   onChange={(e) => setForm({ ...form, retail_price: e.target.value })} data-testid="model-form-retail-price" />
-                <p className="text-[10px] text-muted-foreground mt-1">Jadi nilai awal harga di katalog.</p>
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground">Berat satuan (gram)</label>
+              </Isian>
+              <Isian label="Berat satuan (gram)" petunjuk="Dipakai hitung biaya kirim.">
                 <GlassInput type="number" min="0" value={form.weight_gram}
                   onChange={(e) => setForm({ ...form, weight_gram: e.target.value })} data-testid="model-form-weight-gram" />
-                <p className="text-[10px] text-muted-foreground mt-1">Dipakai hitung biaya kirim.</p>
-              </div>
+              </Isian>
             </div>
 
             {editing && (
-              <GlassCard className="p-3 text-[11px] space-y-1"
+              <div className="rounded-lg border border-[var(--glass-border)] p-3 text-xs space-y-1"
                 data-testid="model-form-hpp-info">
                 <div className="flex items-center gap-2">
                   <span className="text-muted-foreground">HPP berlaku:</span>
@@ -663,44 +651,36 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
                 </p>
                 {/* 2026-08-23 — HPP produk tidak lagi perlu diketik: layar "HPP per
                     Potong" menghitungnya dari BOM × harga pembelian + upah CMT/cutting. */}
-                <button type="button"
+                <Button type="button" variant="link" size="sm" className="h-auto p-0"
                   onClick={() => (typeof onNavigate === 'function'
                     ? onNavigate('fin-hpp-produk')
                     : (window.location.hash = 'fin-hpp-produk'))}
-                  className="text-[hsl(var(--primary))] underline"
                   data-testid="model-goto-hpp-potong">
-                  Hitung HPP dari BOM &amp; harga pembelian (HPP per Potong) →
-                </button>
-              </GlassCard>
+                  Hitung HPP dari BOM &amp; harga pembelian (HPP per potong) →
+                </Button>
+              </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-muted-foreground">Ukuran Bundle (pcs)</label>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Isian label="Ukuran bundle (pcs)">
                 <GlassInput type="number" value={form.bundle_size}
                   onChange={(e) => setForm({ ...form, bundle_size: parseInt(e.target.value) || 30 })} data-testid="model-form-bundle-size" />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground">Bahan utama/pcs (kg)</label>
+              </Isian>
+              <Isian label="Bahan utama per pcs (kg)">
                 <GlassInput type="number" step="0.001" value={form.material_kg_per_pcs}
                   onChange={(e) => setForm({ ...form, material_kg_per_pcs: e.target.value })} data-testid="model-form-material-kg" />
-              </div>
+              </Isian>
             </div>
-            <div>
-              <label className="text-xs text-muted-foreground">Deskripsi</label>
+            <Isian label="Deskripsi">
               <GlassInput value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Opsional" data-testid="model-form-description" />
-            </div>
+            </Isian>
             {editing && (
-              <p className="text-[11px] text-muted-foreground bg-[var(--glass-bg)] p-2 rounded border border-[var(--glass-border)]">
-                💡 <b>Panduan Produksi</b> (SOP, foto jadi, video) dikelola lewat tombol <BookOpen className="inline w-3 h-3" /> di kolom Panduan pada tabel.
+              <p className="text-xs text-muted-foreground">
+                <b>Panduan produksi</b> (SOP, foto jadi, video) dikelola lewat tombol <BookOpen className="inline w-3 h-3" /> di kolom Panduan pada tabel.
               </p>
             )}
-            <div className="flex justify-end gap-2 pt-2 border-t border-[var(--glass-border)]">
-              <Button variant="ghost" onClick={() => setModalOpen(false)} data-testid="model-form-cancel">Batal</Button>
-              <Button onClick={handleSave} disabled={saving} data-testid="model-form-save">{saving ? 'Menyimpan...' : 'Simpan'}</Button>
-            </div>
           </div>
-        </Modal>
+        </FormPopup>
       )}
 
       {panduanModel && (
@@ -708,12 +688,12 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
       )}
 
       {techpackModel && (
-        <Modal onClose={() => setTechpackModel(null)}
-          title={`Tech Pack (R&D) · ${techpackModel.code} — ${techpackModel.name}`} size="md">
+        <DetailPopup open onClose={() => setTechpackModel(null)} testId="model-techpack-popup"
+          judul={`Tech pack (R&D) · ${techpackModel.code} — ${techpackModel.name}`}>
           <div className="space-y-3 text-sm" data-testid="model-techpack-dialog">
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Ringkasan spesifikasi hasil promosi dari R&D — <b>hanya baca</b>. Sumber kebenarannya
-              tetap Tech Pack di modul R&D.
+              tetap tech pack di modul R&D.
             </p>
             {(() => {
               const tp = techpackModel.techpack || {};
@@ -743,11 +723,8 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
                 </div>
               );
             })()}
-            <div className="flex justify-end pt-2 border-t border-[var(--glass-border)]">
-              <Button variant="ghost" onClick={() => setTechpackModel(null)} data-testid="model-techpack-close">Tutup</Button>
-            </div>
           </div>
-        </Modal>
+        </DetailPopup>
       )}
     </>
   );

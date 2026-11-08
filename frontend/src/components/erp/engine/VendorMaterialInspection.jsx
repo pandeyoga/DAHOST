@@ -1,7 +1,18 @@
 import { useState, useEffect } from 'react';
-import { ClipboardCheck, Clipboard, X, CheckCircle, AlertTriangle } from 'lucide-react';
+import { ClipboardCheck, Eye, FileDown, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
-import Modal from './Modal';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker from '@/components/ui/date-picker';
+import { formatDateID } from '@/lib/format';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, StatusBadge } from '../moduleAtoms';
 import AdditionalRequestModal from './AdditionalRequestModal';
 import { apiGet, apiPost, apiFetch } from '../../../lib/api';
 import { todayWIB } from '../../../lib/waktu';
@@ -107,7 +118,7 @@ export default function VendorMaterialInspection({ user }) {
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     setLoading(true);
     try {
       let inspectionData;
@@ -176,7 +187,7 @@ export default function VendorMaterialInspection({ user }) {
     setShowDetail(true);
   };
 
-  const fmtDate = d => d ? new Date(d).toLocaleDateString('id-ID') : '-';
+  const fmtDate = (d) => formatDateID(d, { fallback: '—' });
 
   // Check if inspection is overdue (>3 days from shipment received)
   const isOverdue = (shipment) => {
@@ -191,284 +202,196 @@ export default function VendorMaterialInspection({ user }) {
 
   const pendingShipments = shipments.filter(s => !inspectedShipmentIds.has(s.id));
 
+  const unduhPdf = async (insp) => {
+    try {
+      const res = await apiFetch(`/export-pdf?type=vendor-inspection&id=${insp.id}`);
+      if (!res.ok) throw new Error('Unduh gagal');
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Inspeksi-${insp.shipment_number || 'tanpa-nomor'}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err) { toast.error('Gagal mengunduh PDF: ' + err.message); }
+  };
+  const sum = (list, k) => list.reduce((s, i) => s + (Number(i[k]) || 0), 0);
+
+  const kolomTunggu = [
+    { kunci: 'no', label: 'Kiriman', hp: 'judul', isi: (s) => <span className="font-medium tabular-nums">{s.shipment_number}</span> },
+    { kunci: 'tgl', label: 'Diterima', isi: (s) => fmtDate(s.updated_at) },
+    { kunci: 'jenis', label: 'Jenis', isi: (s) => s.shipment_type || 'NORMAL' },
+    { kunci: 'batas', label: 'Batas 3 hari', isi: (s) => (isOverdue(s)
+      ? <StatusBadge status="late" tone="danger" label="Terlambat" /> : <StatusBadge status="ok" tone="warning" label="Masih dalam batas" />) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
+      <Button type="button" size="sm" onClick={() => openInspect(s)} data-testid={`vendor-inspect-${s.id}`}><ClipboardCheck className="w-4 h-4" />Inspeksi</Button>) },
+  ];
+  const kolomRiwayat = [
+    { kunci: 'no', label: 'Kiriman', hp: 'judul', isi: (i) => <span className="font-medium tabular-nums">{i.shipment_number}</span> },
+    { kunci: 'tgl', label: 'Tanggal inspeksi', isi: (i) => fmtDate(i.inspection_date) },
+    { kunci: 'terima', label: 'Diterima', rata: 'kanan', isi: (i) => <span className="tabular-nums">{i.total_received} pcs</span> },
+    { kunci: 'kurang', label: 'Kurang', rata: 'kanan', isi: (i) => (
+      <span className={`tabular-nums ${i.total_missing > 0 ? 'text-[hsl(var(--danger-text))] font-medium' : 'text-muted-foreground'}`}>{i.total_missing} pcs</span>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (i) => (
+      <Button type="button" size="icon-sm" variant="ghost" onClick={() => openDetail(i)} title="Lihat rincian" aria-label="Lihat rincian"><Eye className="w-4 h-4" /></Button>) },
+  ];
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-          <ClipboardCheck className="w-6 h-6 text-[hsl(var(--success))]" />
-          Inspeksi Material
-        </h1>
-        <p className="text-muted-foreground text-sm mt-1">Laporkan hasil inspeksi material yang diterima (wajib dalam 3 hari)</p>
-      </div>
-
-      {pendingShipments.length > 0 && (
-        <div className="bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-xl p-4">
-          <p className="text-[hsl(var(--warning))] font-semibold text-sm mb-2">⏰ Shipment Menunggu Inspeksi ({pendingShipments.length})</p>
-          <div className="space-y-2">
-            {pendingShipments.map(s => {
-              const overdue = isOverdue(s);
-              return (
-                <div key={s.id} className={`flex items-center justify-between p-3 rounded-lg border ${overdue ? 'bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.35)]' : 'bg-card border-border'}`}>
-                  <div>
-                    <p className={`font-semibold text-sm ${overdue ? 'text-[hsl(var(--destructive))]' : 'text-foreground'}`}>
-                      {s.shipment_number} {overdue && '⚠️ TERLAMBAT'}
-                    </p>
-                    <p className="text-xs text-muted-foreground">Diterima: {fmtDate(s.updated_at)} • Tipe: {s.shipment_type || 'NORMAL'}</p>
-                  </div>
-                  <button onClick={() => openInspect(s)} className="px-3 py-1.5 bg-[hsl(var(--success))] text-white rounded-lg text-xs font-medium hover:bg-[hsl(var(--success)/0.9)]">
-                    Inspeksi Sekarang
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+    <PageLayout testId="vendor-material-inspection" title="Inspeksi material"
+      subtitle="Laporkan hasil inspeksi bahan yang diterima (wajib dalam 3 hari)."
+      tools={<Button type="button" variant="outline" size="icon" onClick={() => { fetchShipments(); fetchInspections(); }} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="h-4 w-4" /></Button>}>
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-semibold text-foreground">Menunggu inspeksi ({pendingShipments.length})</p>
+          <TombolUnduh namaBerkas="kiriman-menunggu-inspeksi" baris={pendingShipments} kolom={[
+            { label: 'Kiriman', nilai: (s) => s.shipment_number }, { label: 'Diterima', nilai: (s) => fmtDate(s.updated_at) },
+            { label: 'Jenis', nilai: (s) => s.shipment_type || 'NORMAL' }, { label: 'Terlambat', nilai: (s) => (isOverdue(s) ? 'Ya' : 'Tidak') },
+          ]} />
         </div>
-      )}
+        <TabelData kolom={kolomTunggu} baris={pendingShipments} testId="vendor-inspection-pending"
+          kosong={<EmptyState icon={ClipboardCheck} title="Tidak ada kiriman yang menunggu inspeksi" description="Kiriman yang sudah dikonfirmasi diterima muncul di sini." />} />
+      </section>
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-semibold text-foreground">Riwayat inspeksi ({inspections.length})</p>
+          <TombolUnduh namaBerkas="riwayat-inspeksi-material" baris={inspections} kolom={[
+            { label: 'Kiriman', nilai: (i) => i.shipment_number }, { label: 'Tanggal inspeksi', nilai: (i) => fmtDate(i.inspection_date) },
+            { label: 'Diterima (pcs)', nilai: (i) => Number(i.total_received) || 0 }, { label: 'Kurang (pcs)', nilai: (i) => Number(i.total_missing) || 0 },
+            { label: 'Catatan', nilai: (i) => i.overall_notes || '' },
+          ]} />
+        </div>
+        <TabelData kolom={kolomRiwayat} baris={inspections} onKlikBaris={openDetail} testId="vendor-inspection-history"
+          kosong={<EmptyState title="Belum ada inspeksi" description="Hasil inspeksi yang sudah dikirim tampil di sini." />} />
+      </section>
 
-      {/* Inspection History */}
-      <div>
-        <h3 className="font-semibold text-foreground/90 mb-3">Riwayat Inspeksi ({inspections.length})</h3>
-        {inspections.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground/70 text-sm">Belum ada inspeksi yang dilakukan</div>
-        ) : (
-          <div className="space-y-2">
-            {inspections.map(insp => (
-              <div key={insp.id} className="bg-card border border-border rounded-xl p-4 flex items-center justify-between">
-                <div>
-                  <p className="font-semibold text-sm text-foreground">{insp.shipment_number}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Inspeksi: {fmtDate(insp.inspection_date)} •
-                    Diterima: <span className="text-[hsl(var(--success))] font-medium">{insp.total_received}</span> pcs •
-                    Missing: <span className={`font-medium ${insp.total_missing > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>{insp.total_missing}</span> pcs
-                  </p>
-                </div>
-                <button onClick={() => openDetail(insp)} className="px-3 py-1.5 bg-muted text-foreground/90 rounded-lg text-xs font-medium hover:bg-muted">
-                  Lihat Detail
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Inspection Form Modal */}
+      {/* Form inspeksi — FormPopup panjang */}
       {showModal && selectedShipment && (
-        <Modal title={`Inspeksi: ${selectedShipment.shipment_number}`} onClose={() => setShowModal(false)} size="xl">
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--success))]">
-              Periksa setiap item material yang diterima. Isi jumlah yang benar-benar diterima dan jumlah yang missing/kurang.
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground/90 mb-1">Tanggal Inspeksi</label>
-              <input type="date" className="w-full border border-border rounded-lg px-3 py-2 text-sm" value={form.inspection_date} onChange={e => setForm(f => ({ ...f, inspection_date: e.target.value }))} />
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-muted">
-                    <th className="text-left px-3 py-2 text-xs">Produk / SKU</th>
-                    <th className="text-right px-3 py-2 text-xs">Dikirim</th>
-                    <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))]">Diterima *</th>
-                    <th className="text-right px-3 py-2 text-xs text-[hsl(var(--destructive))]">Missing</th>
-                    <th className="text-left px-3 py-2 text-xs">Kondisi / Catatan</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {form.items.map((item, idx) => (
-                    <tr key={idx} className="border-t border-border/60">
-                      <td className="px-3 py-2">
-                        <p className="font-medium text-xs">{item.product_name}</p>
-                        <p className="text-xs text-muted-foreground/70 tabular-nums">{item.sku} {item.size}/{item.color}</p>
-                      </td>
-                      <td className="px-3 py-2 text-right text-muted-foreground font-medium">{item.ordered_qty}</td>
-                      <td className="px-3 py-2 text-right">
-                        <input type="number" min="0" max={item.ordered_qty}
-                          className="w-20 border border-[hsl(var(--success)/0.35)] rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-1 focus:ring-[hsl(var(--success)/0.35)]"
-                          value={item.received_qty}
-                          onChange={e => updateItem(idx, 'received_qty', e.target.value)} />
-                      </td>
-                      <td className={`px-3 py-2 text-right font-semibold ${item.missing_qty > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground/70'}`}>
-                        {item.missing_qty}
-                      </td>
-                      <td className="px-3 py-2">
-                        <input className="w-full border border-border rounded px-2 py-1 text-xs" value={item.condition_notes} onChange={e => updateItem(idx, 'condition_notes', e.target.value)} placeholder="Kondisi barang..." />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot className="bg-muted/40 font-bold border-t-2 border-border">
-                  <tr>
-                    <td className="px-3 py-2 text-sm">Total</td>
-                    <td className="px-3 py-2 text-right">{form.items.reduce((s, i) => s + (i.ordered_qty || 0), 0)}</td>
-                    <td className="px-3 py-2 text-right text-[hsl(var(--success))]">{form.items.reduce((s, i) => s + (Number(i.received_qty) || 0), 0)}</td>
-                    <td className="px-3 py-2 text-right text-[hsl(var(--destructive))]">{form.items.reduce((s, i) => s + (i.missing_qty || 0), 0)}</td>
-                    <td></td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-foreground/90 mb-1">Catatan Umum</label>
-              <textarea rows="2" className="w-full border border-border rounded-lg px-3 py-2 text-sm" value={form.overall_notes} onChange={e => setForm(f => ({ ...f, overall_notes: e.target.value }))} placeholder="Catatan kondisi material secara umum..." />
-            </div>
-
-            {/* Accessories Inspection */}
-            {form.accessory_items.length > 0 && (
-              <div className="mt-3" data-testid="inspection-accessories">
-                <label className="block text-sm font-semibold text-[hsl(var(--success))] mb-2">Inspeksi Aksesoris ({form.accessory_items.length} item)</label>
-                <div className="overflow-x-auto border border-[hsl(var(--success)/0.35)] rounded-xl">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-[hsl(var(--success)/0.1)]">
-                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))]">Aksesoris</th>
-                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))]">Kode</th>
-                        <th className="text-right px-3 py-2 text-xs text-muted-foreground">Qty Dibutuhkan</th>
-                        <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))]">Diterima *</th>
-                        <th className="text-right px-3 py-2 text-xs text-[hsl(var(--destructive))]">Missing</th>
-                        <th className="text-left px-3 py-2 text-xs">Catatan</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {form.accessory_items.map((acc, idx) => (
-                        <tr key={idx} className="border-t border-[hsl(var(--success)/0.35)]">
-                          <td className="px-3 py-2 font-medium text-xs text-foreground/90">{acc.accessory_name}</td>
-                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--success))]">{acc.accessory_code}</td>
-                          <td className="px-3 py-2 text-right text-muted-foreground font-medium">{acc.ordered_qty} {acc.unit}</td>
-                          <td className="px-3 py-2 text-right">
-                            <input type="number" min="0" className="w-20 border border-[hsl(var(--success)/0.35)] rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-1 focus:ring-[hsl(var(--success)/0.35)]" value={acc.received_qty} onChange={e => updateAccItem(idx, 'received_qty', e.target.value)} />
-                          </td>
-                          <td className={`px-3 py-2 text-right font-semibold ${acc.missing_qty > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground/70'}`}>{acc.missing_qty}</td>
-                          <td className="px-3 py-2">
-                            <input className="w-full border border-border rounded px-2 py-1 text-xs" value={acc.condition_notes} onChange={e => updateAccItem(idx, 'condition_notes', e.target.value)} placeholder="Kondisi aksesoris..." />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot className="bg-[hsl(var(--success)/0.1)] font-bold border-t-2 border-[hsl(var(--success)/0.35)]">
-                      <tr>
-                        <td className="px-3 py-2 text-sm" colSpan="2">Total Aksesoris</td>
-                        <td className="px-3 py-2 text-right">{form.accessory_items.reduce((s, i) => s + (i.ordered_qty || 0), 0)}</td>
-                        <td className="px-3 py-2 text-right text-[hsl(var(--success))]">{form.accessory_items.reduce((s, i) => s + (Number(i.received_qty) || 0), 0)}</td>
-                        <td className="px-3 py-2 text-right text-[hsl(var(--destructive))]">{form.accessory_items.reduce((s, i) => s + (i.missing_qty || 0), 0)}</td>
-                        <td></td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
+        <FormPopup open onClose={() => setShowModal(false)} ukuran="panjang" testId="vendor-inspection-form"
+          judul={`Inspeksi ${selectedShipment.shipment_number}`}
+          keterangan="Isi jumlah yang benar-benar diterima; kekurangan dihitung otomatis."
+          onSimpan={handleSubmit} menyimpan={loading} labelSimpan="Kirim laporan inspeksi">
+          <Isian label="Tanggal inspeksi">
+            <DatePicker value={form.inspection_date} onChange={(v) => setForm(f => ({ ...f, inspection_date: v }))} bolehKosong={false} />
+          </Isian>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader><TableRow>
+                <TableHead>Produk / SKU</TableHead><TableHead className="text-right">Dikirim</TableHead>
+                <TableHead className="text-right">Diterima *</TableHead><TableHead className="text-right">Kurang</TableHead><TableHead>Kondisi / catatan</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {form.items.map((item, idx) => (
+                  <TableRow key={idx}>
+                    <TableCell><p className="font-medium">{item.product_name}</p><p className="text-xs text-muted-foreground tabular-nums">{item.sku} {item.size}/{item.color}</p></TableCell>
+                    <TableCell className="text-right tabular-nums">{item.ordered_qty}</TableCell>
+                    <TableCell className="text-right">
+                      <Input type="number" min="0" max={item.ordered_qty} className="h-8 w-24 ml-auto text-right"
+                        value={item.received_qty} onChange={e => updateItem(idx, 'received_qty', e.target.value)} aria-label={`Diterima ${item.product_name}`} />
+                    </TableCell>
+                    <TableCell className={`text-right tabular-nums font-medium ${item.missing_qty > 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>{item.missing_qty}</TableCell>
+                    <TableCell><Input className="h-8 min-w-[10rem]" value={item.condition_notes} onChange={e => updateItem(idx, 'condition_notes', e.target.value)} placeholder="Kondisi barang…" /></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+              <TableFooter><TableRow>
+                <TableCell className="font-semibold">Total</TableCell>
+                <TableCell className="text-right tabular-nums font-semibold">{sum(form.items, 'ordered_qty')}</TableCell>
+                <TableCell className="text-right tabular-nums font-semibold">{sum(form.items, 'received_qty')}</TableCell>
+                <TableCell className="text-right tabular-nums font-semibold text-[hsl(var(--danger-text))]">{sum(form.items, 'missing_qty')}</TableCell>
+                <TableCell />
+              </TableRow></TableFooter>
+            </Table>
+          </div>
+          <Isian label="Catatan umum">
+            <Textarea rows={2} value={form.overall_notes} onChange={e => setForm(f => ({ ...f, overall_notes: e.target.value }))} placeholder="Catatan kondisi bahan secara umum…" />
+          </Isian>
+          {form.accessory_items.length > 0 && (
+            <section className="space-y-2" data-testid="inspection-accessories">
+              <p className="text-sm font-medium text-foreground">Inspeksi aksesoris ({form.accessory_items.length} baris)</p>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader><TableRow>
+                    <TableHead>Aksesoris</TableHead><TableHead>Kode</TableHead><TableHead className="text-right">Dibutuhkan</TableHead>
+                    <TableHead className="text-right">Diterima *</TableHead><TableHead className="text-right">Kurang</TableHead><TableHead>Catatan</TableHead>
+                  </TableRow></TableHeader>
+                  <TableBody>
+                    {form.accessory_items.map((acc, idx) => (
+                      <TableRow key={idx}>
+                        <TableCell className="font-medium">{acc.accessory_name}</TableCell>
+                        <TableCell className="tabular-nums">{acc.accessory_code}</TableCell>
+                        <TableCell className="text-right tabular-nums">{acc.ordered_qty} {acc.unit}</TableCell>
+                        <TableCell className="text-right">
+                          <Input type="number" min="0" className="h-8 w-24 ml-auto text-right" value={acc.received_qty}
+                            onChange={e => updateAccItem(idx, 'received_qty', e.target.value)} aria-label={`Diterima ${acc.accessory_name}`} />
+                        </TableCell>
+                        <TableCell className={`text-right tabular-nums font-medium ${acc.missing_qty > 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>{acc.missing_qty}</TableCell>
+                        <TableCell><Input className="h-8 min-w-[10rem]" value={acc.condition_notes} onChange={e => updateAccItem(idx, 'condition_notes', e.target.value)} placeholder="Kondisi aksesoris…" /></TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                  <TableFooter><TableRow>
+                    <TableCell className="font-semibold" colSpan={2}>Total aksesoris</TableCell>
+                    <TableCell className="text-right tabular-nums font-semibold">{sum(form.accessory_items, 'ordered_qty')}</TableCell>
+                    <TableCell className="text-right tabular-nums font-semibold">{sum(form.accessory_items, 'received_qty')}</TableCell>
+                    <TableCell className="text-right tabular-nums font-semibold text-[hsl(var(--danger-text))]">{sum(form.accessory_items, 'missing_qty')}</TableCell>
+                    <TableCell />
+                  </TableRow></TableFooter>
+                </Table>
               </div>
-            )}
-
-            <div className="flex gap-3">
-              <button type="submit" disabled={loading} className="flex-1 bg-[hsl(var(--success))] text-white py-2 rounded-lg text-sm font-medium hover:bg-[hsl(var(--success)/0.9)] disabled:opacity-50">
-                {loading ? 'Menyimpan...' : 'Kirim Laporan Inspeksi'}
-              </button>
-              <button type="button" onClick={() => setShowModal(false)} className="flex-1 border border-border py-2 rounded-lg text-sm hover:bg-muted/60">Batal</button>
-            </div>
-          </form>
-        </Modal>
+            </section>
+          )}
+        </FormPopup>
       )}
 
-      {/* Detail Modal */}
+      {/* Rincian inspeksi — DetailPopup */}
       {showDetail && detailData && (
-        <Modal title={`Detail Inspeksi: ${detailData.shipment_number}`} onClose={() => setShowDetail(false)} size="xl">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="grid grid-cols-3 gap-3 flex-1">
-                <div className="bg-[hsl(var(--success)/0.1)] rounded-lg p-3 text-center">
-                  <p className="text-xs text-[hsl(var(--success))]">Total Diterima</p>
-                  <p className="text-2xl font-bold text-[hsl(var(--success))]">{detailData.total_received}</p>
-                </div>
-                <div className={`rounded-lg p-3 text-center ${detailData.total_missing > 0 ? 'bg-[hsl(var(--destructive)/0.1)]' : 'bg-muted/40'}`}>
-                  <p className={`text-xs ${detailData.total_missing > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>Total Missing</p>
-                  <p className={`text-2xl font-bold ${detailData.total_missing > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>{detailData.total_missing}</p>
-                </div>
-                <div className="bg-muted/40 rounded-lg p-3 text-center">
-                  <p className="text-xs text-muted-foreground">Tanggal Inspeksi</p>
-                  <p className="text-sm font-bold text-foreground/90">{fmtDate(detailData.inspection_date)}</p>
-                </div>
-              </div>
-              <a href="#" onClick={async (e) => {
-                e.preventDefault();
-                try {
-                  const res = await apiFetch(`/export-pdf?type=vendor-inspection&id=${detailData.id}`);
-                  if (!res.ok) throw new Error('Export gagal');
-                  const blob = await res.blob();
-                  const url = window.URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `Inspeksi-${detailData.shipment_number || 'unknown'}.pdf`;
-                  a.click();
-                  window.URL.revokeObjectURL(url);
-                } catch (err) { toast.error('Error: ' + err.message); }
-              }}
-                className="ml-3 px-4 py-2 bg-[hsl(var(--primary))] text-white text-sm rounded-lg font-medium hover:bg-[hsl(var(--primary)/0.9)] flex items-center gap-1.5 flex-shrink-0 cursor-pointer" data-testid="export-inspection-pdf">
-                PDF Export
-              </a>
+        <DetailPopup open onClose={() => setShowDetail(false)} judul={`Inspeksi ${detailData.shipment_number}`} testId="vendor-inspection-detail"
+          aksi={<Button type="button" size="sm" variant="outline" onClick={() => unduhPdf(detailData)} data-testid="export-inspection-pdf"><FileDown className="w-4 h-4" />Unduh PDF</Button>}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Tanggal inspeksi">{fmtDate(detailData.inspection_date)}</BarisDetail>
+            <BarisDetail label="Total diterima">{detailData.total_received} pcs</BarisDetail>
+            <BarisDetail label="Total kurang"><span className={detailData.total_missing > 0 ? 'text-[hsl(var(--danger-text))]' : ''}>{detailData.total_missing} pcs</span></BarisDetail>
+            {detailData.overall_notes && <BarisDetail label="Catatan">{detailData.overall_notes}</BarisDetail>}
+          </dl>
+          {detailData.items?.length > 0 && (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader><TableRow><TableHead>Produk / SKU</TableHead><TableHead className="text-right">Dikirim</TableHead>
+                  <TableHead className="text-right">Diterima</TableHead><TableHead className="text-right">Kurang</TableHead><TableHead>Catatan</TableHead></TableRow></TableHeader>
+                <TableBody>{detailData.items.map(item => (
+                  <TableRow key={item.id}>
+                    <TableCell><p className="font-medium">{item.product_name}</p><p className="text-xs text-muted-foreground tabular-nums">{item.sku} {item.size}/{item.color}</p></TableCell>
+                    <TableCell className="text-right tabular-nums">{item.ordered_qty}</TableCell>
+                    <TableCell className="text-right tabular-nums">{item.received_qty}</TableCell>
+                    <TableCell className={`text-right tabular-nums ${item.missing_qty > 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>{item.missing_qty}</TableCell>
+                    <TableCell className="text-muted-foreground">{item.condition_notes || '—'}</TableCell>
+                  </TableRow>
+                ))}</TableBody>
+              </Table>
             </div>
-            {detailData.overall_notes && (
-              <div className="bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--primary))]">
-                <strong>Catatan:</strong> {detailData.overall_notes}
-              </div>
-            )}
-            {detailData.items?.length > 0 && (
+          )}
+          {(detailData.accessory_items || []).length > 0 && (
+            <section className="space-y-2">
+              <p className="text-sm font-semibold text-foreground">Aksesoris ({detailData.accessory_items.length} baris)</p>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-muted">
-                      <th className="text-left px-3 py-2 text-xs">Produk / SKU</th>
-                      <th className="text-right px-3 py-2 text-xs">Dikirim</th>
-                      <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))]">Diterima</th>
-                      <th className="text-right px-3 py-2 text-xs text-[hsl(var(--destructive))]">Missing</th>
-                      <th className="text-left px-3 py-2 text-xs">Catatan</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detailData.items.map(item => (
-                      <tr key={item.id} className="border-t border-border/60">
-                        <td className="px-3 py-2">
-                          <p className="font-medium text-xs">{item.product_name}</p>
-                          <p className="text-xs text-muted-foreground/70 tabular-nums">{item.sku} {item.size}/{item.color}</p>
-                        </td>
-                        <td className="px-3 py-2 text-right">{item.ordered_qty}</td>
-                        <td className="px-3 py-2 text-right text-[hsl(var(--success))] font-medium">{item.received_qty}</td>
-                        <td className={`px-3 py-2 text-right font-medium ${item.missing_qty > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground/70'}`}>{item.missing_qty}</td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">{item.condition_notes || '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <Table>
+                  <TableHeader><TableRow><TableHead>Aksesoris</TableHead><TableHead>Kode</TableHead><TableHead className="text-right">Dibutuhkan</TableHead>
+                    <TableHead className="text-right">Diterima</TableHead><TableHead className="text-right">Kurang</TableHead><TableHead>Catatan</TableHead></TableRow></TableHeader>
+                  <TableBody>{detailData.accessory_items.map(acc => (
+                    <TableRow key={acc.id}>
+                      <TableCell className="font-medium">{acc.accessory_name}</TableCell>
+                      <TableCell className="tabular-nums">{acc.accessory_code || '—'}</TableCell>
+                      <TableCell className="text-right tabular-nums">{acc.ordered_qty} {acc.unit || 'pcs'}</TableCell>
+                      <TableCell className="text-right tabular-nums">{acc.received_qty}</TableCell>
+                      <TableCell className={`text-right tabular-nums ${acc.missing_qty > 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>{acc.missing_qty}</TableCell>
+                      <TableCell className="text-muted-foreground">{acc.condition_notes || '—'}</TableCell>
+                    </TableRow>
+                  ))}</TableBody>
+                </Table>
               </div>
-            )}
-            {/* Accessory items in detail */}
-            {(detailData.accessory_items || []).length > 0 && (
-              <div className="overflow-x-auto">
-                <h5 className="text-sm font-semibold text-[hsl(var(--success))] mb-2">Aksesoris ({detailData.accessory_items.length} item)</h5>
-                <table className="w-full text-sm">
-                  <thead><tr className="bg-[hsl(var(--success)/0.1)]">
-                    <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))]">Aksesoris</th>
-                    <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))]">Kode</th>
-                    <th className="text-right px-3 py-2 text-xs">Dibutuhkan</th>
-                    <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))]">Diterima</th>
-                    <th className="text-right px-3 py-2 text-xs text-[hsl(var(--destructive))]">Missing</th>
-                    <th className="text-left px-3 py-2 text-xs">Catatan</th>
-                  </tr></thead>
-                  <tbody>{detailData.accessory_items.map(acc => (
-                    <tr key={acc.id} className="border-t border-[hsl(var(--success)/0.35)]">
-                      <td className="px-3 py-2 font-medium text-xs">{acc.accessory_name}</td>
-                      <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--success))]">{acc.accessory_code || '-'}</td>
-                      <td className="px-3 py-2 text-right">{acc.ordered_qty} {acc.unit || 'pcs'}</td>
-                      <td className="px-3 py-2 text-right text-[hsl(var(--success))] font-medium">{acc.received_qty}</td>
-                      <td className={`px-3 py-2 text-right font-medium ${acc.missing_qty > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground/70'}`}>{acc.missing_qty}</td>
-                      <td className="px-3 py-2 text-xs text-muted-foreground">{acc.condition_notes || '-'}</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </Modal>
+            </section>
+          )}
+        </DetailPopup>
       )}
 
       {/* Phase 16: Modal Permintaan Material Tambahan (auto-prompt setelah inspeksi missing) */}
@@ -483,7 +406,7 @@ export default function VendorMaterialInspection({ user }) {
           onSuccess={() => { setShowReqModal(false); setReqModalData(null); }}
         />
       )}
-    </div>
+    </PageLayout>
   );
 }
 

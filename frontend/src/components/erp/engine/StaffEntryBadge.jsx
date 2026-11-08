@@ -36,7 +36,7 @@ export default function StaffEntryBadge({
       <span
         data-testid={testId || 'entry-badge-vendor'}
         title="Vendor mengisi sendiri lewat portalnya"
-        className="inline-flex items-center gap-1 rounded-full border border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)] px-2 py-0.5 text-[11px] font-medium text-[hsl(var(--success))]"
+        className="inline-flex items-center gap-1 rounded-full border border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)] px-2 py-0.5 text-xs font-medium text-[hsl(var(--success-text))]"
       >
         <Users className="h-3 w-3" />
         {compact ? 'vendor' : 'diisi vendor'}
@@ -60,10 +60,10 @@ export default function StaffEntryBadge({
     <span
       data-testid={testId || (mixed ? 'entry-badge-mixed' : 'entry-badge-staff')}
       title={tip}
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
         mixed
-          ? 'border border-dashed border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))]'
-          : 'border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]'
+          ? 'border border-dashed border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning-text))]'
+          : 'border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]'
       }`}
     >
       <UserCog className="h-3 w-3 flex-shrink-0" />

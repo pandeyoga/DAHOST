@@ -74,8 +74,8 @@ export default function SearchableSelect({
         disabled={disabled}
         onClick={() => { if (!disabled) setOpen(o => !o); }}
         data-testid={dataTestId ? `${dataTestId}-trigger` : undefined}
-        className={`w-full flex items-center justify-between border rounded-lg px-3 py-2 text-sm bg-card text-left transition-all
-          ${disabled ? 'opacity-50 cursor-not-allowed border-border' : 'cursor-pointer border-border hover:border-border focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)] focus:border-[hsl(var(--primary)/0.35)]'}
+        className={`w-full flex items-center justify-between border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)] text-left transition-all
+          ${disabled ? 'opacity-50 cursor-not-allowed border-[var(--glass-border)]' : 'cursor-pointer border-[var(--glass-border)] hover:border-[hsl(var(--primary)/0.4)] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)] focus:border-[hsl(var(--primary)/0.35)]'}
           ${open ? 'border-[hsl(var(--primary)/0.35)] ring-2 ring-[hsl(var(--primary)/0.35)]' : ''}`}
       >
         <span className={selected ? 'text-foreground truncate flex-1' : 'text-muted-foreground/70 truncate flex-1'}>
@@ -100,9 +100,9 @@ export default function SearchableSelect({
       </button>
 
       {open && (
-        <div className="absolute z-50 top-full mt-1 left-0 right-0 bg-card border border-border rounded-xl shadow-xl overflow-hidden">
+        <div className="absolute z-50 top-full mt-1 left-0 right-0 bg-popover border border-[var(--glass-border)] rounded-lg shadow-lg overflow-hidden">
           {/* Search input */}
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-border/60">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--glass-border)]">
             <Search className="w-3.5 h-3.5 text-muted-foreground/70 flex-shrink-0" />
             <input
               ref={inputRef}

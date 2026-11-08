@@ -85,10 +85,10 @@ export const RequirementsPreviewCard = ({ bom, token }) => {
   return (
     <GlassPanel className="p-5 space-y-5" data-testid="requirements-preview-card">
       <div>
-        <h3 className="text-lg font-semibold text-foreground flex items-center gap-2 mb-1">
+        <p className="text-base font-semibold text-foreground flex items-center gap-2 mb-1">
           <Calculator className="w-5 h-5 text-primary" />
-          Preview Kebutuhan Material
-        </h3>
+          Pratinjau kebutuhan bahan
+        </p>
         <p className="text-sm text-muted-foreground">
           Hitung kebutuhan material untuk produksi quantity tertentu
         </p>
@@ -119,7 +119,7 @@ export const RequirementsPreviewCard = ({ bom, token }) => {
         </div>
       </div>
 
-      <Button
+      <Button type="button"
         onClick={calculateRequirements}
         disabled={loading || !qtyPcs}
         className="w-full"
@@ -146,7 +146,7 @@ export const RequirementsPreviewCard = ({ bom, token }) => {
                   Total bahan (kg): {readNumber(preview, FIELD.totalMaterialKg).toFixed(3)} kg
                 </Badge>
               )}
-              <Button
+              <Button type="button"
                 variant="outline"
                 size="sm"
                 onClick={exportCSV}
@@ -161,7 +161,7 @@ export const RequirementsPreviewCard = ({ bom, token }) => {
           {materials.length > 0 ? (
             <div>
               <div className="flex items-center justify-between mb-2">
-                <h4 className="text-sm font-semibold text-foreground">Kebutuhan Material</h4>
+                <p className="text-sm font-semibold text-foreground">Kebutuhan Material</p>
                 <Badge variant="secondary">{materials.length} item</Badge>
               </div>
               <div className="border border-[var(--glass-border)] rounded-lg overflow-hidden">

@@ -9,13 +9,16 @@
  * OTOMATIS dari prefix itu (mis. `VST-0001`). Format SKU varian tidak diubah,
  * jadi hasilnya `VST-0001-NVY-M`.
  */
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Plus, Edit2, Ban, RotateCcw, Tags, Info, PackageSearch } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import Modal from './Modal';
 import { DataTable } from './DataTableV2';
-import { PageHeader } from './moduleAtoms';
+import PageLayout from './layout/PageLayout';
+import FormPopup from '@/components/ui/form-popup';
+import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
 
 const EMPTY_FORM = { code: '', name: '', sku_prefix: '', order_seq: 500, description: '' };
@@ -86,7 +89,7 @@ export default function RahazaProductCategoriesModule({ token }) {
   };
 
   const handleDeactivate = async (row) => {
-    if (!window.confirm(`Nonaktifkan kategori "${row.name}"?`)) return;
+    if (!(await confirmDialog({ title: `Nonaktifkan kategori "${row.name}"?`, confirmLabel: 'Nonaktifkan', danger: true }))) return;
     const r = await fetch(`/api/rahaza/product-categories/${row.id}`, { method: 'DELETE', headers });
     const d = await r.json().catch(() => ({}));
     if (r.ok) { toast.success('Kategori dinonaktifkan'); fetchRows(); }
@@ -111,7 +114,7 @@ export default function RahazaProductCategoriesModule({ token }) {
         </span>
       ),
     },
-    { key: 'name', label: 'Nama Kategori', sortable: true },
+    { key: 'name', label: 'Nama kategori', sortable: true },
     { key: 'code', label: 'Kode', sortable: true, render: (row) => <span className="tabular-nums text-xs text-muted-foreground">{row.code}</span> },
     {
       key: 'usage', label: 'Dipakai',
@@ -132,7 +135,7 @@ export default function RahazaProductCategoriesModule({ token }) {
     {
       key: 'created_from', label: 'Asal',
       render: (row) => {
-        const map = { seed: ['Bawaan', 'text-muted-foreground'], manual: ['Manual', 'text-foreground'], migrasi: ['Hasil migrasi', 'text-[hsl(var(--warning))] '] };
+        const map = { seed: ['Bawaan', 'text-muted-foreground'], manual: ['Manual', 'text-foreground'], migrasi: ['Hasil migrasi', 'text-[hsl(var(--warning-text))] '] };
         const [label, cls] = map[row.created_from] || ['—', 'text-muted-foreground'];
         return <span className={`text-xs ${cls}`}>{label}</span>;
       },
@@ -141,9 +144,9 @@ export default function RahazaProductCategoriesModule({ token }) {
       key: 'active', label: 'Status',
       render: (row) => (
         <span className={`text-xs px-2 py-0.5 rounded-full border ${row.active === false
-          ? 'bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.4)] text-[hsl(var(--destructive))] '
-          : 'bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.4)] text-[hsl(var(--success))] '}`}>
-          {row.active === false ? 'Non-aktif' : 'Aktif'}
+          ? 'bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.4)] text-[hsl(var(--danger-text))] '
+          : 'bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.4)] text-[hsl(var(--success-text))] '}`}>
+          {row.active === false ? 'Nonaktif' : 'Aktif'}
         </span>
       ),
     },
@@ -151,86 +154,64 @@ export default function RahazaProductCategoriesModule({ token }) {
       key: 'actions', label: 'Aksi',
       render: (row) => (
         <div className="flex items-center gap-1">
-          <button onClick={(e) => { e.stopPropagation(); openEdit(row); }}
-            className="p-1.5 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground hover:text-foreground"
-            title="Ubah" data-testid={`cat-edit-${row.code}`}>
+          <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); openEdit(row); }}
+            title="Ubah" aria-label="Ubah" data-testid={`cat-edit-${row.code}`}>
             <Edit2 className="w-3.5 h-3.5" />
-          </button>
+          </Button>
           {row.active === false ? (
-            <button onClick={(e) => { e.stopPropagation(); handleReactivate(row); }}
-              className="p-1.5 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground hover:text-[hsl(var(--success))]"
-              title="Aktifkan kembali" data-testid={`cat-reactivate-${row.code}`}>
+            <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); handleReactivate(row); }}
+              title="Aktifkan kembali" aria-label="Aktifkan kembali" data-testid={`cat-reactivate-${row.code}`}>
               <RotateCcw className="w-3.5 h-3.5" />
-            </button>
+            </Button>
           ) : (
-            <button onClick={(e) => { e.stopPropagation(); handleDeactivate(row); }}
-              className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.15)] text-muted-foreground hover:text-[hsl(var(--destructive))] "
-              title="Nonaktifkan (ditolak bila masih dipakai)" data-testid={`cat-deactivate-${row.code}`}>
+            <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); handleDeactivate(row); }}
+              title="Nonaktifkan (ditolak bila masih dipakai)" aria-label="Nonaktifkan" data-testid={`cat-deactivate-${row.code}`}>
               <Ban className="w-3.5 h-3.5" />
-            </button>
+            </Button>
           )}
         </div>
       ),
     },
   ];
 
+  // Standar UI/UX v2 (8 Nov 2026): PageLayout (di hub judul tersembunyi), penjelasan 1 paragraf, form = FormPopup.
   return (
-    <div className="space-y-4" data-testid="rahaza-product-categories-module">
-      <PageHeader
-        icon={Tags}
-        title="Kategori Produk"
-        subtitle="Master kategori (Vest, Rok, Jacket, …). Dipakai untuk filter & grouping katalog marketing, dan sebagai prefix kode produk otomatis."
-        testId="product-categories-header"
-        actions={(
-          <>
-            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
-              <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)}
-                data-testid="cat-show-inactive" />
-              Tampilkan non-aktif
-            </label>
-            <Button onClick={openCreate} className="gap-1.5" data-testid="cat-create-btn">
-              <Plus className="w-4 h-4" /> Tambah Kategori
-            </Button>
-          </>
-        )}
-      />
-
-      <div className="flex items-start gap-2 text-[12px] text-foreground bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-lg p-3"
-        data-testid="cat-explainer">
-        <Info className="w-4 h-4 shrink-0 mt-0.5 text-primary" />
-        <div className="space-y-1">
-          <p><b>Prefix SKU</b> membuat kategori terlihat pada kode barang. Contoh: kategori <b>Vest</b>
-            berprefix <span className="tabular-nums">VST</span> ⇒ produk baru otomatis berkode
-            <span className="tabular-nums"> VST-0001</span>, dan SKU variannya menjadi
-            <span className="tabular-nums"> VST-0001-NVY-M</span>.</p>
-          <p className="text-muted-foreground">Kategori yang masih dipakai produk / barang jadi / item katalog
-            <b> tidak bisa dinonaktifkan</b> — pindahkan dulu produknya.</p>
-        </div>
-      </div>
-
+    <PageLayout testId="rahaza-product-categories-module" headerTestId="product-categories-header" title="Kategori produk"
+      subtitle="Master kategori (Vest, Rok, Jacket, …) untuk saringan katalog dan prefix kode produk otomatis."
+      actions={<Button type="button" onClick={openCreate} data-testid="cat-create-btn"><Plus className="w-4 h-4" /> Tambah kategori</Button>}
+      filters={<label className="flex items-center gap-2 text-sm text-foreground cursor-pointer select-none">
+        <Checkbox checked={showInactive} onCheckedChange={(v) => setShowInactive(!!v)} data-testid="cat-show-inactive" />
+        Tampilkan nonaktif
+      </label>}>
       <GlassCard>
         <DataTable tableId="rahaza-product-categories" columns={columns} rows={rows} loading={loading}
           emptyTitle="Belum ada kategori"
-          emptyDescription="Klik Tambah Kategori untuk membuat kategori produk pertama."
+          emptyDescription="Klik Tambah kategori untuk membuat kategori produk pertama."
           rowKey="id" />
       </GlassCard>
+      {/* Penjelasan prefix di bawah tabel supaya tabel tidak turun terlalu jauh. */}
+      <p className="text-sm text-muted-foreground" data-testid="cat-explainer">
+        <b className="text-foreground">Prefix SKU</b> tampil di kode barang: kategori Vest berprefix <span className="tabular-nums">VST</span> ⇒ produk baru
+        berkode <span className="tabular-nums">VST-0001</span>, SKU variannya <span className="tabular-nums">VST-0001-NVY-M</span>. Kategori yang masih
+        dipakai produk, barang jadi, atau item katalog tidak bisa dinonaktifkan.
+      </p>
 
       {modalOpen && (
-        <Modal onClose={() => setModalOpen(false)}
-          title={editing ? `Ubah Kategori · ${editing.name}` : 'Tambah Kategori Produk'} size="md">
-          <div className="space-y-3" data-testid="cat-form">
+        <FormPopup open onClose={() => setModalOpen(false)} ukuran="pendek" testId="cat-form-popup" onSimpan={handleSave} menyimpan={saving}
+          judul={editing ? `Ubah kategori ${editing.name}` : 'Tambah kategori produk'}>
+          <div className="space-y-4" data-testid="cat-form">
             <div>
-              <label className="text-xs text-muted-foreground">Nama Kategori <span className="text-[hsl(var(--destructive))] ">*</span></label>
+              <label className="text-xs text-muted-foreground">Nama kategori <span className="text-[hsl(var(--danger-text))] ">*</span></label>
               <GlassInput value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
                 placeholder="Contoh: Vest" data-testid="cat-form-name" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-muted-foreground">Prefix SKU <span className="text-[hsl(var(--destructive))] ">*</span></label>
+                <label className="text-xs text-muted-foreground">Prefix SKU <span className="text-[hsl(var(--danger-text))] ">*</span></label>
                 <GlassInput value={form.sku_prefix}
                   onChange={(e) => setForm({ ...form, sku_prefix: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '') })}
                   placeholder="VST" maxLength={6} data-testid="cat-form-prefix" />
-                <p className="text-[11px] text-muted-foreground mt-1">Harus unik. Dipakai membuat kode produk otomatis.</p>
+                <p className="text-xs text-muted-foreground mt-1">Harus unik. Dipakai membuat kode produk otomatis.</p>
               </div>
               <div>
                 <label className="text-xs text-muted-foreground">Urutan tampil</label>
@@ -251,15 +232,9 @@ export default function RahazaProductCategoriesModule({ token }) {
               <GlassInput value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
                 placeholder="Opsional" data-testid="cat-form-description" />
             </div>
-            <div className="flex justify-end gap-2 pt-2 border-t border-[var(--glass-border)]">
-              <Button variant="ghost" onClick={() => setModalOpen(false)} data-testid="cat-form-cancel">Batal</Button>
-              <Button onClick={handleSave} disabled={saving} data-testid="cat-form-save">
-                {saving ? 'Menyimpan…' : 'Simpan'}
-              </Button>
-            </div>
           </div>
-        </Modal>
+        </FormPopup>
       )}
-    </div>
+    </PageLayout>
   );
 }

@@ -26,6 +26,10 @@ import PaginationLite from '@/components/ui/pagination-lite';
 import { Skeleton } from '@/components/ui/skeleton';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PageLayout, { DetailPanel } from './layout/PageLayout';
+import { PageLayoutSatuBaris } from './engine/DataTable';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Input } from '@/components/ui/input';
+import { ambilSemuaHalaman } from './engine/DataTable';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import PeriodPicker, { ALL_TIME, PERIOD_PRESETS, periodFromPreset } from './finance/PeriodPicker';
 import { apiGet, apiPost } from '@/lib/api';
@@ -125,7 +129,7 @@ export default function RahazaHPPModule({ portalId, userRole }) {
   const showMargin = isMaklon || (!businessType && items.some((r) => r.business_type === 'maklon'));
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="hpp-po-page"
       title="HPP per PO"
       subtitle="HPP aktual = potongan + aksesoris yang diserahkan + upah CMT + permak. Biaya umum tidak masuk HPP."
@@ -134,15 +138,15 @@ export default function RahazaHPPModule({ portalId, userRole }) {
           hideWhenEmpty={false}
           options={[{ key: '', label: 'Semua', count: counts.all ?? 0 }, { key: 'open', label: 'Berjalan', count: counts.open ?? 0 },
             { key: 'closed', label: 'Selesai/ditutup', count: counts.closed ?? 0 }]} />
-        <div className="relative w-64 max-w-full">
+        <div className="relative w-full sm:w-64">
           <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)}
+          <Input value={search} onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') { setPage(1); load(); } }}
-            placeholder="Cari nomor PO / vendor / klien…" className="pl-8 h-9" data-testid="hpp-po-search" />
+            placeholder="Cari PO, vendor, klien (Enter)" className="pl-8" data-testid="hpp-po-search" />
         </div>
         {!fixedType && (
           <SmartNativeSelect value={jenis} onChange={(e) => { setJenis(e.target.value); setPage(1); }} searchable={false}
-            className="h-9 w-40" aria-label="Jenis PO" data-testid="hpp-po-jenis">
+            className="w-40" aria-label="Jenis PO" data-testid="hpp-po-jenis">
             <option value="">Semua jenis PO</option>
             <option value="internal">PO internal</option>
             <option value="maklon">PO maklon</option>
@@ -150,27 +154,54 @@ export default function RahazaHPPModule({ portalId, userRole }) {
         )}
         {businessType !== 'internal' && clients.length > 0 && (
           <SmartNativeSelect value={clientId} onChange={(e) => { setClientId(e.target.value); setPage(1); }}
-            className="h-9 w-60 max-w-full" aria-label="Klien maklon" data-testid="hpp-po-client">
+            className="w-52" aria-label="Klien maklon" data-testid="hpp-po-client">
             <option value="">Semua klien maklon</option>
             {clients.map((c) => <option key={c.id} value={c.id}>{c.code ? `${c.code} — ${c.name}` : c.name}</option>)}
           </SmartNativeSelect>
         )}
         <PeriodPicker value={period} onChange={(p) => { setPeriod(p); setPage(1); }} presets={[ALL_TIME, ...PERIOD_PRESETS]} testId="hpp-po-period" />
       </>}
-      tools={<Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="hpp-po-refresh">
-        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-      </Button>}
+      tools={<>
+        {/* Standar UI/UX v2: unduh Excel/CSV SEMUA PO hasil saringan (bukan hanya halaman ini). */}
+        <TombolUnduh namaBerkas="hpp-per-po" namaLembar="HPP per PO" baris={items} testId="hpp-po-unduh"
+          ambilSemua={() => ambilSemuaHalaman(({ page: pg, per_page }) => {
+            const qs = new URLSearchParams({ page: String(pg), per_page: String(per_page) });
+            if (businessType) qs.set('business_type', businessType);
+            if (status) qs.set('status', status);
+            if (search.trim()) qs.set('search', search.trim());
+            if (period.from) qs.set('date_from', period.from);
+            if (period.to) qs.set('date_to', period.to);
+            if (clientId && businessType !== 'internal') qs.set('client_id', clientId);
+            return apiGet(`/rahaza/hpp/po?${qs}`).then((d) => ({ ...d, total_pages: Math.ceil((d?.total || 0) / (d?.per_page || per_page)) }));
+          }, { perHalaman: 100 })}
+          kolom={[
+            { label: 'PO', nilai: (r) => r.po_number }, { label: 'Jenis', nilai: (r) => JENIS[r.business_type] || '' },
+            { label: 'Klien', nilai: (r) => r.client_name || '' }, { label: 'Vendor CMT', nilai: (r) => r.vendor_name || '' },
+            { label: 'Status', nilai: (r) => r.status || '' }, { label: 'Pesan (pcs)', nilai: (r) => Number(r.qty_ordered) || 0 },
+            { label: 'Lolos QC (pcs)', nilai: (r) => Number(r.qty_accepted) || 0 },
+            { label: 'Potongan (Rp)', nilai: (r) => Number(r.cut_cost) || 0 }, { label: 'Aksesoris (Rp)', nilai: (r) => Number(r.accessory_cost) || 0 },
+            { label: 'Upah CMT (Rp)', nilai: (r) => Number(r.cmt_cost) || 0 }, { label: 'Permak (Rp)', nilai: (r) => Number(r.permak_cost) || 0 },
+            { label: 'Total HPP (Rp)', nilai: (r) => Number(r.total_hpp) || 0 },
+            { label: 'HPP per pcs lolos QC (Rp)', nilai: (r) => (r.hpp_per_pcs == null ? '' : Number(r.hpp_per_pcs)) },
+            { label: 'Bahan belum jadi barang (Rp)', nilai: (r) => Number(r.unabsorbed_cost) || 0 },
+            { label: 'Harga jasa per pcs (Rp)', nilai: (r) => (r.selling_price_per_pcs == null ? '' : Number(r.selling_price_per_pcs)) },
+            { label: 'Margin per pcs (Rp)', nilai: (r) => (r.margin_per_pcs == null ? '' : Number(r.margin_per_pcs)) },
+          ]} />
+        <Button type="button" variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="hpp-po-refresh">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </>}
       summary={<>
         {error && <Notice tone="danger" icon={AlertTriangle} title="Gagal memuat data" testId="hpp-po-error">{error}</Notice>}
         {(sum.po_count > 0) && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <StatTile testId="hpp-kpi-total" label="Total HPP aktual" value={rp(sum.total_hpp)}
-              sub={`${num(sum.po_count)} PO · potongan + aksesoris + upah CMT + permak`} />
-            <StatTile testId="hpp-kpi-pcs" label="HPP per pcs" value={rp(sum.hpp_per_pcs)} accent="primary"
-              sub={`${num(sum.qty_accepted)} pcs lolos QC`} />
+              sub={`${num(sum.po_count)} PO · potongan + aksesoris + upah CMT + permak (termasuk bahan pcs yang belum diterima)`} />
+            <StatTile testId="hpp-kpi-pcs" label="HPP per pcs lolos QC" value={sum.hpp_per_pcs == null ? '—' : rp(sum.hpp_per_pcs)} accent="primary"
+              sub={sum.hpp_per_pcs == null ? 'belum ada pcs lolos QC' : `biaya yang terserap ÷ ${num(sum.qty_accepted)} pcs lolos QC`} />
             {showMargin ? (
               <StatTile testId="hpp-kpi-margin" label="Margin maklon" value={rp(sum.margin)}
-                accent={Number(sum.margin) < 0 ? 'danger' : 'success'} sub={`pendapatan ${rp(sum.revenue)} · ${pct(sum.margin_pct)}`} />
+                accent={Number(sum.margin) < 0 ? 'danger' : 'success'} sub={`pendapatan ${rp(sum.revenue)} − total HPP · ${pct(sum.margin_pct)}`} />
             ) : (
               <StatTile testId="hpp-kpi-selisih" label="Bahan belum jadi barang" value={rp(sum.unabsorbed_cost)}
                 sub="bahan untuk pcs yang belum/tidak diterima; ditutup saat PO ditutup" />
@@ -179,11 +210,16 @@ export default function RahazaHPPModule({ portalId, userRole }) {
               sub={`informasi, tidak masuk HPP · ${monthLabel(oh?.month)}`} />
           </div>
         )}
+        {data?.capped && (
+          <Notice tone="warning" icon={AlertTriangle} testId="hpp-po-capped">
+            Ringkasan dan daftar dihitung dari 500 PO terbaru yang cocok dengan penyaring. Persempit penyaring (periode, jenis, klien) agar semua PO terhitung.
+          </Notice>
+        )}
         {residuals.length > 0 && (
           <Notice tone="warning" icon={AlertTriangle} testId="hpp-po-residuals"
             title={`${residuals.length} PO yang sudah ditutup masih menyisakan biaya di barang dalam proses`}>
             {residuals.slice(0, 8).map((r) => (
-              <Button key={r.po_id} variant="link" size="sm" className="h-auto p-0 mr-3" onClick={() => openDetail(r.po_id)}
+              <Button type="button" key={r.po_id} variant="link" size="sm" className="h-auto p-0 mr-3" onClick={() => openDetail(r.po_id)}
                 data-testid={`hpp-residual-${r.po_number}`}>{r.po_number} · {rp(r.residual)}</Button>
             ))}
           </Notice>
@@ -201,7 +237,7 @@ export default function RahazaHPPModule({ portalId, userRole }) {
         <PaginationLite page={page} totalPages={totalPages} total={data?.total || 0} pageSize={PER_PAGE} onPageChange={setPage} />
       )}
     >
-      <GlassCard className="p-0 overflow-hidden">
+      <GlassCard className="p-0 overflow-x-auto">
         {loading && !items.length ? (
           <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
         ) : items.length === 0 ? (
@@ -209,7 +245,7 @@ export default function RahazaHPPModule({ portalId, userRole }) {
             {filtered ? (
               <EmptyState icon={Calculator} title="Tidak ada PO yang cocok dengan penyaring"
                 description="Ubah atau hapus penyaring untuk melihat PO lain."
-                action={<Button variant="outline" size="sm" onClick={resetFilters}>Tampilkan semua PO</Button>} />
+                action={<Button type="button" variant="outline" size="sm" onClick={resetFilters}>Tampilkan semua PO</Button>} />
             ) : (
               <EmptyState icon={Calculator} title="Belum ada PO dengan biaya"
                 description="HPP aktual muncul setelah PO dikonfirmasi dan bahan diserahkan ke CMT." />
@@ -237,7 +273,7 @@ export default function RahazaHPPModule({ portalId, userRole }) {
                 <TableRow key={r.po_id} data-testid={`hpp-po-row-${r.po_number}`}
                   className={detail?.po_id === r.po_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
                   <TableCell className="whitespace-nowrap">
-                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => openDetail(r.po_id)}
+                    <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => openDetail(r.po_id)}
                       data-testid={`hpp-po-open-${r.po_number}`}>{r.po_number}</Button>
                   </TableCell>
                   {!fixedType && <TableCell>{JENIS[r.business_type] || '—'}</TableCell>}
@@ -251,14 +287,14 @@ export default function RahazaHPPModule({ portalId, userRole }) {
                   <TableCell className="text-right tabular-nums whitespace-nowrap">{rp(r.cut_cost + r.accessory_cost)}</TableCell>
                   <TableCell className="text-right tabular-nums whitespace-nowrap">
                     {rp(r.cmt_cost)}
-                    {r.items_missing_rate > 0 && <span className="block text-xs text-[hsl(var(--warning))]">{r.items_missing_rate} baris tanpa tarif</span>}
+                    {r.items_missing_rate > 0 && <span className="block text-xs text-[hsl(var(--warning-text))]">{r.items_missing_rate} baris tanpa tarif</span>}
                   </TableCell>
                   <TableCell className="text-right tabular-nums whitespace-nowrap">{rp(r.permak_cost)}</TableCell>
                   <TableCell className="text-right tabular-nums whitespace-nowrap font-semibold">{rp(r.total_hpp)}</TableCell>
                   <TableCell className="text-right tabular-nums whitespace-nowrap">{rp(r.hpp_per_pcs)}</TableCell>
                   {showMargin && <TableCell className="text-right tabular-nums whitespace-nowrap">{r.business_type === 'maklon' ? rp(r.selling_price_per_pcs) : '—'}</TableCell>}
                   {showMargin && (
-                    <TableCell className={`text-right tabular-nums whitespace-nowrap ${Number(r.margin_per_pcs) < 0 ? 'text-[hsl(var(--destructive))]' : ''}`}>
+                    <TableCell className={`text-right tabular-nums whitespace-nowrap ${Number(r.margin_per_pcs) < 0 ? 'text-[hsl(var(--danger-text))]' : ''}`}>
                       {r.business_type === 'maklon' ? rp(r.margin_per_pcs) : '—'}
                     </TableCell>
                   )}
@@ -268,7 +304,7 @@ export default function RahazaHPPModule({ portalId, userRole }) {
           </Table>
         )}
       </GlassCard>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 
@@ -305,7 +341,7 @@ function PoHppDetail({ detail, canClear, onClose, onChanged }) {
       title={`${d.po_number} · ${maklon ? (d.client_name || 'Klien maklon') : 'PO internal'}`}
       description={`Vendor CMT ${d.vendor_name || '—'} · pesan ${num(d.qty_ordered)} · dikirim ke CMT ${num(d.qty_sent)}${d.sent_basis === 'pesanan' ? ' (belum ada surat jalan, dihitung dari pesanan)' : ''} · lolos QC ${num(d.qty_accepted)} pcs`}
       actions={canClear && !maklon && d.closed && Math.abs(residual) >= 0.01 && (
-        <Button onClick={clearWip} disabled={busy} data-testid="hpp-po-clear-wip">Tutup sisa biaya</Button>
+        <Button type="button" onClick={clearWip} disabled={busy} data-testid="hpp-po-clear-wip">Tutup sisa biaya</Button>
       )}>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Figure label="Total HPP aktual" value={rp(d.total_hpp)} testId="hpp-detail-total" />
@@ -356,7 +392,7 @@ function PoHppDetail({ detail, canClear, onClose, onChanged }) {
             <TableRow>
               <TableCell>Pendapatan jasa (qty diterima klien × harga jasa) · margin = pendapatan − HPP</TableCell>
               <TableCell className="text-right tabular-nums">{rp(d.revenue)}</TableCell>
-              <TableCell colSpan={2} className={`text-right tabular-nums ${Number(d.margin) < 0 ? 'text-[hsl(var(--destructive))]' : ''}`} data-testid="hpp-detail-margin-total">margin {rp(d.margin)}</TableCell>
+              <TableCell colSpan={2} className={`text-right tabular-nums ${Number(d.margin) < 0 ? 'text-[hsl(var(--danger-text))]' : ''}`} data-testid="hpp-detail-margin-total">margin {rp(d.margin)}</TableCell>
             </TableRow>
           )}
         </TableBody>
@@ -394,7 +430,7 @@ function PoHppDetail({ detail, canClear, onClose, onChanged }) {
               <TableCell className="text-right tabular-nums">{num(ln.qty_ordered)}</TableCell>
               <TableCell className="text-right tabular-nums">{num(ln.qty_sent)}</TableCell>
               <TableCell className="text-right tabular-nums">{num(ln.qty_accepted)}</TableCell>
-              <TableCell className={`text-right tabular-nums ${Number(ln.cmt_rate) > 0 ? '' : 'text-[hsl(var(--warning))]'}`}>
+              <TableCell className={`text-right tabular-nums ${Number(ln.cmt_rate) > 0 ? '' : 'text-[hsl(var(--warning-text))]'}`}>
                 {Number(ln.cmt_rate) > 0 ? rp(ln.cmt_rate) : 'belum diisi'}
               </TableCell>
               <TableCell className="text-right tabular-nums">{rp(ln.cut_per_pcs)}</TableCell>

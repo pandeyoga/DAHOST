@@ -3,11 +3,13 @@
  * dikonfirmasi klien ditampilkan "belum dikonfirmasi", BUKAN dianggap diterima penuh (perbaikan Tahap 9).
  * PO internal diserahkan ke gudang sendiri, tidak dikonfirmasi klien.
  */
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Fragment, useState } from 'react';
 import { AlertCircle, PackageCheck } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout, { RowDetail, RowToggle } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../engine/DataTable';
 import { EmptyState, Notice, StatTile } from '../moduleAtoms';
 import { Badge, LoadingRows, RefreshButton, Section, n, useApi } from './pantauShared';
 import { SelisihFilters, useSelisihFilter } from './selisihShared';
@@ -28,11 +30,17 @@ export default function SelisihKlienTab() {
   const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 25);
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="selisih-klien"
       title="Terima klien"
       filters={<SelisihFilters testId="selisih-klien-filter" />}
-      tools={maklon && <RefreshButton onClick={reload} loading={loading} testId="selisih-klien-refresh" />}
+      tools={<><TombolUnduh namaBerkas="selisih-terima-klien" baris={rows} kolom={[
+          { label: 'PO', nilai: (r) => r.po_number || '' }, { label: 'Klien', nilai: (r) => r.customer_name || '' },
+          { label: 'Dikirim', nilai: (r) => Number(r.total_shipped) || 0 }, { label: 'Diterima', nilai: (r) => Number(r.total_received) || 0 },
+          { label: 'Belum dikonfirmasi', nilai: (r) => Number(r.total_unconfirmed) || 0 }, { label: 'Kurang diterima', nilai: (r) => Number(r.total_variance) || 0 },
+          { label: 'Selisih terbuka', nilai: (r) => Number(r.qty_short_open) || 0 }, { label: 'Status', nilai: (r) => r.status || '' },
+        ]} />
+        maklon && <RefreshButton onClick={reload} loading={loading} testId="selisih-klien-refresh" /></>}
       summary={<>
         {error && <Notice tone="danger" icon={AlertCircle}>{error}</Notice>}
         {maklon && rows.length > 0 && (
@@ -87,7 +95,7 @@ export default function SelisihKlienTab() {
                             {r.items.map((it) => (
                               <TableRow key={it.po_item_id || it.sku}>
                                 <TableCell className="text-xs">{it.serial_number || '—'}</TableCell>
-                                <TableCell>{it.sku}<div className="text-[11px] text-muted-foreground">{it.product_name}</div></TableCell>
+                                <TableCell>{it.sku}<div className="text-xs text-muted-foreground">{it.product_name}</div></TableCell>
                                 <TableCell>{it.size || '—'}</TableCell>
                                 <TableCell className="text-right tabular-nums">{n(it.shipped)}</TableCell>
                                 <TableCell className="text-right tabular-nums">{n(it.received)}</TableCell>
@@ -106,6 +114,6 @@ export default function SelisihKlienTab() {
           </Table>
         )}
       </Section>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }

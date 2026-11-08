@@ -1,8 +1,18 @@
 import { useState, useEffect } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { Plus, Info, AlertTriangle, X, CheckCircle } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { toast } from 'sonner';
-import Modal from './Modal';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import PageLayout from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from './DataTable';
+import { EmptyState, StatusBadge } from '../moduleAtoms';
 import { MiniBar } from './VendorShared';
 import { apiGet, apiPost } from '../../../lib/api';
 import { todayWIB } from '../../../lib/waktu';
@@ -57,7 +67,7 @@ export default function VendorProgress({ token, user }) {
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     if (!selectedItem) return;
     setLoading(true);
     try {
@@ -78,209 +88,116 @@ export default function VendorProgress({ token, user }) {
     }
   };
 
-  const renderJobItemsTable = (items, isChild = false) => {
-    if (!items.length) return <p className="text-sm text-muted-foreground/70 px-4 py-3">Tidak ada item</p>;
-    return (
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border/60 bg-muted/40">
-              <th className="text-left px-4 py-2.5 text-xs text-[hsl(var(--warning))] font-semibold">Serial 🏷️</th>
-              <th className="text-left px-4 py-2.5 text-xs text-muted-foreground">Produk</th>
-              <th className="text-left px-4 py-2.5 text-xs text-muted-foreground">SKU 🔒</th>
-              <th className="text-left px-4 py-2.5 text-xs text-muted-foreground">Size</th>
-              <th className="text-left px-4 py-2.5 text-xs text-muted-foreground">Warna</th>
-              <th className="text-right px-4 py-2.5 text-xs text-muted-foreground">Tersedia 🔒</th>
-              <th className="text-right px-4 py-2.5 text-xs text-muted-foreground">Diproduksi</th>
-              <th className="text-right px-4 py-2.5 text-xs text-muted-foreground">Sisa</th>
-              <th className="px-4 py-2.5 text-xs text-muted-foreground">Progress</th>
-              <th className="px-4 py-2.5 text-xs text-muted-foreground">Aksi</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border/40">
-            {items.map(item => {
-              const avail = item.available_qty ?? item.shipment_qty ?? 0;
-              const pct = avail > 0 ? Math.round((item.produced_qty / avail) * 100) : 0;
-              const sisa = Math.max(0, avail - item.produced_qty);
-              const isDone = item.produced_qty >= avail && avail > 0;
-              return (
-                <tr key={item.id} className={`hover:bg-muted/60 ${isDone ? 'bg-[hsl(var(--success)/0.3)]' : ''} ${isChild ? 'bg-[hsl(var(--primary)/0.2)]' : ''}`}>
-                  <td className="px-4 py-3 tabular-nums text-xs text-[hsl(var(--warning))] font-semibold">{item.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
-                  <td className="px-4 py-3 font-medium text-foreground">{item.product_name}</td>
-                  <td className="px-4 py-3 tabular-nums text-xs text-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.2)]">{item.sku || '-'}</td>
-                  <td className="px-4 py-3 text-xs text-center">{item.size || '-'}</td>
-                  <td className="px-4 py-3 text-xs text-center">{item.color || '-'}</td>
-                  <td className="px-4 py-3 text-right font-medium text-[hsl(var(--primary))]">{avail.toLocaleString('id-ID')}</td>
-                  <td className="px-4 py-3 text-right font-bold text-[hsl(var(--success))]">{(item.produced_qty || 0).toLocaleString('id-ID')}</td>
-                  <td className={`px-4 py-3 text-right font-medium ${sisa === 0 ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--warning))]'}`}>{sisa.toLocaleString('id-ID')}</td>
-                  <td className="px-4 py-3 min-w-32"><MiniBar pct={pct} /></td>
-                  <td className="px-4 py-3">
-                    {isDone ? (
-                      <span className="px-2 py-1 bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] rounded text-xs font-medium">✅ Selesai</span>
-                    ) : (
-                      <button onClick={() => openProgress(item)}
-                        className="flex items-center gap-1 px-3 py-1.5 bg-[hsl(var(--success))] text-white rounded-lg text-xs hover:bg-[hsl(var(--success)/0.9)]">
-                        <Plus className="w-3 h-3" /> Input
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    );
-  };
+  // Standar UI/UX v2 (8 Nov 2026): PageLayout; pilih job di baris penyaring; barang = TabelData (+ unduh);
+  // job turunan dipilih dengan pil; form progress = FormPopup pendek dengan DatePicker. API & aturan sama.
+  const n = (v) => Number(v || 0).toLocaleString('id-ID');
+  const tersedia = (it) => it.available_qty ?? it.shipment_qty ?? 0;
+  const sisaDari = (it) => Math.max(0, tersedia(it) - (it.produced_qty || 0));
+  const kolomBarang = [
+    { kunci: 'produk', label: 'Produk', hp: 'judul', isi: (it) => (
+      <div className="min-w-0"><span className="font-medium">{it.product_name}</span>
+        <span className="block text-xs text-muted-foreground tabular-nums">{it.sku || '—'} · {it.size || '—'}/{it.color || '—'}{it.serial_number ? ` · seri ${it.serial_number}` : ''}</span></div>) },
+    { kunci: 'tersedia', label: 'Tersedia', rata: 'kanan', isi: (it) => <span className="tabular-nums">{n(tersedia(it))}</span> },
+    { kunci: 'produksi', label: 'Diproduksi', rata: 'kanan', isi: (it) => <span className="tabular-nums font-medium">{n(it.produced_qty)}</span> },
+    { kunci: 'sisa', label: 'Sisa', rata: 'kanan', isi: (it) => <span className={`tabular-nums ${sisaDari(it) === 0 ? 'text-muted-foreground' : 'text-[hsl(var(--warning-text))]'}`}>{n(sisaDari(it))}</span> },
+    { kunci: 'progres', label: 'Kemajuan', isi: (it) => {
+      const av = tersedia(it);
+      return <div className="min-w-[7rem]"><MiniBar pct={av > 0 ? Math.round(((it.produced_qty || 0) / av) * 100) : 0} /></div>;
+    } },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => ((it.produced_qty || 0) >= tersedia(it) && tersedia(it) > 0
+      ? <StatusBadge status="done" tone="success" label="Selesai" />
+      : <Button type="button" size="sm" onClick={() => openProgress(it)} data-testid={`vendor-progress-input-${it.id}`}><Plus className="w-3.5 h-3.5" />Isi progress</Button>) },
+  ];
+  const kolomUnduh = [
+    { label: 'No. seri', nilai: (it) => it.serial_number || '' }, { label: 'Produk', nilai: (it) => it.product_name },
+    { label: 'SKU', nilai: (it) => it.sku || '' }, { label: 'Ukuran', nilai: (it) => it.size || '' }, { label: 'Warna', nilai: (it) => it.color || '' },
+    { label: 'Tersedia', nilai: (it) => Number(tersedia(it)) || 0 }, { label: 'Diproduksi', nilai: (it) => Number(it.produced_qty) || 0 },
+    { label: 'Sisa', nilai: sisaDari },
+  ];
+  const anakAktif = childJobs.find((c) => c.id === selectedChildJobId);
+  const maks = selectedItem ? sisaDari(selectedItem) : 0;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Progress Produksi</h1>
-        <p className="text-muted-foreground text-sm mt-1">Input progress harian per SKU. Pilih Job Produksi, lalu update qty per SKU.</p>
-      </div>
-
-      {/* Job selector */}
-      <div className="bg-card border border-border rounded-xl p-4 shadow-sm">
-        <label className="block text-sm font-semibold text-foreground/90 mb-2">Pilih Job Produksi (Parent)</label>
-        {jobs.length === 0 ? (
-          <p className="text-sm text-muted-foreground/70">Tidak ada Job Produksi yang aktif. Buat Job Produksi di menu Pekerjaan Produksi.</p>
-        ) : (
-          <SmartNativeSelect
-            className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--success)/0.35)]"
-            value={selectedJob?.id || ''}
-            onChange={e => loadJobItems(e.target.value)}
-          >
-            <option value="">— Pilih Job Produksi —</option>
-            {jobs.map(j => (
-              <option key={j.id} value={j.id}>
-                {j.job_number} — PO: {j.po_number || '-'} ({j.progress_pct || 0}% selesai){j.child_job_count > 0 ? ` • +${j.child_job_count} child` : ''}
-              </option>
-            ))}
-          </SmartNativeSelect>
-        )}
-      </div>
-
-      {selectedJob && (
-        <div className="bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] rounded-lg p-3 text-sm">
-          <div className="flex justify-between items-center">
-            <span className="font-semibold text-[hsl(var(--success))]">{selectedJob.job_number} — PO: {selectedJob.po_number || '-'}</span>
-            <span className="text-xs text-[hsl(var(--success))]">Shipment: {selectedJob.shipment_number}</span>
-          </div>
-          {(selectedJob.serial_numbers || []).length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-2">
-              {selectedJob.serial_numbers.map(sn => (
-                <span key={sn} className="px-1.5 py-0.5 bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.35)] rounded text-xs tabular-nums text-[hsl(var(--warning))]">Serial: {sn}</span>
-              ))}
-            </div>
-          )}
-          <MiniBar pct={selectedJob.progress_pct || 0} />
-          <p className="text-xs text-[hsl(var(--success))] mt-1">
-            Total tersedia: {(selectedJob.total_available || 0).toLocaleString('id-ID')} pcs • 
-            Diproduksi: {(selectedJob.total_produced || 0).toLocaleString('id-ID')} pcs
-          </p>
-        </div>
+    <PageLayoutSatuBaris testId="vendor-progress" title="Progress produksi"
+      subtitle="Isi progress harian per SKU: pilih job produksi, lalu isi qty yang selesai."
+      filters={jobs.length > 0 && (
+        <SmartNativeSelect className="w-full sm:w-96" value={selectedJob?.id || ''} onChange={(e) => loadJobItems(e.target.value)}
+          aria-label="Pilih job produksi" data-testid="vendor-progress-job-select">
+          <option value="">Pilih job produksi</option>
+          {jobs.map((j) => (
+            <option key={j.id} value={j.id}>
+              {j.job_number} — PO {j.po_number || '—'} ({j.progress_pct || 0}% selesai){j.child_job_count > 0 ? ` · +${j.child_job_count} turunan` : ''}
+            </option>
+          ))}
+        </SmartNativeSelect>
       )}
-
-      {/* PARENT JOB ITEMS */}
-      {jobItems.length > 0 && (
-        <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-border/60 bg-muted/40 flex items-center gap-2">
-            <h3 className="font-semibold text-foreground/90 text-sm">Item Produksi — Job Utama ({selectedJob?.job_number})</h3>
-          </div>
-          {renderJobItemsTable(jobItems, false)}
+      tools={jobItems.length > 0 && <TombolUnduh namaBerkas={`progress-${selectedJob?.job_number || 'job'}`} baris={jobItems} kolom={kolomUnduh} />}
+      summary={selectedJob && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+          <span className="font-medium">{selectedJob.job_number} · PO {selectedJob.po_number || '—'} · kiriman {selectedJob.shipment_number}</span>
+          <span className="text-muted-foreground tabular-nums">Diproduksi {n(selectedJob.total_produced)} dari {n(selectedJob.total_available)} pcs tersedia</span>
+          <span className="w-40"><MiniBar pct={selectedJob.progress_pct || 0} /></span>
+          {(selectedJob.serial_numbers || []).length > 0 && <span className="text-xs text-muted-foreground tabular-nums">Seri: {selectedJob.serial_numbers.join(', ')}</span>}
         </div>
-      )}
-
-      {/* CHILD JOBS */}
-      {childJobs.length > 0 && (
-        <div className="space-y-3">
-          <div className="bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] rounded-xl p-3">
-            <p className="text-sm font-semibold text-[hsl(var(--primary))] mb-2">Child Jobs — Shipment Tambahan/Pengganti</p>
-            <div className="flex gap-2 flex-wrap">
-              {childJobs.map(child => (
-                <button key={child.id}
-                  onClick={() => loadChildJobItems(selectedChildJobId === child.id ? '' : child.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${selectedChildJobId === child.id ? 'bg-[hsl(var(--primary))] text-white border-[hsl(var(--primary)/0.35)]' : 'border-[hsl(var(--primary)/0.35)] text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.15)]'}`}>
-                  {child.job_number} ({child.shipment_type})
-                </button>
-              ))}
-            </div>
-          </div>
-          {childJobItems.length > 0 && (
-            <div className="bg-card rounded-xl border border-[hsl(var(--primary)/0.35)] shadow-sm overflow-hidden ml-6">
-              <div className="px-4 py-3 border-b border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary)/0.1)] flex items-center gap-2">
-                <h3 className="font-semibold text-[hsl(var(--primary))] text-sm">
-                  Child Job: {childJobs.find(c => c.id === selectedChildJobId)?.job_number}
-                </h3>
-                <span className="px-2 py-0.5 bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] rounded text-xs">
-                  {childJobs.find(c => c.id === selectedChildJobId)?.shipment_type}
-                </span>
-              </div>
-              {renderJobItemsTable(childJobItems, true)}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Progress Input Modal */}
-      {showModal && selectedItem && (
-        <Modal title={`Input Progress: ${selectedItem.sku || selectedItem.product_name}`} onClose={() => setShowModal(false)}>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Locked info */}
-            <div className="bg-muted/40 rounded-xl p-3 space-y-1.5">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Info Item (Terkunci 🔒)</p>
-              {[
-                ['Serial / Batch', selectedItem.serial_number || '-'],
-                ['Produk', selectedItem.product_name],
-                ['SKU', selectedItem.sku || '-'],
-                ['Size', selectedItem.size || '-'],
-                ['Warna', selectedItem.color || '-'],
-                ['Material Tersedia', `${selectedItem.available_qty ?? selectedItem.shipment_qty ?? 0} pcs`],
-                ['Sudah Diproduksi', `${selectedItem.produced_qty} pcs`],
-                ['Sisa (Maks Input)', `${Math.max(0, (selectedItem.available_qty ?? selectedItem.shipment_qty ?? 0) - selectedItem.produced_qty)} pcs`],
-              ].map(([l, v]) => (
-                <div key={l} className={`flex justify-between text-sm ${l === 'Serial / Batch' ? 'text-[hsl(var(--warning))] font-medium' : ''}`}>
-                  <span className="text-muted-foreground">{l}</span>
-                  <span className={`font-semibold ${l === 'Sisa (Maks Input)' ? 'text-[hsl(var(--warning))]' : 'text-foreground'}`}>{v}</span>
+      )}>
+      {jobs.length === 0 ? (
+        <EmptyState title="Tidak ada job produksi yang aktif" description="Buat job produksi di Pekerjaan produksi." />
+      ) : !selectedJob ? (
+        <EmptyState title="Pilih job produksi" description="Barang job yang dipilih tampil di sini untuk diisi progressnya." />
+      ) : (
+        <>
+          <section className="space-y-2">
+            <p className="text-sm font-semibold text-foreground">Barang job utama ({selectedJob.job_number})</p>
+            <TabelData kolom={kolomBarang} baris={jobItems} testId="vendor-progress-items"
+              kosong={<EmptyState title="Tidak ada barang" description="Job ini belum punya baris barang." />} />
+          </section>
+          {childJobs.length > 0 && (
+            <section className="space-y-2">
+              <p className="text-sm font-semibold text-foreground">Job turunan (kiriman tambahan/pengganti)</p>
+              <FilterChips value={selectedChildJobId || ''} onChange={(v) => loadChildJobItems(v)} hideWhenEmpty={false} ariaLabel="Job turunan"
+                options={childJobs.map((child) => ({ key: child.id, label: `${child.job_number} · ${child.shipment_type === 'ADDITIONAL' ? 'tambahan' : child.shipment_type === 'REPLACEMENT' ? 'pengganti' : child.shipment_type}` }))} />
+              {anakAktif && (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm text-muted-foreground">Barang job turunan {anakAktif.job_number}</p>
+                    <TombolUnduh namaBerkas={`progress-${anakAktif.job_number}`} baris={childJobItems} kolom={kolomUnduh} />
+                  </div>
+                  <TabelData kolom={kolomBarang} baris={childJobItems} testId="vendor-progress-child-items"
+                    kosong={<EmptyState title="Tidak ada barang" description="Job turunan ini belum punya baris barang." />} />
                 </div>
-              ))}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-foreground/90 mb-1">Tanggal Progress *</label>
-              <input required type="date" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--success)/0.35)]"
-                value={form.progress_date} onChange={e => setForm(f => ({ ...f, progress_date: e.target.value }))} />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-foreground/90 mb-1">
-                Jumlah Selesai Hari Ini (pcs) * <span className="text-xs text-muted-foreground/70">maks: {Math.max(0, (selectedItem.available_qty ?? selectedItem.shipment_qty ?? 0) - selectedItem.produced_qty)} pcs</span>
-              </label>
-              <input required type="number" min="1" max={Math.max(0, (selectedItem.available_qty ?? selectedItem.shipment_qty ?? 0) - selectedItem.produced_qty)}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--success)/0.35)] text-right"
-                value={form.completed_quantity}
-                onChange={e => setForm(f => ({ ...f, completed_quantity: e.target.value }))}
-                placeholder={`0 – ${Math.max(0, (selectedItem.available_qty ?? selectedItem.shipment_qty ?? 0) - selectedItem.produced_qty)}`} />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-foreground/90 mb-1">Catatan</label>
-              <textarea rows="2" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--success)/0.35)]"
-                value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Catatan produksi..." />
-            </div>
-
-            <div className="flex gap-3">
-              <button type="submit" disabled={loading}
-                className="flex-1 bg-[hsl(var(--success))] text-white py-2 rounded-lg text-sm font-medium hover:bg-[hsl(var(--success)/0.9)] disabled:opacity-50">
-                {loading ? 'Menyimpan...' : 'Simpan Progress'}
-              </button>
-              <button type="button" onClick={() => setShowModal(false)} className="flex-1 border border-border py-2 rounded-lg text-sm hover:bg-muted/60">Batal</button>
-            </div>
-          </form>
-        </Modal>
+              )}
+            </section>
+          )}
+        </>
       )}
-    </div>
+
+      {/* Isi progress — FormPopup pendek */}
+      {showModal && selectedItem && (
+        <FormPopup open onClose={() => setShowModal(false)} ukuran="pendek" testId="vendor-progress-form"
+          judul={`Isi progress ${selectedItem.sku || selectedItem.product_name}`} onSimpan={handleSubmit} menyimpan={loading} labelSimpan="Simpan progress">
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+            {[
+              ['No. seri / batch', selectedItem.serial_number || '—'], ['Produk', selectedItem.product_name],
+              ['SKU', selectedItem.sku || '—'], ['Ukuran / warna', `${selectedItem.size || '—'} / ${selectedItem.color || '—'}`],
+              ['Bahan tersedia', `${n(tersedia(selectedItem))} pcs`], ['Sudah diproduksi', `${n(selectedItem.produced_qty)} pcs`],
+              ['Sisa (maks isi)', `${n(maks)} pcs`],
+            ].map(([l, v]) => (
+              <div key={l} className="min-w-0"><dt className="text-xs text-muted-foreground">{l}</dt><dd className="font-medium">{v}</dd></div>
+            ))}
+          </dl>
+          <Isian label="Tanggal progress" wajib>
+            <DatePicker value={form.progress_date} onChange={(v) => setForm((f) => ({ ...f, progress_date: v }))} bolehKosong={false} />
+          </Isian>
+          <Isian label="Jumlah selesai (pcs)" wajib htmlFor="vp-qty" petunjuk={`Maksimal ${n(maks)} pcs.`}>
+            <Input id="vp-qty" required type="number" min="1" max={maks} className="text-right"
+              value={form.completed_quantity} onChange={(e) => setForm((f) => ({ ...f, completed_quantity: e.target.value }))} placeholder={`1 – ${maks}`} />
+          </Isian>
+          <Isian label="Catatan" htmlFor="vp-notes">
+            <Textarea id="vp-notes" rows={2} value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} placeholder="Catatan produksi…" />
+          </Isian>
+        </FormPopup>
+      )}
+    </PageLayoutSatuBaris>
   );
 }
 

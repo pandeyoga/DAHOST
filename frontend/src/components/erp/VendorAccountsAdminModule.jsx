@@ -25,10 +25,13 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import FormPopup from '@/components/ui/form-popup';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Input } from '@/components/ui/input';
 import { apiDelete, apiGet, apiPost, apiPut } from '../../lib/api';
 import { formatDateTimeID } from '@/lib/format';
 import PageLayout, { DetailPanel } from './layout/PageLayout';
+import { PageLayoutSatuBaris } from './engine/DataTable';
 import HubTabs from './hubs/HubTabs';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import ImportExportToolbar from './ImportExportToolbar';
@@ -46,7 +49,7 @@ function Field({ label, children, hint, className = '' }) {
     <label className={`block space-y-1 ${className}`}>
       <span className="text-xs text-muted-foreground">{label}</span>
       {children}
-      {hint && <span className="block text-[11px] text-muted-foreground">{hint}</span>}
+      {hint && <span className="block text-xs text-muted-foreground">{hint}</span>}
     </label>
   );
 }
@@ -62,10 +65,10 @@ function Info({ label, value, testId }) {
 
 function SearchBox({ value, onChange, placeholder, testId }) {
   return (
-    <div className="relative w-72 max-w-full">
+    <div className="relative w-full sm:w-64">
       <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-      <GlassInput value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-        className="pl-8 h-9" data-testid={testId} />
+      <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+        className="pl-8" data-testid={testId} />
     </div>
   );
 }
@@ -192,11 +195,11 @@ function PartnerDetail({ partner, onClose, onChanged }) {
       description={`${partner.code || 'Tanpa kode'} · ${OWNER_LABEL[partner.owner_entity || ''] || 'Vendor CMT luar'}`}
       actions={!editing && (
         <>
-          <Button variant="outline" onClick={() => setEditing(true)} disabled={busy} data-testid="partner-edit"><Pencil className="w-4 h-4" />Ubah</Button>
-          <Button variant="outline" onClick={toggle} disabled={busy} data-testid="partner-toggle">
+          <Button type="button" variant="outline" onClick={() => setEditing(true)} disabled={busy} data-testid="partner-edit"><Pencil className="w-4 h-4" />Ubah</Button>
+          <Button type="button" variant="outline" onClick={toggle} disabled={busy} data-testid="partner-toggle">
             <Power className="w-4 h-4" />{isActive(partner) ? 'Nonaktifkan' : 'Aktifkan'}
           </Button>
-          <Button variant="outline" size="icon" onClick={remove} disabled={busy} title="Hapus permanen" aria-label="Hapus permanen"
+          <Button type="button" variant="outline" size="icon" onClick={remove} disabled={busy} title="Hapus permanen" aria-label="Hapus permanen"
             data-testid="partner-delete"><Trash2 className="w-4 h-4" /></Button>
         </>
       )}>
@@ -204,8 +207,8 @@ function PartnerDetail({ partner, onClose, onChanged }) {
         <div className="space-y-3" data-testid="partner-form">
           <PartnerFormFields form={form} setForm={setForm} />
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => { setForm(partnerForm(partner)); setEditing(false); }} disabled={busy}>Batal</Button>
-            <Button onClick={save} disabled={busy} data-testid="partner-save">Simpan perubahan</Button>
+            <Button type="button" variant="outline" onClick={() => { setForm(partnerForm(partner)); setEditing(false); }} disabled={busy}>Batal</Button>
+            <Button type="button" onClick={save} disabled={busy} data-testid="partner-save">Simpan perubahan</Button>
           </div>
         </div>
       ) : (
@@ -245,17 +248,11 @@ function NewPartnerDialog({ onClose, onCreated }) {
     finally { setBusy(false); }
   };
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg" data-testid="partner-create-dialog">
-        <DialogHeader><DialogTitle>Vendor baru</DialogTitle></DialogHeader>
-        <PartnerFormFields form={form} setForm={setForm} full={false} />
-        <p className="text-xs text-muted-foreground">Alamat, kapasitas, dan catatan bisa dilengkapi dari rincian vendor setelah disimpan.</p>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={busy}>Batal</Button>
-          <Button onClick={save} disabled={busy} data-testid="partner-create-save">Simpan</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="partner-create-dialog" judul="Vendor baru"
+      keterangan="Alamat, kapasitas, dan catatan bisa dilengkapi dari rincian vendor setelah disimpan."
+      onSimpan={save} menyimpan={busy}>
+      <PartnerFormFields form={form} setForm={setForm} full={false} />
+    </FormPopup>
   );
 }
 
@@ -290,8 +287,8 @@ export function VendorPartnersTab() {
   const resetFilters = () => { setSearch(''); setStatus(''); };
 
   return (
-    <PageLayout testId="vendor-partners-tab" title="Vendor CMT" subtitle="Daftar penjahit (CMT) beserta kontak, kapasitas, dan catatan."
-      actions={<Button onClick={() => setCreating(true)} data-testid="btn-add-partner"><Plus className="w-4 h-4" />Vendor baru</Button>}
+    <PageLayoutSatuBaris testId="vendor-partners-tab" title="Vendor CMT" subtitle="Daftar penjahit (CMT) beserta kontak, kapasitas, dan catatan."
+      actions={<Button type="button" onClick={() => setCreating(true)} data-testid="btn-add-partner"><Plus className="w-4 h-4" />Vendor baru</Button>}
       filters={<>
         <SearchBox value={search} onChange={setSearch} placeholder="Cari nama / kode / kontak…" testId="partner-search" />
         <FilterChips value={status} onChange={setStatus} testId="partner-status-filter" ariaLabel="Status vendor"
@@ -299,21 +296,29 @@ export function VendorPartnersTab() {
             { key: 'inactive', label: 'Nonaktif', count: counts.inactive }]} />
       </>}
       tools={<>
+        <TombolUnduh namaBerkas="vendor-cmt" namaLembar="Vendor" baris={filtered} testId="partner-unduh" kolom={[
+          { label: 'Vendor', nilai: (p) => p.name || '' }, { label: 'Kode', nilai: (p) => p.code || '' },
+          { label: 'Kontak', nilai: (p) => p.contact_name || '' }, { label: 'Telepon', nilai: (p) => p.contact_phone || '' },
+          { label: 'Kapasitas (pcs)', nilai: (p) => (p.capacity_pcs > 0 ? Number(p.capacity_pcs) : '') },
+          { label: 'PO', nilai: (p) => Number(p.po_count) || 0 }, { label: 'Job berjalan', nilai: (p) => Number(p.active_job_count) || 0 },
+          { label: 'Akun', nilai: (p) => Number(p.account_count) || 0 }, { label: 'Pemilik', nilai: (p) => OWNER_LABEL[p.owner_entity || ''] || '' },
+          { label: 'Status', nilai: (p) => (isActive(p) ? 'Aktif' : 'Nonaktif') }, { label: 'Catatan', nilai: (p) => p.notes || '' },
+        ]} />
         <ImportExportToolbar collectionKey="vendor_partners" label="Vendor CMT" onImported={load} />
-        <Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="partner-refresh">
+        <Button type="button" variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="partner-refresh">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </Button>
       </>}
       summary={error && <Notice tone="danger" title="Gagal memuat vendor" testId="partner-error">{error}</Notice>}
       detail={selected && <PartnerDetail partner={selected} onClose={() => setSelectedId(null)} onChanged={afterChange} />}
       footer={filtered.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
-      <GlassCard className="p-0 overflow-hidden">
+      <GlassCard className="p-0 overflow-x-auto">
         {loading && !rows.length ? (
           <div className="p-4 text-sm text-muted-foreground">Memuat vendor…</div>
         ) : !paged.length ? (
           rows.length ? (
             <EmptyState icon={Building2} title="Tidak ada vendor yang cocok" description="Ubah kata pencarian atau penyaring status."
-              action={<Button variant="outline" size="sm" onClick={resetFilters}><X className="w-3.5 h-3.5" />Tampilkan semua vendor</Button>} />
+              action={<Button type="button" variant="outline" size="sm" onClick={resetFilters}><X className="w-3.5 h-3.5" />Tampilkan semua vendor</Button>} />
           ) : (
             <EmptyState icon={Building2} title="Belum ada vendor CMT" description="Klik Vendor baru untuk mendaftarkan penjahit pertama." />
           )
@@ -329,7 +334,7 @@ export function VendorPartnersTab() {
               {paged.map((p) => (
                 <TableRow key={p.id} data-testid={`partner-row-${p.id}`} className={selectedId === p.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
                   <TableCell>
-                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold text-left" onClick={() => setSelectedId(p.id)}
+                    <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold text-left" onClick={() => setSelectedId(p.id)}
                       data-testid={`partner-open-${p.id}`}>{p.name}</Button>
                     {p.notes && <span className="block text-xs text-muted-foreground truncate max-w-[16rem]" title={p.notes}>{p.notes}</span>}
                   </TableCell>
@@ -348,7 +353,7 @@ export function VendorPartnersTab() {
         )}
       </GlassCard>
       {creating && <NewPartnerDialog onClose={() => setCreating(false)} onCreated={async (id) => { setCreating(false); await afterChange(id || null); }} />}
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 
@@ -415,11 +420,11 @@ function AccountDetail({ account, partners, onClose, onChanged }) {
       description={`${account.email} · ${account.partner_name || 'Vendor belum dipilih'}`}
       actions={!editing && (
         <>
-          <Button variant="outline" onClick={() => setEditing(true)} disabled={busy} data-testid="account-edit"><Pencil className="w-4 h-4" />Ubah</Button>
-          <Button variant="outline" onClick={toggle} disabled={busy} data-testid="account-toggle">
+          <Button type="button" variant="outline" onClick={() => setEditing(true)} disabled={busy} data-testid="account-edit"><Pencil className="w-4 h-4" />Ubah</Button>
+          <Button type="button" variant="outline" onClick={toggle} disabled={busy} data-testid="account-toggle">
             <Power className="w-4 h-4" />{isActive(account) ? 'Nonaktifkan' : 'Aktifkan'}
           </Button>
-          <Button variant="outline" size="icon" onClick={remove} disabled={busy} title="Hapus akun" aria-label="Hapus akun"
+          <Button type="button" variant="outline" size="icon" onClick={remove} disabled={busy} title="Hapus akun" aria-label="Hapus akun"
             data-testid="account-delete"><Trash2 className="w-4 h-4" /></Button>
         </>
       )}>
@@ -440,8 +445,8 @@ function AccountDetail({ account, partners, onClose, onChanged }) {
             </Field>
           </div>
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setEditing(false)} disabled={busy}>Batal</Button>
-            <Button onClick={save} disabled={busy} data-testid="account-edit-save">Simpan perubahan</Button>
+            <Button type="button" variant="outline" onClick={() => setEditing(false)} disabled={busy}>Batal</Button>
+            <Button type="button" onClick={save} disabled={busy} data-testid="account-edit-save">Simpan perubahan</Button>
           </div>
         </div>
       ) : (
@@ -471,10 +476,9 @@ function NewAccountDialog({ partners, onClose, onCreated }) {
     finally { setBusy(false); }
   };
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg" data-testid="account-form">
-        <DialogHeader><DialogTitle>Akun vendor baru</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="account-form" judul="Akun vendor baru"
+      onSimpan={save} menyimpan={busy} labelSimpan="Buat akun">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field label="Vendor *" className="sm:col-span-2">
             <SmartNativeSelect value={form.partner_id} onChange={set('partner_id')} className="w-full h-9"
               data-testid="account-partner-select" aria-label="Vendor">
@@ -486,12 +490,7 @@ function NewAccountDialog({ partners, onClose, onCreated }) {
           <Field label="Email login *"><GlassInput value={form.email} onChange={set('email')} data-testid="account-email" /></Field>
           <Field label="Sandi *" className="sm:col-span-2"><GlassInput type="password" value={form.password} onChange={set('password')} data-testid="account-password" /></Field>
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={busy}>Batal</Button>
-          <Button onClick={save} disabled={busy} data-testid="account-create-save"><KeyRound className="w-4 h-4" />Buat akun</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FormPopup>
   );
 }
 
@@ -530,8 +529,8 @@ export function VendorAccountsTab() {
   const afterChange = async (id) => { await load(); setSelectedId(id); };
 
   return (
-    <PageLayout testId="vendor-accounts-tab" title="Akun vendor" subtitle="Login Portal Vendor untuk penjahit yang mengisi sendiri."
-      actions={<Button onClick={() => setCreating(true)} data-testid="btn-add-account"><Plus className="w-4 h-4" />Akun baru</Button>}
+    <PageLayoutSatuBaris testId="vendor-accounts-tab" title="Akun vendor" subtitle="Login Portal Vendor untuk penjahit yang mengisi sendiri."
+      actions={<Button type="button" onClick={() => setCreating(true)} data-testid="btn-add-account"><Plus className="w-4 h-4" />Akun baru</Button>}
       filters={<>
         <SearchBox value={search} onChange={setSearch} placeholder="Cari nama / email / vendor…" testId="account-search" />
         <FilterChips value={status} onChange={setStatus} testId="account-status-filter" ariaLabel="Status akun"
@@ -545,13 +544,21 @@ export function VendorAccountsTab() {
           </SmartNativeSelect>
         )}
       </>}
-      tools={<Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="account-refresh">
-        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-      </Button>}
+      tools={<>
+        <TombolUnduh namaBerkas="akun-vendor-cmt" namaLembar="Akun" baris={filtered} testId="account-unduh" kolom={[
+          { label: 'Nama', nilai: (u) => u.name || '' }, { label: 'Email login', nilai: (u) => u.email || '' },
+          { label: 'Vendor', nilai: (u) => u.partner_name || '' },
+          { label: 'Login terakhir', nilai: (u) => (u.last_login_at ? formatDateTimeID(u.last_login_at) : 'Belum pernah') },
+          { label: 'Status', nilai: (u) => (isActive(u) ? 'Aktif' : 'Nonaktif') },
+        ]} />
+        <Button type="button" variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="account-refresh">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </>}
       summary={error && <Notice tone="danger" title="Gagal memuat akun vendor">{error}</Notice>}
       detail={selected && <AccountDetail account={selected} partners={partners} onClose={() => setSelectedId(null)} onChanged={afterChange} />}
       footer={filtered.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
-      <GlassCard className="p-0 overflow-hidden">
+      <GlassCard className="p-0 overflow-x-auto">
         {loading && !rows.length ? (
           <div className="p-4 text-sm text-muted-foreground">Memuat akun…</div>
         ) : !paged.length ? (
@@ -567,7 +574,7 @@ export function VendorAccountsTab() {
               {paged.map((u) => (
                 <TableRow key={u.id} data-testid={`account-row-${u.id}`} className={selectedId === u.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
                   <TableCell>
-                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => setSelectedId(u.id)}
+                    <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => setSelectedId(u.id)}
                       data-testid={`account-open-${u.id}`}>{u.name}</Button>
                   </TableCell>
                   <TableCell className="text-sm">{u.email}</TableCell>
@@ -582,7 +589,7 @@ export function VendorAccountsTab() {
       </GlassCard>
       {creating && <NewAccountDialog partners={partners} onClose={() => setCreating(false)}
         onCreated={async (id) => { setCreating(false); await afterChange(id || null); }} />}
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 

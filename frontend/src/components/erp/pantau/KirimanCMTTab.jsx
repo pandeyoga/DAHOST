@@ -3,12 +3,14 @@
  * (hasil periksa bahan), kurang. Kiriman pengganti/tambahan ditandai terpisah dari kiriman normal.
  * Pengganti tab "Potongan masuk" Monitoring CMT (kini juga untuk PO internal).
  */
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Fragment, useMemo, useState } from 'react';
 import { AlertCircle, Truck } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout, { RowDetail, RowToggle } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../engine/DataTable';
 import { EmptyState, Notice } from '../moduleAtoms';
 import { formatDateID } from '@/lib/format';
 import { Badge, KIND_LABEL, LoadingRows, RefreshButton, SearchBox, Section, n, portalBusinessType, useApi } from './pantauShared';
@@ -43,7 +45,7 @@ export default function KirimanCMTTab(props) {
   const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 25);
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="pantau-kiriman"
       title="Kiriman ke CMT"
       filters={<>
@@ -56,14 +58,21 @@ export default function KirimanCMTTab(props) {
           options={[{ key: '', label: 'Semua periksa' }, { key: 'belum', label: 'Belum diperiksa', count: counts.belum },
             { key: 'kurang', label: 'Ada kurang', count: counts.kurang }]} hideWhenEmpty={false} />
       </>}
-      tools={<RefreshButton onClick={reload} loading={loading} testId="pantau-kiriman-refresh" />}
+      tools={<><TombolUnduh namaBerkas="kiriman-ke-cmt-pantau" baris={rows} kolom={[
+          { label: 'Surat jalan', nilai: (b) => b.shipment_number || '' }, { label: 'No. SJ', nilai: (b) => b.delivery_note_number || '' },
+          { label: 'PO', nilai: (b) => b.po_number || '' }, { label: 'Vendor CMT', nilai: (b) => b.vendor_name || '' },
+          { label: 'Tanggal', nilai: (b) => formatDateID(b.shipment_date, { fallback: '' }) }, { label: 'Jenis', nilai: (b) => KIND_LABEL[b.kind] || b.kind || '' },
+          { label: 'Dikirim', nilai: (b) => Number(b.total_sent) || 0 }, { label: 'Diterima CMT', nilai: (b) => Number(b.total_received) || 0 },
+          { label: 'Kurang', nilai: (b) => Number(b.total_missing) || 0 },
+        ]} />
+        <RefreshButton onClick={reload} loading={loading} testId="pantau-kiriman-refresh" /></>}
       summary={<>
         {error && <Notice tone="danger" icon={AlertCircle}>{error}</Notice>}
         {data && all.length > 0 && (
           <p className="text-sm text-muted-foreground" data-testid="pantau-kiriman-summary">
             {n(data.count)} kiriman · dikirim <b className="text-foreground tabular-nums">{n(data.total_sent)}</b> pcs ·
             diterima CMT <b className="text-foreground tabular-nums">{n(data.total_received)}</b> · kurang{' '}
-            <b className={`tabular-nums ${data.total_missing ? 'text-[hsl(var(--destructive))]' : 'text-foreground'}`}>{n(data.total_missing)}</b> ·
+            <b className={`tabular-nums ${data.total_missing ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`}>{n(data.total_missing)}</b> ·
             {' '}{n(data.uninspected)} belum diperiksa CMT
           </p>
         )}
@@ -88,14 +97,14 @@ export default function KirimanCMTTab(props) {
                   <Fragment key={b.shipment_id}>
                     <TableRow data-testid={`pantau-kiriman-row-${b.shipment_number}`}>
                       <TableCell><RowToggle open={isOpen} onClick={() => setOpen(isOpen ? '' : b.shipment_id)} testId={`pantau-kiriman-toggle-${b.shipment_number}`} /></TableCell>
-                      <TableCell className="font-medium whitespace-nowrap">{b.shipment_number || '—'}{b.delivery_note_number ? <div className="text-[11px] text-muted-foreground">{b.delivery_note_number}</div> : null}</TableCell>
-                      <TableCell className="whitespace-nowrap">{b.po_number}<div className="text-[11px] text-muted-foreground">{b.customer_name}</div></TableCell>
+                      <TableCell className="font-medium whitespace-nowrap">{b.shipment_number || '—'}{b.delivery_note_number ? <div className="text-xs text-muted-foreground">{b.delivery_note_number}</div> : null}</TableCell>
+                      <TableCell className="whitespace-nowrap">{b.po_number}<div className="text-xs text-muted-foreground">{b.customer_name}</div></TableCell>
                       <TableCell>{b.vendor_name || '—'}</TableCell>
                       <TableCell className="whitespace-nowrap">{b.shipment_date ? formatDateID(b.shipment_date) : '—'}</TableCell>
                       <TableCell>{KIND_LABEL[b.kind] || b.kind}</TableCell>
                       <TableCell className="text-right tabular-nums">{n(b.total_sent)}</TableCell>
                       <TableCell className="text-right tabular-nums">{checked ? n(b.total_received) : '—'}</TableCell>
-                      <TableCell className={`text-right tabular-nums ${b.total_missing ? 'text-[hsl(var(--destructive))] font-semibold' : ''}`}>{checked ? n(b.total_missing) : '—'}</TableCell>
+                      <TableCell className={`text-right tabular-nums ${b.total_missing ? 'text-[hsl(var(--danger-text))] font-semibold' : ''}`}>{checked ? n(b.total_missing) : '—'}</TableCell>
                       <TableCell><Badge meta={checked ? (b.total_missing ? { label: 'Ada kurang', tone: 'danger' } : { label: 'Sesuai', tone: 'success' }) : { label: 'Belum diperiksa', tone: 'warning' }} /></TableCell>
                     </TableRow>
                     {isOpen && (
@@ -109,7 +118,7 @@ export default function KirimanCMTTab(props) {
                             {b.items.map((it) => (
                               <TableRow key={it.vsi_id}>
                                 <TableCell className="text-xs">{it.serial_number || '—'}</TableCell>
-                                <TableCell>{it.sku}<div className="text-[11px] text-muted-foreground">{it.product_name}</div></TableCell>
+                                <TableCell>{it.sku}<div className="text-xs text-muted-foreground">{it.product_name}</div></TableCell>
                                 <TableCell>{it.size || '—'}</TableCell><TableCell>{it.color || '—'}</TableCell>
                                 <TableCell className="text-right tabular-nums">{n(it.qty_sent)}</TableCell>
                                 <TableCell className="text-right tabular-nums">{it.inspected ? n(it.received_qty) : '—'}</TableCell>
@@ -127,6 +136,6 @@ export default function KirimanCMTTab(props) {
           </Table>
         )}
       </Section>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }

@@ -3,11 +3,13 @@
  * untuk job jahit vendor itu beserta QC per job, job anak, tanda "diinput staf DA", dan PO yang belum
  * punya job (menunggu kiriman bahan). Pengganti kartu vendor di Tracking Produksi / Production Jobs.
  */
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Fragment, useMemo, useState } from 'react';
 import { AlertCircle, Factory } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout, { RowDetail, RowToggle } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../engine/DataTable';
 import { EmptyState, Notice } from '../moduleAtoms';
 import { formatDateID } from '@/lib/format';
 import {
@@ -30,14 +32,22 @@ export default function PerVendorTab(props) {
   const COLS = 12;
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="pantau-vendor"
       title="Per vendor CMT"
       filters={<>
         <SearchBox value={search} onChange={setSearch} placeholder="Cari vendor…" testId="pantau-vendor-search" />
         <ScopeChips value={scope} onChange={setScope} testId="pantau-vendor-scope" />
       </>}
-      tools={<RefreshButton onClick={reload} loading={loading} testId="pantau-vendor-refresh" />}
+      tools={<><TombolUnduh namaBerkas="pantau-per-vendor" baris={rows} kolom={[
+          { label: 'Vendor', nilai: (v) => v.vendor_name || '' }, { label: 'Kode', nilai: (v) => v.vendor_code || '' },
+          { label: 'PO', nilai: (v) => Number(v.po_count) || 0 }, { label: 'Dipesan', nilai: (v) => Number(v.ordered) || 0 },
+          { label: 'Potongan dikirim', nilai: (v) => Number(v.sent_cmt) || 0 }, { label: 'Diproduksi', nilai: (v) => Number(v.produced) || 0 },
+          { label: 'Di CMT', nilai: (v) => Number(v.di_cmt) || 0 }, { label: 'Lolos QC', nilai: (v) => Number(v.accepted) || 0 },
+          { label: 'Ditolak QC', nilai: (v) => Number(v.reject) || 0 }, { label: 'Dikirim/diserahkan', nilai: (v) => Number(v.dispatched) || 0 },
+          { label: 'Ditolak (%)', nilai: (v) => Number(v.reject_rate) || 0 },
+        ]} />
+        <RefreshButton onClick={reload} loading={loading} testId="pantau-vendor-refresh" /></>}
       summary={error && <Notice tone="danger" icon={AlertCircle}>{error}</Notice>}
       footer={rows.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}
     >
@@ -85,7 +95,7 @@ export default function PerVendorTab(props) {
           </Table>
         )}
       </Section>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 
@@ -93,7 +103,7 @@ function VendorJobs({ v }) {
   return (
     <div className="space-y-3">
       {v.entry_source === 'staff' || v.entry_source === 'mixed' ? (
-        <p className="text-xs text-[hsl(var(--warning))]">{n(v.staff_qty)} pcs progres vendor ini diketik staf DA atas nama vendor — periksa sebelum tagihan dibuat.</p>
+        <p className="text-xs text-[hsl(var(--warning-text))]">{n(v.staff_qty)} pcs progres vendor ini diketik staf DA atas nama vendor — periksa sebelum tagihan dibuat.</p>
       ) : null}
       {v.jobs.length > 0 && (
         <Table data-testid="pantau-vendor-jobs">
@@ -107,7 +117,7 @@ function VendorJobs({ v }) {
             {v.jobs.map((j) => (
               <TableRow key={j.id}>
                 <TableCell className="font-medium whitespace-nowrap">{j.job_number}
-                  {j.child_jobs?.length > 0 && <div className="text-[11px] text-muted-foreground">+{j.child_jobs.length} job tambahan: {j.child_jobs.map((c) => c.job_number).join(', ')}</div>}
+                  {j.child_jobs?.length > 0 && <div className="text-xs text-muted-foreground">+{j.child_jobs.length} job tambahan: {j.child_jobs.map((c) => c.job_number).join(', ')}</div>}
                 </TableCell>
                 <TableCell className="whitespace-nowrap">{j.po_number}</TableCell>
                 <TableCell className="text-xs">{(j.serial_numbers || []).join(', ') || '—'}</TableCell>

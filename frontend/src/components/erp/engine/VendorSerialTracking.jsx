@@ -1,13 +1,35 @@
-import { useState, useEffect } from 'react';
-import { Hash, Search, ChevronDown, ChevronRight, X, Package } from 'lucide-react';
+/**
+ * VendorSerialTracking — Lacak nomor seri (Portal Vendor CMT; juga di Input atas nama CMT).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, saringan status = FilterChips, daftar = tabel, jejak satu nomor seri
+ * dibuka sebagai popup, bisa diunduh. Dulu tiga "kartu angka" juga berfungsi sebagai saringan dan angkanya dihitung
+ * dari daftar yang SUDAH disaring (saat memilih "Ongoing", angka "Selesai" selalu 0) — diganti satu kalimat jumlah
+ * yang tampil. API sama: GET /serial-list?status&search, GET /serial-trace?serial.
+ */
+import { useEffect, useState } from 'react';
+import { Eye, Hash, Search } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { formatDateID } from '@/lib/format';
+import PageLayout from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from './DataTable';
+import { EmptyState, StatusBadge } from '../moduleAtoms';
 import { apiGet } from '../../../lib/api';
 
-export default function VendorSerialTracking({ token, user }) {
+const STATUS = { ongoing: ['Berjalan', 'info'], completed: ['Selesai', 'success'] };
+const statusSeri = (s) => STATUS[s] || ['Menunggu', 'warning'];
+const n = (v) => Number(v || 0).toLocaleString('id-ID');
+
+export default function VendorSerialTracking() {
   const [serialList, setSerialList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
-  const [expandedSN, setExpandedSN] = useState(null);
+  const [detail, setDetail] = useState(null);
   const [traceData, setTraceData] = useState(null);
 
   const fetchSerials = async () => {
@@ -15,7 +37,8 @@ export default function VendorSerialTracking({ token, user }) {
     try {
       let url = `/serial-list?status=${filter}`;
       if (search) url += `&search=${encodeURIComponent(search)}`;
-      setSerialList(await apiGet(url));
+      const d = await apiGet(url);
+      setSerialList(Array.isArray(d) ? d : []);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
@@ -23,95 +46,74 @@ export default function VendorSerialTracking({ token, user }) {
   useEffect(() => { fetchSerials(); }, [filter]);
   useEffect(() => { const t = setTimeout(fetchSerials, 400); return () => clearTimeout(t); }, [search]);
 
-  const loadTrace = async (sn) => {
-    if (expandedSN === sn) { setExpandedSN(null); setTraceData(null); return; }
-    setExpandedSN(sn);
-    try {
-      setTraceData(await apiGet(`/serial-trace?serial=${encodeURIComponent(sn)}`));
-    } catch (e) { console.error(e); }
+  const bukaJejak = async (s) => {
+    setDetail(s); setTraceData(null);
+    try { setTraceData(await apiGet(`/serial-trace?serial=${encodeURIComponent(s.serial_number)}`)); }
+    catch (e) { setTraceData({ timeline: [] }); }
   };
 
-  const ongoingCount = serialList.filter(s => s.status === 'ongoing').length;
-  const completedCount = serialList.filter(s => s.status === 'completed').length;
+  const kolom = [
+    { kunci: 'seri', label: 'No. seri', hp: 'judul', isi: (s) => <span className="font-medium tabular-nums">{s.serial_number}</span> },
+    { kunci: 'produk', label: 'Produk', hp: 'keterangan', isi: (s) => <span className="text-sm">{s.product_name} · {s.sku} · {s.size}/{s.color}</span> },
+    { kunci: 'order', label: 'Order', rata: 'kanan', isi: (s) => <span className="tabular-nums">{n(s.ordered_qty)}</span> },
+    { kunci: 'produksi', label: 'Produksi', rata: 'kanan', isi: (s) => <span className="tabular-nums">{n(s.produced_qty)}</span> },
+    { kunci: 'kirim', label: 'Kirim', rata: 'kanan', isi: (s) => <span className="tabular-nums">{n(s.shipped_qty)}</span> },
+    { kunci: 'status', label: 'Status', isi: (s) => { const [l, t] = statusSeri(s.status); return <StatusBadge status={s.status} label={l} tone={t} />; } },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
+      <Button type="button" size="icon-sm" variant="ghost" onClick={() => bukaJejak(s)} title="Lihat jejak" aria-label="Lihat jejak"><Eye className="w-4 h-4" /></Button>) },
+  ];
 
   return (
-    <div className="space-y-5">
-      <h2 className="text-xl font-bold text-foreground">Serial Tracking</h2>
-
-      <div className="grid grid-cols-3 gap-3">
-        <button onClick={() => setFilter('ongoing')} className={`rounded-lg p-3 border text-center ${filter === 'ongoing' ? 'border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary)/0.1)]' : 'border-border bg-card'}`}>
-          <p className="text-xl font-bold text-[hsl(var(--primary))]">{ongoingCount}</p>
-          <p className="text-xs text-[hsl(var(--primary))]">Ongoing</p>
-        </button>
-        <button onClick={() => setFilter('completed')} className={`rounded-lg p-3 border text-center ${filter === 'completed' ? 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)]' : 'border-border bg-card'}`}>
-          <p className="text-xl font-bold text-[hsl(var(--success))]">{completedCount}</p>
-          <p className="text-xs text-[hsl(var(--success))]">Selesai</p>
-        </button>
-        <button onClick={() => setFilter('all')} className={`rounded-lg p-3 border text-center ${filter === 'all' ? 'border-border bg-muted/40' : 'border-border bg-card'}`}>
-          <p className="text-xl font-bold text-foreground/90">{serialList.length}</p>
-          <p className="text-xs text-muted-foreground">Semua</p>
-        </button>
-      </div>
-
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/70" />
-        <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari serial number..." className="w-full pl-9 pr-4 py-2.5 border border-border rounded-lg text-sm" data-testid="vendor-serial-search" />
-      </div>
-
-      {loading ? (
-        <div className="flex justify-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--primary)/0.35)]"></div></div>
-      ) : serialList.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground/70"><Hash className="w-10 h-10 mx-auto mb-2 opacity-30" /><p className="text-sm">Tidak ada serial number</p></div>
-      ) : (
-        <div className="space-y-2">
-          {serialList.map((s, idx) => (
-            <div key={`${s.serial_number}-${s.po_id}-${idx}`} className="bg-card rounded-lg border border-border overflow-hidden">
-              <button onClick={() => loadTrace(s.serial_number)} className="w-full text-left p-3 flex items-center gap-3" data-testid={`vendor-serial-${idx}`}>
-                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${s.status === 'ongoing' ? 'bg-[hsl(var(--primary))] animate-pulse' : s.status === 'completed' ? 'bg-[hsl(var(--success))]' : 'bg-[hsl(var(--warning))]'}`}></div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-foreground text-sm tabular-nums">{s.serial_number}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${s.status === 'ongoing' ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' : s.status === 'completed' ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' : 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]'}`}>{s.status === 'ongoing' ? 'Ongoing' : s.status === 'completed' ? 'Selesai' : 'Menunggu'}</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-0.5">{s.product_name} · {s.sku} · {s.size}/{s.color}</p>
-                </div>
-                <div className="hidden md:flex items-center gap-4 text-center text-xs flex-shrink-0">
-                  <div><p className="text-muted-foreground/70">Order</p><p className="font-bold text-foreground/90">{(s.ordered_qty || 0).toLocaleString('id-ID')}</p></div>
-                  <div><p className="text-muted-foreground/70">Produksi</p><p className="font-bold text-[hsl(var(--primary))]">{(s.produced_qty || 0).toLocaleString('id-ID')}</p></div>
-                  <div><p className="text-muted-foreground/70">Kirim</p><p className="font-bold text-[hsl(var(--primary))]">{(s.shipped_qty || 0).toLocaleString('id-ID')}</p></div>
-                </div>
-                {expandedSN === s.serial_number ? <ChevronDown className="w-4 h-4 text-muted-foreground/70" /> : <ChevronRight className="w-4 h-4 text-muted-foreground/70" />}
-              </button>
-              {expandedSN === s.serial_number && traceData && (
-                <div className="border-t border-border/60 bg-muted/40 p-3">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
-                    <div className="bg-card rounded p-2 text-center border border-border/60"><p className="text-xs text-muted-foreground/70">PO</p><p className="text-sm font-bold text-foreground/90">{s.po_number}</p></div>
-                    <div className="bg-card rounded p-2 text-center border border-border/60"><p className="text-xs text-muted-foreground/70">Customer</p><p className="text-sm font-bold text-foreground/90 truncate">{s.customer_name || '-'}</p></div>
-                    <div className="bg-card rounded p-2 text-center border border-border/60"><p className="text-xs text-muted-foreground/70">Status PO</p><p className="text-sm font-bold text-[hsl(var(--primary))]">{s.po_status}</p></div>
-                    <div className="bg-card rounded p-2 text-center border border-border/60"><p className="text-xs text-muted-foreground/70">Sisa</p><p className="text-sm font-bold text-[hsl(var(--warning))]">{(s.remaining_qty || 0).toLocaleString('id-ID')} pcs</p></div>
-                  </div>
-                  {(traceData.timeline || []).length > 0 && (
-                    <div className="space-y-1 max-h-40 overflow-y-auto">
-                      {traceData.timeline.slice(0, 10).map((ev, i) => (
-                        <div key={i} className="flex items-center gap-2 text-xs">
-                          <div className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--primary))] flex-shrink-0"></div>
-                          <span className="font-medium text-foreground/90">{ev.step}</span>
-                          {ev.qty > 0 && <span className="bg-muted px-1 rounded">Qty: {ev.qty}</span>}
-                          <span className="text-muted-foreground/70 ml-auto">{ev.date ? new Date(ev.date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }) : '-'}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
+    <PageLayoutSatuBaris testId="vendor-serial-tracking" title="Lacak nomor seri"
+      subtitle="Jejak tiap nomor seri: order, produksi, dan kiriman."
+      filters={<>
+        <FilterChips value={filter} onChange={setFilter} hideWhenEmpty={false} ariaLabel="Saring status" testId="vendor-serial-filter"
+          options={[{ key: 'all', label: 'Semua' }, { key: 'ongoing', label: 'Berjalan' }, { key: 'completed', label: 'Selesai' }]} />
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nomor seri" className="pl-8" data-testid="vendor-serial-search" />
         </div>
+      </>}
+      tools={<TombolUnduh namaBerkas="lacak-nomor-seri" baris={serialList} kolom={[
+        { label: 'No. seri', nilai: (s) => s.serial_number }, { label: 'Produk', nilai: (s) => s.product_name || '' },
+        { label: 'SKU', nilai: (s) => s.sku || '' }, { label: 'Ukuran', nilai: (s) => s.size || '' }, { label: 'Warna', nilai: (s) => s.color || '' },
+        { label: 'PO', nilai: (s) => s.po_number || '' }, { label: 'Order', nilai: (s) => Number(s.ordered_qty) || 0 },
+        { label: 'Produksi', nilai: (s) => Number(s.produced_qty) || 0 }, { label: 'Kirim', nilai: (s) => Number(s.shipped_qty) || 0 },
+        { label: 'Sisa', nilai: (s) => Number(s.remaining_qty) || 0 }, { label: 'Status', nilai: (s) => statusSeri(s.status)[0] },
+      ]} />}
+      summary={!loading && <p className="text-sm text-muted-foreground">{n(serialList.length)} nomor seri tampil.</p>}>
+      {loading ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat nomor seri…</p> : (
+        <TabelData kolom={kolom} baris={serialList} kunci={(s) => `${s.serial_number}-${s.po_id}`} onKlikBaris={bukaJejak}
+          testId="vendor-serial-table" kosong={<EmptyState icon={Hash} title="Tidak ada nomor seri" description="Ubah saringan atau kata pencarian." />} />
       )}
-    </div>
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} judul={`Nomor seri ${detail.serial_number}`} testId="vendor-serial-detail"
+          status={(() => { const [l, t] = statusSeri(detail.status); return <StatusBadge status={detail.status} label={l} tone={t} />; })()}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Produk">{detail.product_name} · {detail.sku} · {detail.size}/{detail.color}</BarisDetail>
+            <BarisDetail label="PO">{detail.po_number || '—'}</BarisDetail>
+            <BarisDetail label="Pelanggan">{detail.customer_name || '—'}</BarisDetail>
+            <BarisDetail label="Status PO">{detail.po_status || '—'}</BarisDetail>
+            <BarisDetail label="Sisa">{n(detail.remaining_qty)} pcs</BarisDetail>
+          </dl>
+          <section className="space-y-1">
+            <p className="text-sm font-semibold text-foreground">Jejak (10 kejadian terakhir)</p>
+            {!traceData ? <p className="text-sm text-muted-foreground">Memuat jejak…</p> : (traceData.timeline || []).length === 0 ? (
+              <EmptyState title="Belum ada kejadian" description="Jejak nomor seri ini belum tercatat." />
+            ) : (
+              <ul className="divide-y divide-[var(--glass-border)] text-sm">
+                {traceData.timeline.slice(0, 10).map((ev, i) => (
+                  <li key={i} className="flex flex-wrap items-center gap-x-3 py-1.5">
+                    <span className="font-medium">{ev.step}</span>
+                    {ev.qty > 0 && <span className="tabular-nums text-muted-foreground">Qty {n(ev.qty)}</span>}
+                    <span className="ml-auto text-muted-foreground">{formatDateID(ev.date, { fallback: '—' })}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </DetailPopup>
+      )}
+    </PageLayoutSatuBaris>
   );
 }
-
-// ─── VENDOR REMINDER INBOX ───────────────────────────────────────────────────
-
-

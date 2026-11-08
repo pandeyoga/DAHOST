@@ -2,6 +2,8 @@ import { useState, useEffect, Fragment } from 'react';
 import { ChevronDown, ChevronRight, FileDown, FileSpreadsheet, RefreshCw, PackageCheck, AlertTriangle, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { GlassCard } from '@/components/ui/glass';
 import { EmptyState, StatTile } from '../moduleAtoms';
 import { apiGet } from '../../../lib/api';
@@ -42,7 +44,7 @@ export default function BuyerReceiptVarianceReport() {
   const grandShortOpen = filtered.reduce((s, r) => s + (r.qty_short_open || 0), 0);
   const poWithVariance = filtered.filter(r => (r.total_variance || 0) !== 0 || (r.qty_short_open || 0) > 0).length;
 
-  const varianceClass = (v) => v > 0 ? 'text-[hsl(var(--destructive))]' : v < 0 ? 'text-[hsl(var(--warning))]' : 'text-muted-foreground/70';
+  const varianceClass = (v) => v > 0 ? 'text-[hsl(var(--danger-text))]' : v < 0 ? 'text-[hsl(var(--warning-text))]' : 'text-muted-foreground/70';
   const varianceText = (v) => v > 0 ? fmtNum(v) : v < 0 ? `+${fmtNum(-v)}` : '0';
 
   const exportExcel = async () => {
@@ -96,20 +98,20 @@ export default function BuyerReceiptVarianceReport() {
   return (
     <div className="space-y-4" data-testid="receipt-variance-report">
       {/* Summary */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {/* PANDUAN_UI G5 — kartu angka = StatTile (netral; warna hanya pada angka, nol abu) */}
+        {/* Standar UI/UX v2: paling banyak 4 kartu; jumlah PO berselisih jadi keterangan kartu selisih. */}
         {[
-          { label: 'Total Dikirim', value: fmtNum(grandShipped), suffix: 'pcs', accent: 'success' },
-          { label: 'Total Diterima', value: fmtNum(grandReceived), suffix: 'pcs', accent: 'primary' },
-          { label: 'Total Selisih Dokumen', value: fmtNum(grandVariance), suffix: 'pcs', accent: grandVariance > 0 ? 'danger' : 'default' },
-          { label: 'Belum Sampai (open)', value: fmtNum(grandShortOpen), suffix: 'pcs', accent: grandShortOpen > 0 ? 'danger' : 'default' },
-          { label: 'PO Ada Selisih', value: fmtNum(poWithVariance), accent: 'warning' },
+          { label: 'Total dikirim', value: fmtNum(grandShipped), suffix: 'pcs', accent: 'default', sub: `${fmtNum(filtered.length)} PO tampil` },
+          { label: 'Total diterima', value: fmtNum(grandReceived), suffix: 'pcs', accent: 'default' },
+          { label: 'Total selisih dokumen', value: fmtNum(grandVariance), suffix: 'pcs', accent: grandVariance > 0 ? 'danger' : 'default', sub: `${fmtNum(poWithVariance)} PO ada selisih` },
+          { label: 'Belum sampai (terbuka)', value: fmtNum(grandShortOpen), suffix: 'pcs', accent: grandShortOpen > 0 ? 'danger' : 'default' },
         ].map(s => (
-          <StatTile key={s.label} label={s.label} value={s.value} suffix={s.suffix} accent={s.accent}
+          <StatTile key={s.label} label={s.label} value={s.value} suffix={s.suffix} accent={s.accent} sub={s.sub}
             testId={`variance-kpi-${s.label}`} />
         ))}
       </div>
-      <p className="text-[11px] text-muted-foreground -mt-2">
+      <p className="text-xs text-muted-foreground">
         Catatan: saat buyer menerima lebih sedikit, dokumen surat jalan otomatis dikoreksi ke qty
         yang benar-benar diterima (klaim awal tersimpan di jejak audit) dan kekurangannya menjadi
         dokumen selisih <strong>SEL-BYR-…</strong> berstatus <strong>open</strong> — itulah kolom
@@ -118,20 +120,19 @@ export default function BuyerReceiptVarianceReport() {
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative">
-          <Search className="w-4 h-4 text-muted-foreground/70 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari PO / customer / vendor..."
-            data-testid="variance-search"
-            className="pl-9 pr-3 py-2 border border-border rounded-lg text-sm w-72 focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]" />
+        <div className="relative w-full sm:w-64">
+          <Search className="w-4 h-4 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari PO, pelanggan, vendor"
+            data-testid="variance-search" className="pl-8" />
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <Button variant="outline" size="icon" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang">
+          <Button type="button" variant="outline" size="icon" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang">
             <RefreshCw className={loading ? 'animate-spin' : ''} />
           </Button>
-          <Button variant="outline" onClick={exportPDF} data-testid="variance-export-pdf">
+          <Button type="button" variant="outline" onClick={exportPDF} data-testid="variance-export-pdf">
             <FileDown /> Unduh PDF
           </Button>
-          <Button variant="outline" onClick={exportExcel} data-testid="variance-export-excel">
+          <Button type="button" variant="outline" onClick={exportExcel} data-testid="variance-export-excel">
             <FileSpreadsheet /> Unduh Excel
           </Button>
         </div>
@@ -146,86 +147,86 @@ export default function BuyerReceiptVarianceReport() {
             description={q ? 'Ubah kata pencarian untuk melihat PO lain.' : 'Laporan terisi setelah ada pengiriman ke buyer yang dicatat penerimaannya.'} />
         </GlassCard>
       ) : (
-        <GlassCard className="overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/40 border-b border-border">
-              <tr>
-                <th className="w-8"></th>
-                <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase">No. PO</th>
-                <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase">Customer</th>
-                <th className="text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase">Vendor</th>
-                <th className="text-right px-3 py-2.5 text-xs font-semibold text-[hsl(var(--success))] uppercase">Dikirim</th>
-                <th className="text-right px-3 py-2.5 text-xs font-semibold text-[hsl(var(--primary))] uppercase">Diterima</th>
-                <th className="text-right px-3 py-2.5 text-xs font-semibold text-[hsl(var(--destructive))] uppercase">Selisih</th>
-                <th className="text-right px-3 py-2.5 text-xs font-semibold text-[hsl(var(--destructive))] uppercase">Belum sampai</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/60">
+        <GlassCard className="p-0 overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-8"></TableHead>
+                <TableHead>No. PO</TableHead>
+                <TableHead>Pelanggan</TableHead>
+                <TableHead>Vendor</TableHead>
+                <TableHead className="text-right">Dikirim</TableHead>
+                <TableHead className="text-right">Diterima</TableHead>
+                <TableHead className="text-right">Selisih</TableHead>
+                <TableHead className="text-right">Belum sampai</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {filtered.map(r => {
                 const key = r.po_id || r.po_number;
                 const isOpen = expanded[key];
                 return (
                   <Fragment key={key}>
-                    <tr className="hover:bg-muted/60 cursor-pointer" onClick={() => toggle(key)} data-testid={`variance-po-row-${r.po_number}`}>
-                      <td className="px-2 text-muted-foreground/70">{isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}</td>
-                      <td className="px-3 py-2.5 font-bold text-[hsl(var(--primary))]">{r.po_number || '-'}</td>
-                      <td className="px-3 py-2.5 text-foreground/90">{r.customer_name || '-'}</td>
-                      <td className="px-3 py-2.5 text-muted-foreground">{r.vendor_name || '-'}</td>
-                      <td className="px-3 py-2.5 text-right font-semibold text-[hsl(var(--success))]">{fmtNum(r.total_shipped)}</td>
-                      <td className="px-3 py-2.5 text-right font-semibold text-[hsl(var(--primary))]">{fmtNum(r.total_received)}</td>
-                      <td className={`px-3 py-2.5 text-right font-bold ${varianceClass(r.total_variance)}`}>
+                    <TableRow className="hover:bg-muted/60 cursor-pointer" onClick={() => toggle(key)} data-testid={`variance-po-row-${r.po_number}`}>
+                      <TableCell className="px-2 text-muted-foreground/70">{isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}</TableCell>
+                      <TableCell className="px-3 py-2.5 font-bold text-[hsl(var(--primary))]">{r.po_number || '-'}</TableCell>
+                      <TableCell className="px-3 py-2.5 text-foreground/90">{r.customer_name || '-'}</TableCell>
+                      <TableCell className="px-3 py-2.5 text-muted-foreground">{r.vendor_name || '-'}</TableCell>
+                      <TableCell className="px-3 py-2.5 text-right font-semibold text-[hsl(var(--success-text))]">{fmtNum(r.total_shipped)}</TableCell>
+                      <TableCell className="px-3 py-2.5 text-right font-semibold text-[hsl(var(--primary))]">{fmtNum(r.total_received)}</TableCell>
+                      <TableCell className={`px-3 py-2.5 text-right font-bold ${varianceClass(r.total_variance)}`}>
                         {(r.total_variance || 0) !== 0 && <AlertTriangle className="w-3.5 h-3.5 inline mr-1" />}
                         {varianceText(r.total_variance)}
-                      </td>
-                      <td className={`px-3 py-2.5 text-right font-bold ${(r.qty_short_open || 0) > 0 ? 'text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.1)]' : 'text-muted-foreground/70'}`}
+                      </TableCell>
+                      <TableCell className={`px-3 py-2.5 text-right font-bold ${(r.qty_short_open || 0) > 0 ? 'text-[hsl(var(--danger-text))] bg-[hsl(var(--destructive)/0.1)]' : 'text-muted-foreground/70'}`}
                         data-testid={`variance-short-${r.po_number}`}>
                         {fmtNum(r.qty_short_open)}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                     {isOpen && (
-                      <tr key={`${key}-detail`}>
-                        <td colSpan={8} className="bg-muted/40/60 px-6 py-3">
-                          <table className="w-full text-xs">
-                            <thead>
-                              <tr className="text-muted-foreground border-b border-border">
-                                <th className="text-left py-1.5 px-2">Serial</th>
-                                <th className="text-left py-1.5 px-2">SKU</th>
-                                <th className="text-left py-1.5 px-2">Produk</th>
-                                <th className="text-right py-1.5 px-2">Dikirim</th>
-                                <th className="text-right py-1.5 px-2">Diterima</th>
-                                <th className="text-right py-1.5 px-2">Selisih</th>
-                                <th className="text-right py-1.5 px-2">Belum sampai</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-border/60">
+                      <TableRow key={`${key}-detail`}>
+                        <TableCell colSpan={8} className="bg-foreground/[0.03] px-6 py-3">
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="text-muted-foreground border-b border-border">
+                                <TableHead className="text-left py-1.5 px-2">Serial</TableHead>
+                                <TableHead className="text-left py-1.5 px-2">SKU</TableHead>
+                                <TableHead className="text-left py-1.5 px-2">Produk</TableHead>
+                                <TableHead className="text-right py-1.5 px-2">Dikirim</TableHead>
+                                <TableHead className="text-right py-1.5 px-2">Diterima</TableHead>
+                                <TableHead className="text-right py-1.5 px-2">Selisih</TableHead>
+                                <TableHead className="text-right py-1.5 px-2">Belum sampai</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
                               {(r.items || []).map((it, i) => (
-                                <tr key={i}>
-                                  <td className="py-1.5 px-2 tabular-nums text-[hsl(var(--warning))]">{it.serial_number || '—'}</td>
-                                  <td className="py-1.5 px-2 tabular-nums text-[hsl(var(--primary))]">{it.sku || '-'}</td>
-                                  <td className="py-1.5 px-2 text-foreground/90">{it.product_name} <span className="text-muted-foreground/70">{it.size}/{it.color}</span></td>
-                                  <td className="py-1.5 px-2 text-right text-[hsl(var(--success))]">{fmtNum(it.shipped)}</td>
-                                  <td className="py-1.5 px-2 text-right text-[hsl(var(--primary))]">{fmtNum(it.received)}</td>
-                                  <td className={`py-1.5 px-2 text-right font-semibold ${varianceClass(it.variance)}`}>{varianceText(it.variance)}</td>
-                                  <td className={`py-1.5 px-2 text-right font-semibold ${(it.qty_short_open || 0) > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground/70'}`}>{fmtNum(it.qty_short_open)}</td>
-                                </tr>
+                                <TableRow key={i}>
+                                  <TableCell className="py-1.5 px-2 tabular-nums text-[hsl(var(--warning-text))]">{it.serial_number || '—'}</TableCell>
+                                  <TableCell className="py-1.5 px-2 tabular-nums text-[hsl(var(--primary))]">{it.sku || '-'}</TableCell>
+                                  <TableCell className="py-1.5 px-2 text-foreground/90">{it.product_name} <span className="text-muted-foreground/70">{it.size}/{it.color}</span></TableCell>
+                                  <TableCell className="py-1.5 px-2 text-right text-[hsl(var(--success-text))]">{fmtNum(it.shipped)}</TableCell>
+                                  <TableCell className="py-1.5 px-2 text-right text-[hsl(var(--primary))]">{fmtNum(it.received)}</TableCell>
+                                  <TableCell className={`py-1.5 px-2 text-right font-semibold ${varianceClass(it.variance)}`}>{varianceText(it.variance)}</TableCell>
+                                  <TableCell className={`py-1.5 px-2 text-right font-semibold ${(it.qty_short_open || 0) > 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground/70'}`}>{fmtNum(it.qty_short_open)}</TableCell>
+                                </TableRow>
                               ))}
-                            </tbody>
-                          </table>
+                            </TableBody>
+                          </Table>
                           {(r.short_docs || []).filter(d => d.status === 'open').length > 0 && (
-                            <div className="mt-2 text-[11px] text-[hsl(var(--destructive))]">
+                            <div className="mt-2 text-xs text-[hsl(var(--danger-text))]">
                               Dokumen selisih terbuka:{' '}
                               {(r.short_docs || []).filter(d => d.status === 'open')
                                 .map(d => `${d.short_number} (${d.sku} · ${fmtNum(d.qty_open)} pcs)`).join(' · ')}
                             </div>
                           )}
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     )}
                   </Fragment>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </GlassCard>
       )}
     </div>

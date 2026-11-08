@@ -3,12 +3,14 @@
  * (alasan lebih qty, tutup PO kurang, selisih kirim CMT / klien, laporan vendor). Kekurangan terhadap pesanan
  * baru dihitung setelah CMT selesai atau PO ditutup; selama berjalan, angka yang belum sampai bukan selisih.
  */
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Fragment, useMemo, useState } from 'react';
 import { AlertCircle, Scale } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout, { RowDetail, RowToggle } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../engine/DataTable';
 import { EmptyState, Notice, StatTile } from '../moduleAtoms';
 import { formatDateID } from '@/lib/format';
 import { Badge, LoadingRows, RefreshButton, Section, Signed, n, useApi } from './pantauShared';
@@ -43,7 +45,7 @@ export default function SelisihBarisTab() {
   const finalLabel = maklon ? 'Diterima klien' : 'Masuk stok';
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="selisih-baris"
       title="Per baris PO"
       filters={<>
@@ -54,7 +56,15 @@ export default function SelisihBarisTab() {
             { key: 'tertunda', label: 'Menunggu tindakan', count: counts.tertunda },
             { key: '', label: 'Semua baris', count: all.length }]} />
       </>}
-      tools={<RefreshButton onClick={reload} loading={loading} testId="selisih-baris-refresh" />}
+      tools={<><TombolUnduh namaBerkas="selisih-per-baris-po" baris={rows} kolom={[
+          { label: 'PO', nilai: (r) => r.po_number || '' }, { label: 'Vendor', nilai: (r) => r.vendor_name || '' },
+          { label: 'SKU', nilai: (r) => r.sku || '' }, { label: 'Ukuran', nilai: (r) => r.size || '' }, { label: 'Warna', nilai: (r) => r.color || '' },
+          { label: 'No. seri', nilai: (r) => r.serial_number || '' }, { label: 'Dipesan', nilai: (r) => Number(r.ordered) || 0 },
+          { label: 'Bahan diterima CMT', nilai: (r) => Number(r.material_received) || 0 }, { label: 'Diproduksi', nilai: (r) => Number(r.produced) || 0 },
+          { label: 'Lolos QC', nilai: (r) => Number(r.accepted) || 0 }, { label: 'Hasil akhir', nilai: (r) => Number(r.final) || 0 },
+          { label: 'Selisih akhir', nilai: (r) => Number(r.final_gap) || 0 },
+        ]} />
+        <RefreshButton onClick={reload} loading={loading} testId="selisih-baris-refresh" /></>}
       summary={<>
         {error && <Notice tone="danger" icon={AlertCircle}>{error}</Notice>}
         {data && all.length > 0 && (
@@ -91,14 +101,14 @@ export default function SelisihBarisTab() {
                   <Fragment key={r.po_item_id}>
                     <TableRow data-testid={`selisih-row-${r.po_number}-${r.sku}-${r.size}`}>
                       <TableCell><RowToggle open={isOpen} onClick={() => setOpen(isOpen ? '' : r.po_item_id)} label="Lihat rantai dan alasan" testId={`selisih-toggle-${r.po_number}-${r.sku}-${r.size}`} /></TableCell>
-                      <TableCell className="font-medium whitespace-nowrap">{r.po_number}<div className="text-[11px] text-muted-foreground">{r.vendor_name || '—'}</div></TableCell>
-                      <TableCell className="whitespace-nowrap">{r.sku}<div className="text-[11px] text-muted-foreground">{[r.serial_number, r.size, r.color].filter(Boolean).join(' · ')}</div></TableCell>
+                      <TableCell className="font-medium whitespace-nowrap">{r.po_number}<div className="text-xs text-muted-foreground">{r.vendor_name || '—'}</div></TableCell>
+                      <TableCell className="whitespace-nowrap">{r.sku}<div className="text-xs text-muted-foreground">{[r.serial_number, r.size, r.color].filter(Boolean).join(' · ')}</div></TableCell>
                       <TableCell className="text-right tabular-nums">{n(r.ordered)}</TableCell>
                       <TableCell className="text-right tabular-nums">{n(r.material_received)}</TableCell>
                       <TableCell className="text-right tabular-nums">{n(r.produced)}</TableCell>
                       <TableCell className="text-right tabular-nums">{n(r.accepted)}</TableCell>
                       <TableCell className="text-right tabular-nums" data-testid="selisih-final">{n(r.final)}
-                        {maklon && r.pending_confirm ? <div className="text-[11px] text-[hsl(var(--warning))]">+{n(r.pending_confirm)} belum dikonfirmasi</div> : null}</TableCell>
+                        {maklon && r.pending_confirm ? <div className="text-xs text-[hsl(var(--warning-text))]">+{n(r.pending_confirm)} belum dikonfirmasi</div> : null}</TableCell>
                       <TableCell className="text-right whitespace-nowrap" data-testid="selisih-gap">
                         {r.final_gap && !r.differences.some((d) => d.key === 'akhir_vs_pesan')
                           ? <span className="text-xs text-muted-foreground tabular-nums" title="Masih berjalan — belum dihitung selisih">{n(r.final_gap)} · berjalan</span>
@@ -118,7 +128,7 @@ export default function SelisihBarisTab() {
           </Table>
         )}
       </Section>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 
@@ -157,7 +167,7 @@ function LineDetail({ r, maklon }) {
               <TableBody>
                 {r.differences.map((d) => (
                   <TableRow key={d.key}>
-                    <TableCell>{d.label}{d.note ? <div className="text-[11px] text-muted-foreground">{d.note}</div> : null}</TableCell>
+                    <TableCell>{d.label}{d.note ? <div className="text-xs text-muted-foreground">{d.note}</div> : null}</TableCell>
                     <TableCell className="text-right"><Signed v={d.qty} /></TableCell>
                     <TableCell><Badge meta={KIND_META[d.kind]} /></TableCell>
                   </TableRow>
@@ -169,7 +179,7 @@ function LineDetail({ r, maklon }) {
         <div className="space-y-1">
           <p className="text-xs font-semibold text-muted-foreground">Alasan yang tercatat</p>
           {r.reasons.length === 0 ? (
-            <p className="text-sm text-[hsl(var(--destructive))]">{r.has_diff ? 'Belum ada alasan tercatat untuk selisih ini.' : 'Tidak ada catatan.'}</p>
+            <p className="text-sm text-[hsl(var(--danger-text))]">{r.has_diff ? 'Belum ada alasan tercatat untuk selisih ini.' : 'Tidak ada catatan.'}</p>
           ) : (
             <Table data-testid="selisih-reasons">
               <TableBody>
@@ -177,7 +187,7 @@ function LineDetail({ r, maklon }) {
                   <TableRow key={`${x.kind}-${i}`}>
                     <TableCell className="whitespace-nowrap">{x.label}{x.open ? <div><Badge meta={{ label: 'Belum diputuskan', tone: 'warning' }} /></div> : null}</TableCell>
                     <TableCell className="text-right tabular-nums">{x.qty == null ? '—' : n(x.qty)}</TableCell>
-                    <TableCell className="text-xs">{x.reason || '—'}<div className="text-[11px] text-muted-foreground">{[x.by, x.at ? formatDateID(x.at) : ''].filter(Boolean).join(' · ')}</div></TableCell>
+                    <TableCell className="text-xs">{x.reason || '—'}<div className="text-xs text-muted-foreground">{[x.by, x.at ? formatDateID(x.at) : ''].filter(Boolean).join(' · ')}</div></TableCell>
                   </TableRow>
                 ))}
               </TableBody>

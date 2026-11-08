@@ -32,7 +32,11 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PageLayout, { DetailPanel, RowDetail, RowToggle } from '../layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
-import FormDialog, { Field } from './FormDialog';
+import { Field } from './FormDialog';
+import FormPopup from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Input } from '@/components/ui/input';
 import FileAttachmentPanel from './FileAttachmentPanel';
 import ImportExportPanel from './ImportExportPanel';
 import BuyerReceiptVarianceReport from './BuyerReceiptVarianceReport';
@@ -249,15 +253,15 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
         ? 'Serah terima barang jadi ke gudang DA. Satu surat jalan bisa dikirim bertahap.'
         : `Pengiriman barang jadi ke ${receiverLabel}. Satu surat jalan bisa dikirim bertahap.`}
       actions={canEdit && (
-        <Button onClick={() => setPanel({ kind: 'form', key: Date.now() })} data-testid="buyer-shipment-new">
+        <Button type="button" onClick={() => setPanel({ kind: 'form', key: Date.now() })} data-testid="buyer-shipment-new">
           <Plus className="w-4 h-4" />Buat surat jalan
         </Button>
       )}
       filters={<>
-        <div className="relative w-72 max-w-full">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari surat jalan / PO / penerima…"
-            className="pl-9 h-9" data-testid="buyer-shipment-search" />
+        <div className="relative w-full sm:w-64">
+          <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari surat jalan, PO, penerima"
+            className="pl-8" data-testid="buyer-shipment-search" />
         </div>
         <FilterChips testId="tab" ariaLabel="Tampilan" hideWhenEmpty={false} value={VIEW_KEY[view]}
           onChange={(k) => changeView(KEY_VIEW[k])} options={viewOptions} />
@@ -274,7 +278,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
             options={[{ key: 'all', label: 'Semua jenis' }, { key: 'internal', label: 'Internal' }, { key: 'maklon', label: 'Maklon' }]} />
         )}
         {view === 'outstanding' && (<>
-          <SmartNativeSelect value={outBuyer} data-testid="outstanding-buyer-filter" aria-label="Penerima" className="h-9 w-56"
+          <SmartNativeSelect value={outBuyer} data-testid="outstanding-buyer-filter" aria-label="Penerima" className="w-52"
             onChange={(e) => { setOutBuyer(e.target.value); loadOutstanding(e.target.value, outShowSettled); }}>
             <option value="">Semua penerima</option>
             {(outstanding.buyers || []).map((b) => <option key={b} value={b}>{b}</option>)}
@@ -283,29 +287,52 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
             onChange={(v) => { setOutShowSettled(v); loadOutstanding(outBuyer, v); }}
             options={[{ key: 'open', label: 'Belum lunas' }, { key: 'all', label: 'Termasuk yang lunas' }]} />
         </>)}
-      </>}
-      tools={<>
-        {view === 'outstanding' ? (
-          <Button type="button" variant="outline" onClick={exportOutstandingCSV} data-testid="outstanding-export-csv" disabled={!outstanding.items?.length}>
-            <Download className="w-4 h-4" />Unduh CSV
-          </Button>
-        ) : view === 'list' ? (
-          <ImportExportPanel importType={null} exportType="buyer-shipments" exportFilters={businessType ? { business_type: businessType } : {}} />
+        {/* Alat (unduh, muat ulang) satu baris dengan penyaring supaya tidak terjepit di layar HP. */}
+        <div className="ml-auto flex flex-wrap items-center gap-2" data-alat-baris="">
+        {/* Standar UI/UX v2: tiap tampilan bertabel bisa diunduh Excel + CSV (TombolUnduh). Unduhan lama tetap. */}
+        {view === 'outstanding' ? (<>
+          <TombolUnduh namaBerkas="kekurangan-kirim" namaLembar="Kekurangan kirim" baris={outstanding.items || []} testId="outstanding-unduh" kolom={[
+            { label: 'No. PO', nilai: (r) => r.po_number || '' }, { label: 'Penerima', nilai: (r) => r.buyer || '' },
+            { label: 'SKU', nilai: (r) => r.sku || '' }, { label: 'Produk', nilai: (r) => r.product_name || '' },
+            { label: 'Ukuran', nilai: (r) => r.size || '' }, { label: 'Warna', nilai: (r) => r.color || '' },
+            { label: 'Qty pesan', nilai: (r) => Number(r.ordered) || 0 }, { label: 'Sumber', nilai: (r) => (r.source === 'internal' ? 'produksi internal' : 'CMT') },
+            { label: 'Siap kirim', nilai: (r) => Number(r.source === 'internal' ? r.internal_produced : r.good_from_cmt) || 0 },
+            { label: 'Hasil permak', nilai: (r) => Number(r.reworked_ok) || 0 }, { label: 'Sudah dikirim', nilai: (r) => Number(r.dispatched) || 0 },
+            { label: 'Sisa pesanan', nilai: (r) => Number(r.remaining_vs_order) || 0 }, { label: 'Sisa bisa kirim', nilai: (r) => Number(r.shippable) || 0 },
+            { label: 'Stok barang jadi', nilai: (r) => (r.fg_stock == null ? '' : Math.round(r.fg_stock)) },
+          ]} />
+          <span className="sr-only" data-testid="outstanding-export-csv" />
+        </>) : view === 'list' ? (<>
+          <TombolUnduh namaBerkas="surat-jalan-kirim-hasil" namaLembar="Surat jalan" baris={filteredShipments} testId="buyer-shipment-unduh" kolom={[
+            { label: 'No. surat jalan', nilai: (s) => s.shipment_number || '' }, { label: 'PO', nilai: (s) => s.po_number || '' },
+            { label: 'Penerima', nilai: (s) => s.customer_name || s.buyer_name || '' }, { label: 'Vendor', nilai: (s) => s.vendor_name || '' },
+            { label: 'Dipesan', nilai: (s) => Number(s.total_ordered) || 0 }, { label: 'Dikirim', nilai: (s) => Number(s.total_shipped) || 0 },
+            { label: 'Kemajuan (%)', nilai: (s) => Number(s.progress_pct) || 0 }, { label: 'Jumlah kiriman', nilai: (s) => Number(s.dispatch_count || s.last_dispatch_seq) || 0 },
+          ]} />
+          <ImportExportPanel importType={null} exportType="buyer-shipments" exportFilters={businessType ? { business_type: businessType } : {}}
+            exportLabel="Unduh per barang" exportTitle="Excel dari server: satu baris per barang kiriman" />
+        </>) : view === 'shorts' ? (
+          <TombolUnduh namaBerkas="belum-sampai-penerima" baris={shortRows} testId="buyer-short-unduh" kolom={[
+            { label: 'No. selisih', nilai: (s) => s.short_number || '' }, { label: 'Surat jalan', nilai: (s) => s.shipment_number || '' },
+            { label: 'PO', nilai: (s) => s.po_number || '' }, { label: 'Penerima', nilai: (s) => s.customer_name || '' },
+            { label: 'SKU', nilai: (s) => s.sku || '' }, { label: 'Belum sampai', nilai: (s) => Number(s.qty_open ?? s.qty_short) || 0 },
+          ]} />
         ) : null}
         <Button type="button" variant="outline" size="icon" onClick={refresh} data-testid="outstanding-refresh" title="Muat ulang" aria-label="Muat ulang">
           <RefreshCw className={`w-4 h-4 ${loading || outLoading ? 'animate-spin' : ''}`} />
         </Button>
+        </div>
       </>}
       summary={view === 'list' ? (<>
         {(buyerShorts.items || []).length > 0 && (
           <Notice tone="danger" icon={PackageSearch} testId="buyer-short-panel" title={`${fmtNum(buyerShorts.total_qty_open)} pcs belum sampai di ${receiverLabel}`}
-            action={<Button size="sm" variant="outline" onClick={() => changeView('shorts')} data-testid="buyer-short-open">Lihat</Button>}>
+            action={<Button type="button" size="sm" variant="outline" onClick={() => changeView('shorts')} data-testid="buyer-short-open">Lihat</Button>}>
             Barang sudah dikembalikan ke stok barang jadi — kirim ulang, atau tentukan siapa yang menanggung.
           </Notice>
         )}
         {filteredShipments.length > 0 && (
           <div className="grid grid-cols-3 gap-3">
-            <StatTile testId="ship-kpi-total" label="Total pengiriman" value={fmtNum(filteredShipments.length)} />
+            <StatTile testId="ship-kpi-total" label="Surat jalan (sesuai saringan)" value={fmtNum(filteredShipments.length)} />
             <StatTile testId="ship-kpi-full" label="Terkirim penuh" value={fmtNum(fullyShipped)} accent="success" />
             <StatTile testId="ship-kpi-partial" label="Terkirim sebagian" value={fmtNum(partialShipped)} accent="warning" />
           </div>
@@ -332,7 +359,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
       {view === 'variance' ? (
         <BuyerReceiptVarianceReport portalId={portalId} businessType={businessType} />
       ) : (
-        <GlassCard className="p-0 overflow-hidden">
+        <GlassCard className="p-0 overflow-x-auto">
           {view === 'outstanding' ? (
             <OutstandingView loading={outLoading} rows={outRows} poBoard={poBoard} canEdit={canEdit}
               onDispatch={(g) => setPanel(g.openShip ? { kind: 'form', key: Date.now(), continueShip: g.openShip }
@@ -364,7 +391,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                           <RowToggle open={open} onClick={() => toggleExpand(row.id)} label="Lihat riwayat kirim" testId={`shipment-expand-${row.shipment_number}`} />
                         </TableCell>
                         <TableCell>
-                          <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => openDetail(row)}
+                          <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => openDetail(row)}
                             data-testid={`shipment-open-${row.shipment_number}`}>{row.shipment_number}</Button>
                           <span className="flex flex-wrap gap-1 mt-1">
                             {!businessType && <BizBadge type={row.business_type} size="xs" />}
@@ -385,22 +412,22 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                           <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
                             <div className={`h-full rounded-full ${pct >= 100 ? 'bg-[hsl(var(--success))]' : 'bg-[hsl(var(--primary))]'}`} style={{ width: `${Math.min(pct, 100)}%` }} />
                           </div>
-                          <span className="text-[11px] text-muted-foreground">Sisa {fmtNum(row.remaining)} pcs{row.dispatch_count ? ` · ${row.dispatch_count} kali kirim` : ''}</span>
+                          <span className="text-xs text-muted-foreground">Sisa {fmtNum(row.remaining)} pcs{row.dispatch_count ? ` · ${row.dispatch_count} kali kirim` : ''}</span>
                         </TableCell>
                         <TableCell><StatusBadge status={stLabel} label={stLabel} tone={stTone} /></TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1">
                             {canEdit && pct < 100 && (
-                              <Button size="sm" variant="outline" onClick={() => setPanel({ kind: 'form', key: Date.now(), continueShip: row })}
+                              <Button type="button" size="sm" variant="outline" onClick={() => setPanel({ kind: 'form', key: Date.now(), continueShip: row })}
                                 data-testid={`continue-dispatch-${row.shipment_number}`} title="Kirim sisa pada surat jalan ini (nomor tidak berubah)">
                                 <Plus className="w-3.5 h-3.5" />Kirim lagi
                               </Button>
                             )}
-                            <Button size="icon-sm" variant="ghost" onClick={() => openDetail(row)} title="Rincian" aria-label="Rincian"><Eye className="w-4 h-4" /></Button>
-                            <Button size="icon-sm" variant="ghost" onClick={() => downloadPDF(row)} title="Cetak surat jalan (PDF)" aria-label="Cetak surat jalan (PDF)"
+                            <Button type="button" size="icon-sm" variant="ghost" onClick={() => openDetail(row)} title="Rincian" aria-label="Rincian"><Eye className="w-4 h-4" /></Button>
+                            <Button type="button" size="icon-sm" variant="ghost" onClick={() => downloadPDF(row)} title="Cetak surat jalan (PDF)" aria-label="Cetak surat jalan (PDF)"
                               data-testid="buyer-shipment-print-sj"><Download className="w-4 h-4" /></Button>
                             {canCreate && (
-                              <Button size="icon-sm" variant="ghost" onClick={() => handleDelete(row)} title="Hapus" aria-label="Hapus"
+                              <Button type="button" size="icon-sm" variant="ghost" onClick={() => handleDelete(row)} title="Hapus" aria-label="Hapus"
                                 data-testid={`shipment-delete-${row.shipment_number}`}><Trash2 className="w-4 h-4" /></Button>
                             )}
                           </div>
@@ -499,7 +526,7 @@ function ShipmentRowDetail({ row, detail }) {
                     <TableCell className="whitespace-nowrap">
                       {idx === 0 ? <><span className="font-medium">#{d.seq}</span> <span className="text-xs text-muted-foreground">{fmtDate(d.date)} · kumulatif {fmtNum(cumulative)}/{fmtNum(row.total_ordered)}</span></> : ''}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap">{item.sku || '—'}{item.serial_number ? <span className="block text-[11px] text-muted-foreground">{item.serial_number}</span> : null}</TableCell>
+                    <TableCell className="whitespace-nowrap">{item.sku || '—'}{item.serial_number ? <span className="block text-xs text-muted-foreground">{item.serial_number}</span> : null}</TableCell>
                     <TableCell>{item.product_name}</TableCell>
                     <TableCell className="whitespace-nowrap">{item.size || '—'} / {item.color || '—'}</TableCell>
                     <TableCell className="text-right tabular-nums">{fmtNum(item.qty_shipped)}</TableCell>
@@ -527,7 +554,7 @@ function CogsCell({ item }) {
         </span>
       ) : fmtRp(item.fg_cogs)}
       {Number(item.fg_cogs_uncosted_qty || 0) > 0 && (
-        <span className="block text-[11px] text-[hsl(var(--warning))]">{fmtNum(item.fg_cogs_uncosted_qty)} pcs tanpa lapisan biaya</span>
+        <span className="block text-xs text-[hsl(var(--warning-text))]">{fmtNum(item.fg_cogs_uncosted_qty)} pcs tanpa lapisan biaya</span>
       )}
     </>
   );
@@ -560,13 +587,13 @@ function OutstandingView({ loading, rows, poBoard, canEdit, onDispatch }) {
               <TableCell className="text-right tabular-nums">{fmtNum(g.dispatched)} <span className="text-xs text-muted-foreground">({g.pct}%)</span></TableCell>
               <TableCell className="text-right tabular-nums">{fmtNum(g.remaining)}</TableCell>
               <TableCell className="text-right tabular-nums">
-                {g.shippable > 0 ? <span className="font-medium text-[hsl(var(--success))]" data-testid={`po-board-shippable-${g.po_number}`}>{fmtNum(g.shippable)}</span>
+                {g.shippable > 0 ? <span className="font-medium text-[hsl(var(--success-text))]" data-testid={`po-board-shippable-${g.po_number}`}>{fmtNum(g.shippable)}</span>
                   : <span className="text-xs text-muted-foreground">belum ada barang</span>}
               </TableCell>
               <TableCell className="text-xs">{g.openShip ? `${g.openShip.shipment_number} (${g.openShip.progress_pct || 0}%)` : <span className="text-muted-foreground">belum ada</span>}</TableCell>
               <TableCell className="text-right">
                 {canEdit && (
-                  <Button size="sm" variant="outline" disabled={g.shippable <= 0} onClick={() => onDispatch(g)} data-testid={`board-dispatch-${g.po_number}`}
+                  <Button type="button" size="sm" variant="outline" disabled={g.shippable <= 0} onClick={() => onDispatch(g)} data-testid={`board-dispatch-${g.po_number}`}
                     title={g.shippable > 0 ? (g.openShip ? `Tambah kiriman ke ${g.openShip.shipment_number}` : 'Buat surat jalan pertama untuk PO ini') : 'Barang belum diterima dari CMT'}>
                     <Plus className="w-3.5 h-3.5" />{g.openShip ? 'Kirim lagi' : 'Surat jalan baru'}
                   </Button>
@@ -593,12 +620,12 @@ function OutstandingView({ loading, rows, poBoard, canEdit, onDispatch }) {
               <TableCell className="text-right tabular-nums">{fmtNum(r.ordered)}</TableCell>
               <TableCell className="text-right tabular-nums">
                 {fmtNum(r.source === 'internal' ? r.internal_produced : r.good_from_cmt)}
-                <span className="block text-[11px] text-muted-foreground">{r.source === 'internal' ? 'hasil produksi' : 'lolos QC'}</span>
+                <span className="block text-xs text-muted-foreground">{r.source === 'internal' ? 'hasil produksi' : 'lolos QC'}</span>
               </TableCell>
               <TableCell className="text-right tabular-nums">{r.source === 'internal' ? '—' : fmtNum(r.reworked_ok)}</TableCell>
               <TableCell className="text-right tabular-nums">{fmtNum(r.dispatched)}</TableCell>
               <TableCell className="text-right tabular-nums">
-                {r.shippable > 0 ? <span className="font-medium text-[hsl(var(--success))]" data-testid={`outstanding-shippable-${r.sku || r.key}`}>{fmtNum(r.shippable)}</span>
+                {r.shippable > 0 ? <span className="font-medium text-[hsl(var(--success-text))]" data-testid={`outstanding-shippable-${r.sku || r.key}`}>{fmtNum(r.shippable)}</span>
                   : <span className="text-xs text-muted-foreground">belum ada barang</span>}
               </TableCell>
               <TableCell className="text-right tabular-nums">
@@ -631,9 +658,9 @@ function BuyerShortTable({ rows, onResolve }) {
             <TableCell className="whitespace-nowrap">{s.sku || '—'}</TableCell>
             <TableCell className="text-right tabular-nums">{fmtNum(s.qty_shipped_claimed)}</TableCell>
             <TableCell className="text-right tabular-nums">{fmtNum(s.qty_received)}</TableCell>
-            <TableCell className="text-right tabular-nums font-medium text-[hsl(var(--destructive))]">{fmtNum(s.qty_open ?? s.qty_short)}</TableCell>
+            <TableCell className="text-right tabular-nums font-medium text-[hsl(var(--danger-text))]">{fmtNum(s.qty_open ?? s.qty_short)}</TableCell>
             <TableCell className="text-right">
-              <Button size="sm" variant="outline" data-testid={`buyer-short-resolve-${s.short_number}`} onClick={() => onResolve(s)}>Putuskan</Button>
+              <Button type="button" size="sm" variant="outline" data-testid={`buyer-short-resolve-${s.short_number}`} onClick={() => onResolve(s)}>Putuskan</Button>
             </TableCell>
           </TableRow>
         ))}
@@ -838,27 +865,25 @@ function ShipmentForm({ businessType, pos, setPOs, continueShip, presetPoId, onC
     : `Sisa bisa kirim ${fmtNum(capTotals.shippable)} pcs (lolos QC ${fmtNum(capTotals.good_from_cmt)}${capTotals.reworked_ok ? ` + permak ${fmtNum(capTotals.reworked_ok)}` : ''} − sudah dikirim ${fmtNum(capTotals.dispatched)}).`);
 
   return (
-    <DetailPanel testId="buyer-shipment-form"
-      title={continueShip ? `Kirim lagi — ${continueShip.shipment_number}` : 'Buat surat jalan'}
-      description={continueShip ? 'Kiriman ditambahkan sebagai kiriman berikutnya pada surat jalan ini; nomornya tidak berubah.'
+    // Standar UI/UX v2 (8 Nov 2026): form = FormPopup panjang (dulu panel di atas tabel).
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="buyer-shipment-form"
+      judul={continueShip ? `Kirim lagi — ${continueShip.shipment_number}` : 'Buat surat jalan'}
+      keterangan={continueShip ? 'Kiriman ditambahkan sebagai kiriman berikutnya pada surat jalan ini; nomornya tidak berubah.'
         : 'Qty maksimal = sisa bisa kirim (lolos QC + hasil permak − yang sudah dikirim).'}
-      onClose={onClose}
-      actions={<Button onClick={submit} disabled={saving} data-testid="sj-submit-btn">
-        {saving && <Loader2 className="w-4 h-4 animate-spin" />}{continueShip ? 'Tambah kiriman' : 'Simpan'}
-      </Button>}>
+      onSimpan={submit} menyimpan={saving} labelSimpan={continueShip ? 'Tambah kiriman' : 'Simpan'}>
       {continueShip && <Notice tone="info" icon={Info} testId="continue-dispatch-banner">
         Progres pengiriman PO naik pada surat jalan yang sama ({continueShip.shipment_number}).
       </Notice>}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field label="No. surat jalan" hint={continueShip ? 'Tetap, tidak berubah' : 'Kosongkan untuk nomor otomatis'}>
           <GlassInput placeholder="otomatis sesuai format" disabled={!!continueShip} className="h-9"
             value={form.shipment_number} onChange={(e) => setForm((f) => ({ ...f, shipment_number: e.target.value }))} data-testid="sj-number-input" />
         </Field>
         <Field label="Tanggal">
-          <GlassInput type="date" className="h-9" value={form.shipment_date} onChange={(e) => setForm((f) => ({ ...f, shipment_date: e.target.value }))} />
+          <DatePicker value={form.shipment_date} onChange={(v) => setForm((f) => ({ ...f, shipment_date: v }))} bolehKosong={false} testId="sj-date" />
         </Field>
         {!consolidate ? (
-          <Field label="PO *" className="lg:col-span-2">
+          <Field label="PO *" className="sm:col-span-2">
             <SmartNativeSelect className="w-full h-9" data-testid="buyer-shipment-po-select" aria-label="PO" disabled={!!continueShip}
               value={form.po_id} onChange={(e) => loadPOItems(e.target.value)}>
               <option value="">— Pilih PO —</option>
@@ -943,7 +968,7 @@ function ShipmentForm({ businessType, pos, setPOs, continueShip, presetPoId, onC
                   return (
                     <TableRow key={`${item.po_item_id}-${idx}`} data-testid={`dispatch-item-row-${item.sku || idx}`}>
                       {consolidate && <TableCell className="whitespace-nowrap">{item.po_number || '—'}</TableCell>}
-                      <TableCell className="whitespace-nowrap">{item.sku || '—'}{item.serial_number ? <span className="block text-[11px] text-muted-foreground">{item.serial_number}</span> : null}</TableCell>
+                      <TableCell className="whitespace-nowrap">{item.sku || '—'}{item.serial_number ? <span className="block text-xs text-muted-foreground">{item.serial_number}</span> : null}</TableCell>
                       <TableCell>{item.product_name}</TableCell>
                       <TableCell className="whitespace-nowrap">{item.size || '—'} / {item.color || '—'}</TableCell>
                       <TableCell className="text-right tabular-nums">{fmtNum(item.ordered_qty)}</TableCell>
@@ -953,13 +978,13 @@ function ShipmentForm({ businessType, pos, setPOs, continueShip, presetPoId, onC
                       <TableCell className="text-right tabular-nums">
                         {!hasCap ? '—' : lunas ? (
                           <StatusBadge status="lunas" label={notProduced ? 'Belum produksi' : 'Lunas'} tone="muted" testId={`dispatch-item-lunas-${item.sku || idx}`} />
-                        ) : <span className="font-medium text-[hsl(var(--success))]" data-testid={`dispatch-item-shippable-${item.sku || idx}`}>{fmtNum(sisa)}</span>}
+                        ) : <span className="font-medium text-[hsl(var(--success-text))]" data-testid={`dispatch-item-shippable-${item.sku || idx}`}>{fmtNum(sisa)}</span>}
                       </TableCell>
                       <TableCell className="text-right">
                         <GlassInput type="number" min="0" max={hasCap ? sisa : item.ordered_qty} disabled={lunas}
                           data-testid={`dispatch-item-qty-${item.sku || idx}`} aria-label="Qty kirim"
                           className="w-24 h-8 text-right ml-auto" value={item.qty_shipped} onChange={(e) => updateItemQty(idx, e.target.value)} />
-                        {lowStock && <span className="block text-[11px] text-[hsl(var(--warning))]" title="Stok fisik gudang lebih kecil dari sisa dokumen">stok {fmtNum(item.fg_stock)}</span>}
+                        {lowStock && <span className="block text-xs text-[hsl(var(--warning-text))]" title="Stok fisik gudang lebih kecil dari sisa dokumen">stok {fmtNum(item.fg_stock)}</span>}
                       </TableCell>
                     </TableRow>
                   );
@@ -972,7 +997,7 @@ function ShipmentForm({ businessType, pos, setPOs, continueShip, presetPoId, onC
       <Field label="Catatan">
         <Textarea rows={2} value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
       </Field>
-    </DetailPanel>
+    </FormPopup>
   );
 }
 
@@ -1029,13 +1054,13 @@ function ShipmentDetail({ data, canForceEdit, onClose, onEditReceived }) {
                       <TableCell className="text-right tabular-nums" data-testid={`received-badge-${item.id}`}>
                         {fmtNum(received)}{item.qty_received != null && <ClipboardCheck className="w-3 h-3 inline ml-1 text-muted-foreground" aria-label="dicatat" />}
                       </TableCell>
-                      <TableCell className={`text-right tabular-nums ${variance > 0 ? 'text-[hsl(var(--destructive))]' : ''}`}>
+                      <TableCell className={`text-right tabular-nums ${variance > 0 ? 'text-[hsl(var(--danger-text))]' : ''}`}>
                         {variance > 0 ? fmtNum(variance) : variance < 0 ? `+${fmtNum(-variance)}` : '0'}
                       </TableCell>
                       <TableCell className="text-right tabular-nums" data-testid={`detail-item-cogs-${item.id || idx}`}><CogsCell item={item} /></TableCell>
                       <TableCell className="text-right">
                         {canForceEdit && (
-                          <Button size="icon-sm" variant="ghost" onClick={() => onEditReceived(item, d.dispatch_seq)} title="Catat qty diterima (aktual)"
+                          <Button type="button" size="icon-sm" variant="ghost" onClick={() => onEditReceived(item, d.dispatch_seq)} title="Catat qty diterima (aktual)"
                             aria-label="Catat qty diterima" data-testid={`set-received-item-${item.id}`}><ClipboardCheck className="w-4 h-4" /></Button>
                         )}
                       </TableCell>
@@ -1095,12 +1120,9 @@ function ReceivedDialog({ item, onClose, onSaved }) {
     finally { setSaving(false); }
   };
   return (
-    <FormDialog onClose={onClose} testId="set-received-form" title="Catat qty diterima (aktual)"
-      description={`${item.product_name || '—'} · ${item.sku || '—'} · kiriman #${item.dispatch_seq || 1} · dikirim ${fmtNum(item.qty_shipped)} pcs`}
-      footer={<>
-        <Button variant="outline" onClick={onClose}>Batal</Button>
-        <Button onClick={save} disabled={saving} data-testid="set-received-save-btn">{saving ? 'Menyimpan…' : 'Simpan qty diterima'}</Button>
-      </>}>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="set-received-form" judul="Catat qty diterima (aktual)"
+      keterangan={`${item.product_name || '—'} · ${item.sku || '—'} · kiriman #${item.dispatch_seq || 1} · dikirim ${fmtNum(item.qty_shipped)} pcs`}
+      onSimpan={save} menyimpan={saving} labelSimpan="Simpan qty diterima">
       <Field label="Qty diterima aktual (pcs) *" hint={qty !== '' ? `Selisih ${fmtNum(short)} pcs` : undefined}>
         <GlassInput type="number" min="0" autoFocus className="h-9" data-testid="set-received-qty-input" value={qty} onChange={(e) => setQty(e.target.value)} />
       </Field>
@@ -1121,7 +1143,7 @@ function ReceivedDialog({ item, onClose, onSaved }) {
           ))}
         </div>
       )}
-    </FormDialog>
+    </FormPopup>
   );
 }
 
@@ -1141,12 +1163,9 @@ function BuyerShortDialog({ short, onClose, onSaved }) {
     finally { setSaving(false); }
   };
   return (
-    <FormDialog onClose={onClose} testId="buyer-short-dialog" title={`Putuskan selisih ${short.short_number}`}
-      description={`${short.shipment_number || '—'} · ${short.po_number || '—'} · ${short.customer_name || '—'} · ${short.sku || '—'} · dikirim ${fmtNum(short.qty_shipped_claimed)} → diterima ${fmtNum(short.qty_received)} pcs`}
-      footer={<>
-        <Button variant="outline" onClick={onClose}>Batal</Button>
-        <Button onClick={save} disabled={saving} data-testid="buyer-short-save">{saving ? 'Menyimpan…' : 'Simpan keputusan'}</Button>
-      </>}>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="buyer-short-dialog" judul={`Putuskan selisih ${short.short_number}`}
+      keterangan={`${short.shipment_number || '—'} · ${short.po_number || '—'} · ${short.customer_name || '—'} · ${short.sku || '—'} · dikirim ${fmtNum(short.qty_shipped_claimed)} → diterima ${fmtNum(short.qty_received)} pcs`}
+      onSimpan={save} menyimpan={saving} labelSimpan="Simpan keputusan">
       <Field label="Keputusan *">
         <SmartNativeSelect value={resType} onChange={(e) => setResType(e.target.value)} data-testid="buyer-short-resolution" className="w-full h-9" aria-label="Keputusan">
           {BUYER_RESOLUTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -1159,6 +1178,6 @@ function BuyerShortDialog({ short, onClose, onSaved }) {
         Pilihan hilang menghapusbukukan stok barang jadi {fmtNum(short.qty_open ?? short.qty_short)} pcs yang tadi dikembalikan, lalu mencatat
         pihak yang menanggung untuk diproses Keuangan. Dikirim ulang membiarkan barang tetap di stok — selisih tertutup otomatis saat kiriman ulang dibuat.
       </Notice>
-    </FormDialog>
+    </FormPopup>
   );
 }

@@ -56,7 +56,7 @@ export default function POWorkflowIndicator({ status, compact = false }) {
                 {done ? <Check className="w-4 h-4" /> : <span className="text-xs font-bold">{idx + 1}</span>}
               </div>
               <span className={`mt-1.5 text-xs font-medium whitespace-nowrap ${
-                active ? 'text-foreground' : done ? 'text-[hsl(var(--success))]' : 'text-muted-foreground/70'
+                active ? 'text-foreground' : done ? 'text-[hsl(var(--success-text))]' : 'text-muted-foreground/70'
               }`}>{step.label}</span>
             </div>
           );
