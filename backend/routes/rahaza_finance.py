@@ -800,8 +800,10 @@ async def get_overdue_ar_report(request: Request, days: int = 30):
         try:
             due_date = date.fromisoformat(due_date_str[:10])
             overdue_days = (today - due_date).days
-            
-            if overdue_days >= days:
+
+            # 8 Nov 2026 (keputusan owner): lewat jatuh tempo = jatuh tempo SEBELUM hari ini (WIB), jadi
+            # terlambat minimal 1 hari — juga untuk ?days=0. Dulu faktur yang jatuh tempo HARI INI ikut terhitung.
+            if overdue_days >= max(int(days or 0), 1):
                 overdue_list.append({
                     "id": inv.get("id"),
                     "invoice_number": inv.get("invoice_number"),

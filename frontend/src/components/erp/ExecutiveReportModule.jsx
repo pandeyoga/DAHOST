@@ -182,7 +182,7 @@ export default function ExecutiveReportModule({ user, headers }) {
     ['Faktur reseller sudah dibayar', FMT_IDR(fin.paid_revenue_rp)],
     ['Total biaya', FMT_IDR(fin.total_expenses_rp)],
     ['Laba bersih', FMT_IDR(fin.net_income_rp)],
-    ['Piutang jatuh tempo s.d. hari ini (posisi saat ini)', `${FMT_IDR(fin.ar_overdue_rp)} (${FMT_NUM(fin.ar_overdue_count)} faktur)`],
+    ['Piutang lewat jatuh tempo (posisi saat ini)', `${FMT_IDR(fin.ar_overdue_rp)} (${FMT_NUM(fin.ar_overdue_count)} faktur)`],
   ];
   const barisProduksi = [
     ['Total WO', FMT_NUM(prod.total_wo)],
@@ -328,8 +328,8 @@ export default function ExecutiveReportModule({ user, headers }) {
             <StatTile label="Pendapatan (buku besar)" value={v(FMT_IDR(fin.revenue_rp))} sub={teksDelta(fin.revenue_delta_vs_prev_pct)} />
             <StatTile label="Laba bersih" value={v(FMT_IDR(fin.net_income_rp))} sub={`Margin ${FMT_PCT(fin.profit_margin_pct)}`}
               accent={fin.net_income_rp < 0 ? 'danger' : 'default'} />
-            <StatTile label="Piutang jatuh tempo (saat ini)" value={v(FMT_IDR(fin.ar_overdue_rp))}
-              sub={`${FMT_NUM(fin.ar_overdue_count)} faktur, jatuh tempo s.d. hari ini`}
+            <StatTile label="Piutang lewat jatuh tempo (saat ini)" value={v(FMT_IDR(fin.ar_overdue_rp))}
+              sub={`${FMT_NUM(fin.ar_overdue_count)} faktur, jatuh tempo sebelum hari ini`}
               accent={fin.ar_overdue_rp > 0 ? 'warning' : 'default'} />
           </div>
           <ChartCard title="Perbandingan 6 bulan" subtitle="Pendapatan dan laba bersih per bulan (buku besar)."
