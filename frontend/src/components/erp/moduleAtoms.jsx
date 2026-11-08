@@ -43,7 +43,8 @@ export function PageHeader({ title, subtitle, actions, className, testId }) {
         <h1 className="text-xl sm:text-2xl font-bold text-foreground tracking-tight leading-tight">{title}</h1>
         {subtitle && <p className="hidden sm:block text-sm text-muted-foreground mt-1 leading-relaxed max-w-3xl">{subtitle}</p>}
       </div>
-      {actions && <div className="flex items-center gap-2 flex-wrap shrink-0">{actions}</div>}
+      {/* v2: di HP tombol kepala turun ke baris sendiri dan boleh membungkus (dulu terdorong keluar layar) */}
+      {actions && <div className="flex items-center gap-2 flex-wrap max-sm:w-full sm:shrink-0">{actions}</div>}
     </div>
   );
 }
