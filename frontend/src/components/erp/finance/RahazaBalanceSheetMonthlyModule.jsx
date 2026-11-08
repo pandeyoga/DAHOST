@@ -93,7 +93,7 @@ export default function RahazaBalanceSheetMonthlyModule({ token }) {
                 <span>Semua kolom seimbang. Akhir {asOf}: aset <b className="text-foreground tabular-nums" data-testid="bs12-kpi-assets">{fmt(at(data?.sections?.assets?.months))}</b>
                 {' '}= liabilitas <b className="text-foreground tabular-nums" data-testid="bs12-kpi-liab">{fmt(at(data?.sections?.liabilities?.months))}</b>
                 {' '}+ ekuitas <b className="text-foreground tabular-nums" data-testid="bs12-kpi-eq">{fmt(at(data?.sections?.equity?.months))}</b>
-                {' '}(laba berjalan <b className={`tabular-nums ${at(data?.totals?.current_earnings) < 0 ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`} data-testid="bs12-kpi-earn">{fmt(at(data?.totals?.current_earnings))}</b>)</span></>
+                <span className="hidden sm:inline">{' '}(laba berjalan <b className={`tabular-nums ${at(data?.totals?.current_earnings) < 0 ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`} data-testid="bs12-kpi-earn">{fmt(at(data?.totals?.current_earnings))}</b>)</span></span></>
             : <><AlertTriangle className="w-4 h-4 shrink-0" /> Ada kolom tidak seimbang — periksa jurnal tanpa akun neraca</>}
         </p>
       </>}

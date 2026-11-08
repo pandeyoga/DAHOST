@@ -94,8 +94,11 @@ export default function RahazaPnLMonthlyModule({ token }) {
         <IntercompanyNotes data={data} testId="pnl12-ic-notes" />
         <p className="text-sm text-muted-foreground" data-testid="pnl12-ringkas">
           Tahun {year}: pendapatan <b className="text-foreground tabular-nums" data-testid="pnl12-kpi-rev">{fmt(data?.groups?.revenue?.total)}</b>
-          {' '}· laba kotor <b className={`tabular-nums ${Number(L.gross_profit?.total) < 0 ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`} data-testid="pnl12-kpi-gross">{fmt(L.gross_profit?.total)}</b>
-          {' '}· beban operasional <b className="text-foreground tabular-nums" data-testid="pnl12-kpi-exp">{fmt(data?.groups?.expense?.total)}</b>
+          {/* HP: laba kotor & beban operasional hanya di tabel — kalimat ringkas tetap pendek */}
+          <span className="hidden sm:inline">
+            {' '}· laba kotor <b className={`tabular-nums ${Number(L.gross_profit?.total) < 0 ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`} data-testid="pnl12-kpi-gross">{fmt(L.gross_profit?.total)}</b>
+            {' '}· beban operasional <b className="text-foreground tabular-nums" data-testid="pnl12-kpi-exp">{fmt(data?.groups?.expense?.total)}</b>
+          </span>
           {' '}· {net >= 0 ? 'laba' : 'rugi'} bersih <b className={`tabular-nums ${net < 0 ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`} data-testid="pnl12-kpi-net">{fmt(net)}</b>
         </p>
       </>)}

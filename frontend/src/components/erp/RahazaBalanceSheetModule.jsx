@@ -76,7 +76,7 @@ export default function RahazaBalanceSheetModule({ token }) {
             {data.balanced
               ? <><CheckCircle2 className="w-4 h-4 shrink-0 text-[hsl(var(--success-text))]" />
                   <span>Seimbang: aset <b className="text-foreground tabular-nums" data-testid="bs-kpi-assets">{fmt(t.assets)}</b> = liabilitas <b className="text-foreground tabular-nums" data-testid="bs-kpi-liab">{fmt(t.liabilities)}</b> + ekuitas <b className="text-foreground tabular-nums" data-testid="bs-kpi-equity">{fmt(t.equity)}</b>
-                  {' '}(termasuk {Number(t.current_earnings) >= 0 ? 'laba' : 'rugi'} tahun berjalan <b className={`tabular-nums ${Number(t.current_earnings) < 0 ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`} data-testid="bs-kpi-earnings">{fmt(t.current_earnings)}</b>)</span></>
+                  <span className="hidden sm:inline">{' '}(termasuk {Number(t.current_earnings) >= 0 ? 'laba' : 'rugi'} tahun berjalan <b className={`tabular-nums ${Number(t.current_earnings) < 0 ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`} data-testid="bs-kpi-earnings">{fmt(t.current_earnings)}</b>)</span></span></>
               : <><AlertTriangle className="w-4 h-4 shrink-0" /> Tidak seimbang, selisih {fmt(t.diff)} — periksa jurnal tanpa akun neraca</>}
           </p>
         )}

@@ -82,8 +82,11 @@ export default function RahazaPnLModule({ token }) {
         {data && (
           <p className="text-sm text-muted-foreground" data-testid="pnl-ringkas">
             Pendapatan <b className="text-foreground tabular-nums" data-testid="pnl-kpi-revenue">{fmt(t.revenue)}</b>
-            {' '}− HPP <b className="text-foreground tabular-nums" data-testid="pnl-kpi-cogs">{fmt(t.cogs)}</b>
-            {' '}= laba kotor <b className={`tabular-nums ${neg(t.gross_profit)}`} data-testid="pnl-kpi-gross">{fmt(t.gross_profit)}</b>
+            {/* HP: HPP & laba kotor hanya di tabel (baris tepat di bawah) — kalimat ringkas tetap 1–2 baris */}
+            <span className="hidden sm:inline">
+              {' '}− HPP <b className="text-foreground tabular-nums" data-testid="pnl-kpi-cogs">{fmt(t.cogs)}</b>
+              {' '}= laba kotor <b className={`tabular-nums ${neg(t.gross_profit)}`} data-testid="pnl-kpi-gross">{fmt(t.gross_profit)}</b>
+            </span>
             {' '}· {Number(t.net_income) >= 0 ? 'laba' : 'rugi'} bersih <b className={`tabular-nums ${neg(t.net_income)}`} data-testid="pnl-kpi-net">{fmt(t.net_income)}</b>
           </p>
         )}
