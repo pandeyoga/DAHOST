@@ -390,7 +390,7 @@ export default function HREmployeeModule({ token }) {
       </>}
       footer={<PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}>
       {loading && employees.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat data karyawan…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat data karyawan…</p>
       ) : (
         <TabelData kolom={kolom} baris={paged} onKlikBaris={setDetail} testId="employees-table"
           kosong={<EmptyState
@@ -935,7 +935,7 @@ function EmployeeDialog({ initial, locations, employees = [], masters = {}, head
           </div>
 
           {documents.length === 0 ? (
-            <EmptyState title="Belum ada dokumen" description="Pilih kategori, lalu unggah berkasnya." className="py-8" />
+            <EmptyState title="Belum ada dokumen" description="Pilih kategori, lalu unggah berkasnya." className="py-6" />
           ) : (
             <div className="space-y-2">
               <div className="flex justify-end">

@@ -185,7 +185,7 @@ function SalaryGradesTab({ token, pasang }) {
         {' '}Golongan dipakai di Struktur Organisasi › Jabatan.
       </p>
       {loading && grades.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat golongan gaji…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat golongan gaji…</p>
       ) : (
         <TabelData kolom={kolom} baris={paged} testId="grade-table" onKlikBaris={setEditing}
           kosong={<EmptyState title="Belum ada golongan gaji" description="Tambahkan golongan pertama, lalu pilih golongan untuk tiap jabatan."
@@ -301,7 +301,7 @@ function ResignationsTab({ token, pasang }) {
         {' '}Pengajuan baru masuk lewat Portal Saya dan Kotak Persetujuan SDM.
       </p>
       {loading && items.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat…</p>
       ) : (
         <TabelData kolom={kolom} baris={items} testId="resign-table" onKlikBaris={setEditing}
           kosong={<EmptyState title="Tidak ada pengunduran diri" description="Pengunduran diri yang sedang diproses atau sudah selesai muncul di sini." />} />

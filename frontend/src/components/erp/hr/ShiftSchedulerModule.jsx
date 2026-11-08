@@ -268,7 +268,7 @@ export default function ShiftSchedulerModule({ token, bagian }) {
       </>}>
 
       {activeTab === 'schedules' && (loading && schedules.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat jadwal…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat jadwal…</p>
       ) : (
         <TabelData kolom={kolomJadwal} baris={schedules} testId="scheduler-table" onKlikBaris={(s) => handleViewSchedule(s.id)}
           kosong={<EmptyState title="Belum ada jadwal"
@@ -344,7 +344,7 @@ export default function ShiftSchedulerModule({ token, bagian }) {
                 {template.name} ({template.start_time}–{template.end_time})
               </label>
             ))}
-            {templates.length === 0 && <p className="text-sm text-muted-foreground">Belum ada pola jadwal.</p>}
+            {templates.length === 0 && <EmptyState title="Belum ada pola jadwal" className="py-4" />}
           </div>
         </Isian>
         <p className="text-base font-semibold text-foreground">Batasan</p>
@@ -396,7 +396,7 @@ export default function ShiftSchedulerModule({ token, bagian }) {
             <BarisDetail label="Jumlah shift">{selectedSchedule.shifts?.length ?? 0}</BarisDetail>
           </dl>
           <TabelData kolom={kolomRincian} baris={selectedSchedule.shifts || []} kunci={(x) => x.id} testId="scheduler-detail-table"
-            kosong={<p className="text-sm text-muted-foreground">Jadwal ini belum berisi shift.</p>} />
+            kosong={<EmptyState title="Jadwal ini belum berisi shift" className="py-6" />} />
         </DetailPopup>
       )}
     </PageLayout>

@@ -417,7 +417,7 @@ export default function HRShiftManagementModule({ user, bagian }) {
         ? <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} /> : null}>
 
       {loading && shifts.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat data shift…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat data shift…</p>
       ) : tab === 'shifts' ? (
         <TabelData kolom={kolomShift} baris={shifts} testId="shift-table"
           onKlikBaris={(s) => { if (!s.is_default) setShiftForm(s); }}

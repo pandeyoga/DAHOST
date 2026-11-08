@@ -320,7 +320,7 @@ export default function HROrgChartModule({ token }) {
         {error && <Notice tone="danger" icon={AlertCircle} title="Gagal memuat struktur organisasi">{error}</Notice>}
 
         {loading && !chart ? (
-          <p className="py-10 text-center text-sm text-muted-foreground" data-testid="hr-org-skeleton">Memuat struktur organisasi…</p>
+          <p className="py-6 text-center text-sm text-muted-foreground" data-testid="hr-org-skeleton">Memuat struktur organisasi…</p>
         ) : (<>
           {/* ─── Bagan ─── */}
           {tab === 'chart' && (chartTree.length === 0 ? kosongStruktur : (
@@ -371,7 +371,7 @@ export default function HROrgChartModule({ token }) {
               <p className="mb-2 text-base font-semibold text-foreground">Jabatan di unit ini</p>
               <TabelData kolom={kolomPos.filter(k => k.kunci !== 'unit')} baris={posUnitDetail} kunci={(p) => p.position_id}
                 testId="org-unit-positions"
-                kosong={<p className="text-sm text-muted-foreground">Belum ada jabatan di unit ini.</p>} />
+                kosong={<EmptyState title="Belum ada jabatan di unit ini" description="Tambahkan dari tab Jabatan." className="py-6" />} />
             </div>
           </DetailPopup>
         )}

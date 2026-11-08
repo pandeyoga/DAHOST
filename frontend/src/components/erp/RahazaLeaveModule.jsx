@@ -745,7 +745,7 @@ export default function RahazaLeaveModule({ token, onNavigate, bagian }) {
 
       {/* ── POPUP: BATALKAN CUTI (alasan opsional, sama seperti dulu) ── */}
       <FormPopup open={!!cancelModal} onClose={() => setCancelModal(null)} ukuran="pendek" testId="cancel-dialog"
-        judul="Batalkan cuti" onSimpan={cancelLeave} menyimpan={saving} labelSimpan="Batalkan cuti"
+        judul="Batalkan cuti" onSimpan={cancelLeave} menyimpan={saving} labelSimpan="Batalkan cuti" warnaSimpan="destructive"
         keterangan={cancelModal ? `Cuti ${cancelModal.employee_name} (${fmt(cancelModal.from_date)} – ${fmt(cancelModal.to_date)}) dibatalkan dan saldo cuti dikembalikan.` : ''}>
         <Isian label="Alasan pembatalan" htmlFor="cancel-reason">
           <Textarea id="cancel-reason" placeholder="Alasan pembatalan…" value={cancelReason}

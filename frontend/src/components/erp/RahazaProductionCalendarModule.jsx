@@ -282,7 +282,7 @@ export default function RahazaProductionCalendarModule() {
         <MonthView year={year} month={month} setMonth={setMonth} setYear={setYear} entries={entries} />
       ) : (
         loading && !entries.length ? (
-          <p className="py-10 text-center text-sm text-muted-foreground">Memuat kalender…</p>
+          <p className="py-6 text-center text-sm text-muted-foreground">Memuat kalender…</p>
         ) : (
           <TabelData kolom={kolom} baris={paged} testId="calendar-table"
             kosong={<EmptyState icon={CalendarDays} title={entries.length ? 'Tidak ada entri yang cocok' : `Belum ada entri kalender ${year}`}
