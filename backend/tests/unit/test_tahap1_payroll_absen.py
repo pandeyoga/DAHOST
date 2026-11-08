@@ -91,6 +91,14 @@ def _val(doc, expr):
     if isinstance(expr, dict) and "$cond" in expr:
         cond, yes, no = expr["$cond"]
         return yes if _val(doc, cond) else no
+    # 2026-11-09: rekap menit terlambat/pulang cepat memakai $ifNull & $gt (Q3)
+    if isinstance(expr, dict) and "$ifNull" in expr:
+        v, alt = expr["$ifNull"]
+        got = _val(doc, v)
+        return alt if got is None else got
+    if isinstance(expr, dict) and "$gt" in expr:
+        a, b = (_val(doc, x) for x in expr["$gt"])
+        return (a or 0) > (b or 0)
     return expr
 
 

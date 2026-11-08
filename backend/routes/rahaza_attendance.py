@@ -238,9 +238,11 @@ async def clock_out(request: Request):
     if isinstance(cin, str):
         cin = _parse_iso(cin)
     hours = _calc_hours(cin, now)
+    from core.attendance_rules import early_leave_fields
+    early = await early_leave_fields(db, emp_doc, existing, now)   # 2026-11-09 (Q3): pulang cepat dicatat
     await db.rahaza_attendance_events.update_one({"id": existing["id"]}, {"$set": {
         "clock_out": now, "hours_worked": hours, "source": "operator", "updated_at": now,
-        "updated_by": user["id"], "updated_by_name": user.get("name", ""),
+        "updated_by": user["id"], "updated_by_name": user.get("name", ""), **early,
     }})
     out = await db.rahaza_attendance_events.find_one({"id": existing["id"]}, {"_id": 0})
     await write_attendance_audit(db, before=existing, after=out, user=user, source="manual",
@@ -352,6 +354,13 @@ async def attendance_grid(request: Request, date: Optional[str] = None):
             "photo_selfie_url":         (r or {}).get("photo_selfie_url"),
             "photo_selfie_out_url":     (r or {}).get("photo_selfie_out_url"),
             "late_minutes":             (r or {}).get("late_minutes", 0),
+            # 2026-11-09 (Q3/Q11/Q2): pulang cepat (dicatat), tugas luar, dan izin/sakit/cuti TANPA pengajuan
+            # (akan dipotong — HR diarahkan membuat pengajuan atas nama karyawan, satu jalur dengan Portal Saya).
+            "early_leave_minutes":      (r or {}).get("early_leave_minutes", 0),
+            "late_reason":              (r or {}).get("late_reason"),
+            "tugas_luar":               bool((r or {}).get("tugas_luar")),
+            "needs_leave_request":      bool(r and str(r.get("status") or "").lower() in ("izin", "sakit", "cuti")
+                                             and not r.get("leave_request_id")),
             "locked":                   bool(lock_cache.get(e["id"])),
             "locked_run_number":        (lock_cache.get(e["id"]) or {}).get("run_number"),
         })
@@ -402,6 +411,7 @@ async def bulk_attendance(request: Request):
             raise HTTPException(409, lock_message(row.get("date"), lock, emp_doc.get("name", "")))
 
     saved = 0
+    warnings = []
     for row in rows:
         doc = await _build_att_doc(db, row, user, prefetched_existing=existing_map)
         if not doc:
@@ -414,7 +424,14 @@ async def bulk_attendance(request: Request):
         await write_attendance_audit(db, before=existing or {}, after={**(existing or {}), **doc}, user=user,
                                      source="grid", employee_id=row["employee_id"], day=row.get("date"))
         saved += 1
-    return {"ok": True, "saved": saved}
+        after = {**(existing or {}), **doc}
+        if str(after.get("status") or "").lower() in ("izin", "sakit", "cuti") and not after.get("leave_request_id"):
+            # 2026-11-09 (Q2, keputusan owner): izin/sakit/cuti DIBAYAR hanya lewat pengajuan (satu jalur) —
+            # status yang diketik di grid tanpa pengajuan dipotong payroll (rahaza_payroll_rules.classify_days).
+            warnings.append({"employee_id": row["employee_id"], "date": row.get("date"), "status": after.get("status"),
+                             "message": "Tanpa pengajuan cuti/izin yang disetujui, hari ini dipotong dari gaji. "
+                                        "Buat pengajuan atas nama karyawan bila izin/sakitnya dibayar."})
+    return {"ok": True, "saved": saved, "warnings": warnings}
 
 
 def _as_dt(v):
@@ -456,7 +473,14 @@ async def _build_att_patch(db, existing: dict, body: dict, user: dict) -> dict:
         shift_id = upd["shift_id"] if "shift_id" in upd else existing.get("shift_id")
         emp_doc = await db.rahaza_employees.find_one({"id": existing.get("employee_id")}, {"_id": 0}) or {}
         # Hari tidak hadir tidak punya keterlambatan; jam masuknya tetap disimpan apa adanya.
-        upd.update(await compute_late_minutes(db, emp_doc, cin if status == "hadir" else None, shift_id))
+        # 2026-11-09: cuti/izin SETENGAH hari tetap dinilai (acuan paruh siang, utils.employee_identity).
+        from core.attendance_rules import counts_timing
+        rec_now = {**existing, **upd, "status": status, "shift_id": shift_id}
+        upd.update(await compute_late_minutes(db, emp_doc, cin if counts_timing(rec_now) else None, shift_id))
+    if {"status", "shift_id", "clock_out"} & set(body):
+        from core.attendance_rules import early_leave_fields
+        emp_doc = await db.rahaza_employees.find_one({"id": existing.get("employee_id")}, {"_id": 0}) or {}
+        upd.update(await early_leave_fields(db, emp_doc, {**existing, **upd}, cout))
     if "hours_worked" in upd:
         from routes.rahaza_attendance_sessions import recompute_session_totals
         upd.update(recompute_session_totals({"sessions": existing.get("sessions") or [],
@@ -495,7 +519,11 @@ async def _build_att_doc(db, body, user, prefetched_existing: dict = None):
     # diisi. Sekarang dihitung dari `clock_in` vs jam masuk shift + grace period.
     from utils.employee_identity import compute_late_minutes
     emp_doc = await db.rahaza_employees.find_one({"id": emp_id}, {"_id": 0}) or {}
-    late = await compute_late_minutes(db, emp_doc, cin, body.get("shift_id"))
+    from core.attendance_rules import counts_timing, early_leave_fields
+    late = await compute_late_minutes(db, emp_doc, cin if counts_timing({"status": status}) else None,
+                                      body.get("shift_id"))
+    late.update(await early_leave_fields(db, emp_doc, {"status": status, "date": date_str,
+                                                       "shift_id": body.get("shift_id") or None}, cout))
 
     doc = {
         "employee_id": emp_id, "date": date_str,
@@ -544,10 +572,89 @@ async def upsert_attendance(request: Request):
     return serialize_doc(out)
 
 
+# ─── HITUNG ULANG TERLAMBAT (2026-11-09, M13 audit HR) ────────────────────────
+# Menit terlambat disimpan saat absen masuk. Jadwal/penugasan shift yang diubah belakangan, cuti yang disetujui
+# sesudah karyawan absen, atau perbaikan aturan (H5: hari libur, cuti ½ hari) tidak memperbaiki catatan lama —
+# dulu hanya bila HR mengubah status/shift/jam masuk baris itu satu per satu. Tombol ini menghitung ulang menit
+# terlambat + pulang cepat seluruh catatan satu periode. Tanggal yang sudah masuk gaji FINAL dilewati (terkunci).
+RECOMPUTE_MAX_DAYS = 62
+
+
+@router.post("/attendance/recompute-timing")
+async def recompute_timing(request: Request):
+    """Body: {from, to, employee_ids?} → {checked, changed, locked, skipped_no_clock, samples}."""
+    user = await require_auth(request)
+    if not check_role(user, HR_ATTENDANCE_WRITE_ROLES, ("hr.manage", "hr.attendance.manage")):
+        raise HTTPException(403, MSG_HR_ATTENDANCE_ONLY)
+    db = get_db()
+    body = await request.json()
+    from datetime import date as _date
+    try:
+        d_from = _date.fromisoformat(str(body.get("from") or body.get("from_date") or "")[:10])
+        d_to = _date.fromisoformat(str(body.get("to") or body.get("to_date") or "")[:10])
+    except ValueError:
+        raise HTTPException(400, "Isi periode (tanggal mulai dan selesai).")
+    if d_to < d_from:
+        raise HTTPException(400, "Tanggal selesai tidak boleh lebih awal dari tanggal mulai.")
+    if (d_to - d_from).days + 1 > RECOMPUTE_MAX_DAYS:
+        raise HTTPException(400, f"Periode paling panjang {RECOMPUTE_MAX_DAYS} hari.")
+    q = {"date": {"$gte": d_from.isoformat(), "$lte": d_to.isoformat()}}
+    ids = [str(i) for i in (body.get("employee_ids") or []) if i]
+    if ids:
+        q["employee_id"] = {"$in": ids}
+    from core.attendance_rules import attendance_lock, timing_fields, write_attendance_audit
+    rows = [r async for r in db.rahaza_attendance_events.find(q, {"_id": 0})]
+    emp_ids = list({r.get("employee_id") for r in rows if r.get("employee_id")})
+    emps = {e["id"]: e for e in await db.rahaza_employees.find(
+        {"id": {"$in": emp_ids}}, {"_id": 0}).to_list(len(emp_ids) or 1)} if emp_ids else {}
+    out = {"checked": 0, "changed": 0, "locked": 0, "skipped_no_clock": 0, "samples": []}
+    lock_cache: dict = {}
+    for r in sorted(rows, key=lambda x: (str(x.get("date")), str(x.get("employee_id")))):
+        if not (r.get("clock_in") or r.get("clock_out")):
+            out["skipped_no_clock"] += 1
+            continue
+        key = (r.get("employee_id"), str(r.get("date"))[:10])
+        if key not in lock_cache:
+            lock_cache[key] = await attendance_lock(db, *key)
+        if lock_cache[key]:
+            out["locked"] += 1
+            continue
+        out["checked"] += 1
+        emp = emps.get(r.get("employee_id")) or {"id": r.get("employee_id")}
+        new = await timing_fields(db, emp, r)
+        if all((r.get(k) or 0) == (new.get(k) or 0) for k in ("late_minutes", "early_leave_minutes")):
+            continue
+        upd = {**new, "timing_recomputed_at": _now(), "updated_at": _now(), "updated_by": user["id"],
+               "updated_by_name": user.get("name", "")}
+        await db.rahaza_attendance_events.update_one({"id": r["id"]}, {"$set": upd})
+        await write_attendance_audit(db, before=r, after={**r, **upd}, user=user, source="hitung_ulang",
+                                     note="Hitung ulang terlambat & pulang cepat")
+        out["changed"] += 1
+        if len(out["samples"]) < 30:
+            out["samples"].append({"employee_name": emp.get("name") or "", "date": key[1],
+                                   "late_before": int(r.get("late_minutes") or 0),
+                                   "late_after": int(new.get("late_minutes") or 0),
+                                   "early_before": int(r.get("early_leave_minutes") or 0),
+                                   "early_after": int(new.get("early_leave_minutes") or 0),
+                                   "reason": new.get("late_reason") or new.get("early_leave_reason") or ""})
+    out["message"] = (f"{out['changed']} catatan diperbarui dari {out['checked']} yang diperiksa"
+                      + (f"; {out['locked']} catatan dilewati karena sudah masuk gaji final" if out["locked"] else "")
+                      + ".")
+    return out
+
+
 @router.get("/attendance/summary")
 async def attendance_summary(request: Request, from_: Optional[str] = None, to: Optional[str] = None, employee_id: Optional[str] = None):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
+    # 2026-11-09 (H8, audit HR): rekap hadir/izin/sakit/alpa SEMUA karyawan hanya untuk HR/atasan — dulu cukup
+    # login (diuji: akun tim packing & PIC toko → 200). Selain itu hanya rekap milik sendiri (pola /attendance).
+    from utils.employee_identity import can_view_all_employees, resolve_my_employee
+    if not can_view_all_employees(user):
+        mine = await resolve_my_employee(db, user)
+        if not mine or (employee_id and employee_id != mine["id"]):
+            return []
+        employee_id = mine["id"]
     q = {}
     if from_ or to:
         rg = {}
@@ -560,12 +667,25 @@ async def attendance_summary(request: Request, from_: Optional[str] = None, to: 
         q["employee_id"] = employee_id
     # 2026-11-06 (pola P7): semua record periode (dulu to_list(500) — rekap sebulan 25 karyawan = 650 record)
     rows = [r async for r in db.rahaza_attendance_events.find(
-        q, {"_id": 0, "employee_id": 1, "status": 1, "approval_status": 1, "hours_worked": 1, "overtime_hours": 1})]
+        q, {"_id": 0, "employee_id": 1, "status": 1, "approval_status": 1, "hours_worked": 1, "overtime_hours": 1,
+            "late_minutes": 1, "early_leave_minutes": 1, "half_day": 1, "tugas_luar": 1})]
     from utils.attendance_policy import attendance_counts
+    from routes.rahaza_payroll_rules import timing_counts
     summary = {}
     for r in rows:
         eid = r["employee_id"]
-        s = summary.setdefault(eid, {"employee_id": eid, "days_hadir": 0, "days_izin": 0, "days_sakit": 0, "days_alfa": 0, "days_cuti": 0, "days_libur": 0, "total_hours": 0, "total_overtime": 0})
+        # 2026-11-09 (Q3): rekap memuat menit terlambat & PULANG CEPAT (dicatat, tidak memotong) + hari tugas luar.
+        s = summary.setdefault(eid, {"employee_id": eid, "days_hadir": 0, "days_izin": 0, "days_sakit": 0, "days_alfa": 0, "days_cuti": 0, "days_libur": 0, "total_hours": 0, "total_overtime": 0,
+                                     "total_late_minutes": 0, "days_late": 0, "total_early_leave_minutes": 0,
+                                     "days_early_leave": 0, "days_tugas_luar": 0})
+        if r.get("tugas_luar"):
+            s["days_tugas_luar"] += 1
+        if timing_counts(r, counts=attendance_counts):
+            lm, em = int(r.get("late_minutes") or 0), int(r.get("early_leave_minutes") or 0)
+            s["total_late_minutes"] += lm
+            s["days_late"] += 1 if lm > 0 else 0
+            s["total_early_leave_minutes"] += em
+            s["days_early_leave"] += 1 if em > 0 else 0
         from core.attendance_rules import is_absent
         st = r.get('status', 'hadir')
         k = "days_alfa" if is_absent(st) else f"days_{st}"   # Tahap 2: 'alpa' (kontrak) & 'alfa' (lama)
@@ -621,8 +741,14 @@ async def hr_dashboard(request: Request):
       - alfa_last_7d: total alfa dalam 7 hari terakhir
       - attendance_trend: hadir count per hari (7 hari terakhir)
       - recent_attendance: 10 record attendance terbaru
+
+    2026-11-09 (H8): hanya HR/atasan (dulu akun mana pun, termasuk total gaji bersih run terakhir). Total gaji
+    run terakhir hanya untuk peran penggajian/Keuangan (Q8); peran SDM lain melihat periode & statusnya saja.
     """
-    await require_auth(request)
+    user = await require_auth(request)
+    from utils.employee_identity import can_view_all_employees
+    if not can_view_all_employees(user):
+        raise HTTPException(403, "Dasbor SDM hanya untuk HR dan atasan.")
     db = get_db()
     today = _today_iso()
     from_7d = (today_wib() - timedelta(days=6)).isoformat()
@@ -651,6 +777,10 @@ async def hr_dashboard(request: Request):
              "status": 1, "total_net": 1, "total_employees": 1, "employee_count": 1, "created_at": 1},  # FIX: total_net not total_payout
         sort=[("created_at", -1)]
     )
+
+    from routes.rahaza_payroll_shared import can_view_payroll_transfer
+    if latest_run and not can_view_payroll_transfer(user):
+        latest_run = {k: v for k, v in latest_run.items() if k != "total_net"}
 
     # ── Alfa last 7 days
     alfa_last_7d = await db.rahaza_attendance_events.count_documents(

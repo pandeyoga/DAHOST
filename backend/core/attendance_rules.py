@@ -97,15 +97,35 @@ async def _shift_doc(db, shift_id) -> Optional[dict]:
     return await db.rahaza_shifts.find_one({"id": {"$in": ids}}, {"_id": 0})
 
 
-def _shape(start, end, *, grace=None, code=None, name=None, source: str, overnight=None) -> Optional[dict]:
+def _grace_of(doc: dict):
+    """Toleransi terlambat sebuah shift/entri jadwal: `toleransi_menit` (isian per shift, Q4 9 Nov 2026) →
+    `grace_minutes` (data lama) → None (= bawaan global `DEFAULT_GRACE_MINUTES`). Nilai 0 sah (tanpa toleransi)."""
+    for k in ("toleransi_menit", "grace_minutes"):
+        v = (doc or {}).get(k)
+        if v not in (None, ""):
+            try:
+                return max(0, int(float(v)))
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _shape(start, end, *, grace=None, code=None, name=None, source: str, overnight=None,
+           break_minutes=None) -> Optional[dict]:
     st, en = _hhmm(start), _hhmm(end)
     if not st:
         return None
     from utils.employee_identity import DEFAULT_GRACE_MINUTES
+    try:
+        brk = max(0, int(float(break_minutes or 0)))
+    except (TypeError, ValueError):
+        brk = 0
     return {
         "start_time": st.strftime("%H:%M"),
         "end_time": en.strftime("%H:%M") if en else None,
         "grace_minutes": int(grace if grace not in (None, "") else DEFAULT_GRACE_MINUTES),
+        # 2026-11-09 (Q5): lama istirahat — acuan cuti setengah hari (utils.employee_identity.half_day_points)
+        "break_minutes": brk,
         "code": code, "name": name, "source": source,
         "overnight": bool(overnight) if overnight is not None else bool(en and en <= st),
     }
@@ -116,9 +136,10 @@ def _from_shift(doc: dict, source: str) -> Optional[dict]:
         return None
     return _shape(doc.get("start_time") or doc.get("check_in_time"),
                   doc.get("end_time") or doc.get("check_out_time"),
-                  grace=doc.get("grace_minutes"), code=doc.get("code") or doc.get("shift_code"),
+                  grace=_grace_of(doc), code=doc.get("code") or doc.get("shift_code"),
                   name=doc.get("name") or doc.get("shift_name"), source=source,
-                  overnight=doc.get("is_overnight") if doc.get("is_overnight") else None)
+                  overnight=doc.get("is_overnight") if doc.get("is_overnight") else None,
+                  break_minutes=doc.get("break_duration_minutes", doc.get("break_minutes")))
 
 
 async def resolve_day_shift(db, emp: Optional[dict], day, explicit_shift_id=None) -> Optional[dict]:
@@ -138,8 +159,18 @@ async def resolve_day_shift(db, emp: Optional[dict], day, explicit_shift_id=None
         for sc in scheds:
             for e in sc.get("shifts") or []:
                 if e.get("employee_id") == emp_id and str(e.get("date") or "")[:10] == day:
-                    sh = _shape(e.get("start_time"), e.get("end_time"), grace=e.get("grace_minutes"),
-                                code=e.get("shift_code"), name=e.get("shift_name"), source="jadwal")
+                    sh = _shape(e.get("start_time"), e.get("end_time"), grace=_grace_of(e),
+                                code=e.get("shift_code"), name=e.get("shift_name"), source="jadwal",
+                                break_minutes=e.get("break_duration_minutes", e.get("break_minutes")))
+                    # Jadwal menyimpan shift_id (Tahap C agen shift): toleransi & istirahat ikut master shift
+                    # bila entri jadwal tidak menyimpannya sendiri.
+                    if sh and e.get("shift_id") and (_grace_of(e) is None or not sh["break_minutes"]):
+                        master = _from_shift(await _shift_doc(db, e.get("shift_id")), "jadwal")
+                        if master:
+                            if _grace_of(e) is None:
+                                sh["grace_minutes"] = master["grace_minutes"]
+                            if not sh["break_minutes"]:
+                                sh["break_minutes"] = master["break_minutes"]
                     if sh:
                         return sh
         assign = await db.hr_shift_assignments.find_one({
@@ -213,6 +244,35 @@ def shift_end_utc(day, shift: Optional[dict], clock_in=None) -> Optional[datetim
         return end.astimezone(timezone.utc)
     cin = _aware(clock_in)
     return cin + timedelta(hours=FALLBACK_SHIFT_HOURS) if cin else None
+
+
+# ── Terlambat & pulang cepat satu catatan (2026-11-09, H5/Q3/M13) ───────────
+def counts_timing(rec: Optional[dict]) -> bool:
+    """Catatan yang punya jam kerja untuk dinilai terlambat/pulang cepat: hadir, atau cuti/izin/sakit SETENGAH hari."""
+    r = rec or {}
+    st = normalize_status(r.get("status"), "hadir")
+    return st == "hadir" or (st in LEAVE_STATUSES and bool(r.get("half_day")))
+
+
+async def early_leave_fields(db, emp: dict, rec: dict, clock_out=None) -> dict:
+    """{early_leave_minutes, shift_end, early_leave_reason} untuk absen pulang catatan `rec` (Q3: dicatat saja)."""
+    from utils.employee_identity import compute_early_leave_minutes
+    cout = clock_out if clock_out is not None else rec.get("clock_out")
+    return await compute_early_leave_minutes(db, emp, cout if counts_timing(rec) else None,
+                                             rec.get("date"), rec.get("shift_id"))
+
+
+async def timing_fields(db, emp: dict, rec: dict) -> dict:
+    """Menit terlambat + pulang cepat dihitung ULANG dari jam masuk/pulang & shift catatan (dipakai tombol
+    "Hitung ulang terlambat", persetujuan/pembatalan cuti, dan tugas luar)."""
+    from utils.employee_identity import compute_late_minutes
+    out = await compute_late_minutes(db, emp, _aware(rec.get("clock_in")) if counts_timing(rec) else None,
+                                     rec.get("shift_id"))
+    out.update(await early_leave_fields(db, emp, rec))
+    return out
+
+
+TIMING_KEYS = ("late_minutes", "is_late", "late_reason", "early_leave_minutes", "early_leave_reason")
 
 
 # ── Absen pulang (termasuk lewat tengah malam) ──────────────────────────────
@@ -303,8 +363,8 @@ async def ensure_not_locked(db, employee_id: str, day, who: str = "") -> None:
 
 # ── Jejak perubahan oleh HR ─────────────────────────────────────────────────
 AUDIT_FIELDS = ("status", "clock_in", "clock_out", "hours_worked", "overtime_hours", "overtime_paid",
-                "shift_id", "notes", "late_minutes", "leave_request_id", "half_day", "paid_leave",
-                "approval_status")
+                "shift_id", "notes", "late_minutes", "early_leave_minutes", "leave_request_id", "half_day",
+                "paid_leave", "approval_status", "tugas_luar")
 
 
 def _plain(v):

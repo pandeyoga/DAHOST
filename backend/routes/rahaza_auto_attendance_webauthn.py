@@ -369,7 +369,8 @@ async def webauthn_clock_in(request: Request):
     day_status = leave_status_for_clock_in(existing)   # Tahap 2: hari cuti tidak ditimpa 'hadir'
     _pol = await enforce_attendance_policy(
         db, photo_b64=None, lat=body.get("lat"), lng=body.get("lng"),
-        action="masuk", selfie_required=False, fix=gps_fix_from_body(body))
+        action="masuk", selfie_required=False, fix=gps_fix_from_body(body),
+        duty_day=bool((existing or {}).get("tugas_luar")))   # 2026-11-09 (Q11): tugas luar tanpa geofence
     _geo = _pol["geo"]
     late = await compute_late_minutes(db, _emp, now, (existing or {}).get("shift_id"))
     doc_fields = {
@@ -486,7 +487,8 @@ async def webauthn_clock_out(request: Request):
     from utils.attendance_policy import enforce_attendance_policy, gps_fix_from_body
     _pol = await enforce_attendance_policy(
         db, photo_b64=None, lat=body.get("lat"), lng=body.get("lng"),
-        action="pulang", selfie_required=False, fix=gps_fix_from_body(body))
+        action="pulang", selfie_required=False, fix=gps_fix_from_body(body),
+        duty_day=bool(existing.get("tugas_luar")))
     _geo = _pol["geo"]
     for s in (existing.get("sessions") or []):
         if is_session_out(s):
@@ -498,6 +500,8 @@ async def webauthn_clock_out(request: Request):
                 400, "Ada pengajuan izin yang masih menunggu persetujuan. "
                      "Batalkan pengajuan atau minta HR memprosesnya dulu.")
     totals = recompute_session_totals({**existing, "hours_worked": max(0.0, hours)})
+    from core.attendance_rules import early_leave_fields
+    totals.update(await early_leave_fields(db, _emp, existing, now))   # 2026-11-09 (Q3): pulang cepat dicatat
 
     await db.rahaza_attendance_events.update_one({"id": existing["id"]}, {"$set": {
         "clock_out": now, "hours_worked": max(0.0, hours), **totals,
