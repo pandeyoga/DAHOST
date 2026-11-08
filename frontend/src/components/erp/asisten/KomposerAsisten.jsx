@@ -88,7 +88,7 @@ const KomposerAsisten = forwardRef(function KomposerAsisten({
           </Button>
         )}
       </div>
-      {catatan && <p className="text-center text-[11px] leading-snug text-muted-foreground" data-testid={`${testId}-catatan`}>{catatan}</p>}
+      {catatan && <p className="text-center text-xs leading-snug text-muted-foreground" data-testid={`${testId}-catatan`}>{catatan}</p>}
     </div>
   );
 });

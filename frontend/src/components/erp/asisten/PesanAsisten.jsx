@@ -44,15 +44,15 @@ function LangkahAnalisis({ langkah, pikir, mengalir, statusTeks, adaIsi }) {
   const bisaDibuka = langkah.length > 0 || !!pikir;
   return (
     <div className="space-y-1.5" data-testid="asisten-langkah">
-      <button type="button" onClick={() => bisaDibuka && setBuka((b) => !b)} aria-expanded={buka}
+      <Button type="button" variant="ghost" size="sm" onClick={() => bisaDibuka && setBuka((b) => !b)} aria-expanded={buka}
         disabled={!bisaDibuka}
-        className="inline-flex max-w-full items-center gap-1.5 text-left text-xs text-muted-foreground hover:text-foreground disabled:cursor-default"
+        className="h-auto max-w-full justify-start gap-1.5 p-0 text-left font-normal text-muted-foreground hover:bg-transparent hover:text-foreground disabled:opacity-100"
         data-testid="asisten-langkah-toggle">
         {sibuk
           ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" aria-hidden="true" />
           : <Panah className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
         <span className={cn('truncate', sibuk && 'text-foreground/80')} data-testid="asisten-langkah-judul">{judul}</span>
-      </button>
+      </Button>
       {buka && (
         <div className="ml-1.5 space-y-2 border-l-2 border-[var(--glass-border)] pl-3" data-testid="asisten-langkah-isi">
           {langkah.length > 0 && (

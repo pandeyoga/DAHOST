@@ -17,7 +17,9 @@
  *   · keadaan kosong menjelaskan APA yang harus dilakukan, bukan hanya "no data".
  */
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { Store, Users, Video, Package, AlertCircle, Loader2 } from 'lucide-react';
+import { Store, Users, Video, Package, AlertCircle, Loader2, X } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -26,11 +28,12 @@ import { currentRole } from '../../portalAccess';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
+// Standar UI/UX v2 (8 Nov 2026): tanpa emoji hiasan — nama platform ditulis sebagai teks pendek.
 const PLATFORM_ICON = {
-  shopee: '🛍️', tiktok: '🎵', tiktokshop: '🎵', tokopedia: '🟢',
-  instagram: '📷', lazada: '🔵', blibli: '🔷', website: '🌐',
+  shopee: 'Shopee ·', tiktok: 'TikTok ·', tiktokshop: 'TikTok ·', tokopedia: 'Tokopedia ·',
+  instagram: 'Instagram ·', lazada: 'Lazada ·', blibli: 'Blibli ·', website: 'Situs ·',
 };
-export const platformIcon = (p) => PLATFORM_ICON[String(p || '').toLowerCase()] || '🛒';
+export const platformIcon = (p) => PLATFORM_ICON[String(p || '').toLowerCase()] || '';
 
 function authHeader(token) {
   return { Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` };
@@ -42,7 +45,7 @@ const SCOPED_ROLES = ['staff_marketing', 'pic_toko', 'host_live', 'cs_staff'];
 
 function EmptyHint({ children }) {
   return (
-    <div className="flex items-start gap-1.5 mt-1 text-[11px] text-amber-700 dark:text-amber-400">
+    <div className="flex items-start gap-1.5 mt-1 text-xs text-[hsl(var(--warning-text))]">
       <AlertCircle className="w-3.5 h-3.5 mt-px shrink-0" />
       <span>{children}</span>
     </div>
@@ -60,7 +63,7 @@ function FieldLabel({ icon: Icon, children, required }) {
     <label className="flex items-center gap-1.5 text-xs font-medium text-foreground/80 mb-1">
       {Icon && <Icon className="w-3.5 h-3.5" />}
       {children}
-      {required && <span className="text-red-500">*</span>}
+      {required && <span className="text-[hsl(var(--danger-text))]">*</span>}
     </label>
   );
 }
@@ -131,7 +134,7 @@ export function MarketingAccountSelect({
         )
       )}
       {selected && (
-        <p className="text-[11px] text-muted-foreground mt-1">
+        <p className="text-xs text-muted-foreground mt-1">
           Platform: <b>{selected.platform}</b>
           {selected.account_code ? <> · Kode: <b>{selected.account_code}</b></> : null}
         </p>
@@ -342,7 +345,7 @@ export function CatalogItemSelect({
           diketik ulang di setiap form.</EmptyHint>
       )}
       {selected && (
-        <p className="text-[11px] text-muted-foreground mt-1">
+        <p className="text-xs text-muted-foreground mt-1">
           HPP master: <b>Rp {Number(selected.hpp || 0).toLocaleString('id-ID')}</b>
           {' · '}Harga jual: <b>Rp {Number(selected.harga_jual || selected.price || 0).toLocaleString('id-ID')}</b>
           {selected.stock_quantity != null ? <> · Stok: <b>{selected.stock_quantity}</b></> : null}
@@ -388,7 +391,7 @@ export function MasterChipsSelect({
     return (
       <button type="button" key={r.id || name} onClick={() => toggle(name)}
         data-testid={`${testId}-${r.code || name}`} data-group={group}
-        className={`px-2 py-0.5 rounded text-[11px] border transition-colors ${on
+        className={`px-2 py-0.5 rounded text-xs border transition-colors ${on
           ? 'bg-primary text-primary-foreground border-primary'
           : 'border-foreground/15 text-foreground/70 hover:border-foreground/30'}`}>
         {r.hex && <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: r.hex }} />}
@@ -397,11 +400,11 @@ export function MasterChipsSelect({
     );
   };
   const heading = (text, tid) => (
-    <p className="w-full text-[10px] font-medium uppercase tracking-wide text-muted-foreground px-1" data-testid={tid}>{text}</p>
+    <p className="w-full text-xs font-medium text-muted-foreground px-1" data-testid={tid}>{text}</p>
   );
   return (
     <div className="flex flex-wrap gap-1.5 mt-1 max-h-40 overflow-auto p-1 rounded-md border border-input" data-testid={testId}>
-      {rows.length === 0 && <span className="text-[11px] text-muted-foreground px-1">{emptyText || 'Master kosong'}</span>}
+      {rows.length === 0 && <span className="text-xs text-muted-foreground px-1">{emptyText || 'Master kosong'}</span>}
       {first.length > 0 && heading(priorityLabel, `${testId}-priority-label`)}
       {first.map((r) => chip(r, 'priority'))}
       {first.length > 0 && rest.length > 0 && heading(otherLabel, `${testId}-other-label`)}
@@ -445,23 +448,23 @@ export function CatalogSkuMultiSelect({ token, value = [], onChange, testId = 'c
     <div className="relative mt-1" data-testid={testId}>
       <div className="flex flex-wrap gap-1 mb-1">
         {value.map((s) => (
-          <span key={s} className="px-2 py-0.5 rounded bg-muted text-[11px] font-mono flex items-center gap-1">
+          <span key={s} className="flex items-center gap-1 rounded border border-[var(--glass-border)] px-2 py-0.5 text-xs">
             {s}
-            <button type="button" onClick={() => onChange(value.filter((x) => x !== s))} data-testid={`${testId}-remove-${s}`}>×</button>
+            <Button type="button" variant="ghost" size="icon-sm" className="h-5 w-5" onClick={() => onChange(value.filter((x) => x !== s))}
+              title={`Hapus ${s}`} aria-label={`Hapus ${s}`} data-testid={`${testId}-remove-${s}`}><X /></Button>
           </span>
         ))}
       </div>
-      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari SKU / nama produk di katalog…"
-        data-testid={`${testId}-search`}
-        className="w-full h-9 border border-input bg-background rounded-md px-3 text-sm" />
+      <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari SKU / nama produk di katalog…"
+        data-testid={`${testId}-search`} className="h-9" />
       {hits.length > 0 && (
         <div className="absolute z-20 left-0 right-0 mt-1 max-h-48 overflow-auto rounded-md border border-input bg-popover shadow">
           {hits.map((i) => (
-            <button type="button" key={i.id} onClick={() => add(i.sku)}
-              className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted" data-testid={`${testId}-hit-${i.sku}`}>
-              <span className="font-mono mr-2">{i.sku}</span>{i.name}
-              <span className="text-muted-foreground ml-1">{i.account_name || ''}</span>
-            </button>
+            <Button type="button" variant="ghost" key={i.id} onClick={() => add(i.sku)}
+              className="h-auto w-full justify-start whitespace-normal px-3 py-1.5 text-left font-normal" data-testid={`${testId}-hit-${i.sku}`}>
+              <span className="mr-2">{i.sku}</span>{i.name}
+              <span className="ml-1 text-muted-foreground">{i.account_name || ''}</span>
+            </Button>
           ))}
         </div>
       )}

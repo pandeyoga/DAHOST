@@ -1,15 +1,14 @@
 /**
  * TabelAsisten — tabel dari peristiwa/blok `tabel` (Kontrak B: `{judul, kolom: [str], baris: [[str|number]], catatan?}`).
  *
- * Format PANDUAN_UI G7: judul kolom 11 px huruf besar abu berlatar, sel 13 px, angka rata kanan `tabular-nums`
- * dengan pemisah ribuan Indonesia. Tabel lebar digulir ke samping DI DALAM bingkainya (ui/table →
- * ResponsiveTableWrapper), jadi halaman tidak ikut melebar di HP. Unduh CSV memakai `lib/csv`.
+ * Format tabel standar (ui/table), angka rata kanan `tabular-nums` dengan pemisah ribuan Indonesia. Tabel lebar
+ * digulir ke samping DI DALAM bingkainya (ui/table → ResponsiveTableWrapper), jadi halaman tidak ikut melebar di HP.
+ * Unduh Excel + CSV lewat `TombolUnduh` (Standar UI/UX v2: semua tabel bisa diunduh) — seluruh baris, bukan 50 pertama.
  */
 import { useState } from 'react';
-import { Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { downloadCsv } from '@/lib/csv';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { formatNumber } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -44,13 +43,12 @@ export default function TabelAsisten({ judul, kolom, baris, catatan, polos = fal
   const tampil = semua ? rows : rows.slice(0, BATAS_AWAL);
 
   const isi = (
-    <Table className="text-[13px]" wrapperClassName="max-w-full">
+    <Table className="text-sm" wrapperClassName="max-w-full">
       <TableHeader>
         <TableRow className="hover:bg-transparent">
           {cols.map((c, ci) => (
             <TableHead key={ci}
-              className={cn('h-9 whitespace-nowrap bg-foreground/[0.03] px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground',
-                kolomAngka[ci] && 'text-right')}>
+              className={cn('h-9 whitespace-nowrap px-3', kolomAngka[ci] && 'text-right')}>
               {c}
             </TableHead>
           ))}
@@ -77,10 +75,8 @@ export default function TabelAsisten({ judul, kolom, baris, catatan, polos = fal
       aria-label={judul || 'Tabel'}>
       <div className="flex items-start justify-between gap-2">
         <p className="min-w-0 text-sm font-semibold text-foreground">{judul || 'Tabel'}</p>
-        <Button variant="outline" size="icon-sm" title="Unduh CSV" aria-label="Unduh CSV" data-testid={`${testId}-csv`}
-          onClick={() => downloadCsv(namaBerkas(judul), cols, rows.map((r) => cols.map((_, ci) => r[ci] ?? '')))}>
-          <Download className="h-4 w-4" />
-        </Button>
+        <TombolUnduh namaBerkas={namaBerkas(judul)} namaLembar={judul || 'Tabel'} baris={rows} testId={`${testId}-csv`}
+          kolom={cols.map((c, ci) => ({ label: c, nilai: (r) => r[ci] ?? '' }))} />
       </div>
       <div className="min-w-0 overflow-hidden" data-testid={`${testId}-gulir`}>{isi}</div>
       <div className="flex flex-wrap items-center justify-between gap-2">

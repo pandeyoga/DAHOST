@@ -3,7 +3,7 @@
  *
  * Hal yang diingat Asisten AI tentang cara pengguna bekerja (keputusan owner 13): preferensi ("target minimal tumbuh
  * 8%"), fakta usaha, dan gaya jawaban. Setiap pengguna hanya melihat ingatannya sendiri; tidak ada tampilan admin
- * untuk ingatan orang lain. Ingatan bisa ditambah manual, diubah (Dialog pendek), dinonaktifkan sementara (saklar
+ * untuk ingatan orang lain. Ingatan bisa ditambah manual, diubah (popup form pendek), dinonaktifkan sementara (saklar
  * "Dipakai": disimpan tetapi tidak dipakai AI), dan dihapus permanen (dialog konfirmasi). Asal ingatan dari
  * percakapan bisa dibuka ("Buka percakapan").
  *
@@ -12,17 +12,17 @@
  * Bentuk jawaban dibaca di `adapterTahapCD.js` (A1, A2, A8). PATCH hanya membawa yang berubah (backend menolak PATCH
  * tanpa perubahan); POST dengan isi yang sama mengembalikan ingatan lama (`sudah_ada`).
  *
- * PANDUAN_UI: PageLayout (pil kategori + cari di `filters`, muat ulang di `tools`, 1 tombol utama di `actions`,
- * kalimat ringkas di `summary`), tabel ui/table, Dialog hanya untuk isian pendek, hapus lewat confirmDialog.
+ * Standar UI/UX v2: PageLayout (pil kategori + cari di `filters`, unduh + muat ulang di `tools`, 1 tombol utama di
+ * `actions`, kalimat ringkas di `summary`), tabel ui/table, form = popup pendek bergaya FormPopup (kepala · isi · kaki
+ * Batal/Simpan hijau; testid lama dipertahankan untuk uji), hapus lewat confirmDialog.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Brain, Loader2, MessageSquare, Pencil, Plus, Power, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { Isian } from '@/components/ui/form-popup';
 import FilterChips from '@/components/ui/filter-chips';
 import { GlassCard } from '@/components/ui/glass';
 import { Input } from '@/components/ui/input';
@@ -31,6 +31,7 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { formatDateTimeID } from '@/lib/format';
 import { parseServerTime } from '@/lib/waktu';
 import { cn } from '@/lib/utils';
@@ -78,42 +79,49 @@ function DialogIngatan({ buka, awal, maksIsi, onTutup, onSimpan }) {
     }
   };
 
+  // Tata letak = FormPopup ukuran "pendek" (kepala · isi bergulir · kaki galat/Batal/Simpan hijau; HP penuh layar).
+  // Ditulis di sini karena uji lama memakai testid `ingatan-dialog` / `ingatan-simpan` / `ingatan-batal`.
+  const kirimForm = (e) => { e.preventDefault(); kirim(); };
   return (
     <Dialog open={buka} onOpenChange={(v) => { if (!v && !simpan) onTutup(); }}>
-      <DialogContent className="max-w-md" data-testid="ingatan-dialog">
-        <DialogHeader>
-          <DialogTitle>{ubah ? 'Ubah ingatan' : 'Tambah ingatan'}</DialogTitle>
-          <DialogDescription>
-            Satu hal yang perlu selalu diingat Asisten AI. Jangan tulis kata sandi, gaji, atau data pribadi orang lain.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3 py-1">
-          {galat && <Notice tone="danger" icon={AlertCircle} testId="ingatan-dialog-galat">{galat}</Notice>}
-          <div className="space-y-1">
-            <label htmlFor="ingatan-isi" className="block text-xs text-muted-foreground">Isi ingatan</label>
-            <Textarea id="ingatan-isi" rows={3} value={isi} maxLength={maksIsi + 20}
-              onChange={(e) => setIsi(e.target.value)} placeholder="Mis. target omzet minimal tumbuh 8% per bulan"
-              aria-invalid={panjang > maksIsi ? true : undefined} data-testid="ingatan-isi" />
-            <p className={cn('text-right text-xs tabular-nums', panjang > maksIsi ? 'text-destructive' : 'text-muted-foreground')}
-              data-testid="ingatan-panjang">
-              {panjang}/{maksIsi}
-            </p>
+      <DialogContent data-testid="ingatan-dialog"
+        className={cn('flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-lg',
+          'max-sm:left-0 max-sm:top-0 max-sm:h-[100dvh] max-sm:max-h-none max-sm:max-w-none',
+          'max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none')}>
+        <form onSubmit={kirimForm} className="flex min-h-0 flex-1 flex-col">
+          <div className="border-b border-[var(--glass-border)] px-5 py-4 pr-12">
+            <DialogTitle className="text-base font-semibold">{ubah ? 'Ubah ingatan' : 'Tambah ingatan'}</DialogTitle>
+            <DialogDescription className="mt-1 text-sm text-muted-foreground">
+              Satu hal yang perlu selalu diingat Asisten AI. Jangan tulis kata sandi, gaji, atau data pribadi orang lain.
+            </DialogDescription>
           </div>
-          <div className="space-y-1">
-            <label htmlFor="ingatan-kategori" className="block text-xs text-muted-foreground">Kategori</label>
-            <SmartNativeSelect id="ingatan-kategori" value={kategori} onChange={(e) => setKategori(e.target.value)}
-              searchable={false} className="h-9 w-full" aria-label="Kategori ingatan" data-testid="ingatan-kategori">
-              {KATEGORI_INGATAN.map((k) => <option key={k.kunci} value={k.kunci}>{k.label}</option>)}
-            </SmartNativeSelect>
-            {contoh && <p className="text-xs text-muted-foreground">{contoh}</p>}
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+            <Isian label="Isi ingatan" wajib htmlFor="ingatan-isi">
+              <Textarea id="ingatan-isi" rows={3} value={isi} maxLength={maksIsi + 20}
+                onChange={(e) => setIsi(e.target.value)} placeholder="Mis. target omzet minimal tumbuh 8% per bulan"
+                aria-invalid={panjang > maksIsi ? true : undefined} data-testid="ingatan-isi" />
+              <p className={cn('text-right text-xs tabular-nums', panjang > maksIsi ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground')}
+                data-testid="ingatan-panjang">
+                {panjang}/{maksIsi}
+              </p>
+            </Isian>
+            <Isian label="Kategori" htmlFor="ingatan-kategori" petunjuk={contoh}>
+              <SmartNativeSelect id="ingatan-kategori" value={kategori} onChange={(e) => setKategori(e.target.value)}
+                searchable={false} className="h-9 w-full sm:w-56" aria-label="Kategori ingatan" data-testid="ingatan-kategori">
+                {KATEGORI_INGATAN.map((k) => <option key={k.kunci} value={k.kunci}>{k.label}</option>)}
+              </SmartNativeSelect>
+            </Isian>
           </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onTutup} disabled={simpan} data-testid="ingatan-batal">Batal</Button>
-          <Button onClick={kirim} disabled={simpan} data-testid="ingatan-simpan">
-            {simpan && <Loader2 className="h-4 w-4 animate-spin" />} Simpan
-          </Button>
-        </DialogFooter>
+          <div className="flex flex-wrap items-center gap-2 border-t border-[var(--glass-border)] px-5 py-3">
+            <div className="min-w-0 flex-1 text-sm text-[hsl(var(--danger-text))]" role="alert">
+              {galat ? <span data-testid="ingatan-dialog-galat">{galat}</span> : null}
+            </div>
+            <Button type="button" variant="outline" onClick={onTutup} disabled={simpan} data-testid="ingatan-batal">Batal</Button>
+            <Button type="submit" variant="success" disabled={simpan} data-testid="ingatan-simpan">
+              {simpan && <Loader2 className="animate-spin" />} {simpan ? 'Menyimpan…' : 'Simpan'}
+            </Button>
+          </div>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -273,9 +281,19 @@ export default function IngatanAIModule({ onNavigate, deepLinkParams }) {
         </>
       ) : null}
       tools={(
-        <Button variant="outline" size="icon" onClick={() => muat()} title="Muat ulang" aria-label="Muat ulang" data-testid="ingatan-muat-ulang">
-          <RefreshCw className={memuat ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-        </Button>
+        <>
+          <TombolUnduh namaBerkas="ingatan-ai" namaLembar="Ingatan AI" baris={tampil} testId="ingatan-unduh"
+            kolom={[
+              { label: 'Isi', nilai: (r) => r.isi },
+              { label: 'Kategori', nilai: (r) => r.kategoriLabel },
+              { label: 'Sumber', nilai: (r) => (r.sumber?.jenis === 'percakapan' ? 'Dari percakapan' : 'Ditambah manual') },
+              { label: 'Dipakai Asisten AI', nilai: (r) => (r.aktif ? 'Ya' : 'Tidak') },
+              { label: 'Diperbarui', nilai: (r) => waktu(r.diperbarui) },
+            ]} />
+          <Button variant="outline" size="icon" onClick={() => muat()} title="Muat ulang" aria-label="Muat ulang" data-testid="ingatan-muat-ulang">
+            <RefreshCw className={memuat ? 'animate-spin' : ''} />
+          </Button>
+        </>
       )}
       summary={(
         <>

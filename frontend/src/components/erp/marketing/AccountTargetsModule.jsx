@@ -1,28 +1,27 @@
 /**
  * AccountTargetsModule — LAYAR SIKLUS + Target Bulanan per Akun & KOL/Creator.
  *
- * F5 (2026-08-13): tab pertama **Siklus** menyatukan target → anggaran → omzet →
- * marjin → ROI dalam satu layar (satu permintaan ke `/api/marketing/cycle/overview`).
- * Tab lama (Platform Akun / KOL / Budget) DIPERTAHANKAN karena keduanya menjawab
- * pertanyaan berbeda: Siklus untuk "bagaimana bulan ini berjalan", tab lama untuk
- * menyetel angka per baris.
+ * F5 (2026-08-13): tab pertama **Siklus** menyatukan target → anggaran → omzet → marjin → ROI dalam satu layar
+ * (satu permintaan ke `/api/marketing/cycle/overview`). Tab lama (Platform Akun / KOL / Anggaran) DIPERTAHANKAN.
+ * Modul yang SAMA dipakai dua portal (`marketing-targets` & `mgmt-marketing-cycle`) lewat prop `scope`.
  *
- * Modul yang SAMA dipakai dua portal (`marketing-targets` & `mgmt-marketing-cycle`)
- * lewat prop `scope` — bukan dua salinan komponen, supaya Marketing dan Manajemen
- * tidak bisa melihat angka yang berbeda.
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (navigasi bulan di `filters`, muat ulang di `tools`), tab standar,
+ * kartu angka StatTile (dulu kartu berlatar hijau/kuning/merah), tabel standar + unduh Excel/CSV, form target =
+ * FormPopup pendek (isian & simpan sama), warna lewat token, label berbahasa Indonesia.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { Target, RefreshCw, ChevronLeft, ChevronRight, Save, Loader2, Users, FileDown, Wallet, Activity } from 'lucide-react';
+import { Target, RefreshCw, ChevronLeft, ChevronRight, Loader2, FileDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
 import { thisMonthWIB } from '@/lib/waktu';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { GlassCard } from '@/components/ui/glass';
-import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, StatTile, StatusBadge } from '../moduleAtoms';
 import { AccountBadge } from './AccountBadge';
 import BudgetAllocationTab from './BudgetAllocationTab';
 import CycleView from './CycleView';
@@ -32,26 +31,27 @@ import { formatRupiah } from '@/lib/format';
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmtRp = formatRupiah;
 const fmtNum = (n) => new Intl.NumberFormat('id-ID').format(n || 0);
-const MONTH_NAMES = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Ags','Sep','Okt','Nov','Des'];
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
 
-// ─── Shared helper components ─────────────────────────────────────────────────
+// ─── Komponen bantu ────────────────────────────────────────────────────────────
+const WARNA_BATANG = {
+  on_track: 'bg-[hsl(var(--success))]', warning: 'bg-[hsl(var(--warning))]', behind: 'bg-[hsl(var(--destructive))]', no_target: 'bg-muted',
+};
 function ProgressBar({ pct, status }) {
-  const colors = { on_track:'bg-emerald-500', warning:'bg-amber-500', behind:'bg-red-500', no_target:'bg-muted' };
   return (
-    <div className="h-1.5 bg-muted rounded-full overflow-hidden mt-1">
-      <div className={`h-full transition-all ${colors[status] || 'bg-primary'}`}
-        style={{ width: `${Math.min(pct || 0, 100)}%` }} />
+    <div className="ml-auto mt-1 h-1.5 w-full max-w-[8rem] overflow-hidden rounded-full bg-[var(--glass-bg)]">
+      <div className={`h-full transition-all ${WARNA_BATANG[status] || 'bg-primary'}`} style={{ width: `${Math.min(pct || 0, 100)}%` }} />
     </div>
   );
 }
 
-function StatusBadge({ status, pct }) {
-  if (status === 'no_target') return <Badge variant="outline" className="text-[10px] text-muted-foreground">Belum set</Badge>;
-  const cfg = { on_track:'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-600 border-emerald-400 dark:border-emerald-500/30', warning:'bg-amber-100 dark:bg-amber-500/10 text-amber-600 border-amber-400 dark:border-amber-500/30', behind:'bg-red-100 dark:bg-red-500/10 text-red-600 border-red-400 dark:border-red-500/30' };
-  return <Badge variant="outline" className={`text-[10px] ${cfg[status] || ''}`}>{pct}%</Badge>;
+function CapaianBadge({ status, pct }) {
+  if (status === 'no_target' || pct === null || pct === undefined) return <StatusBadge status="no_target" label="Belum ada target" tone="muted" />;
+  const tone = { on_track: 'success', warning: 'warning', behind: 'danger' }[status] || 'default';
+  return <StatusBadge status={status} label={`${pct}%`} tone={tone} />;
 }
 
-// ─── Account Target Form Dialog ───────────────────────────────────────────────
+// ─── Form target akun (popup pendek) ───────────────────────────────────────────
 function TargetFormDialog({ open, onOpenChange, account, year, month, existingTarget, onSaved, token }) {
   const [form, setForm] = useState({ revenue_target:'', orders_target:'', health_score_target:80, notes:'', reason:'' });
   const [saving, setSaving] = useState(false);
@@ -89,42 +89,33 @@ function TargetFormDialog({ open, onOpenChange, account, year, month, existingTa
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><Target size={16} className="text-primary" /> Set Target — {account?.account_name}</DialogTitle>
-          <p className="text-xs text-muted-foreground">{MONTH_NAMES[month-1]} {year}</p>
-        </DialogHeader>
-        <div className="space-y-3 mt-2">
-          {account && <AccountBadge account={account} size="sm" />}
-          <div><Label className="text-xs">Target Revenue (Rp)</Label>
-            <MoneyInput value={form.revenue_target} onChange={e=>setForm(f=>({...f,revenue_target:e.target.value}))} placeholder="50.000.000" className="mt-1 h-9" data-testid="target-revenue-input" /></div>
-          <div><Label className="text-xs">Target Orders</Label>
-            <Input type="number" min={0} value={form.orders_target} onChange={e=>setForm(f=>({...f,orders_target:e.target.value}))} placeholder="500" className="mt-1 h-9" data-testid="target-orders-input" /></div>
-          <div><Label className="text-xs">Target Health Score (0–100)</Label>
-            <Input type="number" min={0} max={100} value={form.health_score_target} onChange={e=>setForm(f=>({...f,health_score_target:e.target.value}))} className="mt-1 h-9" data-testid="target-health-input" /></div>
-          <div><Label className="text-xs">Catatan (opsional)</Label>
-            <Input value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Strategi bulan ini..." className="mt-1 h-9" /></div>
-          <div><Label className="text-xs">Alasan perubahan (opsional, masuk jejak)</Label>
-            <Input value={form.reason} onChange={e=>setForm(f=>({...f,reason:e.target.value}))}
-              placeholder="mis. target dinaikkan setelah kampanye 8.8 disetujui"
-              className="mt-1 h-9" data-testid="target-reason-input" />
-            <p className="text-[10px] text-muted-foreground mt-1">
-              Tampil di layar <b>Jejak Perubahan</b> bersama nilai lama → baru.
-            </p></div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={()=>onOpenChange(false)}>Batal</Button>
-          <Button onClick={handleSave} disabled={saving} data-testid="target-save-btn">
-            {saving ? <Loader2 size={14} className="mr-1 animate-spin" /> : <Save size={14} className="mr-1" />} Simpan Target
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open={open} onClose={() => onOpenChange(false)} judul={`Target ${account?.account_name || ''}`}
+      keterangan={`${MONTH_NAMES[month-1]} ${year}`} onSimpan={handleSave} menyimpan={saving} labelSimpan="Simpan target"
+      testId="target-form">
+      {account && <AccountBadge account={account} size="sm" />}
+      <Isian label="Target omzet (Rp)">
+        <MoneyInput value={form.revenue_target} onChange={e=>setForm(f=>({...f,revenue_target:e.target.value}))} placeholder="50.000.000" data-testid="target-revenue-input" />
+      </Isian>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Isian label="Target pesanan">
+          <Input type="number" min={0} value={form.orders_target} onChange={e=>setForm(f=>({...f,orders_target:e.target.value}))} placeholder="500" data-testid="target-orders-input" />
+        </Isian>
+        <Isian label="Target skor kesehatan" petunjuk="0–100">
+          <Input type="number" min={0} max={100} value={form.health_score_target} onChange={e=>setForm(f=>({...f,health_score_target:e.target.value}))} data-testid="target-health-input" />
+        </Isian>
+      </div>
+      <Isian label="Catatan" petunjuk="Opsional.">
+        <Input value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Strategi bulan ini…" />
+      </Isian>
+      <Isian label="Alasan perubahan" petunjuk="Opsional. Tampil di Jejak Marketing bersama nilai lama → baru.">
+        <Input value={form.reason} onChange={e=>setForm(f=>({...f,reason:e.target.value}))}
+          placeholder="Mis. target dinaikkan setelah kampanye 8.8 disetujui" data-testid="target-reason-input" />
+      </Isian>
+    </FormPopup>
   );
 }
 
-// ─── Creator Target Form Dialog ───────────────────────────────────────────────
+// ─── Form target KOL / kreator (popup pendek) ──────────────────────────────────
 function CreatorTargetFormDialog({ open, onOpenChange, creator, year, month, existingTarget, onSaved, token }) {
   const [form, setForm] = useState({ revenue_target:'', sessions_target:'', viewers_target:'', notes:'' });
   const [saving, setSaving] = useState(false);
@@ -160,36 +151,27 @@ function CreatorTargetFormDialog({ open, onOpenChange, creator, year, month, exi
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="creator-target-dialog">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><Target size={16} className="text-primary" /> Target KOL — {creator?.name}</DialogTitle>
-          <p className="text-xs text-muted-foreground">{MONTH_NAMES[month-1]} {year}</p>
-        </DialogHeader>
-        <div className="space-y-3 mt-2">
-          <div><Label className="text-xs">Target Revenue (Rp)</Label>
-            <MoneyInput value={form.revenue_target} onChange={e=>setForm(f=>({...f,revenue_target:e.target.value}))} placeholder="50.000.000" className="mt-1 h-9" data-testid="creator-target-revenue" /></div>
-          <div><Label className="text-xs">Target Sessions (jumlah live)</Label>
-            <Input type="number" min={0} value={form.sessions_target} onChange={e=>setForm(f=>({...f,sessions_target:e.target.value}))} placeholder="12" className="mt-1 h-9" data-testid="creator-target-sessions" /></div>
-          <div><Label className="text-xs">Target Viewers (total)</Label>
-            <Input type="number" min={0} value={form.viewers_target} onChange={e=>setForm(f=>({...f,viewers_target:e.target.value}))} placeholder="80000" className="mt-1 h-9" data-testid="creator-target-viewers" /></div>
-          <div><Label className="text-xs">Catatan (opsional)</Label>
-            <Input value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Strategi bulan ini..." className="mt-1 h-9" /></div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={()=>onOpenChange(false)}>Batal</Button>
-          <Button onClick={handleSave} disabled={saving} data-testid="creator-target-save-btn">
-            {saving ? <Loader2 size={14} className="mr-1 animate-spin" /> : <Save size={14} className="mr-1" />} Simpan Target
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open={open} onClose={() => onOpenChange(false)} judul={`Target KOL ${creator?.name || ''}`}
+      keterangan={`${MONTH_NAMES[month-1]} ${year}`} onSimpan={handleSave} menyimpan={saving} labelSimpan="Simpan target"
+      testId="creator-target-dialog">
+      <Isian label="Target omzet (Rp)">
+        <MoneyInput value={form.revenue_target} onChange={e=>setForm(f=>({...f,revenue_target:e.target.value}))} placeholder="50.000.000" data-testid="creator-target-revenue" />
+      </Isian>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Isian label="Target sesi live" petunjuk="Jumlah live">
+          <Input type="number" min={0} value={form.sessions_target} onChange={e=>setForm(f=>({...f,sessions_target:e.target.value}))} placeholder="12" data-testid="creator-target-sessions" />
+        </Isian>
+        <Isian label="Target penonton" petunjuk="Total">
+          <Input type="number" min={0} value={form.viewers_target} onChange={e=>setForm(f=>({...f,viewers_target:e.target.value}))} placeholder="80000" data-testid="creator-target-viewers" />
+        </Isian>
+      </div>
+      <Isian label="Catatan" petunjuk="Opsional.">
+        <Input value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Strategi bulan ini…" />
+      </Isian>
+    </FormPopup>
   );
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// MAIN MODULE
-// ══════════════════════════════════════════════════════════════════════════════
 export default function AccountTargetsModule({ token, scope = 'marketing', moduleId }) {
   // Bulan berjalan menurut kalender WIB, bukan zona perangkat.
   const [year, setYear]   = useState(() => Number(thisMonthWIB().slice(0, 4)));
@@ -279,237 +261,218 @@ export default function AccountTargetsModule({ token, scope = 'marketing', modul
       a.download = `target-creator-${MONTH_NAMES[month-1].toLowerCase()}-${year}.pdf`;
       a.click();
       URL.revokeObjectURL(url);
-      toast.success('PDF target creator berhasil didownload');
+      toast.success('PDF target kreator diunduh');
     } catch (e) { toast.error(e.message); }
     finally { setExportingCreator(false); }
   };
 
   const s  = summary?.summary || {};
   const cs = creatorSummary?.summary || {};
+  const periodeLabel = `${MONTH_NAMES[month - 1]} ${year}`;
+  const nadaPct = (p) => (p == null ? 'default' : p >= 90 ? 'success' : p >= 70 ? 'warning' : 'danger');
 
   return (
-    <div className="space-y-5 p-4 lg:p-6" data-testid="account-targets-module">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Target size={22} className="text-primary" />
-            {scope === 'management' ? 'Siklus Marketing — Semua Toko' : 'Siklus Target, Anggaran & Omzet'}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Satu layar: target → rencana anggaran → omzet nyata → realisasi → marjin → ROI,
-            per toko &amp; gabungan{scope === 'management' ? ' (tampilan Manajemen)' : ''}
-          </p>
+    <PageLayout
+      testId="account-targets-module"
+      title={scope === 'management' ? 'Siklus Marketing' : 'Siklus target, anggaran & omzet'}
+      subtitle="Target, anggaran, omzet, marjin, dan ROI per toko dalam satu layar."
+      filters={(
+        <div className="flex items-center gap-1">
+          <Button variant="outline" size="icon" onClick={prevMonth} data-testid="cycle-prev-month" title="Bulan sebelumnya" aria-label="Bulan sebelumnya"><ChevronLeft /></Button>
+          <span className="min-w-[96px] text-center text-sm font-semibold" data-testid="cycle-period-label">{periodeLabel}</span>
+          <Button variant="outline" size="icon" onClick={nextMonth} data-testid="cycle-next-month" title="Bulan berikutnya" aria-label="Bulan berikutnya"><ChevronRight /></Button>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={prevMonth} data-testid="cycle-prev-month"
-            aria-label="Bulan sebelumnya"><ChevronLeft size={14} /></Button>
-          <span className="font-semibold text-sm min-w-[120px] text-center" data-testid="cycle-period-label">{MONTH_NAMES[month-1]} {year}</span>
-          <Button variant="outline" size="sm" onClick={nextMonth} data-testid="cycle-next-month"
-            aria-label="Bulan berikutnya"><ChevronRight size={14} /></Button>
-          <Button variant="outline" size="sm" onClick={() => { load(); loadCreators(); }}
-            data-testid="cycle-reload-all" aria-label="Muat ulang">
-            <RefreshCw size={14} />
-          </Button>
-        </div>
-      </div>
-
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
-          <TabsTrigger value="cycle" data-testid="tab-cycle">
-            <Activity size={13} className="mr-1.5" /> Siklus Bulan Ini
-          </TabsTrigger>
-          <TabsTrigger value="accounts" data-testid="tab-accounts">
-            <Target size={13} className="mr-1.5" /> Platform Akun
-          </TabsTrigger>
-          <TabsTrigger value="creators" data-testid="tab-creators">
-            <Users size={13} className="mr-1.5" /> KOL / Creator
-          </TabsTrigger>
-          <TabsTrigger value="budget" data-testid="tab-budget">
-            <Wallet size={13} className="mr-1.5" /> Budget &amp; Alokasi
-          </TabsTrigger>
+      )}
+      tools={(
+        <Button variant="outline" size="icon" onClick={() => { load(); loadCreators(); }} data-testid="cycle-reload-all" title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw />
+        </Button>
+      )}
+    >
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+        <TabsList className="h-auto w-auto flex-wrap justify-start">
+          <TabsTrigger value="cycle" data-testid="tab-cycle">Siklus</TabsTrigger>
+          <TabsTrigger value="accounts" data-testid="tab-accounts">Target akun</TabsTrigger>
+          <TabsTrigger value="creators" data-testid="tab-creators">Target KOL</TabsTrigger>
+          <TabsTrigger value="budget" data-testid="tab-budget">Anggaran</TabsTrigger>
         </TabsList>
 
         {/* ── TAB SIKLUS (F5) ── */}
-        <TabsContent value="cycle" className="mt-4">
-          <CycleView
-            token={token}
-            scope={scope}
-            moduleId={moduleId}
-            period={`${year}-${String(month).padStart(2, '0')}`}
-            monthLabel={`${MONTH_NAMES[month - 1]} ${year}`}
-          />
+        <TabsContent value="cycle" className="mt-0">
+          <CycleView token={token} scope={scope} moduleId={moduleId}
+            period={`${year}-${String(month).padStart(2, '0')}`} monthLabel={periodeLabel} />
         </TabsContent>
 
         {/* ── TAB AKUN ── */}
-        <TabsContent value="accounts" className="mt-4 space-y-4">
+        <TabsContent value="accounts" className="mt-0 space-y-4">
           {s.total_accounts > 0 && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <GlassCard className="p-4"><p className="text-xs text-muted-foreground">Total Akun</p><p className="text-2xl font-bold">{s.total_accounts}</p></GlassCard>
-              <GlassCard className="p-4">
-                <p className="text-xs text-muted-foreground">Revenue Actual</p>
-                <p className="text-base font-bold">{fmtRp(s.rev_actual)}</p>
-                {s.rev_target > 0 && <p className="text-xs text-muted-foreground">/ {fmtRp(s.rev_target)}</p>}
-              </GlassCard>
-              <GlassCard className="p-4">
-                <p className="text-xs text-muted-foreground">Orders Actual</p>
-                <p className="text-2xl font-bold">{fmtNum(s.ord_actual)}</p>
-                {s.ord_target > 0 && <p className="text-xs text-muted-foreground">/ {fmtNum(s.ord_target)}</p>}
-              </GlassCard>
-              <GlassCard className={`p-4 ${s.rev_pct >= 90 ? 'border-emerald-400 dark:border-emerald-500/30 bg-emerald-100 dark:bg-emerald-500/5' : s.rev_pct >= 70 ? 'border-amber-400 dark:border-amber-500/30 bg-amber-100 dark:bg-amber-500/5' : 'border-red-400 dark:border-red-500/30 bg-red-100 dark:bg-red-500/5'}`}>
-                <p className="text-xs text-muted-foreground">Pencapaian Revenue</p>
-                <p className={`text-2xl font-bold ${s.rev_pct >= 90 ? 'text-emerald-600' : s.rev_pct >= 70 ? 'text-amber-600' : 'text-red-600'}`}>{s.rev_pct != null ? `${s.rev_pct}%` : '—'}</p>
-              </GlassCard>
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-konten-utama="">
+              <StatTile label="Total akun" value={fmtNum(s.total_accounts)} sub="Akun platform aktif" />
+              <StatTile label="Omzet aktual" value={fmtRp(s.rev_actual)} sub={s.rev_target > 0 ? `dari target ${fmtRp(s.rev_target)}` : 'Target belum diisi'} />
+              <StatTile label="Pesanan aktual" value={fmtNum(s.ord_actual)} sub={s.ord_target > 0 ? `dari target ${fmtNum(s.ord_target)}` : 'Target belum diisi'} />
+              <StatTile label="Pencapaian omzet" value={s.rev_pct != null ? `${s.rev_pct}%` : '—'} accent={nadaPct(s.rev_pct)}
+                sub={s.rev_pct == null ? 'Belum ada target omzet' : `${periodeLabel}`} />
             </div>
           )}
-          <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-sm">Target vs Aktual per Akun</CardTitle></CardHeader>
-            <CardContent className="p-0">
-              {loading ? <div className="py-10 text-center text-muted-foreground text-sm"><Loader2 className="mx-auto animate-spin" size={20} /></div>
-              : !summary?.accounts?.length ? <div className="py-10 text-center text-muted-foreground text-sm">Belum ada akun aktif</div>
-              : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm" data-testid="targets-table">
-                    <thead><tr className="border-b bg-muted/30 text-xs text-muted-foreground">
-                      <th className="px-4 py-2.5 text-left">Akun</th>
-                      <th className="px-4 py-2.5 text-right">Revenue</th>
-                      <th className="px-4 py-2.5 text-right">Orders</th>
-                      <th className="px-4 py-2.5 text-right">Health</th>
-                      <th className="px-4 py-2.5 text-right">Task</th>
-                      <th className="px-4 py-2.5 text-center">Aksi</th>
-                    </tr></thead>
-                    <tbody className="divide-y">
-                      {summary.accounts.map(row => (
-                        <tr key={row.account_id} className="hover:bg-muted/20" data-testid={`target-row-${row.account_code}`}>
-                          <td className="px-4 py-3"><AccountBadge account={row} size="xs" /></td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="font-semibold text-xs">{fmtRp(row.actual.revenue)}</div>
-                            {row.target.revenue != null && <><div className="text-[10px] text-muted-foreground">/ {fmtRp(row.target.revenue)}</div><ProgressBar pct={row.achievement.revenue_pct} status={row.achievement.revenue_status} /></>}
-                            <StatusBadge status={row.achievement.revenue_status} pct={row.achievement.revenue_pct} />
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="font-semibold text-xs">{fmtNum(row.actual.orders)}</div>
-                            {row.target.orders != null && <><div className="text-[10px] text-muted-foreground">/ {fmtNum(row.target.orders)}</div><ProgressBar pct={row.achievement.orders_pct} status={row.achievement.orders_status} /></>}
-                            <StatusBadge status={row.achievement.orders_status} pct={row.achievement.orders_pct} />
-                          </td>
-                          <td className="px-4 py-3 text-right text-xs">
-                            <span className={`font-bold ${row.health_score >= 80 ? 'text-emerald-600' : row.health_score >= 60 ? 'text-amber-600' : 'text-red-600'}`}>{row.health_score ?? 'N/A'}</span>
-                          </td>
-                          <td className="px-4 py-3 text-right text-xs">
-                            <span className="font-semibold">{row.task_stats.done}</span>
-                            <span className="text-muted-foreground"> / {row.task_stats.total}</span>
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openEdit(row)} data-testid={`set-target-${row.account_code}`}>
-                              <Target size={11} className="mr-1" />{row.target.revenue != null ? 'Edit' : 'Set'}
-                            </Button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <GlassCard className="space-y-3 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="text-base font-semibold text-foreground">Target vs aktual per akun</p>
+              <TombolUnduh namaBerkas={`target-akun-${year}-${month}`} namaLembar="Target per akun" baris={summary?.accounts || []} testId="targets-unduh"
+                kolom={[
+                  { label: 'Akun', nilai: (r) => r.account_name || r.account_code },
+                  { label: 'Kode', nilai: (r) => r.account_code },
+                  { label: 'Omzet aktual (Rp)', nilai: (r) => r.actual?.revenue ?? 0 },
+                  { label: 'Target omzet (Rp)', nilai: (r) => r.target?.revenue ?? '' },
+                  { label: 'Pencapaian omzet (%)', nilai: (r) => r.achievement?.revenue_pct ?? '' },
+                  { label: 'Pesanan aktual', nilai: (r) => r.actual?.orders ?? 0 },
+                  { label: 'Target pesanan', nilai: (r) => r.target?.orders ?? '' },
+                  { label: 'Skor kesehatan', nilai: (r) => r.health_score ?? '' },
+                  { label: 'Tugas selesai', nilai: (r) => r.task_stats?.done ?? 0 },
+                  { label: 'Total tugas', nilai: (r) => r.task_stats?.total ?? 0 },
+                ]} />
+            </div>
+            {loading ? <p className="py-8 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Memuat…</p>
+            : !summary?.accounts?.length ? <EmptyState className="py-8" title="Belum ada akun aktif" />
+            : (
+              <div className="overflow-x-auto">
+                <Table data-testid="targets-table">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Akun</TableHead>
+                      <TableHead className="text-right">Omzet</TableHead>
+                      <TableHead className="text-right">Pesanan</TableHead>
+                      <TableHead className="hidden text-right md:table-cell">Kesehatan</TableHead>
+                      <TableHead className="hidden text-right md:table-cell">Tugas</TableHead>
+                      <TableHead className="text-right"><span className="sr-only">Aksi</span></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {summary.accounts.map((row) => (
+                      <TableRow key={row.account_id} data-testid={`target-row-${row.account_code}`}>
+                        <TableCell><AccountBadge account={row} size="xs" /></TableCell>
+                        <TableCell className="text-right">
+                          <div className="font-medium tabular-nums">{fmtRp(row.actual.revenue)}</div>
+                          {row.target.revenue != null && <><div className="text-xs text-muted-foreground tabular-nums">dari {fmtRp(row.target.revenue)}</div><ProgressBar pct={row.achievement.revenue_pct} status={row.achievement.revenue_status} /></>}
+                          <CapaianBadge status={row.achievement.revenue_status} pct={row.achievement.revenue_pct} />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="font-medium tabular-nums">{fmtNum(row.actual.orders)}</div>
+                          {row.target.orders != null && <><div className="text-xs text-muted-foreground tabular-nums">dari {fmtNum(row.target.orders)}</div><ProgressBar pct={row.achievement.orders_pct} status={row.achievement.orders_status} /></>}
+                          <CapaianBadge status={row.achievement.orders_status} pct={row.achievement.orders_pct} />
+                        </TableCell>
+                        <TableCell className="hidden text-right tabular-nums md:table-cell">
+                          <span className={row.health_score == null ? 'text-muted-foreground' : row.health_score >= 80 ? 'text-[hsl(var(--success-text))]' : row.health_score >= 60 ? 'text-[hsl(var(--warning-text))]' : 'text-[hsl(var(--danger-text))]'}>
+                            {row.health_score ?? '—'}
+                          </span>
+                        </TableCell>
+                        <TableCell className="hidden text-right tabular-nums md:table-cell">
+                          {row.task_stats.done}<span className="text-muted-foreground"> / {row.task_stats.total}</span>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button size="sm" variant="outline" onClick={() => openEdit(row)} data-testid={`set-target-${row.account_code}`}>
+                            <Target />{row.target.revenue != null ? 'Ubah' : 'Isi target'}
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </GlassCard>
         </TabsContent>
 
-        {/* ── TAB KOL / CREATOR ── */}
-        <TabsContent value="creators" className="mt-4 space-y-4">
+        {/* ── TAB KOL / KREATOR ── */}
+        <TabsContent value="creators" className="mt-0 space-y-4">
           {cs.total_creators > 0 && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <GlassCard className="p-4"><p className="text-xs text-muted-foreground">Total Creator</p><p className="text-2xl font-bold">{cs.total_creators}</p></GlassCard>
-              <GlassCard className="p-4">
-                <p className="text-xs text-muted-foreground">Revenue Actual</p>
-                <p className="text-base font-bold">{fmtRp(cs.rev_actual)}</p>
-                {cs.rev_target > 0 && <p className="text-xs text-muted-foreground">/ {fmtRp(cs.rev_target)}</p>}
-              </GlassCard>
-              <GlassCard className={`p-4 ${cs.rev_pct >= 90 ? 'border-emerald-400 dark:border-emerald-500/30 bg-emerald-100 dark:bg-emerald-500/5' : cs.rev_pct >= 70 ? 'border-amber-400 dark:border-amber-500/30 bg-amber-100 dark:bg-amber-500/5' : 'border-red-400 dark:border-red-500/30 bg-red-100 dark:bg-red-500/5'}`}>
-                <p className="text-xs text-muted-foreground">Pencapaian Revenue</p>
-                <p className={`text-2xl font-bold ${cs.rev_pct >= 90 ? 'text-emerald-600' : cs.rev_pct >= 70 ? 'text-amber-600' : 'text-red-600'}`}>{cs.rev_pct != null ? `${cs.rev_pct}%` : '—'}</p>
-              </GlassCard>
-              <GlassCard className="p-4">
-                <p className="text-xs text-muted-foreground">Total Sessions</p>
-                <p className="text-2xl font-bold">{creatorSummary?.creators?.reduce((s,c) => s+(c.actual?.sessions||0), 0) || 0}</p>
-              </GlassCard>
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-konten-utama="">
+              <StatTile label="Total kreator" value={fmtNum(cs.total_creators)} />
+              <StatTile label="Omzet aktual" value={fmtRp(cs.rev_actual)} sub={cs.rev_target > 0 ? `dari target ${fmtRp(cs.rev_target)}` : 'Target belum diisi'} />
+              <StatTile label="Pencapaian omzet" value={cs.rev_pct != null ? `${cs.rev_pct}%` : '—'} accent={nadaPct(cs.rev_pct)}
+                sub={cs.rev_pct == null ? 'Belum ada target omzet' : periodeLabel} />
+              <StatTile label="Total sesi live" value={fmtNum(creatorSummary?.creators?.reduce((t, c) => t + (c.actual?.sessions || 0), 0) || 0)}
+                sub="Jumlah dari semua kreator di daftar" />
             </div>
           )}
-          <Card>
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm flex items-center gap-1.5">
-                  <Users size={13} className="text-violet-500" /> Target vs Aktual per KOL/Creator
-                </CardTitle>
-                <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5"
-                  onClick={handleExportCreatorPDF}
-                  disabled={exportingCreator || loadingCreator}
+          <GlassCard className="space-y-3 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="text-base font-semibold text-foreground">Target vs aktual per KOL / kreator</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <TombolUnduh namaBerkas={`target-kreator-${year}-${month}`} namaLembar="Target per kreator" baris={creatorSummary?.creators || []}
+                  testId="creator-targets-unduh"
+                  kolom={[
+                    { label: 'Kreator', nilai: (r) => r.creator_name },
+                    { label: 'Kode', nilai: (r) => r.creator_code },
+                    { label: 'Omzet aktual (Rp)', nilai: (r) => r.actual?.revenue ?? 0 },
+                    { label: 'Target omzet (Rp)', nilai: (r) => r.target?.revenue ?? '' },
+                    { label: 'Pencapaian omzet (%)', nilai: (r) => r.achievement?.revenue_pct ?? '' },
+                    { label: 'Sesi live', nilai: (r) => r.actual?.sessions ?? 0 },
+                    { label: 'Target sesi', nilai: (r) => r.target?.sessions ?? '' },
+                    { label: 'Penonton', nilai: (r) => r.actual?.viewers ?? 0 },
+                    { label: 'Target penonton', nilai: (r) => r.target?.viewers ?? '' },
+                  ]} />
+                <Button variant="outline" onClick={handleExportCreatorPDF} disabled={exportingCreator || loadingCreator}
                   data-testid="export-creator-pdf-btn">
-                  {exportingCreator ? <Loader2 size={12} className="animate-spin" /> : <FileDown size={12} />}
-                  Export PDF
+                  {exportingCreator ? <Loader2 className="animate-spin" /> : <FileDown />}PDF
                 </Button>
               </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              {loadingCreator ? <div className="py-10 text-center text-muted-foreground text-sm"><Loader2 className="mx-auto animate-spin" size={20} /></div>
-              : !creatorSummary?.creators?.length ? <div className="py-10 text-center text-muted-foreground text-sm">Belum ada creator aktif</div>
-              : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm" data-testid="creator-targets-table">
-                    <thead><tr className="border-b bg-muted/30 text-xs text-muted-foreground">
-                      <th className="px-4 py-2.5 text-left">Creator</th>
-                      <th className="px-4 py-2.5 text-right">Revenue</th>
-                      <th className="px-4 py-2.5 text-right">Sessions</th>
-                      <th className="px-4 py-2.5 text-right">Viewers</th>
-                      <th className="px-4 py-2.5 text-center">Aksi</th>
-                    </tr></thead>
-                    <tbody className="divide-y">
-                      {creatorSummary.creators.map(row => (
-                        <tr key={row.creator_id} className="hover:bg-muted/20" data-testid={`creator-target-row-${row.creator_code}`}>
-                          <td className="px-4 py-3">
-                            <div className="text-sm font-medium">{row.creator_name}</div>
-                            <div className="text-xs text-muted-foreground font-mono">{row.creator_code}</div>
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="font-semibold text-xs">{fmtRp(row.actual.revenue)}</div>
-                            {row.target.revenue != null && <><div className="text-[10px] text-muted-foreground">/ {fmtRp(row.target.revenue)}</div><ProgressBar pct={row.achievement.revenue_pct} status={row.achievement.revenue_status} /></>}
-                            <StatusBadge status={row.achievement.revenue_status} pct={row.achievement.revenue_pct} />
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="font-semibold text-xs">{row.actual.sessions}</div>
-                            {row.target.sessions != null && <div className="text-[10px] text-muted-foreground">/ {row.target.sessions}</div>}
-                            {row.achievement.sessions_pct != null && <span className="text-[10px] text-muted-foreground">{row.achievement.sessions_pct}%</span>}
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="font-semibold text-xs">{fmtNum(row.actual.viewers)}</div>
-                            {row.target.viewers != null && <div className="text-[10px] text-muted-foreground">/ {fmtNum(row.target.viewers)}</div>}
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openEditCreator(row)} data-testid={`set-creator-target-${row.creator_code}`}>
-                              <Target size={11} className="mr-1" />{row.target.revenue != null ? 'Edit' : 'Set'}
-                            </Button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+            </div>
+            {loadingCreator ? <p className="py-8 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Memuat…</p>
+            : !creatorSummary?.creators?.length ? <EmptyState className="py-8" title="Belum ada kreator aktif" />
+            : (
+              <div className="overflow-x-auto">
+                <Table data-testid="creator-targets-table">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Kreator</TableHead>
+                      <TableHead className="text-right">Omzet</TableHead>
+                      <TableHead className="text-right">Sesi live</TableHead>
+                      <TableHead className="hidden text-right md:table-cell">Penonton</TableHead>
+                      <TableHead className="text-right"><span className="sr-only">Aksi</span></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {creatorSummary.creators.map((row) => (
+                      <TableRow key={row.creator_id} data-testid={`creator-target-row-${row.creator_code}`}>
+                        <TableCell>
+                          <div className="font-medium">{row.creator_name}</div>
+                          <div className="text-xs text-muted-foreground">{row.creator_code}</div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="font-medium tabular-nums">{fmtRp(row.actual.revenue)}</div>
+                          {row.target.revenue != null && <><div className="text-xs text-muted-foreground tabular-nums">dari {fmtRp(row.target.revenue)}</div><ProgressBar pct={row.achievement.revenue_pct} status={row.achievement.revenue_status} /></>}
+                          <CapaianBadge status={row.achievement.revenue_status} pct={row.achievement.revenue_pct} />
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          <div className="font-medium">{row.actual.sessions}</div>
+                          {row.target.sessions != null && <div className="text-xs text-muted-foreground">dari {row.target.sessions}</div>}
+                          {row.achievement.sessions_pct != null && <span className="text-xs text-muted-foreground">{row.achievement.sessions_pct}%</span>}
+                        </TableCell>
+                        <TableCell className="hidden text-right tabular-nums md:table-cell">
+                          <div className="font-medium">{fmtNum(row.actual.viewers)}</div>
+                          {row.target.viewers != null && <div className="text-xs text-muted-foreground">dari {fmtNum(row.target.viewers)}</div>}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button size="sm" variant="outline" onClick={() => openEditCreator(row)} data-testid={`set-creator-target-${row.creator_code}`}>
+                            <Target />{row.target.revenue != null ? 'Ubah' : 'Isi target'}
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </GlassCard>
         </TabsContent>
 
-        {/* ── TAB BUDGET & ALOKASI ── */}
-        <TabsContent value="budget" className="mt-4">
-          <BudgetAllocationTab
-            token={token}
-            accounts={accounts}
-            period={`${year}-${String(month).padStart(2, '0')}`}
-            monthLabel={`${MONTH_NAMES[month - 1]} ${year}`}
-          />
+        {/* ── TAB ANGGARAN & ALOKASI ── */}
+        <TabsContent value="budget" className="mt-0">
+          <BudgetAllocationTab token={token} accounts={accounts}
+            period={`${year}-${String(month).padStart(2, '0')}`} monthLabel={periodeLabel} />
         </TabsContent>
       </Tabs>
 
-      {/* Dialogs */}
       {editAccount && (
         <TargetFormDialog open={dialogOpen} onOpenChange={setDialogOpen}
           account={editAccount} year={year} month={month}
@@ -520,6 +483,6 @@ export default function AccountTargetsModule({ token, scope = 'marketing', modul
           creator={editCreator} year={year} month={month}
           existingTarget={editCreatorTarget} onSaved={loadCreators} token={token} />
       )}
-    </div>
+    </PageLayout>
   );
 }
