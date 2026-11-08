@@ -52,7 +52,10 @@ const KATA = {
   rahaza: '', txn: 'transaksi', backfill: 'isi ulang', subledger: 'buku pembantu', vendor_portal: 'portal vendor', inbox: 'kotak masuk', hr: 'SDM', livehost: 'live host', script: 'naskah', training: 'pelatihan',
   marketing: 'marketing', sales: 'penjualan', leave: 'cuti', accruals: 'akrual', periods: 'periode', cutting: 'potong',
 };
-const ALIAS_AKSI = { 'ganti sandi': 'Ganti sandi', login: 'Masuk', employee_advance: 'Kasbon karyawan', petty_cash_advance_settle: 'Penyelesaian kas kecil' };
+const ALIAS_AKSI = {
+  'ganti sandi': 'Ganti sandi', login: 'Masuk', employee_advance: 'Kasbon karyawan', petty_cash_advance_settle: 'Penyelesaian kas kecil',
+  create_vendor_account: 'Buat akun vendor', create_vendor_partner: 'Buat mitra vendor',
+};
 
 const kalimat = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 function terjemah(kode) {
@@ -147,7 +150,9 @@ export default function ActivityLogModule({ token }) {
   const [filterAction, setFilterAction] = useState('');
   const [searchText, setSearchText] = useState('');
   const [periode, setPeriode] = useState(() => periodFromPreset('all'));
-  const [detail, setDetail] = useState(null);
+  const [detail, setDetailMentah] = useState(null);
+  const [lihatAsli, setLihatAsli] = useState(false);
+  const setDetail = (d) => { setLihatAsli(false); setDetailMentah(d); };
 
   // Modul & pengguna disaring di server (parameter API yang sudah ada); sisanya di layar.
   const fetchLogs = async () => {
@@ -214,7 +219,15 @@ export default function ActivityLogModule({ token }) {
   const kolom = [
     { kunci: 'waktu', label: 'Waktu', hp: 'keterangan', isi: (l) => <span className="whitespace-nowrap text-sm tabular-nums">{waktu(l.timestamp)}</span> },
     { kunci: 'pengguna', label: 'Pengguna', hp: 'judul', isi: (l) => <span className="font-medium">{l.user_name || '—'}</span> },
-    { kunci: 'aksi', label: 'Aksi', isi: (l) => <StatusBadge status={golonganAksi(l.action)} label={labelAksi(l.action)} tone={NADA[golonganAksi(l.action)]} className="max-w-full whitespace-normal break-words md:max-w-[14rem] md:truncate md:whitespace-nowrap" /> },
+    { kunci: 'aksi', label: 'Aksi', isi: (l) => {
+      const [dasar, ...tambahan] = labelAksi(l.action).split(' · ');
+      return (
+        <div className="min-w-0 space-y-0.5 md:max-w-[14rem]">
+          <StatusBadge status={golonganAksi(l.action)} label={dasar} tone={NADA[golonganAksi(l.action)]} className="max-w-full whitespace-normal break-words" />
+          {tambahan.length > 0 && <p className="break-all text-xs text-muted-foreground">{tambahan.join(' · ')}</p>}
+        </div>
+      );
+    } },
     { kunci: 'modul', label: 'Modul', isi: (l) => <span className="text-sm">{labelModul(l.module)}</span> },
     { kunci: 'rincian', label: 'Rincian', isi: (l) => { const r = rapikanRincian(l.details); return <p className="break-words text-sm text-muted-foreground md:line-clamp-2 md:max-w-[22rem]" title={r}>{r}</p>; } },
   ];
@@ -301,10 +314,12 @@ export default function ActivityLogModule({ token }) {
             <BarisDetail label="Rincian"><span className="whitespace-pre-wrap break-words">{rapikanRincian(detail.details, { diPopup: true })}</span></BarisDetail>
           </dl>
           {detail.details && rapikanRincian(detail.details) !== String(detail.details).trim() && (
-            <details className="mt-3 text-sm" data-testid="activity-log-raw">
-              <summary className="cursor-pointer text-muted-foreground">Teks asli dari sistem (untuk teknisi)</summary>
-              <p className="mt-2 whitespace-pre-wrap break-all rounded-md bg-muted p-2 text-xs">{detail.details}</p>
-            </details>
+            <div className="mt-3 text-sm" data-testid="activity-log-raw">
+              <Button type="button" variant="link" size="sm" className="h-auto px-0" onClick={() => setLihatAsli((v) => !v)}>
+                {lihatAsli ? 'Sembunyikan teks asli' : 'Lihat teks asli dari sistem (untuk teknisi)'}
+              </Button>
+              {lihatAsli && <p className="mt-2 whitespace-pre-wrap break-all rounded-md bg-muted p-2 text-xs">{detail.details}</p>}
+            </div>
           )}
         </DetailPopup>
       )}
