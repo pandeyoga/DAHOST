@@ -417,6 +417,43 @@ async def get_dashboard_analytics(request: Request):
 
 
 # ─── VENDOR DASHBOARD ────────────────────────────────────────────────────────
+async def vendor_material_metrics(db, vendor_id) -> dict:
+    """8 angka ringkasan vendor CMT yang dulu dibaca layar tetapi TIDAK pernah dikirim server (selalu 0).
+
+    8 Nov 2026 (keputusan owner). Definisi = layar vendor yang memuat datanya (satu sumber, tanpa koleksi baru):
+      totalReceived / totalMissing  Σ `vendor_material_inspections.total_received/total_missing` (Inspeksi Material)
+      totalDefect                   Σ `material_defect_reports.defect_qty` (laporan cacat lama, baca saja)
+      pendingAdditional / pendingReplacement
+                                    `material_requests` jenis ADDITIONAL / REPLACEMENT berstatus Pending
+                                    (Permintaan Material, pil "Menunggu")
+      pendingBuyerShipments         jumlah surat jalan vendor ini ke DA (`buyer_shipments`, menu Kirim ke DA)
+      pendingInspections            kiriman bahan sudah diterima tetapi belum diinspeksi
+                                    (`vendor_shipments` status Received, inspection_status ≠ Inspected — Penerimaan Material)
+    """
+    q = {'vendor_id': vendor_id}
+    insps = await db.vendor_material_inspections.find(
+        q, {'_id': 0, 'total_received': 1, 'total_missing': 1}).to_list(5000)
+    defects = await db.material_defect_reports.find(q, {'_id': 0, 'defect_qty': 1}).to_list(5000)
+
+    def _n(v):
+        try:
+            return int(float(v or 0))
+        except (TypeError, ValueError):
+            return 0
+    return {
+        'totalReceived': sum(_n(i.get('total_received')) for i in insps),
+        'totalMissing': sum(_n(i.get('total_missing')) for i in insps),
+        'totalDefect': sum(_n(d.get('defect_qty')) for d in defects),
+        'pendingAdditional': await db.material_requests.count_documents(
+            {**q, 'request_type': 'ADDITIONAL', 'status': 'Pending'}),
+        'pendingReplacement': await db.material_requests.count_documents(
+            {**q, 'request_type': 'REPLACEMENT', 'status': 'Pending'}),
+        'pendingBuyerShipments': await db.buyer_shipments.count_documents(q),
+        'pendingInspections': await db.vendor_shipments.count_documents(
+            {**q, 'status': 'Received', 'inspection_status': {'$ne': 'Inspected'}}),
+    }
+
+
 @router.get("/vendor/dashboard")
 async def get_vendor_dashboard(request: Request):
     """Dashboard vendor CMT (modul 1 dari 11).
@@ -505,6 +542,9 @@ async def get_vendor_dashboard(request: Request):
         'incomingShipments': incoming,
         'totalProduced': total_produced, 'totalAvailable': total_available,
         'progressPct': round((total_produced / total_available * 100) if total_available > 0 else 0),
+        # 8 Nov 2026: 8 angka yang dulu tidak pernah dikirim (layar menampilkan 0 walau datanya ada)
+        **(await vendor_material_metrics(db, vendor_id)),
+        'overdueJobs': len(overdue_jobs),
         'recentProgress': recent_progress,
         'alerts': {'overdueJobs': overdue_jobs, 'nearDeadlineJobs': near_jobs},
         'vendorId': vendor_id,
