@@ -32,6 +32,12 @@ const CATEGORY_META = {
   custom: { label: 'Kustom' },
 };
 const labelKategori = (c) => (CATEGORY_META[c] || CATEGORY_META.custom).label;
+// Keterangan bawaan dari server masih memuat kata Inggris; diterjemahkan untuk tampilan saja.
+const GANTI_KETERANGAN = [
+  [/\bobject storage\b/gi, 'penyimpanan berkas'], [/\bupload\b/gi, 'unggah'], [/^Secret key\b/i, 'Kunci rahasia'],
+  [/^Password\b/i, 'Sandi'], [/^Username\/email\b/i, 'Nama pengguna/email'], [/\balert produksi\b/gi, 'peringatan produksi'],
+];
+const keteranganKunci = (d) => GANTI_KETERANGAN.reduce((t, [re, ke]) => t.replace(re, ke), String(d || ''));
 const statusKunci = (k) => (k.is_configured
   ? `Terpasang (${k.source === 'db' ? 'layar ini' : 'server'})` : 'Belum diisi');
 const instan = (ts) => (typeof ts === 'string' && /T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(ts) ? `${ts}Z` : ts);
@@ -172,7 +178,7 @@ export default function IntegrationSettingsModule({ token, userRole }) {
     { kunci: 'nama', label: 'Kunci', hp: 'judul', isi: (k) => (
       <div className="min-w-0 md:max-w-[22rem]" data-testid={`key-row-${k.key_name}`}>
         <p className="break-all font-mono text-sm font-medium text-foreground">{k.key_name}</p>
-        {k.description && <p className="text-xs text-muted-foreground">{k.description}</p>}
+        {k.description && <p className="text-xs text-muted-foreground">{keteranganKunci(k.description)}</p>}
       </div>) },
     { kunci: 'kategori', label: 'Kategori', isi: (k) => <span className="text-sm">{labelKategori(k.category || 'custom')}</span> },
     { kunci: 'status', label: 'Status', isi: (k) => (
@@ -235,7 +241,7 @@ export default function IntegrationSettingsModule({ token, userRole }) {
         {/* Unduhan TIDAK memuat nilai kunci (juga tidak versi tersamar). */}
         <TombolUnduh namaBerkas="kunci-api" namaLembar="Kunci API" baris={baris} testId="key-unduh" kolom={[
           { label: 'Kunci', nilai: (k) => k.key_name }, { label: 'Kategori', nilai: (k) => labelKategori(k.category || 'custom') },
-          { label: 'Keterangan', nilai: (k) => k.description || '' }, { label: 'Status', nilai: (k) => statusKunci(k) },
+          { label: 'Keterangan', nilai: (k) => keteranganKunci(k.description) }, { label: 'Status', nilai: (k) => statusKunci(k) },
           { label: 'Tidak dipakai lagi', nilai: (k) => (k.deprecated ? 'Ya' : '') },
           { label: 'Diperbarui', nilai: (k) => (k.updated_at ? formatDateID(instan(k.updated_at)) : '') },
           { label: 'Oleh', nilai: (k) => k.updated_by || '' },
