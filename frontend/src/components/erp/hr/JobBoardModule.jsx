@@ -69,13 +69,18 @@ function DaftarKeahlian({ judul, isi }) {
   );
 }
 
-export default function JobBoardModule({ token }) {
+// Peran yang boleh memasang lowongan — sama dengan pemeriksaan server `POST /api/hr/job-board/jobs`.
+const PERAN_PASANG_LOWONGAN = ['superadmin', 'hr', 'manager'];
+
+export default function JobBoardModule({ token, user }) {
   const [activeTab, setActiveTab] = useState('browse'); // browse, my-applications, career-paths
   const [jobs, setJobs] = useState([]);
   const [myApplications, setMyApplications] = useState([]);
   const [selectedJob, setSelectedJob] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [userRole, setUserRole] = useState('');
+  // 2026-11-08 (keputusan pemilik): peran dibaca dari akun yang masuk (dulu selalu 'user' sehingga tombol
+  // "Pasang lowongan" tidak pernah tampil).
+  const userRole = (user?.role || '').toLowerCase();
 
   // Post job dialog
   const [showPostDialog, setShowPostDialog] = useState(false);
@@ -120,8 +125,6 @@ export default function JobBoardModule({ token }) {
   useEffect(() => {
     fetchJobs();
     fetchMyApplications();
-    // Get user role from token (simplified - could decode JWT)
-    setUserRole('user'); // Default
   }, [fetchJobs, fetchMyApplications]);
 
   const handleViewJob = async (jobId) => {
@@ -194,8 +197,8 @@ export default function JobBoardModule({ token }) {
       <RefreshCw className={loading ? 'animate-spin' : ''} />
     </Button>
   );
-  // Tombol pasang lowongan hanya untuk SDM/manajer (perilaku lama dipertahankan).
-  const aksiPasang = (userRole === 'hr' || userRole === 'manager') ? (
+  // Tombol pasang lowongan hanya untuk peran yang diizinkan server (SDM, manajer, superadmin).
+  const aksiPasang = PERAN_PASANG_LOWONGAN.includes(userRole) ? (
     <Button onClick={() => setShowPostDialog(true)}><Plus />Pasang lowongan</Button>
   ) : null;
 

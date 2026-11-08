@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 
 from core import marketing_sales_shape as _shape
-from utils.waktu import today_wib, wib_date_str, fmt_wib
+from utils.waktu import today_wib, wib_date_str, wib_date_of, fmt_wib
 
 def _uid():
     return str(uuid.uuid4())
@@ -242,8 +242,57 @@ def _generate_task_code():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 async def _recalculate_health_score(db, account_id: str):
+    """Hitung skor sehat toko (lihat `compute_health_fields`), SIMPAN ke master toko, kembalikan skornya."""
+    fields = await compute_health_fields(db, account_id)
+    await db.marketing_platform_accounts.update_one(
+        {"id": account_id}, {"$set": {**fields, "updated_at": fields["health_updated_at"]}})
+    return fields["health_score"]
+
+
+def health_is_stale(account: dict, today: Optional[str] = None) -> bool:
+    """Skor sehat toko BASI bila belum pernah dihitung atau dihitung sebelum hari ini (WIB).
+
+    Skor memakai jendela 30 hari terakhir yang bergeser setiap hari, jadi skor kemarin tidak lagi sah
+    walau tidak ada data baru (data yang keluar dari jendela). Input sales & impor sudah menghitung ulang
+    saat data berubah; pemeriksaan ini menutup sisanya.
     """
-    Calculate health score untuk account berdasarkan data 30 hari terakhir.
+    upd = (account or {}).get("health_updated_at")
+    if not upd:
+        return True
+    return wib_date_of(upd) != (today or wib_date_str())
+
+
+async def refresh_stale_health_scores(db, accounts: list, today: Optional[str] = None) -> int:
+    """Keputusan pemilik 8 Nov 2026: layar yang menampilkan skor sehat toko memakai skor SEGAR.
+
+    Dulu `health_score` tersimpan hanya dihitung saat input sales/impor/tombol "Hitung ulang", sehingga skor
+    lama (atau "Belum ada data") menetap berminggu-minggu. Fungsi ini menghitung ulang (rumus yang sama,
+    `compute_health_fields`) dan MENYIMPAN skor toko yang basi — paling banyak sekali sehari per toko —
+    lalu memperbarui dokumen `accounts` di tempat supaya respons langsung memakai angka baru.
+    Kegagalan hitung satu toko tidak menggagalkan layar (skor lama tetap tampil). Kembalikan jumlah toko
+    yang dihitung ulang.
+    """
+    today = today or wib_date_str()
+    n = 0
+    for acc in accounts or []:
+        if not isinstance(acc, dict) or not acc.get("id") or not health_is_stale(acc, today):
+            continue
+        try:
+            fields = await compute_health_fields(db, acc["id"])
+            await db.marketing_platform_accounts.update_one(
+                {"id": acc["id"]}, {"$set": {**fields, "updated_at": fields["health_updated_at"]}})
+        except Exception as e:  # noqa: BLE001 — skor gagal dihitung ≠ layar gagal dimuat
+            import logging
+            logging.getLogger(__name__).warning("[health] hitung ulang skor toko %s gagal: %s", acc.get("id"), e)
+            continue
+        acc.update(fields)
+        n += 1
+    return n
+
+
+async def compute_health_fields(db, account_id: str) -> dict:
+    """
+    Calculate health score untuk account berdasarkan data 30 hari terakhir (HANYA membaca).
 
     Health Score = (
       Sales Performance (30%) +
@@ -272,14 +321,9 @@ async def _recalculate_health_score(db, account_id: str):
     sales_data = [s for s in sales_data if s.get("revenue_type") in ("total", "live")]
 
     if not sales_data:
-        await db.marketing_platform_accounts.update_one(
-            {"id": account_id},
-            {"$set": {"health_score": None, "health_grade": None,
-                      "health_label": HEALTH_NO_DATA_LABEL, "health_breakdown": {},
-                      "health_days_with_data": 0, "health_updated_at": _now(),
-                      "updated_at": _now()}}
-        )
-        return None
+        return {"health_score": None, "health_grade": None,
+                "health_label": HEALTH_NO_DATA_LABEL, "health_breakdown": {},
+                "health_days_with_data": 0, "health_updated_at": _now()}
 
     # F0.3 (2026-08-12) — semua pembacaan grup lewat `core.marketing_sales_shape`
     # supaya dokumen berbentuk RATA (hasil impor sebelum F0.2) memberi skor yang
@@ -371,15 +415,9 @@ async def _recalculate_health_score(db, account_id: str):
                        "score": round(compliance_score, 1), "max": 10},
     }
 
-    await db.marketing_platform_accounts.update_one(
-        {"id": account_id},
-        {"$set": {"health_score": health_score,
-                  "health_grade": grade,
-                  "health_label": label,
-                  "health_breakdown": breakdown,
-                  "health_days_with_data": len({s.get("date") for s in sales_data}),
-                  "health_updated_at": _now(),
-                  "updated_at": _now()}}
-    )
-
-    return health_score
+    return {"health_score": health_score,
+            "health_grade": grade,
+            "health_label": label,
+            "health_breakdown": breakdown,
+            "health_days_with_data": len({s.get("date") for s in sales_data}),
+            "health_updated_at": _now()}

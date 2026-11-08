@@ -412,11 +412,14 @@ async def sync_payments_to_finance(
         user.get('id', 'system'),
         user.get('name') or user.get('email', 'system'),
         'create', 'marketing_livehost_payment_sync',
-        f"Synced payment for {synced_count} LiveHosts ({len(shifts)} shifts) in {month} to Finance"
+        f"Rekap shift {month} ditandai final: {synced_count} host, {len(shifts)} shift (tanpa tulis ke Keuangan)"
     )
     
+    # 2026-11-08 (keputusan pemilik): pesan lama "Payment berhasil di-sync ke Finance" keliru — endpoint ini
+    # TIDAK menulis apa pun ke Keuangan/payroll (RC-12); ia hanya menandai shift final & memberi tahu host.
     return serialize_doc({
-        'message': f'Payment berhasil di-sync ke Finance untuk {synced_count} LiveHost',
+        'message': (f'Rekap {len(shifts)} shift bulan {month} untuk {synced_count} host live ditandai final. '
+                    'Tidak ada jurnal atau payroll yang dibuat — gaji host dibayar lewat SDM › Penggajian.'),
         'synced_hosts': synced_count,
         'synced_shifts': len(shifts),
         'month': month,
@@ -469,6 +472,144 @@ async def get_payment_status(
         'status_summary': status_summary,
         'total_completed_shifts': sum(s['count'] for s in status_summary.values()),
         'total_amount': sum(s['total_pay'] for s in status_summary.values()),
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# REKAP PER HOST (pengganti layar "Pembayaran host") — keputusan pemilik 8 Nov 2026
+# ══════════════════════════════════════════════════════════════════════════════
+# Host live digaji BULANAN lewat payroll SDM (keputusan 23 Agu 2026), jadi layar Pembayaran tidak lagi
+# menghitung/memfinalkan apa pun. Yang dibutuhkan: rekap kerja per host per bulan (sesi live, jam live, omzet)
+# sebagai bahan penilaian & pengecekan payroll di SDM › Penggajian. Endpoint `payment/calculate`,
+# `payment/sync-to-finance`, dan `payment/status` tetap ada (tidak dipakai layar lagi).
+
+_SESI_TIDAK_BERLANGSUNG = ('scheduled', 'cancelled')
+
+
+def _angka(v) -> float:
+    try:
+        return float(v) if v not in (None, '') else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _pertama(doc: dict, *keys):
+    for k in keys:
+        if doc.get(k) not in (None, ''):
+            return doc.get(k)
+    return None
+
+
+def rekap_per_host(hosts: list, sessions: list, shifts: list, include_idle: bool = True) -> list:
+    """Rekap per host dari dokumen mentah (fungsi murni — diuji unit).
+
+    * Sesi live (`marketing_live_sessions`): jumlah sesi, jam live (`duration_minutes`), omzet (`revenue`,
+      cadangan `gmv`), pesanan. Sesi terjadwal/batal dan data contoh (`_seed_origin`) tidak dihitung.
+    * Shift (`marketing_livehost_shifts`): shift selesai (`attendance_status='completed'`) dan jam shift
+      (`actual_duration_minutes`) — dasar kehadiran untuk payroll.
+    * `include_idle`: host master yang aktif ikut tampil walau tanpa kegiatan (supaya "0 sesi" terlihat,
+      bukan hilang). Dimatikan untuk staf berlingkup toko (hanya host yang bekerja di tokonya).
+    """
+    master = {h.get('id'): h for h in hosts if h.get('id')}
+    rows: dict = {}
+
+    def baris(hid, nama):
+        if hid not in rows:
+            h = master.get(hid) or {}
+            rows[hid] = {'host_id': hid, 'host_name': h.get('name') or nama or '(tanpa nama)',
+                         'employee_id': h.get('employee_id') or '', 'employee_name': '',
+                         'sessions': 0, 'live_minutes': 0.0, 'revenue': 0.0, 'orders': 0,
+                         'shifts_completed': 0, 'shift_minutes': 0.0}
+        return rows[hid]
+
+    for h in hosts if include_idle else []:
+        if h.get('id') and (h.get('status') or 'active') == 'active':
+            baris(h['id'], h.get('name'))
+    for s in sessions:
+        if s.get('_seed_origin') or (s.get('status') or 'completed') in _SESI_TIDAK_BERLANGSUNG:
+            continue
+        hid = s.get('host_id') or f"nama:{s.get('host_name') or ''}"
+        r = baris(hid, s.get('host_name'))
+        r['sessions'] += 1
+        r['live_minutes'] += _angka(s.get('duration_minutes'))
+        r['revenue'] += _angka(_pertama(s, 'revenue', 'gmv'))
+        r['orders'] += int(_angka(_pertama(s, 'orders', 'total_orders')))
+    for sh in shifts:
+        if sh.get('_seed_origin') or sh.get('attendance_status') != 'completed':
+            continue
+        hid = sh.get('host_id') or f"nama:{sh.get('host_name') or ''}"
+        r = baris(hid, sh.get('host_name'))
+        r['shifts_completed'] += 1
+        r['shift_minutes'] += _angka(sh.get('actual_duration_minutes'))
+
+    out = []
+    for r in rows.values():
+        r['live_hours'] = round(r.pop('live_minutes') / 60, 1)
+        r['shift_hours'] = round(r.pop('shift_minutes') / 60, 1)
+        r['revenue'] = round(r['revenue'], 2)
+        out.append(r)
+    out.sort(key=lambda r: (-r['revenue'], -r['sessions'], str(r['host_name']).lower()))
+    return out
+
+
+@router.get('/payment/recap')
+async def get_host_recap(
+    request: Request,
+    month: Optional[str] = Query(None, description="YYYY-MM (bawaan: bulan berjalan WIB)"),
+):
+    """Rekap kerja per host live untuk satu bulan: sesi live, jam live, omzet, shift selesai.
+
+    Hanya membaca. Toko dibatasi lingkup pemakai (staf pemegang satu toko hanya melihat sesi/shift tokonya).
+    """
+    user = await require_auth(request)
+    db = get_db()
+    year, mon, date_from, date_to = _month_bounds(month)
+    month = f"{year}-{mon}"
+
+    from core import marketing_account_scope as _scope
+    from core import marketing_live_fields as _LF
+    start_dt = datetime(int(year), int(mon), 1, tzinfo=timezone.utc)
+    end_dt = datetime.fromisoformat(f"{date_to}T23:59:59.999999+00:00")
+    q_sesi = await _scope.scope_filter(db, user, {'$and': [
+        _LF.date_match('session_date', start_dt, end_dt), {'_seed_origin': {'$ne': True}}]})
+    sessions = await db.marketing_live_sessions.find(q_sesi, {
+        '_id': 0, 'host_id': 1, 'host_name': 1, 'status': 1, 'duration_minutes': 1, 'revenue': 1, 'gmv': 1,
+        'orders': 1, 'total_orders': 1}).to_list(20000)
+    q_shift = await _scope.scope_filter(db, user, {'date': {'$gte': date_from, '$lte': date_to},
+                                                   'attendance_status': 'completed'})
+    shifts = await db.marketing_livehost_shifts.find(q_shift, {
+        '_id': 0, 'host_id': 1, 'host_name': 1, 'attendance_status': 1,
+        'actual_duration_minutes': 1}).to_list(20000)
+    host_ids = sorted({d.get('host_id') for d in sessions + shifts if d.get('host_id')})
+    semua = _scope.sees_all_accounts(user)
+    if semua:
+        host_q = {'$or': [{'status': 'active'}, {'id': {'$in': host_ids}}]}
+    else:
+        host_q = {'id': {'$in': host_ids}}      # staf berlingkup: hanya host yang bekerja di tokonya
+    hosts = await db.marketing_livehosts.find(
+        host_q, {'_id': 0, 'id': 1, 'name': 1, 'employee_id': 1, 'status': 1}).to_list(1000)
+
+    rows = rekap_per_host(hosts, sessions, shifts, include_idle=semua)
+    emp_ids = sorted({r['employee_id'] for r in rows if r['employee_id']})
+    if emp_ids:
+        names = {e['id']: e.get('name') or '' for e in await db.rahaza_employees.find(
+            {'id': {'$in': emp_ids}}, {'_id': 0, 'id': 1, 'name': 1}).to_list(1000)}
+        for r in rows:
+            r['employee_name'] = names.get(r['employee_id'], '')
+
+    return serialize_doc({
+        'month': month,
+        'date_range': {'from': date_from, 'to': date_to},
+        'hosts': rows,
+        'totals': {
+            'hosts': len(rows),
+            'sessions': sum(r['sessions'] for r in rows),
+            'live_hours': round(sum(r['live_hours'] for r in rows), 1),
+            'revenue': round(sum(r['revenue'] for r in rows), 2),
+            'orders': sum(r['orders'] for r in rows),
+            'shifts_completed': sum(r['shifts_completed'] for r in rows),
+            'unlinked': sum(1 for r in rows if not r['employee_id']),
+        },
     })
 
 

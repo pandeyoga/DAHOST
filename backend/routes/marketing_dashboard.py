@@ -16,7 +16,7 @@ from database import get_db
 from auth import require_auth, serialize_doc, log_activity, require_demo_seed_allowed
 # F6 (sesi #9) — dashboard gabungan WAJIB berlingkup toko.
 from core import marketing_account_scope as _scope
-from routes.marketing_shared import _uid, _now, _get_user, _sanitize, _recalculate_health_score
+from routes.marketing_shared import _uid, _now, _get_user, _sanitize, _recalculate_health_score, refresh_stale_health_scores
 from core import marketing_sales_shape as _shape
 # 2026-11-07 (Asisten AI) — SATU definisi omzet untuk dashboard, laporan, dan AI.
 from core import ukuran_penjualan as _ukuran
@@ -110,7 +110,8 @@ async def get_account_dashboard(
     account = await db.marketing_platform_accounts.find_one({"id": account_id}, {"_id": 0})
     if not account:
         raise HTTPException(404, "Account not found")
-    
+    await refresh_stale_health_scores(db, [account])   # skor sehat segar (keputusan 8 Nov 2026)
+
     # Date range default: last 30 days
     if not date_to:
         date_to = wib_date_str()
@@ -261,6 +262,7 @@ async def get_comparison_dashboard(
     accounts_list = await db.marketing_platform_accounts.find(
         {"id": {"$in": account_ids}}, {"_id": 0}
     ).to_list(500)
+    await refresh_stale_health_scores(db, accounts_list)   # skor sehat segar (keputusan 8 Nov 2026)
     accounts_map = {a["id"]: a for a in accounts_list}
 
     # 2026-11-06 (pola P7): semua baris periode (dulu to_list(500) — 5 toko × 1 tahun = 1.825 baris; omzet &

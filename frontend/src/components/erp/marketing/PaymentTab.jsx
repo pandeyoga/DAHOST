@@ -1,131 +1,85 @@
 /**
- * Pembayaran host live (Live Selling › Host live › Pembayaran).
- * Standar UI/UX v2 (8 Nov 2026): PageLayout, bulan = pilihan berlabel (dulu input type="month"), label Indonesia.
+ * Rekap host live (Live Selling › Host live › Pembayaran).
  *
- * Koreksi isi layar (keputusan 9 brief — angka/teks menyesatkan):
- *  - Kartu "Payment Calculation Formula" (jam × tarif + bonus 10% − denda telat) DIHAPUS: server sudah tidak menghitung
- *    upah per sesi sejak keputusan pemilik 23 Agu 2026 (host digaji bulanan lewat payroll SDM). Diganti penjelasan.
- *  - Tombol "Calculate Payment" sebenarnya menolkan upah per sesi & menandai shift sebagai gaji bulanan → label
- *    "Tandai gaji bulanan". "Sync to Finance" tidak menulis apa pun ke Keuangan (hanya menandai final + memberi tahu
- *    host) → label "Finalkan rekap".
- *  - Kartu "Total Shifts"/"Total Amount" dihapus: server tidak menghitung shift berstatus gaji bulanan, jadi
- *    angkanya tidak sama dengan jumlah shift selesai. Tiga kartu tahap tetap (angka langsung dari server).
- * Permintaan ke server & konfirmasi sama.
+ * Keputusan pemilik 8 Nov 2026: host live digaji BULANAN lewat payroll SDM (keputusan 23 Agu 2026), jadi layar
+ * ini tidak lagi menghitung atau memfinalkan pembayaran. Isinya kini rekap kerja per host untuk bulan yang dipilih
+ * — sesi live, jam live, omzet (dari Sesi live) dan shift selesai (dari Shift) — dengan unduhan Excel/CSV dan
+ * tombol ke SDM › Penggajian. Tombol lama "Tandai gaji bulanan" dan "Finalkan rekap" dihapus dari layar
+ * (endpoint server tetap ada). Sumber: `GET /api/marketing/livehost/payment/recap?month=YYYY-MM` (hanya membaca).
  */
 import { useState, useEffect, useCallback } from 'react';
-import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { RefreshCw, ChevronLeft, ChevronRight, Loader2, CheckCircle, Info, Wallet } from 'lucide-react';
+import { RefreshCw, ChevronLeft, ChevronRight, Info, Users, Banknote } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { toast } from 'sonner';
 import { thisMonthWIB, addMonthsYM } from '@/lib/waktu';
 import PageLayout from '../layout/PageLayout';
 import { monthOptions } from '../finance/PeriodPicker';
+import { canAccessPortal } from '../portalAccess';
 import { EmptyState, Notice, StatTile } from '../moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmt = (n) => new Intl.NumberFormat('id-ID').format(n || 0);
 const fmtRp = (n) => `Rp ${fmt(n)}`;
+const fmtJam = (n) => (Number(n) || 0).toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const BULAN = monthOptions(24, 1);
 
-export default function PaymentTab({ authH }) {
+export default function PaymentTab({ authH, user, onNavigate }) {
   const [month, setMonth] = useState(() => thisMonthWIB());
-  const [paymentStatus, setPaymentStatus] = useState(null);
+  const [rekap, setRekap] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [calculating, setCalculating] = useState(false);
-  const [syncing, setSyncing] = useState(false);
   const labelBulan = BULAN.find((b) => b.value === month)?.label || month;
 
-  const fetchPaymentStatus = useCallback(async () => {
+  const fetchRekap = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API}/api/marketing/livehost/payment/status?month=${month}`, { headers: authH });
-      if (res.ok) {
-        const data = await res.json();
-        setPaymentStatus(data);
-      }
+      const res = await fetch(`${API}/api/marketing/livehost/payment/recap?month=${month}`, { headers: authH });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Gagal memuat rekap host');
+      setRekap(data);
     } catch (e) {
-      toast.error('Gagal memuat status pembayaran');
+      toast.error(e.message || 'Gagal memuat rekap host');
+      setRekap(null);
     } finally {
       setLoading(false);
     }
   }, [authH, month]);
 
   useEffect(() => {
-    fetchPaymentStatus();
-  }, [fetchPaymentStatus]);
-
-  const handleCalculate = async () => {
-    if (!(await confirmDialog({
-      title: `Tandai shift ${labelBulan} sebagai gaji bulanan?`,
-      body: 'Upah per sesi pada shift bulan ini dinolkan (nilai lama tetap disimpan). Gaji host dibayar lewat payroll SDM.',
-      confirmLabel: 'Tandai',
-    }))) return;
-    setCalculating(true);
-    try {
-      const res = await fetch(`${API}/api/marketing/livehost/payment/calculate?month=${month}`, {
-        method: 'POST',
-        headers: authH,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        toast.success(data.message);
-        fetchPaymentStatus();
-      } else {
-        const err = await res.json();
-        toast.error(err.detail || 'Gagal menandai shift');
-      }
-    } catch (e) {
-      toast.error('Gagal menandai shift');
-    } finally {
-      setCalculating(false);
-    }
-  };
-
-  const handleSync = async () => {
-    if (!(await confirmDialog({
-      title: `Finalkan rekap ${labelBulan}?`,
-      body: 'Shift yang sudah dihitung ditandai final dan host mendapat pemberitahuan. Tidak ada jurnal atau payroll yang dibuat di Keuangan.',
-      confirmLabel: 'Finalkan',
-    }))) return;
-    setSyncing(true);
-    try {
-      const res = await fetch(`${API}/api/marketing/livehost/payment/sync-to-finance?month=${month}`, {
-        method: 'POST',
-        headers: authH,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        toast.success(data.message);
-        fetchPaymentStatus();
-      } else {
-        const err = await res.json();
-        toast.error(err.detail || 'Gagal memfinalkan rekap');
-      }
-    } catch (e) {
-      toast.error('Gagal memfinalkan rekap');
-    } finally {
-      setSyncing(false);
-    }
-  };
+    fetchRekap();
+  }, [fetchRekap]);
 
   // Aritmetika bulan murni (lib/waktu) — `new Date(y, m, 1).toISOString()` di browser
   // WIB mundur ke bulan sebelumnya.
   const changeMonth = (offset) => setMonth(addMonthsYM(month, offset));
-  const ss = paymentStatus?.status_summary;
+  const hosts = rekap?.hosts || [];
+  const t = rekap?.totals;
+  const { page, setPage, totalPages, total, paged } = useClientPagination(hosts, 10);
+  const bolehPayroll = typeof onNavigate === 'function' && canAccessPortal(user?.role, 'hr');
+
+  const kolom = [
+    { kunci: 'nama', label: 'Host live', hp: 'judul', isi: (h) => <span className="font-medium">{h.host_name}</span> },
+    { kunci: 'karyawan', label: 'Karyawan SDM', hp: 'keterangan', isi: (h) => (h.employee_id
+      ? <span className="text-sm">{h.employee_name || 'Tertaut'}</span>
+      : <span className="text-sm text-[hsl(var(--warning-text))]">Belum ditautkan</span>) },
+    { kunci: 'sesi', label: 'Sesi live', rata: 'kanan', isi: (h) => <span className="tabular-nums">{fmt(h.sessions)}</span> },
+    { kunci: 'jam', label: 'Jam live', rata: 'kanan', isi: (h) => <span className="tabular-nums">{fmtJam(h.live_hours)}</span> },
+    { kunci: 'omzet', label: 'Omzet', rata: 'kanan', isi: (h) => <span className="font-medium tabular-nums">{fmtRp(h.revenue)}</span> },
+    { kunci: 'shift', label: 'Shift selesai', rata: 'kanan', isi: (h) => <span className="tabular-nums">{fmt(h.shifts_completed)}</span> },
+    { kunci: 'jamshift', label: 'Jam shift', rata: 'kanan', isi: (h) => <span className="tabular-nums">{fmtJam(h.shift_hours)}</span> },
+  ];
 
   return (
-    <PageLayout testId="livehost-payment" title="Pembayaran host live" subtitle="Status rekap shift host live per bulan."
-      actions={<>
-        <Button variant="outline" onClick={handleCalculate} disabled={calculating} data-testid="calculate-payment-btn">
-          {calculating ? <Loader2 className="animate-spin" /> : <Wallet />}Tandai gaji bulanan
+    <PageLayout testId="livehost-payment" title="Rekap host live"
+      subtitle="Sesi live, jam live, dan omzet per host dalam satu bulan — bahan pengecekan gaji di SDM."
+      actions={bolehPayroll && (
+        <Button variant="outline" onClick={() => onNavigate('hr-payroll-hub', { tab: 'run' })} data-testid="livehost-ke-payroll">
+          <Banknote />Buka SDM › Penggajian
         </Button>
-        <Button onClick={handleSync} disabled={syncing} data-testid="sync-to-finance-btn">
-          {syncing ? <Loader2 className="animate-spin" /> : <CheckCircle />}Finalkan rekap
-        </Button>
-      </>}
+      )}
       filters={
         <div className="flex items-center gap-1">
           <Button variant="outline" size="icon" onClick={() => changeMonth(-1)} title="Bulan sebelumnya" aria-label="Bulan sebelumnya"><ChevronLeft /></Button>
@@ -136,29 +90,44 @@ export default function PaymentTab({ authH }) {
           <Button variant="outline" size="icon" onClick={() => changeMonth(1)} title="Bulan berikutnya" aria-label="Bulan berikutnya"><ChevronRight /></Button>
         </div>
       }
-      tools={
-        <Button variant="outline" size="icon" onClick={fetchPaymentStatus} title="Muat ulang" aria-label="Muat ulang">
+      tools={<>
+        <TombolUnduh namaBerkas={`rekap-host-live-${month}`} namaLembar="Rekap host" baris={hosts} testId="livehost-rekap-unduh"
+          kolom={[
+            { label: 'Host live', nilai: (h) => h.host_name || '' },
+            { label: 'Karyawan SDM', nilai: (h) => (h.employee_id ? (h.employee_name || 'Tertaut') : 'Belum ditautkan') },
+            { label: 'Sesi live', nilai: (h) => Number(h.sessions) || 0 },
+            { label: 'Jam live', nilai: (h) => Number(h.live_hours) || 0 },
+            { label: 'Omzet', nilai: (h) => Number(h.revenue) || 0 },
+            { label: 'Pesanan', nilai: (h) => Number(h.orders) || 0 },
+            { label: 'Shift selesai', nilai: (h) => Number(h.shifts_completed) || 0 },
+            { label: 'Jam shift', nilai: (h) => Number(h.shift_hours) || 0 },
+          ]} />
+        <Button variant="outline" size="icon" onClick={fetchRekap} title="Muat ulang" aria-label="Muat ulang">
           <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
-      }
-      summary={ss && (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3" data-testid="payment-summary">
-          <StatTile label="Belum diproses" value={fmt(ss.pending?.count)} suffix="shift" sub={fmtRp(ss.pending?.total_pay)}
-            hint="Shift selesai yang belum ditandai." testId="payment-pending" />
-          <StatTile label="Sudah dihitung" value={fmt(ss.calculated?.count)} suffix="shift" sub={fmtRp(ss.calculated?.total_pay)}
-            hint="Shift yang dihitung dengan cara lama (upah per sesi), siap difinalkan." testId="payment-calculated" />
-          <StatTile label="Sudah final" value={fmt(ss.synced_to_finance?.count)} suffix="shift" sub={fmtRp(ss.synced_to_finance?.total_pay)}
-            hint="Rekap yang sudah difinalkan." testId="payment-synced" />
+      </>}
+      summary={t && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="payment-summary">
+          <StatTile label="Host" value={fmt(t.hosts)} sub={t.unlinked ? `${fmt(t.unlinked)} belum ditautkan ke karyawan SDM` : 'Semua tertaut ke karyawan SDM'}
+            testId="rekap-host" />
+          <StatTile label="Sesi live" value={fmt(t.sessions)} sub={labelBulan} testId="rekap-sesi" />
+          <StatTile label="Jam live" value={fmtJam(t.live_hours)} suffix="jam" sub="Dari durasi sesi live" testId="rekap-jam" />
+          <StatTile label="Omzet live" value={fmtRp(t.revenue)} sub={`${fmt(t.orders)} pesanan`} testId="rekap-omzet" />
         </div>
-      )}>
+      )}
+      footer={hosts.length > 10 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}>
       <Notice tone="info" icon={Info} title="Host live digaji bulanan lewat payroll SDM" testId="payment-info">
-        Tidak ada upah per sesi. Data shift (jam tayang, omzet, penonton) tetap dicatat untuk penilaian kinerja.
-        Shift yang sudah ditandai gaji bulanan tidak dihitung di kartu di atas.
+        Layar ini hanya rekap kerja; tidak ada upah per sesi dan tidak ada yang dicatat ke Keuangan.
+        Sesi, jam live, dan omzet dari menu Sesi live; shift selesai dari tab Shift.
       </Notice>
-      {loading && !paymentStatus ? (
-        <p className="py-6 text-center text-sm text-muted-foreground">Memuat status pembayaran…</p>
-      ) : !paymentStatus && (
-        <EmptyState icon={Wallet} title="Data pembayaran tidak tersedia" action={<Button variant="outline" onClick={fetchPaymentStatus}>Coba lagi</Button>} />
+      {loading && !rekap ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat rekap host…</p>
+      ) : !rekap ? (
+        <EmptyState icon={Users} title="Rekap host tidak tersedia" action={<Button variant="outline" onClick={fetchRekap}>Coba lagi</Button>} />
+      ) : (
+        <TabelData kolom={kolom} baris={paged} kunci={(r) => r.host_id} testId="livehost-rekap-table"
+          kosong={<EmptyState icon={Users} title={`Belum ada host atau sesi live di ${labelBulan}`}
+            description="Rekap muncul setelah sesi live dicatat atau shift host selesai." />} />
       )}
     </PageLayout>
   );
