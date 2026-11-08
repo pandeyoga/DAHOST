@@ -65,10 +65,11 @@ const PLATFORMS = [
   { value: 'tokopedia', label: 'Tokopedia' },
 ];
 
+// Grup toko = MEREK (keputusan owner 8 Nov 2026). Cermin server: backend/core/grup_toko.py › GRUP_TOKO.
 const GROUPS = [
-  { value: 'official_store', label: 'Official Store' },
-  { value: 'reseller', label: 'Reseller' },
-  { value: 'distributor', label: 'Distributor' },
+  { value: 'rayona', label: 'Rayona' },
+  { value: 'daluna', label: 'Daluna' },
+  { value: 'outfit_boutique', label: 'Outfit Boutique' },
   { value: 'other', label: 'Lainnya' },
 ];
 

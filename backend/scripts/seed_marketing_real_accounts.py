@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, "/app/backend")
 
 from database import get_db          # noqa: E402
+from core.grup_toko import GRUP_BAWAAN, tebak_merek  # noqa: E402  (Grup toko = merek, 8 Nov 2026)
 
 # (account_code, account_name, platform, coa_revenue_code, platform_warehouse_name)
 TOKO = [
@@ -101,7 +102,7 @@ async def main(apply: bool) -> int:
             "account_code": acc_code,
             "username": "",
             "status": "active",
-            "group": "official_store",
+            "group": tebak_merek(name) or GRUP_BAWAAN,
             "credentials": {"api_key": "", "api_secret": "", "has_api_integration": False},
             "import_config": {"saved_templates": []},
             "assigned_staff": [],

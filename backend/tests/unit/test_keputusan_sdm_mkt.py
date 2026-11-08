@@ -270,14 +270,20 @@ def test_pesan_finalkan_tidak_lagi_menyebut_sync_ke_finance(monkeypatch):
 # 5 · Grup toko + Kesehatan Akun satu pemilih
 # ═════════════════════════════════════════════════════════════════════════════
 def test_petakan_grup():
+    """Grup toko = MEREK (keputusan owner 8 Nov 2026): Rayona · Daluna · Outfit Boutique · Lainnya."""
     mig = _mig("2026_11_08_grup_toko")
     p = mig.petakan_grup
-    assert p("official_store") == "official_store"
-    assert p("Official Store") == p(" official-store ") == p("OFFICIAL_STORE") == p("Toko Resmi") == "official_store"
-    assert p("Reseller") == p("agen") == p("Drop Ship") == "reseller"
-    assert p("Distributor") == p("grosir") == "distributor"
-    assert p("Lainnya") == p("lain-lain") == p(None) == p("") == p("  ") == p("-") == "other"
-    assert p("Rayona") is None and p("Daluna") is None and p(5) is None
+    assert p("rayona") == p("Rayona") == p(" RAYONA ") == "rayona"
+    assert p("Daluna") == "daluna"
+    assert p("Outfit Boutique") == p("outfit-boutique") == p("outfit_boutique") == "outfit_boutique"
+    assert p("other") == p("Lainnya") == p("lain-lain") == "other"
+    # kosong / jenis toko versi lama → merek dari nama toko bila tepat satu, selain itu Lainnya
+    assert p("official_store", "Shopee Outfit Boutique") == "outfit_boutique"
+    assert p(None, "TikTok Rayona") == "rayona"
+    assert p("Reseller", "Shopee GHS") == p("grosir") == p("") == p("-") == "other"
+    assert p("Rayona Daluna", None) is None                         # teks tak dikenal → dibiarkan
+    assert p("Official Store", "Rayona x Daluna") == "other"         # dua merek di nama → tidak menebak
+    assert p(5) is None
     fe = _src("frontend", "src", "components", "erp", "AccountManagementModule.jsx")
     kode_fe = sorted(re.findall(r"\{ value: '([a-z_]+)', label: '[^']+' \}",
                                 fe.split("const GROUPS = [")[1].split("];")[0]))
@@ -288,27 +294,27 @@ def test_migrasi_grup_pratinjau_lalu_tulis(capsys):
     mig = _mig("2026_11_08_grup_toko")
     db = FakeDB()
     db.marketing_platform_accounts.docs += [
-        {"id": "t1", "group": "official_store"},
-        {"id": "t2", "group": "Official Store"},
-        {"id": "t3", "group": "reseller "},
-        {"id": "t4", "group": "Rayona"},
-        {"id": "t5", "group": "Daluna"},
-        {"id": "t6"},
-        {"id": "t7", "group": "Rayona"},
+        {"id": "t1", "group": "rayona", "account_name": "Shopee Rayona"},
+        {"id": "t2", "group": "Rayona", "account_name": "Shopee Sukma"},
+        {"id": "t3", "group": "Daluna", "account_name": "Shopee GHS"},
+        {"id": "t4", "group": "Outfit Boutique", "account_name": "Tiktok Outfit Boutique"},
+        {"id": "t5", "group": "official_store", "account_name": "Shopee Outfit Boutique"},
+        {"id": "t6", "account_name": "Toko Baru"},
+        {"id": "t7", "group": "Merek Lain", "account_name": "Shopee X"},
     ]
     pre = run(mig.run(db, apply=False))
-    assert (pre["toko"], pre["sudah_benar"], pre["dipetakan"], pre["tidak_dipetakan"]) == (7, 1, 3, 3)
-    assert pre["nilai_tidak_dipetakan"] == {"Daluna": 1, "Rayona": 2}
+    assert (pre["toko"], pre["sudah_benar"], pre["dipetakan"], pre["tidak_dipetakan"]) == (7, 1, 5, 1)
+    assert pre["nilai_tidak_dipetakan"] == {"Merek Lain": 1}
     teks = capsys.readouterr().out
-    assert "Tidak bisa dipetakan" in teks and "'Rayona': 2 toko" in teks
-    assert db.marketing_platform_accounts.docs[1]["group"] == "Official Store"           # pratinjau tidak menulis
+    assert "Tidak bisa dipetakan" in teks and "'Merek Lain': 1 toko" in teks
+    assert db.marketing_platform_accounts.docs[1]["group"] == "Rayona"                    # pratinjau tidak menulis
     out = run(mig.run(db, apply=True))
-    assert out["ditulis"] == 3
+    assert out["ditulis"] == 5
     grup = {d["id"]: d.get("group") for d in db.marketing_platform_accounts.docs}
-    assert grup == {"t1": "official_store", "t2": "official_store", "t3": "reseller", "t4": "Rayona",
-                    "t5": "Daluna", "t6": "other", "t7": "Rayona"}
+    assert grup == {"t1": "rayona", "t2": "rayona", "t3": "daluna", "t4": "outfit_boutique",
+                    "t5": "outfit_boutique", "t6": "other", "t7": "Merek Lain"}
     again = run(mig.run(db, apply=False))
-    assert again["dipetakan"] == 0 and again["tidak_dipetakan"] == 3                      # idempoten
+    assert again["dipetakan"] == 0 and again["tidak_dipetakan"] == 1                      # idempoten
 
 
 def test_kesehatan_akun_satu_pemilih_akun():
