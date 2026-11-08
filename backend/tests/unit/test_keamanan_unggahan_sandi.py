@@ -147,7 +147,9 @@ def test_penulisan_path_lain_tidak_melewati_penjagaan(env):
 
 def test_daftar_sensitif_satu_sumber():
     # Asisten AI (laporan), 7 Nov 2026: + "ai_reports/" (laporan PDF/Excel buatan Asisten AI).
-    assert set(sf.SENSITIVE_UPLOAD_PREFIXES) == {"attendance/", "leave_docs/", "profile/", "ai_reports/"}
+    # Asisten AI Tahap E, 9 Nov 2026: + "ai_lampiran/" (lampiran percakapan) + "ai_berkas/" (berkas keluaran kode).
+    assert set(sf.SENSITIVE_UPLOAD_PREFIXES) == {"attendance/", "leave_docs/", "profile/", "ai_reports/",
+                                                 "ai_lampiran/", "ai_berkas/"}
     assert "employee" in sf.SENSITIVE_ATTACHMENT_TYPES
     # jenis lampiran non-HR yang dipakai layar tetap publik
     for t in ("company_logo", "rahaza_model", "rnd_style", "production_po", "buyer_shipment", "style"):
@@ -158,6 +160,8 @@ def test_daftar_sensitif_satu_sumber():
         "leave_docs/": (BACKEND / "routes" / "rahaza_leave.py").read_text(encoding="utf-8"),
         "profile/": (BACKEND / "routes" / "dewi_portal_saya_hr.py").read_text(encoding="utf-8"),
         "ai_reports/": (BACKEND / "core" / "laporan_ai.py").read_text(encoding="utf-8"),
+        "ai_lampiran/": (BACKEND / "core" / "asisten_ai" / "lampiran.py").read_text(encoding="utf-8"),
+        "ai_berkas/": (BACKEND / "core" / "asisten_ai" / "berkas_kode.py").read_text(encoding="utf-8"),
     }
     for prefix, text in src.items():
         assert f'f"{prefix}' in text, prefix

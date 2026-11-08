@@ -4,6 +4,7 @@
  *
  *   ┌ "Menganalisis…" (bisa dibuka): langkah alat (`alat`) + ringkasan pemikiran (`pikir_ringkas`)
  *   ├ teks markdown aman · grafik · tabel · tombol unduh laporan (PDF/Excel) · kartu tindakan (Tahap B, KartuTindakan)
+ *   ├ kartu unduh berkas buatan AI (Tahap E: hasil hitung dengan kode — Excel/CSV/Word/PowerPoint/gambar/PDF, KartuBerkas)
  *   ├ chip ingatan (Tahap D): "Diingat: …" / "Dilupakan: …" + tautan ke halaman Ingatan AI (ChipIngatan)
  *   ├ sumber: data internal (label) & web (tautan, tab baru)
  *   └ galat ramah + "Coba lagi" · catatan "dihentikan"
@@ -19,6 +20,7 @@ import MarkdownAman, { isSafeUrl } from '@/components/ui/markdown-aman';
 import { cn } from '@/lib/utils';
 import { blokIngatan } from './adapterTahapCD';
 import { unduhLaporan } from './asistenApi';
+import { KartuBerkas } from './BerkasAsisten';
 import ChipIngatan from './ChipIngatan';
 import GrafikAsisten from './GrafikAsisten';
 import KartuTindakan from './KartuTindakan';
@@ -179,6 +181,7 @@ function PesanAsisten({ pesan, onCobaLagi, onPutuskan, onNavigate, sibukUtas = f
                 nonaktif={sibukUtas || !onPutuskan} tindakanAktif={tindakanAktif} />
             );
           }
+          if (b.jenis === 'berkas') return <KartuBerkas key={b.id || i} berkas={b} />;
           return <TombolLaporan key={b.id || i} laporan={b} />;
         })}
         <ChipIngatan item={ingatan} onNavigate={onNavigate} />

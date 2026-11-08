@@ -39,6 +39,28 @@ Tahap D (8 Nov 2026, agen proaktif):
     panggilan ke alat yang tidak ditawarkan dijawab galat tanpa dijalankan;
   * `fitur` per jalan (bawaan `asisten-ai`; briefing/laporan otomatis = `asisten-ai-proaktif`) untuk gerbang
     anggaran dan log pemakaian; `otomatis=True` menandai pesan pengguna buatan sistem (briefing).
+
+Tahap E (9 Nov 2026, data fleksibel · lampiran · hitung dengan kode):
+  * server tool `code_execution_20260120` selalu dikirim; alat baca `kode=True` boleh dipanggil dari kode
+    (programmatic tool calling). `tool_use` ber-`caller.type` code_execution dijalankan dengan konteks salinan
+    ber-`pemanggil="kode"` (batas hasil 2 juta karakter, bukan 15.000). Giliran yang menjawab panggilan dari kode
+    berisi HANYA tool_result; batas putarannya terpisah (`MAKS_PUTARAN_KODE`); `tool_choice: none` tidak pernah
+    dipakai selagi ada panggilan dari kode yang tertunda (kelebihan batas → tool_result `is_error`);
+  * kontainer ruang hitung (`container` di respons) dicatat per sesi (`simpan.simpan_kontainer`) dan dikirim balik
+    di setiap permintaan sesudahnya selama umurnya sah (WAJIB saat ada panggilan dari kode yang tertunda);
+    kontainer ditolak API (kedaluwarsa) → permintaan diulang SEKALI tanpa kontainer (bila tidak ada yang tertunda);
+  * blok hasil code execution (`code_execution_tool_result`, `bash_code_execution_tool_result`,
+    `text_editor_code_execution_tool_result`) diperlakukan seperti hasil alat server lain (append-only, aturan
+    fallback, pembersihan ekor riwayat) + event `alat` berlabel "Menghitung dengan kode";
+  * berkas keluaran kode diunduh lewat Files API → event `berkas` + blok riwayat (core/asisten_ai/berkas_kode.py);
+  * lampiran pesan (≤ 5) diklaim, diunggah ke Files API sekali, lalu masuk giliran pengguna sebagai teks ringkasan +
+    blok document/image/container_upload (core/asisten_ai/lampiran.py);
+  * jalur darurat (pola `_FALLBACK`): saklar proses `_KODE` + env `ASISTEN_AI_KODE_AKTIF` (bawaan "1"). Galat 400 yang
+    menyebut ruang hitung (`KATA_GALAT_KODE`) saat tidak ada panggilan kode tertunda → `_KODE` mati untuk proses ini dan
+    permintaan diulang SEKALI tanpa ruang hitung: alat tanpa code_execution/allowed_callers, tanpa `container`, dan
+    salinan riwayat untuk permintaan itu (`tanpa_ruang_hitung`) tanpa container_upload (diganti ringkasan lampiran),
+    tanpa blok code execution, tanpa `caller` kode. Selama mati: lampiran tabel/json dikirim sebagai ringkasan teks +
+    catatan `pr.TEKS_KODE_MATI` di giliran pengguna (`system` tetap sama).
 """
 from __future__ import annotations
 
@@ -52,8 +74,10 @@ from typing import Any, Optional
 
 import ai_cost_tracker as tracker
 from core.asisten_ai import alat_base as ab
+from core.asisten_ai import berkas_kode as bk
 from core.asisten_ai import fake as fake_mod
 from core.asisten_ai import ingatan as ing
+from core.asisten_ai import lampiran as lmp
 from core.asisten_ai import prompt as pr
 from core.asisten_ai import simpan
 from core.asisten_ai import tindakan as tdk
@@ -66,14 +90,25 @@ NAMA_MODEL = "Claude Opus 5.5"
 EFFORT = "medium"
 MAX_TOKENS = int(os.environ.get("ASISTEN_AI_MAX_TOKENS", "32000"))
 MAKS_PUTARAN_ALAT = 12
+# Tahap E: putaran yang menjawab panggilan alat DARI KODE dihitung terpisah (satu skrip bisa memanggil berkali-kali).
+MAKS_PUTARAN_KODE = int(os.environ.get("ASISTEN_AI_MAKS_PUTARAN_KODE", "40"))
+MAKS_LEWAT_KODE = 3      # balasan galat sesudah batas kode sebelum loop dihentikan paksa
 MAKS_JEDA = 5
 BATAS_DETIK = float(os.environ.get("ASISTEN_AI_BATAS_DETIK", "300"))
 BETA_FALLBACK = "server-side-fallback-2026-07-01"
 MAKS_RIWAYAT_KARAKTER = 2_500_000
+# Tahap E: hasil alat untuk KODE tidak masuk konteks model (tidak dihitung token) tetapi tetap ikut diputar ulang di
+# riwayat → dihitung terpisah: batas seluruh muatan permintaan (di bawah batas 32 MB API) + jatah data kode per jawaban.
+MAKS_MUATAN_KARAKTER = int(os.environ.get("ASISTEN_AI_MAKS_MUATAN_KARAKTER", "16000000"))
+MAKS_DATA_KODE = int(os.environ.get("ASISTEN_AI_MAKS_DATA_KODE", "8000000"))
 MAKS_PIKIR_BLOK = 1500
 MAKS_TEKS_PENGGUNA = 4000
 
 _FALLBACK = {"aktif": True}
+# Tahap E — saklar proses ruang hitung (jalur darurat bila API menolak gabungan alat; lihat docstring modul).
+_KODE = {"aktif": True}
+KATA_GALAT_KODE = ("code_execution", "allowed_callers", "eager_input_streaming", "container_upload", "container",
+                   "caller")
 _KLIEN = {"key": None, "klien": None}
 _AKTIF: dict[str, "Jalan"] = {}
 _TUGAS: set = set()
@@ -96,11 +131,14 @@ PESAN_GALAT = {
     "layanan": tracker.friendly_error("upstream"),
     "sedang_berjalan": "Jawaban sebelumnya di percakapan ini masih berjalan. Tunggu sampai selesai atau hentikan dulu.",
     "terlalu_panjang": "Percakapan ini sudah terlalu panjang. Mulai percakapan baru.",
+    "lampiran": "Lampiran belum bisa dikirim. Coba unggah ulang berkasnya.",
     "internal": "Terjadi kesalahan saat memproses jawaban. Silakan coba lagi.",
 }
 
-_JENIS_BLOK_DIKENAL = {"text", "thinking", "redacted_thinking", "tool_use", "server_tool_use",
-                       "web_search_tool_result", "web_fetch_tool_result", "fallback"}
+# Hasil alat server (dipasangkan dengan `server_tool_use` lewat `tool_use_id`).
+JENIS_HASIL_SERVER = ("web_search_tool_result", "web_fetch_tool_result") + bk.JENIS_HASIL_KODE
+_JENIS_BLOK_DIKENAL = {"text", "thinking", "redacted_thinking", "tool_use", "server_tool_use", "fallback",
+                       "container_upload", *JENIS_HASIL_SERVER}
 
 
 # ── Pembantu umum ────────────────────────────────────────────────────────────
@@ -147,8 +185,7 @@ def rapikan_fallback(konten: list[dict]) -> list[dict]:
     if idx < 0:
         return konten
     sebelum = konten[:idx]
-    hasil_ids = {b.get("tool_use_id") for b in sebelum if b.get("type") in ("web_search_tool_result",
-                                                                         "web_fetch_tool_result")}
+    hasil_ids = {b.get("tool_use_id") for b in sebelum if b.get("type") in JENIS_HASIL_SERVER}
     keep = []
     for b in sebelum:
         t = b.get("type")
@@ -158,6 +195,107 @@ def rapikan_fallback(konten: list[dict]) -> list[dict]:
             continue
         keep.append(b)
     return keep + konten[idx:]
+
+
+def dari_kode(b: Any) -> bool:
+    """`tool_use` yang dipanggil kode di ruang hitung (programmatic tool calling), bukan langsung oleh model."""
+    c = _attr(b, "caller")
+    return str(_attr(c, "type") or "").startswith("code_execution")
+
+
+def ukuran_riwayat(messages: list[dict]) -> tuple[int, int]:
+    """(karakter yang dihitung untuk batas konteks, karakter seluruh muatan). Isi tool_result yang menjawab
+    panggilan dari kode tidak dihitung ke batas konteks (tidak masuk konteks model), tetapi dihitung ke muatan."""
+    total = len(json.dumps(messages, ensure_ascii=False, default=str))
+    ids = {b.get("id") for m in messages if m.get("role") == "assistant" and isinstance(m.get("content"), list)
+           for b in m["content"] if isinstance(b, dict) and b.get("type") == "tool_use" and dari_kode(b)}
+    if not ids:
+        return total, total
+    data = sum(len(json.dumps(b.get("content"), ensure_ascii=False, default=str))
+               for m in messages if m.get("role") == "user" and isinstance(m.get("content"), list)
+               for b in m["content"] if isinstance(b, dict) and b.get("type") == "tool_result"
+               and b.get("tool_use_id") in ids)
+    return total - data, total
+
+
+def riwayat_terlalu_panjang(messages: list[dict]) -> bool:
+    konteks, muatan = ukuran_riwayat(messages)
+    return konteks > MAKS_RIWAYAT_KARAKTER or muatan > MAKS_MUATAN_KARAKTER
+
+
+def _env_kode() -> bool:
+    return str(os.environ.get("ASISTEN_AI_KODE_AKTIF", "1")).strip().lower() not in ("0", "false", "tidak", "no", "off")
+
+
+def kode_aktif() -> bool:
+    """Ruang hitung (code execution + programmatic tool calling) aktif untuk jawaban baru?"""
+    return bool(_KODE["aktif"]) and _env_kode()
+
+
+def file_id_container_upload(messages: list[dict]) -> list[str]:
+    return [b.get("file_id") for m in messages if m.get("role") == "user" and isinstance(m.get("content"), list)
+            for b in m["content"] if isinstance(b, dict) and b.get("type") == "container_upload"]
+
+
+def _teks_hasil_kode(b: dict) -> str:
+    if bk.galat_hasil(b):
+        return "(Langkah perhitungan dengan kode sebelumnya gagal.)"
+    c = b.get("content") if isinstance(b.get("content"), dict) else {}
+    out = c.get("stdout") if isinstance(c.get("stdout"), str) else ""
+    out = out.strip()
+    if not out:
+        return "(Langkah perhitungan dengan kode sebelumnya tidak dikirim ulang.)"
+    return "(Keluaran perhitungan dengan kode sebelumnya: " + (out[:1500] + "…" if len(out) > 1500 else out) + ")"
+
+
+def tanpa_ruang_hitung(messages: list[dict], peta: dict, *, sisip_catatan: Optional[int] = None
+                       ) -> tuple[list[dict], bool]:
+    """Salinan riwayat untuk SATU permintaan jalur darurat (TIDAK disimpan; riwayat tetap append-only):
+    `container_upload` → teks ringkasan lampiran (`peta` = {file_id: dokumen ai_lampiran}), blok code execution →
+    teks keluaran singkat, `caller` kode dibuang (panggilan jadi langsung), dan catatan `pr.TEKS_KODE_MATI` di akhir
+    giliran pengguna ke-`sisip_catatan` (giliran jawaban ini). Return (pesan, ada giliran asisten yang berubah)."""
+    out: list[dict] = []
+    asisten_berubah = False
+    for i, m in enumerate(messages):
+        c = m.get("content")
+        if m.get("role") == "assistant" and isinstance(c, list):
+            baru, ubah = [], False
+            for b in c:
+                t = b.get("type") if isinstance(b, dict) else None
+                if t == "server_tool_use" and b.get("name") in ab.NAMA_ALAT_KODE:
+                    ubah = True
+                    continue
+                if t in bk.JENIS_HASIL_KODE:
+                    ubah = True
+                    baru.append({"type": "text", "text": _teks_hasil_kode(b)})
+                    continue
+                if isinstance(b, dict) and dari_kode(b):
+                    b = {k: v for k, v in b.items() if k != "caller"}
+                    ubah = True
+                baru.append(b)
+            if ubah:
+                asisten_berubah = True
+                if not any(x.get("type") not in ("thinking", "redacted_thinking") for x in baru):
+                    baru.append({"type": "text", "text": "(Langkah perhitungan dengan kode dilewati.)"})
+                m = {**m, "content": baru}
+            out.append(m)
+            continue
+        if m.get("role") == "user" and (isinstance(c, list) or i == sisip_catatan):
+            isi = c if isinstance(c, list) else [{"type": "text", "text": str(c or "")}]
+            baru, ubah = [], not isinstance(c, list)
+            for b in isi:
+                if isinstance(b, dict) and b.get("type") == "container_upload":
+                    baru.append({"type": "text", "text": lmp.teks_pengganti(peta.get(b.get("file_id")))})
+                    ubah = True
+                else:
+                    baru.append(b)
+            if i == sisip_catatan and not any(isinstance(b, dict) and b.get("text") == pr.TEKS_KODE_MATI for b in baru):
+                baru.append({"type": "text", "text": pr.TEKS_KODE_MATI})
+                ubah = True
+            out.append({**m, "content": baru} if ubah else m)
+            continue
+        out.append(m)
+    return out, asisten_berubah
 
 
 def tanpa_thinking(messages: list[dict]) -> list[dict]:
@@ -260,6 +398,18 @@ def model_log() -> tuple[str, str]:
     return ("fake", MODEL) if fake_mod.aktif() else tracker.OPUS_MODEL
 
 
+async def klien_berkas():
+    """Klien untuk operasi Files API di luar jawaban (hapus berkas saat percakapan dihapus). None bila tanpa kunci."""
+    if fake_mod.aktif():
+        return fake_mod.klien()
+    try:
+        key, _src = await tracker.resolve_api_key(tracker.get_db())
+    except Exception:  # noqa: BLE001
+        log.warning("Asisten AI: kunci API tidak bisa dibaca untuk menghapus berkas", exc_info=True)
+        return None
+    return buat_klien(key) if key and tracker.sdk_available() else None
+
+
 async def gerbang(user_id: Optional[str], *, log_blocked: bool = True, fitur: str = FITUR) -> tracker.GateResult:
     """Gerbang tracker (kunci, saklar utama, toggle fitur `asisten-ai`, anggaran). Mode uji tanpa kunci.
     `fitur` = label log/anggaran per fitur (Tahap D: `asisten-ai-proaktif`; toggle grupnya tetap `asisten-ai`)."""
@@ -314,6 +464,8 @@ async def status_siap() -> dict:
     out["batas_tindakan_harian"] = aturan["batas"]
     # Tahap D: saklar "Ingatan AI aktif" (layar menyembunyikan chip/ajakan ingatan bila mati).
     out["ingatan_aktif"] = await ing.aktif()
+    # Tahap E: ruang hitung (hitung dengan kode) aktif? Mati = env ASISTEN_AI_KODE_AKTIF=0 atau ditolak API (darurat).
+    out["kode_aktif"] = kode_aktif()
     return out
 
 
@@ -325,7 +477,8 @@ class Jalan:
                  batas_detik: float = BATAS_DETIK, tindakan_aktif: bool = False,
                  batas_tindakan: int = tdk.BATAS_BAWAAN, putusan: Optional[tdk.Putusan] = None,
                  boleh_lanjut: bool = True, ingatan_aktif: bool = False, fitur: str = FITUR,
-                 otomatis: bool = False):
+                 otomatis: bool = False, lampiran: Optional[list] = None,
+                 maks_putaran_kode: int = MAKS_PUTARAN_KODE):
         self.db = db
         self.user = user or {}
         self.user_id = self.user.get("id")
@@ -365,7 +518,9 @@ class Jalan:
             self.tindakan_aktif = False
         self.ingatan_aktif = bool(ingatan_aktif)
         self.alat_ditahan = frozenset() if (self.ingatan_aktif and not self.otomatis) else frozenset(ing.ALAT_INGATAN)
-        self.tools = ab.tools_untuk_api(tindakan=self.tindakan_aktif, kecuali=self.alat_ditahan)
+        # Tahap E: ruang hitung bisa dimatikan (env `ASISTEN_AI_KODE_AKTIF=0`, atau ditolak API → `_KODE`).
+        self.kode = kode_aktif()
+        self.tools = ab.tools_untuk_api(tindakan=self.tindakan_aktif, kecuali=self.alat_ditahan, kode=self.kode)
         self.antrian: asyncio.Queue = asyncio.Queue()
         self.berhenti = False
         self.alasan_henti: Optional[str] = None
@@ -384,6 +539,21 @@ class Jalan:
         self.ctx: Optional[ab.AlatContext] = None
         self.pemakaian = {"token_masuk": 0, "token_keluar": 0, "cache_baca": 0, "cache_tulis": 0,
                           "pencarian_web": 0, "biaya_usd": 0.0}
+        # Tahap E — ruang hitung & lampiran.
+        self.kontainer: Optional[str] = simpan.kontainer_sah(sesi) if self.kode else None
+        self._peta_lampiran: Optional[dict] = None
+        self._idx_giliran: Optional[int] = None
+        self._catatan_kode_sisip = False
+        self._kontainer_exp = (sesi or {}).get("container_kedaluwarsa")
+        self.maks_putaran_kode = int(maks_putaran_kode)
+        self.putaran_kode = 0
+        self._kode_lewat = 0
+        self._kode_tertunda = False
+        self._berkas_dilihat: set = set()
+        self._data_kode = 0
+        self._berkas_gagal = False
+        self.lampiran_ids = [str(x) for x in (lampiran or [])][:lmp.MAKS_LAMPIRAN_PESAN]
+        self._klaim_lampiran: Optional[str] = None
 
     # — kendali —
     def hentikan(self, alasan: str = "putus") -> None:
@@ -423,6 +593,9 @@ class Jalan:
         elif event == "tindakan":
             # Keadaan kartu di riwayat selalu dibaca ulang dari `ai_actions` saat GET sesi (Kontrak E).
             b.append({"jenis": "tindakan", **{k: v for k, v in data.items() if k != "jenis"}})
+        elif event == "berkas":
+            # Tahap E (Kontrak K3): berkas keluaran kode yang bisa diunduh.
+            b.append({"jenis": "berkas", **{k: data.get(k) for k in ("id", "nama", "format", "ukuran_kb", "url")}})
         elif event == "ingatan":
             # Tahap D: chip "Diingat: …" / "Dilupakan: …" (keadaan saat itu; ingatan bisa diubah sesudahnya).
             b.append({"jenis": "ingatan", "id": data.get("id"), "isi": data.get("isi"),
@@ -502,7 +675,7 @@ class Jalan:
             status_awal = "Melanjutkan jawaban…"
         else:
             riwayat = await simpan.muat_riwayat_api(self.db, self.user_id, self.sesi_id)
-            if len(json.dumps(riwayat, ensure_ascii=False, default=str)) > MAKS_RIWAYAT_KARAKTER:
+            if riwayat_terlalu_panjang(riwayat):
                 self._set_galat("terlalu_panjang")
                 return
             # Kartu yang belum diputuskan → kedaluwarsa; SEMUA tool_use terbuka dibalas di depan giliran baru.
@@ -511,6 +684,8 @@ class Jalan:
             konteks = pr.konteks_giliran(today=self.today, cv=self.cv, periode=self.periode,
                                          peran=str(self.user.get("role") or ""))
             isi = list(awal) + [{"type": "text", "text": konteks}]
+            if not self.kode:
+                isi.append({"type": "text", "text": pr.TEKS_KODE_MATI})
             # Tahap D: ingatan pengguna = konteks yang berubah → giliran pengguna, BUKAN `system`.
             if self.ingatan_aktif:
                 try:
@@ -522,10 +697,25 @@ class Jalan:
                     isi.append({"type": "text", "text": blok_ing})
             if catatan:
                 isi.append({"type": "text", "text": catatan})
+            # Tahap E: lampiran → klaim atomik + unggah ke Files API (sekali) SEBELUM pesan disimpan; gagal →
+            # klaim dilepas, tidak ada pesan yang tersimpan, lampiran bisa dipakai lagi.
+            lamp_docs = await self._siapkan_lampiran()
+            if lamp_docs is None:
+                return
+            isi += lmp.blok_api(lamp_docs, kode=self.kode)
             isi.append({"type": "text", "text": self.teks})
             api_user = {"role": "user", "content": isi}
-            _pu, pa = await simpan.mulai_giliran(self.db, self.sesi, self.user_id, teks=self.teks, api_user=api_user,
-                                                 cv=self.cv, periode=self.periode, otomatis=self.otomatis)
+            try:
+                pu, pa = await simpan.mulai_giliran(
+                    self.db, self.sesi, self.user_id, teks=self.teks, api_user=api_user, cv=self.cv,
+                    periode=self.periode, otomatis=self.otomatis,
+                    lampiran=lmp.ringkas_pesan(lamp_docs) if lamp_docs else None)
+            except BaseException:
+                if self._klaim_lampiran:
+                    await lmp.lepas_klaim(self.db, self.user_id, self._klaim_lampiran)
+                raise
+            if self._klaim_lampiran:
+                await lmp.tandai_terkirim(self.db, self.user_id, self._klaim_lampiran, pesan_id=pu["id"])
             status_awal = "Menganalisis pertanyaan…"
         self.pesan_id = pa["id"]
         self.kirim("mulai", {"pesan_id": self.pesan_id})
@@ -534,11 +724,11 @@ class Jalan:
         if self.peringatan:
             self.kirim("status", {"teks": self.peringatan.replace("⚠️", "").strip()})
         self.kirim("status", {"teks": status_awal})
-        if self.putusan is not None and \
-                len(json.dumps(riwayat, ensure_ascii=False, default=str)) > MAKS_RIWAYAT_KARAKTER:
+        if self.putusan is not None and riwayat_terlalu_panjang(riwayat):
             self._set_galat("terlalu_panjang")
             return
         messages = list(riwayat) + [api_user]
+        self._idx_giliran = len(riwayat)
         self.ctx = ab.AlatContext(user=self.user, cv=self.cv, today=self.today, token=self.token, app=self.app,
                                   emit=self._emit_alat, klien_api=self.klien_api,
                                   sesi_id=self.sesi_id, db=self.db, baca_saja=True, pesan_id=self.pesan_id)
@@ -555,11 +745,15 @@ class Jalan:
                         gg = galat_dari_gerbang(g)
                         self._set_galat(gg["kode"], gg["pesan"])
                         break
-                tool_choice = {"type": "none"} if self.putaran_alat >= self.maks_putaran else None
+                # Selagi kode di ruang hitung menunggu hasil alat, `tool_choice: none` TIDAK dipakai (kode harus
+                # bisa selesai); kelebihan batas dijawab tool_result is_error.
+                tool_choice = {"type": "none"} if (self.putaran_alat >= self.maks_putaran
+                                                   and not self._kode_tertunda) else None
                 h = await self._panggil(messages, tool_choice)
                 if h is None:
                     break
                 konten, stop = h
+                self._kode_tertunda = any(b.get("type") == "tool_use" and dari_kode(b) for b in konten)
                 turn = {"role": "assistant", "content": konten}
                 if stop == "refusal":
                     # Seluruh rantai (termasuk cadangan) menolak: giliran tidak masuk riwayat.
@@ -570,6 +764,7 @@ class Jalan:
                     break
                 messages.append(turn)
                 self.api_baru.append(turn)
+                await self._berkas_dari(konten)
                 if stop == "pause_turn":
                     jeda += 1
                     if jeda > MAKS_JEDA:
@@ -581,6 +776,17 @@ class Jalan:
                     hasil = [{"type": "tool_result", "tool_use_id": b["id"], "is_error": True,
                               "content": "Isian alat terpotong karena batas panjang jawaban; alat tidak dijalankan."}
                              for b in tool_uses]
+                    if self._kode_tertunda:
+                        # Panggilan dari kode tertunda: balasan HANYA tool_result (tanpa teks lanjutan).
+                        u = {"role": "user", "content": hasil}
+                        messages.append(u)
+                        self.api_baru.append(u)
+                        lanjut_max += 1
+                        if lanjut_max > 1:
+                            self._catatan("Jawaban terpotong karena terlalu panjang. Minta bagian yang dibutuhkan "
+                                          "saja, mis. per toko atau per minggu.")
+                            break
+                        continue
                     if lanjut_max == 0:
                         lanjut_max = 1
                         u = {"role": "user", "content": hasil + [{"type": "text", "text": pr.TEKS_LANJUTKAN}]}
@@ -594,6 +800,22 @@ class Jalan:
                     self._catatan("Jawaban terpotong karena terlalu panjang. Minta bagian yang dibutuhkan saja, "
                                   "mis. per toko atau per minggu.")
                     break
+                if stop == "tool_use" and tool_uses and self._kode_tertunda:
+                    # Tahap E: kode di ruang hitung memanggil alat (programmatic tool calling). Giliran balasan
+                    # berisi HANYA tool_result; batas putarannya terpisah dari batas alat langsung.
+                    isi = await self._jawab_kode(tool_uses)
+                    u = {"role": "user", "content": isi}
+                    messages.append(u)
+                    self.api_baru.append(u)
+                    if self.berhenti:
+                        break
+                    if self._lewat_batas():
+                        self._set_galat("waktu_habis", status="terhenti")
+                        break
+                    if self._kode_lewat > MAKS_LEWAT_KODE:
+                        self._catatan("Perhitungan dengan kode dihentikan karena batas langkah tercapai.")
+                        break
+                    continue
                 if stop == "tool_use" and tool_uses:
                     if self.putaran_alat >= self.maks_putaran:
                         u = {"role": "user", "content": [
@@ -631,11 +853,18 @@ class Jalan:
             await self.ctx.tutup()
 
     def _kwargs(self, messages: list[dict], tool_choice: Optional[dict]) -> dict:
+        msgs = messages
+        if not self.kode:
+            # Jalur darurat: salinan riwayat tanpa ruang hitung untuk permintaan ini saja.
+            msgs, asisten_berubah = tanpa_ruang_hitung(
+                msgs, self._peta_lampiran or {}, sisip_catatan=self._idx_giliran if self._catatan_kode_sisip else None)
+            if asisten_berubah:
+                msgs = tanpa_thinking(msgs)   # giliran asisten diubah → blok thinking-nya tidak sah lagi
         kw = {
             "model": MODEL,
             "max_tokens": MAX_TOKENS,
             "system": copy.deepcopy(list(pr.SISTEM_API)),
-            "messages": tanpa_thinking(messages) if self._tanpa_thinking else messages,
+            "messages": tanpa_thinking(msgs) if self._tanpa_thinking else msgs,
             "tools": self.tools,
             "thinking": {"type": "adaptive", "display": "summarized"},
             "output_config": {"effort": EFFORT},
@@ -643,6 +872,10 @@ class Jalan:
         }
         if tool_choice:
             kw["tool_choice"] = tool_choice
+        if self.kontainer and self.kode:
+            # Tahap E: ruang hitung yang sama (berkas & variabel kode tetap). WAJIB bila ada panggilan dari kode
+            # yang tertunda.
+            kw["container"] = self.kontainer
         if _FALLBACK["aktif"]:
             kw["betas"] = [BETA_FALLBACK]
             kw["fallbacks"] = "default"
@@ -652,7 +885,9 @@ class Jalan:
         """Satu panggilan streaming. Return (konten, stop_reason) atau None (galat/berhenti)."""
         self.panggilan_api += 1
         t0 = time.monotonic()
-        for percobaan in range(3):
+        if not self.kode and self._peta_lampiran is None:
+            await self._muat_peta_lampiran(messages)
+        for percobaan in range(6):
             kw = self._kwargs(messages, tool_choice)
             try:
                 final, terputus, snap = await self._stream(kw)
@@ -660,10 +895,26 @@ class Jalan:
             except Exception as e:  # noqa: BLE001
                 msg = _pesan_exception(e).lower()
                 kode = _kode_exception(e)
-                if kode == "bad_request" and percobaan < 2:
+                if (kode == "bad_request" and percobaan < 5 and self.kontainer and self.kode and "container" in msg
+                        and "container_upload" not in msg and not self._kode_tertunda):
+                    # Kontainer kedaluwarsa tidak bisa dipakai lagi (dok resmi): ulangi tanpa `container`.
+                    log.info("Asisten AI: kontainer ruang hitung ditolak API — memakai kontainer baru (sesi %s)",
+                             self.sesi_id)
+                    self.kontainer = None
+                    self._kontainer_exp = None
+                    try:
+                        await simpan.lupakan_kontainer(self.db, self.user_id, self.sesi_id)
+                    except Exception:  # noqa: BLE001
+                        log.warning("Asisten AI: gagal melupakan kontainer (sesi %s)", self.sesi_id, exc_info=True)
+                    continue
+                if kode == "bad_request" and percobaan < 5:
                     if _FALLBACK["aktif"] and "fallback" in msg:
                         log.warning("Asisten AI: parameter fallbacks ditolak API — dimatikan untuk proses ini")
                         _FALLBACK["aktif"] = False
+                        continue
+                    if self.kode and not self._kode_tertunda and any(k in msg for k in KATA_GALAT_KODE):
+                        # Jalur darurat Tahap E: ulang SEKALI tanpa ruang hitung; saklar proses ikut mati.
+                        await self._matikan_kode(messages, msg)
                         continue
                     if not self._tanpa_thinking and ("signature" in msg or "different conversation" in msg):
                         log.warning("Asisten AI: blok thinking riwayat ditolak — ulang tanpa thinking (sekali)")
@@ -673,6 +924,7 @@ class Jalan:
                 await self._log(None, t0, sukses=False, kode=kode, detail=f"{type(e).__name__}: {msg[:200]}")
                 self._set_galat(KODE_GALAT.get(kode, "internal"))
                 return None
+        await self._catat_kontainer(_attr(snap if terputus else final, "container"))
         if terputus:
             await self._log(_attr(snap, "usage"), t0, sukses=False, kode="terhenti")
             if self.alasan_henti is None and self._lewat_batas():
@@ -745,6 +997,14 @@ class Jalan:
                 self.kirim("alat", data)
                 if items:
                     self.kirim("sumber", {"item": items})
+            elif bt in bk.JENIS_HASIL_KODE:
+                err = bk.galat_hasil(b)
+                nama = bk.nama_alat_hasil(bt)
+                data = {"id": _attr(b, "tool_use_id"), "nama": nama, "label": ab.label_alat(nama),
+                        "keadaan": "gagal" if err else "selesai"}
+                if err:
+                    data["pesan"] = err
+                self.kirim("alat", data)
             elif bt == "fallback":
                 self.kirim("status", {"teks": "Beralih ke model cadangan…"})
         elif t == "content_block_delta":
@@ -765,23 +1025,31 @@ class Jalan:
                     self.kirim("sumber", {"item": [{"jenis": "web", "label": str(_attr(c, "title") or url)[:160],
                                                     "url": str(url)}]})
 
-    async def _jalankan_alat(self, tool_uses: list[dict]) -> list[ab.HasilAlat]:
-        semua = [(b["id"], b.get("name") or "", b.get("input")) for b in tool_uses]
+    async def _jalankan_alat(self, tool_uses: list[dict], *, tolak_tindakan: bool = False) -> list[ab.HasilAlat]:
+        """Jalankan panggilan alat satu giliran. Tahap E: pemanggil per panggilan ("kode" bila `caller` code
+        execution); `tolak_tindakan=True` (selagi kode tertunda) → alat tindakan tidak disiapkan (galat ramah)."""
+        semua = [(b["id"], b.get("name") or "", b.get("input"), "kode" if dari_kode(b) else "langsung")
+                 for b in tool_uses]
         # Tahap D: alat yang TIDAK ditawarkan di jalan ini (alat ingatan saat saklar mati / jalan otomatis) tidak
         # pernah dijalankan walau model memanggilnya (mis. dari riwayat lama).
         ditahan = {i: ab._gagal(tid, nama, "Alat ini tidak tersedia di percakapan ini; jawab tanpa alat ini.",
                                 "Alat ini tidak tersedia di sini")
-                   for i, (tid, nama, _a) in enumerate(semua) if nama in self.alat_ditahan}
+                   for i, (tid, nama, _a, _p) in enumerate(semua) if nama in self.alat_ditahan}
         for h in ditahan.values():
             self.kirim("alat", {"id": h.tool_use_id, "nama": h.nama, "label": ab.label_alat(h.nama),
                                 "keadaan": "gagal", "pesan": h.pesan})
         if ditahan:
             sisa = [c for i, c in enumerate(semua) if i not in ditahan]
-            hasil_sisa = iter(await self._jalankan_alat_inti(sisa) if sisa else [])
+            hasil_sisa = iter(await self._jalankan_alat_inti(sisa, tolak_tindakan=tolak_tindakan) if sisa else [])
             return [ditahan[i] if i in ditahan else next(hasil_sisa) for i in range(len(semua))]
-        return await self._jalankan_alat_inti(semua)
+        return await self._jalankan_alat_inti(semua, tolak_tindakan=tolak_tindakan)
 
-    async def _jalankan_alat_inti(self, calls: list[tuple]) -> list[ab.HasilAlat]:
+    async def _tolak_tindakan(self, tid: str, nama: str, _args: Any) -> ab.HasilAlat:
+        return ab._gagal(tid, nama, "Tindakan tidak bisa disiapkan selagi perhitungan dengan kode masih berjalan. "
+                                    "Selesaikan perhitungannya dulu, lalu siapkan tindakan di langkah berikutnya.",
+                         "Tindakan belum bisa disiapkan")
+
+    async def _jalankan_alat_inti(self, calls: list[tuple], *, tolak_tindakan: bool = False) -> list[ab.HasilAlat]:
         def _mulai(tid, nama):
             label = ab.label_alat(nama)
             self.kirim("status", {"teks": f"{label}…"})
@@ -796,8 +1064,9 @@ class Jalan:
             if h.kartu:
                 self.kirim("tindakan", h.kartu)
 
+        penangan = self._tolak_tindakan if tolak_tindakan else self._siapkan_tindakan
         task = asyncio.ensure_future(ab.jalankan_banyak(calls, self.ctx, saat_mulai=_mulai, saat_selesai=_selesai,
-                                                        penangan_tindakan=self._siapkan_tindakan))
+                                                        penangan_tindakan=penangan))
         while not task.done():
             await asyncio.wait({task}, timeout=0.25)
             if not task.done() and (self.berhenti or self._lewat_batas()):
@@ -806,8 +1075,127 @@ class Jalan:
                 break
         if task.done() and not task.cancelled() and task.exception() is None:
             return task.result()
-        return [ab.HasilAlat(tool_use_id=tid, nama=nama, is_error=True, pesan="Dihentikan",
-                             isi="Dihentikan sebelum alat selesai.") for tid, nama, _a in calls]
+        return [ab.HasilAlat(tool_use_id=c[0], nama=c[1], is_error=True, pesan="Dihentikan",
+                             isi="Dihentikan sebelum alat selesai.") for c in calls]
+
+    # — Tahap E: hitung dengan kode, kontainer, berkas keluaran, lampiran —
+    async def _jawab_kode(self, tool_uses: list[dict]) -> list[dict]:
+        """tool_result untuk giliran yang dijeda kode di ruang hitung (HANYA tool_result, tanpa teks)."""
+        self.putaran_kode += 1
+        if self.putaran_kode > self.maks_putaran_kode:
+            self._kode_lewat += 1
+            pesan = ("Batas panggilan alat dari kode untuk pertanyaan ini sudah tercapai; alat tidak dijalankan. "
+                     "Selesaikan perhitungan dengan data yang sudah ada dan sebutkan bila ada yang belum terbaca.")
+            for b in tool_uses:
+                self.kirim("alat", {"id": b["id"], "nama": b.get("name"), "label": ab.label_alat(b.get("name") or ""),
+                                    "keadaan": "gagal", "pesan": "Batas langkah alat tercapai"})
+            return [{"type": "tool_result", "tool_use_id": b["id"], "is_error": True, "content": pesan}
+                    for b in tool_uses]
+        hasil = await self._jalankan_alat(tool_uses, tolak_tindakan=True)
+        out = []
+        for b, x in zip(tool_uses, hasil):
+            d = x.untuk_api()
+            if dari_kode(b) and not x.is_error:
+                if self._data_kode + len(x.isi) > MAKS_DATA_KODE:
+                    d = {"type": "tool_result", "tool_use_id": x.tool_use_id, "is_error": True,
+                         "content": "Total data yang diminta kode untuk pertanyaan ini sudah terlalu besar. Olah data "
+                                    "yang sudah terbaca, atau minta data yang sudah dikelompokkan/diagregasi."}
+                else:
+                    self._data_kode += len(x.isi)
+            out.append(d)
+        return out
+
+    async def _muat_peta_lampiran(self, messages: list[dict]) -> None:
+        try:
+            self._peta_lampiran = await lmp.peta_file(self.db, self.user_id, file_id_container_upload(messages))
+        except Exception:  # noqa: BLE001 — tanpa peta, pengganti tetap berupa teks umum
+            log.warning("Asisten AI: ringkasan lampiran gagal dimuat (sesi %s)", self.sesi_id, exc_info=True)
+            self._peta_lampiran = {}
+
+    async def _matikan_kode(self, messages: list[dict], pesan: str) -> None:
+        """API menolak permintaan karena ruang hitung → matikan untuk proses ini + jawaban ini (diulang tanpa)."""
+        if _KODE["aktif"]:
+            _KODE["aktif"] = False
+            log.warning("Asisten AI: permintaan dengan ruang hitung ditolak API (%s) — hitung dengan kode DIMATIKAN "
+                        "untuk proses ini", pesan[:200])
+        self.kode = False
+        self.tools = ab.tools_untuk_api(tindakan=self.tindakan_aktif, kecuali=self.alat_ditahan, kode=False)
+        self.kontainer = None
+        self._catatan_kode_sisip = True
+        await self._muat_peta_lampiran(messages)
+
+    async def _catat_kontainer(self, c: Any) -> None:
+        """Simpan kontainer ruang hitung terakhir di sesi (dikirim balik pada permintaan berikutnya)."""
+        cid = _attr(c, "id")
+        if not cid or not isinstance(cid, str):
+            return
+        exp = _attr(c, "expires_at")
+        exp = exp.isoformat() if hasattr(exp, "isoformat") else (str(exp) if exp else None)
+        if cid == self.kontainer and exp == self._kontainer_exp:
+            return
+        baru = cid != self.kontainer
+        self.kontainer, self._kontainer_exp = cid, exp
+        try:
+            await simpan.simpan_kontainer(self.db, self.user_id, self.sesi_id, cid, exp, baru=baru)
+        except Exception:  # noqa: BLE001 — gagal mencatat tidak boleh menggagalkan jawaban
+            log.warning("Asisten AI: kontainer gagal dicatat (sesi %s)", self.sesi_id, exc_info=True)
+
+    async def _berkas_dari(self, konten: list[dict]) -> None:
+        """Berkas keluaran kode di giliran ini → unduh, simpan, event `berkas` (≤ MAKS_BERKAS_JAWABAN per jawaban)."""
+        for fid in bk.file_id_keluaran(konten):
+            if fid in self._berkas_dilihat:
+                continue
+            self._berkas_dilihat.add(fid)
+            if len(self._berkas_dilihat) > bk.MAKS_BERKAS_JAWABAN:
+                if not self._berkas_gagal:
+                    self._berkas_gagal = True
+                    self._catatan(f"Hanya {bk.MAKS_BERKAS_JAWABAN} berkas pertama yang disimpan untuk jawaban ini.")
+                continue
+            if self.klien is None or self.berhenti:
+                continue
+            try:
+                doc = await asyncio.wait_for(
+                    bk.unduh_dan_simpan(self.db, self.klien, fid, user=self.user, sesi_id=self.sesi_id,
+                                        pesan_id=self.pesan_id), timeout=bk.BATAS_DETIK_UNDUH)
+            except bk.GalatBerkas as e:
+                self._catatan(e.pesan)
+                continue
+            except asyncio.TimeoutError:
+                self._catatan("Berkas hasil hitung terlalu lama diambil sehingga dilewati. Minta AI membuatnya lagi.")
+                continue
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                log.exception("Asisten AI: berkas keluaran gagal disimpan (sesi %s)", self.sesi_id)
+                self._catatan("Berkas hasil hitung gagal disimpan. Minta AI membuatnya lagi.")
+                continue
+            self.kirim("berkas", bk.event_berkas(doc))
+
+    async def _siapkan_lampiran(self) -> Optional[list]:
+        """Klaim + unggah lampiran pesan ini. Return [] (tanpa lampiran), dokumen urut, atau None (galat dipancarkan;
+        klaim sudah dilepas)."""
+        if not self.lampiran_ids:
+            return []
+        try:
+            token, docs = await lmp.klaim(self.db, self.user_id, self.lampiran_ids, self.sesi_id)
+        except lmp.GalatLampiran as e:
+            self._set_galat("lampiran", e.pesan)
+            return None
+        self._klaim_lampiran = token
+        try:
+            if self.klien is None:
+                raise lmp.GalatLampiran(502, PESAN_GALAT["lampiran"])
+            await lmp.siapkan_file(self.db, self.klien, docs, kode=self.kode)
+        except lmp.GalatLampiran as e:
+            await lmp.lepas_klaim(self.db, self.user_id, token)
+            self._klaim_lampiran = None
+            self._set_galat("lampiran", e.pesan)
+            return None
+        except BaseException:
+            await lmp.lepas_klaim(self.db, self.user_id, token)
+            self._klaim_lampiran = None
+            raise
+        return docs
 
     # — Tahap B: alat tindakan —
     async def _siapkan_tindakan(self, tid: str, nama: str, args: Any) -> ab.HasilAlat:
@@ -896,7 +1284,7 @@ class Jalan:
             for b in t.get("content") or []:
                 if b.get("type") == "server_tool_use":
                     srv.setdefault(b.get("id"), i)
-                elif b.get("type") in ("web_search_tool_result", "web_fetch_tool_result"):
+                elif b.get("type") in JENIS_HASIL_SERVER:
                     hasil.add(b.get("tool_use_id"))
         yatim = [i for sid, i in srv.items() if sid not in hasil]
         if yatim:
@@ -955,10 +1343,12 @@ def sedang_berjalan(sesi_id: str) -> bool:
 async def siapkan_jalan(*, db, user: dict, sesi: dict, teks: str, cv: str, periode: str, today,
                         token: Optional[str] = None, app=None, klien=None, klien_api=None,
                         maks_putaran: int = MAKS_PUTARAN_ALAT,
-                        batas_detik: float = BATAS_DETIK) -> tuple[Optional[Jalan], Optional[dict]]:
+                        batas_detik: float = BATAS_DETIK, lampiran: Optional[list] = None,
+                        maks_putaran_kode: int = MAKS_PUTARAN_KODE) -> tuple[Optional[Jalan], Optional[dict]]:
     """Gerbang sebelum jawaban dimulai. Return (Jalan, None) atau (None, galat {kode, pesan}).
 
     Bila gerbang menolak (kunci kosong, AI dimatikan, anggaran habis) tidak ada pesan yang disimpan.
+    `lampiran` (Tahap E) = id lampiran yang SUDAH diperiksa rute (`lampiran.periksa_untuk_pesan`).
     """
     if sedang_berjalan(sesi["id"]):
         return None, {"kode": "sedang_berjalan", "pesan": PESAN_GALAT["sedang_berjalan"]}
@@ -969,7 +1359,8 @@ async def siapkan_jalan(*, db, user: dict, sesi: dict, teks: str, cv: str, perio
     j = Jalan(db=db, user=user, sesi=sesi, teks=teks, cv=cv, periode=periode, today=today, token=token, app=app,
               klien=klien, klien_api=klien_api, api_key=g.api_key, peringatan=g.warning,
               maks_putaran=maks_putaran, batas_detik=batas_detik, tindakan_aktif=aturan["aktif"],
-              batas_tindakan=aturan["batas"], ingatan_aktif=await ing.aktif())
+              batas_tindakan=aturan["batas"], ingatan_aktif=await ing.aktif(), lampiran=lampiran,
+              maks_putaran_kode=maks_putaran_kode)
     return j, None
 
 

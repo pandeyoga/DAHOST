@@ -129,9 +129,10 @@ def test_registri_alat_deterministik_hanya_read_ui(env):
         assert {"tampilkan_grafik", "tampilkan_tabel", "tanggal_dan_periode"} <= set(klien)
         assert all(x.get("eager_input_streaming") is True for x in a if "input_schema" in x)
         srv = [x for x in a if "type" in x]
-        assert [(s["type"], s["name"], s["max_uses"]) for s in srv] == [
-            ("web_search_20260209", "web_search", 5), ("web_fetch_20260209", "web_fetch", 3)]
-        assert not any("code_execution" in json.dumps(x) for x in a)
+        # Tahap E (keputusan owner 9 Nov): ruang hitung code_execution_20260120 ikut dikirim sesudah alat web.
+        assert [(s["type"], s["name"], s.get("max_uses")) for s in srv] == [
+            ("web_search_20260209", "web_search", 5), ("web_fetch_20260209", "web_fetch", 3),
+            ("code_execution_20260120", "code_execution", None)]
         # tanpa tanggal/acak di prefix
         assert not re.search(r"\d{4}-\d{2}-\d{2}", json.dumps(a)) and "2026" not in pr.PROMPT_SISTEM
         # skema kanonik (kunci terurut) → serialisasi identik walau penulis modul mengubah urutan kunci
@@ -697,7 +698,7 @@ def test_loop_dengan_sdk_anthropic_sungguhan_lewat_transport_tiruan(env):
     assert b1["fallbacks"] == "default" and b1["cache_control"] == {"type": "ephemeral"}
     assert b1["thinking"] == {"type": "adaptive", "display": "summarized"} and b1["output_config"] == {"effort": "medium"}
     assert b1["system"][-1]["cache_control"] == {"type": "ephemeral"} and b1["model"] == "claude-opus-5-5"
-    assert [x.get("name") for x in b1["tools"]][-2:] == ["web_search", "web_fetch"]
+    assert [x.get("name") for x in b1["tools"]][-3:] == ["web_search", "web_fetch", "code_execution"]
     assert all(x.get("eager_input_streaming") for x in b1["tools"] if "input_schema" in x)
     # giliran asisten diputar ulang PERSIS (thinking + tanda tangan asli, tool_use) lalu tool_result
     b2 = permintaan[1]["body"]

@@ -6,9 +6,11 @@
 import { parseServerTime, todayWIB, toWIBDate, addDaysISO } from '@/lib/waktu';
 import { blokTindakan, terapkanStatusKeBlok } from './tindakanAsisten';
 import { blokIngatan } from './adapterTahapCD';
+import { blokBerkas, normalLampiran } from './lampiranAsisten';
 
-/** Jenis blok yang dihitung sebagai ISI jawaban (bukan langkah/sumber). Kartu tindakan termasuk (Tahap B). */
-export const JENIS_ISI = new Set(['teks', 'grafik', 'tabel', 'laporan', 'tindakan']);
+/** Jenis blok yang dihitung sebagai ISI jawaban (bukan langkah/sumber). Kartu tindakan (Tahap B) dan berkas buatan AI
+ * (Tahap E) termasuk. */
+export const JENIS_ISI = new Set(['teks', 'grafik', 'tabel', 'laporan', 'tindakan', 'berkas']);
 
 /** Kelompok riwayat: Hari ini / Kemarin / Lebih lama (tanggal WIB dari `updated_at`, cadangan `created_at`). */
 export function kelompokkanSesi(sessions, now = new Date()) {
@@ -85,6 +87,15 @@ export function terapkanPeristiwa(pesan, event, data) {
     case 'laporan':
       blok.push({ jenis: 'laporan', ...d });
       return { ...pesan, blok };
+    // Tahap E (Kontrak K3): berkas keluaran hitung-dengan-kode → kartu unduh. Id yang sama tidak digandakan.
+    case 'berkas': {
+      const b = blokBerkas(d);
+      if (!b) return pesan;
+      const i = blok.findIndex((x) => x.jenis === 'berkas' && x.id === b.id);
+      if (i >= 0) blok[i] = b;
+      else blok.push(b);
+      return { ...pesan, blok };
+    }
     // Tahap B (Kontrak E): kartu konfirmasi. `tindakan` = rencana baru (keadaan menunggu); `tindakan_status` =
     // keadaan kartu berubah. Kartu bisa ada di jawaban SEBELUMNYA → layar memakai `terapkanStatusTindakan`
     // untuk seluruh utas; di sini hanya blok milik pesan ini.
@@ -140,5 +151,7 @@ export function dariRiwayat(p) {
     teks: p?.peran === 'user' ? (p?.teks ?? blok.filter((b) => b.jenis === 'teks').map((b) => b.isi).join('\n')) : undefined,
     // Tahap D: permintaan yang ditulis sistem (briefing pagi / laporan mingguan otomatis), bukan oleh pengguna
     otomatis: p?.peran === 'user' && p?.otomatis === true ? true : undefined,
+    // Tahap E (Kontrak K2): berkas yang dilampirkan pengguna pada pertanyaan ini
+    lampiran: p?.peran === 'user' ? normalLampiran(p?.lampiran) : undefined,
   };
 }

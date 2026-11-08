@@ -75,6 +75,9 @@ REGISTRY: dict[str, str] = {
     "ai_chat_messages": "lain",
     # Tahap B (8 Nov 2026): kartu tindakan AI + keputusan/jejaknya (jenis `log`, lihat bawah)
     "ai_actions": "lain",
+    # Tahap E (9 Nov 2026): lampiran pengguna + berkas keluaran "hitung dengan kode" (jenis `log`, lihat bawah)
+    "ai_lampiran": "lain",
+    "ai_berkas": "lain",
     # ── akhir Asisten AI (inti) ──
     # Asisten AI (proaktif) — Tahap D: ingatan AI per pengguna (preferensi = konfigurasi) + jejak jalan
     # briefing/peringatan/laporan mingguan (klaim sekali-sehari, jenis `log`).
@@ -706,6 +709,8 @@ ai_chat_messages ai_chat_sessions
 """
 # Tahap B (8 Nov 2026): jejak tindakan AI (kartu konfirmasi, keputusan, hasil, pembalikan).
 _LOG += " ai_actions "
+# Tahap E (9 Nov 2026): metadata lampiran percakapan + berkas keluaran kode (berkasnya di penyimpanan unggahan).
+_LOG += " ai_lampiran ai_berkas "
 # ── akhir Asisten AI (inti) ──
 # Asisten AI (proaktif) — Tahap D: ingatan = preferensi per pengguna, jenis sama dengan `notif_user_prefs`
 # (konfigurasi: bertahan saat cutoff); jejak jalan proaktif = log (boleh dihapus saat cutoff).

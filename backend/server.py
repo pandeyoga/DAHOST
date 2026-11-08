@@ -1510,6 +1510,13 @@ app.include_router(asisten_ai_laporan_router,
                    dependencies=_DENY_EXTERNAL + [_Depends(_require_portal_dep("management"))])
 # ── akhir Asisten AI (laporan) ──
 
+# ── Asisten AI (berkas kode) — unduh berkas keluaran "hitung dengan kode" (Tahap E, 9 Nov 2026) ──
+# Gerbang sama dengan unduh laporan: tolak peran eksternal + akses Portal Management; pembuat dicek di rute.
+from routes.asisten_ai_berkas_routes import router as asisten_ai_berkas_router  # noqa: E402
+app.include_router(asisten_ai_berkas_router,
+                   dependencies=_DENY_EXTERNAL + [_Depends(_require_portal_dep("management"))])
+# ── akhir Asisten AI (berkas kode) ──
+
 # ─── Production Seed ─────────────────────────────────────────────────────────
 # FASE 5 (AD-4): production_seed_full diarsip (menulis koleksi engine lama yang
 # sudah di-drop). Seeder final: POST /api/seed/maklon-full (maklon + internal).
