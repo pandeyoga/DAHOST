@@ -1,65 +1,79 @@
 /**
- * HRKasbonModule — HR Portal: Review Pengajuan Kasbon & Pinjaman
- * HR bisa lihat semua pengajuan, approve/reject, dan monitor overview.
+ * HRKasbonModule — Portal SDM › Kasbon: tinjau pengajuan kasbon & pinjaman karyawan dan pantau sisanya.
  *
- * F13-B (sesi #12) — LAYAR UANG YANG TIDAK BISA DIBAWA KE RAPAT.
- * Antrian persetujuan kasbon dulu hanya bisa dibaca sebagai KARTU: tidak ada
- * tabel, tidak ada urutan, tidak ada halaman, tidak ada unduhan. Akibatnya
- * pertanyaan paling wajar HR — *"pengajuan mana yang paling besar dan paling
- * lama menunggu?"* — dijawab dengan menggulir kartu satu per satu. Angka ini
- * adalah UTANG KARYAWAN yang akan dipotong dari gaji; menyalinnya ulang dengan
- * tangan ke Excel adalah sumber salah-ketik yang paling mahal di modul ini.
+ * F13-B (sesi #12) — antrian kasbon dulu hanya kartu; kini tabel yang bisa diurutkan, berhalaman, dan diunduh.
+ * Angka ini adalah UTANG KARYAWAN yang akan dipotong dari gaji; menyalinnya ulang dengan tangan ke Excel adalah
+ * sumber salah-ketik yang paling mahal di modul ini.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, penyaring satu baris (status · urutan · cari), daftar =
+ * TabelData (kartu ringkas di HP), detail = popup, tinjauan = FormPopup (Setujui hijau; Tolak merah lewat
+ * konfirmasi beralasan), unduh Excel + CSV, kartu angka hanya bila ada isinya.
+ * Perbaikan ikut: daftar dulu dimuat `limit=100` — pengajuan ke-101 dst. tidak tampil sama sekali. Kini 500
+ * (batas server) + pemberitahuan bila masih ada yang belum termuat.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
-import {
-  CheckCircle2, XCircle, Clock, Users, DollarSign,
-  RefreshCw, Search, Filter, X, Eye, FileText, AlertCircle,
-  Table2, LayoutGrid, ArrowUpDown,
-} from 'lucide-react';
-import { formatRupiah } from '@/lib/format';
-import ExportCsvButton from '@/components/ui/export-csv-button';
+import { ArrowDownWideNarrow, ArrowUpNarrowWide, CheckCircle2, RefreshCw, Search, XCircle } from 'lucide-react';
+import { formatRupiah, formatDateID } from '@/lib/format';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { MoneyInput } from '@/components/ui/money-input';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import ViewToggle from '@/components/ui/view-toggle';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 
 const HRKASBON_VIEW_KEY = 'hr_kasbon_view';
-const CSV_HEAD = ['No. Pengajuan', 'Karyawan', 'Kode', 'Departemen', 'Jenis',
-  'Keperluan', 'Status', 'Jumlah', 'Terbayar', 'Sisa', 'Cicilan/bulan',
-  'Jml cicilan', 'Diajukan'];
+const BATAS_MUAT = 500; // batas `limit` server untuk /api/dewi/kasbon/requests
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const authH = () => ({ Authorization: `Bearer ${localStorage.getItem('erp_token')}`, 'Content-Type': 'application/json' });
 const fmt = formatRupiah;
-const fmtDate = (d) => { if (!d) return '-'; try { return new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }); } catch { return d; } };
+const fmtDate = (d) => formatDateID(d);
 
 const STATUS_CFG = {
-  submitted:   { label: 'Menunggu HR',     bg: 'bg-amber-100 dark:bg-amber-400/20',   text: 'text-amber-700 dark:text-amber-400' },
-  hr_approved: { label: 'Disetujui HR',    bg: 'bg-blue-100 dark:bg-blue-400/20',     text: 'text-blue-700 dark:text-blue-400' },
-  hr_rejected: { label: 'Ditolak HR',      bg: 'bg-red-100 dark:bg-red-400/20',       text: 'text-red-700 dark:text-red-400' },
-  disbursed:   { label: 'Aktif/Dicairkan', bg: 'bg-emerald-100 dark:bg-emerald-400/20', text: 'text-emerald-700 dark:text-emerald-400' },
-  paid_off:    { label: 'Lunas',           bg: 'bg-violet-100 dark:bg-violet-400/20', text: 'text-violet-700 dark:text-violet-400' },
-  cancelled:   { label: 'Dibatalkan',      bg: 'bg-muted dark:bg-slate-400/20',   text: 'text-muted-foreground dark:text-slate-400' },
+  submitted:   { label: 'Menunggu HR',       tone: 'warning' },
+  hr_approved: { label: 'Disetujui HR',      tone: 'info' },
+  hr_rejected: { label: 'Ditolak HR',        tone: 'danger' },
+  disbursed:   { label: 'Aktif (dicairkan)', tone: 'primary' },
+  paid_off:    { label: 'Lunas',             tone: 'success' },
+  cancelled:   { label: 'Dibatalkan',        tone: 'muted' },
 };
+const labelStatus = (s) => STATUS_CFG[s]?.label || 'Status lain';
 
-function StatusBadge({ status }) {
-  const cfg = STATUS_CFG[status] || STATUS_CFG.submitted;
-  return <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${cfg.bg} ${cfg.text}`}>{cfg.label}</span>;
+function KasbonStatus({ status }) {
+  const cfg = STATUS_CFG[status] || { label: labelStatus(status), tone: 'default' };
+  return <StatusBadge status={status} label={cfg.label} tone={cfg.tone} />;
 }
 
-// ─── Review Modal ─────────────────────────────────────────────────────────────
+// Urutan: semua kolom yang dulu bisa diklik di kepala tabel, plus arah naik/turun.
+const URUTAN = [
+  ['amount', 'Jumlah'], ['created_at', 'Tanggal diajukan'], ['outstanding_balance', 'Sisa'],
+  ['installment_amount', 'Cicilan/bulan'], ['employee_name', 'Nama karyawan'], ['employee_code', 'Kode karyawan'],
+  ['department', 'Departemen'], ['request_number', 'No. pengajuan'], ['type_label', 'Jenis'],
+  ['purpose', 'Keperluan'], ['status', 'Status'],
+];
+
+// ─── Tinjau pengajuan (popup form) ────────────────────────────────────────────
 function ReviewModal({ req, onClose, onDone }) {
-  const [action, setAction] = useState('approve');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [galat, setGalat] = useState('');
   // 2026-11-02 (K25): nilai disetujui ≤ nilai diminta (backend juga menegakkan batas kasbon & pengaju ≠ penyetuju).
   const [approvedAmount, setApprovedAmount] = useState(req.amount);
   const tooHigh = Number(approvedAmount) > Number(req.amount);
 
-  const handleSubmit = async () => {
-    setSaving(true);
+  const kirim = async (action, catatan) => {
+    setSaving(true); setGalat('');
     try {
-      const body = { action, notes };
+      const body = { action, notes: catatan };
       if (action === 'approve' && Number(approvedAmount) !== Number(req.amount)) body.approved_amount = Number(approvedAmount);
       const r = await fetch(`${API}/api/dewi/kasbon/requests/${req.id}/hr-review`, {
         method: 'PATCH', headers: authH(),
@@ -69,140 +83,106 @@ function ReviewModal({ req, onClose, onDone }) {
       if (d.ok) {
         toast.success(action === 'approve' ? 'Pengajuan disetujui' : 'Pengajuan ditolak');
         onDone();
-      } else toast.error(d.detail || 'Gagal');
-    } catch (_e) { toast.error('Terjadi kesalahan'); }
+      } else setGalat(typeof d.detail === 'string' ? d.detail : 'Gagal menyimpan tinjauan.');
+    } catch (_e) { setGalat('Terjadi kesalahan. Coba lagi.'); }
     finally { setSaving(false); }
   };
 
+  const tolak = async () => {
+    const alasan = await confirmDialog({
+      title: 'Tolak pengajuan ini?',
+      body: `${req.employee_name} · ${fmt(req.amount)}. Alasan dikirim ke karyawan.`,
+      input: { label: 'Alasan penolakan', placeholder: 'Jelaskan alasan penolakan…' },
+      confirmLabel: 'Tolak', danger: true,
+    });
+    if (!alasan) return;
+    await kirim('reject', alasan);
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-[var(--card-surface)] rounded-2xl border border-[var(--glass-border)] shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
-        <div className="p-5 border-b border-[var(--glass-border)] flex items-center justify-between">
-          <h3 className="font-semibold">Review Pengajuan</h3>
-          <button onClick={onClose}><X className="w-4 h-4" /></button>
-        </div>
-        <div className="p-5 space-y-4">
-          {/* Applicant Info */}
-          <div className="p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)] space-y-1 text-xs">
-            <div className="flex justify-between"><span className="text-muted-foreground">Karyawan</span><strong>{req.employee_name}</strong></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Departemen</span><span>{req.department || '-'}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Jenis</span><span>{req.type_label}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Jumlah</span><strong className="text-foreground">{fmt(req.amount)}</strong></div>
-            {req.installment_count > 1 && <div className="flex justify-between"><span className="text-muted-foreground">Cicilan</span><span>{req.installment_count}x × {fmt(req.installment_amount)}</span></div>}
-            <div className="flex justify-between"><span className="text-muted-foreground">Keperluan</span><span className="text-right max-w-[60%]">{req.purpose}</span></div>
-            {req.documents?.length > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Dokumen</span><span>{req.documents.length} file</span></div>}
-          </div>
-
-          {/* Action */}
-          <div className="grid grid-cols-2 gap-3">
-            <button onClick={() => setAction('approve')}
-              className={`p-3 rounded-xl border-2 flex items-center gap-2 transition-all ${action==='approve' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-500/10' : 'border-[var(--glass-border)]'}`}>
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-              <span className="text-sm font-medium text-foreground">Setujui</span>
-            </button>
-            <button onClick={() => setAction('reject')}
-              className={`p-3 rounded-xl border-2 flex items-center gap-2 transition-all ${action==='reject' ? 'border-red-500 bg-red-50 dark:bg-red-500/10' : 'border-[var(--glass-border)]'}`}>
-              <XCircle className="w-4 h-4 text-red-500" />
-              <span className="text-sm font-medium text-foreground">Tolak</span>
-            </button>
-          </div>
-
-          {(req.limit_warnings || []).length > 0 && (
-            <div className="text-[11px] rounded-lg border border-amber-400 bg-amber-50 dark:bg-amber-500/10 px-2 py-1.5">
-              {req.limit_warnings.join(' ')}
-            </div>
-          )}
-          {action === 'approve' && (
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Nilai disetujui (maks {fmt(req.amount)})</label>
-              {/* Tahap 5 (2026-11-07): nominal uang memakai MoneyInput (pemisah ribuan), bukan input angka polos */}
-              <MoneyInput unstyled value={approvedAmount}
-                onChange={e => setApprovedAmount(e.target.value)} data-testid="kasbon-approved-amount"
-                className="w-full h-9 px-3 rounded-xl border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-              {tooHigh && <div className="text-[10px] text-red-600 mt-1">Tidak boleh melebihi nilai yang diminta.</div>}
-            </div>
-          )}
-
-          <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1">
-              {action === 'reject' ? 'Alasan Penolakan *' : 'Catatan (opsional)'}
-            </label>
-            <textarea value={notes} onChange={e => setNotes(e.target.value)}
-              placeholder={action === 'reject' ? 'Jelaskan alasan penolakan...' : 'Tambahkan catatan...'}
-              className="w-full h-16 px-3 py-2 rounded-xl border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm resize-none" />
-          </div>
-        </div>
-        <div className="p-5 border-t border-[var(--glass-border)] flex gap-3">
-          <button onClick={onClose} className="flex-1 h-10 rounded-xl border border-[var(--glass-border)] text-sm text-muted-foreground">Batal</button>
-          <button onClick={handleSubmit} disabled={saving || (action === 'reject' && !notes.trim()) || (action === 'approve' && (tooHigh || !(Number(approvedAmount) > 0)))}
-            className={`flex-1 h-10 rounded-xl text-sm font-semibold disabled:opacity-50 ${action==='approve' ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`}>
-            {saving ? 'Menyimpan...' : action === 'approve' ? 'Setujui' : 'Tolak'}
-          </button>
-        </div>
-      </div>
-    </div>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="kasbon-review"
+      judul="Tinjau pengajuan" keterangan="Setujui dengan nilai yang sama atau lebih kecil, atau tolak dengan alasan."
+      onSimpan={() => kirim('approve', notes)} labelSimpan="Setujui" menyimpan={saving} galat={galat}
+      bisaSimpan={!tooHigh && Number(approvedAmount) > 0}
+      aksiKiri={<Button type="button" variant="destructive" onClick={tolak} disabled={saving} data-testid="kasbon-review-reject">
+        <XCircle />Tolak</Button>}>
+      <dl className="divide-y divide-[var(--glass-border)]">
+        <BarisDetail label="Karyawan">{req.employee_name}</BarisDetail>
+        <BarisDetail label="Departemen">{req.department || '—'}</BarisDetail>
+        <BarisDetail label="Jenis">{req.type_label || req.type}</BarisDetail>
+        <BarisDetail label="Jumlah diminta"><span className="font-semibold tabular-nums">{fmt(req.amount)}</span></BarisDetail>
+        {req.installment_count > 1 && <BarisDetail label="Cicilan">{req.installment_count}× {fmt(req.installment_amount)}</BarisDetail>}
+        <BarisDetail label="Keperluan">{req.purpose || '—'}</BarisDetail>
+        {req.documents?.length > 0 && <BarisDetail label="Dokumen">{req.documents.length} berkas</BarisDetail>}
+      </dl>
+      {(req.limit_warnings || []).length > 0 && (
+        <Notice tone="warning" title="Perhatian batas kasbon">{req.limit_warnings.join(' ')}</Notice>
+      )}
+      <Isian label={`Nilai disetujui (maks ${fmt(req.amount)})`} htmlFor="kasbon-nilai"
+        galat={tooHigh ? 'Tidak boleh melebihi nilai yang diminta.' : undefined}>
+        {/* Tahap 5 (2026-11-07): nominal uang memakai MoneyInput (pemisah ribuan), bukan input angka polos */}
+        <MoneyInput id="kasbon-nilai" value={approvedAmount}
+          onChange={e => setApprovedAmount(e.target.value)} data-testid="kasbon-approved-amount" />
+      </Isian>
+      <Isian label="Catatan" petunjuk="Opsional. Tampil bagi karyawan dan Keuangan." htmlFor="kasbon-catatan">
+        <Textarea id="kasbon-catatan" rows={3} value={notes} onChange={e => setNotes(e.target.value)}
+          placeholder="Tambahkan catatan…" />
+      </Isian>
+    </FormPopup>
   );
 }
 
-// ─── Request Row ──────────────────────────────────────────────────────────────
-function RequestRow({ req, onReview, onView }) {
+// ─── Kartu ringkas (tampilan kartu) ───────────────────────────────────────────
+function RequestCard({ req, onOpen, onReview }) {
   return (
-    <div className="p-4 rounded-xl border border-[var(--glass-border)] bg-[var(--glass-bg)] hover:bg-[var(--card-surface)] transition-colors">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap mb-1">
-            <span className="text-xs font-mono text-muted-foreground">{req.request_number}</span>
-            <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${req.type==='kasbon' ? 'bg-orange-100 dark:bg-orange-400/20 text-orange-700 dark:text-orange-400' : 'bg-blue-100 dark:bg-blue-400/20 text-blue-700 dark:text-blue-400'}`}>
-              {req.type_label}
-            </span>
-            <StatusBadge status={req.status} />
-          </div>
-          <p className="text-sm font-semibold text-foreground">{req.employee_name}</p>
-          <p className="text-xs text-muted-foreground">{req.department} · {req.purpose}</p>
+    <div onClick={() => onOpen(req)} role="button" tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter') onOpen(req); }}
+      className="cursor-pointer rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] p-3 hover:border-[hsl(var(--primary)/0.4)]">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-foreground">{req.employee_name}</p>
+          <p className="truncate text-xs text-muted-foreground">{req.request_number} · {req.type_label || req.type}</p>
         </div>
-        <div className="text-right shrink-0">
-          <p className="text-sm font-bold text-foreground">{fmt(req.amount)}</p>
+        <KasbonStatus status={req.status} />
+      </div>
+      <p className="mt-1 truncate text-xs text-muted-foreground" title={req.purpose}>{req.purpose || '—'}</p>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold tabular-nums text-foreground">{fmt(req.amount)}</p>
           <p className="text-xs text-muted-foreground">{fmtDate(req.created_at)}</p>
-          {req.documents?.length > 0 && (
-            <p className="text-xs text-blue-500 mt-0.5">{req.documents.length} dok.</p>
-          )}
         </div>
+        {req.status === 'submitted' && (
+          <Button size="sm" onClick={(e) => { e.stopPropagation(); onReview(req); }} data-testid={`hr-review-btn-${req.id}`}>
+            Tinjau
+          </Button>
+        )}
       </div>
-      {req.status === 'submitted' && (
-        <div className="flex gap-2 mt-3">
-          <button onClick={() => onReview(req)} data-testid={`hr-review-btn-${req.id}`}
-            className="flex-1 h-8 rounded-lg bg-[hsl(var(--primary))] text-foreground text-xs font-medium">
-            Review Pengajuan
-          </button>
-        </div>
-      )}
-      {req.hr_notes && (
-        <p className="text-xs text-muted-foreground mt-2 italic">Catatan HR: {req.hr_notes}</p>
-      )}
     </div>
   );
 }
 
-// ─── Main Module ──────────────────────────────────────────────────────────────
+// ─── Halaman ──────────────────────────────────────────────────────────────────
 export default function HRKasbonModule() {
   const [requests, setRequests] = useState([]);
-  const [stats, setStats] = useState({});
+  const [totalServer, setTotalServer] = useState(0);
+  const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState('submitted');
   const [search, setSearch] = useState('');
   const [reviewReq, setReviewReq] = useState(null);
+  const [detail, setDetail] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [rReqs, rStats] = await Promise.all([
-        fetch(`${API}/api/dewi/kasbon/requests?limit=100`, { headers: authH() }),
+        fetch(`${API}/api/dewi/kasbon/requests?limit=${BATAS_MUAT}`, { headers: authH() }),
         fetch(`${API}/api/dewi/kasbon/stats`, { headers: authH() }),
       ]);
       const [dReqs, dStats] = await Promise.all([rReqs.json(), rStats.json()]);
-      if (dReqs.ok) setRequests(dReqs.requests || []);
+      if (dReqs.ok) { setRequests(dReqs.requests || []); setTotalServer(Number(dReqs.total) || 0); }
       if (dStats.ok) setStats(dStats.stats || {});
-    } catch (_e) { /* ignore */ }
+    } catch (_e) { toast.error('Gagal memuat pengajuan kasbon.'); }
     finally { setLoading(false); }
   }, []);
 
@@ -218,9 +198,7 @@ export default function HRKasbonModule() {
     return matchStatus && matchSearch;
   });
 
-  // ── F13-B — tabel, urutan, halaman, unduhan ────────────────────────────────
-  // Pilihan tampilan DIINGAT antar kunjungan: staf yang bekerja dengan tabel
-  // tidak boleh disuruh mengklik ulang tiap membuka layar.
+  // Pilihan tampilan DIINGAT antar kunjungan.
   const [view, setView] = useState(() => {
     try { return localStorage.getItem(HRKASBON_VIEW_KEY) || 'table'; } catch { return 'table'; }
   });
@@ -229,9 +207,7 @@ export default function HRKasbonModule() {
   }, [view]);
   const [sort, setSort] = useState({ key: 'amount', dir: 'desc' });
 
-  // Yang diurutkan = yang TERLIHAT, dan yang diunduh = yang terlihat juga
-  // (aturan `lib/csv.js`). Kueri ulang saat unduh melahirkan berkas yang tidak
-  // sama dengan layar — dan yang dipercaya biasanya justru yang salah.
+  // Yang diurutkan = yang TERLIHAT, dan yang diunduh = yang terlihat juga.
   const rows = useMemo(() => {
     const list = [...filtered];
     const { key, dir } = sort;
@@ -245,171 +221,159 @@ export default function HRKasbonModule() {
     return list;
   }, [filtered, sort]);
   const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 12);
-  const toggleSort = (key) => setSort((s) => (
-    s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' }));
-  const csvRows = rows.map((r) => [
-    r.request_number, r.employee_name, r.employee_code || '', r.department || '',
-    r.type_label || r.type || '', r.purpose || '',
-    STATUS_CFG[r.status]?.label || r.status,
-    r.amount ?? 0, r.paid_amount ?? 0, r.outstanding_balance ?? 0,
-    r.installment_amount ?? 0, r.installment_count ?? 0,
-    String(r.created_at || '').slice(0, 10),
-  ]);
 
-  const statCards = [
-    { label: 'Menunggu Review HR', value: stats.pending_hr || 0, unit: 'pengajuan', icon: Clock, color: 'text-amber-500', urgent: (stats.pending_hr || 0) > 0 },
-    { label: 'Menunggu Pencairan', value: stats.pending_finance || 0, unit: 'pengajuan', icon: DollarSign, color: 'text-blue-500' },
-    { label: 'Aktif (Outstanding)', value: fmt(stats.total_outstanding || 0), unit: '', icon: Users, color: 'text-emerald-500' },
-    { label: 'Bulan Ini', value: stats.this_month_requests || 0, unit: 'pengajuan', icon: FileText, color: 'text-violet-500' },
+  const hitung = (s) => requests.filter((r) => r.status === s).length;
+  const opsiStatus = [
+    { key: 'all', label: 'Semua status', count: requests.length },
+    ...Object.entries(STATUS_CFG).map(([k, c]) => ({ key: k, label: c.label, count: hitung(k) })),
   ];
 
+  const kolomUnduh = [
+    { label: 'No. pengajuan', nilai: (r) => r.request_number },
+    { label: 'Karyawan', nilai: (r) => r.employee_name },
+    { label: 'Kode', nilai: (r) => r.employee_code || '' },
+    { label: 'Departemen', nilai: (r) => r.department || '' },
+    { label: 'Jenis', nilai: (r) => r.type_label || r.type || '' },
+    { label: 'Keperluan', nilai: (r) => r.purpose || '' },
+    { label: 'Status', nilai: (r) => labelStatus(r.status) },
+    { label: 'Jumlah', nilai: (r) => Number(r.amount ?? 0) },
+    { label: 'Terbayar', nilai: (r) => Number(r.paid_amount ?? 0) },
+    { label: 'Sisa', nilai: (r) => Number(r.outstanding_balance ?? 0) },
+    { label: 'Cicilan per bulan', nilai: (r) => Number(r.installment_amount ?? 0) },
+    { label: 'Jumlah cicilan', nilai: (r) => Number(r.installment_count ?? 0) },
+    { label: 'Diajukan', nilai: (r) => fmtDate(r.created_at) },
+    { label: 'Catatan HR', nilai: (r) => r.hr_notes || '' },
+  ];
+
+  const kolom = [
+    { kunci: 'karyawan', label: 'Karyawan', hp: 'judul', isi: (r) => (
+      <div className="min-w-0">
+        <p className="font-medium text-foreground">{r.employee_name}</p>
+        <p className="text-xs text-muted-foreground">{[r.employee_code, r.department].filter(Boolean).join(' · ') || '—'}</p>
+      </div>) },
+    { kunci: 'nomor', label: 'No. pengajuan', hp: 'keterangan', isi: (r) => (
+      <span className="whitespace-nowrap text-xs tabular-nums">{r.request_number}</span>) },
+    { kunci: 'jenis', label: 'Jenis', isi: (r) => r.type_label || r.type || '—' },
+    { kunci: 'keperluan', label: 'Keperluan', hp: false, isi: (r) => (
+      <span className="block max-w-[14rem] truncate" title={r.purpose}>{r.purpose || '—'}</span>) },
+    { kunci: 'status', label: 'Status', isi: (r) => <KasbonStatus status={r.status} /> },
+    { kunci: 'jumlah', label: 'Jumlah', rata: 'kanan', isi: (r) => (
+      <span className="whitespace-nowrap font-semibold tabular-nums">{fmt(r.amount)}</span>) },
+    { kunci: 'sisa', label: 'Sisa', rata: 'kanan', isi: (r) => (
+      <span className="whitespace-nowrap tabular-nums">{fmt(r.outstanding_balance || 0)}</span>) },
+    { kunci: 'cicilan', label: 'Cicilan/bulan', rata: 'kanan', hp: false, isi: (r) => (
+      <span className="whitespace-nowrap tabular-nums">{r.installment_amount ? fmt(r.installment_amount) : '—'}</span>) },
+    { kunci: 'diajukan', label: 'Diajukan', isi: (r) => <span className="whitespace-nowrap">{fmtDate(r.created_at)}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (r.status === 'submitted' ? (
+      <Button size="sm" onClick={() => setReviewReq(r)} data-testid={`hr-review-btn-${r.id}`}>Tinjau</Button>
+    ) : null) },
+  ];
+
+  const s = stats || {};
+  const adaAngka = stats && [s.pending_hr, s.pending_finance, s.total_outstanding, s.this_month_requests].some((v) => Number(v) > 0);
+  const kosong = (
+    <EmptyState
+      title={requests.length ? 'Tidak ada pengajuan yang cocok' : 'Belum ada pengajuan kasbon'}
+      description={requests.length ? 'Ubah status atau kata pencarian.' : 'Pengajuan dari karyawan (Portal Saya › Kasbon) akan muncul di sini.'} />
+  );
+
   return (
-    <div className="p-4 space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">Manajemen Kasbon & Pinjaman</h2>
-          <p className="text-xs text-muted-foreground">Review pengajuan karyawan dan monitoring</p>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={load} className="w-9 h-9 rounded-xl border border-[var(--glass-border)] flex items-center justify-center text-muted-foreground">
-            <RefreshCw className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {statCards.map((s, i) => (
-          <div key={i} className={`p-4 rounded-2xl border ${s.urgent ? 'border-amber-500/40 bg-amber-50 dark:bg-amber-500/10' : 'border-[var(--glass-border)] bg-[var(--card-surface)]'}`}>
-            <s.icon className={`w-5 h-5 mb-2 ${s.color}`} />
-            <p className="text-lg font-bold text-foreground">{s.value} <span className="text-xs font-normal text-muted-foreground">{s.unit}</span></p>
-            <p className="text-xs text-muted-foreground">{s.label}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Filter */}
-      <div className="flex gap-2 flex-wrap">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari karyawan, nomor, keperluan..."
-            data-testid="hrkasbon-search"
-            className="w-full h-9 pl-9 pr-3 rounded-xl border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
-        </div>
+    <PageLayout testId="hr-kasbon-module" title="Kasbon"
+      subtitle="Tinjau pengajuan kasbon dan pinjaman karyawan, lalu pantau sisa pinjaman yang dipotong dari gaji."
+      filters={<>
         <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} searchable={false}
-          data-testid="hrkasbon-filter-status"
-          className="h-9 px-3 rounded-xl border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-          <option value="all">Semua status</option>
-          <option value="submitted">Menunggu HR</option>
-          <option value="hr_approved">Disetujui HR</option>
-          <option value="hr_rejected">Ditolak</option>
-          <option value="disbursed">Aktif</option>
-          <option value="paid_off">Lunas</option>
-          <option value="cancelled">Dibatalkan</option>
+          data-testid="hrkasbon-filter-status" className="h-9 w-full" wrapperClassName="w-full sm:w-48" aria-label="Status">
+          {opsiStatus.map((o) => <option key={o.key} value={o.key}>{`${o.label} (${o.count})`}</option>)}
         </SmartNativeSelect>
-        <div className="flex items-center gap-2">
-          <div className="inline-flex rounded-lg border border-[var(--glass-border)] overflow-hidden">
-            <button type="button" onClick={() => setView('table')} data-testid="hrkasbon-view-table"
-              className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'table'
-                ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-              <Table2 size={12} /> Tabel
-            </button>
-            <button type="button" onClick={() => setView('grid')} data-testid="hrkasbon-view-grid"
-              className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'grid'
-                ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-              <LayoutGrid size={12} /> Kartu
-            </button>
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <SmartNativeSelect value={sort.key} searchable={false} className="h-9 w-full" wrapperClassName="min-w-0 flex-1 sm:w-48 sm:flex-none"
+            aria-label="Urutkan menurut" data-testid="hrkasbon-sort"
+            onChange={e => setSort((s) => ({ key: e.target.value, dir: s.dir }))}>
+            {URUTAN.map(([k, l]) => <option key={k} value={k}>{`Urut: ${l}`}</option>)}
+          </SmartNativeSelect>
+          <Button variant="outline" size="icon" data-testid="hrkasbon-sort-dir"
+            onClick={() => setSort((s) => ({ ...s, dir: s.dir === 'asc' ? 'desc' : 'asc' }))}
+            title={sort.dir === 'asc' ? 'Urutan naik (kecil ke besar, A–Z). Klik untuk membalik.' : 'Urutan turun (besar ke kecil, Z–A). Klik untuk membalik.'}
+            aria-label={sort.dir === 'asc' ? 'Urutan naik, klik untuk membalik' : 'Urutan turun, klik untuk membalik'}>
+            {sort.dir === 'asc' ? <ArrowUpNarrowWide /> : <ArrowDownWideNarrow />}
+          </Button>
+        </div>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari karyawan, nomor, keperluan"
+            data-testid="hrkasbon-search" className="pl-8" />
+        </div>
+      </>}
+      tools={<>
+        <TombolUnduh label={<span className="hidden sm:inline">Unduh</span>} namaBerkas="pengajuan-kasbon-hr" namaLembar="Kasbon" baris={rows} kolom={kolomUnduh}
+          testId="hrkasbon-export" />
+        <div className="hidden sm:block"><ViewToggle value={view} onChange={setView} testId="hrkasbon-view" /></div>
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={adaAngka ? (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="hrkasbon-stats">
+          <StatTile label="Menunggu tinjauan HR" value={s.pending_hr || 0} suffix="pengajuan"
+            accent={s.pending_hr ? 'warning' : 'default'} sub="Status Menunggu HR, semua karyawan." />
+          <StatTile label="Menunggu pencairan" value={s.pending_finance || 0} suffix="pengajuan"
+            sub="Sudah disetujui HR, belum dicairkan Keuangan." />
+          <StatTile label="Sisa pinjaman aktif" value={fmt(s.total_outstanding || 0)}
+            sub="Jumlah sisa kasbon yang sudah dicairkan dan belum lunas." />
+          <StatTile label="Diajukan bulan ini" value={s.this_month_requests || 0} suffix="pengajuan"
+            sub="Semua status, bulan berjalan (WIB)." />
+        </div>
+      ) : null}
+      footer={rows.length > 0 && (
+        <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
+      )}>
+      {totalServer > requests.length && (
+        <Notice tone="warning" title={`Baru ${requests.length} dari ${totalServer} pengajuan yang termuat`}>
+          Pengajuan terlama belum tampil. Saring per status untuk melihatnya.
+        </Notice>
+      )}
+      {loading && requests.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat pengajuan…</p>
+      ) : view === 'grid' ? (
+        rows.length === 0 ? kosong : (
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3" data-testid="hrkasbon-grid">
+            {paged.map((r) => <RequestCard key={r.id} req={r} onOpen={setDetail} onReview={setReviewReq} />)}
           </div>
-          <ExportCsvButton filename="pengajuan-kasbon-hr" testId="hrkasbon-export-csv"
-            head={CSV_HEAD} rows={csvRows}
-            note={`Rp ${(rows.reduce((s, r) => s + Number(r.amount || 0), 0)).toLocaleString('id-ID')} diajukan`} />
-        </div>
-      </div>
-
-      {/* List */}
-      {loading ? (
-        <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="h-20 rounded-xl bg-[var(--glass-bg)] animate-pulse" />)}</div>
-      ) : filtered.length === 0 ? (
-        <div className="text-center py-12">
-          <FileText className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" />
-          <p className="text-muted-foreground text-sm">Tidak ada data</p>
-        </div>
-      ) : view === 'table' ? (
-        <div className="rounded-2xl border border-[var(--glass-border)] bg-[var(--card-surface)]">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs" data-testid="hrkasbon-table">
-              <thead className="bg-[var(--glass-bg)]">
-                <tr className="text-left">
-                  {[['request_number', 'No. Pengajuan'], ['employee_name', 'Karyawan'],
-                    ['employee_code', 'Kode'], ['department', 'Departemen'],
-                    ['type_label', 'Jenis'], ['purpose', 'Keperluan'],
-                    ['status', 'Status'], ['amount', 'Jumlah'],
-                    ['outstanding_balance', 'Sisa'],
-                    ['installment_amount', 'Cicilan/bulan'],
-                    ['created_at', 'Diajukan']].map(([k, label]) => (
-                    <th key={k} className="px-2.5 py-2 font-semibold whitespace-nowrap">
-                      <button type="button" onClick={() => toggleSort(k)}
-                        data-testid={`hrkasbon-sort-${k}`}
-                        className="inline-flex items-center gap-1 hover:text-primary">
-                        {label}
-                        <ArrowUpDown size={10}
-                          className={sort.key === k ? 'text-primary' : 'opacity-30'} />
-                      </button>
-                    </th>
-                  ))}
-                  <th className="px-2.5 py-2 font-semibold text-right">Aksi</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paged.map((r) => (
-                  <tr key={r.id} className="border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg)]">
-                    <td className="px-2.5 py-2 font-mono whitespace-nowrap">{r.request_number}</td>
-                    <td className="px-2.5 py-2 font-medium">{r.employee_name}</td>
-                    <td className="px-2.5 py-2 font-mono text-muted-foreground">{r.employee_code || '—'}</td>
-                    <td className="px-2.5 py-2">{r.department || '—'}</td>
-                    <td className="px-2.5 py-2">{r.type_label || r.type}</td>
-                    <td className="px-2.5 py-2 max-w-[220px] truncate" title={r.purpose}>{r.purpose}</td>
-                    <td className="px-2.5 py-2"><StatusBadge status={r.status} /></td>
-                    <td className="px-2.5 py-2 text-right font-semibold whitespace-nowrap">{fmt(r.amount)}</td>
-                    <td className="px-2.5 py-2 text-right whitespace-nowrap">{fmt(r.outstanding_balance || 0)}</td>
-                    <td className="px-2.5 py-2 text-right whitespace-nowrap">{r.installment_amount ? fmt(r.installment_amount) : '—'}</td>
-                    <td className="px-2.5 py-2 whitespace-nowrap">{fmtDate(r.created_at)}</td>
-                    <td className="px-2.5 py-2 text-right">
-                      {r.status === 'submitted' ? (
-                        <button onClick={() => setReviewReq(r)} data-testid={`hr-review-btn-${r.id}`}
-                          className="h-7 px-2.5 rounded-lg bg-[hsl(var(--primary))] text-primary-foreground text-[11px] font-medium">
-                          Review
-                        </button>
-                      ) : <span className="text-muted-foreground">—</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <PaginationLite page={page} totalPages={totalPages} total={total}
-            pageSize={pageSize} onPageChange={setPage} className="px-3" />
-        </div>
+        )
       ) : (
-        <>
-          <div className="space-y-3">
-            {paged.map(req => (
-              <RequestRow key={req.id} req={req}
-                onReview={setReviewReq}
-                onView={() => {}}
-              />
-            ))}
-          </div>
-          <PaginationLite page={page} totalPages={totalPages} total={total}
-            pageSize={pageSize} onPageChange={setPage} />
-        </>
+        <TabelData kolom={kolom} baris={paged} onKlikBaris={setDetail} testId="hrkasbon-table" kosong={kosong} />
+      )}
+
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} testId="hrkasbon-detail"
+          judul={`${detail.request_number} · ${detail.employee_name}`} status={<KasbonStatus status={detail.status} />}
+          aksi={detail.status === 'submitted' && (
+            <Button size="sm" onClick={() => { setReviewReq(detail); setDetail(null); }}>
+              <CheckCircle2 />Tinjau
+            </Button>
+          )}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Karyawan">{detail.employee_name}{detail.employee_code ? ` · ${detail.employee_code}` : ''}</BarisDetail>
+            <BarisDetail label="Departemen">{detail.department || '—'}</BarisDetail>
+            <BarisDetail label="Jenis">{detail.type_label || detail.type || '—'}</BarisDetail>
+            <BarisDetail label="Keperluan">{detail.purpose || '—'}</BarisDetail>
+            <BarisDetail label="Jumlah"><span className="font-semibold tabular-nums">{fmt(detail.amount)}</span></BarisDetail>
+            <BarisDetail label="Terbayar"><span className="tabular-nums">{fmt(detail.paid_amount || 0)}</span></BarisDetail>
+            <BarisDetail label="Sisa"><span className="tabular-nums">{fmt(detail.outstanding_balance || 0)}</span></BarisDetail>
+            <BarisDetail label="Cicilan">
+              {detail.installment_amount ? `${detail.installment_count || 1}× ${fmt(detail.installment_amount)}` : '—'}
+            </BarisDetail>
+            <BarisDetail label="Diajukan">{fmtDate(detail.created_at)}</BarisDetail>
+            {detail.documents?.length > 0 && <BarisDetail label="Dokumen">{detail.documents.length} berkas</BarisDetail>}
+            {detail.hr_notes && <BarisDetail label="Catatan HR">{detail.hr_notes}</BarisDetail>}
+          </dl>
+        </DetailPopup>
       )}
 
       {reviewReq && (
         <ReviewModal req={reviewReq} onClose={() => setReviewReq(null)}
           onDone={() => { setReviewReq(null); load(); }} />
       )}
-    </div>
+    </PageLayout>
   );
 }

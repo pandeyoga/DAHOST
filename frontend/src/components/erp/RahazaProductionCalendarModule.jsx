@@ -7,17 +7,25 @@
  * tidak ada kalender kedua. Tulis hanya peran SDM (+ owner/manager/admin).
  *
  * Tampilan: cetakan PageLayout + tabel per tahun (cari, jenis, halaman), tampilan bulan sebagai pilihan
- * (ViewToggle), entri baru/ubah dan kalkulator hari kerja DI HALAMAN (DetailPanel).
+ * (ViewToggle). Standar UI/UX v2 (8 Nov 2026): entri baru/ubah = FormPopup, kalkulator hari kerja = popup
+ * (DetailPanel dengan onClose), tanggal = DatePicker, daftar = TabelData (kartu ringkas di HP), alat di ujung
+ * baris penyaring supaya kepala tidak meluber di HP (dulu tombol "Entri baru" terdorong keluar layar).
  *
  *   GET/POST /api/rahaza/production-calendar · PUT/DELETE /api/rahaza/production-calendar/{id}
  *   POST /api/rahaza/production-calendar/seed-national?year= · GET …/working-days
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CalendarDays, Calculator, ChevronLeft, ChevronRight, Pencil, Plus, RefreshCw, Search, Table2, Trash2 } from 'lucide-react';
+import { CalendarDays, Calculator, ChevronLeft, ChevronRight, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Table2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Input } from '@/components/ui/input';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { GlassCard } from '@/components/ui/glass';
+import TabelData from '@/components/ui/tabel-data';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
 import ViewToggle from '@/components/ui/view-toggle';
@@ -46,55 +54,45 @@ const weekdayOf = (iso) => DAYS[new Date(`${iso}T00:00:00`).getDay()];
 // cuti bersama bersifat fakultatif bagi swasta → boleh dihapus bila pabrik tetap bekerja
 const deletable = (e) => e.created_by !== 'system' || e.kind === 'cuti_bersama';
 
-function Field({ label, children, className = '' }) {
-  return (
-    <label className={`block space-y-1 ${className}`}>
-      <span className="text-xs text-muted-foreground">{label}</span>
-      {children}
-    </label>
-  );
-}
-
 function EntryForm({ entry, onClose, onSaved }) {
   const isEdit = !!entry?.id;
   const [form, setForm] = useState(() => ({ ...BLANK, ...(entry || {}) }));
   const [busy, setBusy] = useState(false);
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const [galat, setGalat] = useState('');
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e?.target ? e.target.value : e }));
   const save = async () => {
-    if (!form.date || !form.name.trim()) { toast.error('Tanggal dan nama wajib diisi'); return; }
-    setBusy(true);
+    if (!form.date || !form.name.trim()) { setGalat('Tanggal dan nama wajib diisi.'); return; }
+    setBusy(true); setGalat('');
     try {
       if (isEdit) await apiPut(`/rahaza/production-calendar/${entry.id}`, { name: form.name.trim(), type: form.type, notes: form.notes });
       else await apiPost('/rahaza/production-calendar', { date: form.date, name: form.name.trim(), type: form.type, notes: form.notes });
       toast.success(isEdit ? 'Entri kalender diperbarui' : 'Entri kalender ditambahkan');
       onSaved(form.date);
-    } catch (e) { toast.error(e.message || 'Gagal menyimpan'); }
+    } catch (e) { setGalat(e.message || 'Gagal menyimpan'); }
     finally { setBusy(false); }
   };
   return (
-    <DetailPanel testId="calendar-form" onClose={onClose} title={isEdit ? `Ubah entri · ${formatDateID(entry.date)}` : 'Entri kalender baru'}
-      description="Hari libur mengurangi hari kerja: hari cuti, pembagi gaji harian, dan absensi ikut berubah.">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <Field label="Tanggal *">
-          <GlassInput type="date" value={form.date} onChange={set('date')} disabled={isEdit} className="h-9" data-testid="cal-date" />
-        </Field>
-        <Field label="Jenis">
-          <SmartNativeSelect value={form.type} onChange={set('type')} className="w-full h-9" searchable={false} data-testid="cal-type" aria-label="Jenis">
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="calendar-form" onSimpan={save} menyimpan={busy} galat={galat}
+      judul={isEdit ? `Ubah entri ${formatDateID(entry.date)}` : 'Entri kalender baru'}
+      keterangan="Hari libur mengurangi hari kerja: hari cuti, pembagi gaji harian, dan absensi ikut berubah."
+      labelSimpan={isEdit ? 'Simpan perubahan' : 'Simpan'}>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Isian label="Tanggal" wajib petunjuk={isEdit ? 'Tanggal tidak bisa diubah; hapus lalu buat entri baru.' : undefined}>
+          <DatePicker value={form.date} onChange={set('date')} disabled={isEdit} bolehKosong={false} testId="cal-date" />
+        </Isian>
+        <Isian label="Jenis">
+          <SmartNativeSelect value={form.type} onChange={set('type')} className="w-full" searchable={false} data-testid="cal-type" aria-label="Jenis">
             {Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </SmartNativeSelect>
-        </Field>
-        <Field label="Nama / keterangan *" className="lg:col-span-2">
-          <GlassInput value={form.name} onChange={set('name')} placeholder="mis. Libur perusahaan" className="h-9" data-testid="cal-name" />
-        </Field>
-        <Field label="Catatan (opsional)" className="sm:col-span-2 lg:col-span-4">
-          <GlassInput value={form.notes} onChange={set('notes')} className="h-9" data-testid="cal-notes" />
-        </Field>
+        </Isian>
       </div>
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={onClose} disabled={busy}>Batal</Button>
-        <Button onClick={save} disabled={busy} data-testid="cal-submit-btn">{isEdit ? 'Simpan perubahan' : 'Simpan'}</Button>
-      </div>
-    </DetailPanel>
+      <Isian label="Nama / keterangan" wajib htmlFor="cal-name">
+        <Input id="cal-name" value={form.name} onChange={set('name')} placeholder="mis. Libur perusahaan" data-testid="cal-name" />
+      </Isian>
+      <Isian label="Catatan" htmlFor="cal-notes">
+        <Input id="cal-notes" value={form.notes} onChange={set('notes')} data-testid="cal-notes" />
+      </Isian>
+    </FormPopup>
   );
 }
 
@@ -110,10 +108,10 @@ function WorkdayCalculator({ onClose }) {
   return (
     <DetailPanel testId="calendar-workdays" onClose={onClose} title="Hitung hari kerja"
       description="Hari kerja = hari kalender dikurangi libur mingguan (Pengaturan Payroll) dan hari libur di kalender ini.">
-      <div className="flex flex-wrap items-end gap-2">
-        <Field label="Dari"><GlassInput type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9" data-testid="wd-from" /></Field>
-        <Field label="Sampai"><GlassInput type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9" data-testid="wd-to" /></Field>
-        <Button variant="outline" onClick={calc} data-testid="calc-workdays-btn"><Calculator className="w-4 h-4" />Hitung</Button>
+      <div className="flex flex-wrap items-end gap-3">
+        <Isian label="Dari" className="w-full sm:w-48"><DatePicker value={from} onChange={setFrom} bolehKosong={false} testId="wd-from" /></Isian>
+        <Isian label="Sampai" className="w-full sm:w-48"><DatePicker value={to} onChange={setTo} min={from || undefined} bolehKosong={false} testId="wd-to" /></Isian>
+        <Button variant="outline" onClick={calc} data-testid="calc-workdays-btn"><Calculator />Hitung</Button>
       </div>
       {res && (
         <p className="text-sm" data-testid="calc-workdays-result">
@@ -141,7 +139,7 @@ function MonthView({ year, month, setMonth, setYear, entries }) {
         <Button variant="outline" size="icon" onClick={next} title="Bulan berikutnya" aria-label="Bulan berikutnya" data-testid="cal-next"><ChevronRight className="w-4 h-4" /></Button>
       </div>
       <div className="grid grid-cols-7 border-b border-[var(--glass-border)]">
-        {DAYS_SHORT.map((d) => <p key={d} className={`py-2 text-center text-xs font-semibold ${d === 'Min' ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>{d}</p>)}
+        {DAYS_SHORT.map((d) => <p key={d} className={`py-2 text-center text-xs font-semibold ${d === 'Min' ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>{d}</p>)}
       </div>
       <div className="grid grid-cols-7">
         {cells.map((day, idx) => {
@@ -151,8 +149,8 @@ function MonthView({ year, month, setMonth, setYear, entries }) {
           const sunday = new Date(year, month - 1, day).getDay() === 0;
           return (
             <div key={iso} className={`h-16 p-1 border-b border-r border-[var(--glass-border)] ${iso === today ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
-              <p className={`text-xs font-medium text-center ${sunday ? 'text-[hsl(var(--destructive))]' : 'text-foreground/70'}`}>{day}</p>
-              {e && <p className={`mt-0.5 truncate text-[10px] leading-tight ${e.type === 'holiday' ? 'text-[hsl(var(--destructive))]' : e.type === 'exception' ? 'text-[hsl(var(--warning))]' : 'text-[hsl(var(--primary))]'}`} title={e.name}>{e.name}</p>}
+              <p className={`text-xs font-medium text-center ${sunday ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`}>{day}</p>
+              {e && <p className={`mt-0.5 truncate text-xs leading-tight ${e.type === 'holiday' ? 'text-[hsl(var(--danger-text))]' : e.type === 'exception' ? 'text-[hsl(var(--warning-text))]' : 'text-[hsl(var(--primary))]'}`} title={e.name}>{e.name}</p>}
             </div>
           );
         })}
@@ -215,6 +213,29 @@ export default function RahazaProductionCalendarModule() {
     catch (err) { toast.error(err.message || 'Gagal menghapus'); }
   };
 
+  const catatan = (e) => String(e.notes || '').replace(/\s*·\s*Perkiraan, cek SKB.*$/, '');
+  const kolom = [
+    { kunci: 'tanggal', label: 'Tanggal', hp: 'judul', isi: (e) => (
+      <span className="md:whitespace-nowrap">{formatDateID(e.date)}<span className="text-muted-foreground md:hidden"> · {weekdayOf(e.date)}</span></span>) },
+    { kunci: 'hari', label: 'Hari', hp: false, isi: (e) => <span className="text-muted-foreground">{weekdayOf(e.date)}</span> },
+    { kunci: 'nama', label: 'Nama', hp: 'keterangan', isi: (e) => <span className="font-medium text-foreground">{e.name}</span> },
+    { kunci: 'jenis', label: 'Jenis', isi: (e) => <StatusBadge status={e.type} label={typeLabel(e)} tone={TYPE_TONE[e.type] || 'default'} /> },
+    { kunci: 'catatan', label: 'Catatan', isi: (e) => (
+      <div className="text-xs text-muted-foreground md:max-w-[22rem]">
+        {e.perkiraan && <span className="block text-[hsl(var(--warning-text))]">Perkiraan, cek SKB</span>}
+        <span className="block truncate" title={e.notes || ''}>{catatan(e) || (e.perkiraan ? '' : '—')}</span>
+      </div>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (e) => (
+      <div className="flex items-center justify-end gap-1 whitespace-nowrap">
+        <Button variant="ghost" size="icon-sm" onClick={() => setPanel({ mode: 'edit', entry: e })} title="Ubah" aria-label="Ubah"
+          data-testid={`edit-entry-${e.id}`}><Pencil /></Button>
+        {deletable(e) && (
+          <Button variant="ghost" size="icon-sm" onClick={() => remove(e)} title="Hapus" aria-label="Hapus"
+            data-testid={`del-entry-${e.id}`}><Trash2 /></Button>
+        )}
+      </div>) },
+  ];
+
   let detail = null;
   if (panel?.mode === 'calc') detail = <WorkdayCalculator onClose={() => setPanel(null)} />;
   else if (panel) {
@@ -225,12 +246,25 @@ export default function RahazaProductionCalendarModule() {
   return (
     <PageLayout testId="production-calendar-page" title="Kalender libur"
       subtitle="Hari libur untuk hitung cuti, gaji harian, dan absensi."
+      // Kepala hanya 2 tombol: di HP kepala tidak membungkus, jadi 3 tombol lebar menimpa judul (dulu "Entri baru"
+      // terdorong keluar layar). "Isi libur nasional" (setahun sekali) & "Hitung hari kerja" → menu "Lainnya".
       actions={<>
-        <Button variant="outline" onClick={() => setPanel({ mode: 'calc' })} data-testid="calc-open-btn"><Calculator className="w-4 h-4" />Hitung hari kerja</Button>
-        <Button variant="outline" onClick={seedNational} disabled={seeding} data-testid="seed-national-btn">
-          <RefreshCw className={`w-4 h-4 ${seeding ? 'animate-spin' : ''}`} />{`Isi libur nasional ${year}`}
-        </Button>
-        <Button onClick={() => setPanel({ mode: 'new', entry: null })} data-testid="new-entry-btn"><Plus className="w-4 h-4" />Entri baru</Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" disabled={seeding} aria-label="Lainnya" title="Lainnya" data-testid="cal-more-btn">
+              {seeding ? <RefreshCw className="animate-spin" /> : <MoreHorizontal />}<span className="hidden sm:inline">Lainnya</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={seedNational} data-testid="seed-national-btn">
+              <RefreshCw className="mr-2 h-4 w-4" />{`Isi libur nasional ${year}`}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setPanel({ mode: 'calc' })} data-testid="calc-open-btn">
+              <Calculator className="mr-2 h-4 w-4" />Hitung hari kerja
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Button onClick={() => setPanel({ mode: 'new', entry: null })} data-testid="new-entry-btn"><Plus />Entri baru</Button>
       </>}
       filters={<>
         <SmartNativeSelect value={String(year)} onChange={(e) => setYear(Number(e.target.value))} className="h-9 w-28" searchable={false}
@@ -239,19 +273,20 @@ export default function RahazaProductionCalendarModule() {
         </SmartNativeSelect>
         {view === 'table' && (
           <>
-            <div className="relative w-64 max-w-full">
-              <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nama libur…" className="pl-8 h-9" data-testid="cal-search" />
+            <div className="relative w-full sm:w-64">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nama libur" className="pl-8" data-testid="cal-search" />
             </div>
             <FilterChips value={type} onChange={setType} testId="cal-type-filter" ariaLabel="Jenis entri"
               options={[{ key: '', label: 'Semua', count: counts.all }, { key: 'holiday', label: 'Hari libur', count: counts.holiday },
                 { key: 'exception', label: 'Hari kerja pengganti', count: counts.exception }, { key: 'special', label: 'Acara khusus', count: counts.special }]} />
           </>
         )}
-      </>}
-      tools={<>
-        <ImportExportToolbar collectionKey="holidays" label="Kalender Libur" onImported={load} />
-        <ViewToggle value={view} onChange={setView} options={VIEWS} testId="cal-view" />
+        {/* Alat di ujung baris penyaring (bukan slot `tools`): di HP slot `tools` menyempitkan kotak cari. */}
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <ImportExportToolbar collectionKey="holidays" label="Kalender libur" onImported={load} />
+          <ViewToggle value={view} onChange={setView} options={VIEWS} testId="cal-view" />
+        </div>
       </>}
       summary={<>
         {error && <Notice tone="danger" title="Gagal memuat kalender">{error}</Notice>}
@@ -262,45 +297,17 @@ export default function RahazaProductionCalendarModule() {
       {view === 'month' ? (
         <MonthView year={year} month={month} setMonth={setMonth} setYear={setYear} entries={entries} />
       ) : (
-        <GlassCard className="p-0 overflow-hidden">
-          {loading && !entries.length ? (
-            <div className="p-4 text-sm text-muted-foreground">Memuat kalender…</div>
-          ) : !paged.length ? (
-            <EmptyState icon={CalendarDays} title={entries.length ? 'Tidak ada entri yang cocok' : `Belum ada entri kalender ${year}`}
-              description={entries.length ? 'Ubah kata pencarian atau penyaring jenis.' : `Klik "Isi libur nasional ${year}" atau tambahkan entri sendiri.`} />
-          ) : (
-            <Table data-testid="calendar-table">
-              <TableHeader><TableRow>
-                <TableHead>Tanggal</TableHead><TableHead>Hari</TableHead><TableHead>Nama</TableHead>
-                <TableHead>Jenis</TableHead><TableHead>Catatan</TableHead><TableHead className="text-right">Aksi</TableHead>
-              </TableRow></TableHeader>
-              <TableBody>
-                {paged.map((e) => (
-                  <TableRow key={e.id} data-testid={`cal-entry-${e.id}`}>
-                    <TableCell className="whitespace-nowrap">{formatDateID(e.date)}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{weekdayOf(e.date)}</TableCell>
-                    <TableCell className="font-medium">{e.name}</TableCell>
-                    <TableCell><StatusBadge status={e.type} label={typeLabel(e)} tone={TYPE_TONE[e.type] || 'default'} /></TableCell>
-                    <TableCell className="text-xs text-muted-foreground max-w-[22rem]">
-                      {e.perkiraan && <span className="block text-[hsl(var(--warning))]">Perkiraan, cek SKB</span>}
-                      <span className="block truncate" title={e.notes || ''}>
-                        {String(e.notes || '').replace(/\s*·\s*Perkiraan, cek SKB.*$/, '') || (e.perkiraan ? '' : '—')}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right whitespace-nowrap">
-                      <Button variant="ghost" size="icon-sm" onClick={() => setPanel({ mode: 'edit', entry: e })} title="Ubah" aria-label="Ubah"
-                        data-testid={`edit-entry-${e.id}`}><Pencil className="w-3.5 h-3.5" /></Button>
-                      {deletable(e) && (
-                        <Button variant="ghost" size="icon-sm" onClick={() => remove(e)} title="Hapus" aria-label="Hapus"
-                          data-testid={`del-entry-${e.id}`}><Trash2 className="w-3.5 h-3.5" /></Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </GlassCard>
+        loading && !entries.length ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">Memuat kalender…</p>
+        ) : (
+          <TabelData kolom={kolom} baris={paged} testId="calendar-table"
+            kosong={<EmptyState icon={CalendarDays} title={entries.length ? 'Tidak ada entri yang cocok' : `Belum ada entri kalender ${year}`}
+              description={entries.length ? 'Ubah kata pencarian atau penyaring jenis.' : 'Isi libur nasional & cuti bersama tahun ini, atau tambahkan entri sendiri.'}
+              action={!entries.length && (
+                <Button variant="outline" onClick={seedNational} disabled={seeding} data-testid="seed-national-empty">
+                  <RefreshCw className={seeding ? 'animate-spin' : ''} />{`Isi libur nasional ${year}`}
+                </Button>)} />} />
+        )
       )}
     </PageLayout>
   );

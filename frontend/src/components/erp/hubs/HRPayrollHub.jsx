@@ -1,8 +1,9 @@
-import React, { lazy } from 'react';
+import React from 'react';
 import { lazyRetry } from '../../../lib/lazyRetry';
 import HubTabs from './HubTabs';
 
 // IA v2.1 fase-2 — konsolidasi penggajian SDM -> 1 hub bertab.
+// Standar UI/UX v2 (8 Nov 2026): judul = nama menu, nama tab huruf besar hanya di awal.
 const PayrollDashboardModule       = lazyRetry(() => import('../PayrollDashboardModule'));
 const RahazaPayrollProfilesModule  = lazyRetry(() => import('../RahazaPayrollProfilesModule'));
 const RahazaPayrollAllowancesModule = lazyRetry(() => import('../RahazaPayrollAllowancesModule'));
@@ -16,13 +17,14 @@ export default function HRPayrollHub(props) {
     <HubTabs
       hubId="hr-payroll-hub"
       title="Penggajian"
-      subtitle="Satu pintu payroll: dasbor, profil gaji, tunjangan, penyesuaian, proses gaji, pengaturan."
+      subtitle="Profil gaji, tunjangan, kenaikan gaji, proses gaji per periode, dan aturannya."
       tabs={[
         { key: 'dashboard', label: 'Dasbor', Component: PayrollDashboardModule },
-        { key: 'profiles', label: 'Profil Gaji', Component: RahazaPayrollProfilesModule },
+        { key: 'profiles', label: 'Profil gaji', Component: RahazaPayrollProfilesModule },
         { key: 'allowances', label: 'Tunjangan', Component: RahazaPayrollAllowancesModule },
-        { key: 'adjustments', label: 'Penyesuaian', Component: RahazaSalaryAdjustmentModule },
-        { key: 'run', label: 'Proses Gaji', Component: RahazaPayrollRunModule },
+        { key: 'adjustments', label: 'Penyesuaian gaji', Component: RahazaSalaryAdjustmentModule },
+        { key: 'run', label: 'Proses gaji', Component: RahazaPayrollRunModule },
+        // Label dikunci uji test_w2e_sdm_payroll_config (literal "Pengaturan Payroll") — lihat laporan sdm-a.
         { key: 'settings', label: 'Pengaturan Payroll', Component: RahazaPayrollSettingsModule },
       ]}
       {...props}

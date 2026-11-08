@@ -1,26 +1,39 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { confirmDialog } from '@/components/ui/confirm-dialog';
+/**
+ * HREmployeeModule — Portal SDM › Data Karyawan.
+ *
+ * Standar UI/UX v2 (keputusan owner 8 Nov 2026): cetakan PageLayout (kepala tipis, penyaring satu baris),
+ * daftar = TabelData (kartu ringkas di HP) + unduh Excel/CSV, klik baris → popup detail (dengan rincian
+ * kelengkapan data), aksi baris = Ubah + "Lainnya" (tautkan akun, nonaktifkan), form karyawan = FormPopup
+ * panjang dengan pemilih tanggal seragam, tautkan akun = FormPopup pendek dengan pilihan yang bisa dicari.
+ * Data yang dikirim ke server, validasi, dan alur tidak berubah.
+ */
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import axios from 'axios';
 import {
-  Users, Plus, Edit2, Search, Save, X, Loader2, RefreshCw, User,
-  Briefcase, FileText, CreditCard, Phone, UploadCloud, Trash2,
-  Camera, Calendar, MapPin, GraduationCap, Heart, Landmark, Shield,
-  AlertCircle, CheckCircle2, Power, Filter, Mail, UserCheck,
+  Plus, Pencil, Search, RefreshCw, UploadCloud, Trash2, Camera, Power, Link2, MoreHorizontal, FileText,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { EmptyState } from './EmptyState';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
-import { toast } from 'sonner';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker, { formatTanggalID } from '@/components/ui/date-picker';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { todayWIB, toWIBDate, daysBetweenISO } from '@/lib/waktu';
 import { withFileAuth } from '@/lib/fileUrl';
-import SmartNativeSelect from '@/components/ui/smart-native-select';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import {
   EmployeeSelect, useHrMasters, departmentOptions, positionOptions, unitByName, shiftLabel,
   useDepartmentFilterOptions, EMERGENCY_RELATIONS,
@@ -35,28 +48,29 @@ const API = process.env.REACT_APP_BACKEND_URL;
 // Layar ini hanya menampilkannya (baca saja).
 const PAY_SCHEME_LABEL = { monthly: 'Bulanan', weekly: 'Mingguan', hourly: 'Borongan per jam', pcs: 'Borongan per pcs' };
 const CONTRACT_TYPES = [
-  { value: 'PKWT',   label: 'PKWT (Kontrak Terbatas)' },
-  { value: 'PKWTT',  label: 'PKWTT (Kontrak Tidak Terbatas)' },
-  { value: 'Magang', label: 'Magang / Percobaan' },
-  { value: 'Tetap',  label: 'Karyawan Tetap' },
+  { value: 'PKWT',   label: 'PKWT (kontrak waktu tertentu)' },
+  { value: 'PKWTT',  label: 'PKWTT (kontrak tidak tertentu)' },
+  { value: 'Magang', label: 'Magang / percobaan' },
+  { value: 'Tetap',  label: 'Karyawan tetap' },
 ];
+const CONTRACT_TONE = { PKWTT: 'success', Tetap: 'success', PKWT: 'warning', Magang: 'info' };
 const EDUCATION_LEVELS = ['Tidak Sekolah', 'SD', 'SMP', 'SMA/SMK', 'D1-D3', 'S1', 'S2', 'S3'];
 const MARITAL_STATUS = [
-  { value: 'single',   label: 'Belum Menikah' },
+  { value: 'single',   label: 'Belum menikah' },
   { value: 'married',  label: 'Menikah' },
-  { value: 'divorced', label: 'Cerai Hidup' },
-  { value: 'widowed',  label: 'Cerai Mati' },
+  { value: 'divorced', label: 'Cerai hidup' },
+  { value: 'widowed',  label: 'Cerai mati' },
 ];
 const RELIGIONS = ['Islam', 'Kristen Protestan', 'Katolik', 'Hindu', 'Buddha', 'Konghucu', 'Kepercayaan'];
 const TAX_PTKP = [
-  { value: 'TK/0', label: 'TK/0 — Tidak Kawin, tanpa tanggungan' },
-  { value: 'TK/1', label: 'TK/1 — Tidak Kawin, 1 tanggungan' },
-  { value: 'TK/2', label: 'TK/2 — Tidak Kawin, 2 tanggungan' },
-  { value: 'TK/3', label: 'TK/3 — Tidak Kawin, 3 tanggungan' },
-  { value: 'K/0',  label: 'K/0 — Kawin, tanpa tanggungan' },
-  { value: 'K/1',  label: 'K/1 — Kawin, 1 tanggungan' },
-  { value: 'K/2',  label: 'K/2 — Kawin, 2 tanggungan' },
-  { value: 'K/3',  label: 'K/3 — Kawin, 3 tanggungan' },
+  { value: 'TK/0', label: 'TK/0 — tidak kawin, tanpa tanggungan' },
+  { value: 'TK/1', label: 'TK/1 — tidak kawin, 1 tanggungan' },
+  { value: 'TK/2', label: 'TK/2 — tidak kawin, 2 tanggungan' },
+  { value: 'TK/3', label: 'TK/3 — tidak kawin, 3 tanggungan' },
+  { value: 'K/0',  label: 'K/0 — kawin, tanpa tanggungan' },
+  { value: 'K/1',  label: 'K/1 — kawin, 1 tanggungan' },
+  { value: 'K/2',  label: 'K/2 — kawin, 2 tanggungan' },
+  { value: 'K/3',  label: 'K/3 — kawin, 3 tanggungan' },
 ];
 // Bank di luar daftar: pilih "Bank lain" lalu ketik namanya (dulu "Lainnya" tersimpan apa adanya → nama bank hilang).
 const BANKS = ['BCA', 'BRI', 'Mandiri', 'BNI', 'BSI', 'CIMB Niaga', 'Permata', 'Danamon', 'BTN', 'Mega', 'Panin', 'Jago'];
@@ -87,16 +101,83 @@ function bpjsProgramsOf(emp) {
   return { kes, jht: tk, jp: tk, jkk_jkm: tk };
 }
 
+/** Tanggal tersimpan (YYYY-MM-DD atau ISO) → "30 Apr 2027" (tanggal kalender WIB). */
+const tgl = (v) => (v ? formatTanggalID(toWIBDate(v)) : '');
+const ymdOf = (v) => (v ? String(v).slice(0, 10) : '');
+const PERAN = { owner: 'Owner', superadmin: 'Super admin', admin: 'Admin', manager: 'Manajer', hr: 'HR' };
+const labelPeran = (r) => {
+  const s = String(r || '').trim().toLowerCase();
+  if (!s) return '';
+  if (PERAN[s]) return PERAN[s];
+  const t = s.replace(/[_-]+/g, ' ');
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
+
+/**
+ * Kelengkapan data: 8 isian penting (sama dengan rumus lama). Rinciannya ditampilkan di popup detail supaya
+ * persentase bisa dijelaskan. Catatan: PTKP bawaan formulir = TK/0, jadi TK/0 dihitung "belum diatur".
+ */
+function kelengkapan(emp) {
+  const items = [
+    { label: 'NIK KTP 16 digit', ok: !!emp.ktp_number && emp.ktp_number.length === 16 },
+    { label: 'Nomor rekening bank', ok: !!emp.bank_account_number },
+    { label: 'Nomor telepon', ok: !!emp.phone },
+    { label: 'Tipe kontrak', ok: !!emp.contract_type },
+    { label: 'Tanggal lahir', ok: !!emp.birth_date },
+    { label: 'Kontak darurat', ok: !!emp.emergency_contact_name },
+    { label: 'No. BPJS Kesehatan', ok: !!emp.bpjs_kesehatan_number },
+    { label: 'Status PTKP diatur (selain bawaan TK/0)', ok: !!emp.tax_ptkp && emp.tax_ptkp !== 'TK/0' },
+  ];
+  const pct = Math.round(items.filter((i) => i.ok).length / items.length * 100);
+  return { items, pct };
+}
+
+function sisaKontrak(emp) {
+  // sisa hari kalender WIB (kontrak berakhir hari ini = 0, bukan sudah lewat sejak 07:00 WIB)
+  const days = emp.contract_end_date ? daysBetweenISO(todayWIB(), toWIBDate(emp.contract_end_date)) : null;
+  return { days, expiring: days !== null && days >= 0 && days <= 30 };
+}
+
+function Avatar({ emp }) {
+  if (emp.photo_url) {
+    return <img src={withFileAuth(`${API}${emp.photo_url}`)} alt={emp.name}
+      className="h-8 w-8 shrink-0 rounded-full border border-[var(--glass-border)] object-cover" />;
+  }
+  return (
+    <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-[var(--glass-border)] bg-[var(--card-surface)] text-xs font-semibold text-foreground">
+      {(emp.name || '?').slice(0, 2).toUpperCase()}
+    </div>
+  );
+}
+
+function KontrakBadge({ type }) {
+  if (!type) return <span className="text-muted-foreground">—</span>;
+  return <StatusBadge status={type} label={type} tone={CONTRACT_TONE[type] || 'default'} />;
+}
+
+function Kelengkapan({ pct }) {
+  const warna = pct >= 80 ? 'bg-[hsl(var(--success))]' : pct >= 50 ? 'bg-[hsl(var(--warning))]' : 'bg-[hsl(var(--destructive))]';
+  return (
+    <div className="flex items-center gap-2" title={`Kelengkapan data ${pct}%`}>
+      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-foreground/10">
+        <div className={`h-full ${warna}`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="text-xs tabular-nums text-foreground">{pct}%</span>
+    </div>
+  );
+}
+
 export default function HREmployeeModule({ token }) {
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
   const [employees, setEmployees] = useState([]);
   const [locations, setLocations] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [deptFilter, setDeptFilter] = useState('');
   const [activeOnly, setActiveOnly] = useState(true);
   const [editing, setEditing] = useState(null);
-  // Link user modal
+  const [detail, setDetail] = useState(null);
+  // Tautkan akun login
   const [linkTarget, setLinkTarget] = useState(null); // employee object
   const [users, setUsers] = useState([]);
   const [linking, setLinking] = useState(false);
@@ -119,6 +200,7 @@ export default function HREmployeeModule({ token }) {
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
     (async () => {
       try {
         const [r1, r2] = await Promise.all([
@@ -150,32 +232,35 @@ export default function HREmployeeModule({ token }) {
       e.email?.toLowerCase().includes(q)
     );
   });
+  const lokasiNama = useMemo(() => Object.fromEntries(locations.map(l => [l.id, `${l.code} · ${l.name}`])), [locations]);
 
   const handleDelete = async (emp) => {
-    if (!(await confirmDialog({ title: `Nonaktifkan karyawan ${emp.name} (${emp.employee_code})?`, danger: true }))) return;
+    if (!(await confirmDialog({
+      title: `Nonaktifkan ${emp.name} (${emp.employee_code})?`,
+      body: 'Karyawan tidak muncul lagi di pilihan absensi dan penggajian. Datanya tetap tersimpan.',
+      confirmLabel: 'Nonaktifkan', danger: true,
+    }))) return;
     try {
       await axios.delete(`${API}/api/rahaza/employees/${emp.id}`, { headers });
-      toast.success('Karyawan dinon-aktifkan');
+      toast.success('Karyawan dinonaktifkan');
+      setDetail(null);
       load();
-    } catch { toast.error('Gagal non-aktifkan'); }
+    } catch { toast.error('Gagal menonaktifkan karyawan'); }
   };
 
   const handleSave = async (form) => {
-    try {
-      const isEdit = !!form.id;
-      const url = isEdit
-        ? `${API}/api/rahaza/employees/${form.id}`
-        : `${API}/api/rahaza/employees`;
-      await axios[isEdit ? 'put' : 'post'](url, form, { headers });
-      toast.success(isEdit ? 'Karyawan diupdate' : 'Karyawan ditambahkan');
-      setEditing(null);
-      load();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || 'Gagal simpan');
-    }
+    const isEdit = !!form.id;
+    const url = isEdit
+      ? `${API}/api/rahaza/employees/${form.id}`
+      : `${API}/api/rahaza/employees`;
+    await axios[isEdit ? 'put' : 'post'](url, form, { headers });
+    toast.success(isEdit ? 'Data karyawan disimpan' : 'Karyawan ditambahkan');
+    setEditing(null);
+    load();
   };
 
   const openLinkUser = async (emp) => {
+    setDetail(null);
     setLinkTarget(emp);
     if (users.length === 0) {
       try {
@@ -195,79 +280,129 @@ export default function HREmployeeModule({ token }) {
       setLinkTarget(null);
       load();
     } catch (e) {
-      toast.error(e.response?.data?.detail || 'Gagal tautkan');
+      toast.error(e.response?.data?.detail || 'Gagal menautkan akun');
     } finally { setLinking(false); }
   };
 
-  const { page, setPage, totalPages, total, paged } = useClientPagination(filtered, 10);
-  return (
-    <div className="space-y-6 p-6" data-testid="hr-employees-page">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Users className="w-6 h-6 text-blue-600 dark:text-blue-400" /> Data Karyawan & Kontrak
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Master karyawan lengkap: kontrak, personal, pajak & BPJS, bank, dokumen · {filtered.length} {activeOnly ? 'aktif' : 'total'}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={load} data-testid="employees-refresh">
-            <RefreshCw className="w-4 h-4 mr-1" /> Refresh
-          </Button>
-          <Button size="sm" onClick={() => setEditing({ ...defaultEmployee })} data-testid="employees-add">
-            <Plus className="w-4 h-4 mr-1" /> Tambah Karyawan
-          </Button>
-        </div>
-      </div>
+  const ubah = (e) => { setDetail(null); setEditing(e); };
 
-      <div className="flex flex-wrap gap-3 items-center">
-        <div className="relative flex-1 min-w-48">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Cari nama / kode / NIK / email / HP..." className="pl-9 h-9" data-testid="employees-search" />
+  const { page, setPage, totalPages, total, paged } = useClientPagination(filtered, 10);
+
+  const kolom = [
+    { kunci: 'nama', label: 'Karyawan', hp: 'judul', isi: (e) => (
+      <div className="flex min-w-0 items-center gap-3">
+        <Avatar emp={e} />
+        <div className="min-w-0">
+          <p className="truncate font-medium text-foreground">{e.name}</p>
+          <p className="text-xs text-muted-foreground">{e.employee_code}</p>
         </div>
-        <SmartNativeSelect value={deptFilter} onChange={e => setDeptFilter(e.target.value)}
-          wrapperClassName="w-56" data-testid="employees-dept-filter"
-          className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground">
+      </div>) },
+    { kunci: 'jabatan', label: 'Departemen & jabatan', hp: 'keterangan', isi: (e) => (
+      <div className="min-w-0">
+        <p className="text-sm text-foreground">{e.job_title || '—'}</p>
+        <p className="text-xs text-muted-foreground">{e.department || '—'}{e.manager_name ? ` · atasan ${e.manager_name}` : ''}</p>
+      </div>) },
+    { kunci: 'kontrak', label: 'Kontrak', isi: (e) => {
+      const s = sisaKontrak(e);
+      return (
+        <div className="space-y-1">
+          <KontrakBadge type={e.contract_type} />
+          {e.contract_end_date && (
+            <p className={`text-xs ${s.expiring ? 'font-medium text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>
+              s/d {tgl(e.contract_end_date)}{s.expiring && ` (${s.days} hari lagi)`}
+            </p>
+          )}
+        </div>
+      );
+    } },
+    { kunci: 'kontak', label: 'Telepon', isi: (e) => <span className="text-sm tabular-nums">{e.phone || '—'}</span> },
+    { kunci: 'lengkap', label: 'Kelengkapan', isi: (e) => <Kelengkapan pct={kelengkapan(e).pct} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (e) => (
+      <div className="flex items-center justify-end gap-1">
+        <Button size="sm" variant="outline" onClick={() => ubah(e)} data-testid={`employee-edit-${e.id}`}>
+          <Pencil />Ubah
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="icon-sm" variant="ghost" aria-label="Lainnya" title="Lainnya" data-testid={`employee-more-${e.id}`}>
+              <MoreHorizontal />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => openLinkUser(e)} data-testid={`employee-link-${e.id}`}>
+              <Link2 className="mr-2 h-4 w-4" />{e.user_id ? 'Ganti tautan akun login' : 'Tautkan akun login'}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => handleDelete(e)} className="text-[hsl(var(--danger-text))]">
+              <Power className="mr-2 h-4 w-4" />Nonaktifkan
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>) },
+  ];
+
+  const kolomUnduh = [
+    { label: 'Kode', nilai: (e) => e.employee_code },
+    { label: 'Nama', nilai: (e) => e.name },
+    { label: 'Departemen', nilai: (e) => e.department || '' },
+    { label: 'Jabatan', nilai: (e) => e.job_title || '' },
+    { label: 'Atasan', nilai: (e) => e.manager_name || '' },
+    { label: 'Tipe kontrak', nilai: (e) => e.contract_type || '' },
+    { label: 'Mulai kontrak', nilai: (e) => tgl(e.contract_start_date) },
+    { label: 'Berakhir kontrak', nilai: (e) => tgl(e.contract_end_date) },
+    { label: 'Tanggal masuk', nilai: (e) => tgl(e.join_date) },
+    { label: 'Lokasi', nilai: (e) => lokasiNama[e.location_id] || e.location_name || '' },
+    { label: 'Telepon', nilai: (e) => e.phone || '' },
+    { label: 'Email', nilai: (e) => e.email || '' },
+    { label: 'Akun login', nilai: (e) => e.user_email || '' },
+    { label: 'Status', nilai: (e) => (e.active === false ? 'Nonaktif' : 'Aktif') },
+    { label: 'Kelengkapan (%)', nilai: (e) => kelengkapan(e).pct },
+  ];
+
+  return (
+    <PageLayout testId="hr-employees-page" title="Data Karyawan"
+      subtitle="Kontrak, data pribadi, pajak & BPJS, rekening, dan dokumen tiap karyawan."
+      actions={<Button onClick={() => setEditing({ ...defaultEmployee })} data-testid="employees-add"><Plus />Tambah karyawan</Button>}
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}
+            placeholder="Cari nama, kode, NIK, email, HP" className="pl-8" data-testid="employees-search" />
+        </div>
+        <SmartNativeSelect value={deptFilter} onChange={e => { setDeptFilter(e.target.value); setPage(1); }}
+          wrapperClassName="w-full sm:w-56" className="w-full" aria-label="Departemen" data-testid="employees-dept-filter">
           <option value="">Semua departemen</option>
           {deptFilterOptions.map(d => <option key={d.value} value={d.value}>{d.legacy ? d.value : d.label}</option>)}
         </SmartNativeSelect>
-        <div className="flex items-center gap-2 text-xs">
-          <Switch checked={activeOnly} onCheckedChange={setActiveOnly} id="active-only" />
-          <Label htmlFor="active-only" className="cursor-pointer">Aktif saja</Label>
+        <label htmlFor="active-only" className="flex h-9 cursor-pointer items-center gap-2 text-sm text-foreground">
+          <Switch checked={activeOnly} onCheckedChange={(v) => { setActiveOnly(v); setPage(1); }} id="active-only" />
+          Aktif saja
+        </label>
+        {/* Alat ditaruh di ujung baris penyaring (bukan slot `tools`): di HP slot `tools` menyempitkan penyaring
+            ke separuh lebar layar (lihat laporan, permintaan komponen bersama). Di layar lebar tetap rata kanan. */}
+        <div className="ml-auto flex items-center gap-2">
+          <TombolUnduh namaBerkas="data-karyawan" namaLembar="Karyawan" baris={filtered} kolom={kolomUnduh}
+            testId="employees-unduh" />
+          <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+            data-testid="employees-refresh">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
+          </Button>
         </div>
-      </div>
+      </>}
+      footer={<PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}>
+      {loading && employees.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat data karyawan…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={paged} onKlikBaris={setDetail} testId="employees-table"
+          kosong={<EmptyState
+            title={employees.length ? 'Tidak ada karyawan yang cocok' : 'Belum ada karyawan'}
+            description={employees.length ? 'Ubah kata pencarian atau pilihan departemen.' : 'Tambahkan karyawan pertama dengan tombol Tambah karyawan.'} />} />
+      )}
 
-      <div className="rounded-xl border overflow-hidden border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-foreground/10 text-xs text-muted-foreground">
-              <th className="text-left px-4 py-3 w-10"></th>
-              <th className="text-left px-4 py-3">Kode / Nama</th>
-              <th className="text-left px-4 py-3">Divisi & Jabatan</th>
-              <th className="text-left px-4 py-3">Kontrak</th>
-              <th className="text-left px-4 py-3">Kontak</th>
-              <th className="text-left px-4 py-3">Kelengkapan</th>
-              <th className="px-4 py-3"></th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-white/5">
-            {paged.map(e => <EmployeeRow key={e.id} emp={e}
-              onEdit={() => setEditing(e)} onDelete={() => handleDelete(e)}
-              onLinkUser={() => openLinkUser(e)} />)}
-            {filtered.length === 0 && !loading && (
-              <tr><td colSpan={7}>
-                <EmptyState icon={Users} title="Belum ada karyawan" description="Tambahkan karyawan pertama menggunakan tombol '+' di atas." />
-              </td></tr>
-            )}
-            {loading && Array.from({ length: 5 }).map((_, i) => (
-              <tr key={i}>{[...Array(7)].map((__, j) => <td key={j} className="px-3 py-2.5"><Skeleton className="h-4" /></td>)}</tr>
-            ))}
-          </tbody>
-        </table>
-        <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
-      </div>
+      {detail && (
+        <DetailKaryawan emp={detail} lokasi={lokasiNama[detail.location_id] || detail.location_name}
+          onClose={() => setDetail(null)} onUbah={() => ubah(detail)}
+          onTautkan={() => openLinkUser(detail)} onNonaktifkan={() => handleDelete(detail)} />
+      )}
 
       {editing && (
         <EmployeeDialog
@@ -281,151 +416,101 @@ export default function HREmployeeModule({ token }) {
         />
       )}
 
-      {/* ── Link User Dialog ── */}
       {linkTarget && (
-        <Dialog open onOpenChange={() => setLinkTarget(null)}>
-          <DialogContent className="max-w-md" data-testid="link-user-dialog">
-            <DialogHeader>
-              <DialogTitle>Tautkan Akun Login — {linkTarget.name}</DialogTitle>
-              <p className="text-xs text-muted-foreground mt-1">
-                Pilih akun pengguna yang akan ditautkan ke karyawan ini.
-                Setelah ditautkan, karyawan dapat mengakses Portal Saya (slip gaji, cuti, dll).
-              </p>
-            </DialogHeader>
-            {linkTarget.user_id && (
-              <div className="flex items-center justify-between p-2 rounded bg-emerald-100 dark:bg-emerald-500/10 border border-emerald-400 dark:border-emerald-500/30 text-xs text-emerald-600 dark:text-emerald-400">
-                <span>Saat ini: {linkTarget.user_email || linkTarget.user_id}</span>
-                <Button variant="ghost" size="sm" className="h-6 text-xs text-red-700 dark:text-red-400"
-                  onClick={() => handleLinkUser('')} disabled={linking}>
-                  Hapus Tautan
-                </Button>
-              </div>
-            )}
-            <div className="space-y-1 max-h-64 overflow-y-auto">
-              {users.filter(u => u.role !== 'superadmin').map(u => (
-                <button key={u.id}
-                  onClick={() => handleLinkUser(u.id)}
-                  disabled={linking}
-                  className={`w-full text-left p-2.5 rounded-lg border text-sm transition-colors ${
-                    linkTarget.user_id === u.id
-                      ? 'bg-primary/10 border-primary/40 text-primary'
-                      : 'border-border hover:bg-muted/30'
-                  }`}
-                  data-testid={`link-user-${u.id}`}
-                >
-                  <div className="font-medium">{u.name || u.email}</div>
-                  <div className="text-xs text-muted-foreground">{u.email} · {u.role}</div>
-                </button>
-              ))}
-              {users.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">Memuat daftar user...</p>}
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setLinkTarget(null)}>Tutup</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <TautkanAkun target={linkTarget} users={users} linking={linking}
+          onPilih={handleLinkUser} onClose={() => setLinkTarget(null)} />
       )}
-    </div>
+    </PageLayout>
   );
 }
 
-function EmployeeRow({ emp, onEdit, onDelete, onLinkUser }) {
-  // Kelengkapan score: essential fields present
-  const fields = [
-    emp.ktp_number && emp.ktp_number.length === 16,
-    !!emp.bank_account_number,
-    !!emp.phone,
-    !!emp.contract_type,
-    !!emp.birth_date,
-    !!emp.emergency_contact_name,
-    !!emp.bpjs_kesehatan_number,
-    !!emp.tax_ptkp && emp.tax_ptkp !== 'TK/0',
-  ];
-  const complete = fields.filter(Boolean).length;
-  const pct = Math.round(complete / fields.length * 100);
-  // sisa hari kalender WIB (kontrak berakhir hari ini = 0, bukan sudah lewat sejak 07:00 WIB)
-  const daysUntilEnd = emp.contract_end_date ? daysBetweenISO(todayWIB(), toWIBDate(emp.contract_end_date)) : null;
-  const isExpiring = daysUntilEnd !== null && daysUntilEnd >= 0 && daysUntilEnd <= 30;
-
+// ─── Detail (popup) ───────────────────────────────────────────────────────────
+function DetailKaryawan({ emp, lokasi, onClose, onUbah, onTautkan, onNonaktifkan }) {
+  const k = kelengkapan(emp);
+  const s = sisaKontrak(emp);
+  const kurang = k.items.filter((i) => !i.ok);
   return (
-    <tr className="hover:bg-foreground/5" data-testid={`employee-row-${emp.id}`}>
-      <td className="px-4 py-3">
-        {emp.photo_url ? (
-          <img src={withFileAuth(`${API}${emp.photo_url}`)}
-            alt={emp.name}
-            className="w-9 h-9 rounded-full object-cover border border-foreground/10" />
+    <DetailPopup open onClose={onClose} judul={emp.name} keterangan={emp.employee_code} testId="employee-detail"
+      status={<><KontrakBadge type={emp.contract_type} />
+        {emp.active === false && <StatusBadge status="nonaktif" label="Nonaktif" tone="muted" />}</>}
+      aksi={<>
+        <Button size="sm" variant="outline" onClick={onUbah}><Pencil />Ubah</Button>
+        <Button size="sm" variant="outline" onClick={onTautkan}><Link2 />{emp.user_id ? 'Ganti akun login' : 'Tautkan akun login'}</Button>
+        {emp.active !== false && (
+          <Button size="sm" variant="destructive" onClick={onNonaktifkan}><Power />Nonaktifkan</Button>
+        )}
+      </>}>
+      <div className="flex items-start gap-4">
+        {emp.photo_url && (
+          <img src={withFileAuth(`${API}${emp.photo_url}`)} alt={emp.name}
+            className="h-20 w-20 shrink-0 rounded-lg border border-[var(--glass-border)] object-cover" />
+        )}
+        <dl className="min-w-0 flex-1 divide-y divide-[var(--glass-border)]">
+          <BarisDetail label="Departemen">{emp.department || '—'}</BarisDetail>
+          <BarisDetail label="Jabatan">{emp.job_title || '—'}</BarisDetail>
+          <BarisDetail label="Atasan">{emp.manager_name || '—'}</BarisDetail>
+          <BarisDetail label="Lokasi utama">{lokasi || '—'}</BarisDetail>
+          <BarisDetail label="Shift utama">{emp.shift_code || '—'}</BarisDetail>
+          <BarisDetail label="Kontrak">
+            {emp.contract_type || '—'}
+            {(emp.contract_start_date || emp.contract_end_date) && ` · ${tgl(emp.contract_start_date) || '…'} s/d ${tgl(emp.contract_end_date) || '…'}`}
+            {s.expiring && <span className="ml-1 font-medium text-[hsl(var(--danger-text))]">({s.days} hari lagi)</span>}
+          </BarisDetail>
+          <BarisDetail label="Tanggal masuk">{tgl(emp.join_date) || '—'}</BarisDetail>
+          {emp.resign_date && <BarisDetail label="Tanggal keluar">{tgl(emp.resign_date)}</BarisDetail>}
+          <BarisDetail label="Telepon">{emp.phone || '—'}</BarisDetail>
+          <BarisDetail label="Email">{emp.email || '—'}</BarisDetail>
+          <BarisDetail label="Akun login">{emp.user_email || (emp.user_id ? 'Tertaut' : 'Belum ditautkan')}</BarisDetail>
+        </dl>
+      </div>
+      <div>
+        <p className="mb-2 text-sm font-medium text-foreground">Kelengkapan data {k.pct}%</p>
+        {kurang.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Delapan isian penting sudah terisi.</p>
         ) : (
-          <div className="w-9 h-9 rounded-full bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-300 flex items-center justify-center text-xs font-semibold">
-            {(emp.name || '?').slice(0, 2).toUpperCase()}
-          </div>
+          <p className="text-sm text-muted-foreground">
+            Belum terisi: {kurang.map((i) => i.label).join(', ')}.
+          </p>
         )}
-      </td>
-      <td className="px-4 py-3">
-        <div className="font-medium text-sm">{emp.name}</div>
-        <div className="text-xs text-muted-foreground font-mono">{emp.employee_code}</div>
-      </td>
-      <td className="px-4 py-3">
-        <div className="text-sm">{emp.job_title || '—'}</div>
-        <div className="text-xs text-muted-foreground">{emp.department || '—'}</div>
-        {emp.manager_name && (
-          <div className="text-[10px] text-indigo-600 dark:text-indigo-400 mt-0.5 flex items-center gap-1">
-            <span className="opacity-70">↳</span> {emp.manager_name}
-          </div>
-        )}
-      </td>
-      <td className="px-4 py-3">
-        <div className="flex items-center gap-1">
-          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-            emp.contract_type === 'PKWTT' || emp.contract_type === 'Tetap' ? 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-300' :
-            emp.contract_type === 'PKWT' ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300' :
-            emp.contract_type === 'Magang' ? 'bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-300' :
-            'bg-muted dark:bg-slate-500/20 text-foreground/70'
-          }`}>{emp.contract_type || '—'}</span>
-        </div>
-        {emp.contract_end_date && (
-          <div className={`text-xs mt-1 ${isExpiring ? 'text-red-700 dark:text-red-400 font-semibold' : 'text-muted-foreground'}`}>
-            s/d {new Date(emp.contract_end_date).toLocaleDateString('id-ID')}
-            {isExpiring && ` (${daysUntilEnd}hr)`}
-          </div>
-        )}
-      </td>
-      <td className="px-4 py-3 text-xs">
-        {emp.phone && <div className="flex items-center gap-1"><Phone className="w-3 h-3 text-muted-foreground" />{emp.phone}</div>}
-        {emp.email && <div className="flex items-center gap-1 text-muted-foreground"><Mail className="w-3 h-3" />{emp.email}</div>}
-      </td>
-      <td className="px-4 py-3">
-        <div className="flex items-center gap-2">
-          <div className="flex-1 h-1.5 w-20 bg-foreground/10 rounded-full overflow-hidden">
-            <div className={`h-full ${pct >= 80 ? 'bg-emerald-400' : pct >= 50 ? 'bg-amber-400' : 'bg-red-400'}`}
-              style={{ width: `${pct}%` }} />
-          </div>
-          <span className="text-[10px] text-muted-foreground font-mono">{pct}%</span>
-        </div>
-      </td>
-      <td className="px-4 py-3">
-        <div className="flex gap-1">
-          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={onEdit}
-            data-testid={`employee-edit-${emp.id}`}>
-            <Edit2 className="w-3.5 h-3.5" />
-          </Button>
-          <Button
-            size="icon" variant="ghost"
-            className={`h-7 w-7 ${emp.user_id ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}
-            onClick={onLinkUser}
-            title={emp.user_id ? `Terhubung: ${emp.user_email || emp.user_id}` : 'Tautkan akun login'}
-            data-testid={`employee-link-${emp.id}`}
-          >
-            <User className="w-3.5 h-3.5" />
-          </Button>
-          <Button size="icon" variant="ghost" className="h-7 w-7 text-red-700 dark:text-red-400" onClick={onDelete}>
-            <Power className="w-3.5 h-3.5" />
-          </Button>
-        </div>
-      </td>
-    </tr>
+      </div>
+    </DetailPopup>
   );
 }
 
+// ─── Tautkan akun login (popup pendek) ─────────────────────────────────────────
+function TautkanAkun({ target, users, linking, onPilih, onClose }) {
+  const [pilih, setPilih] = useState(target.user_id || '');
+  const pilihan = users.filter(u => u.role !== 'superadmin');
+  return (
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="link-user-dialog"
+      judul={`Tautkan akun login — ${target.name}`}
+      keterangan="Setelah ditautkan, karyawan bisa membuka Portal Saya (slip gaji, cuti, dan lainnya)."
+      onSimpan={() => onPilih(pilih)} menyimpan={linking} bisaSimpan={!!pilih && pilih !== target.user_id}
+      labelSimpan="Tautkan"
+      aksiKiri={target.user_id ? (
+        <Button type="button" variant="outline" onClick={() => onPilih('')} disabled={linking}
+          className="text-[hsl(var(--danger-text))]" data-testid="link-user-hapus">
+          Hapus tautan
+        </Button>
+      ) : null}>
+      {target.user_id && (
+        <p className="text-sm text-muted-foreground">Saat ini tertaut ke <span className="text-foreground">{target.user_email || target.user_id}</span>.</p>
+      )}
+      <Isian label="Akun pengguna" htmlFor="link-user-pilih"
+        petunjuk={users.length === 0 ? 'Memuat daftar pengguna…' : `${pilihan.length} akun bisa dipilih.`}>
+        <SmartNativeSelect id="link-user-pilih" value={pilih} onChange={(e) => setPilih(e.target.value)}
+          searchable className="w-full" data-testid="link-user-select">
+          <option value="">— Pilih akun —</option>
+          {pilihan.map(u => (
+            <option key={u.id} value={u.id}>{`${u.name || u.email} · ${u.email}${u.role ? ` · ${labelPeran(u.role)}` : ''}`}</option>
+          ))}
+        </SmartNativeSelect>
+      </Isian>
+    </FormPopup>
+  );
+}
+
+// ─── Form karyawan (popup panjang) ─────────────────────────────────────────────
 function EmployeeDialog({ initial, locations, employees = [], masters = {}, headers, onSave, onClose }) {
   const [form, setForm] = useState(initial);
   const [bankOther, setBankOther] = useState(() => !!initial.bank_name && !BANKS.includes(initial.bank_name));
@@ -442,7 +527,11 @@ function EmployeeDialog({ initial, locations, employees = [], masters = {}, head
     return { ...f, department: v, job_title: keep ? f.job_title : '' };
   });
   const [saving, setSaving] = useState(false);
+  const [galat, setGalat] = useState('');
   const [documents, setDocuments] = useState([]);
+  const [docCategory, setDocCategory] = useState(DOC_CATEGORIES[0]);
+  const docInput = useRef(null);
+  const photoInput = useRef(null);
   const [tab, setTab] = useState('dasar');
   const [salaryProfile, setSalaryProfile] = useState(null);
   const isEdit = !!form.id;
@@ -482,17 +571,18 @@ function EmployeeDialog({ initial, locations, employees = [], masters = {}, head
   }, [form.id, headers]);
 
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e?.target ? e.target.value : e }));
+  const tolak = (pesan, keTab) => { setGalat(pesan); if (keTab) setTab(keTab); };
 
-  const submit = async (e) => {
-    e.preventDefault();
-    if (!form.employee_code || !form.name) { toast.error('Kode dan nama wajib diisi'); return; }
-    if (form.ktp_number && form.ktp_number.length !== 16) { toast.error('NIK KTP harus 16 digit'); return; }
+  const submit = async () => {
+    setGalat('');
+    if (!form.employee_code || !form.name) { tolak('Kode dan nama wajib diisi.', 'dasar'); return; }
+    if (form.ktp_number && form.ktp_number.length !== 16) { tolak('NIK KTP harus 16 digit.', 'pajak'); return; }
     // 2026-11-06 (Tahap 2): NPWP 15 digit (lama) atau 16 digit (NIK = NPWP sejak 2024) diterima.
-    if (form.npwp_number && ![15, 16].includes(form.npwp_number.replace(/[^0-9]/g, '').length)) { toast.error('NPWP harus 15 atau 16 digit'); return; }
-    if (form.join_date && form.resign_date && form.resign_date < form.join_date) { toast.error('Tanggal keluar tidak boleh sebelum tanggal masuk'); return; }
-    if (form.contract_start_date && form.contract_end_date && form.contract_end_date < form.contract_start_date) { toast.error('Tanggal berakhir kontrak tidak boleh sebelum tanggal mulai'); return; }
-    if (!isEdit && ['PKWT', 'Magang'].includes(form.contract_type) && !form.contract_end_date) { toast.error('Tanggal berakhir kontrak wajib untuk PKWT/Magang'); setTab('dasar'); return; }
-    if (bankOther && !String(form.bank_name || '').trim()) { toast.error('Ketik nama bank'); setTab('bank'); return; }
+    if (form.npwp_number && ![15, 16].includes(form.npwp_number.replace(/[^0-9]/g, '').length)) { tolak('NPWP harus 15 atau 16 digit.', 'pajak'); return; }
+    if (form.join_date && form.resign_date && form.resign_date < form.join_date) { tolak('Tanggal keluar tidak boleh sebelum tanggal masuk.', 'kontrak'); return; }
+    if (form.contract_start_date && form.contract_end_date && form.contract_end_date < form.contract_start_date) { tolak('Tanggal berakhir kontrak tidak boleh sebelum tanggal mulai.', 'kontrak'); return; }
+    if (!isEdit && ['PKWT', 'Magang'].includes(form.contract_type) && !form.contract_end_date) { tolak('Tanggal berakhir kontrak wajib untuk PKWT/Magang.', 'kontrak'); return; }
+    if (bankOther && !String(form.bank_name || '').trim()) { tolak('Ketik nama bank.', 'bank'); return; }
     const payload = { ...form };
     delete payload.base_rate;      // gaji hanya di Profil Gaji
     delete payload.wage_scheme;
@@ -500,7 +590,14 @@ function EmployeeDialog({ initial, locations, employees = [], masters = {}, head
     const sh = activeShifts.find(s => s.id === form.shift_id);
     payload.shift_id = form.shift_id || null;
     payload.shift_code = sh ? sh.code : (form.shift_id ? form.shift_code : null);
-    setSaving(true); await onSave(payload); setSaving(false);
+    setSaving(true);
+    try {
+      await onSave(payload);
+    } catch (e) {
+      setGalat(e.response?.data?.detail || 'Gagal menyimpan data karyawan.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const uploadFile = async (file, onUrl, category = '') => {
@@ -522,7 +619,7 @@ function EmployeeDialog({ initial, locations, employees = [], masters = {}, head
       }
       return data;
     } catch (e) {
-      toast.error('Upload gagal: ' + (e.response?.data?.detail || e.message));
+      toast.error('Unggah gagal: ' + (e.response?.data?.detail || e.message));
       return null;
     }
   };
@@ -530,7 +627,7 @@ function EmployeeDialog({ initial, locations, employees = [], masters = {}, head
   const onPhotoChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 3 * 1024 * 1024) { toast.error('Foto max 3MB'); return; }
+    if (file.size > 3 * 1024 * 1024) { toast.error('Foto maksimal 3 MB'); return; }
     const data = await uploadFile(file, (url) => setForm(f => ({ ...f, photo_url: url })));
     if (data && form.id) {
       // Update photo_url on employee record
@@ -550,365 +647,312 @@ function EmployeeDialog({ initial, locations, employees = [], masters = {}, head
   };
 
   const deleteDoc = async (attId) => {
-    if (!(await confirmDialog({ title: 'Hapus dokumen ini?', danger: true }))) return;
+    if (!(await confirmDialog({ title: 'Hapus dokumen ini?', body: 'Berkas dihapus dari data karyawan.', confirmLabel: 'Hapus', danger: true }))) return;
     try {
       await axios.delete(`${API}/api/attachments/${attId}`, { headers });
       toast.success('Dokumen dihapus');
       loadDocs();
-    } catch { toast.error('Gagal hapus'); }
+    } catch { toast.error('Gagal menghapus dokumen'); }
   };
 
+  const kolomDok = [
+    { kunci: 'nama', label: 'Nama berkas', hp: 'judul', isi: (d) => (
+      <a href={withFileAuth(`${API}/api/files/${d.storage_path}`)} target="_blank" rel="noreferrer"
+        className="inline-flex items-center gap-1 text-primary hover:underline">
+        <FileText className="h-3.5 w-3.5" />{d.original_filename}
+      </a>) },
+    { kunci: 'kategori', label: 'Kategori', isi: (d) => d.category || '—' },
+    { kunci: 'ukuran', label: 'Ukuran', rata: 'kanan', isi: (d) => <span className="tabular-nums">{d.size ? `${(d.size / 1024).toFixed(1)} KB` : '—'}</span> },
+    { kunci: 'tgl', label: 'Diunggah', isi: (d) => tgl(d.created_at) || '—' },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (d) => (
+      <Button type="button" size="icon-sm" variant="ghost" onClick={() => deleteDoc(d.id)}
+        aria-label="Hapus dokumen" title="Hapus dokumen">
+        <Trash2 />
+      </Button>) },
+  ];
+
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[95vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <UserCheck className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-            {isEdit ? `Edit ${form.name}` : 'Tambah Karyawan Baru'}
-          </DialogTitle>
-          <DialogDescription>
-            Kelola data karyawan: info dasar, personal, pajak &amp; BPJS, bank, dan dokumen.
-          </DialogDescription>
-        </DialogHeader>
+    <FormPopup open onClose={onClose} ukuran="panjang" onSimpan={submit} menyimpan={saving} galat={galat}
+      judul={isEdit ? `Ubah data ${form.name}` : 'Tambah karyawan'}
+      keterangan="Data dasar, pribadi, pajak & BPJS, rekening, dan dokumen karyawan."
+      labelSimpan={isEdit ? 'Simpan perubahan' : 'Simpan karyawan'} testId="employee-form">
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList className="h-auto max-w-full justify-start gap-1 max-sm:flex-nowrap max-sm:overflow-x-auto sm:flex-wrap">
+          <TabsTrigger value="dasar" className="shrink-0">Data dasar</TabsTrigger>
+          <TabsTrigger value="kontrak" className="shrink-0">Kontrak</TabsTrigger>
+          <TabsTrigger value="personal" className="shrink-0">Pribadi</TabsTrigger>
+          <TabsTrigger value="pajak" className="shrink-0">Pajak & BPJS</TabsTrigger>
+          <TabsTrigger value="bank" className="shrink-0">Rekening & kontak darurat</TabsTrigger>
+          <TabsTrigger value="dokumen" disabled={!isEdit} className="shrink-0"
+            title={isEdit ? undefined : 'Simpan karyawan dulu, lalu unggah dokumen'}>Dokumen</TabsTrigger>
+        </TabsList>
 
-        <form onSubmit={submit}>
-          <Tabs value={tab} onValueChange={setTab}>
-            <TabsList className="grid grid-cols-2 sm:grid-cols-5 h-auto w-full">
-              <TabsTrigger value="dasar" className="text-xs"><Briefcase className="w-3 h-3 mr-1" />Info Dasar</TabsTrigger>
-              <TabsTrigger value="personal" className="text-xs"><User className="w-3 h-3 mr-1" />Personal</TabsTrigger>
-              <TabsTrigger value="pajak" className="text-xs"><Shield className="w-3 h-3 mr-1" />Pajak & BPJS</TabsTrigger>
-              <TabsTrigger value="bank" className="text-xs"><Landmark className="w-3 h-3 mr-1" />Bank & Emergency</TabsTrigger>
-              <TabsTrigger value="dokumen" disabled={!isEdit} className="text-xs"><FileText className="w-3 h-3 mr-1" />Dokumen{!isEdit && ' (simpan dulu)'}</TabsTrigger>
-            </TabsList>
+        {/* Tab 1: Data dasar */}
+        <TabsContent value="dasar" className="mt-4">
+          <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2">
+            <Isian label="Kode karyawan" wajib htmlFor="emp-code-input">
+              <Input id="emp-code-input" value={form.employee_code} onChange={set('employee_code')} placeholder="EMP-001" data-testid="emp-code" />
+            </Isian>
+            <Isian label="Nama lengkap" wajib htmlFor="emp-name-input">
+              <Input id="emp-name-input" value={form.name} onChange={set('name')} data-testid="emp-name" />
+            </Isian>
+            <Isian label="Departemen"
+              petunjuk={masters.loaded && !(masters.units || []).length ? 'Belum ada unit — tambahkan di menu Struktur Organisasi.' : 'Dari Struktur Organisasi.'}>
+              <Sel value={form.department} onChange={changeDepartment} testId="emp-department"
+                options={[{ value: '', label: '— Pilih departemen —' }, ...deptOpts]} />
+            </Isian>
+            <Isian label="Jabatan" petunjuk={selectedUnit ? `Jabatan di ${selectedUnit.name}.` : 'Pilih departemen dulu untuk menyaring jabatan.'}>
+              <Sel value={form.job_title} onChange={set('job_title')} testId="emp-job-title"
+                options={[{ value: '', label: posOpts.length ? '— Pilih jabatan —' : '— Belum ada jabatan di Struktur Organisasi —' }, ...posOpts]} />
+            </Isian>
+            <Isian label="Atasan" petunjuk="Atasan yang menyetujui usulan kenaikan gaji.">
+              <EmployeeSelect
+                employees={employees.filter(e => e.active !== false)}
+                exclude={[form.id]}
+                value={form.manager_id || ''}
+                onChange={set('manager_id')}
+                placeholder="— Tidak ada atasan —"
+                testId="emp-manager"
+              />
+            </Isian>
+            <Isian label="Lokasi utama">
+              <Sel value={form.location_id || ''} onChange={set('location_id')} testId="emp-location"
+                options={[{ value: '', label: '— Pilih —' }, ...locations.filter(l => l.active !== false).map(l => ({ value: l.id, label: `${l.code} · ${l.name}` }))]} />
+            </Isian>
+            <Isian label="Shift utama" petunjuk="Dipakai absensi bila tidak ada jadwal atau penugasan shift.">
+              <Sel value={form.shift_id || ''} onChange={set('shift_id')} testId="emp-shift"
+                options={[{ value: '', label: '— Tanpa shift tetap —' },
+                  ...activeShifts.map(s => ({ value: s.id, label: shiftLabel(s) })),
+                  ...(form.shift_id && !activeShifts.some(s => s.id === form.shift_id) ? [{ value: form.shift_id, label: `${form.shift_code || 'Shift'} (nonaktif)` }] : [])]} />
+            </Isian>
+            <Isian label="No. telepon" htmlFor="emp-phone">
+              <Input id="emp-phone" value={form.phone} onChange={set('phone')} placeholder="08xxxxxxxxxx" />
+            </Isian>
+            <Isian label="Email" htmlFor="emp-email">
+              <Input id="emp-email" type="email" value={form.email} onChange={set('email')} placeholder="nama@contoh.com" />
+            </Isian>
+          </div>
+        </TabsContent>
 
-            {/* Tab 1: Info Dasar */}
-            <TabsContent value="dasar" className="space-y-3 mt-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Field label="Kode Karyawan *" data-testid="emp-code">
-                  <Input value={form.employee_code} onChange={set('employee_code')} required placeholder="EMP-001" />
-                </Field>
-                <Field label="Nama Lengkap *" data-testid="emp-name">
-                  <Input value={form.name} onChange={set('name')} required />
-                </Field>
-                <Field label="Departemen"
-                  help={masters.loaded && !(masters.units || []).length ? 'Belum ada unit di Struktur Organisasi — tambahkan di menu Struktur Organisasi.' : 'Dari Struktur Organisasi'}>
-                  <Sel value={form.department} onChange={changeDepartment} testId="emp-department"
-                    options={[{ value: '', label: '— Pilih departemen —' }, ...deptOpts]} />
-                </Field>
-                <Field label="Jabatan" help={selectedUnit ? `Jabatan di ${selectedUnit.name}` : 'Pilih departemen dulu untuk menyaring jabatan'}>
-                  <Sel value={form.job_title} onChange={set('job_title')} testId="emp-job-title"
-                    options={[{ value: '', label: posOpts.length ? '— Pilih jabatan —' : '— Belum ada jabatan di Struktur Organisasi —' }, ...posOpts]} />
-                </Field>
-                <Field label="Atasan (Manager)" help="Atasan yang akan approve usulan kenaikan gaji">
-                  <EmployeeSelect
-                    employees={employees.filter(e => e.active !== false)}
-                    exclude={[form.id]}
-                    value={form.manager_id || ''}
-                    onChange={set('manager_id')}
-                    placeholder="— Tidak ada atasan —"
-                    testId="emp-manager"
-                  />
-                </Field>
-                <Field label="Lokasi Utama">
-                  <Sel value={form.location_id || ''} onChange={set('location_id')} testId="emp-location"
-                    options={[{ value: '', label: '— Pilih —' }, ...locations.filter(l => l.active !== false).map(l => ({ value: l.id, label: `${l.code} · ${l.name}` }))]} />
-                </Field>
-                <Field label="Shift utama" help="Dipakai absensi bila tidak ada jadwal/penugasan shift">
-                  <Sel value={form.shift_id || ''} onChange={set('shift_id')} testId="emp-shift"
-                    options={[{ value: '', label: '— Tanpa shift tetap —' },
-                      ...activeShifts.map(s => ({ value: s.id, label: shiftLabel(s) })),
-                      ...(form.shift_id && !activeShifts.some(s => s.id === form.shift_id) ? [{ value: form.shift_id, label: `${form.shift_code || 'Shift'} (nonaktif)` }] : [])]} />
-                </Field>
-                <Field label="No. Telepon">
-                  <Input value={form.phone} onChange={set('phone')} placeholder="08xxxxxxxxxx" />
-                </Field>
-                <Field label="Email">
-                  <Input type="email" value={form.email} onChange={set('email')} placeholder="user@example.com" />
-                </Field>
-                <Field label="Tipe Kontrak">
-                  <Sel value={form.contract_type || ''} onChange={set('contract_type')} options={CONTRACT_TYPES} />
-                </Field>
-                <Field label="Tgl Mulai Kontrak">
-                  <Input type="date" value={form.contract_start_date || ''} onChange={set('contract_start_date')} />
-                </Field>
-                <Field label="Tgl Berakhir Kontrak" help="Wajib untuk PKWT/Magang">
-                  <Input type="date" value={form.contract_end_date || ''} onChange={set('contract_end_date')} />
-                </Field>
-                <Field label="Tanggal masuk kerja" help="Dipakai payroll untuk gaji prorata di bulan pertama">
-                  <Input type="date" value={(form.join_date || '').slice(0, 10)} onChange={set('join_date')} data-testid="emp-join-date" />
-                </Field>
-                <Field label="Tanggal keluar" help="Diisi saat karyawan berhenti — gaji bulan terakhir prorata">
-                  <Input type="date" value={(form.resign_date || '').slice(0, 10)} onChange={set('resign_date')} data-testid="emp-resign-date" />
-                </Field>
-                <Field label="Gaji" help="Diatur di Penggajian › Profil Gaji (satu sumber gaji)">
-                  <div className="h-9 flex items-center text-sm text-muted-foreground" data-testid="emp-salary-readonly">
-                    {salaryProfile
-                      ? `${PAY_SCHEME_LABEL[salaryProfile.pay_scheme] || salaryProfile.pay_scheme} · Rp ${Number(salaryProfile.base_rate || 0).toLocaleString('id-ID')}`
-                      : (isEdit && salaryProfile === false ? 'Belum ada Profil Gaji' : '—')}
-                  </div>
-                </Field>
+        {/* Tab 2: Kontrak & masa kerja (dulu satu tab dengan data dasar — terlalu panjang, tombol simpan jauh di bawah) */}
+        <TabsContent value="kontrak" className="mt-4">
+          <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2">
+            <Isian label="Tipe kontrak">
+              <Sel value={form.contract_type || ''} onChange={set('contract_type')} options={CONTRACT_TYPES} testId="emp-contract-type" />
+            </Isian>
+            <Isian label="Mulai kontrak">
+              <DatePicker value={ymdOf(form.contract_start_date)} onChange={set('contract_start_date')} testId="emp-contract-start" />
+            </Isian>
+            <Isian label="Berakhir kontrak" petunjuk="Wajib untuk PKWT dan magang.">
+              <DatePicker value={ymdOf(form.contract_end_date)} onChange={set('contract_end_date')}
+                min={ymdOf(form.contract_start_date) || undefined} testId="emp-contract-end" />
+            </Isian>
+            <Isian label="Tanggal masuk kerja" petunjuk="Dipakai penggajian untuk gaji prorata di bulan pertama.">
+              <DatePicker value={ymdOf(form.join_date)} onChange={set('join_date')} testId="emp-join-date" />
+            </Isian>
+            <Isian label="Tanggal keluar" petunjuk="Diisi saat karyawan berhenti — gaji bulan terakhir prorata.">
+              <DatePicker value={ymdOf(form.resign_date)} onChange={set('resign_date')}
+                min={ymdOf(form.join_date) || undefined} placeholder="Belum keluar" testId="emp-resign-date" />
+            </Isian>
+            <Isian label="Gaji" petunjuk="Diatur di Penggajian › Profil Gaji (satu sumber gaji).">
+              <div className="flex h-9 items-center text-sm text-muted-foreground" data-testid="emp-salary-readonly">
+                {salaryProfile
+                  ? `${PAY_SCHEME_LABEL[salaryProfile.pay_scheme] || 'Skema lain'} · Rp ${Number(salaryProfile.base_rate || 0).toLocaleString('id-ID')}`
+                  : (isEdit && salaryProfile === false ? 'Belum ada Profil Gaji' : '—')}
               </div>
-            </TabsContent>
+            </Isian>
+          </div>
+        </TabsContent>
 
-            {/* Tab 2: Personal */}
-            <TabsContent value="personal" className="space-y-3 mt-4">
-              <div className="grid grid-cols-1 sm:grid-cols-[120px_1fr] gap-4 items-start">
-                <div className="space-y-2">
-                  {form.photo_url ? (
-                    <img src={withFileAuth(`${API}${form.photo_url}`)} alt={form.name}
-                      className="w-28 h-28 rounded-xl object-cover border border-foreground/10" />
-                  ) : (
-                    <div className="w-28 h-28 rounded-xl bg-foreground/5 border border-dashed border-foreground/20 flex flex-col items-center justify-center text-muted-foreground">
-                      <Camera className="w-6 h-6 mb-1 opacity-50" />
-                      <span className="text-[10px]">Foto</span>
-                    </div>
-                  )}
-                  <label className="block">
-                    <input type="file" accept="image/*" className="hidden" onChange={onPhotoChange} disabled={!isEdit} />
-                    <Button size="sm" variant="outline" type="button" className="w-full text-xs h-8"
-                      disabled={!isEdit}
-                      onClick={(ev) => ev.currentTarget.parentElement.querySelector('input').click()}>
-                      <UploadCloud className="w-3 h-3 mr-1" /> {form.photo_url ? 'Ganti' : 'Upload'}
-                    </Button>
-                    {!isEdit && <div className="text-[10px] text-muted-foreground mt-1 text-center">Simpan dulu</div>}
-                  </label>
+        {/* Tab 2: Pribadi */}
+        <TabsContent value="personal" className="mt-4 space-y-4">
+          <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-[7rem_1fr]">
+            <div className="space-y-2">
+              {form.photo_url ? (
+                <img src={withFileAuth(`${API}${form.photo_url}`)} alt={form.name}
+                  className="h-28 w-28 rounded-lg border border-[var(--glass-border)] object-cover" />
+              ) : (
+                <div className="flex h-28 w-28 flex-col items-center justify-center rounded-lg border border-dashed border-[var(--glass-border)] text-muted-foreground">
+                  <Camera className="mb-1 h-6 w-6" />
+                  <span className="text-xs">Foto</span>
                 </div>
+              )}
+              <input ref={photoInput} type="file" accept="image/*" className="hidden" onChange={onPhotoChange} disabled={!isEdit} />
+              <Button size="sm" variant="outline" type="button" className="w-28" disabled={!isEdit}
+                title={isEdit ? undefined : 'Simpan karyawan dulu, lalu unggah foto'}
+                onClick={() => photoInput.current?.click()}>
+                <UploadCloud />{form.photo_url ? 'Ganti foto' : 'Unggah foto'}
+              </Button>
+              {!isEdit && <p className="w-28 text-xs text-muted-foreground">Simpan dulu untuk mengunggah.</p>}
+            </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1">
-                  <Field label="Jenis Kelamin">
-                    <Sel value={form.gender} onChange={set('gender')} options={[{ value: 'L', label: 'Laki-laki' }, { value: 'P', label: 'Perempuan' }]} />
-                  </Field>
-                  <Field label="Status Pernikahan">
-                    <Sel value={form.marital_status} onChange={set('marital_status')} options={MARITAL_STATUS} />
-                  </Field>
-                  <Field label="Tempat Lahir">
-                    <Input value={form.birth_place} onChange={set('birth_place')} placeholder="Kota kelahiran" />
-                  </Field>
-                  <Field label="Tanggal Lahir">
-                    <Input type="date" value={form.birth_date || ''} onChange={set('birth_date')} />
-                  </Field>
-                  <Field label="Agama">
-                    <Sel value={form.religion} onChange={set('religion')} options={RELIGIONS.map(r => ({ value: r, label: r }))} />
-                  </Field>
-                  <Field label="Kewarganegaraan">
-                    <Input value={form.nationality} onChange={set('nationality')} />
-                  </Field>
-                </div>
-              </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Isian label="Jenis kelamin">
+                <Sel value={form.gender} onChange={set('gender')} options={[{ value: 'L', label: 'Laki-laki' }, { value: 'P', label: 'Perempuan' }]} />
+              </Isian>
+              <Isian label="Status pernikahan">
+                <Sel value={form.marital_status} onChange={set('marital_status')} options={MARITAL_STATUS} />
+              </Isian>
+              <Isian label="Tempat lahir" htmlFor="emp-birth-place">
+                <Input id="emp-birth-place" value={form.birth_place} onChange={set('birth_place')} placeholder="Kota kelahiran" />
+              </Isian>
+              <Isian label="Tanggal lahir">
+                <DatePicker value={ymdOf(form.birth_date)} onChange={set('birth_date')} testId="emp-birth-date" />
+              </Isian>
+              <Isian label="Agama">
+                <Sel value={form.religion} onChange={set('religion')} options={RELIGIONS.map(r => ({ value: r, label: r }))} />
+              </Isian>
+              <Isian label="Kewarganegaraan" htmlFor="emp-nationality">
+                <Input id="emp-nationality" value={form.nationality} onChange={set('nationality')} />
+              </Isian>
+            </div>
+          </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <Field label="Alamat KTP">
-                  <Textarea value={form.ktp_address} onChange={set('ktp_address')} rows={2}
-                    placeholder="Sesuai KTP (RT/RW, Kel, Kec, Kota)" />
-                </Field>
-                <Field label="Alamat Tinggal Saat Ini">
-                  <Textarea value={form.current_address} onChange={set('current_address')} rows={2}
-                    placeholder="Alamat domisili sekarang" />
-                </Field>
-              </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <Isian label="Alamat KTP" htmlFor="emp-ktp-address">
+              <Textarea id="emp-ktp-address" value={form.ktp_address} onChange={set('ktp_address')} rows={2}
+                placeholder="Sesuai KTP (RT/RW, kelurahan, kecamatan, kota)" />
+            </Isian>
+            <Isian label="Alamat tinggal saat ini" htmlFor="emp-current-address">
+              <Textarea id="emp-current-address" value={form.current_address} onChange={set('current_address')} rows={2}
+                placeholder="Alamat domisili sekarang" />
+            </Isian>
+          </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <Field label="Pendidikan Terakhir">
-                  <Sel value={form.education_level} onChange={set('education_level')} options={EDUCATION_LEVELS.map(e => ({ value: e, label: e }))} />
-                </Field>
-                <Field label="Sekolah / Universitas">
-                  <Input value={form.education_institution} onChange={set('education_institution')} placeholder="Nama institusi" />
-                </Field>
-                <Field label="Jurusan">
-                  <Input value={form.education_major} onChange={set('education_major')} placeholder="Jurusan / program" />
-                </Field>
-              </div>
-            </TabsContent>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <Isian label="Pendidikan terakhir">
+              <Sel value={form.education_level} onChange={set('education_level')} options={EDUCATION_LEVELS.map(e => ({ value: e, label: e }))} />
+            </Isian>
+            <Isian label="Sekolah / universitas" htmlFor="emp-edu-inst">
+              <Input id="emp-edu-inst" value={form.education_institution} onChange={set('education_institution')} placeholder="Nama institusi" />
+            </Isian>
+            <Isian label="Jurusan" htmlFor="emp-edu-major">
+              <Input id="emp-edu-major" value={form.education_major} onChange={set('education_major')} placeholder="Jurusan / program" />
+            </Isian>
+          </div>
+        </TabsContent>
 
-            {/* Tab 3: Pajak & BPJS */}
-            <TabsContent value="pajak" className="space-y-3 mt-4">
-              <div className="rounded-lg border border-amber-300 dark:border-amber-500/20 bg-amber-100 dark:bg-amber-500/5 p-3 text-xs text-muted-foreground">
-                <AlertCircle className="inline w-3.5 h-3.5 mr-1 text-amber-700 dark:text-amber-400" />
-                Data ini digunakan untuk <strong>perhitungan PPh21 & BPJS otomatis</strong> di payroll. Pastikan akurat.
+        {/* Tab 3: Pajak & BPJS */}
+        <TabsContent value="pajak" className="mt-4 space-y-4">
+          <Notice tone="warning" title="Dipakai untuk menghitung PPh 21 dan BPJS di penggajian.">
+            Pastikan nomor dan status pajak sesuai dokumen.
+          </Notice>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Isian label="NIK KTP (16 digit)" wajib htmlFor="emp-ktp"
+              galat={form.ktp_number && form.ktp_number.length !== 16 ? `NIK harus tepat 16 digit (${form.ktp_number.length}/16).` : undefined}
+              petunjuk="Nomor Induk Kependudukan — wajib untuk BPJS dan pajak.">
+              <Input id="emp-ktp" value={form.ktp_number} onChange={set('ktp_number')}
+                maxLength={16} placeholder="3310xxxxxxxxxxxx" inputMode="numeric" />
+            </Isian>
+            <Isian label="NPWP (15 atau 16 digit)" htmlFor="emp-npwp" petunjuk="Sejak 2024 NIK 16 digit berlaku sebagai NPWP.">
+              <Input id="emp-npwp" value={form.npwp_number} onChange={set('npwp_number')} placeholder="xx.xxx.xxx.x-xxx.xxx" />
+            </Isian>
+            <Isian label="Status PTKP" petunjuk="Menentukan penghasilan tidak kena pajak untuk PPh 21.">
+              <Sel value={form.tax_ptkp} onChange={set('tax_ptkp')} options={TAX_PTKP} />
+            </Isian>
+            <div className="hidden sm:block" />
+            <Isian label="No. BPJS Kesehatan" htmlFor="emp-bpjs-kes">
+              <Input id="emp-bpjs-kes" value={form.bpjs_kesehatan_number} onChange={set('bpjs_kesehatan_number')} placeholder="13 digit" />
+            </Isian>
+            <Isian label="No. BPJS Ketenagakerjaan" htmlFor="emp-bpjs-tk">
+              <Input id="emp-bpjs-tk" value={form.bpjs_ketenagakerjaan_number} onChange={set('bpjs_ketenagakerjaan_number')} placeholder="11 digit" />
+            </Isian>
+            {/* 2026-11-02 (K23): kepesertaan per program — potongan payroll HANYA untuk program yang dicentang.
+                Belum pernah dicentang → diturunkan dari nomor kartu (Kes ← no. Kes; JHT/JP/JKK-JKM ← no. TK). */}
+            <Isian label="Kepesertaan BPJS" className="sm:col-span-2"
+              petunjuk={!form.bpjs_programs
+                ? 'Belum diatur — sementara mengikuti nomor kartu di atas. Centang atau hapus centang untuk menetapkan.'
+                : 'Potongan dan iuran hanya dihitung untuk program yang dicentang.'}>
+              <div className="flex flex-wrap gap-4" data-testid="emp-bpjs-programs">
+                {BPJS_PROGRAMS.map(([k, label]) => {
+                  const progs = bpjsProgramsOf(form);
+                  return (
+                    <label key={k} className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+                      <Checkbox checked={!!progs[k]} data-testid={`emp-bpjs-${k}`}
+                        onCheckedChange={() => setForm(f => ({ ...f, bpjs_programs: { ...bpjsProgramsOf(f), [k]: !bpjsProgramsOf(f)[k] } }))} />
+                      {label}
+                    </label>
+                  );
+                })}
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Field label="NIK KTP (16 digit) *" help="Nomor Induk Kependudukan — wajib untuk BPJS & pajak">
-                  <Input value={form.ktp_number} onChange={set('ktp_number')}
-                    maxLength={16} placeholder="3310xxxxxxxxxxxx" />
-                  {form.ktp_number && form.ktp_number.length !== 16 && (
-                    <div className="text-[10px] text-red-700 dark:text-red-400 mt-1">NIK harus tepat 16 digit ({form.ktp_number.length}/16)</div>
-                  )}
-                </Field>
-                <Field label="NPWP (15 atau 16 digit)" help="Sejak 2024 NIK 16 digit berlaku sebagai NPWP">
-                  <Input value={form.npwp_number} onChange={set('npwp_number')} placeholder="xx.xxx.xxx.x-xxx.xxx" />
-                </Field>
-                <Field label="PTKP (Status Pajak)" help="Menentukan Penghasilan Tidak Kena Pajak untuk PPh21">
-                  <Sel value={form.tax_ptkp} onChange={set('tax_ptkp')} options={TAX_PTKP} />
-                </Field>
-                <div className="hidden sm:block"></div>
-                <Field label="No. BPJS Kesehatan">
-                  <Input value={form.bpjs_kesehatan_number} onChange={set('bpjs_kesehatan_number')}
-                    placeholder="13 digit" />
-                </Field>
-                <Field label="No. BPJS Ketenagakerjaan">
-                  <Input value={form.bpjs_ketenagakerjaan_number} onChange={set('bpjs_ketenagakerjaan_number')}
-                    placeholder="11 digit" />
-                </Field>
-                {/* 2026-11-02 (K23): kepesertaan per program — potongan payroll HANYA untuk program yang dicentang.
-                    Belum pernah dicentang → diturunkan dari nomor kartu (Kes ← no. Kes; JHT/JP/JKK-JKM ← no. TK). */}
-                <div className="sm:col-span-2 rounded-lg border border-[var(--glass-border)] p-3" data-testid="emp-bpjs-programs">
-                  <div className="text-xs font-semibold mb-2">Kepesertaan BPJS (potongan & iuran hanya untuk yang dicentang)</div>
-                  <div className="flex flex-wrap gap-4">
-                    {BPJS_PROGRAMS.map(([k, label]) => {
-                      const progs = bpjsProgramsOf(form);
-                      return (
-                        <label key={k} className="flex items-center gap-1.5 text-xs cursor-pointer">
-                          <input type="checkbox" checked={!!progs[k]} data-testid={`emp-bpjs-${k}`}
-                            onChange={() => setForm(f => ({ ...f, bpjs_programs: { ...bpjsProgramsOf(f), [k]: !bpjsProgramsOf(f)[k] } }))} />
-                          {label}
-                        </label>
-                      );
-                    })}
-                  </div>
-                  {!form.bpjs_programs && (
-                    <div className="text-[10px] text-muted-foreground mt-1.5">
-                      Belum diatur — sementara mengikuti nomor kartu di atas. Centang/hapus centang untuk menetapkan.
-                    </div>
-                  )}
-                </div>
-              </div>
-            </TabsContent>
+            </Isian>
+          </div>
+        </TabsContent>
 
-            {/* Tab 4: Bank & Emergency */}
-            <TabsContent value="bank" className="space-y-4 mt-4">
-              <div>
-                <h3 className="text-sm font-semibold mb-2 flex items-center gap-1">
-                  <Landmark className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> Rekening Bank (untuk transfer payroll)
-                </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <Field label="Nama Bank">
-                    <Sel value={bankOther ? BANK_OTHER : (form.bank_name || '')} testId="emp-bank"
-                      onChange={v => {
-                        if (v === BANK_OTHER) { setBankOther(true); setForm(f => ({ ...f, bank_name: BANKS.includes(f.bank_name) ? '' : f.bank_name })); }
-                        else { setBankOther(false); setForm(f => ({ ...f, bank_name: v })); }
-                      }}
-                      options={[{ value: '', label: '— Pilih bank —' }, ...BANKS.map(b => ({ value: b, label: b })), { value: BANK_OTHER, label: 'Bank lain (ketik nama)' }]} />
-                    {bankOther && (
-                      <Input className="mt-1" value={form.bank_name || ''} onChange={set('bank_name')} placeholder="Nama bank" data-testid="emp-bank-other" />
-                    )}
-                  </Field>
-                  <Field label="No. Rekening">
-                    <Input value={form.bank_account_number} onChange={set('bank_account_number')} placeholder="xxxxxxxxxx" />
-                  </Field>
-                  <Field label="Atas Nama" help="Biasanya = nama karyawan">
-                    <Input value={form.bank_account_holder || form.name} onChange={set('bank_account_holder')} />
-                  </Field>
-                </div>
-              </div>
+        {/* Tab 4: Rekening & kontak darurat */}
+        <TabsContent value="bank" className="mt-4 space-y-4">
+          <p className="text-base font-semibold text-foreground">Rekening bank (untuk transfer gaji)</p>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <Isian label="Nama bank">
+              <Sel value={bankOther ? BANK_OTHER : (form.bank_name || '')} testId="emp-bank"
+                onChange={v => {
+                  if (v === BANK_OTHER) { setBankOther(true); setForm(f => ({ ...f, bank_name: BANKS.includes(f.bank_name) ? '' : f.bank_name })); }
+                  else { setBankOther(false); setForm(f => ({ ...f, bank_name: v })); }
+                }}
+                options={[{ value: '', label: '— Pilih bank —' }, ...BANKS.map(b => ({ value: b, label: b })), { value: BANK_OTHER, label: 'Bank lain (ketik nama)' }]} />
+              {bankOther && (
+                <Input className="mt-2" value={form.bank_name || ''} onChange={set('bank_name')} placeholder="Nama bank" data-testid="emp-bank-other" />
+              )}
+            </Isian>
+            <Isian label="No. rekening" htmlFor="emp-bank-no">
+              <Input id="emp-bank-no" value={form.bank_account_number} onChange={set('bank_account_number')} placeholder="xxxxxxxxxx" />
+            </Isian>
+            <Isian label="Atas nama" htmlFor="emp-bank-holder" petunjuk="Biasanya sama dengan nama karyawan.">
+              <Input id="emp-bank-holder" value={form.bank_account_holder || form.name} onChange={set('bank_account_holder')} />
+            </Isian>
+          </div>
 
-              <div>
-                <h3 className="text-sm font-semibold mb-2 flex items-center gap-1">
-                  <Heart className="w-4 h-4 text-red-700 dark:text-red-400" /> Emergency Contact
-                </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <Field label="Nama Kontak Darurat">
-                    <Input value={form.emergency_contact_name} onChange={set('emergency_contact_name')} placeholder="Nama keluarga" />
-                  </Field>
-                  <Field label="No. HP Kontak Darurat">
-                    <Input value={form.emergency_phone} onChange={set('emergency_phone')} placeholder="08xxxxxxxxxx" />
-                  </Field>
-                  <Field label="Hubungan">
-                    <Sel value={form.emergency_relation} onChange={set('emergency_relation')} options={RELATIONS.map(r => ({ value: r, label: r }))} />
-                  </Field>
-                </div>
-              </div>
-            </TabsContent>
+          <p className="text-base font-semibold text-foreground">Kontak darurat</p>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <Isian label="Nama kontak darurat" htmlFor="emp-em-name">
+              <Input id="emp-em-name" value={form.emergency_contact_name} onChange={set('emergency_contact_name')} placeholder="Nama keluarga" />
+            </Isian>
+            <Isian label="No. HP kontak darurat" htmlFor="emp-em-phone">
+              <Input id="emp-em-phone" value={form.emergency_phone} onChange={set('emergency_phone')} placeholder="08xxxxxxxxxx" />
+            </Isian>
+            <Isian label="Hubungan">
+              <Sel value={form.emergency_relation} onChange={set('emergency_relation')} options={RELATIONS.map(r => ({ value: r, label: r }))} />
+            </Isian>
+          </div>
+        </TabsContent>
 
-            {/* Tab 5: Dokumen */}
-            <TabsContent value="dokumen" className="space-y-3 mt-4">
-              <div className="rounded-lg border border-blue-300 dark:border-blue-500/20 bg-blue-100 dark:bg-blue-500/5 p-3 text-xs">
-                <FileText className="inline w-3.5 h-3.5 mr-1 text-blue-600 dark:text-blue-400" />
-                Upload dokumen karyawan seperti: scan KTP, NPWP, ijazah, kontrak kerja, sertifikat, dll. <strong>Max 10MB per file</strong>.
-              </div>
-
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                {DOC_CATEGORIES.map(cat => (
-                  <label key={cat} className="rounded-lg border border-dashed border-foreground/20 bg-foreground/5 px-3 py-2 hover:bg-foreground/10 cursor-pointer text-xs flex items-center gap-2">
-                    <UploadCloud className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="flex-1">{cat}</span>
-                    <input type="file" className="hidden" onChange={(e) => onDocUpload(e, cat)} />
-                  </label>
-                ))}
-              </div>
-
-              <div className="rounded-xl border border-foreground/10 bg-foreground/5 overflow-hidden">
-                {documents.length === 0 ? (
-                  <div className="text-center py-10 text-muted-foreground text-sm">
-                    <FileText className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                    Belum ada dokumen
-                  </div>
-                ) : (
-                  <table className="w-full text-xs">
-                    <thead className="bg-foreground/5 text-muted-foreground">
-                      <tr>
-                        <th className="text-left px-3 py-2">Nama File</th>
-                        <th className="text-left px-3 py-2">Kategori</th>
-                        <th className="text-left px-3 py-2">Ukuran</th>
-                        <th className="text-left px-3 py-2">Diupload</th>
-                        <th className="px-3 py-2"></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {documents.map(d => (
-                        <tr key={d.id} className="hover:bg-foreground/5">
-                          <td className="px-3 py-2">
-                            <a href={withFileAuth(`${API}/api/files/${d.storage_path}`)}
-                              target="_blank" rel="noreferrer"
-                              className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1">
-                              <FileText className="w-3 h-3" /> {d.original_filename}
-                            </a>
-                          </td>
-                          <td className="px-3 py-2">
-                            <span className="px-1.5 py-0.5 rounded-full bg-foreground/10 text-[10px]">{d.category || '—'}</span>
-                          </td>
-                          <td className="px-3 py-2 text-muted-foreground font-mono">
-                            {d.size ? `${(d.size / 1024).toFixed(1)} KB` : '—'}
-                          </td>
-                          <td className="px-3 py-2 text-muted-foreground">
-                            {d.created_at ? new Date(d.created_at).toLocaleDateString('id-ID') : '—'}
-                          </td>
-                          <td className="px-3 py-2">
-                            <Button size="icon" variant="ghost" className="h-7 w-7 text-red-700 dark:text-red-400"
-                              onClick={() => deleteDoc(d.id)}>
-                              <Trash2 className="w-3 h-3" />
-                            </Button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            </TabsContent>
-          </Tabs>
-
-          <DialogFooter className="mt-6">
-            <Button type="button" variant="outline" onClick={onClose}>
-              <X className="w-4 h-4 mr-1" /> Batal
+        {/* Tab 5: Dokumen */}
+        <TabsContent value="dokumen" className="mt-4 space-y-4">
+          <Notice tone="info" icon={FileText}>
+            Unggah dokumen karyawan seperti KTP, NPWP, ijazah, kontrak kerja, atau sertifikat. Maksimal 10 MB per berkas.
+          </Notice>
+          <div className="flex flex-wrap items-end gap-2">
+            <Isian label="Kategori dokumen" className="w-full sm:w-64">
+              <SmartNativeSelect value={docCategory} onChange={(e) => setDocCategory(e.target.value)} className="w-full"
+                data-testid="emp-doc-category">
+                {DOC_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </SmartNativeSelect>
+            </Isian>
+            <input ref={docInput} type="file" className="hidden" onChange={(e) => onDocUpload(e, docCategory)} />
+            <Button type="button" variant="outline" onClick={() => docInput.current?.click()} data-testid="emp-doc-upload">
+              <UploadCloud />Pilih berkas & unggah
             </Button>
-            <Button type="submit" disabled={saving} data-testid="emp-save">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
-              Simpan
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
+          </div>
 
-function Field({ label, help, children, ...props }) {
-  return (
-    <div className="space-y-1" {...props}>
-      <Label className="text-xs">{label}</Label>
-      {children}
-      {help && <p className="text-[10px] text-muted-foreground">{help}</p>}
-    </div>
+          {documents.length === 0 ? (
+            <EmptyState title="Belum ada dokumen" description="Pilih kategori, lalu unggah berkasnya." className="py-6" />
+          ) : (
+            <div className="space-y-2">
+              <div className="flex justify-end">
+                <TombolUnduh namaBerkas={`dokumen-${form.employee_code || 'karyawan'}`} namaLembar="Dokumen" baris={documents}
+                  kolom={[
+                    { label: 'Nama berkas', nilai: (d) => d.original_filename },
+                    { label: 'Kategori', nilai: (d) => d.category || '' },
+                    { label: 'Ukuran (KB)', nilai: (d) => (d.size ? Number((d.size / 1024).toFixed(1)) : '') },
+                    { label: 'Diunggah', nilai: (d) => tgl(d.created_at) },
+                  ]} testId="emp-doc-unduh" />
+              </div>
+              <TabelData kolom={kolomDok} baris={documents} testId="emp-doc-table" />
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
+    </FormPopup>
   );
 }
 
@@ -916,8 +960,7 @@ function Field({ label, help, children, ...props }) {
 // manager_id '_' (ditolak server) dan lokasi '_' tersimpan. Kini SmartNativeSelect (nilai kosong tetap kosong, bisa dicari).
 function Sel({ value, onChange, options, testId }) {
   return (
-    <SmartNativeSelect value={value || ''} onChange={e => onChange(e.target.value)} data-testid={testId}
-      className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm text-foreground">
+    <SmartNativeSelect value={value || ''} onChange={e => onChange(e.target.value)} data-testid={testId} className="w-full">
       {options.map(o => <option key={o.value || '_kosong'} value={o.value}>{o.label}</option>)}
     </SmartNativeSelect>
   );

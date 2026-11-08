@@ -1,63 +1,71 @@
+/**
+ * RahazaLeaveModule — pengajuan cuti, izin, sakit + master jenis cuti (Portal SDM › Cuti & Lembur).
+ *
+ * Standar UI/UX v2 (8 Nov 2026):
+ *  • Di hub "Cuti & Lembur" modul ini dipakai dua kali (`bagian="pengajuan"` dan `bagian="jenis"`) — dulu tab
+ *    Radix di dalam tab hub. Dibuka sendiri (menu lama `hr-leave`) → bagian pengajuan + tautan "Jenis cuti".
+ *  • Daftar kartu berulang → tabel (kartu ringkas di HP) + unduh Excel/CSV; rincian = popup.
+ *  • Form = FormPopup; tanggal = DatePicker; tolak/nonaktifkan = konfirmasi merah; label bahasa Indonesia
+ *    tanpa emoji. Panggilan API, validasi, dan data yang dikirim tidak berubah.
+ */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Plus, Calendar, CheckCircle2, XCircle, Eye, Settings,
-  RefreshCw, CheckCheck, AlertTriangle, FileText, Upload,
-  Paperclip, Clock, X, Info, Wallet,
+  Plus, CheckCircle2, XCircle, RefreshCw, CheckCheck, FileText, Upload, Paperclip, X, Pencil, CalendarDays,
 } from 'lucide-react';
-import OnwardCTA from './OnwardCTA';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { withFileAuth } from '@/lib/fileUrl';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker, { formatTanggalID } from '@/components/ui/date-picker';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import { EmployeeSelect } from './hr/hrPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-const fmt = (d) => d ? new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+const fmt = (d) => (d ? formatTanggalID(String(d).slice(0, 10)) || '—' : '—');
 const fmtDuration = (d, wd) => {
   if (!d) return '—';
   const wdStr = wd && wd !== d ? ` (${wd} hari kerja)` : '';
   return `${d} hari${wdStr}`;
 };
 
-// ─── Status Badge ─────────────────────────────────────────────────────────────
+// ─── Status & jenis ───────────────────────────────────────────────────────────
 const STATUS_CFG = {
-  pending_approval: { label: 'Menunggu Supervisor', cls: 'bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-400 border-amber-400 dark:border-amber-400/30' },
-  pending_hr_approval: { label: 'Menunggu HR',      cls: 'bg-blue-50 dark:bg-blue-400/15 text-blue-600 dark:text-blue-400 border-blue-400 dark:border-blue-400/30' },
-  approved:         { label: 'Disetujui',            cls: 'bg-emerald-50 dark:bg-emerald-400/15 text-emerald-600 dark:text-emerald-400 border-emerald-400 dark:border-emerald-400/30' },
-  rejected:         { label: 'Ditolak',              cls: 'bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-400 border-red-400 dark:border-red-400/30' },
-  cancelled:        { label: 'Dibatalkan',           cls: 'bg-muted dark:bg-slate-400/15 text-muted-foreground border-border dark:border-slate-400/30' },
-  draft:            { label: 'Draft',                cls: 'bg-muted dark:bg-slate-400/15 text-foreground/70 border-border dark:border-slate-300/20' },
+  pending_approval:    { label: 'Menunggu atasan', tone: 'warning' },
+  pending_hr_approval: { label: 'Menunggu HR', tone: 'info' },
+  approved:            { label: 'Disetujui', tone: 'success' },
+  rejected:            { label: 'Ditolak', tone: 'danger' },
+  cancelled:           { label: 'Dibatalkan', tone: 'muted' },
+  draft:               { label: 'Draf', tone: 'muted' },
 };
 function LeaveBadge({ status }) {
   const cfg = STATUS_CFG[status] || STATUS_CFG.draft;
-  return <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${cfg.cls}`}>{cfg.label}</span>;
+  return <StatusBadge status={status} label={cfg.label} tone={cfg.tone} />;
 }
 
-// ─── Request Type Badge ───────────────────────────────────────────────────────
 const REQ_TYPE_CFG = {
-  cuti:  { label: 'Cuti',  icon: '🏖️', cls: 'bg-blue-100 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-400 dark:border-blue-400/30' },
-  sakit: { label: 'Sakit', icon: '🏥', cls: 'bg-red-100 dark:bg-red-500/10 text-red-700 dark:text-red-400 border-red-400 dark:border-red-400/30' },
-  izin:  { label: 'Izin',  icon: '📋', cls: 'bg-amber-100 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-400 dark:border-amber-400/30' },
+  cuti:  { label: 'Cuti',  tone: 'info' },
+  sakit: { label: 'Sakit', tone: 'danger' },
+  izin:  { label: 'Izin',  tone: 'warning' },
 };
 function RequestTypeBadge({ type }) {
   const cfg = REQ_TYPE_CFG[type] || REQ_TYPE_CFG.izin;
-  return <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${cfg.cls}`}>{cfg.icon} {cfg.label}</span>;
+  return <StatusBadge status={type} label={cfg.label} tone={cfg.tone} />;
 }
+const PERIODE_SETENGAH = { AM: 'Pagi', PM: 'Siang' };
 
-// ─── Document Upload Component ────────────────────────────────────────────────
+// ─── Unggah dokumen pendukung ─────────────────────────────────────────────────
 function DocumentUpload({ value, onChange, required, docNote, token }) {
   const fileRef = useRef();
   const [uploading, setUploading] = useState(false);
@@ -74,42 +82,29 @@ function DocumentUpload({ value, onChange, required, docNote, token }) {
         body: form,
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Upload gagal');
+      if (!res.ok) throw new Error(data.detail || 'Unggah gagal');
       onChange({ url: data.url, filename: file.name });
-      toast.success('Dokumen berhasil diupload');
+      toast.success('Dokumen terunggah');
     } catch (e) { toast.error(e.message); }
     finally { setUploading(false); }
   };
 
   return (
-    <div className="space-y-2">
-      <Label className={`text-xs flex items-center gap-1 ${required ? 'text-amber-700 dark:text-amber-400' : ''}`}>
-        <Paperclip size={12} />
-        Bukti / Dokumen Pendukung
-        {required && <span className="text-red-700 dark:text-red-400 ml-0.5">*</span>}
-      </Label>
-      {docNote && (
-        <div className="flex items-start gap-1.5 p-2 rounded bg-amber-100 dark:bg-amber-500/10 border border-amber-400 dark:border-amber-500/30 text-[11px] text-amber-600 dark:text-amber-300">
-          <Info size={12} className="mt-0.5 shrink-0" />
-          {docNote}
-        </div>
-      )}
+    <Isian label="Bukti / dokumen pendukung" wajib={Boolean(required)} petunjuk={docNote || 'Foto atau PDF, maksimal 8 MB.'}>
       {value?.url ? (
-        <div className="flex items-center gap-2 p-2 rounded bg-foreground/5 border border-foreground/10">
-          <FileText size={14} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
-          <span className="text-xs text-emerald-600 dark:text-emerald-400 truncate flex-1">{value.filename}</span>
-          <a href={withFileAuth(`${API}${value.url}`)} target="_blank" rel="noreferrer" className="text-xs text-blue-600 dark:text-blue-400 hover:underline shrink-0">Lihat</a>
-          <button onClick={() => onChange(null)} className="text-red-700 dark:text-red-400 hover:text-red-600 dark:text-red-300 shrink-0"><X size={12} /></button>
+        <div className="flex items-center gap-2 rounded-md border border-[var(--glass-border)] px-3 py-2">
+          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-sm" title={value.filename}>{value.filename}</span>
+          <a href={withFileAuth(`${API}${value.url}`)} target="_blank" rel="noreferrer" className="shrink-0 text-sm text-primary underline-offset-4 hover:underline">Lihat</a>
+          <Button type="button" variant="ghost" size="icon-sm" onClick={() => onChange(null)} aria-label="Hapus lampiran" title="Hapus lampiran">
+            <X />
+          </Button>
         </div>
       ) : (
-        <div
-          onClick={() => fileRef.current?.click()}
-          className="flex items-center justify-center gap-2 p-3 rounded border-2 border-dashed border-foreground/20 hover:border-primary/50 cursor-pointer transition-colors text-sm text-muted-foreground"
-          data-testid="doc-upload-area"
-        >
-          {uploading ? <RefreshCw size={14} className="animate-spin" /> : <Upload size={14} />}
-          {uploading ? 'Mengupload...' : 'Klik untuk upload foto/PDF (maks 8MB)'}
-        </div>
+        <Button type="button" variant="outline" onClick={() => fileRef.current?.click()} disabled={uploading} data-testid="doc-upload-area">
+          {uploading ? <RefreshCw className="animate-spin" /> : <Upload />}
+          {uploading ? 'Mengunggah…' : 'Unggah foto/PDF'}
+        </Button>
       )}
       <input
         ref={fileRef}
@@ -118,29 +113,30 @@ function DocumentUpload({ value, onChange, required, docNote, token }) {
         accept="image/*,application/pdf"
         onChange={e => handleFile(e.target.files?.[0])}
       />
-    </div>
+    </Isian>
   );
 }
 
 // ─── MAIN MODULE ──────────────────────────────────────────────────────────────
-export default function RahazaLeaveModule({ token, onNavigate }) {
+export default function RahazaLeaveModule({ token, onNavigate, bagian }) {
   const [leaves, setLeaves] = useState([]);
+  const [totalServer, setTotalServer] = useState(0);   // jumlah pengajuan di server (daftar memuat 100 terbaru)
+  const [dimuat, setDimuat] = useState(0);
   const [leaveTypes, setLeaveTypes] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [filterStatus, setFilterStatus] = useState('');
   const [filterReqType, setFilterReqType] = useState('');
-  const [activeTab, setActiveTab] = useState('requests');
+  // Dalam hub bagian ditetapkan tab; dibuka sendiri → bisa pindah lewat tautan.
+  const [bagianSendiri, setBagianSendiri] = useState('pengajuan');
+  const activeTab = (bagian || bagianSendiri) === 'jenis' ? 'types' : 'requests';
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [bulkApproving, setBulkApproving] = useState(false);
 
-  // Modals
+  // Popup
   const [requestModal, setRequestModal] = useState(false);
   const [typeModal, setTypeModal] = useState(false);
-  const [detailModal, setDetailModal] = useState(false);
   const [selectedLeave, setSelectedLeave] = useState(null);
-  const [rejectModal, setRejectModal] = useState(null);
-  const [rejectReason, setRejectReason] = useState('');
   const [cancelModal, setCancelModal] = useState(null);
   const [cancelReason, setCancelReason] = useState('');
   // Tahap 2 (2026-11-06): dialog persetujuan — alasan, lampiran, hari kerja, saldo, dan keputusan dibayar/tidak.
@@ -156,7 +152,6 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
   const [wdLoading, setWdLoading] = useState(false);
   const [typeForm, setTypeForm] = useState({ code: '', name: '', paid: true, quota_default: 12, description: '',
     request_type: 'cuti', requires_document: false, max_days_without_doc: 0, doc_note: '' });
-  const [deactivateTarget, setDeactivateTarget] = useState(null);
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -175,6 +170,8 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
         fetch(`${API}/api/rahaza/employees?active_only=true&limit=500`, { headers }).then(r => r.json()),
       ]);
       let allLeaves = lr?.items || (Array.isArray(lr) ? lr : []);
+      setTotalServer(Number(lr?.total) || allLeaves.length);
+      setDimuat(allLeaves.length);
       if (filterReqType) allLeaves = allLeaves.filter(l => l.request_type === filterReqType);
       setLeaves(allLeaves);
       setLeaveTypes(Array.isArray(lts) ? lts : []);
@@ -230,7 +227,7 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
       const r = await fetch(`${API}/api/rahaza/leaves/request`, {
         method: 'POST', headers, body: JSON.stringify(payload) });
       if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${r.status}`); }
-      toast.success('Request berhasil dikirim');
+      toast.success('Pengajuan terkirim');
       setRequestModal(false);
       setRequestForm(EMPTY_FORM);
       load();
@@ -259,18 +256,25 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
       if (!r.ok) throw new Error(d.detail || 'Gagal menyetujui');
       toast.success(d.status === 'pending_hr_approval' ? 'Disetujui atasan — diteruskan ke HR' : 'Pengajuan disetujui');
       setApproveModal(null);
+      setSelectedLeave(null);
       load();
     } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
   };
 
-  // ── Reject ──────────────────────────────────────────────────────────────────
-  const rejectLeave = async () => {
-    if (!rejectModal) return;
-    const r = await fetch(`${API}/api/rahaza/leaves/${rejectModal.id}/reject`, {
-      method: 'POST', headers, body: JSON.stringify({ reason: rejectReason || 'Tidak disetujui' }) });
-    if (r.ok) { toast.success('Request ditolak'); setRejectModal(null); setRejectReason(''); load(); }
-    else toast.error('Gagal tolak');
+  // ── Reject (konfirmasi merah; alasan bawaan sama dengan dulu: "Tidak disetujui") ──
+  const rejectLeave = async (lv) => {
+    const reason = await confirmDialog({
+      title: 'Tolak pengajuan ini?',
+      body: `Pengajuan ${lv.employee_name || ''} (${lv.leave_type_name || ''}) ditolak dan karyawan diberi tahu.`,
+      confirmLabel: 'Tolak', danger: true,
+      input: { label: 'Alasan penolakan', value: 'Tidak disetujui' },
+    });
+    if (!reason) return;
+    const r = await fetch(`${API}/api/rahaza/leaves/${lv.id}/reject`, {
+      method: 'POST', headers, body: JSON.stringify({ reason: reason || 'Tidak disetujui' }) });
+    if (r.ok) { toast.success('Pengajuan ditolak'); setSelectedLeave(null); load(); }
+    else toast.error('Gagal menolak');
   };
 
   // ── Cancel ──────────────────────────────────────────────────────────────────
@@ -282,11 +286,12 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
         method: 'POST', headers, body: JSON.stringify({ reason: cancelReason }) });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || 'Gagal membatalkan');
-      toast.success('Cuti berhasil dibatalkan, saldo dikembalikan');
-      setCancelModal(null); setCancelReason(''); load();
+      toast.success('Cuti dibatalkan, saldo dikembalikan');
+      setCancelModal(null); setCancelReason(''); setSelectedLeave(null); load();
     } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
   };
+  const bukaBatal = (lv) => { setCancelModal(lv); setCancelReason(''); };
 
   // ── Bulk approve ────────────────────────────────────────────────────────────
   const bulkApprove = async () => {
@@ -297,9 +302,9 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
       const d = await r.json().catch(() => ({}));
       // 2026-11-06 (pola P6): dulu penolakan server (bukan approver, dsb.) tampil sebagai sukses
       if (!r.ok) { toast.error(typeof d.detail === 'string' ? d.detail : 'Gagal menyetujui sekaligus'); return; }
-      toast.success(d.message || `${d.approved} request disetujui`);
+      toast.success(d.message || `${d.approved} pengajuan disetujui`);
       load();
-    } catch { toast.error('Gagal bulk approve'); }
+    } catch { toast.error('Gagal menyetujui sekaligus'); }
     finally { setBulkApproving(false); }
   };
 
@@ -319,7 +324,7 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
           max_days_without_doc: parseInt(typeForm.max_days_without_doc, 10) || 0,
         }) });
       if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Gagal menyimpan'); }
-      toast.success(editing ? 'Jenis cuti diperbarui' : 'Jenis cuti disimpan');
+      toast.success(editing ? 'Jenis cuti disimpan' : 'Jenis cuti ditambahkan');
       setTypeModal(false);
       load();
     } catch (e) { toast.error(e.message); }
@@ -327,580 +332,475 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
   };
 
   const deactivateLeaveType = async (lt) => {
+    const ok = await confirmDialog({
+      title: 'Nonaktifkan jenis cuti?',
+      body: `"${lt.name}" tidak muncul lagi di formulir pengajuan. Riwayat pengajuan tetap tersimpan. Pengajuan yang masih menunggu keputusan harus diproses dulu.`,
+      confirmLabel: 'Nonaktifkan', danger: true,
+    });
+    if (!ok) return;
     setSaving(true);
     try {
       const r = await fetch(`${API}/api/rahaza/leave-types/${lt.id}`, { method: 'DELETE', headers });
       if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Gagal menonaktifkan'); }
       toast.success(`Jenis cuti "${lt.name}" dinonaktifkan`);
-      setDeactivateTarget(null);
       load();
     } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
   };
 
-  // ─── Render ──────────────────────────────────────────────────────────────────
-  return (
-    <div className="space-y-5 p-4 lg:p-6" data-testid="leave-module">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">Izin & Cuti</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Kelola request cuti, izin, dan sakit karyawan</p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={load}><RefreshCw size={13} className="mr-1" /> Refresh</Button>
-          {pendingCount > 0 && (
-            <Button variant="outline" size="sm" onClick={bulkApprove} disabled={bulkApproving}
-              className="text-emerald-600 dark:text-emerald-400 border-emerald-400 dark:border-emerald-400/30" data-testid="bulk-approve-btn">
-              <CheckCheck size={13} className="mr-1" />
-              Approve Semua ({pendingCount})
-            </Button>
-          )}
-          <Button size="sm" onClick={() => setRequestModal(true)} data-testid="new-request-btn">
-            <Plus size={13} className="mr-1" /> Buat Request
+  const tambahJenis = () => {
+    setTypeForm({ code: '', name: '', paid: true, quota_default: 12, description: '',
+      request_type: 'cuti', requires_document: false, max_days_without_doc: 0, doc_note: '' });
+    setTypeModal(true);
+  };
+
+  const { page, setPage, totalPages, total, paged } = useClientPagination(leaves, 10);
+
+  // Unduh: SEMUA pengajuan sesuai penyaring (bukan hanya 100 terbaru yang tampil) — API yang sama, per 500 baris.
+  const ambilSemuaPengajuan = async () => {
+    const semua = [];
+    for (let skip = 0; skip < 20000; skip += 500) {
+      const params = new URLSearchParams({ skip: String(skip), limit: '500' });
+      if (filterStatus) params.append('status', filterStatus);
+      const r = await fetch(`${API}/api/rahaza/leaves?${params}`, { headers });
+      if (!r.ok) throw new Error('Gagal memuat pengajuan');
+      const d = await r.json();
+      const items = d?.items || [];
+      semua.push(...items);
+      if (!d?.has_more || items.length === 0) break;
+    }
+    return filterReqType ? semua.filter(l => l.request_type === filterReqType) : semua;
+  };
+
+  // ── Aksi per pengajuan (dipakai di tabel & popup rincian) ──
+  const aksiPengajuan = (lv) => {
+    if (lv.status === 'pending_approval' || lv.status === 'pending_hr_approval') {
+      const hr = lv.status === 'pending_hr_approval';
+      return (<>
+        <Button size="sm" variant="success" onClick={() => approveLeave(lv.id)}
+          data-testid={hr ? `approve-hr-${lv.id}` : `approve-${lv.id}`}>
+          <CheckCircle2 />{hr ? 'Setujui (HR)' : 'Setujui (atasan)'}
+        </Button>
+        <Button size="sm" variant="destructive" onClick={() => rejectLeave(lv)}
+          data-testid={hr ? `reject-hr-${lv.id}` : `reject-${lv.id}`}>
+          <XCircle />Tolak
+        </Button>
+      </>);
+    }
+    // Tahap 2: HR juga boleh membatalkan cuti yang sudah dimulai (absensi dikembalikan)
+    if (lv.status === 'approved') {
+      return (
+        <Button size="sm" variant="outline" onClick={() => bukaBatal(lv)} data-testid={`cancel-${lv.id}`}>
+          <X />Batalkan
+        </Button>
+      );
+    }
+    return null;
+  };
+
+  const kolomPengajuan = [
+    { kunci: 'karyawan', label: 'Karyawan', hp: 'judul', isi: (lv) => (
+      <div className="min-w-0">
+        <p className="font-medium text-foreground">{lv.employee_name || lv.employee_id}</p>
+        <p className="text-xs text-muted-foreground">{lv.leave_type_name || '—'}</p>
+      </div>) },
+    { kunci: 'jenis', label: 'Jenis', isi: (lv) => (
+      <div className="flex flex-wrap items-center gap-1">
+        <RequestTypeBadge type={lv.request_type || 'cuti'} />
+        {lv.is_half_day && <StatusBadge status="half" label={`½ hari ${PERIODE_SETENGAH[lv.half_day_period] || ''}`.trim()} tone="muted" />}
+        {lv.attachment_url && <StatusBadge status="doc" label="Ada dokumen" tone="muted" />}
+        {/* Multi-level indicator */}
+        {lv.approval_level_required === 2 && <StatusBadge status="level2" label="2 tingkat" tone="primary" />}
+      </div>) },
+    { kunci: 'periode', label: 'Periode', isi: (lv) => <span className="whitespace-nowrap">{fmt(lv.from_date)} – {fmt(lv.to_date)}</span> },
+    { kunci: 'durasi', label: 'Durasi', isi: (lv) => <span className="whitespace-nowrap">{fmtDuration(lv.duration_days, lv.duration_working_days)}</span> },
+    { kunci: 'status', label: 'Status', isi: (lv) => <LeaveBadge status={lv.status} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (lv) => <div className="flex justify-end gap-2">{aksiPengajuan(lv)}</div> },
+  ];
+
+  const kolomJenis = [
+    { kunci: 'nama', label: 'Jenis cuti', hp: 'judul', isi: (lt) => (
+      <div className={lt.active === false ? 'min-w-0 opacity-60' : 'min-w-0'}>
+        <p className="font-medium text-foreground">{lt.name}</p>
+        <p className="text-xs text-muted-foreground">{lt.code}{lt.legal_basis ? ` · ${lt.legal_basis}` : ''}</p>
+      </div>) },
+    { kunci: 'kelompok', label: 'Kelompok', isi: (lt) => <RequestTypeBadge type={lt.request_type || 'cuti'} /> },
+    { kunci: 'kuota', label: 'Kuota / tahun', rata: 'kanan', isi: (lt) => <span className="tabular-nums">{lt.quota_default} hari</span> },
+    /* BUG-4: dulu hanya membaca `unpaid`; jenis buatan HR (yang menulis `paid`) tidak pernah menampilkan status apa pun. */
+    { kunci: 'dibayar', label: 'Gaji', isi: (lt) => (lt.unpaid
+      ? <span data-testid={`lt-unpaid-${lt.code}`}><StatusBadge status="unpaid" label="Tanpa gaji" tone="muted" /></span>
+      : <span data-testid={`lt-paid-${lt.code}`}><StatusBadge status="paid" label="Dibayar" tone="success" /></span>) },
+    { kunci: 'dokumen', label: 'Dokumen', isi: (lt) => (lt.requires_document
+      ? <span className="text-sm">Wajib{lt.doc_note ? <span className="block text-xs text-muted-foreground">{lt.doc_note}</span> : null}</span>
+      : <span className="text-muted-foreground">—</span>) },
+    { kunci: 'status', label: 'Status', isi: (lt) => (lt.active === false
+      ? <StatusBadge status="nonaktif" label="Nonaktif" tone="muted" />
+      : <StatusBadge status="aktif" label="Aktif" tone="success" />) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (lt) => (
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="outline" data-testid={`leave-type-edit-${lt.code}`}
+          onClick={() => { setTypeForm({ ...lt, paid: !lt.unpaid }); setTypeModal(true); }}>
+          <Pencil />Ubah
+        </Button>
+        {lt.active !== false && (
+          <Button size="sm" variant="outline" data-testid={`leave-type-off-${lt.code}`} disabled={saving}
+            onClick={() => deactivateLeaveType(lt)}>
+            <XCircle />Nonaktifkan
           </Button>
+        )}
+      </div>) },
+  ];
+
+  const muatUlang = (
+    <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+      <RefreshCw className={loading ? 'animate-spin' : ''} />
+    </Button>
+  );
+  const pindahBagian = !bagian && (
+    <Button variant="link" className="px-1" onClick={() => setBagianSendiri(activeTab === 'types' ? 'pengajuan' : 'jenis')}
+      data-testid={activeTab === 'types' ? 'tab-requests' : 'tab-types'}>
+      {activeTab === 'types' ? 'Kembali ke pengajuan' : 'Jenis cuti'}
+    </Button>
+  );
+
+  const halamanPengajuan = (
+    <PageLayout testId="leave-module" title="Pengajuan cuti"
+      subtitle="Pengajuan cuti, izin, dan sakit karyawan beserta persetujuannya."
+      actions={<>
+        {pendingCount > 0 && (
+          <Button variant="outline" onClick={bulkApprove} disabled={bulkApproving} data-testid="bulk-approve-btn"
+            title="Menyetujui SEMUA pengajuan yang menunggu (tidak terbatas pada penyaring)">
+            <CheckCheck />{bulkApproving ? 'Menyetujui…' : 'Setujui semua yang menunggu'}
+          </Button>
+        )}
+        <Button onClick={() => setRequestModal(true)} data-testid="new-request-btn">
+          <Plus />Buat pengajuan
+        </Button>
+      </>}
+      filters={<>
+        <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} searchable={false}
+          className="h-9 w-48" aria-label="Status" data-testid="filter-status">
+          <option value="">Semua status</option>
+          <option value="pending_approval">Menunggu atasan</option>
+          <option value="pending_hr_approval">Menunggu HR</option>
+          <option value="approved">Disetujui</option>
+          <option value="rejected">Ditolak</option>
+          <option value="cancelled">Dibatalkan</option>
+        </SmartNativeSelect>
+        <SmartNativeSelect value={filterReqType} onChange={e => setFilterReqType(e.target.value)} searchable={false}
+          className="h-9 w-44" aria-label="Kelompok" data-testid="filter-reqtype">
+          <option value="">Semua kelompok</option>
+          <option value="cuti">Cuti</option>
+          <option value="sakit">Sakit</option>
+          <option value="izin">Izin</option>
+        </SmartNativeSelect>
+        {pindahBagian}
+        {/* Unduh & muat ulang di ujung kanan; di HP turun ke baris sendiri (tidak menimpa penyaring) */}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <TombolUnduh namaBerkas="pengajuan-cuti" namaLembar="Pengajuan cuti" baris={leaves} testId="leave-unduh"
+            ambilSemua={ambilSemuaPengajuan}
+            kolom={[
+              { label: 'Karyawan', nilai: (lv) => lv.employee_name || lv.employee_id },
+              { label: 'Kelompok', nilai: (lv) => (REQ_TYPE_CFG[lv.request_type || 'cuti'] || REQ_TYPE_CFG.izin).label },
+              { label: 'Jenis cuti', nilai: (lv) => lv.leave_type_name || '' },
+              { label: 'Dari', nilai: (lv) => fmt(lv.from_date) },
+              { label: 'Sampai', nilai: (lv) => fmt(lv.to_date) },
+              { label: 'Hari kalender', nilai: (lv) => Number(lv.duration_days) || 0 },
+              { label: 'Hari kerja', nilai: (lv) => Number(lv.duration_working_days) || 0 },
+              { label: 'Setengah hari', nilai: (lv) => (lv.is_half_day ? PERIODE_SETENGAH[lv.half_day_period] || 'Ya' : '') },
+              { label: 'Alasan', nilai: (lv) => lv.reason || '' },
+              { label: 'Status', nilai: (lv) => (STATUS_CFG[lv.status] || STATUS_CFG.draft).label },
+              { label: 'Dokumen', nilai: (lv) => (lv.attachment_url ? 'Ada' : '') },
+            ]} />
+          {muatUlang}
         </div>
-      </div>
+      </>}
+      summary={(typeof onNavigate === 'function' || totalServer > dimuat) && (
+        <p className="text-sm text-muted-foreground">
+          {totalServer > dimuat && `Menampilkan ${dimuat} pengajuan terbaru dari ${totalServer}; unduhan berisi semuanya. `}
+          {typeof onNavigate === 'function' && <>Saldo cuti berkurang otomatis setelah pengajuan disetujui.{' '}
+          <Button variant="link" className="h-auto p-0" onClick={() => onNavigate('hr-leave-balances', {})}
+            data-testid="onward-hr-leave-balances" title="Cek saldo cuti karyawan setelah pengajuan disetujui">
+            Lihat saldo cuti
+          </Button></>}
+        </p>
+      )}
+      footer={leaves.length > 0 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}>
+      {loading && leaves.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat pengajuan…</p>
+      ) : (
+        <TabelData kolom={kolomPengajuan} baris={paged} onKlikBaris={setSelectedLeave} testId="leave-table"
+          kosong={<EmptyState icon={CalendarDays} title="Belum ada pengajuan"
+            description={filterStatus || filterReqType ? 'Ubah penyaring status atau kelompok.' : 'Pengajuan cuti, izin, dan sakit karyawan akan tampil di sini.'} />} />
+      )}
+    </PageLayout>
+  );
 
-      <OnwardCTA
-        onNavigate={onNavigate}
-        title="Setelah Approve Cuti"
-        actions={[
-          { module: 'hr-leave-balances', label: 'Lihat Saldo Cuti', icon: Wallet, primary: true, hint: 'Cek saldo cuti karyawan setelah pengajuan disetujui' },
-        ]}
-      />
+  const halamanJenis = (
+    <PageLayout testId="leave-type-page" title="Jenis cuti"
+      subtitle="Kuota, dibayar atau tidak, dan kewajiban dokumen tiap jenis cuti, izin, dan sakit."
+      actions={<Button onClick={tambahJenis} data-testid="leave-type-add"><Plus />Tambah jenis</Button>}
+      tools={<>
+        {pindahBagian}
+        <TombolUnduh namaBerkas="jenis-cuti" namaLembar="Jenis cuti" baris={leaveTypes} testId="leave-type-unduh"
+          kolom={[
+            { label: 'Kode', nilai: (lt) => lt.code },
+            { label: 'Nama', nilai: (lt) => lt.name },
+            { label: 'Kelompok', nilai: (lt) => (REQ_TYPE_CFG[lt.request_type || 'cuti'] || REQ_TYPE_CFG.izin).label },
+            { label: 'Kuota per tahun (hari)', nilai: (lt) => Number(lt.quota_default) || 0 },
+            { label: 'Gaji', nilai: (lt) => (lt.unpaid ? 'Tanpa gaji' : 'Dibayar') },
+            { label: 'Wajib dokumen', nilai: (lt) => (lt.requires_document ? 'Ya' : 'Tidak') },
+            { label: 'Maks. hari tanpa dokumen', nilai: (lt) => Number(lt.max_days_without_doc) || 0 },
+            { label: 'Catatan dokumen', nilai: (lt) => lt.doc_note || '' },
+            { label: 'Dasar hukum', nilai: (lt) => lt.legal_basis || '' },
+            { label: 'Status', nilai: (lt) => (lt.active === false ? 'Nonaktif' : 'Aktif') },
+          ]} />
+        {muatUlang}
+      </>}
+      summary={<p className="text-sm text-muted-foreground">Perubahan langsung dipakai formulir pengajuan dan penggajian.</p>}>
+      {loading && leaveTypes.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat jenis cuti…</p>
+      ) : (
+        <TabelData kolom={kolomJenis} baris={leaveTypes} testId="leave-type-list"
+          kosong={<EmptyState icon={CalendarDays} title="Belum ada jenis cuti"
+            description="Tekan Tambah jenis untuk membuat jenis cuti, izin, atau sakit beserta kuota tahunannya." />} />
+      )}
+    </PageLayout>
+  );
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
-          <TabsTrigger value="requests" data-testid="tab-requests">
-            Daftar Request
-            {pendingCount > 0 && <span className="ml-1.5 text-[10px] bg-amber-500 text-foreground px-1.5 py-0.5 rounded-full">{pendingCount}</span>}
-          </TabsTrigger>
-          <TabsTrigger value="types" data-testid="tab-types">Master Tipe</TabsTrigger>
-        </TabsList>
+  const rf = requestForm;
+  const setRf = (patch) => setRequestForm((f) => ({ ...f, ...patch }));
 
-        {/* ── TAB: REQUESTS ── */}
-        <TabsContent value="requests" className="mt-4 space-y-4">
-          {/* Filters */}
-          <div className="flex gap-2 flex-wrap">
-            <Select value={filterStatus || 'all'} onValueChange={v => setFilterStatus(v === 'all' ? '' : v)}>
-              <SelectTrigger className="h-9 w-40 text-xs" data-testid="filter-status"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Semua Status</SelectItem>
-                <SelectItem value="pending_approval">Menunggu Supervisor</SelectItem>
-                <SelectItem value="pending_hr_approval">Menunggu HR</SelectItem>
-                <SelectItem value="approved">Disetujui</SelectItem>
-                <SelectItem value="rejected">Ditolak</SelectItem>
-                <SelectItem value="cancelled">Dibatalkan</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={filterReqType || 'all'} onValueChange={v => setFilterReqType(v === 'all' ? '' : v)}>
-              <SelectTrigger className="h-9 w-40 text-xs" data-testid="filter-reqtype"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Semua Tipe</SelectItem>
-                <SelectItem value="cuti">🏖️ Cuti</SelectItem>
-                <SelectItem value="sakit">🏥 Sakit</SelectItem>
-                <SelectItem value="izin">📋 Izin</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+  return (
+    <>
+      {activeTab === 'types' ? halamanJenis : halamanPengajuan}
 
-          {/* Request list */}
-          {loading ? (
-            <div className="py-10 text-center text-muted-foreground text-sm">Memuat...</div>
-          ) : leaves.length === 0 ? (
-            <GlassCard className="p-10 text-center text-muted-foreground text-sm">
-              Tidak ada request ditemukan
-            </GlassCard>
-          ) : (
-            <div className="space-y-2">
-              {leaves.map(lv => (
-                <GlassCard key={lv.id} className="p-4" data-testid={`leave-row-${lv.id}`}>
-                  <div className="flex items-start gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <span className="font-semibold text-sm">{lv.employee_name || lv.employee_id}</span>
-                        <LeaveBadge status={lv.status} />
-                        <RequestTypeBadge type={lv.request_type || 'cuti'} />
-                        {lv.is_half_day && <Badge variant="outline" className="text-[10px]">½ Hari ({lv.half_day_period})</Badge>}
-                        {lv.attachment_url && (
-                          <Badge variant="outline" className="text-[10px] bg-blue-100 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-400 dark:border-blue-400/30">
-                            <Paperclip size={9} className="mr-0.5" /> Dok
-                          </Badge>
-                        )}
-                        {/* Multi-level indicator */}
-                        {lv.approval_level_required === 2 && (
-                          <Badge variant="outline" className="text-[10px] bg-violet-100 dark:bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-400 dark:border-violet-400/30">
-                            2-Level
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        <span className="font-medium text-foreground">{lv.leave_type_name}</span>
-                        {' · '}{fmt(lv.from_date)} – {fmt(lv.to_date)}
-                        {' · '}{fmtDuration(lv.duration_days, lv.duration_working_days)}
-                        {lv.reason && <span className="ml-2 italic">"{lv.reason}"</span>}
-                      </div>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0"
-                        onClick={() => { setSelectedLeave(lv); setDetailModal(true); }}>
-                        <Eye size={13} />
-                      </Button>
-                      {lv.status === 'pending_approval' && (
-                        <>
-                          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-emerald-600 dark:text-emerald-400"
-                            onClick={() => approveLeave(lv.id)} data-testid={`approve-${lv.id}`}>
-                            <CheckCircle2 size={13} className="mr-1" /> Approve (Supervisor)
-                          </Button>
-                          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-red-700 dark:text-red-400"
-                            onClick={() => setRejectModal(lv)} data-testid={`reject-${lv.id}`}>
-                            <XCircle size={13} className="mr-1" /> Tolak
-                          </Button>
-                        </>
-                      )}
-                      {lv.status === 'pending_hr_approval' && (
-                        <>
-                          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-blue-600 dark:text-blue-400"
-                            onClick={() => approveLeave(lv.id)} data-testid={`approve-hr-${lv.id}`}>
-                            <CheckCircle2 size={13} className="mr-1" /> Approve (HR)
-                          </Button>
-                          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-red-700 dark:text-red-400"
-                            onClick={() => setRejectModal(lv)} data-testid={`reject-hr-${lv.id}`}>
-                            <XCircle size={13} className="mr-1" /> Tolak
-                          </Button>
-                        </>
-                      )}
-                      {/* Tahap 2: HR juga boleh membatalkan cuti yang sudah dimulai (absensi dikembalikan) */}
-                      {lv.status === 'approved' && (
-                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-muted-foreground"
-                          onClick={() => { setCancelModal(lv); setCancelReason(''); }}
-                          data-testid={`cancel-${lv.id}`}>
-                          <X size={13} className="mr-1" /> Batalkan
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </GlassCard>
-              ))}
-            </div>
-          )}
-        </TabsContent>
-
-        {/* ── TAB: LEAVE TYPES (master jenis/alasan cuti) ── */}
-        <TabsContent value="types" className="mt-4 space-y-4">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <p className="text-xs text-muted-foreground">
-              Jenis cuti menentukan <b>kuota</b>, apakah <b>dibayar</b>, dan apakah
-              <b> wajib melampirkan dokumen</b>. Perubahan langsung dipakai form pengajuan &amp; payroll.
-            </p>
-            <Button size="sm" data-testid="leave-type-add"
-              onClick={() => { setTypeForm({ code:'',name:'',paid:true,quota_default:12,description:'',
-                request_type:'cuti',requires_document:false,max_days_without_doc:0,doc_note:'' }); setTypeModal(true); }}>
-              <Plus size={13} className="mr-1" /> Tambah Tipe
-            </Button>
-          </div>
-          <div className="space-y-2" data-testid="leave-type-list">
-            {leaveTypes.map(lt => (
-              <GlassCard key={lt.id} className={`p-3 ${lt.active === false ? 'opacity-55' : ''}`}>
-                <div className="flex items-center gap-3">
-                  <div className="w-3 h-3 rounded-full shrink-0" style={{ background: lt.color || '#888' }} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-sm">{lt.name}</span>
-                      <span className="text-xs font-mono text-muted-foreground">{lt.code}</span>
-                      <RequestTypeBadge type={lt.request_type || 'cuti'} />
-                      {lt.requires_document && (
-                        <Badge variant="outline" className="text-[10px] bg-amber-100 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-400 dark:border-amber-400/30">
-                          <Paperclip size={9} className="mr-0.5" /> Dok Wajib
-                        </Badge>
-                      )}
-                      {/* BUG-4: dulu hanya membaca `unpaid`; jenis buatan HR (yang
-                          menulis `paid`) tidak pernah menampilkan status apa pun. */}
-                      {lt.unpaid
-                        ? <Badge variant="outline" className="text-[10px] text-muted-foreground" data-testid={`lt-unpaid-${lt.code}`}>Tanpa Gaji</Badge>
-                        : <Badge variant="outline" className="text-[10px] bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-400/40" data-testid={`lt-paid-${lt.code}`}>Berbayar</Badge>}
-                      {lt.active === false && (
-                        <Badge variant="outline" className="text-[10px] text-muted-foreground">Nonaktif</Badge>
-                      )}
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-0.5">
-                      Kuota: {lt.quota_default} hari/tahun
-                      {lt.legal_basis && <span className="ml-2 italic text-[10px]">{lt.legal_basis}</span>}
-                      {lt.doc_note && <span className="ml-2 text-amber-700 dark:text-amber-400 text-[10px]">{lt.doc_note}</span>}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Button size="sm" variant="ghost" data-testid={`leave-type-edit-${lt.code}`}
-                      onClick={() => { setTypeForm({ ...lt, paid: !lt.unpaid }); setTypeModal(true); }}>
-                      <Settings size={13} className="mr-1" /> Ubah
-                    </Button>
-                    {lt.active !== false && (
-                      <Button size="sm" variant="ghost" className="text-red-600 hover:text-red-700"
-                        data-testid={`leave-type-off-${lt.code}`}
-                        onClick={() => setDeactivateTarget(lt)}>
-                        <XCircle size={13} className="mr-1" /> Nonaktifkan
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </GlassCard>
-            ))}
-          </div>
-        </TabsContent>
-      </Tabs>
-
-      {/* ── DIALOG: NEW REQUEST ── */}
-      <Dialog open={requestModal} onOpenChange={setRequestModal}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" data-testid="new-request-dialog">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><Calendar size={16} /> Buat Request Izin/Cuti</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 mt-2">
-            <div>
-              <Label className="text-xs">Karyawan <span className="text-red-700 dark:text-red-400">*</span></Label>
-              <div className="mt-1">
-                <EmployeeSelect employees={employees} value={requestForm.employee_id}
-                  onChange={v => setRequestForm(f => ({ ...f, employee_id: v }))} testId="req-employee" />
-              </div>
-            </div>
-
-            <div>
-              <Label className="text-xs">Tipe Izin/Cuti <span className="text-red-700 dark:text-red-400">*</span></Label>
-              {/* Tahap 5: hanya jenis AKTIF (jenis yang dinonaktifkan dulu tetap bisa dipilih lalu ditolak server) */}
-              <SmartNativeSelect value={requestForm.leave_type_id}
-                onChange={e => setRequestForm(f => ({ ...f, leave_type_id: e.target.value }))}
-                wrapperClassName="mt-1" data-testid="req-type"
-                className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm text-foreground">
-                <option value="">— Pilih jenis izin/cuti —</option>
-                {['cuti', 'sakit', 'izin'].map(rt => (
-                  <optgroup key={rt} label={REQ_TYPE_CFG[rt].label}>
-                    {leaveTypes.filter(lt => lt.active !== false && (lt.request_type || 'cuti') === rt).map(lt => (
-                      <option key={lt.id} value={lt.id}>{`${REQ_TYPE_CFG[rt].label} · ${lt.name}${lt.quota_default ? ` (${lt.quota_default} hari)` : ''}`}</option>
-                    ))}
-                  </optgroup>
+      {/* ── POPUP: PENGAJUAN BARU ── */}
+      <FormPopup open={requestModal} onClose={() => setRequestModal(false)} ukuran="panjang" testId="new-request-dialog"
+        judul="Buat pengajuan cuti, izin, atau sakit" onSimpan={submitRequest} menyimpan={saving} labelSimpan="Kirim pengajuan">
+        <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Karyawan" wajib>
+          <EmployeeSelect employees={employees} value={rf.employee_id}
+            onChange={v => setRf({ employee_id: v })} testId="req-employee" />
+        </Isian>
+        <Isian label="Jenis" wajib petunjuk={selectedLT?.legal_basis || undefined}>
+          {/* Tahap 5: hanya jenis AKTIF (jenis yang dinonaktifkan dulu tetap bisa dipilih lalu ditolak server) */}
+          <SmartNativeSelect value={rf.leave_type_id} aria-label="Jenis"
+            onChange={e => setRf({ leave_type_id: e.target.value })} data-testid="req-type">
+            <option value="">— Pilih jenis cuti, izin, atau sakit —</option>
+            {['cuti', 'sakit', 'izin'].map(rt => (
+              <optgroup key={rt} label={REQ_TYPE_CFG[rt].label}>
+                {leaveTypes.filter(lt => lt.active !== false && (lt.request_type || 'cuti') === rt).map(lt => (
+                  <option key={lt.id} value={lt.id}>{`${REQ_TYPE_CFG[rt].label} · ${lt.name}${lt.quota_default ? ` (${lt.quota_default} hari)` : ''}`}</option>
                 ))}
-              </SmartNativeSelect>
-              {selectedLT?.legal_basis && (
-                <p className="text-[10px] text-muted-foreground mt-1">{selectedLT.legal_basis}</p>
-              )}
-            </div>
+              </optgroup>
+            ))}
+          </SmartNativeSelect>
+        </Isian>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Dari tanggal" wajib>
+            <DatePicker value={rf.from_date} testId="req-from" bolehKosong={false}
+              onChange={v => setRequestForm(f => ({ ...f, from_date: v, to_date: f.is_half_day || !f.to_date ? v : f.to_date }))} />
+          </Isian>
+          <Isian label="Sampai tanggal" wajib>
+            <DatePicker value={rf.to_date} min={rf.from_date || undefined} disabled={rf.is_half_day} bolehKosong={false}
+              onChange={v => setRf({ to_date: v })} testId="req-to" />
+          </Isian>
+        </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs">Dari Tanggal <span className="text-red-700 dark:text-red-400">*</span></Label>
-                <GlassInput type="date" className="mt-1 h-9 text-sm"
-                  value={requestForm.from_date}
-                  onChange={e => setRequestForm(f => ({ ...f, from_date: e.target.value, to_date: f.is_half_day || !f.to_date ? e.target.value : f.to_date }))}
-                  data-testid="req-from" />
-              </div>
-              <div>
-                <Label className="text-xs">Sampai Tanggal <span className="text-red-700 dark:text-red-400">*</span></Label>
-                <GlassInput type="date" className="mt-1 h-9 text-sm"
-                  value={requestForm.to_date} min={requestForm.from_date || undefined} disabled={requestForm.is_half_day}
-                  onChange={e => setRequestForm(f => ({ ...f, to_date: e.target.value }))}
-                  data-testid="req-to" />
-              </div>
-            </div>
-
-            {/* Working days preview */}
-            {(wdPreview || wdLoading) && !requestForm.is_half_day && (
-              <div className={`rounded-lg px-3 py-2 text-xs border ${
-                wdLoading ? 'bg-muted/30 border-border text-muted-foreground' :
-                wdPreview?.holiday_days > 0 ? 'bg-amber-100 dark:bg-amber-500/10 border-amber-400 dark:border-amber-500/30 text-amber-600 dark:text-amber-300' :
-                'bg-emerald-100 dark:bg-emerald-500/10 border-emerald-400 dark:border-emerald-500/30 text-emerald-600 dark:text-emerald-300'
-              }`} data-testid="wd-preview">
-                {wdLoading ? (
-                  <span className="flex items-center gap-1"><RefreshCw size={11} className="animate-spin" /> Menghitung...</span>
-                ) : wdPreview ? (
-                  <div className="space-y-1">
-                    <div className="font-semibold">
-                      {wdPreview.working_days === wdPreview.calendar_days
-                        ? `${wdPreview.working_days} hari kerja`
-                        : `${wdPreview.working_days} hari kerja dari ${wdPreview.calendar_days} hari kalender`
-                      }
-                    </div>
-                    {(wdPreview.weekend_days > 0 || wdPreview.holiday_days > 0) && (
-                      <div className="text-[10px] space-y-0.5">
-                        {wdPreview.weekend_days > 0 && (
-                          <div>📅 {wdPreview.weekend_days} hari akhir pekan (tidak dihitung)</div>
-                        )}
-                        {wdPreview.holiday_days > 0 && (
-                          <div>
-                            🎌 {wdPreview.holiday_days} libur nasional dalam periode ini:
-                            <span className="ml-1">{wdPreview.holidays.map(h => h.name).join(', ')}</span>
-                          </div>
-                        )}
-                      </div>
+        {/* Hari kerja dalam rentang (libur & akhir pekan tidak dihitung) */}
+        {(wdPreview || wdLoading) && !rf.is_half_day && (
+          <div data-testid="wd-preview">
+            {wdLoading ? (
+              <p className="flex items-center gap-2 text-sm text-muted-foreground"><RefreshCw className="h-4 w-4 animate-spin" />Menghitung hari kerja…</p>
+            ) : wdPreview ? (
+              <Notice tone={wdPreview.holiday_days > 0 ? 'warning' : 'success'}
+                title={wdPreview.working_days === wdPreview.calendar_days
+                  ? `${wdPreview.working_days} hari kerja`
+                  : `${wdPreview.working_days} hari kerja dari ${wdPreview.calendar_days} hari kalender`}>
+                {(wdPreview.weekend_days > 0 || wdPreview.holiday_days > 0) && (
+                  <>
+                    {wdPreview.weekend_days > 0 && <span className="block">{wdPreview.weekend_days} hari akhir pekan tidak dihitung.</span>}
+                    {wdPreview.holiday_days > 0 && (
+                      <span className="block">{wdPreview.holiday_days} libur nasional dalam periode ini: {wdPreview.holidays.map(h => h.name).join(', ')}</span>
                     )}
-                  </div>
-                ) : null}
-              </div>
-            )}
-
-            {/* Half day option */}
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-2 cursor-pointer text-sm">
-                <input type="checkbox" checked={requestForm.is_half_day} data-testid="req-half-day"
-                  onChange={e => setRequestForm(f => ({ ...f, is_half_day: e.target.checked, to_date: e.target.checked ? f.from_date : f.to_date }))}
-                  className="rounded" />
-                Setengah Hari
-              </label>
-              {requestForm.is_half_day && (
-                <Select value={requestForm.half_day_period}
-                  onValueChange={v => setRequestForm(f => ({ ...f, half_day_period: v }))}>
-                  <SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="AM">Pagi (AM)</SelectItem>
-                    <SelectItem value="PM">Siang (PM)</SelectItem>
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
-
-            <div>
-              <Label className="text-xs">Alasan <span className="text-red-700 dark:text-red-400">*</span></Label>
-              <Textarea className="mt-1 text-sm" rows={2} placeholder="Tulis alasan..."
-                value={requestForm.reason}
-                onChange={e => setRequestForm(f => ({ ...f, reason: e.target.value }))}
-                data-testid="req-reason" />
-            </div>
-
-            {/* Document upload */}
-            <DocumentUpload
-              value={requestForm.attachment}
-              onChange={att => setRequestForm(f => ({ ...f, attachment: att }))}
-              required={selectedLT?.requires_document}
-              docNote={selectedLT?.doc_note}
-              token={token}
-            />
+                  </>
+                )}
+              </Notice>
+            ) : null}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRequestModal(false)}>Batal</Button>
-            <Button onClick={submitRequest} disabled={saving} data-testid="req-submit">
-              Kirim Request
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        )}
 
-      {/* ── DIALOG: DETAIL ── */}
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-sm" htmlFor="req-half-day">
+            <Switch id="req-half-day" checked={rf.is_half_day} data-testid="req-half-day"
+              onCheckedChange={v => setRequestForm(f => ({ ...f, is_half_day: v, to_date: v ? f.from_date : f.to_date }))} />
+            Setengah hari
+          </label>
+          {rf.is_half_day && (
+            <SmartNativeSelect value={rf.half_day_period} searchable={false} className="h-9 w-32" aria-label="Bagian hari"
+              onChange={e => setRf({ half_day_period: e.target.value })}>
+              <option value="AM">Pagi</option>
+              <option value="PM">Siang</option>
+            </SmartNativeSelect>
+          )}
+        </div>
+
+        <Isian label="Alasan" wajib htmlFor="req-reason">
+          <Textarea id="req-reason" rows={2} placeholder="Tulis alasan…" value={rf.reason}
+            onChange={e => setRf({ reason: e.target.value })} data-testid="req-reason" />
+        </Isian>
+
+        <DocumentUpload
+          value={rf.attachment}
+          onChange={att => setRf({ attachment: att })}
+          required={selectedLT?.requires_document}
+          docNote={selectedLT?.doc_note}
+          token={token}
+        />
+      </FormPopup>
+
+      {/* ── POPUP: RINCIAN ── */}
       {selectedLeave && (
-        <Dialog open={detailModal} onOpenChange={setDetailModal}>
-          <DialogContent className="max-w-md" data-testid="detail-dialog">
-            <DialogHeader><DialogTitle>Detail Request Cuti</DialogTitle></DialogHeader>
-            <div className="space-y-2 text-sm mt-2">
-              <div className="flex justify-between"><span className="text-muted-foreground">Karyawan</span><span className="font-medium">{selectedLeave.employee_name}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Tipe</span><span>{selectedLeave.leave_type_name}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Request Type</span><RequestTypeBadge type={selectedLeave.request_type} /></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Periode</span><span>{fmt(selectedLeave.from_date)} – {fmt(selectedLeave.to_date)}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Durasi</span><span>{fmtDuration(selectedLeave.duration_days, selectedLeave.duration_working_days)}</span></div>
-              {selectedLeave.is_half_day && <div className="flex justify-between"><span className="text-muted-foreground">Half Day</span><span>{selectedLeave.half_day_period}</span></div>}
-              <div className="flex justify-between"><span className="text-muted-foreground">Status</span><LeaveBadge status={selectedLeave.status} /></div>
-              {selectedLeave.reason && <div className="flex justify-between"><span className="text-muted-foreground">Alasan</span><span className="text-right max-w-[200px]">{selectedLeave.reason}</span></div>}
-              {selectedLeave.rejected_reason && <div className="flex justify-between"><span className="text-muted-foreground">Alasan Tolak</span><span className="text-red-700 dark:text-red-400">{selectedLeave.rejected_reason}</span></div>}
-              {selectedLeave.cancel_reason && <div className="flex justify-between"><span className="text-muted-foreground">Alasan Batal</span><span className="text-muted-foreground">{selectedLeave.cancel_reason}</span></div>}
-              {selectedLeave.attachment_url && (
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Dokumen</span>
-                  <a href={withFileAuth(`${API}${selectedLeave.attachment_url}`)} target="_blank" rel="noreferrer"
-                    className="text-blue-600 dark:text-blue-400 hover:underline text-xs flex items-center gap-1">
-                    <Paperclip size={12} /> {selectedLeave.attachment_filename || 'Lihat Dokumen'}
-                  </a>
-                </div>
-              )}
-            </div>
-          </DialogContent>
-        </Dialog>
+        <DetailPopup open onClose={() => setSelectedLeave(null)} testId="detail-dialog"
+          judul={selectedLeave.employee_name || 'Rincian pengajuan'}
+          keterangan={selectedLeave.leave_type_name}
+          status={<><LeaveBadge status={selectedLeave.status} /><RequestTypeBadge type={selectedLeave.request_type} /></>}
+          aksi={aksiPengajuan(selectedLeave)}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Jenis cuti">{selectedLeave.leave_type_name || '—'}</BarisDetail>
+            <BarisDetail label="Periode">{fmt(selectedLeave.from_date)} – {fmt(selectedLeave.to_date)}</BarisDetail>
+            <BarisDetail label="Durasi">{fmtDuration(selectedLeave.duration_days, selectedLeave.duration_working_days)}</BarisDetail>
+            {selectedLeave.is_half_day && <BarisDetail label="Setengah hari">{PERIODE_SETENGAH[selectedLeave.half_day_period] || selectedLeave.half_day_period}</BarisDetail>}
+            {selectedLeave.approval_level_required === 2 && <BarisDetail label="Persetujuan">2 tingkat (atasan lalu HR)</BarisDetail>}
+            <BarisDetail label="Alasan">{selectedLeave.reason || '—'}</BarisDetail>
+            {selectedLeave.rejected_reason && <BarisDetail label="Alasan ditolak"><span className="text-[hsl(var(--danger-text))]">{selectedLeave.rejected_reason}</span></BarisDetail>}
+            {selectedLeave.cancel_reason && <BarisDetail label="Alasan dibatalkan">{selectedLeave.cancel_reason}</BarisDetail>}
+            {selectedLeave.attachment_url && (
+              <BarisDetail label="Dokumen">
+                <a href={withFileAuth(`${API}${selectedLeave.attachment_url}`)} target="_blank" rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline">
+                  <Paperclip className="h-4 w-4" /> {selectedLeave.attachment_filename || 'Lihat dokumen'}
+                </a>
+              </BarisDetail>
+            )}
+          </dl>
+        </DetailPopup>
       )}
 
-      {/* ── DIALOG: SETUJUI (Tahap 2) ── */}
-      <Dialog open={!!approveModal} onOpenChange={v => !v && setApproveModal(null)}>
-        <DialogContent className="max-w-md" data-testid="approve-dialog">
-          <DialogHeader><DialogTitle>Setujui pengajuan</DialogTitle></DialogHeader>
-          {approveModal && (
-            <div className="space-y-3 text-sm">
-              <p>
-                <b>{approveModal.employee?.name}</b> · {approveModal.leave_type_name} ({approveModal.leave_kind})
-                <br />
-                <span className="text-muted-foreground">
-                  {fmt(approveModal.leave?.from_date)} – {fmt(approveModal.leave?.to_date)} · {approveModal.working_days} hari kerja
-                  {approveModal.half_day ? ' (setengah hari)' : ''}
-                </span>
+      {/* ── POPUP: SETUJUI (Tahap 2) ── */}
+      <FormPopup open={!!approveModal} onClose={() => setApproveModal(null)} ukuran="pendek" testId="approve-dialog"
+        judul="Setujui pengajuan" onSimpan={confirmApprove} menyimpan={saving} labelSimpan="Setujui">
+        {approveModal && (
+          <>
+            <div className="text-sm">
+              <p><span className="font-medium">{approveModal.employee?.name}</span> · {approveModal.leave_type_name} ({approveModal.leave_kind})</p>
+              <p className="text-muted-foreground">
+                {fmt(approveModal.leave?.from_date)} – {fmt(approveModal.leave?.to_date)} · {approveModal.working_days} hari kerja
+                {approveModal.half_day ? ' (setengah hari)' : ''}
               </p>
-              <div>
-                <p className="text-xs text-muted-foreground">Alasan</p>
-                <p data-testid="approve-reason">{approveModal.reason || '—'}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Lampiran</p>
+            </div>
+            <dl className="divide-y divide-[var(--glass-border)]">
+              <BarisDetail label="Alasan"><span data-testid="approve-reason">{approveModal.reason || '—'}</span></BarisDetail>
+              <BarisDetail label="Lampiran">
                 {approveModal.attachment_url ? (
                   <a href={withFileAuth(`${API}${approveModal.attachment_url}`)} target="_blank" rel="noreferrer"
-                    className="text-primary underline" data-testid="approve-attachment">
-                    <Paperclip size={12} className="inline mr-1" />{approveModal.attachment_filename || 'Buka lampiran'}
+                    className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline" data-testid="approve-attachment">
+                    <Paperclip className="h-4 w-4" />{approveModal.attachment_filename || 'Buka lampiran'}
                   </a>
-                ) : <p className="text-muted-foreground">Tidak ada lampiran</p>}
-              </div>
-              {(approveModal.balance_by_year || []).length > 1 ? (
-                <p className="text-xs text-muted-foreground" data-testid="approve-balance-by-year">
-                  {/* Tahap 7: cuti lintas tahun memakai saldo masing-masing tahun */}
-                  Saldo per tahun: {approveModal.balance_by_year.map((b) => (
-                    `${b.year} dipakai ${b.days} hari (sisa ${b.remaining} dari ${b.allocated})`)).join(' · ')}
-                </p>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Sisa saldo jenis ini: {approveModal.balance?.remaining} dari {approveModal.balance?.allocated} hari
-                </p>
-              )}
-              {approveModal.final_step ? (
-                <div className="space-y-1">
-                  <Label className="text-xs">Keputusan pembayaran</Label>
-                  <div className="flex gap-2">
-                    <Button type="button" size="sm" variant={payDecision === 'paid' ? 'default' : 'outline'}
-                      onClick={() => setPayDecision('paid')} data-testid="pay-decision-paid">Dibayar</Button>
-                    <Button type="button" size="sm" variant={payDecision === 'unpaid' ? 'default' : 'outline'}
-                      onClick={() => setPayDecision('unpaid')} data-testid="pay-decision-unpaid">Tidak dibayar</Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">Usulan sistem: {approveModal.suggestion?.reason}</p>
+                ) : <span className="text-muted-foreground">Tidak ada lampiran</span>}
+              </BarisDetail>
+              <BarisDetail label="Saldo">
+                {(approveModal.balance_by_year || []).length > 1 ? (
+                  <span data-testid="approve-balance-by-year">
+                    {/* Tahap 7: cuti lintas tahun memakai saldo masing-masing tahun */}
+                    {approveModal.balance_by_year.map((b) => (
+                      `${b.year} dipakai ${b.days} hari (sisa ${b.remaining} dari ${b.allocated})`)).join(' · ')}
+                  </span>
+                ) : (
+                  <span>Sisa {approveModal.balance?.remaining} dari {approveModal.balance?.allocated} hari</span>
+                )}
+              </BarisDetail>
+            </dl>
+            {approveModal.final_step ? (
+              <Isian label="Keputusan pembayaran" petunjuk={`Usulan sistem: ${approveModal.suggestion?.reason || '—'}`}>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" size="sm" variant={payDecision === 'paid' ? 'default' : 'outline'} aria-pressed={payDecision === 'paid'}
+                    onClick={() => setPayDecision('paid')} data-testid="pay-decision-paid">Dibayar</Button>
+                  <Button type="button" size="sm" variant={payDecision === 'unpaid' ? 'default' : 'outline'} aria-pressed={payDecision === 'unpaid'}
+                    onClick={() => setPayDecision('unpaid')} data-testid="pay-decision-unpaid">Tidak dibayar</Button>
                 </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">Persetujuan tingkat 1 — diteruskan ke HR untuk keputusan akhir.</p>
-              )}
-              <Textarea placeholder="Catatan (opsional)" value={approveNote} rows={2}
-                onChange={e => setApproveNote(e.target.value)} data-testid="approve-note" />
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setApproveModal(null)}>Batal</Button>
-            <Button onClick={confirmApprove} disabled={saving} data-testid="confirm-approve">Setujui</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── DIALOG: REJECT ── */}
-      <Dialog open={!!rejectModal} onOpenChange={v => !v && setRejectModal(null)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Tolak Request Cuti</DialogTitle></DialogHeader>
-          <div className="space-y-2 mt-2">
-            <p className="text-sm text-muted-foreground">Tolak request <b>{rejectModal?.employee_name}</b> ({rejectModal?.leave_type_name})?</p>
-            <Textarea placeholder="Alasan penolakan..." value={rejectReason}
-              onChange={e => setRejectReason(e.target.value)} rows={2} data-testid="reject-reason" />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRejectModal(null)}>Batal</Button>
-            <Button onClick={rejectLeave} className="bg-red-600 hover:bg-red-700" data-testid="confirm-reject">Tolak</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── DIALOG: CANCEL ── */}
-      <Dialog open={!!cancelModal} onOpenChange={v => !v && setCancelModal(null)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Batalkan Cuti</DialogTitle></DialogHeader>
-          <div className="space-y-2 mt-2">
-            <p className="text-sm text-muted-foreground">Batalkan cuti <b>{cancelModal?.employee_name}</b> ({fmt(cancelModal?.from_date)} – {fmt(cancelModal?.to_date)})?
-              Saldo cuti akan dikembalikan.</p>
-            <Textarea placeholder="Alasan pembatalan..." value={cancelReason}
-              onChange={e => setCancelReason(e.target.value)} rows={2} />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCancelModal(null)}>Batal</Button>
-            <Button onClick={cancelLeave} disabled={saving} className="bg-muted hover:bg-muted-foreground/30">Batalkan Cuti</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── DIALOG: NEW LEAVE TYPE ── */}
-      <Dialog open={typeModal} onOpenChange={setTypeModal}>
-        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto" data-testid="new-type-dialog">
-          <DialogHeader><DialogTitle>
-            {typeForm.id ? `Ubah Jenis Cuti — ${typeForm.name || typeForm.code}` : 'Tambah Tipe Izin/Cuti'}
-          </DialogTitle></DialogHeader>
-          <div className="space-y-3 mt-2">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs">Kode <span className="text-red-700 dark:text-red-400">*</span></Label>
-                <GlassInput className="mt-1 h-9 text-sm" placeholder="SICK" value={typeForm.code}
-                  onChange={e => setTypeForm(f => ({ ...f, code: e.target.value.toUpperCase() }))} />
-              </div>
-              <div>
-                <Label className="text-xs">Nama <span className="text-red-700 dark:text-red-400">*</span></Label>
-                <GlassInput className="mt-1 h-9 text-sm" placeholder="Izin Sakit" value={typeForm.name}
-                  onChange={e => setTypeForm(f => ({ ...f, name: e.target.value }))} />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs">Request Type</Label>
-                <Select value={typeForm.request_type} onValueChange={v => setTypeForm(f => ({ ...f, request_type: v }))}>
-                  <SelectTrigger className="mt-1 h-9 text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="cuti">🏖️ Cuti</SelectItem>
-                    <SelectItem value="sakit">🏥 Sakit</SelectItem>
-                    <SelectItem value="izin">📋 Izin</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs">Kuota Default (hari)</Label>
-                <GlassInput type="number" min={0} className="mt-1 h-9 text-sm" value={typeForm.quota_default}
-                  onChange={e => setTypeForm(f => ({ ...f, quota_default: e.target.value }))} />
-              </div>
-            </div>
-            <div className="flex gap-4">
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input type="checkbox" checked={typeForm.paid}
-                  onChange={e => setTypeForm(f => ({ ...f, paid: e.target.checked }))} /> Berbayar
-              </label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input type="checkbox" checked={typeForm.requires_document}
-                  onChange={e => setTypeForm(f => ({ ...f, requires_document: e.target.checked }))} />
-                Wajib Dokumen
-              </label>
-            </div>
-            {typeForm.requires_document && (
-              <div>
-                <Label className="text-xs">Maks. Hari Tanpa Dokumen</Label>
-                <GlassInput type="number" min={0} className="mt-1 h-9 text-sm"
-                  placeholder="0 = selalu wajib" value={typeForm.max_days_without_doc}
-                  onChange={e => setTypeForm(f => ({ ...f, max_days_without_doc: e.target.value }))} />
-                <Label className="text-xs mt-2">Catatan Dokumen</Label>
-                <GlassInput className="mt-1 h-9 text-sm" placeholder="Contoh: Lampirkan surat dokter"
-                  value={typeForm.doc_note}
-                  onChange={e => setTypeForm(f => ({ ...f, doc_note: e.target.value }))} />
-              </div>
+              </Isian>
+            ) : (
+              <p className="text-sm text-muted-foreground">Persetujuan tingkat 1 — diteruskan ke HR untuk keputusan akhir.</p>
             )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setTypeModal(false)} data-testid="leave-type-cancel">Batal</Button>
-            <Button onClick={saveLeaveType} disabled={saving} data-testid="leave-type-save">
-              {typeForm.id ? 'Simpan Perubahan' : 'Simpan'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            <Isian label="Catatan (opsional)" htmlFor="approve-note">
+              <Textarea id="approve-note" value={approveNote} rows={2}
+                onChange={e => setApproveNote(e.target.value)} data-testid="approve-note" />
+            </Isian>
+          </>
+        )}
+      </FormPopup>
 
-      {/* ── DIALOG: KONFIRMASI NONAKTIF JENIS CUTI ── */}
-      <Dialog open={Boolean(deactivateTarget)} onOpenChange={(v) => { if (!v) setDeactivateTarget(null); }}>
-        <DialogContent data-testid="leave-type-off-dialog">
-          <DialogHeader>
-            <DialogTitle>Nonaktifkan jenis cuti?</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            &quot;{deactivateTarget?.name}&quot; tidak akan muncul lagi di form pengajuan.
-            Riwayat pengajuan yang sudah ada TETAP tersimpan. Pengajuan yang masih
-            menunggu keputusan harus diproses dulu.
-          </p>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeactivateTarget(null)}>Batal</Button>
-            <Button variant="destructive" disabled={saving}
-              onClick={() => deactivateLeaveType(deactivateTarget)}
-              data-testid="leave-type-off-confirm">Nonaktifkan</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+      {/* ── POPUP: BATALKAN CUTI (alasan opsional, sama seperti dulu) ── */}
+      <FormPopup open={!!cancelModal} onClose={() => setCancelModal(null)} ukuran="pendek" testId="cancel-dialog"
+        judul="Batalkan cuti" onSimpan={cancelLeave} menyimpan={saving} labelSimpan="Batalkan cuti" warnaSimpan="destructive"
+        keterangan={cancelModal ? `Cuti ${cancelModal.employee_name} (${fmt(cancelModal.from_date)} – ${fmt(cancelModal.to_date)}) dibatalkan dan saldo cuti dikembalikan.` : ''}>
+        <Isian label="Alasan pembatalan" htmlFor="cancel-reason">
+          <Textarea id="cancel-reason" placeholder="Alasan pembatalan…" value={cancelReason}
+            onChange={e => setCancelReason(e.target.value)} rows={2} />
+        </Isian>
+      </FormPopup>
+
+      {/* ── POPUP: JENIS CUTI ── */}
+      <FormPopup open={typeModal} onClose={() => setTypeModal(false)} ukuran="pendek" testId="new-type-dialog"
+        judul={typeForm.id ? `Ubah jenis cuti — ${typeForm.name || typeForm.code}` : 'Tambah jenis cuti'}
+        onSimpan={saveLeaveType} menyimpan={saving} labelSimpan={typeForm.id ? 'Simpan perubahan' : 'Simpan'}>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Kode" wajib htmlFor="lt-code">
+            <Input id="lt-code" placeholder="SICK" value={typeForm.code}
+              onChange={e => setTypeForm(f => ({ ...f, code: e.target.value.toUpperCase() }))} />
+          </Isian>
+          <Isian label="Nama" wajib htmlFor="lt-name">
+            <Input id="lt-name" placeholder="Izin sakit" value={typeForm.name}
+              onChange={e => setTypeForm(f => ({ ...f, name: e.target.value }))} />
+          </Isian>
+          <Isian label="Kelompok">
+            <SmartNativeSelect value={typeForm.request_type} searchable={false} aria-label="Kelompok"
+              onChange={e => setTypeForm(f => ({ ...f, request_type: e.target.value }))}>
+              <option value="cuti">Cuti</option>
+              <option value="sakit">Sakit</option>
+              <option value="izin">Izin</option>
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Kuota bawaan (hari)" htmlFor="lt-quota">
+            <Input id="lt-quota" type="number" min={0} value={typeForm.quota_default}
+              onChange={e => setTypeForm(f => ({ ...f, quota_default: e.target.value }))} />
+          </Isian>
+        </div>
+        <div className="flex flex-wrap gap-6">
+          <label className="flex items-center gap-2 text-sm" htmlFor="lt-paid">
+            <Switch id="lt-paid" checked={typeForm.paid} onCheckedChange={v => setTypeForm(f => ({ ...f, paid: v }))} /> Dibayar
+          </label>
+          <label className="flex items-center gap-2 text-sm" htmlFor="lt-doc">
+            <Switch id="lt-doc" checked={typeForm.requires_document}
+              onCheckedChange={v => setTypeForm(f => ({ ...f, requires_document: v }))} /> Wajib dokumen
+          </label>
+        </div>
+        {typeForm.requires_document && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Isian label="Maks. hari tanpa dokumen" htmlFor="lt-maxdoc" petunjuk="0 = selalu wajib.">
+              <Input id="lt-maxdoc" type="number" min={0} value={typeForm.max_days_without_doc}
+                onChange={e => setTypeForm(f => ({ ...f, max_days_without_doc: e.target.value }))} />
+            </Isian>
+            <Isian label="Catatan dokumen" htmlFor="lt-docnote">
+              <Input id="lt-docnote" placeholder="Contoh: lampirkan surat dokter" value={typeForm.doc_note}
+                onChange={e => setTypeForm(f => ({ ...f, doc_note: e.target.value }))} />
+            </Isian>
+          </div>
+        )}
+      </FormPopup>
+    </>
   );
 }
