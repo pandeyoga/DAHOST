@@ -366,7 +366,8 @@ async def list_configs(
         if cleaned.get('is_secret') and not is_admin:
             cleaned.pop('value', None)
         out.append(cleaned)
-    return out
+    from utils.waktu import mongo_utc  # 8 Nov 2026: updated_at (datetime naif dari Mongo) dikirim berzona UTC
+    return mongo_utc(out)
 
 @router.get('/categories')
 async def list_categories(user: dict = Depends(require_auth)):
@@ -387,7 +388,8 @@ async def get_config(key: str, user: dict = Depends(require_auth)):
     _mask_secret(doc)
     if doc.get('is_secret') and not is_admin:
         doc.pop('value', None)
-    return doc
+    from utils.waktu import mongo_utc
+    return mongo_utc(doc)
 
 # 2026-11-07 (Tahap 6, SY2 — keputusan owner): MENGUBAH pengaturan sistem (termasuk kunci rahasia) hanya
 # admin / owner / superadmin. Dulu semua peran internal boleh. Membaca tetap seperti semula (rahasia disamarkan

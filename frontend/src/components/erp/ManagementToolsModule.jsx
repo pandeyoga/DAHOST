@@ -4,9 +4,9 @@
  * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, tab standar, ringkasan per bagian dalam satu gaya kartu, tabel
  * (log perubahan & peran pengguna aktif) yang bisa diunduh Excel/CSV, label peran & aksi berbahasa biasa (dulu kode
  * seperti "tim_packing"), tanpa emoji / warna mentah / gradasi.
- * Angka diperiksa (lihat LAPORAN): "Stok rendah" di digest membaca kolom tersimpan `total_qty` (1.111 material) —
- * berbeda dengan pembaca stok resmi yang dipakai Ringkasan Bisnis & Pusat Laporan (43). Layar ini kini memakai angka
- * resmi dari /api/rahaza/management/overview, dan status kondisi dihitung ulang dengan aturan yang sama dengan server.
+ * Angka diperiksa (lihat LAPORAN): "Stok rendah" di digest dulu membaca kolom tersimpan `total_qty` (1.111 material).
+ * Sejak 8 Nov 2026 server digest memakai pembaca stok resmi (`core.stock_thresholds`, sama dengan Dashboard Gudang &
+ * Alert & Reorder), jadi layar ini cukup membaca angka & kondisi dari /management/weekly-digest (satu sumber).
  */
 import { useState, useEffect, useCallback } from 'react';
 import apiFetch from '@/lib/apiFetch';
@@ -46,20 +46,14 @@ const KONDISI = {
 function WeeklyDigestTab() {
   const { toast } = useToast();
   const [digest, setDigest] = useState(null);
-  const [stokResmi, setStokResmi] = useState(null); // jumlah material di bawah minimum dari pembaca stok resmi
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(7);
 
   const loadDigest = useCallback(async () => {
     setLoading(true);
     try {
-      const [res, ov] = await Promise.all([
-        apiFetch(`/management/weekly-digest?days=${days}`),
-        apiFetch('/rahaza/management/overview?domain=all').catch(() => null),
-      ]);
+      const res = await apiFetch(`/management/weekly-digest?days=${days}`);
       setDigest(res.data);
-      const n = ov?.warehouse?.low_stock_materials ?? ov?.data?.warehouse?.low_stock_materials;
-      setStokResmi(Number.isFinite(Number(n)) ? Number(n) : null);
     } catch (err) {
       toast({ title: 'Gagal memuat digest', variant: 'destructive' });
     } finally {
@@ -70,11 +64,10 @@ function WeeklyDigestTab() {
   useEffect(() => { loadDigest(); }, [loadDigest]);
 
   const rak = digest?.alerts?.high_occupancy_racks || 0;
-  const stok = stokResmi ?? null;
-  // aturan server: 0 peringatan = baik, ≤ 3 = perhatian, lebih = perlu tindakan — dengan angka stok resmi
-  const peringatan = stok === null ? digest?.alert_count : stok + rak;
-  const health = peringatan === undefined || peringatan === null ? digest?.health
-    : (peringatan === 0 ? 'good' : peringatan <= 3 ? 'warning' : 'critical');
+  const stok = digest?.alerts?.low_stock_materials ?? null;
+  // kondisi & jumlah peringatan dari server (0 = baik, ≤ 3 = perhatian, lebih = perlu tindakan)
+  const peringatan = digest?.alert_count;
+  const health = digest?.health;
   const kondisi = KONDISI[health] || KONDISI.good;
 
   const alat = (

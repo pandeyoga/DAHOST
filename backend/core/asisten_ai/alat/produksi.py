@@ -98,7 +98,10 @@ def _po_hpp(f: dict, ps) -> dict:
                         "upah_cmt": rp(f.get("cmt_cost")), "permak": rp(f.get("permak_cost"))},
            "total_hpp": rp(f.get("total_hpp")), "hpp_per_pcs": rp(f.get("hpp_per_pcs")) if f.get("hpp_per_pcs") else None}
     if f.get("business_type") == "maklon":
-        out.update({"pendapatan": rp(f.get("revenue")), "margin": rp(f.get("margin")) if f.get("margin") is not None else None})
+        out.update({"pendapatan": rp(f.get("revenue")), "margin": rp(f.get("margin")) if f.get("margin") is not None else None,
+                    # 8 Nov 2026: margin terealisasi = pendapatan − biaya pcs yang sudah dikirim (sama dengan layar HPP)
+                    "margin_terealisasi": (rp(f.get("margin_realized")) if f.get("margin_realized") is not None
+                                           else None)})
     elif f.get("selling_price_per_pcs"):
         out.update({"harga_jual_per_pcs": rp(f.get("selling_price_per_pcs")),
                     "margin_per_pcs": rp(f.get("margin_per_pcs")) if f.get("margin_per_pcs") is not None else None})
@@ -151,6 +154,13 @@ async def hpp_per_po(ctx, args: dict) -> dict:
     if "revenue" in s:
         hasil["ringkas"].update({"pendapatan_maklon": rp(s.get("revenue")), "margin_maklon": rp(s.get("margin")),
                                  "margin_maklon_pct": s.get("margin_pct")})
+        if s.get("margin_realized") is not None:   # 8 Nov 2026: angka utama layar HPP per PO
+            hasil["ringkas"].update({
+                "margin_maklon_terealisasi": rp(s.get("margin_realized")),
+                "margin_maklon_terealisasi_pct": s.get("margin_realized_pct"),
+                "catatan_margin": ("margin_maklon = pendapatan − total biaya sampai saat ini (termasuk bahan pcs yang "
+                                   "belum dikirim); margin_maklon_terealisasi = pendapatan − biaya pcs yang sudah "
+                                   "dikirim ke klien (dasar sepadan, angka utama layar).")})
     ov = d.get("overhead") or {}
     if ov:
         hasil["biaya_umum_informasi"] = {"bulan": ov.get("month"), "biaya_umum": rp(ov.get("overhead")),

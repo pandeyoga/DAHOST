@@ -234,3 +234,74 @@ async def buyer_dispatch_map(db, po_ids: list) -> dict:
         if d and d > row["last_dispatch"]:
             row["last_dispatch"] = d
     return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 8 Nov 2026 (keputusan owner): SATU sumber "output produksi" & "ketepatan kirim" untuk
+# Ringkasan Bisnis (`/api/rahaza/management/overview`, `/on-time-delivery`) DAN Dashboard Eksekutif
+# (`/api/dashboard`, `/api/dashboard/analytics`). Dashboard dulu membaca `rahaza_wip_events` dan koleksi pesanan
+# lama `rahaza_orders` (kosong), Ringkasan Bisnis membaca `production_progress` + `cmt_receipts` → angka berbeda.
+# ─────────────────────────────────────────────────────────────────────────────
+async def output_sources(db, sc: dict) -> dict:
+    """Catatan output produksi cakupan `domain_scope`: progres internal (`production_progress`, per job) +
+    penerimaan barang dari CMT (`cmt_receipts`, per PO). Dibaca sekali, dijumlah per periode oleh pemanggil."""
+    progress = await db.production_progress.find(
+        {"job_id": {"$in": sc["job_ids"]}}, {"_id": 0, "job_id": 1, "completed_quantity": 1,
+                                             "progress_date": 1},
+    ).to_list(MAX_DOCS) if sc["job_ids"] else []
+    receipts = await db.cmt_receipts.find(
+        {"po_id": {"$in": sc["po_ids"]}},
+        {"_id": 0, "id": 1, "po_id": 1, "receipt_date": 1, "status": 1,
+         "total_actual": 1, "total_rejected": 1, "total_qty_short": 1},
+    ).to_list(MAX_DOCS) if sc["po_ids"] else []
+    return {"progress": progress, "receipts": receipts}
+
+
+def output_in_period(src: dict, start: str, end: str) -> dict:
+    """Output pada [start, end] (tanggal ISO, inklusif): progres internal + qty diterima dari CMT."""
+    prog = sum(i(r.get("completed_quantity")) for r in src.get("progress") or []
+               if in_period(r.get("progress_date"), start, end))
+    recv = sum(i(r.get("total_actual")) for r in src.get("receipts") or []
+               if in_period(r.get("receipt_date"), start, end))
+    return {"progress": prog, "received": recv, "total": prog + recv}
+
+
+async def on_time_stats(db, sc: dict, days: int = 90) -> dict:
+    """Ketepatan kirim: tanggal dispatch terakhir ke buyer (dalam `days` hari) vs deadline PO.
+    Hanya PO yang punya deadline DAN sudah dikirim yang dinilai."""
+    since = (today() - timedelta(days=days)).isoformat()
+    ships = await db.buyer_shipments.find(
+        {"po_id": {"$in": sc["po_ids"]}}, {"_id": 0, "id": 1, "po_id": 1},
+    ).to_list(MAX_DOCS) if sc["po_ids"] else []
+    ship_po = {s["id"]: s.get("po_id") for s in ships}
+    items = await db.buyer_shipment_items.find(
+        {"shipment_id": {"$in": list(ship_po.keys())}},
+        {"_id": 0, "shipment_id": 1, "dispatch_date": 1, "qty_shipped": 1},
+    ).to_list(MAX_DOCS) if ship_po else []
+
+    last_dispatch: dict = {}
+    for it in items:
+        d = as_iso_date(it.get("dispatch_date"))
+        if not d or d < since:
+            continue
+        po_id = ship_po.get(it.get("shipment_id"))
+        if not po_id:
+            continue
+        if d > last_dispatch.get(po_id, ""):
+            last_dispatch[po_id] = d
+
+    total = on_time = 0
+    late_rows = []
+    for po_id, d in last_dispatch.items():
+        po = sc["po_by_id"].get(po_id) or {}
+        due = as_iso_date(po.get("deadline") or po.get("delivery_deadline"))
+        if not due:
+            continue  # tanpa deadline → tidak bisa dinilai (jangan dipaksa)
+        total += 1
+        if d <= due:
+            on_time += 1
+        else:
+            late_rows.append({"po_number": po.get("po_number"), "deadline": due, "dispatch": d})
+    rate = (on_time / total * 100) if total else 0.0
+    return {"total_po": total, "on_time": on_time, "late": total - on_time, "rate_pct": round(rate, 1),
+            "late_examples": late_rows[:5], "shipments": len(ships), "shipment_items": len(items)}

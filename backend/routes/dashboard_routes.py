@@ -77,18 +77,66 @@ def revenue_windows(ar_invoices: list, today: date) -> dict:
             out['ytd'] += v
     return {k: round(v, 2) for k, v in out.items()}
 
+
+_BULAN = ('Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des')
+
+
+def last_months(today: date, n: int = 6) -> list:
+    """`n` bulan terakhir (termasuk bulan ini) → [(ym 'YYYY-MM', label 'Nov 26')] urut lama → baru."""
+    out = []
+    y, m = today.year, today.month
+    for _ in range(n):
+        out.append((f'{y:04d}-{m:02d}', f'{_BULAN[m - 1]} {y % 100:02d}'))
+        y, m = (y, m - 1) if m > 1 else (y - 1, 12)
+    return out[::-1]
+
+
+def po_deadline_rows(pos: list, today: date) -> dict:
+    """PO produksi terbuka (bukan draf/selesai/batal) yang lewat tenggat & yang tenggatnya < 3 hari lagi.
+
+    8 Nov 2026: dulu dari koleksi pesanan lama `rahaza_orders` (kosong). Tenggat = `deadline` atau
+    `delivery_deadline` PO; lewat tenggat = tenggat SEBELUM hari ini (WIB)."""
+    from services.mgmt_analytics import PO_CANCELLED, PO_DONE, PO_DRAFT, as_iso_date
+    t = today.isoformat()
+    soon = (today + timedelta(days=3)).isoformat()
+    overdue, near = [], []
+    for p in pos:
+        s = (p.get('status') or '').strip().lower()
+        if s in PO_DRAFT or s in PO_DONE or s in PO_CANCELLED:
+            continue
+        due = as_iso_date(p.get('deadline') or p.get('delivery_deadline'))
+        if not due:
+            continue
+        row = {'id': p.get('id'), 'po_number': p.get('po_number', ''), 'customer_name': p.get('customer_name', ''),
+               'vendor_name': p.get('vendor_name', ''), 'status': p.get('status', ''),
+               'business_type': p.get('business_type', ''), 'deadline': due, 'due_date': due}
+        if due < t:
+            overdue.append(row)
+        elif due < soon:
+            near.append(row)
+    overdue.sort(key=lambda r: r['deadline'])
+    near.sort(key=lambda r: r['deadline'])
+    return {'overdue': overdue, 'near': near}
+
+
 @router.get("/dashboard")
 async def get_dashboard(request: Request):
     """Dashboard Eksekutif — KPI ringkasan dengan data today/MTD/YTD."""
     await require_auth(request)
     db = get_db()
-    n = now()
     today = today_wib()
 
-    # ── Rahaza orders (primary) ──
-    total_orders = await db.rahaza_orders.count_documents({})
-    active_orders = await db.rahaza_orders.count_documents({'status': {'$in': ['confirmed', 'in_production']}})
-    completed_orders = await db.rahaza_orders.count_documents({'status': {'$in': ['completed', 'closed']}})
+    # ── PO produksi — 8 Nov 2026 (keputusan owner): sumber SAMA dengan Ringkasan Bisnis / layar PO produksi
+    # (`production_pos` lewat `services.mgmt_analytics.domain_scope`). Dulu koleksi pesanan lama `rahaza_orders`
+    # (pra-migrasi, 0 dokumen) → PO, PO berjalan, ketepatan kirim, PO terlambat & tren selalu 0.
+    from services.mgmt_analytics import (as_iso_date, domain_scope, on_time_stats, output_in_period,
+                                         output_sources, po_buckets)
+    sc = await domain_scope(db, 'all')
+    buckets = po_buckets(sc['pos'])
+    total_orders = buckets['total']
+    active_orders = buckets['running']
+    completed_orders = buckets['done']
+    deadline_rows = po_deadline_rows(sc['pos'], today)
 
     # Work Orders — T-03 (FASE 3): SSOT production_jobs via core.wo_reader
     from core.wo_reader import status_counts
@@ -113,12 +161,9 @@ async def get_dashboard(request: Request):
     # (rahaza_shipments = koleksi dorman/kosong, self-consistent tapi tak dipakai flow)
     pending_shipments = await db.wh_delivery_notes.count_documents({'status': {'$in': ['draft', 'issued']}})
 
-    # ── Delayed orders (past due_date, not completed) ──
+    # ── PO terlambat (tenggat lewat, belum selesai) ──
     today_iso = today.isoformat()
-    delayed_orders = await db.rahaza_orders.count_documents({
-        'status': {'$in': ['confirmed', 'in_production']},
-        'due_date': {'$lt': today_iso},
-    })
+    delayed_orders = len(deadline_rows['overdue'])
 
     # ── Revenue Today / MTD / YTD (from rahaza AR invoices — SSOT) ──
     # NOTE: legacy `invoices` collection was DROPPED in Session #11.16 Phase B.
@@ -128,10 +173,9 @@ async def get_dashboard(request: Request):
     _rev = revenue_windows(ar_invoices, today_wib())
     revenue_today, revenue_mtd, revenue_ytd = _rev['today'], _rev['mtd'], _rev['ytd']
 
-    # ── Employee count (active) ──
-    active_employees = await db.rahaza_employees.count_documents({'status': {'$in': ['active', 'Active']}})
-    if active_employees == 0:
-        active_employees = await db.users.count_documents({'status': 'active'})
+    # ── Karyawan aktif — 8 Nov 2026: data karyawan memakai `active: true` (sama dengan Ringkasan Bisnis
+    # `hr.employees_active`). Dulu `status: active` (tidak dipakai) lalu jatuh ke jumlah AKUN pengguna (48 vs 24).
+    active_employees = await db.rahaza_employees.count_documents({'active': True})
 
     # ── Attendance today — RC-01/RC-03: SSOT live rahaza_attendance_events
     # (fallback dewi_attendance dihapus: phantom tanpa writer)
@@ -146,62 +190,26 @@ async def get_dashboard(request: Request):
     # ── OEE — FASE 4 (E10 DELETE): engine rahaza_oee/line diarsip → metrik OEE null
     avg_oee = None
 
-    # ── On-time rate ──
-    closed_orders = await db.rahaza_orders.find(
-        {'status': {'$in': ['completed', 'closed']}}, {'_id': 0, 'due_date': 1, 'updated_at': 1}
-    ).to_list(500)
-    on_time = 0
-    for o in closed_orders:
-        dd = o.get('due_date')
-        upd = o.get('updated_at')
-        if not dd or not upd:
-            continue
-        # upd is datetime, dd is ISO string
-        try:
-            upd_d = upd.date() if hasattr(upd, 'date') else date.fromisoformat(str(upd)[:10])
-            dd_d = date.fromisoformat(dd[:10])
-            if upd_d <= dd_d:
-                on_time += 1
-        except Exception:
-            logging.getLogger(__name__).debug("suppressed exception", exc_info=True)
-    on_time_rate = round((on_time / len(closed_orders) * 100) if closed_orders else 0)
+    # ── Ketepatan kirim (90 hari) — SAMA dengan /api/rahaza/management/on-time-delivery ──
+    on_time_rate = round((await on_time_stats(db, sc, 90))['rate_pct'])
 
-    # ── Monthly data (6 months — orders + output) ──
+    # ── Data 6 bulan: PO dibuat (production_pos) + output produksi (SAMA dengan Ringkasan Bisnis:
+    # progres internal + penerimaan dari CMT, `services.mgmt_analytics.output_sources`) ──
+    out_src = await output_sources(db, sc)
     monthly_data = []
-    for i in range(5, -1, -1):
-        start = datetime(n.year, n.month, 1, tzinfo=timezone.utc) - timedelta(days=i * 30)
-        start = start.replace(day=1)
-        if start.month == 12:
-            end = start.replace(year=start.year + 1, month=1)
-        else:
-            end = start.replace(month=start.month + 1)
-        m_orders = await db.rahaza_orders.count_documents({'created_at': {'$gte': start, '$lt': end}})
-        # RC-03/RC-DASH-DECISION: output produksi nyata = rahaza_wip_events event_type='output'
-        # (event_date string "YYYY-MM-DD"; rahaza_shipments = dorman/kosong)
-        m_out_agg = await db.rahaza_wip_events.aggregate([
-            {'$match': {'event_type': 'output',
-                        'event_date': {'$gte': start.date().isoformat(), '$lt': end.date().isoformat()}}},
-            {'$group': {'_id': None, 'total': {'$sum': {'$ifNull': ['$qty', 0]}}}}
-        ]).to_list(1)
+    for ym, label in last_months(today, 6):
         monthly_data.append({
-            'month': start.strftime('%b %y'),
-            'pos': m_orders,
-            'production': m_out_agg[0]['total'] if m_out_agg else 0,
+            'month': label,
+            'pos': sum(1 for p in sc['pos'] if as_iso_date(p.get('created_at') or p.get('po_date'))[:7] == ym),
+            'production': output_in_period(out_src, f'{ym}-01', f'{ym}-31')['total'],
         })
 
     # ── User count ──
     total_users = await db.users.count_documents({'status': 'active'})
 
-    # ── Alerts: overdue orders, near deadline, unpaid invoices ──
-    overdue_orders = await db.rahaza_orders.find(
-        {'status': {'$in': ['confirmed', 'in_production']}, 'due_date': {'$lt': today_iso}},
-        {'_id': 0},
-    ).sort('due_date', 1).limit(5).to_list(500)
-    near_deadline_orders = await db.rahaza_orders.find(
-        {'status': {'$in': ['confirmed', 'in_production']},
-         'due_date': {'$gte': today_iso, '$lt': (today_wib() + timedelta(days=3)).isoformat()}},
-        {'_id': 0},
-    ).sort('due_date', 1).limit(5).to_list(500)
+    # ── Alerts: PO lewat tenggat, mendekati tenggat (production_pos), faktur belum dibayar ──
+    overdue_orders = deadline_rows['overdue'][:5]
+    near_deadline_orders = deadline_rows['near'][:5]
     unpaid_ars = await db.rahaza_ar_invoices.find(
         {'status': {'$in': list(AR_OPEN_STATUSES)}, 'balance': {'$gt': 0}}, {'_id': 0}
     ).sort('due_date', 1).limit(5).to_list(500)  # 2026-11-02: status kanonik
@@ -262,6 +270,18 @@ async def get_dashboard(request: Request):
             'unpaidInvoices': serialize_doc(unpaid_ars),
         },
     }
+
+
+def weekly_output(src: dict, today: date, weeks: int = 8) -> list:
+    """Output produksi `weeks` minggu terakhir (7 hari per minggu, minggu terakhir berakhir hari ini WIB)."""
+    from services.mgmt_analytics import output_in_period
+    out = []
+    for w in range(weeks - 1, -1, -1):
+        end = today - timedelta(days=w * 7)
+        start = end - timedelta(days=6)
+        out.append({'week': f"W{weeks - w}", 'label': start.strftime('%d/%m'),
+                    'qty': output_in_period(src, start.isoformat(), end.isoformat())['total']})
+    return out
 
 
 def _in_range(val, start: datetime, end: datetime) -> bool:
@@ -337,23 +357,11 @@ async def get_dashboard_analytics(request: Request):
         total = vals['received'] + vals['missing']
         rate = round((vals['missing'] / total * 100) if total > 0 else 0, 1)
         defect_rates.append({'vendor': vn, 'missing_rate': rate, 'total_received': vals['received'], 'total_missing': vals['missing']})
-    # Production throughput by week — RC-04: SSOT rahaza_wip_events (event_type='output',
-    # event_date string). rahaza_shipments & production_progress = kosong/legacy.
-    weekly_throughput = []
+    # Output produksi per minggu — 8 Nov 2026 (keputusan owner): sumber SAMA dengan Ringkasan Bisnis
+    # (`services.mgmt_analytics.output_sources`: progres internal + penerimaan dari CMT). Dulu `rahaza_wip_events`.
+    from services.mgmt_analytics import domain_scope, output_sources
+    weekly_throughput = weekly_output(await output_sources(db, await domain_scope(db, 'all')), today_wib())
     n = now()
-    for w in range(7, -1, -1):
-        start = n - timedelta(days=(w + 1) * 7)
-        end = n - timedelta(days=w * 7)
-        wip_agg = await db.rahaza_wip_events.aggregate([
-            {'$match': {'event_type': 'output',
-                        'event_date': {'$gte': start.date().isoformat(), '$lt': end.date().isoformat()}}},
-            {'$group': {'_id': None, 'total': {'$sum': {'$ifNull': ['$qty', 0]}}}}
-        ]).to_list(1)
-        qty = wip_agg[0]['total'] if wip_agg else 0
-        weekly_throughput.append({
-            'week': f"W{8-w}", 'label': start.strftime('%d/%m'),
-            'qty': qty
-        })
     # Production completion rate by product — T-03 (FASE 3): SSOT production_jobs via core.wo_reader
     from core.wo_reader import load_wos
     _all_wos = await load_wos(db)
@@ -409,6 +417,43 @@ async def get_dashboard_analytics(request: Request):
 
 
 # ─── VENDOR DASHBOARD ────────────────────────────────────────────────────────
+async def vendor_material_metrics(db, vendor_id) -> dict:
+    """8 angka ringkasan vendor CMT yang dulu dibaca layar tetapi TIDAK pernah dikirim server (selalu 0).
+
+    8 Nov 2026 (keputusan owner). Definisi = layar vendor yang memuat datanya (satu sumber, tanpa koleksi baru):
+      totalReceived / totalMissing  Σ `vendor_material_inspections.total_received/total_missing` (Inspeksi Material)
+      totalDefect                   Σ `material_defect_reports.defect_qty` (laporan cacat lama, baca saja)
+      pendingAdditional / pendingReplacement
+                                    `material_requests` jenis ADDITIONAL / REPLACEMENT berstatus Pending
+                                    (Permintaan Material, pil "Menunggu")
+      pendingBuyerShipments         jumlah surat jalan vendor ini ke DA (`buyer_shipments`, menu Kirim ke DA)
+      pendingInspections            kiriman bahan sudah diterima tetapi belum diinspeksi
+                                    (`vendor_shipments` status Received, inspection_status ≠ Inspected — Penerimaan Material)
+    """
+    q = {'vendor_id': vendor_id}
+    insps = await db.vendor_material_inspections.find(
+        q, {'_id': 0, 'total_received': 1, 'total_missing': 1}).to_list(5000)
+    defects = await db.material_defect_reports.find(q, {'_id': 0, 'defect_qty': 1}).to_list(5000)
+
+    def _n(v):
+        try:
+            return int(float(v or 0))
+        except (TypeError, ValueError):
+            return 0
+    return {
+        'totalReceived': sum(_n(i.get('total_received')) for i in insps),
+        'totalMissing': sum(_n(i.get('total_missing')) for i in insps),
+        'totalDefect': sum(_n(d.get('defect_qty')) for d in defects),
+        'pendingAdditional': await db.material_requests.count_documents(
+            {**q, 'request_type': 'ADDITIONAL', 'status': 'Pending'}),
+        'pendingReplacement': await db.material_requests.count_documents(
+            {**q, 'request_type': 'REPLACEMENT', 'status': 'Pending'}),
+        'pendingBuyerShipments': await db.buyer_shipments.count_documents(q),
+        'pendingInspections': await db.vendor_shipments.count_documents(
+            {**q, 'status': 'Received', 'inspection_status': {'$ne': 'Inspected'}}),
+    }
+
+
 @router.get("/vendor/dashboard")
 async def get_vendor_dashboard(request: Request):
     """Dashboard vendor CMT (modul 1 dari 11).
@@ -497,6 +542,9 @@ async def get_vendor_dashboard(request: Request):
         'incomingShipments': incoming,
         'totalProduced': total_produced, 'totalAvailable': total_available,
         'progressPct': round((total_produced / total_available * 100) if total_available > 0 else 0),
+        # 8 Nov 2026: 8 angka yang dulu tidak pernah dikirim (layar menampilkan 0 walau datanya ada)
+        **(await vendor_material_metrics(db, vendor_id)),
+        'overdueJobs': len(overdue_jobs),
         'recentProgress': recent_progress,
         'alerts': {'overdueJobs': overdue_jobs, 'nearDeadlineJobs': near_jobs},
         'vendorId': vendor_id,

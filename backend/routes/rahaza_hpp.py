@@ -487,8 +487,14 @@ def _summary(figs: list, business_type: str) -> dict:
     if mk:
         rev = sum(f["revenue"] for f in mk)
         cost = sum(f["total_hpp"] for f in mk)
+        # 8 Nov 2026: margin terealisasi = pendapatan − biaya pcs yang sudah dikirim ke klien (dasar sepadan);
+        # `margin` lama (pendapatan − total biaya sampai saat ini) tetap dikirim untuk pemanggil lama.
+        realized = sum(f.get("realized_cost") or 0 for f in mk)
         out.update({"revenue": round(rev, 2), "margin": round(rev - cost, 2),
-                    "margin_pct": round((rev - cost) / rev * 100, 2) if rev else None})
+                    "margin_pct": round((rev - cost) / rev * 100, 2) if rev else None,
+                    "cost_to_date": round(cost, 2), "realized_cost": round(realized, 2),
+                    "margin_realized": round(rev - realized, 2),
+                    "margin_realized_pct": round((rev - realized) / rev * 100, 2) if rev else None})
     return out
 
 

@@ -19,31 +19,74 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["operations-excel"])
 
+PO_EXPORT_TYPES = ('production-pos', 'production-report')
+PO_EXPORT_CAP = 500
+
+
+def can_see_po_price(user: dict) -> bool:
+    """Harga jasa & upah CMT di unduhan PO hanya untuk Keuangan (aturan owner 6 Nov 2026: harga PO = Keuangan).
+
+    Memakai gerbang peran yang SAMA dengan harga baris PO pembelian (`core.purchase_returns.is_finance`:
+    `core.roles.FINANCE_ROLES` atau izin `fin.ap.manage`) — tidak ada daftar peran kedua."""
+    from core.purchase_returns import is_finance
+    return is_finance(user)
+
+
+def deny_external_po_export(user: dict) -> None:
+    """Klien maklon & vendor CMT tidak boleh mengunduh daftar PO semua klien/vendor (endpoint staf DA)."""
+    from routes.production_rbac import EXTERNAL_ROLES
+    if (user.get('role') or '') in EXTERNAL_ROLES:
+        raise HTTPException(403, 'Akses ditolak: unduhan PO produksi khusus staf DA.')
+
+
+def production_pos_headers(show_price: bool) -> list:
+    """Judul kolom unduhan "per baris produk" (bahasa Indonesia); kolom harga hanya untuk Keuangan."""
+    base = ['No', 'No. PO', 'Klien / tujuan', 'Penjahit (CMT)', 'Tanggal PO', 'Tenggat', 'Status', 'No. seri',
+            'SKU', 'Produk', 'Ukuran', 'Warna', 'Qty']
+    return base + (['Harga jasa', 'Upah CMT'] if show_price else [])
+
+
+def production_pos_row(row_num: int, po: dict, item: dict, show_price: bool) -> list:
+    from core.po_detail import PO_STATUS_ID
+    row = [row_num, po.get('po_number'), po.get('customer_name'), po.get('vendor_name'),
+           str(po.get('po_date', ''))[:10], str(po.get('deadline', ''))[:10],
+           PO_STATUS_ID.get(po.get('status'), po.get('status')),
+           item.get('serial_number', ''), item.get('sku', ''), item.get('product_name', ''),
+           item.get('size', ''), item.get('color', ''), item.get('qty', 0)]
+    if show_price:
+        row += [item.get('selling_price_snapshot', 0), item.get('cmt_price_snapshot', 0)]
+    return row
+
+
+async def _export_pos(db, sp) -> list:
+    """PO yang cocok dengan saringan layar daftar PO (status, kata cari, jenis, vendor) — maks. 500 terbaru."""
+    from routes.production_pos import po_list_query
+    return await db.production_pos.find(po_list_query(sp), {'_id': 0}).sort('created_at', -1).to_list(PO_EXPORT_CAP)
+
 
 @router.get("/export-excel")
 async def export_excel(request: Request):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     sp = request.query_params
     export_type = sp.get('type', '')
+    show_price = False
+    if export_type in PO_EXPORT_TYPES:
+        deny_external_po_export(user)
+        show_price = can_see_po_price(user)
     try:
         import openpyxl
         wb = openpyxl.Workbook()
         ws = wb.active
         if export_type == 'production-pos':
-            ws.title = "Production POs"
-            headers = ['No', 'PO Number', 'Customer', 'Vendor', 'PO Date', 'Deadline', 'Status', 'Serial', 'SKU', 'Product', 'Size', 'Color', 'Qty', 'Selling Price', 'CMT Price']
-            ws.append(headers)
-            pos = await db.production_pos.find({}, {'_id': 0}).sort('created_at', -1).to_list(500)
+            ws.title = "PO produksi"
+            ws.append(production_pos_headers(show_price))
+            pos = await _export_pos(db, sp)
             row_num = 1
             for po in pos:
                 items = await db.po_items.find({'po_id': po['id']}).to_list(500)
                 for item in items:
-                    ws.append([row_num, po.get('po_number'), po.get('customer_name'), po.get('vendor_name'),
-                               str(po.get('po_date', ''))[:10], str(po.get('deadline', ''))[:10], po.get('status'),
-                               item.get('serial_number', ''), item.get('sku', ''), item.get('product_name', ''),
-                               item.get('size', ''), item.get('color', ''), item.get('qty', 0),
-                               item.get('selling_price_snapshot', 0), item.get('cmt_price_snapshot', 0)])
+                    ws.append(production_pos_row(row_num, po, item, show_price))
                     row_num += 1
         elif export_type == 'vendor-shipments':
             ws.title = "Vendor Shipments"
@@ -98,8 +141,11 @@ async def export_excel(request: Request):
             headers = ['No', 'Date', 'PO Number', 'Serial', 'Product Code', 'Product Name', 'Size', 'SKU', 'Color',
                        'Output Qty', 'Selling Price', 'CMT Price', 'Total Sales', 'Total CMT', 'Vendor', 'Notes',
                        'Qty Produced', 'Qty Not Produced', 'Qty Shipped']
-            ws.append(headers)
-            pos = await db.production_pos.find({}, {'_id': 0}).sort('created_at', -1).to_list(500)
+            # 8 Nov 2026: kolom harga (indeks 10–13) hanya untuk Keuangan — sama dengan type=production-pos
+            price_cols = {10, 11, 12, 13}
+            keep = [i for i in range(len(headers)) if show_price or i not in price_cols]
+            ws.append([headers[i] for i in keep])
+            pos = await _export_pos(db, sp)
             row_num = 1
             for po in pos:
                 items = await db.po_items.find({'po_id': po['id']}).to_list(500)
@@ -111,12 +157,13 @@ async def export_excel(request: Request):
                     qty = item.get('qty', 0)
                     sp_price = item.get('selling_price_snapshot', 0)
                     cmt = item.get('cmt_price_snapshot', 0)
-                    ws.append([row_num, str(po.get('po_date', po.get('created_at', '')))[:10],
-                               po.get('po_number'), item.get('serial_number', ''), item.get('sku', ''),
-                               item.get('product_name', ''), item.get('size', ''), item.get('sku', ''),
-                               item.get('color', ''), qty, sp_price, cmt, qty * sp_price, qty * cmt,
-                               po.get('vendor_name', ''), po.get('notes', ''),
-                               produced, max(0, qty - produced), shipped])
+                    full = [row_num, str(po.get('po_date', po.get('created_at', '')))[:10],
+                            po.get('po_number'), item.get('serial_number', ''), item.get('sku', ''),
+                            item.get('product_name', ''), item.get('size', ''), item.get('sku', ''),
+                            item.get('color', ''), qty, sp_price, cmt, qty * sp_price, qty * cmt,
+                            po.get('vendor_name', ''), po.get('notes', ''),
+                            produced, max(0, qty - produced), shipped]
+                    ws.append([full[i] for i in keep])
                     row_num += 1
         else:
             return JSONResponse({'error': f'Unknown export type: {export_type}', 'available_types': [

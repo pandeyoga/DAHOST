@@ -3,11 +3,11 @@
  *
  * Standar UI/UX v2 (8 Nov 2026):
  *  • Cetakan PageLayout (di dalam hub judulnya otomatis disembunyikan → tidak ada kepala ganda).
- *  • Kartu angka hanya yang DIKIRIM server (`GET /vendor/dashboard`): job aktif, job selesai, diproduksi / bahan
- *    tersedia, kiriman masuk. Dulu 12 kartu, 8 di antaranya (Material diterima/kurang/cacat, permintaan tambahan &
- *    pengganti, buyer shipments, inspeksi pending, job overdue) membaca kolom yang TIDAK pernah dikirim server
- *    sehingga selalu 0 walau datanya ada — kartu itu disembunyikan (keputusan 9). Angka job lewat tenggat diambil
- *    dari daftar peringatan server.
+ *  • Kartu angka hanya yang DIKIRIM server (`GET /vendor/dashboard`). 8 kartu (Material diterima/kurang/cacat,
+ *    permintaan tambahan & pengganti, kiriman ke DA, inspeksi menunggu, job lewat tenggat) dulu disembunyikan karena
+ *    server tidak pernah mengirim angkanya (selalu 0). Sejak 8 Nov 2026 server menghitungnya dengan definisi yang sama
+ *    dengan layar asalnya (Inspeksi material, Permintaan material, Kirim ke DA, Penerimaan material) → tampil lagi,
+ *    dikelompokkan: ringkasan job (atas), bahan dari DA, permintaan & kiriman.
  *  • Job lewat / mendekati tenggat = satu tabel, bisa diunduh.
  */
 import { useEffect, useState } from 'react';
@@ -43,6 +43,9 @@ export default function VendorDashboard({ user, onNavigate }) {
     ...near.map((j) => ({ ...j, keadaan: 'dekat' })),
   ];
   const nilai = (v) => (metrics ? n(v) : '—');
+  const pcs = (v) => (metrics ? `${n(v)} pcs` : '—');
+  const buka = (modul) => (onNavigate ? () => onNavigate(modul) : undefined);
+  const lewat = metrics ? (metrics.overdueJobs ?? overdue.length) : null;
 
   const kolom = [
     { kunci: 'job', label: 'Job', hp: 'judul', isi: (j) => <span className="font-medium tabular-nums">{j.job_number || '—'}</span> },
@@ -72,10 +75,41 @@ export default function VendorDashboard({ user, onNavigate }) {
           <StatTile label="Job selesai" value={nilai(metrics?.completedJobs)} sub="Job berstatus selesai" />
           <StatTile label="Diproduksi" value={metrics ? `${n(metrics.totalProduced)} pcs` : '—'}
             sub={metrics ? `${metrics.progressPct || 0}% dari ${n(metrics.totalAvailable)} pcs bahan tersedia` : 'Memuat…'} />
-          <StatTile label="Kiriman masuk" value={nilai(metrics?.incomingShipments)} accent={metrics?.incomingShipments > 0 ? 'warning' : 'default'}
-            sub="Menunggu dikonfirmasi diterima" />
+          <StatTile label="Job lewat tenggat" value={nilai(lewat)} accent={lewat > 0 ? 'danger' : 'default'}
+            sub="Job belum selesai yang melewati tenggat" />
         </div>
       </>}>
+      <section className="space-y-2" data-testid="vendor-dashboard-bahan">
+        <p className="text-sm font-semibold text-foreground">Bahan dari DA</p>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <StatTile testId="vendor-kpi-kiriman-masuk" label="Kiriman masuk" value={nilai(metrics?.incomingShipments)}
+            accent={metrics?.incomingShipments > 0 ? 'warning' : 'default'} sub="Menunggu dikonfirmasi diterima"
+            onClick={buka('receiving')} hint="Buka penerimaan material" />
+          <StatTile testId="vendor-kpi-inspeksi" label="Menunggu inspeksi" value={nilai(metrics?.pendingInspections)}
+            accent={metrics?.pendingInspections > 0 ? 'warning' : 'default'} sub="Sudah diterima, belum diinspeksi"
+            onClick={buka('inspeksi')} hint="Buka inspeksi material" />
+          <StatTile testId="vendor-kpi-diterima" label="Material diterima" value={pcs(metrics?.totalReceived)}
+            sub="Jumlah diterima menurut inspeksi" onClick={buka('inspeksi')} hint="Buka riwayat inspeksi" />
+          <StatTile testId="vendor-kpi-kurang" label="Material kurang" value={pcs(metrics?.totalMissing)}
+            accent={metrics?.totalMissing > 0 ? 'warning' : 'default'} sub="Kurang dari surat jalan saat inspeksi"
+            onClick={buka('inspeksi')} hint="Buka riwayat inspeksi" />
+        </div>
+      </section>
+      <section className="space-y-2" data-testid="vendor-dashboard-permintaan">
+        <p className="text-sm font-semibold text-foreground">Permintaan & kiriman</p>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <StatTile testId="vendor-kpi-tambahan" label="Permintaan tambahan" value={nilai(metrics?.pendingAdditional)}
+            accent={metrics?.pendingAdditional > 0 ? 'warning' : 'default'} sub="Menunggu persetujuan DA"
+            onClick={buka('material-requests')} hint="Buka permintaan material" />
+          <StatTile testId="vendor-kpi-pengganti" label="Permintaan pengganti" value={nilai(metrics?.pendingReplacement)}
+            accent={metrics?.pendingReplacement > 0 ? 'warning' : 'default'} sub="Menunggu persetujuan DA"
+            onClick={buka('material-requests')} hint="Buka permintaan material" />
+          <StatTile testId="vendor-kpi-cacat" label="Material cacat" value={pcs(metrics?.totalDefect)}
+            accent={metrics?.totalDefect > 0 ? 'danger' : 'default'} sub="Dari laporan cacat material" />
+          <StatTile testId="vendor-kpi-kirim-da" label="Kiriman ke DA" value={nilai(metrics?.pendingBuyerShipments)}
+            sub="Semua surat jalan vendor ini ke DA" onClick={buka('buyer-shipments')} hint="Buka kirim ke DA" />
+        </div>
+      </section>
       <section className="space-y-2" data-testid="vendor-dashboard-alerts">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm font-semibold text-foreground">

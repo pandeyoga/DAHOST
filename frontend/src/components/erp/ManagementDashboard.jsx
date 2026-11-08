@@ -14,6 +14,8 @@
  *  • "Margin" (total faktur piutang − total tagihan pemasok) bukan margin → disembunyikan. OEE selalu kosong
  *    (mesin OEE diarsipkan) → disembunyikan. Tren 6 bulan PO membaca koleksi pesanan lama → disembunyikan.
  *  • Pilihan periode lama tidak memengaruhi angka apa pun (API tidak menerima periode) → tidak ditampilkan.
+ *  • 8 Nov 2026: server /api/dashboard kini juga membaca PO dari production_pos, karyawan aktif dari `active: true`,
+ *    dan output produksi dari sumber Ringkasan Bisnis (progres internal + penerimaan dari CMT).
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
@@ -251,7 +253,7 @@ export default function ManagementDashboard({ token, onNavigate, onModuleChange 
         </ChartCard>
       </div>
 
-      <ChartCard title="Output produksi per minggu" subtitle="Jumlah potong selesai, 8 minggu terakhir.">
+      <ChartCard title="Output produksi per minggu" subtitle="Progres jahit internal + barang diterima dari CMT (sumber sama dengan Ringkasan Bisnis), 8 minggu terakhir.">
         {adaOutput ? (
           <div style={{ width: '100%', height: 220 }}>
             <ResponsiveContainer>
