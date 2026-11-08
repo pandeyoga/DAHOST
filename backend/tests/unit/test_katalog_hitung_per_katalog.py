@@ -8,9 +8,14 @@ yang sama dengan kartu ringkasan, sehingga tabel dan kartu tidak bisa berbeda.
 """
 import asyncio
 import copy
+import os
 import pathlib
 import sys
 from pathlib import Path
+
+os.environ.setdefault("JWT_SECRET", "uji-hermetik-secret")
+os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
+os.environ.setdefault("DB_NAME", "uji")
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
