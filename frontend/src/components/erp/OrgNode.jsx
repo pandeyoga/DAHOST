@@ -37,7 +37,7 @@ function flattenTree(node, depth = 0, parentId = null, result = []) {
   return result;
 }
 
-export function OrgNode({ node, onPilih }) {
+export function OrgNode({ node, onPilih, adaCabang = true }) {
   const flat = flattenTree(node);
   const [expanded, setExpanded] = useState(
     () => new Set(flat.filter((n) => n.depth < 2 && n.hasChildren).map((n) => n.unit_id)),
@@ -70,7 +70,7 @@ export function OrgNode({ node, onPilih }) {
               onClick={(e) => { e.stopPropagation(); toggle(n.unit_id); }}>
               {open ? <ChevronDown /> : <ChevronRight />}
             </Button>
-          ) : <span className="w-8 shrink-0" aria-hidden="true" />}
+          ) : adaCabang ? <span className="w-8 shrink-0" aria-hidden="true" /> : null}
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <p className="truncate text-sm font-semibold text-foreground">{n.name}</p>

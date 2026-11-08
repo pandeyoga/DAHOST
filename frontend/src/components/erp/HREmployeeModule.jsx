@@ -377,14 +377,16 @@ export default function HREmployeeModule({ token }) {
           <Switch checked={activeOnly} onCheckedChange={(v) => { setActiveOnly(v); setPage(1); }} id="active-only" />
           Aktif saja
         </label>
-      </>}
-      tools={<>
-        <TombolUnduh namaBerkas="data-karyawan" namaLembar="Karyawan" baris={filtered} kolom={kolomUnduh}
-          testId="employees-unduh" />
-        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
-          data-testid="employees-refresh">
-          <RefreshCw className={loading ? 'animate-spin' : ''} />
-        </Button>
+        {/* Alat ditaruh di ujung baris penyaring (bukan slot `tools`): di HP slot `tools` menyempitkan penyaring
+            ke separuh lebar layar (lihat laporan, permintaan komponen bersama). Di layar lebar tetap rata kanan. */}
+        <div className="ml-auto flex items-center gap-2">
+          <TombolUnduh namaBerkas="data-karyawan" namaLembar="Karyawan" baris={filtered} kolom={kolomUnduh}
+            testId="employees-unduh" />
+          <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+            data-testid="employees-refresh">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
+          </Button>
+        </div>
       </>}
       footer={<PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}>
       {loading && employees.length === 0 ? (
@@ -577,9 +579,9 @@ function EmployeeDialog({ initial, locations, employees = [], masters = {}, head
     if (form.ktp_number && form.ktp_number.length !== 16) { tolak('NIK KTP harus 16 digit.', 'pajak'); return; }
     // 2026-11-06 (Tahap 2): NPWP 15 digit (lama) atau 16 digit (NIK = NPWP sejak 2024) diterima.
     if (form.npwp_number && ![15, 16].includes(form.npwp_number.replace(/[^0-9]/g, '').length)) { tolak('NPWP harus 15 atau 16 digit.', 'pajak'); return; }
-    if (form.join_date && form.resign_date && form.resign_date < form.join_date) { tolak('Tanggal keluar tidak boleh sebelum tanggal masuk.', 'dasar'); return; }
-    if (form.contract_start_date && form.contract_end_date && form.contract_end_date < form.contract_start_date) { tolak('Tanggal berakhir kontrak tidak boleh sebelum tanggal mulai.', 'dasar'); return; }
-    if (!isEdit && ['PKWT', 'Magang'].includes(form.contract_type) && !form.contract_end_date) { tolak('Tanggal berakhir kontrak wajib untuk PKWT/Magang.', 'dasar'); return; }
+    if (form.join_date && form.resign_date && form.resign_date < form.join_date) { tolak('Tanggal keluar tidak boleh sebelum tanggal masuk.', 'kontrak'); return; }
+    if (form.contract_start_date && form.contract_end_date && form.contract_end_date < form.contract_start_date) { tolak('Tanggal berakhir kontrak tidak boleh sebelum tanggal mulai.', 'kontrak'); return; }
+    if (!isEdit && ['PKWT', 'Magang'].includes(form.contract_type) && !form.contract_end_date) { tolak('Tanggal berakhir kontrak wajib untuk PKWT/Magang.', 'kontrak'); return; }
     if (bankOther && !String(form.bank_name || '').trim()) { tolak('Ketik nama bank.', 'bank'); return; }
     const payload = { ...form };
     delete payload.base_rate;      // gaji hanya di Profil Gaji
@@ -677,6 +679,7 @@ function EmployeeDialog({ initial, locations, employees = [], masters = {}, head
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="h-auto max-w-full justify-start gap-1 max-sm:flex-nowrap max-sm:overflow-x-auto sm:flex-wrap">
           <TabsTrigger value="dasar" className="shrink-0">Data dasar</TabsTrigger>
+          <TabsTrigger value="kontrak" className="shrink-0">Kontrak</TabsTrigger>
           <TabsTrigger value="personal" className="shrink-0">Pribadi</TabsTrigger>
           <TabsTrigger value="pajak" className="shrink-0">Pajak & BPJS</TabsTrigger>
           <TabsTrigger value="bank" className="shrink-0">Rekening & kontak darurat</TabsTrigger>
@@ -728,6 +731,12 @@ function EmployeeDialog({ initial, locations, employees = [], masters = {}, head
             <Isian label="Email" htmlFor="emp-email">
               <Input id="emp-email" type="email" value={form.email} onChange={set('email')} placeholder="nama@contoh.com" />
             </Isian>
+          </div>
+        </TabsContent>
+
+        {/* Tab 2: Kontrak & masa kerja (dulu satu tab dengan data dasar — terlalu panjang, tombol simpan jauh di bawah) */}
+        <TabsContent value="kontrak" className="mt-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Isian label="Tipe kontrak">
               <Sel value={form.contract_type || ''} onChange={set('contract_type')} options={CONTRACT_TYPES} testId="emp-contract-type" />
             </Isian>

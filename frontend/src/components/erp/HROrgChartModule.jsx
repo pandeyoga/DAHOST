@@ -277,10 +277,6 @@ export default function HROrgChartModule({ token }) {
       <PageLayout testId="hr-org-module" title="Struktur Organisasi"
         subtitle="Bagan unit, jabatan, dan target jumlah karyawan per unit."
         actions={<>
-          <Button variant="outline" size="icon" onClick={fetchAll} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
-            <RefreshCw className={loading ? 'animate-spin' : ''} />
-          </Button>
-          {unduh[tab]}
           {units.length === 0 && !loading && (
             <Button variant="outline" onClick={handleSeed} disabled={seeding} data-testid="org-seed">
               {seeding ? 'Memuat…' : 'Muat contoh'}
@@ -290,22 +286,29 @@ export default function HROrgChartModule({ token }) {
             ? <Button onClick={openPosForm} data-testid="org-add-position"><Plus />Tambah jabatan</Button>
             : <Button onClick={() => openUnitForm()} data-testid="org-add-unit"><Plus />Tambah unit</Button>}
         </>}
-        filters={
+        filters={<>
           <TabsList className="h-auto max-w-full justify-start max-sm:flex-nowrap max-sm:overflow-x-auto">
             <TabsTrigger value="chart" className="shrink-0" data-testid="org-tab-chart">Bagan</TabsTrigger>
             <TabsTrigger value="units" className="shrink-0" data-testid="org-tab-units">Unit</TabsTrigger>
             <TabsTrigger value="positions" className="shrink-0" data-testid="org-tab-positions">Jabatan</TabsTrigger>
             <TabsTrigger value="headcount" className="shrink-0" data-testid="org-tab-headcount">Target karyawan</TabsTrigger>
           </TabsList>
-        }
+          {/* Alat di ujung baris tab (bukan kepala/slot tools): di HP kepala dengan 3 tombol menimpa judul. */}
+          <div className="ml-auto flex items-center gap-2">
+            {unduh[tab]}
+            <Button variant="outline" size="icon" onClick={fetchAll} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+              <RefreshCw className={loading ? 'animate-spin' : ''} />
+            </Button>
+          </div>
+        </>}
         summary={units.length > 0 && (
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="org-summary">
-            <StatTile label="Unit" value={units.length} hint="Unit aktif di struktur organisasi." sub="Perusahaan, divisi, departemen, tim, seksi" />
-            <StatTile label="Jabatan" value={positions.length} sub="Jabatan terdaftar di semua unit" />
+            <StatTile label="Unit" value={units.length} sub="Unit aktif di struktur" />
+            <StatTile label="Jabatan" value={positions.length} sub="Terdaftar di semua unit" />
             <StatTile label="Karyawan di unit" value={sum.total_actual ?? '—'}
-              sub={totalAktif !== undefined ? `dari ${totalAktif} karyawan aktif — dihitung dari departemen yang sama dengan nama unit` : 'Karyawan yang departemennya sama dengan nama unit'} />
+              sub={totalAktif !== undefined ? `dari ${totalAktif} karyawan aktif; dicocokkan lewat nama departemen` : 'Dicocokkan lewat nama departemen'} />
             <StatTile label="Kekurangan karyawan" value={headcount ? kekurangan : '—'} accent={kekurangan > 0 ? 'warning' : 'default'}
-              sub={headcount ? `Target ${sum.total_target ?? 0}, terisi ${sum.total_actual ?? 0}; dijumlah per unit yang kurang` : 'Data target belum termuat'} />
+              sub={headcount ? `Target ${sum.total_target ?? 0}, terisi ${sum.total_actual ?? 0}` : 'Data target belum termuat'} />
           </div>
         )}
         footer={
@@ -322,7 +325,7 @@ export default function HROrgChartModule({ token }) {
           {/* ─── Bagan ─── */}
           {tab === 'chart' && (chartTree.length === 0 ? kosongStruktur : (
             <GlassCard hover={false} className="divide-y divide-[var(--glass-border)] overflow-hidden" data-testid="org-chart">
-              {chartTree.map(node => <OrgNode key={node.unit_id} node={node} onPilih={setDetailUnit} />)}
+              {chartTree.map(node => <OrgNode key={node.unit_id} node={node} onPilih={setDetailUnit} adaCabang={units.some(u => u.parent_id)} />)}
             </GlassCard>
           ))}
 
@@ -398,17 +401,17 @@ export default function HROrgChartModule({ token }) {
                 {units.filter(u => !editUnit || u.unit_id !== editUnit.unit_id).map(u => <option key={u.unit_id} value={u.unit_id}>{u.name}</option>)}
               </SmartNativeSelect>
             </Isian>
+            <Isian label="Kepala unit" petunjuk="Dipilih dari karyawan aktif.">
+              <EmployeeSelect employees={employees} value={unitForm.head_employee_id} testId="org-unit-head"
+                placeholder={unitForm.head_employee_name && !unitForm.head_employee_id ? `${unitForm.head_employee_name} (belum dipilih)` : '— Belum ditentukan —'}
+                onChange={v => { const e = employees.find(x => x.id === v); setUnitForm(p => ({ ...p, head_employee_id: v, head_employee_name: e ? e.name : (v ? p.head_employee_name : '') })); }}
+                className="w-full" />
+            </Isian>
             <Isian label="Target jumlah karyawan" htmlFor="org-unit-target">
               <Input id="org-unit-target" type="number" min={0} value={unitForm.headcount_target}
                 onChange={e => setUnitForm(p => ({ ...p, headcount_target: +e.target.value }))} />
             </Isian>
           </div>
-          <Isian label="Kepala unit" petunjuk="Dipilih dari karyawan aktif.">
-            <EmployeeSelect employees={employees} value={unitForm.head_employee_id} testId="org-unit-head"
-              placeholder={unitForm.head_employee_name && !unitForm.head_employee_id ? `${unitForm.head_employee_name} (belum dipilih dari karyawan)` : '— Belum ditentukan —'}
-              onChange={v => { const e = employees.find(x => x.id === v); setUnitForm(p => ({ ...p, head_employee_id: v, head_employee_name: e ? e.name : (v ? p.head_employee_name : '') })); }}
-              className="w-full" />
-          </Isian>
         </FormPopup>
 
         {/* ─── Form jabatan ─── */}
