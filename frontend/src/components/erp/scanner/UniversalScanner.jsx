@@ -43,9 +43,10 @@ import Modal from '../Modal';
 import { useCameraScanner, useWedgeInput } from './useScanner';
 import { normalizeScanCode, scanFeedback } from './scanCode';
 import ScanResult from './ScanResult';
+import { Notice } from '../moduleAtoms';
 
 // ─── Internal: Camera + Manual modal contents ─────────────────────────────────
-function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuous = false, feedback }) {
+function ScannerModalContent({ onScan, onClose, title = 'Scan barcode', continuous = false, feedback }) {
   const uid = useId().replace(/:/g, '_');
   const elementId = `universal-qr-${uid}`;
   const [tab, setTab]           = useState('camera');
@@ -107,6 +108,9 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuo
 
   const onManualSubmit = async (e) => {
     e?.preventDefault();
+    // Standar UI/UX v2: pemindai ini kini sering dibuka dari dalam FormPopup (sebuah <form>). Event submit React
+    // merambat lewat portal ke form induk → "Konfirmasi kode" ikut menekan Simpan form induk. Hentikan di sini.
+    e?.stopPropagation();
     const code = manual.trim();
     if (!code) return;
     setManual('');
@@ -124,31 +128,15 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuo
   return (
     <div className="space-y-3" data-testid="universal-scanner-content">
       {/* Tab switcher */}
-      <div className="inline-flex rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg)] p-1 w-full">
-        <button
-          type="button"
-          onClick={() => switchTab('camera')}
-          className={`flex-1 inline-flex items-center justify-center gap-1.5 py-2 rounded-md text-xs font-semibold transition-colors ${
-            tab === 'camera'
-              ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]'
-              : 'text-muted-foreground hover:text-foreground'
-          }`}
-          data-testid="scanner-tab-camera"
-        >
-          <Camera className="w-3.5 h-3.5" /> Kamera
-        </button>
-        <button
-          type="button"
-          onClick={() => switchTab('manual')}
-          className={`flex-1 inline-flex items-center justify-center gap-1.5 py-2 rounded-md text-xs font-semibold transition-colors ${
-            tab === 'manual'
-              ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]'
-              : 'text-muted-foreground hover:text-foreground'
-          }`}
-          data-testid="scanner-tab-manual"
-        >
-          <Keyboard className="w-3.5 h-3.5" /> Ketik kode
-        </button>
+      <div className="grid w-full grid-cols-2 gap-2" role="group" aria-label="Cara scan">
+        <Button type="button" variant={tab === 'camera' ? 'default' : 'outline'} aria-pressed={tab === 'camera'}
+          onClick={() => switchTab('camera')} data-testid="scanner-tab-camera">
+          <Camera /> Kamera
+        </Button>
+        <Button type="button" variant={tab === 'manual' ? 'default' : 'outline'} aria-pressed={tab === 'manual'}
+          onClick={() => switchTab('manual')} data-testid="scanner-tab-manual">
+          <Keyboard /> Ketik kode
+        </Button>
       </div>
 
       {/* Camera tab */}
@@ -163,11 +151,9 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuo
             />
           </div>
           {continuous && (
-            <div
-              className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs border ${
-                justRead
-                  ? 'bg-[hsl(var(--success)/0.1)]  border-[hsl(var(--success)/0.35)]  text-[hsl(var(--success))] '
-                  : 'bg-[var(--glass-bg)] border-[var(--glass-border)] text-muted-foreground'}`}
+            <p
+              className={`flex items-center justify-between px-1 text-sm ${
+                justRead ? 'text-[hsl(var(--success-text))]' : 'text-muted-foreground'}`}
               data-testid="scanner-continuous-status"
             >
               <span className="inline-flex items-center gap-1.5 tabular-nums truncate">
@@ -175,9 +161,9 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuo
                 {reads.last || 'Siap — scan berkali-kali tanpa menutup kamera'}
               </span>
               <span className="font-semibold shrink-0 ml-2" data-testid="scanner-continuous-count">{reads.count} scan</span>
-            </div>
+            </p>
           )}
-          <div className="text-center text-[11px] text-muted-foreground">
+          <div className="text-center text-xs text-muted-foreground">
             {cameraState === 'starting' && (
               <span className="inline-flex items-center gap-1">
                 <Loader2 className="w-3 h-3 animate-spin" /> Memulai kamera...
@@ -191,23 +177,15 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuo
             )}
           </div>
           {cameraError && (
-            <div
-              className="bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.2)] rounded-lg p-2.5 text-xs text-[hsl(var(--destructive))]  flex items-start gap-2"
-              data-testid="scanner-camera-error"
-            >
-              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+            <Notice tone="danger" icon={AlertTriangle} testId="scanner-camera-error">
               <span>
                 {cameraError}
-                <button
-                  type="button"
-                  onClick={() => switchTab('manual')}
-                  className="ml-2 underline font-semibold"
-                  data-testid="scanner-switch-manual-cta"
-                >
+                <Button type="button" variant="link" className="ml-2 h-auto p-0" onClick={() => switchTab('manual')}
+                  data-testid="scanner-switch-manual-cta">
                   Ketik kode saja
-                </button>
+                </Button>
               </span>
-            </div>
+            </Notice>
           )}
         </div>
       )}
@@ -215,8 +193,9 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuo
       {/* Manual tab */}
       {tab === 'manual' && (
         <form onSubmit={onManualSubmit} className="space-y-2" data-testid="scanner-manual-form">
-          <label className="block text-xs font-medium text-foreground/70">Nomor / Kode</label>
+          <label className="block text-sm font-medium text-foreground" htmlFor={`${elementId}-manual`}>Nomor / kode</label>
           <Input
+            id={`${elementId}-manual`}
             autoFocus
             value={manual}
             onChange={(e) => setManual(e.target.value)}
@@ -227,14 +206,15 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuo
           <Button
             type="submit"
             disabled={scanLoading || !manual.trim()}
-            className="w-full h-11"
+            size="lg"
+            className="w-full"
             data-testid="scanner-manual-submit"
           >
             {scanLoading ? (
               <span className="inline-flex items-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" /> Memproses...
               </span>
-            ) : 'Konfirmasi Kode'}
+            ) : 'Konfirmasi kode'}
           </Button>
         </form>
       )}
@@ -246,7 +226,7 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuo
         </Button>
       )}
 
-      <div className="text-[10px] text-muted-foreground text-center">
+      <div className="text-center text-xs text-muted-foreground">
         Kamera bermasalah? Pilih <b>Ketik kode</b>.
       </div>
     </div>
@@ -254,7 +234,7 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuo
 }
 
 // ─── Modal Variant ────────────────────────────────────────────────────────────
-function ScannerModal({ open, onClose, onScan, title = 'Scan Barcode', continuous = false, feedback }) {
+function ScannerModal({ open, onClose, onScan, title = 'Scan barcode', continuous = false, feedback }) {
   if (!open) return null;
   return (
     <Modal
@@ -334,17 +314,19 @@ function ScannerInline({
           className={`tabular-nums pr-10 transition-shadow ${flashAt ? 'ring-2 ring-[hsl(var(--success)/0.35)]' : ''} ${inputClassName}`}
           data-testid="scanner-inline-input"
         />
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-sm"
           onClick={() => setModalOpen(true)}
           disabled={disabled}
           title="Buka kamera scanner"
           aria-label="Buka kamera scanner"
-          className="absolute right-2 text-muted-foreground hover:text-[hsl(var(--primary))] transition-colors disabled:opacity-40"
+          className="absolute right-1 text-muted-foreground hover:text-[hsl(var(--primary))]"
           data-testid="scanner-camera-btn"
         >
           <ScanLine className="w-4 h-4" />
-        </button>
+        </Button>
       </div>
       {cameraButton && (
         <Button type="button" variant="outline" size="lg" className="mt-2 w-full sm:hidden text-base gap-2"
@@ -357,7 +339,7 @@ function ScannerInline({
         open={modalOpen}
         onClose={() => { setModalOpen(false); refocus('camera'); }}
         onScan={handleModalScan}
-        title="Scan Barcode"
+        title="Scan barcode"
         continuous={continuous}
         feedback={feedback || continuous}
       />
@@ -368,7 +350,7 @@ function ScannerInline({
 // ─── Button Variant ───────────────────────────────────────────────────────────
 // Hanya tombol yang membuka modal
 function ScannerButton({
-  onScan, title = 'Scan Barcode', label, disabled, size = 'sm', variant: btnVariant = 'outline',
+  onScan, title = 'Scan barcode', label, disabled, size = 'sm', variant: btnVariant = 'outline',
   'data-testid': testId, className = '', continuous = false, feedback,
 }) {
   const [open, setOpen] = useState(false);

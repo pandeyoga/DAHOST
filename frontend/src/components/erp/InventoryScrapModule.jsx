@@ -1,25 +1,43 @@
+/**
+ * Penyesuaian stok (tab di hub Stok & Akurasi) — catat barang rusak, hilang, ditemukan, atau koreksi hitung.
+ * Jalur adjust RESMI: POST /api/rahaza/material-adjust (+ posting GL di server).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, form = FormPopup pendek (dulu kotak melayang buatan sendiri),
+ * riwayat = TabelData + unduh Excel/CSV, label Indonesia.
+ *
+ * Verifikasi angka (8 Nov 2026): GET /api/rahaza/material-movements TIDAK mengenal parameter `type`
+ * (lihat routes/rahaza_inventory_stock.list_movements) — `?type=adjust` diabaikan, sehingga "Riwayat adjustment"
+ * dan kedua kartunya ikut menghitung penerimaan, pindah lokasi, dan pengeluaran. Kini layar mengambil 500 mutasi
+ * terakhir (batas server) lalu menyaring `type === 'adjust'` di layar; kartu menyebut sumbernya.
+ */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { RefreshCw, PackageMinus, Plus, AlertTriangle } from 'lucide-react';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { RefreshCw, Plus, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { PageHeader, StatTile } from './moduleAtoms';
-import { useToast } from '@/hooks/use-toast';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
-import { formatRupiah } from '@/lib/format';
+import { useToast } from '@/hooks/use-toast';
+import { formatDateTimeID } from '@/lib/format';
+import { todayWIB, toWIBDate } from '@/lib/waktu';
 import StorageLocationSelect from './StorageLocationSelect';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { materialOptionLabel } from '@/lib/materialFields';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile } from './moduleAtoms';
 
 // 2026-11-07 (Tahap 5): tanda qty mengikuti tipe — dulu tipe hanya hiasan (tidak dikirim, tidak diperiksa),
 // sehingga "Scrap" dengan qty +50 menambah stok.
 const ADJ_TYPES = [
-  { value: 'scrap', label: 'Scrap / rusak (mengurangi stok)', sign: -1 },
+  { value: 'scrap', label: 'Rusak / afkir (mengurangi stok)', sign: -1 },
   { value: 'theft', label: 'Hilang (mengurangi stok)', sign: -1 },
   { value: 'found', label: 'Ditemukan / tambahan (menambah stok)', sign: 1 },
   { value: 'correction', label: 'Koreksi hitung stok (tambah atau kurang)', sign: 0 },
 ];
-
-const fmt = formatRupiah;
+const BATAS_MUTASI = 500; // batas `limit` GET /rahaza/material-movements (mode tanpa halaman)
+const fmtQty = (v) => Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 3 });
 
 export default function InventoryScrapModule({ token }) {
   const [movements, setMovements] = useState([]);
@@ -27,32 +45,36 @@ export default function InventoryScrapModule({ token }) {
   const [adjustForm, setAdjustForm] = useState(null);
   const [materials, setMaterials] = useState([]);
   const [stockInfo, setStockInfo] = useState(null);
+  const [galat, setGalat] = useState('');
+  const [menyimpan, setMenyimpan] = useState(false);
   const { toast } = useToast();
   const headers = useMemo(
     () => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
     [token]
   );
+  const URL_MUTASI = `/api/rahaza/material-movements?type=adjust&limit=${BATAS_MUTASI}`;
+  const hanyaPenyesuaian = (d) => (Array.isArray(d) ? d : []).filter((m) => !m.type || m.type === 'adjust');
 
   const fetchMovements = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch('/api/rahaza/material-movements?type=adjust', { headers });
-      if (r.ok) setMovements(await r.json());
+      const r = await fetch(URL_MUTASI, { headers });
+      if (r.ok) setMovements(hanyaPenyesuaian(await r.json()));
     } catch (e) {
-      toast({ title: 'Error', description: 'Gagal memuat riwayat adjustment', variant: 'destructive' });
+      toast({ title: 'Gagal', description: 'Gagal memuat riwayat penyesuaian', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
-  }, [headers, toast]);
+  }, [headers, toast, URL_MUTASI]);
 
   useEffect(() => {
     (async () => {
       try {
         const [mvR, matR] = await Promise.all([
-          fetch('/api/rahaza/material-movements?type=adjust', { headers }),
+          fetch(URL_MUTASI, { headers }),
           fetch('/api/rahaza/materials', { headers }),
         ]);
-        if (mvR.ok) setMovements(await mvR.json());
+        if (mvR.ok) setMovements(hanyaPenyesuaian(await mvR.json()));
         if (matR.ok) {
           const d = await matR.json();
           setMaterials((Array.isArray(d) ? d : d?.items || []).filter((m) => m.active !== false));
@@ -63,7 +85,7 @@ export default function InventoryScrapModule({ token }) {
         setLoading(false);
       }
     })();
-  }, [headers]);
+  }, [headers, URL_MUTASI]);
 
   const checkStock = async (materialId, locationId) => {
     try {
@@ -77,35 +99,39 @@ export default function InventoryScrapModule({ token }) {
     }
   };
 
+  const tutupForm = () => { setAdjustForm(null); setStockInfo(null); setGalat(''); };
+
   const adjust = async () => {
     if (!adjustForm) return;
+    setGalat('');
     if (!adjustForm.material_id || !adjustForm.location_id || !adjustForm.qty || !adjustForm.reason) {
-      toast({ title: 'Error', description: 'Semua field wajib diisi', variant: 'destructive' });
+      setGalat('Semua isian wajib diisi.');
       return;
     }
     if (adjustForm.reason.trim().length < 5) {
-      toast({ title: 'Error', description: 'Alasan harus minimal 5 karakter untuk audit trail', variant: 'destructive' });
+      setGalat('Alasan minimal 5 karakter untuk jejak audit.');
       return;
     }
     const delta = Number(adjustForm.qty);
     if (delta === 0) {
-      toast({ title: 'Error', description: 'Qty adjustment tidak boleh 0', variant: 'destructive' });
+      setGalat('Qty penyesuaian tidak boleh 0.');
       return;
     }
     const typ = ADJ_TYPES.find((t) => t.value === adjustForm.adjustment_type);
     if (typ && typ.sign < 0 && delta > 0) {
-      toast({ title: 'Periksa qty', description: `${typ.label}: isi qty negatif, mis. -${delta}.`, variant: 'destructive' });
+      setGalat(`${typ.label}: isi qty negatif, mis. -${delta}.`);
       return;
     }
     if (typ && typ.sign > 0 && delta < 0) {
-      toast({ title: 'Periksa qty', description: `${typ.label}: isi qty positif, mis. ${Math.abs(delta)}.`, variant: 'destructive' });
+      setGalat(`${typ.label}: isi qty positif, mis. ${Math.abs(delta)}.`);
       return;
     }
     // Check stock availability for negative adjustment
     if (delta < 0 && stockInfo && Math.abs(delta) > stockInfo.qty) {
-      toast({ title: 'Error', description: `Stok tidak cukup. Tersedia: ${stockInfo.qty}`, variant: 'destructive' });
+      setGalat(`Stok tidak cukup. Tersedia: ${stockInfo.qty}`);
       return;
     }
+    setMenyimpan(true);
     try {
       const r = await fetch('/api/rahaza/material-adjust', {
         method: 'POST',
@@ -118,195 +144,165 @@ export default function InventoryScrapModule({ token }) {
         })
       });
       if (r.ok) {
-        toast({ title: 'Sukses', description: 'Adjustment berhasil dicatat' });
-        setAdjustForm(null);
-        setStockInfo(null);
+        toast({ title: 'Tersimpan', description: 'Penyesuaian stok dicatat' });
+        tutupForm();
         fetchMovements();
       } else {
         const err = await r.json().catch(() => ({}));
-        toast({ title: 'Gagal', description: typeof err.detail === 'string' ? err.detail : `Gagal menyimpan penyesuaian (HTTP ${r.status})`, variant: 'destructive' });
+        setGalat(typeof err.detail === 'string' ? err.detail : `Gagal menyimpan penyesuaian (HTTP ${r.status})`);
       }
     } catch (e) {
-      toast({ title: 'Error', description: 'Gagal adjustment', variant: 'destructive' });
+      setGalat('Gagal menyimpan penyesuaian.');
+    } finally {
+      setMenyimpan(false);
     }
   };
 
-  const totalScrapThisMonth = movements.filter(m => {
-    const d = new Date(m.created_at || '');
-    const now = new Date();
-    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() && Number(m.qty) < 0;
-  }).length;
-  const { page, setPage, totalPages, total, paged } = useClientPagination(movements, 10);
+  // Bulan ini menurut WIB (dulu memakai jam peramban).
+  const bulanIni = todayWIB().slice(0, 7);
+  const bulanan = movements.filter((m) => m.created_at && String(toWIBDate(m.created_at) || '').slice(0, 7) === bulanIni);
+  const totalBulanIni = bulanan.length;
+  const totalScrapThisMonth = bulanan.filter((m) => Number(m.qty) < 0).length;
+  const { page, setPage, totalPages, total, paged } = useClientPagination(movements, 25);
+
+  const kolom = [
+    { kunci: 'tanggal', label: 'Tanggal', hp: 'keterangan', isi: (m) => (
+      <span className="text-sm md:whitespace-nowrap" data-testid={`adj-row-${m.id}`}>{formatDateTimeID(m.created_at)}</span>) },
+    { kunci: 'material', label: 'Material', hp: 'judul', isi: (m) => (
+      <div className="min-w-0 md:max-w-[20rem]">
+        <p className="font-medium">{m.material_name}</p>
+        <p className="text-xs text-muted-foreground">{m.material_code}</p>
+      </div>) },
+    { kunci: 'lokasi', label: 'Lokasi', hp: false, isi: (m) => <span className="text-sm">{m.location_name || m.from_location_name || m.to_location_name || '—'}</span> },
+    { kunci: 'qty', label: 'Perubahan', rata: 'kanan', isi: (m) => (
+      <span className={`tabular-nums ${Number(m.qty) < 0 ? 'text-[hsl(var(--danger-text))]' : 'text-[hsl(var(--success-text))]'}`}>
+        {Number(m.qty) > 0 ? '+' : ''}{fmtQty(m.qty)} {m.unit || ''}
+      </span>) },
+    { kunci: 'alasan', label: 'Alasan', isi: (m) => (
+      <span className="block max-w-xs truncate text-sm text-muted-foreground" title={m.notes || ''}>{m.notes || '—'}</span>) },
+    { kunci: 'oleh', label: 'Oleh', hp: false, isi: (m) => <span className="text-sm">{m.created_by_name || '—'}</span> },
+  ];
 
   return (
-    <div className="space-y-5" data-testid="inventory-scrap-page">
-      <PageHeader
-        icon={PackageMinus}
-        title="Penyesuaian Stok"
-        subtitle="Catat penyesuaian stok: barang rusak, hilang, ditemukan, atau koreksi hitung. Jurnal dibuat otomatis."
-        actions={
-          <>
-            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchMovements} data-testid="adj-refresh">
-              <RefreshCw className="w-3.5 h-3.5" /></Button>
-            <Button onClick={() => setAdjustForm({ material_id: '', location_id: '', qty: 0, reason: '', adjustment_type: 'scrap' })} data-testid="adj-add">
-              <Plus className="w-3.5 h-3.5 mr-1.5" />Buat Adjustment
-            </Button>
-          </>
-        }
-      />
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <StatTile label="Total Adjustment Bulan Ini" value={movements.filter(m => {
-          const d = new Date(m.created_at || '');
-          const now = new Date();
-          return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-        }).length} />
-        <StatTile label="Scrap/Reduction Bulan Ini" value={totalScrapThisMonth} accent="destructive" />
-      </div>
-      <GlassCard className="p-4">
-        <h3 className="text-lg font-semibold text-foreground mb-4">Riwayat Adjustment</h3>
-        {loading ? (
-          <div className="text-center py-8 text-muted-foreground">Memuat...</div>
-        ) : movements.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">Belum ada riwayat adjustment</div>
-        ) : (
-          <>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm" data-testid="adj-table">
-              <thead>
-                <tr className="text-left text-xs text-muted-foreground border-b border-[var(--glass-border)]">
-                  <th className="pb-2">Tanggal</th>
-                  <th className="pb-2">Material</th>
-                  <th className="pb-2">Lokasi</th>
-                  <th className="pb-2 text-right">Qty Adjustment</th>
-                  <th className="pb-2">Alasan</th>
-                  <th className="pb-2">Oleh</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paged.map(m => (
-                  <tr key={m.id} className="border-b border-[var(--glass-border)] hover:bg-[var(--glass-border)]/30" data-testid={`adj-row-${m.id}`}>
-                    <td className="py-3 text-xs">{new Date(m.created_at).toLocaleString('id-ID')}</td>
-                    <td className="py-3">
-                      <div className="text-xs tabular-nums text-muted-foreground">{m.material_code}</div>
-                      <div>{m.material_name}</div>
-                    </td>
-                    <td className="py-3 text-xs">{m.location_name}</td>
-                    <td className="py-3 text-right tabular-nums">
-                      <span className={Number(m.qty) < 0 ? 'text-[hsl(var(--destructive))]' : 'text-[hsl(var(--success))]'}>
-                        {Number(m.qty) > 0 ? '+' : ''}{m.qty}
-                      </span>
-                    </td>
-                    <td className="py-3 text-xs text-muted-foreground max-w-xs truncate">{m.notes}</td>
-                    <td className="py-3 text-xs">{m.created_by_name}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
-          </>
-        )}
-      </GlassCard>
-      {adjustForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => { setAdjustForm(null); setStockInfo(null); }}>
-          <GlassCard className="p-6 max-w-lg w-full" onClick={e => e.stopPropagation()} data-testid="adj-form">
-            <h2 className="text-xl font-bold text-foreground mb-4">Buat Adjustment Stok</h2>
-            <div className="space-y-3">
-              <div>
-                {/* 2026-11-07 (Tahap 5): material DIPILIH dari master (dulu staf harus mengetik UUID material). */}
-                <label className="text-xs uppercase text-muted-foreground">Material <span className="text-[hsl(var(--destructive))]">*</span></label>
-                <SmartNativeSelect
-                  value={adjustForm.material_id}
-                  onChange={e => {
-                    setAdjustForm(f => ({ ...f, material_id: e.target.value }));
-                    setStockInfo(null);
-                    if (e.target.value && adjustForm.location_id) checkStock(e.target.value, adjustForm.location_id);
-                  }}
-                  className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-                  data-testid="adj-material-id"
-                >
-                  <option value="">— pilih material —</option>
-                  {materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
-                </SmartNativeSelect>
-              </div>
-              <div>
-                {/* 2026-11-02 — No.18(a): lokasi DIPILIH dari daftar gudang, bukan UUID diketik. */}
-                <label className="text-xs uppercase text-muted-foreground">Lokasi <span className="text-[hsl(var(--destructive))]">*</span></label>
-                <StorageLocationSelect
-                  token={token}
-                  value={adjustForm.location_id}
-                  onChange={(v) => {
-                    setAdjustForm(f => ({ ...f, location_id: v }));
-                    setStockInfo(null);
-                    if (adjustForm.material_id && v) checkStock(adjustForm.material_id, v);
-                  }}
-                  testId="adj-location-id"
-                />
-              </div>
-              {stockInfo && (
-                <div className="bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.3)] rounded-lg p-3 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Stok Saat Ini:</span>
-                    <span className="tabular-nums font-semibold">{stockInfo.qty} {stockInfo.unit}</span>
-                  </div>
-                  {stockInfo.below_min && (
-                    <div className="flex items-center gap-1 mt-1 text-[hsl(var(--warning))] text-xs">
-                      <AlertTriangle className="w-3 h-3" />
-                      <span>Stok di bawah minimum</span>
-                    </div>
-                  )}
-                </div>
-              )}
-              <div>
-                <label className="text-xs uppercase text-muted-foreground">Tipe Adjustment</label>
-                <SmartNativeSelect
-                  value={adjustForm.adjustment_type}
-                  onChange={e => setAdjustForm(f => ({ ...f, adjustment_type: e.target.value }))}
-                  className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-                  data-testid="adj-type"
-                >
-                  {ADJ_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                </SmartNativeSelect>
-              </div>
-              <div>
-                <label className="text-xs uppercase text-muted-foreground">Qty Adjustment</label>
-                <GlassInput
-                  type="number"
-                  value={adjustForm.qty}
-                  onChange={e => setAdjustForm(f => ({ ...f, qty: e.target.value }))}
-                  placeholder="Gunakan negatif untuk pengurangan (misal: -50)"
-                  data-testid="adj-qty"
-                />
-                <div className="text-xs text-muted-foreground mt-1">
-                  Negatif (-) untuk scrap/hilang, Positif (+) untuk tambahan/koreksi
-                </div>
-              </div>
-              <div>
-                <label className="text-xs uppercase text-muted-foreground">Alasan <span className="text-[hsl(var(--destructive))]">*</span></label>
-                <textarea
-                  value={adjustForm.reason}
-                  onChange={e => setAdjustForm(f => ({ ...f, reason: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-                  rows={3}
-                  placeholder="Contoh: Rusak/cacat saat produksi, hilang saat inventory count"
-                  data-testid="adj-reason"
-                />
-                <div className="text-xs text-muted-foreground mt-1">
-                  Min. 5 karakter untuk audit trail
-                </div>
-              </div>
-            </div>
-            <div className="flex gap-2 mt-6 justify-end">
-              <Button variant="outline" onClick={() => { setAdjustForm(null); setStockInfo(null); }} data-testid="adj-cancel">
-                Batal
-              </Button>
-              <Button onClick={adjust} data-testid="adj-confirm">
-                Simpan Adjustment
-              </Button>
-            </div>
-          </GlassCard>
+    <PageLayout testId="inventory-scrap-page" title="Penyesuaian stok"
+      subtitle="Catat barang rusak, hilang, ditemukan, atau koreksi hitung. Jurnal dibuat otomatis."
+      actions={
+        <Button onClick={() => { setGalat(''); setAdjustForm({ material_id: '', location_id: '', qty: 0, reason: '', adjustment_type: 'scrap' }); }}
+          data-testid="adj-add">
+          <Plus />Buat penyesuaian
+        </Button>
+      }
+      tools={<>
+        <TombolUnduh namaBerkas="riwayat-penyesuaian-stok" namaLembar="Penyesuaian" baris={movements} testId="adj-unduh"
+          kolom={[
+            { label: 'Tanggal', nilai: (m) => formatDateTimeID(m.created_at) },
+            { label: 'Kode material', nilai: (m) => m.material_code },
+            { label: 'Material', nilai: (m) => m.material_name },
+            { label: 'Lokasi', nilai: (m) => m.location_name || m.from_location_name || m.to_location_name || '' },
+            { label: 'Perubahan', nilai: (m) => Number(m.qty || 0) },
+            { label: 'Satuan', nilai: (m) => m.unit || '' },
+            { label: 'Alasan', nilai: (m) => m.notes || '' },
+            { label: 'Oleh', nilai: (m) => m.created_by_name || '' },
+          ]} />
+        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchMovements} disabled={loading}
+          data-testid="adj-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={movements.length > 0 ? (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile label="Penyesuaian bulan ini" value={totalBulanIni.toLocaleString('id-ID')}
+            sub={`Dari ${BATAS_MUTASI} mutasi stok terakhir.`} />
+          <StatTile label="Pengurangan bulan ini" value={totalScrapThisMonth.toLocaleString('id-ID')}
+            accent={totalScrapThisMonth > 0 ? 'danger' : 'default'} sub="Penyesuaian yang mengurangi stok (rusak, hilang)." />
         </div>
+      ) : null}
+      footer={movements.length > 25 ? (
+        <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={25} onPageChange={setPage} />
+      ) : null}>
+      {loading && movements.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={paged} kunci={(m) => m.id} testId="adj-table"
+          kosong={<EmptyState title="Belum ada riwayat penyesuaian"
+            description="Penyesuaian stok yang dicatat dari sini atau dari baris stok tampil di daftar ini." />} />
       )}
-    </div>
+
+      <FormPopup open={!!adjustForm} onClose={tutupForm} ukuran="pendek" judul="Buat penyesuaian stok"
+        keterangan="Stok berubah di lokasi terpilih dan jurnalnya dibuat otomatis." onSimpan={adjust}
+        menyimpan={menyimpan} galat={galat} labelSimpan="Simpan penyesuaian" testId="adj-form">
+        {adjustForm && <>
+          {/* 2026-11-07 (Tahap 5): material DIPILIH dari master (dulu staf harus mengetik UUID material). */}
+          <Isian label="Material" wajib htmlFor="adj-material">
+            <SmartNativeSelect
+              id="adj-material"
+              value={adjustForm.material_id}
+              onChange={e => {
+                setAdjustForm(f => ({ ...f, material_id: e.target.value }));
+                setStockInfo(null);
+                if (e.target.value && adjustForm.location_id) checkStock(e.target.value, adjustForm.location_id);
+              }}
+              className="w-full"
+              data-testid="adj-material-id"
+            >
+              <option value="">Pilih material</option>
+              {materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          {/* 2026-11-02 — No.18(a): lokasi DIPILIH dari daftar gudang, bukan UUID diketik. */}
+          <Isian label="Lokasi" wajib>
+            <StorageLocationSelect
+              token={token}
+              value={adjustForm.location_id}
+              onChange={(v) => {
+                setAdjustForm(f => ({ ...f, location_id: v }));
+                setStockInfo(null);
+                if (adjustForm.material_id && v) checkStock(adjustForm.material_id, v);
+              }}
+              testId="adj-location-id"
+            />
+          </Isian>
+          {stockInfo && (
+            <Notice tone={stockInfo.below_min ? 'warning' : 'info'} icon={stockInfo.below_min ? AlertTriangle : undefined}
+              title={`Stok saat ini: ${fmtQty(stockInfo.qty)} ${stockInfo.unit || ''}`}>
+              {stockInfo.below_min ? 'Stok di bawah minimum.' : null}
+            </Notice>
+          )}
+          <Isian label="Jenis penyesuaian" htmlFor="adj-type-sel">
+            <SmartNativeSelect
+              id="adj-type-sel"
+              value={adjustForm.adjustment_type}
+              onChange={e => setAdjustForm(f => ({ ...f, adjustment_type: e.target.value }))}
+              className="w-full"
+              searchable={false}
+              data-testid="adj-type"
+            >
+              {ADJ_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Qty penyesuaian" wajib htmlFor="adj-qty-in" petunjuk="Negatif (−) untuk rusak/hilang, positif (+) untuk tambahan/koreksi.">
+            <Input
+              id="adj-qty-in"
+              type="number"
+              inputMode="decimal"
+              value={adjustForm.qty}
+              onChange={e => setAdjustForm(f => ({ ...f, qty: e.target.value }))}
+              placeholder="Contoh: -50"
+              data-testid="adj-qty"
+            />
+          </Isian>
+          <Isian label="Alasan" wajib htmlFor="adj-reason-in" petunjuk="Minimal 5 karakter untuk jejak audit.">
+            <Textarea
+              id="adj-reason-in"
+              value={adjustForm.reason}
+              onChange={e => setAdjustForm(f => ({ ...f, reason: e.target.value }))}
+              rows={3}
+              placeholder="Contoh: rusak/cacat saat produksi, hilang saat hitung stok"
+              data-testid="adj-reason"
+            />
+          </Isian>
+        </>}
+      </FormPopup>
+    </PageLayout>
   );
 }

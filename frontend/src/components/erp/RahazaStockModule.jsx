@@ -1,19 +1,43 @@
+/**
+ * Stok & pergerakan (tab di hub Stok & Akurasi) — stok kanonik per barang × lokasi, penerimaan, pindah lokasi,
+ * penyesuaian cepat, dan mutasi terakhir.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout (di hub judul tersembunyi, tombol pindah ke baris tab), penyaring
+ * satu baris, StatTile berketerangan, form Penerimaan / Pindah lokasi / Sesuaikan stok = FormPopup pendek
+ * (dulu Modal dan popover kecil), mutasi terakhir = tabel + unduh Excel/CSV, label Indonesia.
+ *
+ * Verifikasi angka (8 Nov 2026, DB uji):
+ *  • Kartu Bahan/Aksesoris/Produk jadi dulu menampilkan JUMLAH qty lintas satuan (kg + m + yard; pcs + pack + roll)
+ *    → angka tanpa arti ("0.00", "-1"). Kini nilainya = jumlah baris stok (`row_count` /material-stock/summary);
+ *    total qty hanya disebut untuk produk jadi (selalu pcs).
+ *  • "Low Stock 0" dulu memakai `low_stock_count` yang hanya melihat barang yang SUDAH punya baris stok, padahal
+ *    43 barang berambang stoknya 0 (tanpa baris) → 0 menyesatkan. Kini = jumlah /materials/reorder-alerts (43),
+ *    aturan yang sama dengan Alert & Reorder dan notifikasi.
+ *  • Kolom Status dulu "OK" (hijau) untuk barang berambang yang stoknya 0, karena server tidak mengisi `below_min`
+ *    pada baris tanpa stok. Kini status dihitung dari qty & stok minimum yang sudah dikirim server.
+ */
 import { useState, useEffect, useCallback } from 'react';
-import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { Package, ArrowDown, ArrowRightLeft, AlertTriangle, Scale, Gem, Archive, Clock, MapPin, TriangleAlert, Plus, Minus, RefreshCw } from 'lucide-react';
-import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
-import { Button } from '@/components/ui/button';
-import Modal from './Modal';
-import { DataTable } from './DataTableV2';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Package, ArrowDown, ArrowRightLeft, PlusCircle, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { GlassCard } from '@/components/ui/glass';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { typeToCategory } from '@/lib/itemTaxonomy';
-import { todayWIB, toWIBDate, daysBetweenISO } from '@/lib/waktu';
+import { todayWIB } from '@/lib/waktu';
+import { formatDateTimeID } from '@/lib/format';
+import { DataTable } from './DataTableV2';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
 
-// Tampilan per 3 kategori bisnis (Bahan/Aksesoris/Produk Jadi).
-const CAT_ICON = { bahan: Scale, aksesoris: Gem, fg: Archive };
-const CAT_LABEL = { bahan: 'Bahan', aksesoris: 'Aksesoris', fg: 'Produk Jadi' };
-const CAT_COLOR = { bahan: 'text-[hsl(var(--warning))] ', aksesoris: 'text-primary', fg: 'text-[hsl(var(--success))] ' };
+// Tampilan per 3 kategori bisnis (Bahan/Aksesoris/Produk jadi).
+const CAT_LABEL = { bahan: 'Bahan', aksesoris: 'Aksesoris', fg: 'Produk jadi' };
+const JENIS_MUTASI = { receive: 'Terima', issue: 'Keluar', transfer: 'Pindah lokasi', adjust: 'Penyesuaian', opname: 'Opname' };
+const fmtNum = (v, d = 2) => Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: d });
 
 // W1 (sesi #29) — pilihan filter dibangun dari nilai yang BENAR-BENAR ADA di data.
 // Daftar hardcode akan menyesatkan (mis. warna yang tidak dipakai satu pun barang),
@@ -27,26 +51,38 @@ function uniqOptions(rows, field) {
   return [...seen].sort((a, b) => a.localeCompare(b)).map(v => ({ value: v, label: v }));
 }
 
-// U7: Check if expiry date is within 30 days
-function expiryWarning(expiry_date) {  if (!expiry_date) return null;
-  // hari kalender WIB: kedaluwarsa baru 'lewat' setelah tanggalnya habis, bukan sejak 07:00 WIB
-  const days = daysBetweenISO(todayWIB(), toWIBDate(expiry_date));
-  if (days < 0) return { label: 'Kedaluwarsa', cls: 'text-[hsl(var(--destructive))]  bg-[hsl(var(--destructive)/0.1)] ' };
-  if (days <= 30) return { label: `${days}h lagi`, cls: 'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.1)] ' };
-  return null;
+// Status baris dihitung dari qty & stok minimum yang dikirim server (lihat catatan verifikasi di atas).
+const minStok = (r) => Number(r.min_stock_qty || r.min_stock || 0);
+function statusBaris(r) {
+  const qty = Number(r.qty || 0);
+  const min = minStok(r);
+  if (qty < 0) return 'minus';
+  if (min > 0 && qty < min) return 'kurang';
+  if (qty === 0) return 'kosong';
+  if (min > 0) return 'aman';
+  return 'ada';
 }
+const STATUS = {
+  minus: { label: 'Minus', tone: 'danger' },
+  kurang: { label: 'Di bawah minimum', tone: 'warning' },
+  kosong: { label: 'Kosong', tone: 'muted' },
+  aman: { label: 'Aman', tone: 'success' },
+  ada: { label: 'Ada stok', tone: 'default' },
+};
 
-/** Inline Quick Adjust Popover — ±qty tanpa buka modal penuh */
-function QuickAdjustPopover({ row, token, onDone }) {
-  const [open, setOpen] = useState(false);
+/** Sesuaikan stok ± (dulu popover kecil di baris) — kini FormPopup pendek; isian & kiriman sama. */
+function QuickAdjustPopover({ row, token, onClose, onDone }) {
   const [delta, setDelta] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [galat, setGalat] = useState('');
+
+  useEffect(() => { setDelta(''); setNotes(''); setGalat(''); }, [row]);
 
   const submit = async () => {
     const qty = Number(delta);
-    if (!qty || qty === 0) { toast.error('Delta qty tidak boleh 0.'); return; }
-    setSaving(true);
+    if (!qty || qty === 0) { setGalat('Perubahan qty tidak boleh 0.'); return; }
+    setSaving(true); setGalat('');
     try {
       const r = await fetch('/api/rahaza/material-adjust', {
         method: 'POST',
@@ -61,71 +97,32 @@ function QuickAdjustPopover({ row, token, onDone }) {
         }),
       });
       if (r.ok) {
-        toast.success(`Stok ${row.material_code} berhasil diupdate ${qty > 0 ? '+' : ''}${qty} ${row.unit}.`);
-        setOpen(false); setDelta(''); setNotes('');
+        toast.success(`Stok ${row.material_code} disesuaikan ${qty > 0 ? '+' : ''}${qty} ${row.unit}.`);
+        onClose();
         onDone();
       } else {
         const d = await r.json().catch(() => ({}));
-        toast.error(d.detail || `Gagal adjust (HTTP ${r.status})`);
+        setGalat(typeof d.detail === 'string' ? d.detail : `Gagal menyesuaikan (HTTP ${r.status})`);
       }
     } finally { setSaving(false); }
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          className="h-7 px-2 rounded border border-[var(--glass-border)] bg-[var(--glass-bg)] text-foreground/60 hover:text-primary hover:border-primary/30 hover:bg-primary/8 transition-colors text-xs font-semibold flex items-center gap-1 whitespace-nowrap"
-          data-testid={`stock-adjust-btn-${row.material_code}`}
-          title="Quick adjust stok ±"
-        >
-          <Plus className="w-3 h-3" />/<Minus className="w-3 h-3" />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent className="w-56 p-3" align="end">
-        <p className="text-xs font-semibold text-foreground mb-2">Adjust Stok</p>
-        <p className="text-[10px] text-muted-foreground mb-2">{row.material_code} · {row.location_code} · Stok: <span className="tabular-nums font-semibold text-foreground">{Number(row.qty).toFixed(2)} {row.unit}</span></p>
-        <div className="space-y-2">
-          <div>
-            <label className="text-[10px] text-muted-foreground uppercase mb-1 block">Delta Qty (+/-)</label>
-            <GlassInput
-              type="number"
-              step="0.001"
-              placeholder="+10 atau -5"
-              value={delta}
-              onChange={e => setDelta(e.target.value)}
-              className="h-8 text-xs tabular-nums"
-              autoFocus
-              data-testid={`stock-adjust-delta-${row.material_code}`}
-            />
-          </div>
-          <div>
-            <label className="text-[10px] text-muted-foreground uppercase mb-1 block">Catatan</label>
-            <GlassInput
-              placeholder="Alasan (opsional)"
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
-              className="h-8 text-xs"
-              data-testid={`stock-adjust-notes-${row.material_code}`}
-            />
-          </div>
-          <div className="flex gap-1.5 pt-1">
-            <button
-              onClick={() => { setOpen(false); setDelta(''); setNotes(''); }}
-              className="flex-1 h-7 text-xs rounded border border-[var(--glass-border)] text-muted-foreground hover:text-foreground"
-            >Batal</button>
-            <button
-              onClick={submit}
-              disabled={saving || !delta}
-              className="flex-1 h-7 text-xs rounded border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-semibold disabled:opacity-50"
-              data-testid={`stock-adjust-submit-${row.material_code}`}
-            >
-              {saving ? <RefreshCw className="w-3 h-3 animate-spin mx-auto" /> : 'Simpan'}
-            </button>
-          </div>
-        </div>
-      </PopoverContent>
-    </Popover>
+    <FormPopup open={!!row} onClose={onClose} ukuran="pendek" judul="Sesuaikan stok" onSimpan={submit}
+      menyimpan={saving} galat={galat} bisaSimpan={!!delta} testId="stock-adjust-form"
+      keterangan={row ? `${row.material_code} · ${row.location_code || ''} · stok sekarang ${fmtNum(row.qty, 3)} ${row.unit || ''}` : ''}>
+      {row && <>
+        <Isian label="Perubahan qty (+/−)" wajib htmlFor="stock-adjust-delta" petunjuk="Contoh: 10 untuk menambah, -5 untuk mengurangi.">
+          <Input id="stock-adjust-delta" type="number" step="0.001" inputMode="decimal" placeholder="+10 atau -5" value={delta}
+            onChange={e => setDelta(e.target.value)} className="tabular-nums" autoFocus
+            data-testid={`stock-adjust-delta-${row.material_code}`} />
+        </Isian>
+        <Isian label="Alasan" htmlFor="stock-adjust-notes">
+          <Input id="stock-adjust-notes" placeholder="Opsional" value={notes} onChange={e => setNotes(e.target.value)}
+            data-testid={`stock-adjust-notes-${row.material_code}`} />
+        </Isian>
+      </>}
+    </FormPopup>
   );
 }
 
@@ -144,8 +141,10 @@ export default function RahazaStockModule({ token }) {
   // 2026-09-24 keputusan owner: barang master ber-qty 0 ikut tampil secara bawaan
   const [showZero, setShowZero] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [termuat, setTermuat] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
+  const [adjustRow, setAdjustRow] = useState(null);
   const [receiveForm, setReceiveForm] = useState({ material_id: '', location_id: '', qty: '', notes: '' });
   const [transferForm, setTransferForm] = useState({ material_id: '', from_location_id: '', to_location_id: '', qty: '', notes: '' });
   const [saving, setSaving] = useState(false);
@@ -166,9 +165,11 @@ export default function RahazaStockModule({ token }) {
       const normalizedStocks = (Array.isArray(stkRes) ? stkRes : []).map((s, i) => ({
         ...s,
         _key: s.id || `${s.material_id || 'm'}-${s.location_id || 'l'}-${i}`,
+        _status: statusBaris(s),
       }));
-      setStocks(normalizedStocks); setSummary(sumRes); setMovements(mvRes); setReorderAlerts(reorderRes);
-    } finally { setLoading(false); }
+      setStocks(normalizedStocks); setSummary(sumRes);
+      setMovements(Array.isArray(mvRes) ? mvRes : []); setReorderAlerts(Array.isArray(reorderRes) ? reorderRes : []);
+    } finally { setLoading(false); setTermuat(true); }
   }, [token, showZero]);
 
   useEffect(() => {
@@ -253,331 +254,266 @@ export default function RahazaStockModule({ token }) {
     finally { setSaving(false); }
   };
 
-  if (loading) return (<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" /></div>);
+  const nKosong = stocks.filter(s => s.no_stock_row).length;
+  const cat = (t) => summary?.by_category?.[t] || {};
+  const barisTampil = filterLocation ? stocks.filter(s => s.location_id === filterLocation) : stocks;
+
+  const kolomMutasi = [
+    { kunci: 'waktu', label: 'Waktu', hp: 'keterangan', isi: (m) => <span className="text-sm md:whitespace-nowrap">{formatDateTimeID(m.timestamp)}</span> },
+    // 2026-11-02 (K9): mutasi mesin opname tunggal tampil sebagai 'Opname'
+    { kunci: 'jenis', label: 'Jenis', isi: (m) => (m.type === 'opname' ? 'Opname' : (JENIS_MUTASI[m.type] || 'Mutasi')) },
+    { kunci: 'barang', label: 'Barang', hp: 'judul', isi: (m) => <span className="font-medium">{m.material_code}</span> },
+    { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (m) => <span className="tabular-nums md:whitespace-nowrap">{fmtNum(m.qty, 3)} {m.unit || ''}</span> },
+    { kunci: 'dari', label: 'Dari', hp: false, isi: (m) => <span className="text-sm text-muted-foreground">{m.from_location_name || '—'}</span> },
+    { kunci: 'ke', label: 'Ke', hp: false, isi: (m) => <span className="text-sm text-muted-foreground">{m.to_location_name || '—'}</span> },
+    { kunci: 'ref', label: 'Catatan', hp: false, isi: (m) => <span className="block max-w-[14rem] truncate text-sm text-muted-foreground" title={m.notes || m.ref_type || ''}>{m.notes || m.ref_type || '—'}</span> },
+  ];
 
   return (
-    <div className="space-y-5" data-testid="rahaza-stock-page">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Stok Material</h1>
-          <p className="text-muted-foreground text-sm mt-1">Stok bahan, aksesoris, dan produk jadi per Gedung / Zona. Transfer A↔B dan penerimaan dicatat di ledger.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={openTransfer} data-testid="stock-transfer-btn"><ArrowRightLeft className="w-4 h-4 mr-1.5" /> Transfer A↔B</Button>
-          <Button onClick={openReceive} data-testid="stock-receive-btn"><ArrowDown className="w-4 h-4 mr-1.5" /> Penerimaan</Button>
-        </div>
-      </div>
-
-      {/* Summary cards */}
-      {summary && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {['bahan', 'aksesoris', 'fg'].map(t => {
-            const Icon = CAT_ICON[t] || Package;
-            const s = summary.by_category?.[t] || {};
-            return (
-              <GlassPanel key={t} className="p-3" data-testid={`stock-summary-${t}`}>
-                <div className="flex items-center gap-2 mb-1">
-                  <Icon className={`w-4 h-4 ${CAT_COLOR[t]}`} />
-                  <span className="text-xs font-semibold text-muted-foreground uppercase">{CAT_LABEL[t]}</span>
-                </div>
-                <div className="text-xl font-bold text-foreground">{Number(s.total_qty || 0).toFixed(t === 'bahan' ? 2 : 0)}</div>
-                <div className="text-[10px] text-muted-foreground">{s.row_count || 0} baris stok</div>
-              </GlassPanel>
-            );
-          })}
-          <GlassPanel className={`p-3 ${summary.low_stock_count > 0 ? 'border-[hsl(var(--warning)/0.35)] ' : ''}`}>
-            <div className="flex items-center gap-2 mb-1">
-              <AlertTriangle className={`w-4 h-4 ${summary.low_stock_count > 0 ? 'text-[hsl(var(--warning))] ' : 'text-foreground/30'}`} />
-              <span className="text-xs font-semibold text-muted-foreground uppercase">Low Stock</span>
-            </div>
-            <div className={`text-xl font-bold ${summary.low_stock_count > 0 ? 'text-[hsl(var(--warning))] ' : 'text-foreground'}`}>{summary.low_stock_count}</div>
-            <div className="text-[10px] text-muted-foreground">material di bawah min</div>
-          </GlassPanel>
-        </div>
-      )}
-
-      {/* U8 — Reorder Alert Banner */}
-      {reorderAlerts.length > 0 && (
-        <div className="bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.35)]  rounded-xl p-3 flex items-start gap-2" data-testid="reorder-alert-banner">
-          <TriangleAlert size={15} className="text-[hsl(var(--warning))] flex-shrink-0 mt-0.5" />
-          <div>
-            <span className="text-sm font-semibold text-[hsl(var(--warning))] ">{reorderAlerts.length} material perlu reorder</span>
-            <div className="flex flex-wrap gap-1.5 mt-1">
-              {reorderAlerts.map(a => (
-                <span key={a.id} className="text-[10px] bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] px-2 py-0.5 rounded-full border border-[hsl(var(--warning)/0.35)] ">
-                  {a.code} — butuh {a.shortage} {a.unit}
-                </span>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* U5 — Location filter bar + W1 saklar "tampilkan stok 0" */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <MapPin size={14} className="text-foreground/40 flex-shrink-0" />
-        <span className="text-xs text-foreground/40">Filter lokasi:</span>
-        <button
-          onClick={() => setFilterLocation('')}
-          className={`text-xs px-2.5 py-1 rounded-lg border transition-colors ${filterLocation === '' ? 'bg-foreground/[0.15] border-foreground/30 text-foreground' : 'bg-foreground/5 border-foreground/10 text-foreground/50 hover:bg-foreground/10'}`}
-        >
-          Semua
-        </button>
-        {stockFilterLocations.map(l => (
-          <button
-            key={l.id}
-            onClick={() => setFilterLocation(filterLocation === l.id ? '' : l.id)}
-            className={`text-xs px-2.5 py-1 rounded-lg border transition-colors ${filterLocation === l.id ? 'bg-[hsl(var(--primary)/0.15)]  border-[hsl(var(--primary)/0.4)] text-[hsl(var(--primary))] ' : 'bg-foreground/5 border-foreground/10 text-foreground/50 hover:bg-foreground/10'}`}
-            data-testid={`stock-loc-filter-${l.code}`}
-            title={l.name || l.code}
-          >
-            {l.code}
-          </button>
-        ))}
-        {stockFilterLocations.length === 0 && (
-          <span className="text-xs text-foreground/30 italic">belum ada stok berlokasi</span>
-        )}
-        <label
-          className="ml-auto flex items-center gap-2 text-xs text-foreground/70 cursor-pointer select-none"
-          title="Barang master yang belum punya baris stok ikut ditampilkan dengan qty 0 — supaya daftar bisa disamakan dengan Master Item Produk Jadi."
-        >
-          <input
-            type="checkbox"
-            checked={showZero}
-            onChange={e => setShowZero(e.target.checked)}
-            className="h-3.5 w-3.5 accent-[hsl(var(--primary))] cursor-pointer"
-            data-testid="stock-show-zero-toggle"
-          />
+    <PageLayout testId="rahaza-stock-page" title="Stok & pergerakan"
+      subtitle="Stok bahan, aksesoris, dan produk jadi per lokasi. Penerimaan dan pindah lokasi tercatat di buku stok."
+      actions={<>
+        <Button variant="outline" onClick={openTransfer} data-testid="stock-transfer-btn"><ArrowRightLeft />Pindah lokasi</Button>
+        <Button onClick={openReceive} data-testid="stock-receive-btn"><ArrowDown />Penerimaan</Button>
+      </>}
+      filters={<>
+        <SmartNativeSelect value={filterLocation} onChange={e => setFilterLocation(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-52"
+          aria-label="Lokasi" data-testid="stock-loc-filter" searchable={stockFilterLocations.length > 8}>
+          <option value="">Semua lokasi</option>
+          {stockFilterLocations.map(l => <option key={l.id} value={l.id}>{l.name ? `${l.code} · ${l.name}` : l.code}</option>)}
+        </SmartNativeSelect>
+        <label className="inline-flex h-9 cursor-pointer select-none items-center gap-2 text-sm text-foreground/80"
+          title="Barang master yang belum punya baris stok ikut ditampilkan dengan qty 0 — supaya daftar bisa disamakan dengan Master Item Produk jadi.">
+          <Checkbox checked={showZero} onCheckedChange={v => setShowZero(v === true)} data-testid="stock-show-zero-toggle"
+            aria-label="Tampilkan juga yang stoknya 0" />
           Tampilkan juga yang stoknya 0
-          {showZero && (
-            <span className="text-[10px] text-foreground/50" data-testid="stock-zero-count">
-              ({stocks.filter(s => s.no_stock_row).length} barang belum punya stok)
-            </span>
+          {showZero && termuat && (
+            <span className="text-xs text-muted-foreground" data-testid="stock-zero-count">({fmtNum(nKosong, 0)} barang belum punya stok)</span>
           )}
         </label>
-      </div>
+      </>}
+      tools={
+        <Button variant="outline" size="icon" onClick={fetchAll} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="stock-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      }
+      summary={<>
+        {summary && (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {['bahan', 'aksesoris'].map(t => (
+              <StatTile key={t} testId={`stock-summary-${t}`} label={`${CAT_LABEL[t]} · baris stok`}
+                value={fmtNum(cat(t).row_count, 0)}
+                sub="Barang × lokasi; qty beda satuan." />
+            ))}
+            <StatTile testId="stock-summary-fg" label="Produk jadi · baris stok" value={fmtNum(cat('fg').row_count, 0)}
+              sub={`Total ${fmtNum(cat('fg').total_qty, 0)} pcs.`}
+              subTone={Number(cat('fg').total_qty || 0) < 0 ? 'danger' : undefined} />
+            {/* U8 — dulu juga kotak berisi deretan 43 pil kode barang; rinciannya ada di Alert & Reorder (tabel + unduh). */}
+            <StatTile testId="stock-summary-low" label="Di bawah ambang stok" value={fmtNum(reorderAlerts.length, 0)}
+              accent={reorderAlerts.length > 0 ? 'warning' : 'default'}
+              hint="Buka rincian"
+              onClick={() => {
+                if (window.location.hash === '#warehouse-smart') window.location.hash = '';
+                window.location.hash = '#warehouse-smart';
+              }} />
+          </div>
+        )}
+      </>}>
+      {!termuat ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat stok…</p>
+      ) : (
+        <DataTable
+          tableId="stock"
+          loading={loading}
+          rowKey="_key"
+          rows={barisTampil}
+          searchFields={['material_code', 'material_name', 'location_code', 'location_name',
+                         'category_name', 'color_name', 'option_name', 'size_code']}
+          filters={[
+            { key: 'material_type', label: 'Jenis', type: 'select',
+              accessor: (r) => typeToCategory(r.material_type),
+              options: [
+                { value: 'bahan', label: 'Bahan' },
+                { value: 'aksesoris', label: 'Aksesoris' },
+                { value: 'fg', label: 'Produk jadi' },
+              ] },
+            // W1 — filter identitas barang. Pilihannya dibangun dari data yang benar-benar
+            // ada (bukan daftar hardcode) supaya tidak ada opsi kosong yang menyesatkan.
+            { key: 'category_name', label: 'Kategori', type: 'select',
+              accessor: (r) => r.category_name || '—',
+              options: uniqOptions(stocks, 'category_name') },
+            { key: 'color_name', label: 'Warna', type: 'select',
+              accessor: (r) => r.color_name || '—',
+              options: uniqOptions(stocks, 'color_name') },
+            { key: 'option_name', label: 'Opsi', type: 'select',
+              accessor: (r) => r.option_name || '—',
+              options: uniqOptions(stocks, 'option_name') },
+            { key: 'status', label: 'Status', type: 'select',
+              accessor: (r) => r._status,
+              options: Object.entries(STATUS).map(([value, s]) => ({ value, label: s.label })) },
+          ]}
+          columns={[
+            { key: 'material_code', label: 'Barang', sortable: true,
+              render: (r) => (
+                <div className="min-w-0 max-w-[18rem]">
+                  <div className="font-medium">{r.material_code}</div>
+                  <div className="text-xs text-muted-foreground">{r.material_name}</div>
+                </div>
+              ) },
+            { key: 'category_name', label: 'Kategori', sortable: true,
+              accessor: (r) => r.category_name || '',
+              render: (r) => <span className="text-sm">{r.category_name || '—'}</span> },
+            { key: 'color_name', label: 'Warna', sortable: true,
+              accessor: (r) => r.color_name || '',
+              render: (r) => (
+                <span className="text-sm">
+                  {r.color_name || '—'}
+                  {r.size_code ? <span className="text-muted-foreground"> · {r.size_code}</span> : null}
+                </span>
+              ) },
+            { key: 'option_name', label: 'Opsi', sortable: true,
+              accessor: (r) => r.option_name || '',
+              render: (r) => <span className="text-sm text-muted-foreground">{r.option_name || '—'}</span> },
+            { key: 'material_type', label: 'Jenis', sortable: true,
+              accessor: (r) => CAT_LABEL[typeToCategory(r.material_type)] || '',
+              render: (r) => <span className="text-sm">{CAT_LABEL[typeToCategory(r.material_type)] || '—'}</span> },
+            { key: 'location', label: 'Lokasi', sortable: true,
+              accessor: (r) => r.location_code ? `${r.location_code} · ${r.location_name || ''}` : '',
+              render: (r) => r.location_code
+                ? <span className="text-sm">{r.location_code} · {r.location_name}</span>
+                : <span className="text-sm text-muted-foreground">Tanpa lokasi (stok 0)</span> },
+            { key: 'qty', label: 'Qty', align: 'right', sortable: true,
+              render: (r) => (
+                <span className={`tabular-nums font-medium whitespace-nowrap ${Number(r.qty) < 0 ? 'text-[hsl(var(--danger-text))]' : ''}`}>
+                  {fmtNum(r.qty, r.unit === 'kg' ? 3 : 2)} <span className="text-xs font-normal text-muted-foreground">{r.unit}</span>
+                </span>) },
+            { key: 'min_stock', label: 'Stok minimum', align: 'right', sortable: true,
+              accessor: (r) => minStok(r),
+              render: (r) => <span className="tabular-nums text-muted-foreground">{minStok(r) ? fmtNum(minStok(r)) : '—'}</span> },
+            { key: 'status', label: 'Status',
+              accessor: (r) => STATUS[r._status]?.label || '',
+              render: (r) => <StatusBadge status={r._status} label={STATUS[r._status]?.label} tone={STATUS[r._status]?.tone} /> },
+            { key: '_adjust', label: 'Sesuaikan', align: 'right',
+              accessor: () => '',
+              render: (r) => (
+                // Baris tanpa lokasi (belum punya baris stok) tidak bisa disesuaikan:
+                // penyesuaian WAJIB menyebut lokasi. Pakai "Penerimaan" untuk memulai.
+                r.location_id
+                  ? <Button size="icon-sm" variant="ghost" onClick={() => setAdjustRow(r)}
+                      title="Sesuaikan stok ±" aria-label="Sesuaikan stok" data-testid={`stock-adjust-btn-${r.material_code}`}>
+                      <PlusCircle />
+                    </Button>
+                  : <span className="text-xs text-muted-foreground" title="Penyesuaian butuh lokasi. Mulai dari Penerimaan.">—</span>
+              ) },
+          ]}
+          emptyTitle="Belum ada stok"
+          emptyDescription='Mulai dari "Penerimaan" untuk menambah stok ke lokasi.'
+          emptyIcon={Package}
+          exportFilename={`stok-material-${todayWIB()}.csv`}
+        />
+      )}
 
-      {/* Stock table — DataTable v2 */}
-      <DataTable
-        tableId="stock"
-        loading={loading}
-        rowKey="_key"
-        rows={filterLocation ? stocks.filter(s => s.location_id === filterLocation) : stocks}
-        searchFields={['material_code', 'material_name', 'location_code', 'location_name',
-                       'category_name', 'color_name', 'option_name', 'size_code']}
-        filters={[
-          { key: 'material_type', label: 'Jenis', type: 'select',
-            accessor: (r) => typeToCategory(r.material_type),
-            options: [
-              { value: 'bahan', label: 'Bahan' },
-              { value: 'aksesoris', label: 'Aksesoris' },
-              { value: 'fg', label: 'Produk Jadi' },
-            ] },
-          // W1 — filter identitas barang. Pilihannya dibangun dari data yang benar-benar
-          // ada (bukan daftar hardcode) supaya tidak ada opsi kosong yang menyesatkan.
-          { key: 'category_name', label: 'Kategori', type: 'select',
-            accessor: (r) => r.category_name || '—',
-            options: uniqOptions(stocks, 'category_name') },
-          { key: 'color_name', label: 'Warna', type: 'select',
-            accessor: (r) => r.color_name || '—',
-            options: uniqOptions(stocks, 'color_name') },
-          { key: 'option_name', label: 'Opsi', type: 'select',
-            accessor: (r) => r.option_name || '—',
-            options: uniqOptions(stocks, 'option_name') },
-          { key: 'status', label: 'Status', type: 'select',
-            accessor: (r) => r.below_min ? 'low' : 'ok',
-            options: [
-              { value: 'ok', label: 'OK' },
-              { value: 'low', label: 'Low Stock' },
-            ] },
-        ]}
-        columns={[
-          { key: 'material_code', label: 'Barang', sortable: true,
-            render: (r) => (
-              <div>
-                <div className="tabular-nums text-xs">{r.material_code}</div>
-                <div className="text-[11px] text-foreground/60">{r.material_name}</div>
-              </div>
-            ) },
-          { key: 'category_name', label: 'Kategori', sortable: true,
-            accessor: (r) => r.category_name || '',
-            render: (r) => <span className="text-foreground/80 text-xs">{r.category_name || '—'}</span> },
-          { key: 'color_name', label: 'Warna', sortable: true,
-            accessor: (r) => r.color_name || '',
-            render: (r) => (
-              <span className="text-foreground/80 text-xs">
-                {r.color_name || '—'}
-                {r.size_code ? <span className="text-foreground/40"> · {r.size_code}</span> : null}
-              </span>
-            ) },
-          { key: 'option_name', label: 'Opsi', sortable: true,
-            accessor: (r) => r.option_name || '',
-            render: (r) => <span className="text-foreground/70 text-xs">{r.option_name || '—'}</span> },
-          { key: 'material_type', label: 'Jenis', sortable: true,
-            render: (r) => <span className={`text-xs ${CAT_COLOR[typeToCategory(r.material_type)]}`}>{CAT_LABEL[typeToCategory(r.material_type)]}</span> },
-          { key: 'location', label: 'Lokasi', sortable: true,
-            accessor: (r) => r.location_code ? `${r.location_code} · ${r.location_name || ''}` : '',
-            render: (r) => r.location_code
-              ? <span className="text-foreground/70">{r.location_code} · {r.location_name}</span>
-              : <span className="text-foreground/40 italic text-xs">belum ada baris stok</span> },
-          { key: 'qty', label: 'Qty', align: 'right', sortable: true,
-            render: (r) => <span className="tabular-nums font-semibold">{Number(r.qty).toFixed(r.unit === 'kg' ? 3 : 2)} <span className="text-foreground/60 text-xs">{r.unit}</span></span> },
-          { key: 'min_stock', label: 'Min Stok', align: 'right', sortable: true,
-            render: (r) => <span className="text-foreground/60">{r.min_stock_qty || r.min_stock || '—'}</span> },
-          { key: 'status', label: 'Status',
-            accessor: (r) => r.below_min ? 'low' : 'ok',
-            render: (r) => r.below_min
-              ? <span className="text-[hsl(var(--warning))] text-xs font-medium">Low</span>
-              : <span className="text-[hsl(var(--success))] text-xs font-medium">OK</span> },
-          { key: '_adjust', label: 'Adjust', align: 'right',
-            render: (r) => (
-              // Baris tanpa lokasi (belum punya baris stok) tidak bisa di-adjust:
-              // penyesuaian WAJIB menyebut lokasi. Pakai "Penerimaan" untuk memulai.
-              r.location_id
-                ? <QuickAdjustPopover row={r} token={token} onDone={fetchAll} />
-                : <span className="text-[10px] text-foreground/40">pakai Penerimaan</span>
-            ) },
-        ]}
-        emptyTitle="Belum ada stok"
-        emptyDescription='Mulai dari "Penerimaan" untuk menambah stok ke lokasi.'
-        emptyIcon={Package}
-        exportFilename={`material-stock-${todayWIB()}.csv`}
-      />
-
-      {/* Movements ledger */}
-      <GlassCard className="p-0 overflow-hidden">
-        <div className="px-4 py-2 border-b border-[var(--glass-border)] bg-[var(--glass-bg)] flex items-center gap-2">
-          <Clock className="w-3.5 h-3.5 text-muted-foreground" />
-          <span className="text-xs font-semibold text-foreground">Movement Ledger (30 terakhir)</span>
+      {/* Mutasi terakhir (buku stok) */}
+      <GlassCard className="space-y-3 p-4" data-testid="stock-movements">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <p className="text-base font-semibold text-foreground">Mutasi terakhir</p>
+            <p className="text-sm text-muted-foreground">30 mutasi stok terbaru dari buku stok.</p>
+          </div>
+          <TombolUnduh namaBerkas="mutasi-stok-terakhir" namaLembar="Mutasi" baris={movements} testId="stock-movements-unduh"
+            kolom={[
+              { label: 'Waktu', nilai: (m) => formatDateTimeID(m.timestamp) },
+              { label: 'Jenis', nilai: (m) => JENIS_MUTASI[m.type] || 'Mutasi' },
+              { label: 'Kode barang', nilai: (m) => m.material_code },
+              { label: 'Qty', nilai: (m) => Number(m.qty || 0) },
+              { label: 'Satuan', nilai: (m) => m.unit || '' },
+              { label: 'Dari', nilai: (m) => m.from_location_name || '' },
+              { label: 'Ke', nilai: (m) => m.to_location_name || '' },
+              { label: 'Catatan', nilai: (m) => m.notes || m.ref_type || '' },
+            ]} />
         </div>
-        <div className="overflow-x-auto max-h-80">
-          <table className="w-full text-xs">
-            <thead className="bg-[var(--glass-bg)] sticky top-0">
-              <tr className="text-left text-[10px] text-muted-foreground">
-                <th className="px-3 py-2">Waktu</th>
-                <th className="px-3 py-2">Tipe</th>
-                <th className="px-3 py-2">Material</th>
-                <th className="px-3 py-2 text-right">Qty</th>
-                <th className="px-3 py-2">Dari</th>
-                <th className="px-3 py-2">Ke</th>
-                <th className="px-3 py-2">Ref</th>
-              </tr>
-            </thead>
-            <tbody>
-              {movements.length === 0 ? (
-                <tr><td colSpan={7} className="text-center py-6 text-muted-foreground">Belum ada movement.</td></tr>
-              ) : movements.map((m, idx) => (
-                <tr key={m.id || `mv-${idx}`} className="border-t border-[var(--glass-border)]">
-                  <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">{new Date(m.timestamp).toLocaleString('id-ID', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
-                  <td className="px-3 py-1.5">
-                    {m.type === 'receive'  && <span className="text-[hsl(var(--success))] ">Receive</span>}
-                    {m.type === 'issue'    && <span className="text-[hsl(var(--destructive))] ">Issue</span>}
-                    {m.type === 'transfer' && <span className="text-primary">Transfer</span>}
-                    {m.type === 'adjust'   && <span className="text-[hsl(var(--warning))] ">Adjust</span>}
-                    {/* 2026-11-02 (K9): mutasi mesin opname tunggal */}
-                    {m.type === 'opname'   && <span className="text-[hsl(var(--primary))] ">Opname</span>}
-                  </td>
-                  <td className="px-3 py-1.5 text-foreground">{m.material_code}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums font-semibold text-foreground">{Number(m.qty).toFixed(3)} {m.unit || ''}</td>
-                  <td className="px-3 py-1.5 text-muted-foreground">{m.from_location_name || '—'}</td>
-                  <td className="px-3 py-1.5 text-muted-foreground">{m.to_location_name || '—'}</td>
-                  <td className="px-3 py-1.5 text-muted-foreground truncate max-w-[160px]">{m.notes || m.ref_type || ''}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <TabelData kolom={kolomMutasi} baris={movements} kunci={(m) => m.id || `${m.timestamp}-${m.material_code}`}
+          testId="stock-movements-tabel"
+          kosong={<EmptyState title="Belum ada mutasi" description="Mutasi tercatat saat barang diterima, dipindah, dikeluarkan, atau disesuaikan." />} />
       </GlassCard>
 
-      {/* Receive modal */}
-      {receiveOpen && (
-        <Modal onClose={() => setReceiveOpen(false)} title="Penerimaan Material" size="md">
-          <div className="space-y-3" data-testid="receive-form">
-            {formError && <div className="bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.35)]  rounded-lg p-3 text-sm text-[hsl(var(--destructive))] ">{formError}</div>}
-            <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Material <span className="text-[hsl(var(--destructive))] ">*</span></label>
-              <SmartNativeSelect value={receiveForm.material_id} onChange={e => setReceiveForm({...receiveForm, material_id: e.target.value})} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="receive-material">
-                <option value="">— Pilih —</option>
-                {materials.map(m => <option key={m.id} value={m.id}>{`${m.code} · ${m.name} (${m.unit})`}</option>)}
-              </SmartNativeSelect>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Lokasi Tujuan <span className="text-[hsl(var(--destructive))] ">*</span></label>
-              <SmartNativeSelect value={receiveForm.location_id} onChange={e => setReceiveForm({...receiveForm, location_id: e.target.value})} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="receive-location">
-                <option value="">— Pilih —</option>
-                {locations.map(l => <option key={l.id} value={l.id}>{`${l.code} · ${l.name}`}</option>)}
-              </SmartNativeSelect>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Qty <span className="text-[hsl(var(--destructive))] ">*</span></label>
-              <GlassInput type="number" step="0.001" value={receiveForm.qty} onChange={e => setReceiveForm({...receiveForm, qty: e.target.value})} placeholder="0" data-testid="receive-qty" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Catatan</label>
-              <GlassInput value={receiveForm.notes} onChange={e => setReceiveForm({...receiveForm, notes: e.target.value})} placeholder="No. surat jalan, supplier, dsb" />
-            </div>
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <Button variant="ghost" onClick={() => setReceiveOpen(false)} disabled={saving}>Batal</Button>
-              <Button onClick={doReceive} disabled={saving} data-testid="receive-submit">{saving ? 'Menyimpan...' : 'Simpan Penerimaan'}</Button>
-            </div>
-          </div>
-        </Modal>
-      )}
+      {/* Penerimaan (FormPopup pendek) */}
+      <FormPopup open={receiveOpen} onClose={() => setReceiveOpen(false)} ukuran="pendek" judul="Penerimaan material"
+        keterangan="Menambah stok barang ke lokasi tujuan." onSimpan={doReceive} menyimpan={saving} galat={formError}
+        labelSimpan="Simpan penerimaan" testId="receive-form">
+        <Isian label="Material" wajib htmlFor="receive-material">
+          <SmartNativeSelect id="receive-material" value={receiveForm.material_id} onChange={e => setReceiveForm({ ...receiveForm, material_id: e.target.value })}
+            className="w-full" data-testid="receive-material">
+            <option value="">Pilih material</option>
+            {materials.map(m => <option key={m.id} value={m.id}>{`${m.code} · ${m.name} (${m.unit})`}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Lokasi tujuan" wajib htmlFor="receive-location">
+          <SmartNativeSelect id="receive-location" value={receiveForm.location_id} onChange={e => setReceiveForm({ ...receiveForm, location_id: e.target.value })}
+            className="w-full" data-testid="receive-location">
+            <option value="">Pilih lokasi</option>
+            {locations.map(l => <option key={l.id} value={l.id}>{`${l.code} · ${l.name}`}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Qty" wajib htmlFor="receive-qty">
+          <Input id="receive-qty" type="number" step="0.001" inputMode="decimal" value={receiveForm.qty}
+            onChange={e => setReceiveForm({ ...receiveForm, qty: e.target.value })} placeholder="0" data-testid="receive-qty" />
+        </Isian>
+        <Isian label="Catatan" htmlFor="receive-notes">
+          <Input id="receive-notes" value={receiveForm.notes} onChange={e => setReceiveForm({ ...receiveForm, notes: e.target.value })}
+            placeholder="No. surat jalan, pemasok, dsb." />
+        </Isian>
+      </FormPopup>
 
-      {/* Transfer modal */}
-      {transferOpen && (
-        <Modal onClose={() => setTransferOpen(false)} title="Transfer Antar Gudang" size="md">
-          <div className="space-y-3" data-testid="transfer-form">
-            {formError && <div className="bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.35)]  rounded-lg p-3 text-sm text-[hsl(var(--destructive))] ">{formError}</div>}
-            <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Material <span className="text-[hsl(var(--destructive))] ">*</span></label>
-              <SmartNativeSelect value={transferForm.material_id} onChange={e => setTransferForm({...transferForm, material_id: e.target.value})} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="transfer-material">
-                <option value="">{fromHasRows && !transferMaterials.length ? '— Tidak ada stok di lokasi asal —' : '— Pilih —'}</option>
-                {transferMaterials.map(m => <option key={m.id} value={m.id}>{`${m.code} · ${m.name} (${m.unit})`}</option>)}
-              </SmartNativeSelect>
-              {transferAvail != null && (
-                <p className="text-[11px] text-muted-foreground mt-1" data-testid="transfer-available">
-                  Stok di lokasi asal: <span className="tabular-nums font-medium text-foreground">{transferAvail.toLocaleString('id-ID')}</span>
-                </p>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-foreground/70 mb-1">Dari Lokasi <span className="text-[hsl(var(--destructive))] ">*</span></label>
-                <SmartNativeSelect value={transferForm.from_location_id} onChange={e => {
-                  const v = e.target.value;
-                  // material yang sudah dipilih tetap bila masih ada stoknya di lokasi asal baru
-                  const rows = stocks.some(s => s.location_id === v);
-                  setTransferForm(f => ({ ...f, from_location_id: v,
-                    material_id: f.material_id && (!rows || stockAt(f.material_id, v) > 0) ? f.material_id : '' }));
-                }} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="transfer-from">
-                  <option value="">— Pilih —</option>
-                  {locations.map(l => <option key={l.id} value={l.id}>{`${l.code} · ${l.name}`}</option>)}
-                </SmartNativeSelect>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-foreground/70 mb-1">Ke Lokasi <span className="text-[hsl(var(--destructive))] ">*</span></label>
-                <SmartNativeSelect value={transferForm.to_location_id} onChange={e => setTransferForm({...transferForm, to_location_id: e.target.value})} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="transfer-to">
-                  <option value="">— Pilih —</option>
-                  {locations.filter(l => l.id !== transferForm.from_location_id).map(l => <option key={l.id} value={l.id}>{`${l.code} · ${l.name}`}</option>)}
-                </SmartNativeSelect>
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Qty <span className="text-[hsl(var(--destructive))] ">*</span></label>
-              <GlassInput type="number" step="0.001" value={transferForm.qty} onChange={e => setTransferForm({...transferForm, qty: e.target.value})} placeholder="0" data-testid="transfer-qty" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Catatan</label>
-              <GlassInput value={transferForm.notes} onChange={e => setTransferForm({...transferForm, notes: e.target.value})} placeholder="Opsional" />
-            </div>
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <Button variant="ghost" onClick={() => setTransferOpen(false)} disabled={saving}>Batal</Button>
-              <Button onClick={doTransfer} disabled={saving} data-testid="transfer-submit">{saving ? 'Menyimpan...' : 'Konfirmasi Transfer'}</Button>
-            </div>
-          </div>
-        </Modal>
-      )}
-    </div>
+      {/* Pindah lokasi (FormPopup pendek) */}
+      <FormPopup open={transferOpen} onClose={() => setTransferOpen(false)} ukuran="pendek" judul="Pindah lokasi"
+        keterangan="Memindahkan stok dari satu lokasi gudang ke lokasi lain." onSimpan={doTransfer} menyimpan={saving}
+        galat={formError} labelSimpan="Pindahkan" testId="transfer-form">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Dari lokasi" wajib htmlFor="transfer-from">
+            <SmartNativeSelect id="transfer-from" value={transferForm.from_location_id} onChange={e => {
+              const v = e.target.value;
+              // material yang sudah dipilih tetap bila masih ada stoknya di lokasi asal baru
+              const rows = stocks.some(s => s.location_id === v);
+              setTransferForm(f => ({ ...f, from_location_id: v,
+                material_id: f.material_id && (!rows || stockAt(f.material_id, v) > 0) ? f.material_id : '' }));
+            }} className="w-full" data-testid="transfer-from">
+              <option value="">Pilih lokasi</option>
+              {locations.map(l => <option key={l.id} value={l.id}>{`${l.code} · ${l.name}`}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Ke lokasi" wajib htmlFor="transfer-to">
+            <SmartNativeSelect id="transfer-to" value={transferForm.to_location_id} onChange={e => setTransferForm({ ...transferForm, to_location_id: e.target.value })}
+              className="w-full" data-testid="transfer-to">
+              <option value="">Pilih lokasi</option>
+              {locations.filter(l => l.id !== transferForm.from_location_id).map(l => <option key={l.id} value={l.id}>{`${l.code} · ${l.name}`}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+        </div>
+        <Isian label="Material" wajib htmlFor="transfer-material"
+          petunjuk={transferAvail != null ? undefined : 'Pilih lokasi asal dulu agar daftar hanya berisi barang yang ada stoknya.'}>
+          <SmartNativeSelect id="transfer-material" value={transferForm.material_id} onChange={e => setTransferForm({ ...transferForm, material_id: e.target.value })}
+            className="w-full" data-testid="transfer-material">
+            <option value="">{fromHasRows && !transferMaterials.length ? 'Tidak ada stok di lokasi asal' : 'Pilih material'}</option>
+            {transferMaterials.map(m => <option key={m.id} value={m.id}>{`${m.code} · ${m.name} (${m.unit})`}</option>)}
+          </SmartNativeSelect>
+          {transferAvail != null && (
+            <p className="text-xs text-muted-foreground" data-testid="transfer-available">
+              Stok di lokasi asal: <span className="tabular-nums font-medium text-foreground">{transferAvail.toLocaleString('id-ID')}</span>
+            </p>
+          )}
+        </Isian>
+        <Isian label="Qty" wajib htmlFor="transfer-qty">
+          <Input id="transfer-qty" type="number" step="0.001" inputMode="decimal" value={transferForm.qty}
+            onChange={e => setTransferForm({ ...transferForm, qty: e.target.value })} placeholder="0" data-testid="transfer-qty" />
+        </Isian>
+        <Isian label="Catatan" htmlFor="transfer-notes">
+          <Input id="transfer-notes" value={transferForm.notes} onChange={e => setTransferForm({ ...transferForm, notes: e.target.value })} placeholder="Opsional" />
+        </Isian>
+      </FormPopup>
+
+      <QuickAdjustPopover row={adjustRow} token={token} onClose={() => setAdjustRow(null)} onDone={fetchAll} />
+    </PageLayout>
   );
 }

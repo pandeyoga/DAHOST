@@ -1,36 +1,50 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  AlertTriangle, Search, RefreshCw, Save, Wand2, CheckCircle2, Info, Eraser,
-  ShoppingCart, Layers, ChevronDown, ChevronRight,
+  AlertTriangle, Search, RefreshCw, Save, Wand2, Info, Eraser, ShoppingCart, Layers,
 } from 'lucide-react';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { formatDateID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 
 const STATUS_META = {
-  critical:     { label: 'Kritis',        cls: 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.25)]' },
-  low:          { label: 'Perlu pesan',   cls: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.25)]' },
-  ok:           { label: 'Aman',          cls: 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.25)]' },
-  no_threshold: { label: 'Belum diambang', cls: 'bg-muted/30 text-muted-foreground border-border' },
+  critical:     { label: 'Kritis',          tone: 'danger' },
+  low:          { label: 'Perlu pesan',     tone: 'warning' },
+  ok:           { label: 'Aman',            tone: 'success' },
+  no_threshold: { label: 'Belum berambang', tone: 'muted' },
 };
+const JENIS_LABEL = {
+  yarn: 'Bahan', fabric: 'Bahan', kain: 'Bahan', benang: 'Bahan', interlining: 'Bahan',
+  accessory: 'Aksesoris', packaging: 'Aksesoris', fg: 'Produk jadi',
+};
+const jenisLabel = (t) => JENIS_LABEL[t] || 'Lainnya';
 
 const num = (v) => (v === '' || v == null ? 0 : Number(v) || 0);
 const fmt = (v) => Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
+const angka = (v) => Number(v || 0).toLocaleString('id-ID');
 
 // Empat DASAR pengisian massal. Semuanya punya pijakan nyata; tidak ada yang menebak.
 const MODES = [
   {
     key: 'purchase_lot',
     label: 'Dari lot pembelian',
-    hint: 'rata-rata satu kali beli dari penerimaan nyata 12 bulan terakhir \u00d7 pengali',
-    param: { key: 'lot_multiplier', label: 'Pengali lot', def: '0.5', step: '0.1', suffix: '\u00d7' },
+    hint: 'rata-rata satu kali beli dari penerimaan nyata 12 bulan terakhir × pengali',
+    param: { key: 'lot_multiplier', label: 'Pengali lot', def: '0.5', step: '0.1', suffix: '×' },
   },
   {
     key: 'usage_30d',
     label: 'Dari pemakaian 30 hari',
-    hint: 'pakai per hari \u00d7 masa tunggu pembelian \u2014 hanya untuk barang yang pernah dipakai',
+    hint: 'pakai per hari × masa tunggu pembelian — hanya untuk barang yang pernah dipakai',
     param: null,
   },
   {
@@ -42,22 +56,28 @@ const MODES = [
   {
     key: 'fixed',
     label: 'Angka yang saya tentukan',
-    hint: 'satu angka untuk seluruh seleksi \u2014 cocok per jenis / per kategori',
+    hint: 'satu angka untuk seluruh seleksi — cocok per jenis / per kategori',
     param: null,
   },
 ];
+const labelDasar = (k) => (MODES.find((m) => m.key === k) || {}).label || 'Dasar lain';
 
 /**
- * Ambang Stok \u2014 layar tempat pemilik MENGISI ambang minimum & titik pesan ulang.
+ * Ambang Stok — layar tempat pemilik MENGISI ambang minimum & titik pesan ulang.
  *
  * Sesi #29 (W3) membuat layar ini karena alert stok tidak pernah berbunyi: 333
  * dari 333 material tidak punya ambang. Sesi #33 menutup lubang yang tersisa:
  * usulan lama HANYA lahir dari pemakaian 30 hari, dan terukur di data nyata
- * hanya **5 dari 335 material** yang punya pemakaian \u21d2 tombol "Pakai semua
+ * hanya **5 dari 335 material** yang punya pemakaian ⇒ tombol "Pakai semua
  * usulan" secara struktural cuma bisa mengisi 5 baris, 330 sisanya harus
  * diketik satu per satu. Sekarang ada EMPAT dasar pengisian massal, semuanya
  * bisa dipratinjau lebih dulu, bisa dikosongkan lagi, dan DASARNYA disimpan
  * bersama siapa & kapan supaya tidak ada angka anonim.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout; panel "Isi ambang massal" (form) → FormPopup panjang; kartu
+ * angka → StatTile; status → StatusBadge; unduh Excel/CSV; konfirmasi kosongkan → confirmDialog.
+ * Perbaikan data: daftar dulu memakai limit=1000 padahal ada 1.726 barang aktif — 726 barang tidak pernah
+ * tampil dan label "semua hasil filter (1000 baris)" keliru. Kini limit 5000 + halaman 50 baris di layar.
  */
 export default function StockThresholdsModule({ token, onNavigate }) {
   const [rows, setRows] = useState([]);
@@ -68,8 +88,9 @@ export default function StockThresholdsModule({ token, onNavigate }) {
   const [filterType, setFilterType] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [search, setSearch] = useState('');
+  const [cari, setCari] = useState('');
   const [selected, setSelected] = useState(() => new Set());
-  const [bulkOpen, setBulkOpen] = useState(true);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [mode, setMode] = useState('purchase_lot');
   const [params, setParams] = useState({ lot_multiplier: '0.5', percent: '20',
     min_stock_qty: '', reorder_point: '' });
@@ -87,10 +108,16 @@ export default function StockThresholdsModule({ token, onNavigate }) {
     window.location.hash = `#${moduleId}`;
   }, [onNavigate]);
 
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(cari), 300);
+    return () => clearTimeout(t);
+  }, [cari]);
+
   const fetchRows = useCallback(async () => {
     setLoading(true);
     try {
-      const p = new URLSearchParams({ status: filterStatus, limit: 1000 });
+      // 1.726 barang aktif di data nyata — limit 1000 dulu memotong 726 barang tanpa tanda.
+      const p = new URLSearchParams({ status: filterStatus, limit: 5000 });
       if (filterType) p.set('type', filterType);
       if (search.trim()) p.set('search', search.trim());
       const r = await fetch(`/api/rahaza/stock-thresholds?${p}`, { headers });
@@ -120,7 +147,7 @@ export default function StockThresholdsModule({ token, onNavigate }) {
   const applySuggestion = (r) => {
     const s = r.suggestion || {};
     if (s.no_usage_data) {
-      toast.error(`${r.code} belum ada pemakaian 30 hari terakhir — pakai dasar "Dari lot pembelian" pada panel Isi Massal.`);
+      toast.error(`${r.code} belum ada pemakaian 30 hari terakhir — pakai dasar "Dari lot pembelian" pada Isi ambang massal.`);
       return;
     }
     setEdits(prev => ({
@@ -148,10 +175,10 @@ export default function StockThresholdsModule({ token, onNavigate }) {
     setEdits(next);
     if (n) {
       toast.success(`${n} usulan disiapkan — klik Simpan untuk menerapkan.`
-        + (skipped ? ` ${skipped} barang tidak punya pemakaian 30 hari; pakai panel Isi Ambang Massal (dasar "Dari lot pembelian") untuk barang-barang itu.` : ''));
+        + (skipped ? ` ${skipped} barang tidak punya pemakaian 30 hari; pakai Isi ambang massal (dasar "Dari lot pembelian") untuk barang-barang itu.` : ''));
     } else {
       toast.error(`Tidak ada barang dengan pemakaian nyata di daftar ini (${skipped} barang dilewati) — `
-        + 'pakai panel Isi Ambang Massal dengan dasar "Dari lot pembelian" atau "Persen stok sekarang".');
+        + 'pakai Isi ambang massal dengan dasar "Dari lot pembelian" atau "Persen stok sekarang".');
     }
   };
 
@@ -192,8 +219,8 @@ export default function StockThresholdsModule({ token, onNavigate }) {
   }, [selected, filterType, search, filterStatus]);
 
   const scopeLabel = selected.size
-    ? `${selected.size} baris tercentang`
-    : `semua hasil filter (${rows.length} baris)`;
+    ? `${angka(selected.size)} baris tercentang`
+    : `semua hasil saringan (${angka(rows.length)} baris)`;
 
   const activeMode = MODES.find(m => m.key === mode) || MODES[0];
 
@@ -239,7 +266,12 @@ export default function StockThresholdsModule({ token, onNavigate }) {
       toast.error('Centang dulu baris yang ambangnya mau dikosongkan.');
       return;
     }
-    if (!window.confirm(`Kosongkan ambang ${selected.size} barang? Alert untuk barang itu akan berhenti berbunyi.`)) return;
+    const ok = await confirmDialog({
+      title: `Kosongkan ambang ${selected.size} barang?`,
+      body: 'Peringatan stok untuk barang itu akan berhenti berbunyi.',
+      confirmLabel: 'Kosongkan', danger: true,
+    });
+    if (!ok) return;
     setBusyBulk(true);
     try {
       const r = await fetch('/api/rahaza/stock-thresholds/bulk-clear', {
@@ -263,344 +295,320 @@ export default function StockThresholdsModule({ token, onNavigate }) {
   const toggleAll = () => setSelected(prev =>
     prev.size === rows.length ? new Set() : new Set(rows.map(r => r.material_id)));
 
+  const pg = useClientPagination(rows, 50);
+  const semuaTercentang = rows.length > 0 && selected.size === rows.length;
+
   return (
-    <div className="space-y-4" data-testid="stock-thresholds-page">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h2 className="text-lg font-bold text-foreground">Ambang Stok — Minimum &amp; Titik Pesan Ulang</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Alert stok &amp; Daftar Belanja Mingguan hanya bekerja untuk barang yang ambangnya sudah
-            diisi. Setiap ambang menyimpan DASARNYA, siapa yang mengisi, dan kapan.
-          </p>
+    <PageLayout testId="stock-thresholds-page" title="Ambang stok"
+      subtitle="Minimum stok dan titik pesan ulang; alert dan Belanja Mingguan hanya bekerja untuk barang berambang."
+      actions={<>
+        <Button variant="outline" onClick={() => setBulkOpen(true)} data-testid="threshold-bulk-toggle">
+          <Layers />Isi ambang massal
+        </Button>
+        <Button variant="outline" onClick={applyAllSuggestions} data-testid="threshold-apply-all">
+          <Wand2 />Pakai semua usulan
+        </Button>
+        <Button variant="success" onClick={save} disabled={saving || !dirtyItems.length} data-testid="threshold-save">
+          <Save />{saving ? 'Menyimpan…' : `Simpan${dirtyItems.length ? ` (${dirtyItems.length})` : ''}`}
+        </Button>
+      </>}
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={cari} onChange={e => setCari(e.target.value)} placeholder="Cari kode atau nama"
+            className="pl-8" data-testid="threshold-search" />
         </div>
-        <div className="flex items-center gap-2">
-          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="ghost" onClick={fetchRows} disabled={loading} data-testid="threshold-refresh">
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>
-          <Button variant="outline" onClick={() => goto('wh-shopping-list')}
-            data-testid="threshold-goto-shopping">
-            <ShoppingCart className="w-4 h-4 mr-1.5" /> Daftar Belanja Mingguan
-          </Button>
-          <Button variant="outline" onClick={applyAllSuggestions} data-testid="threshold-apply-all">
-            <Wand2 className="w-4 h-4 mr-1.5" /> Pakai semua usulan
-          </Button>
-          <Button onClick={save} disabled={saving || !dirtyItems.length} data-testid="threshold-save">
-            <Save className="w-4 h-4 mr-1.5" /> {saving ? 'Menyimpan…' : `Simpan${dirtyItems.length ? ` (${dirtyItems.length})` : ''}`}
-          </Button>
-        </div>
-      </div>
-
-      {summary && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="threshold-summary">
-          {[
-            { k: 'with_threshold', label: 'Sudah punya ambang', v: summary.with_threshold, tone: 'text-[hsl(var(--success))] ' },
-            { k: 'missing_threshold', label: 'Belum diisi', v: summary.missing_threshold, tone: 'text-[hsl(var(--warning))] ' },
-            { k: 'critical', label: 'Stok kritis', v: summary.critical, tone: 'text-[hsl(var(--destructive))]' },
-            { k: 'low', label: 'Perlu pesan ulang', v: summary.low, tone: 'text-[hsl(var(--warning))]' },
-          ].map(c => (
-            <GlassCard key={c.k} className="p-3">
-              <div className={`text-2xl font-bold ${c.tone}`} data-testid={`threshold-stat-${c.k}`}>{c.v}</div>
-              <div className="text-xs text-muted-foreground mt-0.5">{c.label} · dari {summary.total_materials} material</div>
-            </GlassCard>
-          ))}
-        </div>
-      )}
-
-      {summary && summary.with_threshold === 0 && (
-        <div className="flex items-start gap-2 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.25)] rounded-lg px-4 py-3" data-testid="threshold-empty-warning">
-          <AlertTriangle className="w-4 h-4 text-[hsl(var(--warning))] shrink-0 mt-0.5" />
-          <div className="text-sm text-[hsl(var(--warning))] ">
-            <strong>Belum ada satu pun ambang stok yang diisi</strong> — itulah sebabnya menu
-            Alert &amp; Reorder selalu kosong dan Daftar Belanja Mingguan kosong. Pakai panel
-            <em> Isi Ambang Massal</em> di bawah: mulai dari <em>lot pembelian</em> (paling banyak
-            barang yang tercakup), lalu sesuaikan yang perlu.
-          </div>
-        </div>
-      )}
-
-      {/* ── PANEL ISI MASSAL ───────────────────────────────────────────────── */}
-      <GlassCard className="p-0 overflow-hidden" data-testid="threshold-bulk-panel">
-        <button onClick={() => setBulkOpen(v => !v)}
-          className="w-full flex items-center justify-between px-4 py-3 hover:bg-[var(--glass-bg-hover)] transition-colors"
-          data-testid="threshold-bulk-toggle">
-          <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Layers className="w-4 h-4 text-primary" /> Isi Ambang Massal
-            <Badge variant="secondary" className="text-[10px]">{scopeLabel}</Badge>
-          </span>
-          {bulkOpen ? <ChevronDown className="w-4 h-4 text-muted-foreground" />
-            : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
-        </button>
-
-        {bulkOpen && (
-          <div className="px-4 pb-4 space-y-3 border-t border-[var(--glass-border)] pt-3">
-            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2">
-              {MODES.map(m => (
-                <button key={m.key} onClick={() => { setMode(m.key); setPreview(null); }}
-                  className={`text-left rounded-lg border px-3 py-2 transition-colors ${
-                    mode === m.key
-                      ? 'border-primary bg-primary/10'
-                      : 'border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)]'}`}
-                  data-testid={`threshold-mode-${m.key}`}>
-                  <div className={`text-sm font-medium ${mode === m.key ? 'text-primary' : 'text-foreground'}`}>{m.label}</div>
-                  <div className="text-[10px] text-muted-foreground mt-0.5 leading-snug">{m.hint}</div>
-                </button>
-              ))}
-            </div>
-
-            <div className="flex items-end gap-3 flex-wrap">
-              {activeMode.param && (
-                <div>
-                  <label className="text-xs text-muted-foreground">{activeMode.param.label}</label>
-                  <div className="flex items-center gap-1 mt-1">
-                    <GlassInput type="number" step={activeMode.param.step} min="0"
-                      value={params[activeMode.param.key]}
-                      onChange={e => setParams(p => ({ ...p, [activeMode.param.key]: e.target.value }))}
-                      className="h-9 w-24 text-sm" data-testid={`threshold-param-${activeMode.param.key}`} />
-                    <span className="text-xs text-muted-foreground">{activeMode.param.suffix}</span>
-                  </div>
-                </div>
-              )}
-              {mode === 'fixed' && (
-                <>
-                  <div>
-                    <label className="text-xs text-muted-foreground">Minimum stok</label>
-                    <GlassInput type="number" step="0.01" min="0" value={params.min_stock_qty}
-                      onChange={e => setParams(p => ({ ...p, min_stock_qty: e.target.value }))}
-                      placeholder="0" className="h-9 w-28 text-sm mt-1"
-                      data-testid="threshold-param-min" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">Titik pesan ulang</label>
-                    <GlassInput type="number" step="0.01" min="0" value={params.reorder_point}
-                      onChange={e => setParams(p => ({ ...p, reorder_point: e.target.value }))}
-                      placeholder="0" className="h-9 w-28 text-sm mt-1"
-                      data-testid="threshold-param-rp" />
-                  </div>
-                </>
-              )}
-              <Button variant="outline" onClick={() => runBulk(true)} disabled={busyBulk}
-                data-testid="threshold-bulk-preview">
-                <Wand2 className="w-4 h-4 mr-1.5" /> Pratinjau
-              </Button>
-              <Button onClick={() => runBulk(false)} disabled={busyBulk}
-                data-testid="threshold-bulk-apply">
-                Terapkan ke {scopeLabel}
-              </Button>
-              <Button variant="ghost" onClick={clearSelected} disabled={busyBulk || !selected.size}
-                data-testid="threshold-bulk-clear">
-                <Eraser className="w-4 h-4 mr-1.5" /> Kosongkan terpilih
-              </Button>
-            </div>
-
-            <div className="text-xs text-muted-foreground">
-              Centang baris untuk membatasi ke barang tertentu; tanpa centang, penerapan mengikuti
-              filter di bawah. Pratinjau tidak menulis apa pun.
-            </div>
-
-            {preview && (
-              <div className="rounded-lg border border-[var(--glass-border)] overflow-hidden"
-                data-testid="threshold-preview">
-                <div className="px-3 py-2 bg-[var(--glass-bg)] text-xs flex flex-wrap items-center gap-x-4 gap-y-1">
-                  <span className="text-foreground font-semibold">
-                    {preview.dry_run ? 'Pratinjau' : 'Diterapkan'} · dasar {preview.basis_label}
-                  </span>
-                  <span className="text-muted-foreground">diperiksa {preview.scanned} barang</span>
-                  <span className="text-[hsl(var(--success))] "
-                    data-testid="threshold-preview-eligible">
-                    {preview.dry_run ? `${preview.eligible} akan diisi` : `${preview.applied} terisi`}
-                  </span>
-                  {preview.skipped_count > 0 && (
-                    <span className="text-[hsl(var(--warning))] "
-                      data-testid="threshold-preview-skipped">
-                      {preview.skipped_count} dilewati
-                    </span>
-                  )}
-                </div>
-                {!!(preview.preview || []).length && (
-                  <div className="overflow-x-auto max-h-56">
-                    <table className="w-full text-xs">
-                      <thead className="bg-[var(--glass-bg)] sticky top-0">
-                        <tr className="text-left text-muted-foreground">
-                          <th className="px-3 py-2">Kode</th>
-                          <th className="px-3 py-2 text-right">Stok</th>
-                          <th className="px-3 py-2 text-right">Min sekarang</th>
-                          <th className="px-3 py-2 text-right">Min baru</th>
-                          <th className="px-3 py-2 text-right">Pesan ulang baru</th>
-                          <th className="px-3 py-2">Dasar angkanya</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {preview.preview.slice(0, 30).map(p => (
-                          <tr key={p.material_id} className="border-t border-[var(--glass-border)]"
-                            data-testid={`threshold-preview-row-${p.code}`}>
-                            <td className="px-3 py-1.5 tabular-nums text-foreground">{p.code}</td>
-                            <td className="px-3 py-1.5 text-right tabular-nums text-foreground">{fmt(p.onhand)} {p.unit}</td>
-                            <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">{fmt(p.current_min)}</td>
-                            <td className="px-3 py-1.5 text-right tabular-nums font-semibold text-foreground">{fmt(p.min_stock_qty)}</td>
-                            <td className="px-3 py-1.5 text-right tabular-nums text-foreground">{fmt(p.reorder_point)}</td>
-                            <td className="px-3 py-1.5 text-muted-foreground">{p.basis_note}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {preview.preview.length > 30 && (
-                      <div className="px-3 py-1.5 text-[10px] text-muted-foreground">
-                        …dan {preview.preview.length - 30} baris lain (semua akan ikut diterapkan)
-                      </div>
-                    )}
-                  </div>
-                )}
-                {!!(preview.skipped || []).length && (
-                  <div className="px-3 py-2 text-[11px] text-muted-foreground border-t border-[var(--glass-border)]">
-                    <strong className="text-[hsl(var(--warning))] ">Dilewati:</strong>{' '}
-                    {preview.skipped.slice(0, 4).map(s => `${s.code} (${s.reason})`).join(' · ')}
-                    {preview.skipped.length > 4 && ` · dan ${preview.skipped.length - 4} lainnya`}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </GlassCard>
-
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="relative flex-1 min-w-[180px]">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <GlassInput value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Cari kode / nama material…" className="pl-8 h-9 text-sm"
-            data-testid="threshold-search" />
-        </div>
-        <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)}
-          className="w-44 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-          data-testid="threshold-filter-type">
+        <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-40"
+          searchable={false} aria-label="Jenis" data-testid="threshold-filter-type">
           <option value="">Semua jenis</option>
           <option value="bahan">Bahan</option>
           <option value="aksesoris">Aksesoris</option>
-          <option value="fg">Produk Jadi</option>
+          <option value="fg">Produk jadi</option>
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-          className="w-44 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-          data-testid="threshold-filter-status">
+        <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-52"
+          searchable={false} aria-label="Status ambang" data-testid="threshold-filter-status">
           <option value="all">Semua status</option>
           <option value="missing">Belum ada ambang</option>
           <option value="set">Sudah ada ambang</option>
           <option value="low">Sedang rendah / kritis</option>
         </SmartNativeSelect>
-        {!!rows.length && (
-          <Button variant="outline" size="sm" onClick={toggleAll} data-testid="threshold-select-all">
-            {selected.size === rows.length ? 'Batalkan semua' : `Centang semua (${rows.length})`}
-          </Button>
-        )}
-      </div>
-
-      <GlassCard className="p-0 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm" data-testid="threshold-table">
-            <thead className="bg-[var(--glass-bg)]">
-              <tr className="text-left text-xs text-muted-foreground">
-                <th className="px-3 py-3 w-8"></th>
-                <th className="px-3 py-3">Kode</th>
-                <th className="px-3 py-3">Nama</th>
-                <th className="px-3 py-3 text-right">Stok</th>
-                <th className="px-3 py-3 text-right">Min Stok</th>
-                <th className="px-3 py-3 text-right">Titik Pesan Ulang</th>
-                <th className="px-3 py-3">Dasar</th>
-                <th className="px-3 py-3">Usulan (pemakaian nyata)</th>
-                <th className="px-3 py-3">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan={9} className="text-center py-12 text-muted-foreground">Memuat…</td></tr>
-              ) : rows.length === 0 ? (
-                <tr><td colSpan={9} className="text-center py-12 text-muted-foreground">Tidak ada material pada filter ini.</td></tr>
-              ) : rows.map(r => {
-                const s = r.suggestion || {};
-                const meta = STATUS_META[r.status] || STATUS_META.no_threshold;
-                const dirty = !!edits[r.material_id];
-                const isSel = selected.has(r.material_id);
-                return (
-                  <tr key={r.material_id}
-                    className={`border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] ${dirty ? 'bg-primary/5' : ''} ${isSel ? 'bg-primary/[0.07]' : ''}`}
-                    data-testid={`threshold-row-${r.code}`}>
-                    <td className="px-3 py-2">
-                      <input type="checkbox" checked={isSel} onChange={() => toggle(r.material_id)}
-                        data-testid={`threshold-check-${r.code}`} />
-                    </td>
-                    <td className="px-3 py-2 tabular-nums text-xs text-foreground whitespace-nowrap">{r.code}</td>
-                    <td className="px-3 py-2 text-foreground">
-                      {r.name}
-                      <span className="block text-[10px] text-muted-foreground">{r.type} · {r.unit}</span>
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-xs text-foreground whitespace-nowrap">
-                      {fmt(r.onhand)} {r.unit}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <GlassInput type="number" step="0.01" min="0" value={valueOf(r, 'min_stock_qty')}
-                        onChange={e => setEdit(r.material_id, 'min_stock_qty', e.target.value)}
-                        placeholder="0" className="h-8 w-24 text-right text-xs"
-                        data-testid={`threshold-min-${r.code}`} />
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <GlassInput type="number" step="0.01" min="0" value={valueOf(r, 'reorder_point')}
-                        onChange={e => setEdit(r.material_id, 'reorder_point', e.target.value)}
-                        placeholder="0" className="h-8 w-24 text-right text-xs"
-                        data-testid={`threshold-rp-${r.code}`} />
-                    </td>
-                    <td className="px-3 py-2 text-xs" data-testid={`threshold-basis-${r.code}`}>
-                      {r.threshold_basis ? (
-                        <>
-                          <Badge variant="secondary" className="text-[10px]">
-                            {(MODES.find(m => m.key === r.threshold_basis) || {}).label || r.threshold_basis}
-                          </Badge>
-                          <span className="block text-[10px] text-muted-foreground mt-0.5 line-clamp-2"
-                            title={r.threshold_basis_note}>
-                            {r.threshold_basis_note}
-                          </span>
-                          {r.threshold_set_by && (
-                            <span className="block text-[10px] text-muted-foreground">
-                              oleh {r.threshold_set_by} · {String(r.threshold_set_at).slice(0, 10)}
-                            </span>
-                          )}
-                        </>
-                      ) : (
-                        <span className="text-[11px] text-muted-foreground">
-                          {r.has_threshold ? 'diisi sebelum jejak dasar dicatat' : 'belum diisi'}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-xs">
-                      {s.no_usage_data ? (
-                        <span className="text-muted-foreground inline-flex items-center gap-1">
-                          <Info className="w-3 h-3" /> belum ada pemakaian 30 hari
-                        </span>
-                      ) : (
-                        <button onClick={() => applySuggestion(r)}
-                          className="text-primary hover:underline text-left"
-                          data-testid={`threshold-use-suggestion-${r.code}`}>
-                          min <strong>{s.suggested_min_stock}</strong> · pesan ulang <strong>{s.suggested_reorder_point}</strong>
-                          <span className="block text-[10px] text-muted-foreground">
-                            pakai {s.avg_daily_consumption}/hari × {s.lead_time_days} hari · {s.movements_30d} transaksi — klik untuk pakai
-                          </span>
-                        </button>
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${meta.cls}`}
-                        data-testid={`threshold-status-${r.code}`}>
-                        {r.status === 'ok' ? <CheckCircle2 className="w-3 h-3" /> : r.status === 'no_threshold' ? null : <AlertTriangle className="w-3 h-3" />}
-                        {meta.label}
-                      </span>
-                      {r.shortage > 0 && (
-                        <span className="block text-[10px] text-muted-foreground mt-0.5">kurang {fmt(r.shortage)} {r.unit}</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+        <Button variant="link" onClick={() => goto('wh-shopping-list')} data-testid="threshold-goto-shopping">
+          <ShoppingCart />Belanja mingguan
+        </Button>
+        <TombolUnduh namaBerkas="ambang-stok" namaLembar="Ambang stok" baris={rows} testId="threshold-unduh"
+          kolom={[
+            { label: 'Kode', nilai: (r) => r.code },
+            { label: 'Nama', nilai: (r) => r.name },
+            { label: 'Jenis', nilai: (r) => jenisLabel(r.type) },
+            { label: 'Satuan', nilai: (r) => r.unit },
+            { label: 'Stok', nilai: (r) => Number(r.onhand || 0) },
+            { label: 'Min stok', nilai: (r) => Number(r.min_stock_qty || 0) },
+            { label: 'Titik pesan ulang', nilai: (r) => Number(r.reorder_point || 0) },
+            { label: 'Dasar', nilai: (r) => (r.threshold_basis ? labelDasar(r.threshold_basis) : '') },
+            { label: 'Keterangan dasar', nilai: (r) => r.threshold_basis_note || '' },
+            { label: 'Diisi oleh', nilai: (r) => r.threshold_set_by || '' },
+            { label: 'Tanggal diisi', nilai: (r) => (r.threshold_set_at ? formatDateID(r.threshold_set_at) : '') },
+            { label: 'Status', nilai: (r) => (STATUS_META[r.status] || STATUS_META.no_threshold).label },
+            { label: 'Kekurangan', nilai: (r) => Number(r.shortage || 0) },
+          ]} />
+        <Button variant="outline" size="icon" onClick={fetchRows} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="threshold-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
         </div>
-      </GlassCard>
-    </div>
+      </>}
+      summary={summary ? (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="threshold-summary">
+            <StatTile label="Sudah punya ambang" value={angka(summary.with_threshold)} testId="threshold-stat-with_threshold"
+              sub={`dari ${angka(summary.total_materials)} barang aktif`} />
+            <StatTile label="Belum diisi" value={angka(summary.missing_threshold)} testId="threshold-stat-missing_threshold"
+              accent={summary.missing_threshold ? 'warning' : 'default'} sub="belum bisa dinilai perlu dibeli atau tidak" />
+            <StatTile label="Stok kritis" value={angka(summary.critical)} testId="threshold-stat-critical"
+              accent={summary.critical ? 'danger' : 'default'} sub="stok di bawah minimum" />
+            <StatTile label="Perlu pesan ulang" value={angka(summary.low)} testId="threshold-stat-low"
+              accent={summary.low ? 'warning' : 'default'} sub="di bawah titik pesan ulang, belum kritis" />
+          </div>
+          {summary.with_threshold === 0 && (
+            <Notice tone="warning" icon={AlertTriangle} testId="threshold-empty-warning"
+              title="Belum ada satu pun ambang stok yang diisi">
+              Itulah sebabnya Alert &amp; Reorder dan Belanja Mingguan kosong. Pakai Isi ambang massal: mulai dari
+              lot pembelian (paling banyak barang yang tercakup), lalu sesuaikan yang perlu.
+            </Notice>
+          )}
+        </div>
+      ) : null}
+      footer={pg.total > pg.pageSize ? (
+        <PaginationLite page={pg.page} totalPages={pg.totalPages} total={pg.total} pageSize={pg.pageSize} onPageChange={pg.setPage} />
+      ) : null}>
+      {loading && rows.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat ambang stok…</p>
+      ) : rows.length === 0 ? (
+        <EmptyState title="Tidak ada barang pada saringan ini" description="Ubah jenis, status, atau kata pencarian." />
+      ) : (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            Isi minimum dan titik pesan ulang langsung di tabel, lalu klik Simpan. Centang baris untuk membatasi Isi ambang
+            massal atau mengosongkan ambang.{selected.size ? ` ${angka(selected.size)} baris tercentang.` : ''}
+          </p>
+          <div className="overflow-x-auto">
+            <Table data-testid="threshold-table">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox checked={semuaTercentang} onCheckedChange={toggleAll} aria-label="Centang semua baris"
+                      data-testid="threshold-select-all" />
+                  </TableHead>
+                  <TableHead>Barang</TableHead>
+                  <TableHead className="text-right">Stok</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Min stok</TableHead>
+                  <TableHead className="text-right">Titik pesan ulang</TableHead>
+                  <TableHead>Usulan (pemakaian nyata)</TableHead>
+                  <TableHead>Dasar</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pg.paged.map(r => {
+                  const s = r.suggestion || {};
+                  const meta = STATUS_META[r.status] || STATUS_META.no_threshold;
+                  const dirty = !!edits[r.material_id];
+                  const isSel = selected.has(r.material_id);
+                  return (
+                    <TableRow key={r.material_id} className={dirty || isSel ? 'bg-primary/5' : undefined}
+                      data-testid={`threshold-row-${r.code}`}>
+                      <TableCell>
+                        <Checkbox checked={isSel} onCheckedChange={() => toggle(r.material_id)} aria-label={`Centang ${r.code}`}
+                          data-testid={`threshold-check-${r.code}`} />
+                      </TableCell>
+                      <TableCell className="min-w-[12rem]">
+                        <div className="tabular-nums text-xs text-muted-foreground">{r.code}</div>
+                        <div className="text-foreground">{r.name}</div>
+                        <div className="text-xs text-muted-foreground">{jenisLabel(r.type)} · {r.unit}</div>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums whitespace-nowrap">
+                        {fmt(r.onhand)} {r.unit}
+                      </TableCell>
+                      <TableCell>
+                        <span data-testid={`threshold-status-${r.code}`}>
+                          <StatusBadge status={r.status} label={meta.label} tone={meta.tone} />
+                        </span>
+                        {r.shortage > 0 && (
+                          <span className="mt-0.5 block text-xs text-muted-foreground">kurang {fmt(r.shortage)} {r.unit}</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Input type="number" step="0.01" min="0" value={valueOf(r, 'min_stock_qty')}
+                          onChange={e => setEdit(r.material_id, 'min_stock_qty', e.target.value)}
+                          placeholder="0" className="ml-auto h-8 w-24 text-right" aria-label={`Min stok ${r.code}`}
+                          data-testid={`threshold-min-${r.code}`} />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Input type="number" step="0.01" min="0" value={valueOf(r, 'reorder_point')}
+                          onChange={e => setEdit(r.material_id, 'reorder_point', e.target.value)}
+                          placeholder="0" className="ml-auto h-8 w-24 text-right" aria-label={`Titik pesan ulang ${r.code}`}
+                          data-testid={`threshold-rp-${r.code}`} />
+                      </TableCell>
+                      <TableCell className="min-w-[12rem] text-xs">
+                        {s.no_usage_data ? (
+                          <span className="inline-flex items-center gap-1 text-muted-foreground">
+                            <Info className="h-3 w-3" /> belum ada pemakaian 30 hari
+                          </span>
+                        ) : (
+                          <div>
+                            <Button variant="link" size="sm" className="h-auto p-0" onClick={() => applySuggestion(r)}
+                              data-testid={`threshold-use-suggestion-${r.code}`}>
+                              Pakai: min {s.suggested_min_stock} · pesan ulang {s.suggested_reorder_point}
+                            </Button>
+                            <span className="block text-muted-foreground">
+                              {s.avg_daily_consumption}/hari × {s.lead_time_days} hari · {s.movements_30d} transaksi
+                            </span>
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="min-w-[10rem] text-xs" data-testid={`threshold-basis-${r.code}`}>
+                        {r.threshold_basis ? (
+                          <>
+                            <StatusBadge status="dasar" label={labelDasar(r.threshold_basis)} tone="default" />
+                            {r.threshold_basis_note && (
+                              <span className="mt-0.5 block line-clamp-2 text-muted-foreground" title={r.threshold_basis_note}>
+                                {r.threshold_basis_note}
+                              </span>
+                            )}
+                            {r.threshold_set_by && (
+                              <span className="block text-muted-foreground">
+                                oleh {r.threshold_set_by} · {formatDateID(r.threshold_set_at)}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-muted-foreground">
+                            {r.has_threshold ? 'diisi sebelum jejak dasar dicatat' : 'belum diisi'}
+                          </span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
+
+      {/* ── ISI AMBANG MASSAL (form → popup) ─────────────────────────────────── */}
+      <FormPopup open={bulkOpen} onClose={() => { setBulkOpen(false); setPreview(null); }} ukuran="panjang"
+        judul="Isi ambang massal" testId="threshold-bulk-panel"
+        keterangan={`Berlaku untuk ${scopeLabel}. Tanpa centang, penerapan mengikuti saringan di halaman. Pratinjau tidak menulis apa pun.`}
+        onSimpan={() => runBulk(false)} menyimpan={busyBulk} labelSimpan="Terapkan"
+        aksiKiri={<>
+          <Button type="button" variant="outline" onClick={clearSelected} disabled={busyBulk || !selected.size}
+            data-testid="threshold-bulk-clear"><Eraser />Kosongkan terpilih</Button>
+          <Button type="button" variant="outline" onClick={() => runBulk(true)} disabled={busyBulk}
+            data-testid="threshold-bulk-preview"><Wand2 />Pratinjau</Button>
+        </>}>
+        <Isian label="Dasar pengisian">
+          <RadioGroup value={mode} onValueChange={(v) => { setMode(v); setPreview(null); }} className="gap-3">
+            {MODES.map(m => (
+              <label key={m.key} htmlFor={`threshold-mode-${m.key}`} className="flex cursor-pointer items-start gap-2"
+                data-testid={`threshold-mode-${m.key}`}>
+                <RadioGroupItem id={`threshold-mode-${m.key}`} value={m.key} className="mt-0.5" />
+                <span>
+                  <span className="block text-sm font-medium text-foreground">{m.label}</span>
+                  <span className="block text-xs text-muted-foreground">{m.hint}</span>
+                </span>
+              </label>
+            ))}
+          </RadioGroup>
+        </Isian>
+
+        {(activeMode.param || mode === 'fixed') && (
+          <div className="grid gap-4 sm:grid-cols-3">
+            {activeMode.param && (
+              <Isian label={`${activeMode.param.label} (${activeMode.param.suffix})`} htmlFor="threshold-param">
+                <Input id="threshold-param" type="number" step={activeMode.param.step} min="0"
+                  value={params[activeMode.param.key]}
+                  onChange={e => setParams(p => ({ ...p, [activeMode.param.key]: e.target.value }))}
+                  data-testid={`threshold-param-${activeMode.param.key}`} />
+              </Isian>
+            )}
+            {mode === 'fixed' && (
+              <>
+                <Isian label="Minimum stok" htmlFor="threshold-param-min">
+                  <Input id="threshold-param-min" type="number" step="0.01" min="0" value={params.min_stock_qty}
+                    onChange={e => setParams(p => ({ ...p, min_stock_qty: e.target.value }))}
+                    placeholder="0" data-testid="threshold-param-min" />
+                </Isian>
+                <Isian label="Titik pesan ulang" htmlFor="threshold-param-rp">
+                  <Input id="threshold-param-rp" type="number" step="0.01" min="0" value={params.reorder_point}
+                    onChange={e => setParams(p => ({ ...p, reorder_point: e.target.value }))}
+                    placeholder="0" data-testid="threshold-param-rp" />
+                </Isian>
+              </>
+            )}
+          </div>
+        )}
+
+        {preview && (
+          <div className="space-y-2" data-testid="threshold-preview">
+            <p className="text-sm">
+              <span className="font-medium text-foreground">
+                {preview.dry_run ? 'Pratinjau' : 'Diterapkan'} · dasar {preview.basis_label}
+              </span>
+              <span className="text-muted-foreground"> · diperiksa {preview.scanned} barang · </span>
+              <span className="text-[hsl(var(--success-text))]" data-testid="threshold-preview-eligible">
+                {preview.dry_run ? `${preview.eligible} akan diisi` : `${preview.applied} terisi`}
+              </span>
+              {preview.skipped_count > 0 && (
+                <span className="text-[hsl(var(--warning-text))]" data-testid="threshold-preview-skipped">
+                  {' '}· {preview.skipped_count} dilewati
+                </span>
+              )}
+            </p>
+            {!!(preview.preview || []).length && (
+              <div className="max-h-56 overflow-auto rounded-md border border-[var(--glass-border)]">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Kode</TableHead>
+                      <TableHead className="text-right">Stok</TableHead>
+                      <TableHead className="text-right">Min sekarang</TableHead>
+                      <TableHead className="text-right">Min baru</TableHead>
+                      <TableHead className="text-right">Pesan ulang baru</TableHead>
+                      <TableHead>Dasar angkanya</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {preview.preview.slice(0, 30).map(p => (
+                      <TableRow key={p.material_id} data-testid={`threshold-preview-row-${p.code}`}>
+                        <TableCell className="tabular-nums">{p.code}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmt(p.onhand)} {p.unit}</TableCell>
+                        <TableCell className="text-right tabular-nums text-muted-foreground">{fmt(p.current_min)}</TableCell>
+                        <TableCell className="text-right tabular-nums font-medium">{fmt(p.min_stock_qty)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmt(p.reorder_point)}</TableCell>
+                        <TableCell className="text-muted-foreground">{p.basis_note}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+            {(preview.preview || []).length > 30 && (
+              <p className="text-xs text-muted-foreground">
+                …dan {preview.preview.length - 30} baris lain (semua akan ikut diterapkan)
+              </p>
+            )}
+            {!!(preview.skipped || []).length && (
+              <p className="text-xs text-muted-foreground">
+                <span className="font-medium text-[hsl(var(--warning-text))]">Dilewati:</span>{' '}
+                {preview.skipped.slice(0, 4).map(s => `${s.code} (${s.reason})`).join(' · ')}
+                {preview.skipped.length > 4 && ` · dan ${preview.skipped.length - 4} lainnya`}
+              </p>
+            )}
+          </div>
+        )}
+      </FormPopup>
+    </PageLayout>
   );
 }

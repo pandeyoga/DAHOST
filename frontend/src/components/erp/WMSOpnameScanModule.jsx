@@ -8,6 +8,10 @@
  * tidak tampil; baris belum dihitung ≠ 0) → ajukan (konfirmasi "anggap 0") → supervisor melihat
  * selisih (hitung − stok sistem saat dihitung, tanpa kunci) → approve: saldo ditimpa, penempatan
  * bin diperbarui, satu jurnal per sesi. Scan memakai scanner bersama (wedge + kamera kontinu).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): daftar sesi = PageLayout + tabel + unduh, form sesi baru = FormPopup pendek (dulu panel
+ * di atas daftar), status = StatusBadge, kartu = StatTile, konfirmasi tolak = confirmDialog (dulu window.prompt),
+ * arsip mesin lama tidak lagi menampilkan JSON mentah. Layar kerja hitung tetap di halaman (pemindai & kamera, HP).
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
@@ -16,10 +20,18 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { IconButton } from './IconButton';
-import { Notice, EmptyState } from './moduleAtoms';
+import { Notice, EmptyState, StatTile, StatusBadge } from './moduleAtoms';
+import PageLayout from './layout/PageLayout';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { BarisDetail } from '@/components/ui/detail-popup';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Textarea } from '@/components/ui/textarea';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { formatDateTimeID } from '@/lib/format';
 import {
-  ScanLine, Plus, Check, X, ClipboardList, MapPin, AlertTriangle, PackageCheck, ArrowLeft,
-  RefreshCw, ShieldCheck, ListChecks, Boxes, Printer, EyeOff, Archive, Minus,
+  ScanLine, Plus, X, ClipboardList, MapPin, AlertTriangle, PackageCheck, ArrowLeft,
+  RefreshCw, ShieldCheck, Boxes, Printer, EyeOff, Minus,
 } from 'lucide-react';
 import useUomOptions from '@/hooks/useUomOptions';
 import { UomConversionHint, baseUnitOf } from './uom/UomPicker';
@@ -31,12 +43,8 @@ const API = process.env.REACT_APP_BACKEND_URL || '';
 const fmtNum = (v) => (v === null || v === undefined ? '—' : Number(v).toLocaleString('id-ID', { maximumFractionDigits: 4 }));
 const fmtRp = (v) => 'Rp ' + Math.round(v || 0).toLocaleString('id-ID');
 const STATUS_BADGE = {
-  counting: 'bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.2)]',
-  submitted: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.2)]',
-  approving: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.2)]',
-  approved: 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.2)]',
-  rejected: 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.2)]',
-  cancelled: 'bg-muted text-muted-foreground border-[var(--glass-border)]',
+  counting: { tone: 'primary' }, submitted: { tone: 'warning' }, approving: { tone: 'warning' },
+  approved: { tone: 'success' }, rejected: { tone: 'danger' }, cancelled: { tone: 'muted' },
 };
 const STATUS_LABEL = {
   counting: 'Menghitung', submitted: 'Menunggu persetujuan', approving: 'Diproses', approved: 'Disetujui',
@@ -44,11 +52,10 @@ const STATUS_LABEL = {
 };
 const KIND_OPTS = [['bahan', 'Kain / bahan'], ['aksesoris', 'Aksesoris'], ['fg', 'Barang jadi']];
 const LINE_STATUS = {
-  belum: ['Belum dihitung', 'bg-muted text-muted-foreground border-[var(--glass-border)]'],
-  dihitung: ['Dihitung', 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.2)]'],
-  nol: ['Anggap 0', 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.2)]'],
+  belum: ['Belum dihitung', 'muted'],
+  dihitung: ['Dihitung', 'success'],
+  nol: ['Anggap 0', 'warning'],
 };
-const selectCls = 'w-full border border-[var(--glass-border)] bg-[var(--input-surface)] rounded-lg px-3 py-2 text-sm text-foreground';
 
 export default function WMSOpnameScanModule({ token, kind = '' }) {
   const [sessions, setSessions] = useState([]);
@@ -228,7 +235,12 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
 
   const doAction = async (action, extra = {}) => {
     let notes = '';
-    if (action === 'reject') { notes = window.prompt('Alasan penolakan:') || ''; if (!notes) return; }
+    if (action === 'reject') {
+      const alasan = await confirmDialog({ title: `Tolak sesi ${sess.session_no}?`, confirmLabel: 'Tolak', danger: true,
+        input: { label: 'Alasan penolakan' } });
+      notes = typeof alasan === 'string' ? alasan : '';
+      if (!notes) return;
+    }
     setBusy(true);
     try {
       const [r, d] = await post(action, { session_id: sess.id, notes, ...extra });
@@ -263,130 +275,148 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
   const banner = message && (
     <Notice tone={message.type === 'success' ? 'success' : 'danger'} title={message.text} testId="opname-message" />
   );
+  const lencana = (st, testId) => {
+    const b = STATUS_BADGE[st] || { tone: 'muted' };
+    return <StatusBadge status={st} label={STATUS_LABEL[st] || 'Lainnya'} tone={b.tone} testId={testId} />;
+  };
 
   // ── DAFTAR ──
   if (!view) {
+    const kolomSesi = [
+      { kunci: 'no', label: 'No. sesi', hp: 'judul', isi: (s) => (
+        <span className="inline-flex flex-wrap items-center gap-1.5 font-medium" data-testid={`opname-session-${s.session_no}`}>
+          {s.session_no}
+          {s.archived && <StatusBadge status="arsip" label="Arsip" tone="muted" />}
+          {s.level === 'rak' && <StatusBadge status="rak" label="Rak" tone="muted" />}
+        </span>) },
+      { kunci: 'cakupan', label: 'Cakupan', hp: 'keterangan', isi: (s) => <span className="text-sm">{s.scope_label || '—'}</span> },
+      { kunci: 'dibuat', label: 'Dibuat', isi: (s) => <span className="text-sm md:whitespace-nowrap">{formatDateTimeID(s.created_at)}</span> },
+      { kunci: 'jurnal', label: 'Jurnal', hp: false, isi: (s) => <span className="text-sm">{s.je_number || '—'}</span> },
+      { kunci: 'status', label: 'Status', isi: (s) => lencana(s.status) },
+    ];
     return (
-      <div className="space-y-4" data-testid="wms-opname-scan-module">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">{kind === 'aksesoris' ? 'Stok opname aksesoris' : 'Sesi opname'}</h1>
-            <p className="text-muted-foreground text-sm">Hitung stok fisik per lokasi; transaksi tetap jalan dan selisih dibukukan setelah disetujui.</p>
-          </div>
-          <div className="flex gap-2">
-            <IconButton label="Muat ulang" onClick={loadSessions} data-testid="opname-refresh"><RefreshCw className="w-4 h-4 text-muted-foreground" /></IconButton>
-            <Button onClick={() => setShowNew((v) => !v)} data-testid="opname-new-btn"><Plus className="w-4 h-4" /> Opname baru</Button>
-          </div>
-        </div>
-        {banner}
+      <PageLayout testId="wms-opname-scan-module" title={kind === 'aksesoris' ? 'Stok opname aksesoris' : 'Sesi opname'}
+        subtitle="Hitung stok fisik per lokasi; transaksi tetap jalan dan selisih dibukukan setelah disetujui."
+        actions={<Button onClick={() => setShowNew(true)} data-testid="opname-new-btn"><Plus /> Opname baru</Button>}
+        tools={<>
+          <TombolUnduh namaBerkas={kind === 'aksesoris' ? 'sesi-opname-aksesoris' : 'sesi-opname'} namaLembar="Sesi opname"
+            baris={sessions} testId="opname-unduh" kolom={[
+              { label: 'No. sesi', nilai: (s) => s.session_no },
+              { label: 'Cakupan', nilai: (s) => s.scope_label || '' },
+              { label: 'Level', nilai: (s) => (s.level === 'rak' ? 'Rak' : 'Lokasi') },
+              { label: 'Dibuat', nilai: (s) => formatDateTimeID(s.created_at) },
+              { label: 'Jurnal', nilai: (s) => s.je_number || '' },
+              { label: 'Status', nilai: (s) => STATUS_LABEL[s.status] || '' },
+              { label: 'Arsip', nilai: (s) => (s.archived ? 'Ya' : '') },
+            ]} />
+          <Button variant="outline" size="icon" onClick={loadSessions} title="Muat ulang" aria-label="Muat ulang" data-testid="opname-refresh">
+            <RefreshCw />
+          </Button>
+        </>}
+        summary={banner}>
+        <TabelData kolom={kolomSesi} baris={sessions} kunci={(s) => s.id} onKlikBaris={openSession} testId="opname-sesi-tabel"
+          kosong={<EmptyState icon={ClipboardList} title="Belum ada sesi opname" description="Klik Opname baru untuk mulai menghitung." testId="opname-empty" />} />
 
-        {showNew && (
-          <GlassCard hover={false} className="p-5 space-y-3" data-testid="opname-new-panel">
-            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2"><ListChecks className="w-4 h-4 text-primary" /> Sesi opname baru</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Lokasi (wajib)</label>
-                <div className="flex gap-2">
-                  <SmartNativeSelect value={locId} onChange={(e) => { setLocId(e.target.value); setSubType(''); setSubId(''); }} className={selectCls} data-testid="opname-location">
-                    <option value="">Pilih lokasi...</option>
-                    {locations.map((l) => <option key={l.id} value={l.id} disabled={l.quarantine}>{l.code} - {l.name}{l.quarantine ? ' (karantina — dikelola dokumen karantina)' : ''}</option>)}
-                  </SmartNativeSelect>
-                  {locId && <IconButton label="Cetak label lokasi" onClick={() => printLocationLabel(locId)} data-testid="opname-print-location"><Printer className="w-4 h-4 text-muted-foreground" /></IconButton>}
-                </div>
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Level</label>
-                <SmartNativeSelect value={subType} onChange={(e) => { setSubType(e.target.value); setSubId(''); }} className={selectCls} disabled={!loc || !(loc.zones.length || loc.bins.length)} data-testid="opname-sub-type">
-                  <option value="">Seluruh lokasi (stok + penempatan)</option>
-                  <option value="zone">Per zona (penempatan saja)</option>
-                  <option value="rack">Per rak (penempatan saja)</option>
-                  <option value="bin">Per bin (penempatan saja)</option>
+        <FormPopup open={showNew} onClose={() => setShowNew(false)} ukuran="pendek" judul="Sesi opname baru"
+          keterangan="Pilih lokasi yang dihitung. Jumlah sistem disembunyikan selama menghitung."
+          onSimpan={createSession} menyimpan={busy} bisaSimpan={!!locId && !(subType && !subId)} labelSimpan="Mulai hitung"
+          testId="opname-new-panel">
+          <Isian label="Lokasi" wajib htmlFor="opname-location-field">
+            <div className="flex gap-2">
+              <div className="min-w-0 flex-1">
+                <SmartNativeSelect id="opname-location-field" value={locId} onChange={(e) => { setLocId(e.target.value); setSubType(''); setSubId(''); }} className="w-full" data-testid="opname-location">
+                  <option value="">Pilih lokasi</option>
+                  {locations.map((l) => <option key={l.id} value={l.id} disabled={l.quarantine}>{l.code} - {l.name}{l.quarantine ? ' (karantina — dikelola dokumen karantina)' : ''}</option>)}
                 </SmartNativeSelect>
               </div>
-              {subType && (
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Pilih {subType === 'zone' ? 'zona' : subType === 'rack' ? 'rak' : 'bin'}</label>
-                  <SmartNativeSelect value={subId} onChange={(e) => setSubId(e.target.value)} className={selectCls} data-testid="opname-sub-id">
-                    <option value="">Pilih...</option>
-                    {subChoices.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-                  </SmartNativeSelect>
-                </div>
-              )}
+              {locId && <IconButton label="Cetak label lokasi" onClick={() => printLocationLabel(locId)} data-testid="opname-print-location"><Printer className="w-4 h-4 text-muted-foreground" /></IconButton>}
             </div>
+          </Isian>
+          <Isian label="Level" htmlFor="opname-sub-type-field">
+            <SmartNativeSelect id="opname-sub-type-field" value={subType} onChange={(e) => { setSubType(e.target.value); setSubId(''); }} className="w-full" searchable={false}
+              disabled={!loc || !(loc.zones.length || loc.bins.length)} data-testid="opname-sub-type">
+              <option value="">Seluruh lokasi (stok + penempatan)</option>
+              <option value="zone">Per zona (penempatan saja)</option>
+              <option value="rack">Per rak (penempatan saja)</option>
+              <option value="bin">Per bin (penempatan saja)</option>
+            </SmartNativeSelect>
+          </Isian>
+          {subType && (
+            <Isian label={`Pilih ${subType === 'zone' ? 'zona' : subType === 'rack' ? 'rak' : 'bin'}`} wajib htmlFor="opname-sub-id-field">
+              <SmartNativeSelect id="opname-sub-id-field" value={subId} onChange={(e) => setSubId(e.target.value)} className="w-full" data-testid="opname-sub-id">
+                <option value="">Pilih</option>
+                {subChoices.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </SmartNativeSelect>
+            </Isian>
+          )}
+          <Isian label="Jenis barang" petunjuk="Tidak dicentang = semua jenis.">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              <span className="text-xs text-muted-foreground">Jenis barang:</span>
               {KIND_OPTS.map(([k, label]) => (
-                <label key={k} htmlFor={`opname-kind-${k}-cb`} className="text-sm text-foreground flex items-center gap-2 cursor-pointer">
+                <label key={k} htmlFor={`opname-kind-${k}-cb`} className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
                   <Checkbox id={`opname-kind-${k}-cb`} checked={kinds.includes(k)} disabled={!!kind}
                     onCheckedChange={(c) => setKinds((v) => (c === true ? [...v, k] : v.filter((x) => x !== k)))} data-testid={`opname-kind-${k}`} />
                   {label}
                 </label>
               ))}
-              <span className="text-[11px] text-muted-foreground">Tidak dicentang = semua jenis</span>
             </div>
-            <div>
-              <label htmlFor="opname-codes-field" className="text-xs text-muted-foreground mb-1 block">Hanya barang tertentu (opsional) — ketik atau scan kode, satu per baris</label>
-              <textarea id="opname-codes-field" value={codes} onChange={(e) => setCodes(e.target.value)} rows={2} className={selectCls} placeholder="Kosongkan untuk menghitung semua barang" data-testid="opname-codes" />
-            </div>
-            <Button onClick={createSession} disabled={busy || !locId || (subType && !subId)} data-testid="opname-create-btn"><Check className="w-4 h-4" /> Mulai hitung</Button>
-          </GlassCard>
-        )}
-
-        <GlassCard hover={false} className="p-5">
-          <h3 className="text-sm font-semibold text-foreground mb-3">Riwayat sesi opname</h3>
-          {sessions.length === 0 ? (
-            <EmptyState icon={ClipboardList} title="Belum ada sesi opname" description="Klik Opname baru untuk mulai menghitung." testId="opname-empty" />
-          ) : (
-            <div className="space-y-2">
-              {sessions.map((s) => (
-                <button key={s.id} onClick={() => openSession(s)} className="w-full text-left p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--glass-bg)] hover:bg-[var(--glass-bg-hover)] transition-colors flex items-center justify-between gap-3" data-testid={`opname-session-${s.session_no}`}>
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground tabular-nums flex items-center gap-2">{s.session_no}
-                      {s.archived && <span className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--glass-border)] text-muted-foreground flex items-center gap-1"><Archive className="w-3 h-3" /> arsip</span>}
-                      {s.level === 'rak' && <span className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--glass-border)] text-muted-foreground">rak</span>}
-                    </p>
-                    <p className="text-xs text-muted-foreground truncate">{s.scope_label} · {s.created_at ? new Date(s.created_at).toLocaleString('id-ID') : '-'}{s.je_number ? ` · ${s.je_number}` : ''}</p>
-                  </div>
-                  <span className={`text-[11px] px-2 py-1 rounded-full border shrink-0 ${STATUS_BADGE[s.status] || ''}`}>{STATUS_LABEL[s.status] || s.status}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </GlassCard>
-      </div>
+          </Isian>
+          <Isian label="Hanya barang tertentu" htmlFor="opname-codes-field" petunjuk="Opsional — ketik atau scan kode, satu per baris. Kosongkan untuk menghitung semua barang.">
+            <Textarea id="opname-codes-field" value={codes} onChange={(e) => setCodes(e.target.value)} rows={2} data-testid="opname-codes" />
+          </Isian>
+        </FormPopup>
+      </PageLayout>
     );
   }
 
+  // Layar kerja satu sesi (hitung / tinjau) tetap DI HALAMAN, bukan popup: pemindai & kamera butuh fokus terus-menerus
+  // dan layar ini dipakai di HP sambil berjalan di gudang. Kepala tipis: tombol kembali + nomor sesi + status.
   const header = (
-    <div className="flex items-center justify-between gap-3 flex-wrap">
-      <div className="flex items-center gap-3">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-3">
         <IconButton label="Kembali" onClick={backToList} data-testid="opname-back"><ArrowLeft className="w-4 h-4 text-muted-foreground" /></IconButton>
-        <div>
-          <h1 className="text-xl font-bold text-foreground tabular-nums">{sess.session_no}</h1>
-          <p className="text-muted-foreground text-xs">{sess.scope_label || '-'}{view.archived ? ' · ARSIP baca-saja (mesin lama)' : ''}</p>
+        <div className="min-w-0">
+          <p className="text-base font-semibold tabular-nums text-foreground">{sess.session_no}</p>
+          <p className="text-sm text-muted-foreground">{sess.scope_label || '-'}{view.archived ? ' · arsip baca-saja (mesin lama)' : ''}</p>
         </div>
       </div>
-      <span className={`text-xs px-3 py-1 rounded-full border ${STATUS_BADGE[sess.status] || ''}`} data-testid="opname-status">{STATUS_LABEL[sess.status] || sess.status}</span>
+      {lencana(sess.status, 'opname-status')}
     </div>
   );
 
   // ── ARSIP (mesin lama) ──
   if (view.archived) {
     const rows = view.counts || view.session?.count_items || [];
+    const ringkas = Object.entries(sess.summary || {}).filter(([, v]) => v === null || ['string', 'number', 'boolean'].includes(typeof v));
     return (
       <div className="space-y-4" data-testid="wms-opname-scan-module">
         {header}
-        <GlassCard hover={false} className="p-5" data-testid="opname-archive">
-          <p className="text-xs text-muted-foreground mb-3">Sesi ini dibuat mesin opname lama (sebelum mesin tunggal K9). Hanya bisa dibaca; untuk menghitung ulang buat Sesi Opname baru.</p>
-          <pre className="text-[11px] text-muted-foreground whitespace-pre-wrap">{JSON.stringify(sess.summary || {}, null, 1)}</pre>
-          <div className="mt-3 space-y-1 max-h-[420px] overflow-y-auto">
-            {rows.map((c, i) => (
-              <div key={c.id || c.line_id || i} className="text-xs text-foreground flex justify-between border-b border-[var(--glass-border)]/50 py-1">
-                <span>{c.material_code} {c.bin_label ? `@ ${c.bin_label}` : ''}</span>
-                <span>{fmtNum(c.counted_qty)}{c.system_qty !== undefined ? ` / sistem ${fmtNum(c.system_qty)}` : ''}</span>
-              </div>
-            ))}
+        <GlassCard hover={false} className="space-y-3 p-4" data-testid="opname-archive">
+          <p className="text-sm text-muted-foreground">Sesi ini dibuat mesin opname lama (sebelum mesin tunggal K9). Hanya bisa dibaca; untuk menghitung ulang buat sesi opname baru.</p>
+          {ringkas.length > 0 && (
+            <dl className="divide-y divide-[var(--glass-border)]">
+              {ringkas.map(([k, v]) => (
+                <BarisDetail key={k} label={k.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())}>
+                  {typeof v === 'number' ? fmtNum(v) : typeof v === 'boolean' ? (v ? 'Ya' : 'Tidak') : (v || '—')}
+                </BarisDetail>
+              ))}
+            </dl>
+          )}
+          <div className="flex justify-end">
+            <TombolUnduh namaBerkas={`opname-arsip-${sess.session_no}`} namaLembar="Arsip" baris={rows} testId="opname-archive-unduh"
+              kolom={[
+                { label: 'Kode', nilai: (c) => c.material_code },
+                { label: 'Bin', nilai: (c) => c.bin_label || '' },
+                { label: 'Hitung', nilai: (c) => Number(c.counted_qty || 0) },
+                { label: 'Sistem', nilai: (c) => (c.system_qty !== undefined ? Number(c.system_qty || 0) : '') },
+              ]} />
           </div>
+          <TabelData baris={rows.map((c, i) => ({ ...c, _k: c.id || c.line_id || i }))} kunci={(c) => c._k} testId="opname-archive-tabel"
+            kolom={[
+              { kunci: 'kode', label: 'Kode', hp: 'judul', isi: (c) => c.material_code },
+              { kunci: 'bin', label: 'Bin', isi: (c) => c.bin_label || '—' },
+              { kunci: 'hitung', label: 'Hitung', rata: 'kanan', isi: (c) => <span className="tabular-nums">{fmtNum(c.counted_qty)}</span> },
+              { kunci: 'sistem', label: 'Sistem', rata: 'kanan', isi: (c) => <span className="tabular-nums">{c.system_qty !== undefined ? fmtNum(c.system_qty) : '—'}</span> },
+            ]} />
         </GlassCard>
       </div>
     );
@@ -395,6 +425,7 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
   const lines = view.lines || [];
   const totals = view.totals || {};
   const status = sess.status;
+  const lineStatus = (st) => LINE_STATUS[st] || ['Lainnya', 'muted'];
 
   return (
     <div className="space-y-4" data-testid="wms-opname-scan-module">
@@ -402,23 +433,22 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
       {banner}
 
       {zeroList && (
-        <GlassCard hover={false} className="p-5 border border-[hsl(var(--warning)/0.3)]" data-testid="opname-zero-confirm">
-          <h3 className="text-sm font-semibold text-[hsl(var(--warning))] flex items-center gap-2 mb-2"><AlertTriangle className="w-4 h-4" /> {zeroList.length} baris BELUM dihitung</h3>
-          <p className="text-xs text-muted-foreground mb-2">Belum dihitung ≠ 0. Hitung dulu, atau konfirmasi bahwa barang ini memang tidak ada (stok akan menjadi 0 saat disetujui).</p>
-          <div className="max-h-48 overflow-y-auto text-xs text-foreground space-y-0.5 mb-3">
+        <Notice tone="warning" icon={AlertTriangle} testId="opname-zero-confirm" title={`${zeroList.length} baris belum dihitung`}>
+          <p>Belum dihitung ≠ 0. Hitung dulu, atau konfirmasi bahwa barang ini memang tidak ada (stok menjadi 0 saat disetujui).</p>
+          <div className="my-2 max-h-48 space-y-0.5 overflow-y-auto text-sm text-foreground">
             {zeroList.map((z) => <div key={z.key}>{z.material_code} — {z.material_name}{z.bin_label ? ` @ ${z.bin_label}` : ''}</div>)}
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button onClick={() => doAction('submit', { confirm_zero: true })} disabled={busy} data-testid="opname-confirm-zero">Anggap 0 &amp; ajukan</Button>
             <Button onClick={() => setZeroList(null)} variant="outline">Kembali menghitung</Button>
           </div>
-        </GlassCard>
+        </Notice>
       )}
 
       {status === 'counting' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <GlassCard hover={false} className="p-5 space-y-4" data-testid="opname-count-panel">
-            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 flex-wrap"><ScanLine className="w-4 h-4 text-primary" /> Hitung <span className="text-[11px] text-muted-foreground font-normal flex items-center gap-1"><EyeOff className="w-3 h-3" /> jumlah sistem disembunyikan</span></h3>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <GlassCard hover={false} className="space-y-4 p-4" data-testid="opname-count-panel">
+            <p className="flex flex-wrap items-center gap-2 text-base font-semibold text-foreground"><ScanLine className="w-4 h-4 text-primary" /> Hitung <span className="flex items-center gap-1 text-xs font-normal text-muted-foreground"><EyeOff className="w-3 h-3" /> jumlah sistem disembunyikan</span></p>
 
             {/* 1 · Aksi utama: scan barang — paling atas, besar; hasil scan tepat di bawahnya. */}
             <div>
@@ -433,89 +463,91 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
 
             {/* 2 · Cara menghitung + jumlah & satuan */}
             <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground">Cara menghitung</p>
+              <p className="text-sm font-medium text-muted-foreground">Cara menghitung</p>
               <div className="flex flex-wrap gap-2" role="group" aria-label="Cara menghitung">
                 <Button type="button" variant={mode === 'add' ? 'default' : 'outline'} aria-pressed={mode === 'add'} onClick={() => setMode('add')} className="flex-1 basis-44" data-testid="opname-mode-add">Tambah tiap scan</Button>
                 <Button type="button" variant={mode === 'set' ? 'default' : 'outline'} aria-pressed={mode === 'set'} onClick={() => setMode('set')} className="flex-1 basis-44" data-testid="opname-mode-set">Isi jumlah hitungan</Button>
               </div>
-              <p className="text-[11px] text-muted-foreground" data-testid="opname-mode-help">
+              <p className="text-xs text-muted-foreground" data-testid="opname-mode-help">
                 {mode === 'set'
                   ? 'Isi jumlahnya, lalu scan barangnya — jumlah itu menjadi hasil hitung barang tersebut di lokasi ini.'
                   : 'Setiap scan menambah jumlah di bawah ke hitungan barang tersebut.'}
               </p>
               <div className="grid grid-cols-2 gap-2">
-                <div className="min-w-0">
-                  <label htmlFor="opname-scan-qty-field" className="text-xs text-muted-foreground mb-1 block">{mode === 'set' ? 'Jumlah hitungan' : 'Jumlah per scan'}</label>
+                <Isian label={mode === 'set' ? 'Jumlah hitungan' : 'Jumlah per scan'} htmlFor="opname-scan-qty-field" className="min-w-0">
                   <GlassInput id="opname-scan-qty-field" type="number" min={0} step="0.0001" value={scanQty}
                     onChange={(e) => setScanQty(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') focusItem(); }}
                     data-testid="opname-scan-qty" />
-                </div>
-                <div className="min-w-0">
-                  <span className="text-xs text-muted-foreground mb-1 block">Satuan</span>
+                </Isian>
+                <Isian label="Satuan" className="min-w-0">
                   <SmartNativeSelect value={scanUnitValue} onChange={(e) => setScanUom(e.target.value)} disabled={scanUnits.length <= 1}
-                    searchable={false} className={`${selectCls} h-10`} aria-label="Satuan" data-testid="opname-scan-uom"
+                    searchable={false} className="w-full" aria-label="Satuan" data-testid="opname-scan-uom"
                     title={scanUnits.length <= 1 ? 'Belum ada satuan lain — tambahkan kemasan di Master Material' : 'Pilih satuan hitung fisik'}>
                     {scanUnits.length
                       ? scanUnits.map((u) => <option key={u.unit} value={u.unit}>{u.unit}</option>)
                       : <option value="">Satuan barang</option>}
                   </SmartNativeSelect>
-                </div>
+                </Isian>
               </div>
               <UomConversionHint opt={scanUomOpt} qty={scanQty} unit={scanUom || scanBaseUnit} fallbackUnit={lastScan?.base_uom || ''} testId="opname-scan-uom-hint" />
             </div>
 
             {/* 3 · Lokasi hitung: satu blok (pilih, atau scan label) */}
-            <div className="space-y-2 pt-4 border-t border-[var(--glass-border)]">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <span className="text-xs font-medium text-muted-foreground flex items-center gap-1"><MapPin className="w-3 h-3" /> Lokasi hitung{isRak ? ' (wajib pilih bin)' : ''}</span>
-                <span className="text-[11px] text-muted-foreground min-w-0 truncate" data-testid="opname-active-bin">
-                  Sekarang: <span className="text-foreground font-medium">{ctxBin.id ? ctxBin.label : `${sess.location_code} · lantai / belum dirak`}</span>
+            <div className="space-y-2 border-t border-[var(--glass-border)] pt-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="flex items-center gap-1 text-sm font-medium text-muted-foreground"><MapPin className="w-3 h-3" /> Lokasi hitung{isRak ? ' (wajib pilih bin)' : ''}</span>
+                <span className="min-w-0 truncate text-xs text-muted-foreground" data-testid="opname-active-bin">
+                  Sekarang: <span className="font-medium text-foreground">{ctxBin.id ? ctxBin.label : `${sess.location_code} · lantai / belum dirak`}</span>
                 </span>
               </div>
-              <SmartNativeSelect value={ctxBin.id} onChange={(e) => { const b = ctxBins.find((x) => x.id === e.target.value); setCtxBin(b ? { id: b.id, label: b.label } : { id: '', label: '' }); setBinResult(null); focusItem(); }} className={selectCls} aria-label="Lokasi hitung" data-testid="opname-bin-select">
+              <SmartNativeSelect value={ctxBin.id} onChange={(e) => { const b = ctxBins.find((x) => x.id === e.target.value); setCtxBin(b ? { id: b.id, label: b.label } : { id: '', label: '' }); setBinResult(null); focusItem(); }} className="w-full" aria-label="Lokasi hitung" data-testid="opname-bin-select">
                 {!isRak && <option value="">Lantai / belum dirak ({sess.location_code})</option>}
-                {isRak && <option value="">— pilih bin —</option>}
+                {isRak && <option value="">Pilih bin</option>}
                 {ctxBins.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
               </SmartNativeSelect>
               <UniversalScanner variant="inline" onScan={pickBin} cameraButton={false} result={binResult}
                 placeholder={isRak ? 'Atau scan label bin' : 'Atau scan label bin / lokasi'} data-testid="opname-bin-barcode" />
-              <p className="text-[11px] text-muted-foreground">{isRak ? 'Hitung rak: pilih atau scan bin dulu sebelum scan barang.' : 'Tanpa bin berarti barang di lantai atau belum dirak.'}</p>
+              <p className="text-xs text-muted-foreground">{isRak ? 'Hitung rak: pilih atau scan bin dulu sebelum scan barang.' : 'Tanpa bin berarti barang di lantai atau belum dirak.'}</p>
             </div>
           </GlassCard>
 
-          <GlassCard hover={false} className="p-5">
-            <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2"><ClipboardList className="w-4 h-4 text-primary" /> Lembar hitung <span className="text-xs text-muted-foreground font-normal">{totals.counted || 0}/{totals.lines || 0} dihitung</span></h3>
+          <GlassCard hover={false} className="p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <p className="flex items-center gap-2 text-base font-semibold text-foreground"><ClipboardList className="w-4 h-4 text-primary" /> Lembar hitung <span className="text-sm font-normal text-muted-foreground">{totals.counted || 0}/{totals.lines || 0} dihitung</span></p>
               <Button onClick={() => doAction('submit')} disabled={busy} size="sm" data-testid="opname-submit-btn"><PackageCheck className="w-4 h-4" /> Selesai &amp; ajukan</Button>
             </div>
-            <div className="space-y-2 max-h-[520px] overflow-y-auto">
+            {/* Baris hitung = baris ringkas berisi kendali (kurangi per bin, rusak, resolusi) — tetap daftar padat untuk HP. */}
+            <div className="max-h-[520px] divide-y divide-[var(--glass-border)] overflow-y-auto">
               {lines.length === 0 ? <EmptyState icon={ClipboardList} title="Tidak ada barang di stok saat mulai" description="Barang yang di-scan akan ditambahkan ke daftar ini." testId="opname-lines-empty" /> : lines.map((ln) => (
-                <div key={ln.key} className="p-2.5 rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg)]" data-testid={`opname-line-${ln.material_code}`}>
+                <div key={ln.key} className="py-2" data-testid={`opname-line-${ln.material_code}`}>
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">{ln.material_code} <span className="text-muted-foreground font-normal">{ln.material_name}</span></p>
-                      {ln.bin_label && <p className="text-[11px] text-muted-foreground">@ {ln.bin_label}</p>}
+                      <p className="truncate text-sm font-medium text-foreground">{ln.material_code} <span className="font-normal text-muted-foreground">{ln.material_name}</span></p>
+                      {ln.bin_label && <p className="text-xs text-muted-foreground">@ {ln.bin_label}</p>}
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded border ${LINE_STATUS[ln.status]?.[1] || ''}`}>{LINE_STATUS[ln.status]?.[0] || ln.status}</span>
-                      {ln.status !== 'belum' && <span className="text-sm font-bold text-foreground">{fmtNum(ln.counted_qty)} {ln.unit}</span>}
+                    <div className="flex shrink-0 items-center gap-2">
+                      <StatusBadge status={ln.status} label={lineStatus(ln.status)[0]} tone={lineStatus(ln.status)[1]} />
+                      {ln.status !== 'belum' && <span className="text-sm font-semibold tabular-nums text-foreground">{fmtNum(ln.counted_qty)} {ln.unit}</span>}
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2 mt-1">
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
                     {(ln.entries || []).map((e) => (
-                      <span key={e.bin_id || 'lantai'} className="text-[11px] text-muted-foreground border border-[var(--glass-border)] rounded px-1.5 py-0.5 flex items-center gap-1">
+                      <span key={e.bin_id || 'lantai'} className="flex items-center gap-1 rounded border border-[var(--glass-border)] py-0.5 pl-1.5 text-xs text-muted-foreground">
                         {e.bin_label || 'lantai'}: {fmtNum(e.counted_qty)}
-                        <button onClick={() => undoEntry(ln, e)} title="Kurangi 1" data-testid={`opname-undo-${ln.material_code}`}><Minus className="w-3 h-3" /></button>
+                        <Button type="button" variant="ghost" size="icon-sm" className="h-6 w-6" onClick={() => undoEntry(ln, e)}
+                          title="Kurangi 1" aria-label="Kurangi 1" data-testid={`opname-undo-${ln.material_code}`}><Minus className="w-3 h-3" /></Button>
                       </span>
                     ))}
-                    <label className="text-[11px] text-muted-foreground flex items-center gap-1 ml-auto">
-                      <input type="checkbox" checked={ln.reason === 'rusak'} onChange={(e) => setLine(ln, { reason: e.target.checked ? 'rusak' : '' })} data-testid={`opname-rusak-${ln.material_code}`} /> rusak
+                    <label className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Checkbox checked={ln.reason === 'rusak'} onCheckedChange={(c) => setLine(ln, { reason: c === true ? 'rusak' : '' })}
+                        data-testid={`opname-rusak-${ln.material_code}`} aria-label="Rusak" /> Rusak
                     </label>
                     {isRak && !ln.in_snapshot && (
-                      <SmartNativeSelect value={ln.resolution || 'pindah'} onChange={(e) => setLine(ln, { resolution: e.target.value })} className="border border-[var(--glass-border)] bg-[var(--input-surface)] rounded px-1.5 py-0.5 text-[11px] text-foreground" data-testid={`opname-resolution-${ln.material_code}`}>
-                        <option value="pindah">pindah penempatan (stok tetap)</option>
-                        <option value="lebih">barang lebih (selisih lewat hitung penuh lokasi)</option>
+                      <SmartNativeSelect value={ln.resolution || 'pindah'} onChange={(e) => setLine(ln, { resolution: e.target.value })} searchable={false}
+                        className="h-8 w-full text-sm sm:w-auto" aria-label="Penyelesaian" data-testid={`opname-resolution-${ln.material_code}`}>
+                        <option value="pindah">Pindah penempatan (stok tetap)</option>
+                        <option value="lebih">Barang lebih (selisih lewat hitung penuh lokasi)</option>
                       </SmartNativeSelect>
                     )}
                   </div>
@@ -523,9 +555,9 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
               ))}
             </div>
             {/* Batalkan sesi dijauhkan dari "Selesai & ajukan" (dulu bersebelahan → mudah salah tekan) dan dikonfirmasi. */}
-            <div className="mt-4 pt-3 border-t border-[var(--glass-border)] flex flex-wrap items-center gap-3">
-              <Button onClick={cancelSession} disabled={busy} variant="outline" size="sm" className="text-destructive hover:text-destructive" data-testid="opname-cancel-btn">Batalkan sesi</Button>
-              <span className="text-[11px] text-muted-foreground">Hanya bila sesi ini salah dibuat; hasil hitung tidak dipakai.</span>
+            <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-[var(--glass-border)] pt-3">
+              <Button onClick={cancelSession} disabled={busy} variant="destructive" size="sm" data-testid="opname-cancel-btn">Batalkan sesi</Button>
+              <span className="text-xs text-muted-foreground">Hanya bila sesi ini salah dibuat; hasil hitung tidak dipakai.</span>
             </div>
           </GlassCard>
         </div>
@@ -533,71 +565,94 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
 
       {status !== 'counting' && (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <GlassCard hover={false} className="p-4"><p className="text-xs text-muted-foreground">Baris dihitung</p><p className="text-xl font-bold text-foreground">{totals.counted || 0}/{totals.lines || 0}</p></GlassCard>
-            <GlassCard hover={false} className="p-4"><p className="text-xs text-muted-foreground">Baris berselisih</p><p className="text-xl font-bold text-foreground">{totals.with_variance || 0}</p></GlassCard>
-            <GlassCard hover={false} className="p-4"><p className="text-xs text-muted-foreground">Nilai selisih (harga rata-rata saat mulai)</p><p className={`text-xl font-bold ${totals.total_variance_value < 0 ? 'text-[hsl(var(--destructive))]' : totals.total_variance_value > 0 ? 'text-[hsl(var(--success))]' : 'text-foreground'}`}>{fmtRp(totals.total_variance_value)}</p></GlassCard>
-            <GlassCard hover={false} className="p-4"><p className="text-xs text-muted-foreground">Tanpa harga rata-rata (tidak dijurnal)</p><p className="text-xl font-bold text-[hsl(var(--warning))]">{totals.uncosted || 0}</p></GlassCard>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <StatTile label="Baris dihitung" value={`${totals.counted || 0}/${totals.lines || 0}`} sub="Baris terhitung dari seluruh baris sesi." />
+            <StatTile label="Baris berselisih" value={fmtNum(totals.with_variance || 0)} sub="Hitung ≠ sistem saat dihitung." />
+            <StatTile label="Nilai selisih" value={fmtRp(totals.total_variance_value)}
+              accent={totals.total_variance_value < 0 ? 'danger' : totals.total_variance_value > 0 ? 'success' : 'default'}
+              sub="Dinilai harga rata-rata saat mulai." />
+            <StatTile label="Tanpa harga rata-rata" value={fmtNum(totals.uncosted || 0)} accent={totals.uncosted ? 'warning' : 'default'}
+              sub="Baris ini tidak dijurnal." />
           </div>
-          {isRak && <p className="text-xs text-muted-foreground">Hitung level rak hanya memperbaiki PENEMPATAN bin — stok dan jurnal tidak berubah.</p>}
+          {isRak && <p className="text-sm text-muted-foreground">Hitung level rak hanya memperbaiki penempatan bin — stok dan jurnal tidak berubah.</p>}
 
           {status === 'submitted' && (
             <div className="flex flex-wrap gap-2" data-testid="opname-approval-actions">
-              <Button onClick={() => doAction('approve')} disabled={busy} data-testid="opname-approve-btn"><ShieldCheck className="w-4 h-4" /> Setujui</Button>
-              <Button onClick={() => doAction('reject')} disabled={busy} variant="outline" className="border-[hsl(var(--destructive)/0.3)] text-[hsl(var(--destructive))]" data-testid="opname-reject-btn"><X className="w-4 h-4" /> Tolak</Button>
-              <Button onClick={cancelSession} disabled={busy} variant="outline" className="text-destructive hover:text-destructive" data-testid="opname-cancel-btn">Batalkan sesi</Button>
+              <Button variant="success" onClick={() => doAction('approve')} disabled={busy} data-testid="opname-approve-btn"><ShieldCheck className="w-4 h-4" /> Setujui</Button>
+              <Button variant="destructive" onClick={() => doAction('reject')} disabled={busy} data-testid="opname-reject-btn"><X className="w-4 h-4" /> Tolak</Button>
+              <Button onClick={cancelSession} disabled={busy} variant="outline" data-testid="opname-cancel-btn">Batalkan sesi</Button>
             </div>
           )}
           {status === 'approved' && (
-            <div className="p-3 rounded-xl bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.2)] text-sm text-[hsl(var(--success))] flex items-center gap-2 flex-wrap" data-testid="opname-approved-banner">
-              <PackageCheck className="w-4 h-4" /> Disetujui {sess.approved_by_name || ''}. {sess.summary?.stock_writes || 0} baris stok ditimpa · {sess.summary?.positions_updated || 0} bin diperbarui
+            <Notice tone="success" icon={PackageCheck} testId="opname-approved-banner"
+              title={`Disetujui ${sess.approved_by_name || ''}`.trim()}>
+              {sess.summary?.stock_writes || 0} baris stok ditimpa · {sess.summary?.positions_updated || 0} bin diperbarui
               {sess.je_number ? ` · jurnal ${sess.je_number}` : ''}{sess.summary?.je_error ? ` · jurnal GAGAL: ${sess.summary.je_error}` : ''}
-            </div>
+            </Notice>
           )}
 
-          <GlassCard hover={false} className="p-5">
-            <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2"><Boxes className="w-4 h-4 text-primary" /> Selisih per Baris</h3>
+          <GlassCard hover={false} className="space-y-3 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="flex items-center gap-2 text-base font-semibold text-foreground"><Boxes className="w-4 h-4 text-primary" /> Selisih per baris</p>
+              <TombolUnduh namaBerkas={`selisih-opname-${sess.session_no}`} namaLembar="Selisih" baris={lines} testId="opname-var-unduh"
+                kolom={[
+                  { label: 'Kode', nilai: (l) => l.material_code },
+                  { label: 'Nama', nilai: (l) => l.material_name || '' },
+                  ...(isRak ? [{ label: 'Bin', nilai: (l) => l.bin_label || '' }] : []),
+                  { label: isRak ? 'Penempatan' : 'Stok saat mulai', nilai: (l) => Number(l.snapshot_qty || 0) },
+                  ...(isRak ? [] : [
+                    { label: 'Mutasi s/d dihitung', nilai: (l) => Number(l.mutation_qty || 0) },
+                    { label: 'Sistem saat dihitung', nilai: (l) => Number(l.system_qty || 0) },
+                  ]),
+                  { label: 'Hitung', nilai: (l) => Number(l.counted_qty || 0) },
+                  { label: 'Selisih', nilai: (l) => Number(l.variance_qty || 0) },
+                  ...(isRak ? [] : [{ label: 'Nilai', nilai: (l) => Number(l.variance_value || 0) }]),
+                  { label: 'Status', nilai: (l) => lineStatus(l.status)[0] },
+                  { label: 'Rusak', nilai: (l) => (l.reason === 'rusak' ? 'Ya' : '') },
+                ]} />
+            </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-xs text-muted-foreground border-b border-[var(--glass-border)]">
-                    <th className="text-left py-2">Kode</th><th className="text-left">Nama</th>{isRak && <th className="text-left">Bin</th>}
-                    <th className="text-right">{isRak ? 'Penempatan' : 'Stok saat mulai'}</th>{!isRak && <th className="text-right">Mutasi s/d dihitung</th>}{!isRak && <th className="text-right">Sistem saat dihitung</th>}
-                    <th className="text-right">Hitung</th><th className="text-right">Selisih</th>{!isRak && <th className="text-right">Nilai</th>}<th className="text-left pl-3">Catatan</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Kode</TableHead><TableHead>Nama</TableHead>{isRak && <TableHead>Bin</TableHead>}
+                    <TableHead className="text-right">{isRak ? 'Penempatan' : 'Stok saat mulai'}</TableHead>{!isRak && <TableHead className="text-right">Mutasi s/d dihitung</TableHead>}{!isRak && <TableHead className="text-right">Sistem saat dihitung</TableHead>}
+                    <TableHead className="text-right">Hitung</TableHead><TableHead className="text-right">Selisih</TableHead>{!isRak && <TableHead className="text-right">Nilai</TableHead>}<TableHead>Catatan</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {lines.map((l) => (
-                    <tr key={l.key} className={`border-b border-[var(--glass-border)]/50 ${l.variance_qty ? 'bg-[hsl(var(--warning)/0.05)]' : ''}`} data-testid={`opname-var-${l.material_code}`}>
-                      <td className="py-2 tabular-nums text-foreground">{l.material_code}</td>
-                      <td className="text-muted-foreground">{l.material_name}</td>
-                      {isRak && <td className="text-muted-foreground text-xs">{l.bin_label}</td>}
-                      <td className="text-right text-foreground">{fmtNum(l.snapshot_qty)}</td>
-                      {!isRak && <td className="text-right text-muted-foreground">{fmtNum(l.mutation_qty)}</td>}
-                      {!isRak && <td className="text-right text-foreground">{fmtNum(l.system_qty)}</td>}
-                      <td className="text-right text-foreground">{fmtNum(l.counted_qty)}</td>
-                      <td className={`text-right font-semibold ${l.variance_qty < 0 ? 'text-[hsl(var(--destructive))]' : l.variance_qty > 0 ? 'text-[hsl(var(--success))]' : 'text-muted-foreground'}`}>{l.variance_qty > 0 ? '+' : ''}{fmtNum(l.variance_qty)}</td>
-                      {!isRak && <td className="text-right text-muted-foreground">{fmtRp(l.variance_value)}</td>}
-                      <td className="pl-3 text-[11px] text-muted-foreground">
-                        {LINE_STATUS[l.status]?.[0]}{l.reason === 'rusak' ? ' · rusak (6-4300)' : ''}{isRak && !l.in_snapshot ? ` · ${l.resolution === 'lebih' ? 'barang lebih' : 'pindah penempatan'}` : ''}
+                    <TableRow key={l.key} data-testid={`opname-var-${l.material_code}`}>
+                      <TableCell className="whitespace-nowrap font-medium">{l.material_code}</TableCell>
+                      <TableCell className="text-muted-foreground">{l.material_name}</TableCell>
+                      {isRak && <TableCell className="text-sm text-muted-foreground">{l.bin_label}</TableCell>}
+                      <TableCell className="text-right tabular-nums">{fmtNum(l.snapshot_qty)}</TableCell>
+                      {!isRak && <TableCell className="text-right tabular-nums text-muted-foreground">{fmtNum(l.mutation_qty)}</TableCell>}
+                      {!isRak && <TableCell className="text-right tabular-nums">{fmtNum(l.system_qty)}</TableCell>}
+                      <TableCell className="text-right tabular-nums">{fmtNum(l.counted_qty)}</TableCell>
+                      <TableCell className={`text-right font-semibold tabular-nums ${l.variance_qty < 0 ? 'text-[hsl(var(--danger-text))]' : l.variance_qty > 0 ? 'text-[hsl(var(--success-text))]' : 'text-muted-foreground'}`}>{l.variance_qty > 0 ? '+' : ''}{fmtNum(l.variance_qty)}</TableCell>
+                      {!isRak && <TableCell className="text-right tabular-nums text-muted-foreground">{fmtRp(l.variance_value)}</TableCell>}
+                      <TableCell className="text-sm text-muted-foreground">
+                        {lineStatus(l.status)[0]}{l.reason === 'rusak' ? ' · rusak (6-4300)' : ''}{isRak && !l.in_snapshot ? ` · ${l.resolution === 'lebih' ? 'barang lebih' : 'pindah penempatan'}` : ''}
                         {status === 'submitted' && !isRak && l.variance_qty < 0 && (
-                          <label className="ml-2 inline-flex items-center gap-1"><input type="checkbox" checked={l.reason === 'rusak'} onChange={(e) => setLine(l, { reason: e.target.checked ? 'rusak' : '' })} /> rusak</label>
+                          <label className="ml-2 inline-flex items-center gap-1.5">
+                            <Checkbox checked={l.reason === 'rusak'} onCheckedChange={(c) => setLine(l, { reason: c === true ? 'rusak' : '' })} aria-label="Rusak" /> Rusak
+                          </label>
                         )}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
           </GlassCard>
 
           {(sess.summary?.findings || []).length > 0 && (
-            <GlassCard hover={false} className="p-5">
-              <h3 className="text-sm font-semibold text-[hsl(var(--warning))] mb-2 flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Temuan penempatan</h3>
+            <Notice tone="warning" icon={AlertTriangle} title="Temuan penempatan">
               {sess.summary.findings.map((f, i) => (
-                <p key={i} className="text-xs text-foreground">{f.jenis === 'barang_lebih' ? 'Barang lebih (belum masuk stok — hitung penuh lokasi)' : 'Bin sudah berisi barang lain (1 bin = 1 barang) — dianggap belum dirak'}: {lines.find((x) => x.material_id === f.material_id)?.material_code || f.material_id} × {fmtNum(f.qty)}</p>
+                <p key={i}>{f.jenis === 'barang_lebih' ? 'Barang lebih (belum masuk stok — hitung penuh lokasi)' : 'Bin sudah berisi barang lain (1 bin = 1 barang) — dianggap belum dirak'}: {lines.find((x) => x.material_id === f.material_id)?.material_code || f.material_id} × {fmtNum(f.qty)}</p>
               ))}
-            </GlassCard>
+            </Notice>
           )}
         </div>
       )}

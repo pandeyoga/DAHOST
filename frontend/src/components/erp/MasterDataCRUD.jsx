@@ -1,23 +1,34 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { Plus, Edit2, Trash2, CheckCircle2, XCircle } from 'lucide-react';
+import { Plus, Pencil, Ban } from 'lucide-react';
+import { toast } from 'sonner';
 import DataTable from './DataTable';
-import Modal from './Modal';
 import ImportExportToolbar from './ImportExportToolbar';
 import { Button } from '@/components/ui/button';
-import { GlassInput } from '@/components/ui/glass';
+import { Input } from '@/components/ui/input';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import PageLayout from './layout/PageLayout';
+import { StatusBadge } from './moduleAtoms';
 
-// Reusable master-data CRUD page.
-// Props:
+// Reusable master-data CRUD page (Gudang › Lokasi gudang; Produksi/RnD › master lini, mesin, proses, shift, ukuran, karyawan).
+// Props (tidak berubah):
 //   title       : judul halaman
 //   description : subtitle
 //   endpoint    : '/api/rahaza/locations' etc.
 //   token       : auth token
 //   columns     : [{ key, label, render?, showInForm? }]
-//   fields      : [{ key, label, type: 'text'|'select'|'number'|'readonly', options?:[{value,label}], required?, help? }]
+//   fields      : [{ key, label, type: 'text'|'select'|'number'|'readonly'|'time', options?:[{value,label}], required?, help?, createOnly?, editOnly? }]
 //   defaultItem : initial form state
 //   testIdPrefix
 //   canEdit     : boolean (default true)
+//   ieKey       : kunci registri impor/unduh data master (opsional)
+//
+// Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (di dalam hub judulnya tersembunyi), form = FormPopup
+// (pendek ≤ 6 isian, panjang bila lebih), nonaktifkan lewat confirmDialog, status = StatusBadge, unduhan tabel
+// (DataTable bawaan) memakai teks yang sama dengan yang tampil — bukan kode mentah (mis. "Zona", bukan "zona").
+const teksSel = (out) => (typeof out === 'string' || typeof out === 'number' ? out : null);
+
 export default function MasterDataCRUD({
   title, description, endpoint, token,
   columns = [], fields = [], defaultItem = {},
@@ -95,115 +106,118 @@ export default function MasterDataCRUD({
   };
 
   const handleDeactivate = async (row) => {
-    if (!window.confirm(`Nonaktifkan "${row.name || row.code}"?`)) return;
-    await fetch(`${endpoint}/${row.id}`, { method: 'DELETE', headers });
+    const ok = await confirmDialog({
+      title: `Nonaktifkan "${row.name || row.code}"?`,
+      body: 'Data tidak dihapus; hanya tidak dipakai lagi di pilihan baru.',
+      confirmLabel: 'Nonaktifkan', danger: true,
+    });
+    if (!ok) return;
+    const res = await fetch(`${endpoint}/${row.id}`, { method: 'DELETE', headers });
+    if (!res.ok) toast.error(`Gagal menonaktifkan (HTTP ${res.status}).`);
     fetchRows();
   };
 
+  // Kolom pemanggil: tampilan tetap lewat render(value,row); unduhan & urutan memakai teks yang tampil.
+  const tableColumns = useMemo(() => columns.map((c) => {
+    if (typeof c.render !== 'function') return c;
+    return {
+      ...c,
+      accessor: (row) => { const t = teksSel(c.render(row[c.key], row)); return t === null ? row[c.key] : t; },
+      render: (_v, row) => c.render(row[c.key], row),
+    };
+  }), [columns]);
+
   const activeCol = {
     key: 'active', label: 'Status',
-    render: (v) => v
-      ? <span className="inline-flex items-center gap-1 text-xs text-[hsl(var(--success))]"><CheckCircle2 className="w-3.5 h-3.5" /> Aktif</span>
-      : <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><XCircle className="w-3.5 h-3.5" /> Nonaktif</span>,
+    accessor: (row) => (row.active ? 'Aktif' : 'Nonaktif'),
+    render: (_v, row) => (row.active
+      ? <StatusBadge status="aktif" label="Aktif" tone="success" />
+      : <StatusBadge status="nonaktif" label="Nonaktif" tone="muted" />),
   };
 
   const actionsCol = canEdit ? {
-    key: '_actions', label: 'Aksi',
+    key: '_actions', label: '',
     render: (_, row) => (
-      <div className="flex items-center gap-1">
-        <button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground hover:text-foreground" data-testid={`${testIdPrefix}-edit-${row.id}`}><Edit2 className="w-3.5 h-3.5" /></button>
+      <div className="flex items-center justify-end gap-1">
+        <Button variant="ghost" size="icon-sm" onClick={() => openEdit(row)} title="Ubah" aria-label={`Ubah ${row.name || row.code || ''}`}
+          data-testid={`${testIdPrefix}-edit-${row.id}`}><Pencil /></Button>
         {row.active && (
-          <button onClick={() => handleDeactivate(row)} className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.1)] text-muted-foreground hover:text-[hsl(var(--destructive))]" data-testid={`${testIdPrefix}-deactivate-${row.id}`}><Trash2 className="w-3.5 h-3.5" /></button>
+          <Button variant="ghost" size="icon-sm" onClick={() => handleDeactivate(row)} title="Nonaktifkan"
+            aria-label={`Nonaktifkan ${row.name || row.code || ''}`}
+            data-testid={`${testIdPrefix}-deactivate-${row.id}`}><Ban /></Button>
         )}
       </div>
     ),
   } : null;
 
-  const fullColumns = [...columns, activeCol, ...(actionsCol ? [actionsCol] : [])];
-
-  if (loading) return (
-    <div className="flex items-center justify-center h-64">
-      <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
-    </div>
-  );
+  const fullColumns = [...tableColumns, activeCol, ...(actionsCol ? [actionsCol] : [])];
+  const visibleFields = fields.filter(f => !(editing && f.createOnly) && !(f.editOnly && !editing));
 
   return (
-    <div className="space-y-6" data-testid={`${testIdPrefix}-page`}>
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{title}</h1>
-          {description && <p className="text-muted-foreground text-sm mt-1">{description}</p>}
-        </div>
+    <PageLayout testId={`${testIdPrefix}-page`} title={title} subtitle={description}
+      actions={(canEdit || ieKey) ? <>
+        {ieKey && <ImportExportToolbar collectionKey={ieKey} label={title} onImported={fetchRows} size="default" caption="master" />}
         {canEdit && (
-          <div className="flex items-center gap-2">
-            {ieKey && <ImportExportToolbar collectionKey={ieKey} label={title} onImported={fetchRows} />}
-            <Button onClick={openCreate} data-testid={`${testIdPrefix}-add-btn`}>
-              <Plus className="w-4 h-4 mr-1.5" /> Tambah
-            </Button>
-          </div>
+          <Button onClick={openCreate} data-testid={`${testIdPrefix}-add-btn`}>
+            <Plus />Tambah
+          </Button>
         )}
-        {!canEdit && ieKey && (
-          <ImportExportToolbar collectionKey={ieKey} label={title} onImported={fetchRows} />
-        )}
-      </div>
-
-      <DataTable
-        columns={fullColumns}
-        data={rows}
-        searchKeys={columns.map(c => c.key)}
-      />
-
-      {modalOpen && (
-        <Modal onClose={() => setModalOpen(false)} title={editing ? `Edit ${title}` : `Tambah ${title}`}>
-          <div className="space-y-4" data-testid={`${testIdPrefix}-form`}>
-            {error && <div className="bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.2)] rounded-lg p-3 text-sm text-[hsl(var(--destructive))]" data-testid={`${testIdPrefix}-error`}>{error}</div>}
-            {fields.filter(f => !(editing && f.createOnly) && !(f.editOnly && !editing)).map(fld => (
-              <div key={fld.key}>
-                <label className="block text-sm font-medium text-foreground/70 mb-1.5">
-                  {fld.label} {fld.required && <span className="text-[hsl(var(--destructive))]">*</span>}
-                </label>
-                {fld.type === 'select' ? (
-                  <SmartNativeSelect
-                    value={form[fld.key] ?? ''}
-                    onChange={e => setForm({ ...form, [fld.key]: e.target.value })}
-                    className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    data-testid={`${testIdPrefix}-field-${fld.key}`}
-                  >
-                    <option value="">— Pilih —</option>
-                    {(fld.options || []).map(o => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </SmartNativeSelect>
-                ) : fld.type === 'number' ? (
-                  <GlassInput
-                    type="number"
-                    value={form[fld.key] ?? ''}
-                    onChange={e => setForm({ ...form, [fld.key]: e.target.value === '' ? '' : Number(e.target.value) })}
-                    placeholder={fld.placeholder || ''}
-                    data-testid={`${testIdPrefix}-field-${fld.key}`}
-                  />
-                ) : (
-                  <GlassInput
-                    type={fld.type === 'time' ? 'time' : 'text'}
-                    value={form[fld.key] ?? ''}
-                    onChange={e => setForm({ ...form, [fld.key]: e.target.value })}
-                    placeholder={fld.placeholder || ''}
-                    disabled={fld.type === 'readonly'}
-                    data-testid={`${testIdPrefix}-field-${fld.key}`}
-                  />
-                )}
-                {fld.help && <p className="text-xs text-muted-foreground mt-1">{fld.help}</p>}
-              </div>
-            ))}
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <Button variant="ghost" onClick={() => setModalOpen(false)} disabled={saving}>Batal</Button>
-              <Button onClick={handleSave} disabled={saving} data-testid={`${testIdPrefix}-save-btn`}>
-                {saving ? 'Menyimpan...' : 'Simpan'}
-              </Button>
-            </div>
-          </div>
-        </Modal>
+      </> : null}>
+      {loading && rows.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat data…</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <DataTable
+            columns={fullColumns}
+            data={rows}
+            searchKeys={columns.map(c => c.key)}
+            pageSize={25}
+          />
+        </div>
       )}
-    </div>
+
+      <FormPopup open={modalOpen} onClose={() => setModalOpen(false)} onSimpan={handleSave} menyimpan={saving}
+        ukuran={visibleFields.length > 6 ? 'panjang' : 'pendek'} galat={error} testId={`${testIdPrefix}-form`}
+        judul={editing ? `Ubah ${title}` : `Tambah ${title}`}
+        labelSimpan={editing ? 'Simpan perubahan' : 'Simpan'}>
+        {visibleFields.map(fld => (
+          <Isian key={fld.key} label={fld.label} wajib={!!fld.required} petunjuk={fld.help}
+            htmlFor={fld.type === 'select' ? undefined : `${testIdPrefix}-in-${fld.key}`}>
+            {fld.type === 'select' ? (
+              <SmartNativeSelect
+                value={form[fld.key] ?? ''}
+                onChange={e => setForm({ ...form, [fld.key]: e.target.value })}
+                className="w-full"
+                data-testid={`${testIdPrefix}-field-${fld.key}`}
+              >
+                <option value="">Pilih</option>
+                {(fld.options || []).map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </SmartNativeSelect>
+            ) : fld.type === 'number' ? (
+              <Input
+                id={`${testIdPrefix}-in-${fld.key}`}
+                type="number"
+                value={form[fld.key] ?? ''}
+                onChange={e => setForm({ ...form, [fld.key]: e.target.value === '' ? '' : Number(e.target.value) })}
+                placeholder={fld.placeholder || ''}
+                data-testid={`${testIdPrefix}-field-${fld.key}`}
+              />
+            ) : (
+              <Input
+                id={`${testIdPrefix}-in-${fld.key}`}
+                type={fld.type === 'time' ? 'time' : 'text'}
+                value={form[fld.key] ?? ''}
+                onChange={e => setForm({ ...form, [fld.key]: e.target.value })}
+                placeholder={fld.placeholder || ''}
+                disabled={fld.type === 'readonly'}
+                data-testid={`${testIdPrefix}-field-${fld.key}`}
+              />
+            )}
+          </Isian>
+        ))}
+      </FormPopup>
+    </PageLayout>
   );
 }

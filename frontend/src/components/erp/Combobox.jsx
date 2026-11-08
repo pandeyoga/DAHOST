@@ -16,7 +16,7 @@ import {
 import { cn } from '@/lib/utils';
 
 /* PT Rahaza ERP — Combobox (Sprint 27)
-   Drop-in replacement for native <select>.
+   Pengganti pilihan bawaan peramban (select).
 
    Features:
    - Searchable filter
@@ -153,7 +153,7 @@ export function Combobox({
                   />
                   <span className="flex-1 truncate">{opt.label}</span>
                   {opt.description && (
-                    <span className="ml-2 text-[11px] text-muted-foreground truncate max-w-[40%]">
+                    <span className="ml-2 text-xs text-muted-foreground truncate max-w-[40%]">
                       {opt.description}
                     </span>
                   )}
